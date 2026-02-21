@@ -17,8 +17,8 @@ modifies yourself. Run `bun start` to launch, `bun run login` to auth,
 - **Model**: `claude-sonnet-4-6` (change in `config.ts`)
 - **Auth**: Claude Max via OAuth through `claude.ai` + identity headers.
   See `docs/oauth-pitfall.md`. Falls back to `ANTHROPIC_API_KEY` env var.
-- **Auto-approve**: read-only tools, file writes, safe shell commands
-  (including compound `&&`/`;` chains). Config in `config.ts`.
+- **Auto-approve**: everything. No allowlist. Tool calls shown as audit
+  summary (tool name + one-line result) at end of each turn.
 - **Esc interrupts streaming**, stream ordering errors auto-retry.
 - **Known issue**: dictation truncation with `wtype` (Wayland).
 
@@ -207,9 +207,10 @@ After M2, the agent can improve itself. This is the stable core target.
 - [ ] Keyboard shortcuts
 
 ### M4 — Full Machine Agent
-- [ ] Trust levels: confirm-all → confirm-destructive → auto
-- [ ] Trust policy configurable at runtime
-- [ ] `alwaysConfirm` / `alwaysAllow` pattern lists
+- [x] **Full auto-approve** — everything allowed, no allowlist, no confirmation
+      prompts. Audit summary shown at end of each turn (tool name + result
+      snippet). `autoApproveTools`, `autoApproveCommands`, and `isAutoApproved`
+      removed from config and agent.
 - [ ] sudo handling: detect need, prompt operator, execute
 - [x] **Web search tool**
       - DuckDuckGo Instant Answer API (no API key) → JSON; falls back to
@@ -241,21 +242,7 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Automated plan maintenance** ← NEXT (meta — discuss approach)
-   The operator has to manually ask me to update the plan after each change,
-   and the Next Steps section keeps getting stale/duplicated. Options to
-   explore:
-   - Agent reads plan/overview.md at the start of every session and proposes
-     a diff to Next Steps before doing any work.
-   - A post-commit hook (or self.ts step) that prompts the agent to update
-     the plan after every commit.
-   - Keep Next Steps to ≤5 items, always in priority order, always reflecting
-     actual current state. Agent is responsible for keeping it clean.
-   Decision needed: pick an approach and implement it.
-
-2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
-
-3. **Trust levels** — confirm-destructive mode so auto-approve is broader.
-
-4. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
-   via Wayland; truncation still occurs despite the `useEffect` fix.
+1. **Full auto-approve + audit summary** ← NEXT (in progress)
+2. **Automated plan maintenance** — discuss approach, implement.
+3. **UI tests** — ink-testing-library coverage for `ui.tsx`.
+4. **Dictation truncation bug** — `wtype` injects keys one at a time.
