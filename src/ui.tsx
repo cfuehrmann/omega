@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
 import { Agent, type AgentEvent, type TurnMetrics } from "./agent.js";
@@ -40,8 +40,20 @@ function truncateOutput(text: string, maxLines: number = 20): string {
 export function App() {
   const { exit } = useApp();
   const [agent] = useState(() => new Agent());
+  const [authMode, setAuthMode] = useState<string>("...");
+  const [ready, setReady] = useState(false);
   const [input, setInput] = useState("");
   const [completedItems, setCompletedItems] = useState<CompletedItem[]>([]);
+
+  // Initialize agent (auth)
+  useEffect(() => {
+    agent.init().then((mode) => {
+      setAuthMode(mode);
+      setReady(true);
+    }).catch((err) => {
+      setAuthMode(`error: ${err.message}`);
+    });
+  }, [agent]);
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [itemId, setItemId] = useState(0);
@@ -90,7 +102,7 @@ export function App() {
       }
 
       const trimmed = value.trim();
-      if (!trimmed || isStreaming) return;
+      if (!trimmed || isStreaming || !ready) return;
 
       setInput("");
       setStreamingText("");
@@ -263,7 +275,7 @@ export function App() {
       {/* Status bar */}
       <Box marginTop={1}>
         <Text dimColor>
-          {config.model} │ in: {agent.sessionInputTokens} out:{" "}
+          {config.model} │ {authMode} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
           {" │ Ctrl+C quit"}
         </Text>

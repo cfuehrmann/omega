@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
+import { getAuthToken } from "./auth.js";
 
 // --- Types ---
 
@@ -46,6 +47,7 @@ function isAutoApproved(toolName: string, toolInput: any): boolean {
 
 const PRICING: Record<string, { input: number; output: number }> = {
   "claude-opus-4-6": { input: 15, output: 75 },
+  "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
 };
 
@@ -81,8 +83,36 @@ export class Agent {
   public sessionOutputTokens = 0;
   public sessionCostUsd = 0;
 
+  private authMode: "api-key" | "oauth" = "api-key";
+
   constructor() {
+    // Will be initialized in init()
     this.client = new Anthropic();
+  }
+
+  async init(): Promise<string> {
+    // Try OAuth token first (Claude Max), fall back to API key
+    const oauthToken = await getAuthToken();
+    if (oauthToken) {
+      this.client = new Anthropic({
+        authToken: oauthToken,
+        apiKey: undefined as any,
+      });
+      this.authMode = "oauth";
+      return "oauth (Claude Max)";
+    } else if (process.env.ANTHROPIC_API_KEY) {
+      this.client = new Anthropic();
+      this.authMode = "api-key";
+      return "api-key";
+    } else {
+      throw new Error(
+        "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY."
+      );
+    }
+  }
+
+  getAuthMode(): string {
+    return this.authMode;
   }
 
   getHistory(): readonly Anthropic.MessageParam[] {

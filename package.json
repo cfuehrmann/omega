@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/main.tsx"
+    "start": "bun run src/main.tsx",
+    "login": "bun run src/login.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
