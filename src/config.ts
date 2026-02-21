@@ -29,6 +29,7 @@ export const config = {
     "",
     "Your planning files are in plan/. They are the source of truth for goals,",
     "architecture, and decisions. Start by reading plan/overview.md if you need context.",
+    "Read docs/lessons-learned.md before integrating with external APIs or protocols.",
     "",
     "The operator must approve destructive tool calls. Read-only tools and file writes",
     "are auto-approved.",

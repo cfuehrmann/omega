@@ -1,107 +1,147 @@
-# OAuth Pitfall: Token vs API Key (Claude Max Billing)
+# OAuth for Claude Max — Lessons Learned
 
-## The Problem
+## The Working Flow (reverse-engineered from pi-ai)
 
-When authenticating with Claude Max via OAuth, there are **two different
-things** you can use to call the Anthropic API:
+The Anthropic API requires a specific OAuth flow for Claude Max billing.
+We got it wrong multiple times. Here is what actually works, reverse-
+engineered from `@mariozechner/pi-ai/dist/utils/oauth/anthropic.js`:
 
-1. **OAuth access token** (Bearer token via `authToken` parameter)
-2. **API key** created from that OAuth token
+### 1. Authorization
 
-They both authenticate successfully. But **only the API key bills through
-Claude Max**. The raw OAuth token bills per-token (pay-as-you-go), even
-if the user has a Max subscription.
-
-We discovered this the hard way: Omega was authenticating via OAuth and
-showing "oauth (Claude Max)" in the status bar, but every API call was
-billing per-token.
-
-## How Claude Code Does It
-
-By examining the Claude Code CLI (`@anthropic-ai/claude-code`), we found
-the correct flow:
-
-1. **OAuth PKCE flow** → get `access_token` + `refresh_token`
-   - Endpoint: `https://platform.claude.com/oauth/authorize`
-   - Token: `https://platform.claude.com/v1/oauth/token`
-   - **Critical scope**: `org:create_api_key` (without this, step 2 fails)
-
-2. **Exchange token for API key** → POST to create_api_key endpoint
-   ```
-   POST https://api.anthropic.com/api/oauth/claude_cli/create_api_key
-   Authorization: Bearer <access_token>
-   ```
-   Response: `{ "raw_key": "sk-ant-..." }`
-
-3. **Use the API key** for all API calls:
-   ```typescript
-   new Anthropic({ apiKey: raw_key })
-   ```
-   This key bills through Claude Max.
-
-## The Wrong Way (what we did first)
-
-```typescript
-// ❌ WRONG: authenticates but bills per-token
-new Anthropic({ authToken: oauthAccessToken })
+```
+GET https://claude.ai/oauth/authorize
+  ?code=true                         ← REQUIRED, easy to miss
+  &client_id=9d1c250a-...
+  &response_type=code
+  &redirect_uri=https://console.anthropic.com/oauth/code/callback
+  &scope=org:create_api_key user:profile user:inference
+  &code_challenge=<PKCE challenge>
+  &code_challenge_method=S256
+  &state=<PKCE verifier>
 ```
 
-## The Right Way (what we do now)
+**Critical details:**
+- URL is `claude.ai`, NOT `platform.claude.com`
+- `code=true` param is required (not part of standard OAuth)
+- Redirect URI is `console.anthropic.com`, NOT `platform.claude.com`
+- State is the PKCE verifier (used later in token exchange)
 
-```typescript
-// ✅ RIGHT: OAuth token → create API key → use API key
-const resp = await fetch(
-  "https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
-  { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }
-);
-const { raw_key } = await resp.json();
-new Anthropic({ apiKey: raw_key });  // bills through Claude Max
+### 2. Token Exchange
+
+```
+POST https://console.anthropic.com/v1/oauth/token
+Content-Type: application/json
+
+{
+  "grant_type": "authorization_code",
+  "client_id": "9d1c250a-...",
+  "code": "<code from redirect>",
+  "state": "<state from redirect>",
+  "redirect_uri": "https://console.anthropic.com/oauth/code/callback",
+  "code_verifier": "<PKCE verifier>"
+}
 ```
 
-## Required OAuth Scopes
+**Critical details:**
+- Token URL is `console.anthropic.com`, NOT `platform.claude.com`
+- Response includes `access_token`, `refresh_token`, `expires_in`
 
-Claude Code uses two scope sets:
+### 3. Using the Token
 
-- **For API key creation**: `org:create_api_key`, `user:profile`
-- **For ongoing use**: `user:profile`, `user:inference`, `user:sessions:claude_code`, `user:mcp_servers`
+The `access_token` (format: `sk-ant-oat-...`) is passed as `authToken`
+to the Anthropic SDK, with specific headers:
 
-Omega uses: `org:create_api_key`, `user:inference`, `user:profile`
+```typescript
+new Anthropic({
+  apiKey: null,
+  authToken: accessToken,
+  defaultHeaders: {
+    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+    "user-agent": "claude-cli/2.1.2 (external, cli)",
+    "x-app": "cli",
+  },
+});
+```
 
-The `org:create_api_key` scope is essential. Without it, the
-`create_api_key` endpoint returns an error.
+**Critical details:**
+- `apiKey: null` — do NOT pass the token as apiKey (→ "invalid x-api-key")
+- `authToken: token` — sends as `Authorization: Bearer <token>`
+- Beta headers `claude-code-20250219,oauth-2025-04-20` are REQUIRED
+- Must impersonate Claude Code (user-agent + x-app headers)
+- System prompt must start with: `"You are Claude Code, Anthropic's
+  official CLI for Claude."`
 
-## Startup Verification
+### 4. Token Refresh
 
-Having a key file is not proof of correct billing. On every startup,
-`agent.ts init()` calls `verifyApiKey()` which:
+```
+POST https://console.anthropic.com/v1/oauth/token
+Content-Type: application/json
 
-1. Makes a free `POST /v1/messages/count_tokens` call (no tokens billed)
-2. Inspects the `x-ratelimit-limit-requests` response header
-3. Max accounts have limit > 200; pay-per-token Tier 1 has ~50
+{
+  "grant_type": "refresh_token",
+  "client_id": "9d1c250a-...",
+  "refresh_token": "<refresh_token>"
+}
+```
 
-The UI shows the verified result:
-- `✓ Authenticated: Claude Max (verified ✓)` — confirmed Max billing
-- `⚠ Auth: api-key (pay-per-token ⚠)` — confirmed pay-per-token
-- `⚠ Auth: ⚠ API key invalid: API usage limit reached` — key exhausted
-- `⚠ Auth: oauth-derived (billing unknown)` — couldn't determine
+## What Went Wrong (the full list of mistakes)
 
-This catches:
-- Old keys from wrong OAuth scopes that bill per-token
-- Exhausted pay-per-token keys (usage limit reached)
-- Expired or revoked keys
+### Mistake 1: Wrong authorize URL
+- **Used**: `platform.claude.com/oauth/authorize` (Console/API account)
+- **Should be**: `claude.ai/oauth/authorize` (Claude Max account)
+- **Effect**: Created tokens tied to pay-per-token billing
+
+### Mistake 2: Wrong token URL
+- **Used**: `platform.claude.com/v1/oauth/token`
+- **Should be**: `console.anthropic.com/v1/oauth/token`
+
+### Mistake 3: Wrong redirect URI
+- **Used**: `platform.claude.com/oauth/code/callback`
+- **Should be**: `console.anthropic.com/oauth/code/callback`
+
+### Mistake 4: Missing `code=true` param
+- Standard OAuth doesn't have this; Anthropic requires it
+
+### Mistake 5: Assumed we needed create_api_key
+- **Tried**: `POST /api/oauth/claude_cli/create_api_key` to exchange
+  token for API key
+- **Reality**: The access_token IS the credential. No exchange needed.
+- The API key from create_api_key inherits billing from the OAuth
+  account — since we were using the wrong authorize URL, those keys
+  were also pay-per-token.
+
+### Mistake 6: Passed token as apiKey instead of authToken
+- `new Anthropic({ apiKey: token })` → "invalid x-api-key" (401)
+- Must use `new Anthropic({ authToken: token, apiKey: null })`
+
+### Mistake 7: Missing identity headers
+- Without `claude-code-20250219` beta and user-agent headers,
+  the API rejects OAuth tokens entirely
+
+## Root Cause of All Mistakes
+
+**We guessed instead of reading working code.** We should have reverse-
+engineered pi-ai's `dist/utils/oauth/anthropic.js` on the first attempt.
+The file is 100 lines and contains every URL, every parameter, every
+header. Instead we:
+
+1. Read Claude Code's minified CLI (hard to follow, multiple code paths)
+2. Made assumptions about which endpoints to use
+3. Trial-and-errored through each failure
+
+**The fix was 10 minutes of reading the right file.** The debugging was
+hours of wrong guesses.
 
 ## Files
 
-- `src/auth.ts` — OAuth flow + API key creation + caching + verification
+- `src/auth.ts` — OAuth flow (authorize + token exchange + refresh)
 - `src/login.ts` — Interactive login script
-- `src/agent.ts` — `init()` tries API key first, verifies billing via
-  `verifyApiKey()`, falls back to env var, then raw OAuth token
-- `~/.config/omega/oauth-token.json` — cached OAuth token
-- `~/.config/omega/api-key` — cached API key (the one that actually matters)
+- `src/agent.ts` — `init()` passes token as authToken with identity headers
+- `~/.config/omega/oauth-token.json` — cached OAuth credentials
 
 ## If Re-Authentication Is Needed
 
 ```bash
-rm ~/.config/omega/api-key ~/.config/omega/oauth-token.json
+rm ~/.config/omega/oauth-token.json
 cd ~/omega && bun run login
 ```

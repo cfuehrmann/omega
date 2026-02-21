@@ -27,17 +27,15 @@ you are modifying yourself.
   latency). Config lists are in `config.ts` (`autoApproveTools`,
   `autoApproveCommands`). Truly destructive commands (e.g. `rm -rf`) still
   require operator confirmation.
-- **Claude Max authentication is implemented and verified.** Run
-  `bun run login` to authenticate. The OAuth token alone is NOT enough —
-  it authenticates but bills per-token. The login flow exchanges the OAuth
-  token for an API key via `/api/oauth/claude_cli/create_api_key` (same as
-  Claude Code does). That API key carries Claude Max billing. On every
-  startup, the key is **verified** against the API (free `count_tokens`
-  call + rate limit header check) to confirm billing type. The first line
-  in the UI shows the verified result. See `docs/oauth-pitfall.md` for the
-  full explanation. Falls back to `ANTHROPIC_API_KEY` env var if no OAuth.
-  Token in `~/.config/omega/oauth-token.json`, API key in
-  `~/.config/omega/api-key`.
+- **Claude Max authentication is implemented.** Run `bun run login` to
+  authenticate. The OAuth flow must go through `claude.ai` (not
+  `platform.claude.com`) and the access token must be passed as `authToken`
+  (Bearer auth) with Claude Code identity headers. This was reverse-
+  engineered from pi-ai's OAuth implementation after multiple failed
+  attempts with wrong endpoints. See `docs/oauth-pitfall.md` for the full
+  story and `docs/lessons-learned.md` for methodology lessons. Falls back
+  to `ANTHROPIC_API_KEY` env var if no OAuth. Token in
+  `~/.config/omega/oauth-token.json`.
 - **Model is currently `claude-sonnet-4-6`** (switched from Opus for cost
   savings). Change in `src/config.ts`.
 - **M3 is in progress.** Conversation history persistence is done:
@@ -85,6 +83,9 @@ omega/
   plan/              ← you are here (planning docs, source of truth)
     overview.md      ← this file
     ui.md            ← UI layout and interaction design
+  docs/
+    oauth-pitfall.md ← OAuth flow details (exact URLs, params, headers)
+    lessons-learned.md ← methodology lessons (read before new features)
   src/
     agent.ts         ← agent core (streaming, tool loop, retry, auto-approve, truncation)
                         StreamProvider interface for test injection
