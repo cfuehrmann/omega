@@ -19,7 +19,10 @@ you are modifying yourself.
 - **Auto-approve is implemented.** Read-only tools (`read_file`, `list_files`)
   and `write_file` are auto-approved without operator confirmation. Safe shell
   commands (`ls`, `cat`, `grep`, `git status/log/diff`, `bun test`, and all
-  self-modification git commands) are auto-approved. The auto-approve logic
+  self-modification git commands) are auto-approved. Compound commands
+  (`cmd1 && cmd2` or `cmd1; cmd2`) are approved only when every part is
+  individually approved; a `cd` into a relative project subdirectory (no
+  absolute path, no `..`) also counts as approved. The auto-approve logic
   lives in `agent.ts` and skips the `tool_pending` event entirely (no UI
   latency). Config lists are in `config.ts` (`autoApproveTools`,
   `autoApproveCommands`). Truly destructive commands (e.g. `rm -rf`) still
@@ -53,7 +56,11 @@ you are modifying yourself.
   this error by message text and retries automatically (up to 5 times).
 - Run `bun start` from the project root to launch yourself.
 - Run `bun run login` to authenticate with Claude Max.
-- Run `bun test` to run the test suite (123 tests, 7 files).
+- **Compound command auto-approve.** `cd <subdir> && grep ...` and similar
+  compound commands are now split on `&&`/`;` and each part checked
+  independently. `cd` into a relative project path is safe; any part that
+  isn't approved blocks the whole command.
+- Run `bun test` to run the test suite (130 tests, 7 files).
 
 ### Project Structure
 
