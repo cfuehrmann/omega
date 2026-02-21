@@ -37,7 +37,7 @@ you are modifying yourself.
 - **M3 is in progress.** Conversation history persistence is done:
   `src/session.ts` saves history to `~/.local/share/omega/sessions/` after
   every turn; `ui.tsx` offers a resume prompt on startup. The `Agent` class
-  accepts an injectable `StreamProvider` for testing. 123 tests passing.
+  accepts an injectable `StreamProvider` for testing. 132 tests passing.
 - **Test coverage audit completed.** The test suite is layered correctly:
   unit tests pin pure functions with boundary cases; integration tests
   (mock provider) verify the full `sendMessage` loop, tool dispatch, session
@@ -60,7 +60,17 @@ you are modifying yourself.
   compound commands are now split on `&&`/`;` and each part checked
   independently. `cd` into a relative project path is safe; any part that
   isn't approved blocks the whole command.
-- Run `bun test` to run the test suite (130 tests, 7 files).
+- **Escape interrupts streaming.** Pressing Esc mid-response aborts the
+  current stream via `AbortController`. The partial text is flushed to
+  history, no incomplete assistant turn is added, and the operator can
+  immediately type a correction. The status bar shows `│ Esc to interrupt`
+  only while a stream is interruptible (not during tool confirmation).
+- **Dictation truncation partially fixed.** `fast-text-input.tsx` `useEffect`
+  now only resets `valueRef` when `value === ""` (external clear after submit),
+  never on intermediate prop echoes. Root cause of remaining truncation is
+  still under investigation — `wtype` (Wayland key injector) sends keystrokes
+  individually; the exact truncation mechanism needs more diagnosis.
+- Run `bun test` to run the test suite (132 tests, 7 files).
 
 ### Project Structure
 
@@ -82,7 +92,7 @@ omega/
     tools.ts         ← tool definitions and execution (read/write/run/list/edit_file)
     ui.tsx           ← Ink terminal UI (static zone, live zone, status bar, resume prompt)
     main.tsx         ← entry point
-    *.test.ts        ← 115 tests across 7 files
+    *.test.ts        ← 132 tests across 7 files
   package.json
 ```
 
@@ -647,16 +657,28 @@ After M2, the agent can improve itself. This is the stable core target.
       - `isRetryable()` extended to match SDK-level `"Unexpected event order"`
         errors by message text (no HTTP status code on these)
       - Agent retries up to 5× instead of surfacing a hard error
+- [x] **Escape interrupts streaming**
+      - `sendMessage()` accepts optional `AbortSignal`; stream loop checks
+        `signal.aborted` after each event and breaks cleanly
+      - Emits `{ type: "interrupted" }` event; partial text flushed, no
+        incomplete assistant turn added to history
+      - `ui.tsx`: Esc fires `abortControllerRef.current.abort()`
+      - Status bar shows `│ Esc to interrupt` only while interruptible
+        (streaming, no pending tool confirmation)
+      - Input box always visible; unfocused during streaming so Esc reaches
+        the global `useInput` handler
+- [~] **Dictation truncation bug** — `useEffect` fix landed (only resets ref
+      when `value === ""`). Root cause confirmed as `wtype` injecting keys
+      one at a time via Wayland. Further diagnosis needed to understand
+      exactly where truncation occurs and whether additional buffering is
+      required in `fast-text-input.tsx`.
 - [ ] **UI tests** ← NEXT (only remaining untested layer)
       - `ui.tsx` has zero automated tests: resume prompt, tool confirmation,
-        streaming display, input blocking are manual-only right now
+        streaming display, Esc interrupt are manual-only right now
       - Use `ink-testing-library`: render `<App>`, drive via `stdin.write()`,
         assert on rendered text output
       - Key scenarios: resume prompt Y/N, tool pending → approve/reject,
-        streaming text appears, Ctrl+C exits
-- [ ] **Dictation truncation bug** — `fast-text-input.tsx` `useEffect` resets
-      `valueRef` mid-paste when React re-renders with a stale prop; fix is to
-      only sync the ref on external resets (value → ""), not on echoed onChange
+        streaming text appears, Esc interrupts
 - [ ] Log projection for self-analysis
 - [ ] Model payload viewer (collapsible, shows what goes to the model)
 - [ ] Modal input: normal mode / insert mode (Helix-inspired)
@@ -692,18 +714,17 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Dictation truncation bug** (`fast-text-input.tsx`) — the `useEffect`
-   that syncs `valueRef` from the `value` prop resets the ref mid-paste when
-   React re-renders with a stale intermediate value. Fix: only reset the ref
-   when the value changes externally (i.e. drops to `""`), not when it's
-   echoing back our own `onChange`. The race can't be reproduced in the
-   ink-testing-library environment (stdin writes are synchronous there), but
-   the fix is unambiguous and safe to apply directly.
+1. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
+   via the Wayland compositor. The `useEffect` fix prevents the React
+   re-render race from truncating `valueRef`, but the truncation still occurs.
+   Next step: add debug logging to `fast-text-input.tsx` to capture every
+   `useInput` call and `useEffect` fire during a dictation session, then
+   reproduce with `wtype` directly to pinpoint the exact drop site.
 
 2. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
    to render `<App>` with a mock agent, drive input via `stdin.write()`, assert
    on rendered text. Key scenarios: resume prompt, tool confirmation, streaming
-   display, input blocking during streaming, Ctrl+C exit.
+   display, Esc interrupt.
 
 3. **Remaining M3 items** — log projection, payload viewer, modal input,
    observability pane, scrollable history, keyboard shortcuts.
