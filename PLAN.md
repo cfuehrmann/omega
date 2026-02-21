@@ -58,13 +58,24 @@ TypeScript is the clear choice for this project:
 - Massive ecosystem for everything we'll need
 - Same language and React component model for terminal UI and future browser UI
 
-### Runtime: Node.js
+### Runtime: Bun
 
-Node is the safest runtime choice because:
+Bun is the best fit for a self-improving agent:
+- Native TypeScript execution — no compile step, no `tsx` wrapper
+- Fastest startup (~5x faster than Node+tsx) — critical when the agent
+  restarts itself on every self-modification
+- Built-in test runner (can replace Vitest if desired)
 - Full compatibility with the Anthropic SDK
-- Widest ecosystem compatibility
-- Stable and well-understood
-- If we add a browser UI later, Node is the expected runtime
+- Ink 6.x + ink-testing-library 4.x confirmed working (smoke-tested)
+- npm-compatible — full ecosystem access
+
+**Verified compatibility** (smoke test 2025-02-21):
+- Ink rendering, flexbox layout, borders, text styling ✅
+- `<Static>` zone ✅
+- State updates / streaming simulation ✅
+- `ink-testing-library` render + assert ✅
+- `useInput` with TTY ✅
+- Clean exit ✅
 
 ### UI Strategy: Terminal-First (Ink), Browser Later (Vite + React)
 
@@ -219,7 +230,7 @@ rendering.
 
 ### Test Infrastructure
 
-- Test runner: Vitest (fast, native TypeScript, watch mode)
+- Test runner: `bun test` (native, fast, built-in) or Vitest
 - Component testing: ink-testing-library
 - API mocking: Record/replay of SSE streams, or mock provider adapter
 - CI: Tests run on every self-modification before the new version is accepted
@@ -384,5 +395,5 @@ retains the ability to:
 
 ## Next Steps
 
-1. **Set up project** — package.json, tsconfig, Ink, Vitest, Anthropic SDK
+1. **Set up project** — `bun init`, Ink, Anthropic SDK, `bun test`
 2. **Build M0** — minimal streaming chat with token logging in the terminal
