@@ -64,6 +64,9 @@ export function App() {
   } | null>(null);
   const confirmResolveRef = useRef<((approved: boolean) => void) | null>(null);
 
+  // Abort controller for the current stream — replaced on each new message
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Last completed response — shown in live zone until next message
   const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
 
@@ -149,6 +152,9 @@ export function App() {
 
       let fullText = "";
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       const confirmTool = (
         name: string,
         input: any,
@@ -161,7 +167,7 @@ export function App() {
       };
 
       try {
-        for await (const event of agent.sendMessage(trimmed, confirmTool)) {
+        for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
           switch (event.type) {
             case "status":
               setActivity(event.message);
@@ -224,6 +230,15 @@ export function App() {
             case "error":
               addItem("error", `⚠ ${event.error}`);
               break;
+
+            case "interrupted":
+              if (fullText) {
+                addItem("turn", fullText);
+                fullText = "";
+                setStreamingText("");
+              }
+              addItem("error", "⊘ Interrupted");
+              break;
           }
         }
       } catch (err: any) {
@@ -240,9 +255,14 @@ export function App() {
   useInput((input, key) => {
     if (key.escape) {
       if (pendingTool && confirmResolveRef.current) {
+        // Escape rejects a pending tool confirmation
         confirmResolveRef.current(false);
         confirmResolveRef.current = null;
         setPendingTool(null);
+      } else if (isStreaming && abortControllerRef.current) {
+        // Escape interrupts the current stream
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
       }
     }
     if (input === "c" && key.ctrl) {
@@ -325,8 +345,8 @@ export function App() {
           </Box>
         )}
 
-        {/* Input prompt — hidden while streaming (unless confirming tool or resume prompt) */}
-        {isStreaming && !pendingTool && resumePromptDone ? null : (
+        {/* Input prompt — always visible; shows Esc hint while streaming */}
+        {!(isStreaming && !pendingTool && resumePromptDone) ? (
           <Box>
             <Text bold color={
               priorSession && !resumePromptDone ? "cyan"
@@ -349,6 +369,10 @@ export function App() {
                 : "message"
               }
             />
+          </Box>
+        ) : (
+          <Box>
+            <Text dimColor>  Esc to interrupt</Text>
           </Box>
         )}
       </Box>

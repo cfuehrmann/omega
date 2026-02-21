@@ -601,3 +601,85 @@ describe("Agent.sendMessage — error handling", () => {
     expect(events[events.length - 1].type).toBe("metrics");
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// Abort / interrupt
+// ---------------------------------------------------------------------------
+
+describe("Agent.sendMessage — abort", () => {
+  it("stops emitting events when aborted mid-stream", async () => {
+    // Stream that yields text chunks with a delay so we can abort mid-way
+    const mockProvider: StreamProvider = async () => {
+      async function* slowEvents() {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk1 " } };
+        // Pause — abort fires here
+        await new Promise((r) => setTimeout(r, 50));
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk2 " } };
+        await new Promise((r) => setTimeout(r, 50));
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk3" } };
+        yield { type: "content_block_stop", index: 0 };
+        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 10 } };
+        yield { type: "message_stop" };
+      }
+      return {
+        [Symbol.asyncIterator]: slowEvents,
+        finalMessage: async () => textMessage("chunk1 chunk2 chunk3"),
+      };
+    };
+
+    const agent = new Agent(mockProvider);
+    const events: AgentEvent[] = [];
+    const controller = new AbortController();
+
+    const gen = agent.sendMessage("test", async () => true, controller.signal);
+
+    for await (const event of gen) {
+      events.push(event);
+      // Abort after receiving the first text chunk
+      if (event.type === "text" && (event as any).text.includes("chunk1")) {
+        controller.abort();
+      }
+    }
+
+    const textEvents = events.filter((e) => e.type === "text");
+    // Only chunk1 should have arrived — chunk2 and chunk3 were aborted
+    expect(textEvents.length).toBe(1);
+    expect((textEvents[0] as any).text).toContain("chunk1");
+
+    // Should emit an "interrupted" event so the UI can show feedback
+    const interrupted = events.find((e) => e.type === "interrupted");
+    expect(interrupted).toBeDefined();
+  });
+
+  it("does not add incomplete assistant turn to history when aborted", async () => {
+    const mockProvider: StreamProvider = async () => {
+      async function* slowEvents() {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } };
+        await new Promise((r) => setTimeout(r, 50));
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " response" } };
+        yield { type: "content_block_stop", index: 0 };
+        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } };
+        yield { type: "message_stop" };
+      }
+      return {
+        [Symbol.asyncIterator]: slowEvents,
+        finalMessage: async () => textMessage("partial response"),
+      };
+    };
+
+    const agent = new Agent(mockProvider);
+    const controller = new AbortController();
+    const gen = agent.sendMessage("hello", async () => true, controller.signal);
+
+    for await (const event of gen) {
+      if (event.type === "text") controller.abort();
+    }
+
+    // History should only have the user message — no partial assistant turn
+    const history = agent.getHistory();
+    expect(history.length).toBe(1);
+    expect(history[0].role).toBe("user");
+  });
+});

@@ -23,7 +23,8 @@ export type AgentEvent =
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
   | { type: "tool_rejected"; id: string; name: string }
   | { type: "metrics"; metrics: TurnMetrics }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "interrupted" };
 
 type ConfirmFn = (
   name: string,
@@ -321,7 +322,8 @@ export class Agent {
 
   async *sendMessage(
     userMessage: string,
-    confirmTool: ConfirmFn
+    confirmTool: ConfirmFn,
+    signal?: AbortSignal
   ): AsyncGenerator<AgentEvent> {
     this.history.push({ role: "user", content: userMessage });
 
@@ -360,7 +362,12 @@ export class Agent {
             ? await this.streamProvider(streamParams)
             : this.client.messages.stream(streamParams);
 
+          let aborted = false;
           for await (const event of stream) {
+            if (signal?.aborted) {
+              aborted = true;
+              break;
+            }
             if (
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
@@ -382,6 +389,13 @@ export class Agent {
                 message: `generating ${event.content_block.name} input...`,
               } as AgentEvent;
             }
+          }
+
+          if (aborted) {
+            // Don't add the partial assistant turn to history.
+            // The user message stays — it was real input.
+            yield { type: "interrupted" };
+            return;
           }
 
           response = await stream.finalMessage();
