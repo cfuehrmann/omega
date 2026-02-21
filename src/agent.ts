@@ -127,6 +127,33 @@ export function truncateHistory(
   return [...alwaysKeepHead, ...kept, ...alwaysKeepTail];
 }
 
+// --- Stream event processing (extracted for testability) ---
+
+/** Process raw Anthropic stream events into AgentEvents.
+ *  This is the inner loop of sendMessage, extracted so it can be tested
+ *  without a real API connection. */
+export function processStreamEvents(streamEvents: Iterable<any>): AgentEvent[] {
+  const events: AgentEvent[] = [];
+  for (const event of streamEvents) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      events.push({ type: "text", text: event.delta.text });
+    }
+    if (
+      event.type === "content_block_start" &&
+      event.content_block?.type === "tool_use"
+    ) {
+      events.push({
+        type: "status",
+        message: `generating ${event.content_block.name} input...`,
+      });
+    }
+  }
+  return events;
+}
+
 // --- Agent ---
 
 export class Agent {
@@ -222,6 +249,17 @@ export class Agent {
               }
               fullText += event.delta.text;
               yield { type: "text", text: event.delta.text };
+            }
+            // Emit status when a tool_use block starts generating,
+            // so the UI shows feedback instead of appearing stuck
+            if (
+              event.type === "content_block_start" &&
+              event.content_block?.type === "tool_use"
+            ) {
+              yield {
+                type: "status",
+                message: `generating ${event.content_block.name} input...`,
+              } as AgentEvent;
             }
           }
 
