@@ -71,6 +71,32 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
   {
+    name: "edit_file",
+    description:
+      "Edit a file by replacing exact text. The old_text must match exactly " +
+      "(including whitespace and indentation). Use this for surgical edits " +
+      "instead of rewriting entire files with write_file. The old_text must " +
+      "appear exactly once in the file.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "Path to the file (absolute or relative to cwd)",
+        },
+        old_text: {
+          type: "string",
+          description: "Exact text to find (must match exactly, must appear once)",
+        },
+        new_text: {
+          type: "string",
+          description: "Text to replace old_text with",
+        },
+      },
+      required: ["path", "old_text", "new_text"],
+    },
+  },
+  {
     name: "list_files",
     description:
       "List files and directories. Returns names with '/' suffix for directories. " +
@@ -148,6 +174,39 @@ async function executeWriteFile(input: {
   await writeFile(input.path, input.content, "utf-8");
   const lines = input.content.split("\n").length;
   return `Wrote ${input.content.length} bytes (${lines} lines) to ${input.path}`;
+}
+
+async function executeEditFile(input: {
+  path: string;
+  old_text: string;
+  new_text: string;
+}): Promise<string> {
+  const content = await readFile(input.path, "utf-8");
+
+  // Count occurrences
+  let count = 0;
+  let idx = -1;
+  while ((idx = content.indexOf(input.old_text, idx + 1)) !== -1) {
+    count++;
+  }
+
+  if (count === 0) {
+    throw new Error(
+      `old_text not found in ${input.path}. Make sure it matches exactly (including whitespace).`
+    );
+  }
+  if (count > 1) {
+    throw new Error(
+      `old_text found ${count} multiple times in ${input.path}. It must appear exactly once. Use a larger/more unique snippet.`
+    );
+  }
+
+  const newContent = content.replace(input.old_text, input.new_text);
+  await writeFile(input.path, newContent, "utf-8");
+
+  const oldLines = input.old_text.split("\n").length;
+  const newLines = input.new_text.split("\n").length;
+  return `edit_file: ${input.path} — replaced ${oldLines} line(s) with ${newLines} line(s)`;
 }
 
 function executeRunCommand(input: {
@@ -255,6 +314,9 @@ export async function executeTool(
       case "write_file":
         output = await executeWriteFile(input);
         break;
+      case "edit_file":
+        output = await executeEditFile(input);
+        break;
       case "run_command":
         output = await executeRunCommand(input);
         break;
@@ -293,6 +355,8 @@ export function formatToolCall(name: string, input: any): string {
     }
     case "write_file":
       return `write_file: ${input.path} (${input.content?.length ?? 0} bytes)`;
+    case "edit_file":
+      return `edit_file: ${input.path} (${input.old_text?.length ?? 0} → ${input.new_text?.length ?? 0} bytes)`;
     case "run_command":
       return `run_command: ${input.command}`;
     case "list_files": {

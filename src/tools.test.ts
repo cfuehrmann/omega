@@ -196,6 +196,86 @@ describe("executeTool: list_files", () => {
   });
 });
 
+// --- executeTool: edit_file ---
+
+describe("executeTool: edit_file", () => {
+  it("replaces exact text in a file", async () => {
+    const path = join(TMP, "edit.txt");
+    await writeFile(path, "hello world\ngoodbye world\n");
+    const result = await executeTool("edit_file", {
+      path,
+      old_text: "hello world",
+      new_text: "hi world",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("edit_file");
+
+    const { readFile } = await import("fs/promises");
+    const content = await readFile(path, "utf-8");
+    expect(content).toBe("hi world\ngoodbye world\n");
+  });
+
+  it("returns error when old_text is not found", async () => {
+    const path = join(TMP, "edit2.txt");
+    await writeFile(path, "hello world\n");
+    const result = await executeTool("edit_file", {
+      path,
+      old_text: "not found text",
+      new_text: "replacement",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("not found");
+  });
+
+  it("returns error when old_text matches multiple times", async () => {
+    const path = join(TMP, "edit3.txt");
+    await writeFile(path, "foo bar\nfoo baz\n");
+    const result = await executeTool("edit_file", {
+      path,
+      old_text: "foo",
+      new_text: "qux",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("multiple");
+  });
+
+  it("returns error for missing file", async () => {
+    const result = await executeTool("edit_file", {
+      path: join(TMP, "nonexistent.txt"),
+      old_text: "x",
+      new_text: "y",
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it("handles multi-line old_text and new_text", async () => {
+    const path = join(TMP, "multiline.txt");
+    await writeFile(path, "line 1\nline 2\nline 3\nline 4\n");
+    const result = await executeTool("edit_file", {
+      path,
+      old_text: "line 2\nline 3",
+      new_text: "replaced 2\nreplaced 3\nextra line",
+    });
+    expect(result.isError).toBe(false);
+
+    const { readFile } = await import("fs/promises");
+    const content = await readFile(path, "utf-8");
+    expect(content).toBe("line 1\nreplaced 2\nreplaced 3\nextra line\nline 4\n");
+  });
+});
+
+describe("formatToolCall: edit_file", () => {
+  it("formats edit_file with path and sizes", () => {
+    const formatted = formatToolCall("edit_file", {
+      path: "src/agent.ts",
+      old_text: "hello",
+      new_text: "world!",
+    });
+    expect(formatted).toContain("edit_file");
+    expect(formatted).toContain("src/agent.ts");
+  });
+});
+
 // --- executeTool: unknown tool ---
 
 describe("executeTool: unknown tool", () => {
