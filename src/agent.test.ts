@@ -143,6 +143,65 @@ describe("isAutoApproved", () => {
   it("does NOT auto-approve 'cd /tmp && ls' (absolute path)", () => {
     expect(isAutoApproved("run_command", { command: "cd /tmp && ls" })).toBe(false);
   });
+
+  // Pipe-connected commands
+  it("auto-approves 'grep -r foo . | head -20'", () => {
+    expect(isAutoApproved("run_command", { command: "grep -r foo . | head -20" })).toBe(true);
+  });
+
+  it("auto-approves 'cat file.txt | grep pattern'", () => {
+    expect(isAutoApproved("run_command", { command: "cat file.txt | grep pattern" })).toBe(true);
+  });
+
+  it("auto-approves 'ls -la | grep foo'", () => {
+    expect(isAutoApproved("run_command", { command: "ls -la | grep foo" })).toBe(true);
+  });
+
+  it("auto-approves 'git log --oneline | head -5'", () => {
+    expect(isAutoApproved("run_command", { command: "git log --oneline | head -5" })).toBe(true);
+  });
+
+  it("auto-approves mixed && and | chain: 'cd src && grep -r foo . | head -20'", () => {
+    expect(isAutoApproved("run_command", { command: "cd src && grep -r foo . | head -20" })).toBe(true);
+  });
+
+  it("does NOT auto-approve pipe chain with dangerous command: 'ls | rm -rf'", () => {
+    expect(isAutoApproved("run_command", { command: "ls | rm -rf" })).toBe(false);
+  });
+
+  // Three-part && chains
+  it("auto-approves three-part chain: 'git add -A && bun test && git status'", () => {
+    expect(isAutoApproved("run_command", { command: "git add -A && bun test && git status" })).toBe(true);
+  });
+
+  it("does NOT auto-approve three-part chain when one part is dangerous: 'ls && rm -rf . && git status'", () => {
+    expect(isAutoApproved("run_command", { command: "ls && rm -rf . && git status" })).toBe(false);
+  });
+
+  // Safe text-processor commands (read-only, commonly piped)
+  it("auto-approves 'sort'", () => {
+    expect(isAutoApproved("run_command", { command: "sort file.txt" })).toBe(true);
+  });
+
+  it("auto-approves 'uniq'", () => {
+    expect(isAutoApproved("run_command", { command: "uniq file.txt" })).toBe(true);
+  });
+
+  it("auto-approves 'cut -d: -f1 /etc/passwd'", () => {
+    expect(isAutoApproved("run_command", { command: "cut -d: -f1 /etc/passwd" })).toBe(true);
+  });
+
+  it("auto-approves 'tr a-z A-Z'", () => {
+    expect(isAutoApproved("run_command", { command: "tr a-z A-Z" })).toBe(true);
+  });
+
+  it("auto-approves 'sed -n 1p file.txt' (read-only sed)", () => {
+    expect(isAutoApproved("run_command", { command: "sed -n 1p file.txt" })).toBe(true);
+  });
+
+  it("auto-approves 'awk {print} file.txt'", () => {
+    expect(isAutoApproved("run_command", { command: "awk '{print}' file.txt" })).toBe(true);
+  });
 });
 
 // --- Retry logic ---

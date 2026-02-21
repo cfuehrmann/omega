@@ -63,10 +63,12 @@ export function isAutoApproved(toolName: string, toolInput: any): boolean {
   if (toolName === "run_command" && toolInput?.command) {
     const cmd = toolInput.command.trim();
 
-    // Split compound commands on && or ; and check each part individually.
-    // Every part must be independently approved. A `cd` into a relative
-    // project subdirectory (no absolute path, no ..) counts as approved.
-    const parts = cmd.split(/&&|;/).map((p: string) => p.trim()).filter(Boolean);
+    // Split compound commands on &&, ;, or | and check each segment individually.
+    // Every segment must be independently approved. A pipe introduces no new
+    // privileges — it just connects stdout/stdin between already-approved commands.
+    // A `cd` into a relative project subdirectory (no absolute path, no ..)
+    // also counts as approved.
+    const parts = cmd.split(/&&|\||;/).map((p: string) => p.trim()).filter(Boolean);
     return parts.every((part: string) => {
       if (isSingleCommandApproved(part)) return true;
       // Allow: cd <relative-safe-path>
