@@ -52,6 +52,7 @@ export function App() {
       setReady(true);
     }).catch((err) => {
       setAuthMode(`error: ${err.message}`);
+      setReady(true); // allow input even on error so user sees something
     });
   }, [agent]);
   const [streamingText, setStreamingText] = useState("");
@@ -254,8 +255,8 @@ export function App() {
 
         {/* Input */}
         <Box>
-          <Text bold color={pendingTool ? "yellow" : isStreaming ? "gray" : "green"}>
-            {pendingTool ? "? " : "❯ "}
+          <Text bold color={pendingTool ? "yellow" : isStreaming ? "gray" : !ready ? "red" : "green"}>
+            {pendingTool ? "? " : !ready ? "… " : "❯ "}
           </Text>
           <TextInput
             value={input}
