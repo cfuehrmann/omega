@@ -27,11 +27,14 @@ you are modifying yourself.
   latency). Config lists are in `config.ts` (`autoApproveTools`,
   `autoApproveCommands`). Truly destructive commands (e.g. `rm -rf`) still
   require operator confirmation.
-- **OAuth authentication is implemented.** The agent can authenticate via
-  Claude Max (OAuth PKCE flow via `bun run login`) or fall back to an API key
-  (`ANTHROPIC_API_KEY` env var). Token is persisted in
-  `~/.config/omega/oauth-token.json` with auto-refresh. The status bar shows
-  the active auth mode.
+- **Claude Max authentication is implemented.** Run `bun run login` to
+  authenticate. The OAuth token alone is NOT enough — it authenticates but
+  bills per-token. The login flow must exchange the OAuth token for an API
+  key via `/api/oauth/claude_cli/create_api_key` (same as Claude Code does).
+  That API key carries Claude Max billing. See `docs/oauth-pitfall.md` for
+  the full explanation. Falls back to `ANTHROPIC_API_KEY` env var if no
+  OAuth. Token in `~/.config/omega/oauth-token.json`, API key in
+  `~/.config/omega/api-key`.
 - **Model is currently `claude-sonnet-4-6`** (switched from Opus for cost
   savings). Change in `src/config.ts`.
 - **M3 is in progress.** Conversation history persistence is done:
