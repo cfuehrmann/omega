@@ -182,13 +182,20 @@ After M2, the agent can improve itself. This is the stable core target.
         dim `… ` glyph instead of the green `❯`, and dim the placeholder
         text. The `❯` only appears when the user can actually type.
 - [x] **API call inspector UX fixes**
-      - Bug 1: `i`/`q` shortcuts fired while user was typing in the prompt
-        (useInput fires for all keypresses regardless of TextInput focus).
-        Fix: extracted `shouldHandleShortcut()` pure function to `ui-logic.ts`
-        (10 unit tests); gates on `inputState.length === 0`.
-      - Bug 2: separator said "Turn N" → renamed to "API call #N".
-      - Bug 3: panel always shows most recent API call; call number in title
-        makes that clear. No navigation needed for now.
+      - Renamed separator "Turn N" → "API call #N".
+      - Extracted `shouldHandleShortcut()` to `ui-logic.ts` (10 unit tests);
+        gates `i`/`q` on empty prompt. (Panel and shortcuts subsequently
+        removed — see below.)
+- [x] **API call visibility — simplify to status bar delta**
+      - Insight: context is always a prefix-superset across calls, so the
+        message list in the panel is redundant with scrollback.
+      - Removed: `PayloadPanel`, `i`/`q` shortcuts, `showPayloadPanel` state,
+        `lastPayload`/`lastCallNumber` state, `ui-logic.ts`, `ui-logic.test.ts`.
+      - Added: `Δ±N tok` in the status bar — difference in estimated token
+        count between the current and previous API call. Negative = truncation
+        fired. Resets to blank at the start of each user turn.
+      - Separator in scrollback keeps cumulative token count (absolute context
+        size at that moment).
 - [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
       `ink-testing-library` to cover: resume prompt, tool confirmation,
       streaming display, Esc interrupt, payload panel toggle.
@@ -234,7 +241,7 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Automated plan maintenance** ← NEXT
+1. **Automated plan maintenance** ← NEXT (meta — discuss approach)
    The operator has to manually ask me to update the plan after each change,
    and the Next Steps section keeps getting stale/duplicated. Options to
    explore:
