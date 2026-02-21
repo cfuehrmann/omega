@@ -184,7 +184,7 @@ export function App() {
         setIsStreaming(false);
       }
     },
-    [agent, isStreaming, pendingTool, addItem]
+    [agent, isStreaming, pendingTool, addItem, ready]
   );
 
   useInput((input, key) => {
