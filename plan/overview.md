@@ -18,11 +18,12 @@ you are modifying yourself.
   81 tests, all passing.
 - **Auto-approve is implemented.** Read-only tools (`read_file`, `list_files`)
   and `write_file` are auto-approved without operator confirmation. Safe shell
-  commands (`ls`, `cat`, `grep`, `git status/log/diff`, `bun test`, etc.) are
-  also auto-approved. The auto-approve logic lives in `agent.ts` and skips the
-  `tool_pending` event entirely (no UI latency). Config lists are in `config.ts`
-  (`autoApproveTools`, `autoApproveCommands`). Other commands (e.g. arbitrary
-  `run_command`) still require operator confirmation.
+  commands (`ls`, `cat`, `grep`, `git status/log/diff`, `bun test`, and all
+  self-modification git commands) are auto-approved. The auto-approve logic
+  lives in `agent.ts` and skips the `tool_pending` event entirely (no UI
+  latency). Config lists are in `config.ts` (`autoApproveTools`,
+  `autoApproveCommands`). Truly destructive commands (e.g. `rm -rf`) still
+  require operator confirmation.
 - **OAuth authentication is implemented.** The agent can authenticate via
   Claude Max (OAuth PKCE flow via `bun run login`) or fall back to an API key
   (`ANTHROPIC_API_KEY` env var). Token is persisted in
@@ -33,7 +34,7 @@ you are modifying yourself.
 - **M3 is in progress.** Conversation history persistence is done:
   `src/session.ts` saves history to `~/.local/share/omega/sessions/` after
   every turn; `ui.tsx` offers a resume prompt on startup. The `Agent` class
-  accepts an injectable `StreamProvider` for testing. 115 tests passing.
+  accepts an injectable `StreamProvider` for testing. 123 tests passing.
 - **Test coverage audit completed.** The test suite is layered correctly:
   unit tests pin pure functions with boundary cases; integration tests
   (mock provider) verify the full `sendMessage` loop, tool dispatch, session
@@ -42,9 +43,17 @@ you are modifying yourself.
   prompt, tool confirmation flow, and streaming display logic are exercised
   only by manual testing. UI tests via `ink-testing-library` are the next
   testing priority.
+- **Self-modification loop is fully unattended.** `git add`, `git commit`,
+  `git reset`, `git checkout`, `git clean`, and `git rev-parse` are all
+  auto-approved. The entire test→commit/revert cycle runs without operator
+  confirmation.
+- **Stream ordering errors are now retried.** The Anthropic SDK throws
+  `"Unexpected event order, got message_start before receiving message_stop"`
+  when the server restarts a stream mid-flight. `isRetryable()` now matches
+  this error by message text and retries automatically (up to 5 times).
 - Run `bun start` from the project root to launch yourself.
 - Run `bun run login` to authenticate with Claude Max.
-- Run `bun test` to run the test suite (115 tests, 7 files).
+- Run `bun test` to run the test suite (123 tests, 7 files).
 
 ### Project Structure
 
@@ -623,6 +632,14 @@ After M2, the agent can improve itself. This is the stable core target.
       - Test isolation: per-test temp dirs (avoid fire-and-forget persist races)
       - Discovered and documented: `params.messages` is a live reference to
         `this.history` — tests must snapshot with `[...params.messages]`
+- [x] **Self-modification loop fully unattended**
+      - `git add`, `git commit`, `git reset`, `git checkout`, `git clean`,
+        `git rev-parse` added to `autoApproveCommands` in `config.ts`
+      - Entire test→commit/revert cycle runs without operator confirmation
+- [x] **Stream ordering errors retried automatically**
+      - `isRetryable()` extended to match SDK-level `"Unexpected event order"`
+        errors by message text (no HTTP status code on these)
+      - Agent retries up to 5× instead of surfacing a hard error
 - [ ] **UI tests** ← NEXT (only remaining untested layer)
       - `ui.tsx` has zero automated tests: resume prompt, tool confirmation,
         streaming display, input blocking are manual-only right now
@@ -630,6 +647,9 @@ After M2, the agent can improve itself. This is the stable core target.
         assert on rendered text output
       - Key scenarios: resume prompt Y/N, tool pending → approve/reject,
         streaming text appears, Ctrl+C exits
+- [ ] **Dictation truncation bug** — `fast-text-input.tsx` `useEffect` resets
+      `valueRef` mid-paste when React re-renders with a stale prop; fix is to
+      only sync the ref on external resets (value → ""), not on echoed onChange
 - [ ] Log projection for self-analysis
 - [ ] Model payload viewer (collapsible, shows what goes to the model)
 - [ ] Modal input: normal mode / insert mode (Helix-inspired)
@@ -665,10 +685,18 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
+1. **Dictation truncation bug** (`fast-text-input.tsx`) — the `useEffect`
+   that syncs `valueRef` from the `value` prop resets the ref mid-paste when
+   React re-renders with a stale intermediate value. Fix: only reset the ref
+   when the value changes externally (i.e. drops to `""`), not when it's
+   echoing back our own `onChange`. The race can't be reproduced in the
+   ink-testing-library environment (stdin writes are synchronous there), but
+   the fix is unambiguous and safe to apply directly.
+
+2. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
    to render `<App>` with a mock agent, drive input via `stdin.write()`, assert
    on rendered text. Key scenarios: resume prompt, tool confirmation, streaming
    display, input blocking during streaming, Ctrl+C exit.
 
-2. **Remaining M3 items** — log projection, payload viewer, modal input,
+3. **Remaining M3 items** — log projection, payload viewer, modal input,
    observability pane, scrollable history, keyboard shortcuts.
