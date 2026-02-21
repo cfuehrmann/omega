@@ -267,14 +267,33 @@ adding messages when the budget is reached.
 The payload viewer (Principle 11) makes this visible: the operator sees
 exactly which messages are included and which were truncated.
 
+### Planning Files as Persistent Context
+
+Truncation is low-risk for this project because the ground truth lives in
+files, not in conversation history. `PLAN.md`, `DESIGN-UI.md`, and the
+source code are always available via tool calls.
+
+The system prompt makes this explicit:
+
+> Your project's planning files (`PLAN.md`, `DESIGN-UI.md`) are the source
+> of truth for goals, architecture, and decisions. If your conversation
+> history has been truncated and you've lost context, re-read these files.
+> They are always current.
+
+This means the agent can recover from aggressive truncation: it loses the
+conversational flow but can reconstruct what it was doing by reading the
+plan. This is also why we keep the planning files up to date — they serve
+double duty as documentation and as recoverable context.
+
 ### What This Means in Practice
 
 - Short tasks (< 20 turns): no truncation, full history
 - Medium tasks (20–50 turns): oldest turns get dropped, recent work preserved
 - Long tasks: the operator may need to start a new session with a handoff
   summary (Principle 12)
+- In all cases: planning files are re-readable, so context loss is recoverable
 
-Summarization is a future enhancement. Truncation is the M1 implementation.
+Summarization is a future enhancement. Truncation is the M2 implementation.
 
 ## Error Handling
 
