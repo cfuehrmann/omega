@@ -186,18 +186,33 @@ export class Agent {
   private authMode: "api-key" | "oauth" = "api-key";
   public readonly sessionId: string;
 
-  /** Optional override for the session storage directory (used in tests). */
-  private readonly sessionDir: string | undefined;
+  /** Session storage directory. null = persistence disabled. undefined = use default. */
+  private readonly sessionDir: string | null | undefined;
 
   /** Optional injectable stream provider (used in tests). */
   private readonly streamProvider: StreamProvider | undefined;
 
-  constructor(streamProvider?: StreamProvider, sessionDir?: string) {
+  /**
+   * Production: new Agent()
+   *   — uses real Anthropic client, persists to default session dir
+   * Test: new Agent(mockProvider, dir)
+   *   — uses mock provider, persists to isolated temp dir
+   *   — sessionDir is REQUIRED when streamProvider is given; there is no
+   *     safe default for tests. Pass a temp dir from makeTempDir(), or pass
+   *     null to disable persistence entirely.
+   */
+  constructor(streamProvider?: StreamProvider, sessionDir?: string | null) {
     // Will be initialized in init()
     this.client = new Anthropic();
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
-    this.sessionDir = sessionDir;
+    // If a mock provider is given but no sessionDir, disable persistence.
+    // This prevents tests from accidentally writing to the real session dir.
+    if (streamProvider !== undefined && sessionDir === undefined) {
+      this.sessionDir = null; // explicitly disabled
+    } else {
+      this.sessionDir = sessionDir;
+    }
   }
 
   async init(): Promise<string> {
@@ -236,6 +251,7 @@ export class Agent {
    * Returns the session metadata if found, null otherwise.
    */
   async checkPriorSession(): Promise<Session | null> {
+    if (this.sessionDir === null) return null;
     return loadLatestSession(this.sessionDir);
   }
 
@@ -254,8 +270,10 @@ export class Agent {
   /**
    * Persist the current session to disk.
    * Called after every turn so the latest state is always saved.
+   * No-op if sessionDir is null (persistence disabled).
    */
   private async persistSession(): Promise<void> {
+    if (this.sessionDir === null) return;
     const session: Session = {
       id: this.sessionId,
       savedAt: new Date().toISOString(),

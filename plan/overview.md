@@ -30,14 +30,21 @@ you are modifying yourself.
   the active auth mode.
 - **Model is currently `claude-sonnet-4-6`** (switched from Opus for cost
   savings). Change in `src/config.ts`.
-- **M3 is next.** The first and most important M3 item is **conversation
-  history persistence**: saving session history to disk and restoring it on
-  restart. This is the critical missing piece for the self-modification loop —
-  when the agent restarts itself after a commit, it currently loses all context.
-  Persistence makes restarts seamless and enables long multi-session tasks.
+- **M3 is in progress.** Conversation history persistence is done:
+  `src/session.ts` saves history to `~/.local/share/omega/sessions/` after
+  every turn; `ui.tsx` offers a resume prompt on startup. The `Agent` class
+  accepts an injectable `StreamProvider` for testing. 115 tests passing.
+- **Test coverage audit completed.** The test suite is layered correctly:
+  unit tests pin pure functions with boundary cases; integration tests
+  (mock provider) verify the full `sendMessage` loop, tool dispatch, session
+  persist/resume wiring; stream tests anchor the stuck-UI regression.
+  **One gap remains: UI behaviour (`ui.tsx`) is not tested.** The resume
+  prompt, tool confirmation flow, and streaming display logic are exercised
+  only by manual testing. UI tests via `ink-testing-library` are the next
+  testing priority.
 - Run `bun start` from the project root to launch yourself.
 - Run `bun run login` to authenticate with Claude Max.
-- Run `bun test` to run the test suite.
+- Run `bun test` to run the test suite (115 tests, 7 files).
 
 ### Project Structure
 
@@ -48,15 +55,18 @@ omega/
     ui.md            ← UI layout and interaction design
   src/
     agent.ts         ← agent core (streaming, tool loop, retry, auto-approve, truncation)
+                        StreamProvider interface for test injection
     auth.ts          ← OAuth PKCE flow for Claude Max
     config.ts        ← model, system prompt, settings (TypeScript, not YAML)
     fast-text-input.tsx ← custom text input (fixes paste/dictation issues)
     logger.ts        ← structured JSON-lines logger (→ ~/.local/share/omega/logs/)
     login.ts         ← interactive login script (bun run login)
     self.ts          ← self-modification orchestration (test→commit/revert→restart)
+    session.ts       ← session persistence (save/load/list, ~/.local/share/omega/sessions/)
     tools.ts         ← tool definitions and execution (read/write/run/list/edit_file)
-    ui.tsx           ← Ink terminal UI (static zone, live zone, status bar)
+    ui.tsx           ← Ink terminal UI (static zone, live zone, status bar, resume prompt)
     main.tsx         ← entry point
+    *.test.ts        ← 115 tests across 7 files
   package.json
 ```
 
@@ -599,11 +609,27 @@ retains the ability to:
 After M2, the agent can improve itself. This is the stable core target.
 
 ### M3 — Observability + Rich UI
-- [ ] **Conversation history persistence** ← START HERE (most important)
-      - Save `agent.history` to `~/.local/share/omega/sessions/<id>.json` after each turn
-      - On startup, detect the most recent session and offer to resume it
-      - Makes post-commit restarts seamless; enables multi-session long tasks
-      - The planning files + persistent history = full recovery after any restart
+- [x] **Conversation history persistence**
+      - `src/session.ts`: `saveSession` / `loadLatestSession` / `listSessions`
+      - Saves to `~/.local/share/omega/sessions/<sessionId>.json` after every turn
+      - `Agent`: `sessionId`, `checkPriorSession()`, `resumeSession()`, `persistSession()`
+      - `Agent` constructor accepts `StreamProvider` + `sessionDir` for test injection
+      - `ui.tsx`: cyan resume prompt on startup (Y=restore history, N=fresh start)
+      - 14 unit tests (`session.test.ts`) + 20 integration tests (`agent-integration.test.ts`)
+- [x] **Integration test layer** (added alongside persistence)
+      - `StreamProvider` interface: injectable mock replaces real Anthropic client
+      - Covers: text response, tool loop, tool rejection, history growth, session
+        persist/resume, error handling, retry-then-succeed
+      - Test isolation: per-test temp dirs (avoid fire-and-forget persist races)
+      - Discovered and documented: `params.messages` is a live reference to
+        `this.history` — tests must snapshot with `[...params.messages]`
+- [ ] **UI tests** ← NEXT (only remaining untested layer)
+      - `ui.tsx` has zero automated tests: resume prompt, tool confirmation,
+        streaming display, input blocking are manual-only right now
+      - Use `ink-testing-library`: render `<App>`, drive via `stdin.write()`,
+        assert on rendered text output
+      - Key scenarios: resume prompt Y/N, tool pending → approve/reject,
+        streaming text appears, Ctrl+C exits
 - [ ] Log projection for self-analysis
 - [ ] Model payload viewer (collapsible, shows what goes to the model)
 - [ ] Modal input: normal mode / insert mode (Helix-inspired)
@@ -639,10 +665,10 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Conversation history persistence** (first M3 item) — save session history
-   to disk, restore on startup with a resume prompt. ~150 lines of code.
-   Critical because the self-modification loop restarts the agent, losing all
-   context. Persistence + planning files = full recovery after any restart.
+1. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
+   to render `<App>` with a mock agent, drive input via `stdin.write()`, assert
+   on rendered text. Key scenarios: resume prompt, tool confirmation, streaming
+   display, input blocking during streaming, Ctrl+C exit.
 
 2. **Remaining M3 items** — log projection, payload viewer, modal input,
    observability pane, scrollable history, keyboard shortcuts.

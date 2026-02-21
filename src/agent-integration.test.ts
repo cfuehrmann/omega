@@ -121,6 +121,37 @@ function makeTempDir(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Pollution guard
+// ---------------------------------------------------------------------------
+
+// Tests that use a mock StreamProvider must never write to the real session
+// directory (~/.local/share/omega/sessions/). This test proves the contract:
+// when a streamProvider is given without a sessionDir, Agent must NOT fall
+// back to the real default directory.
+describe("Agent — test isolation (no production session pollution)", () => {
+  it("does not write to the real session dir when no sessionDir is given", async () => {
+    const { homedir } = await import("os");
+    const realDir = join(homedir(), ".local", "share", "omega", "sessions");
+    const { existsSync } = await import("fs");
+
+    // Snapshot real dir before
+    const before = existsSync(realDir) ? readdirSync(realDir).length : 0;
+
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+
+    // No sessionDir passed — this is the pollution case
+    const agent = new Agent(mockProvider);
+    await collectEvents(agent, "should not persist");
+    await Bun.sleep(100);
+
+    // Real dir must be unchanged
+    const after = existsSync(realDir) ? readdirSync(realDir).length : 0;
+    expect(after).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Plain text response
 // ---------------------------------------------------------------------------
 
