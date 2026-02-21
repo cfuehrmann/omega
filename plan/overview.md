@@ -94,9 +94,9 @@ Bun is the best fit for a self-improving agent:
 - `useInput` with TTY ✅
 - Clean exit ✅
 
-### Model: Claude claude-opus-4-20250514 (starting point)
+### Model: Claude claude-opus-4-6 (starting point)
 
-The operator has a Claude Max account. We start with `claude-opus-4-20250514` as
+The operator has a Claude Max account. We start with `claude-opus-4-6` as
 the fixed model. Provider abstraction (OpenAI, local LLMs, etc.) is a future
 concern — the provider adapter interface will make it possible, but we don't
 build for it now.
@@ -156,7 +156,7 @@ a `.env` file in `.gitignore`. Everything else is TypeScript:
 ```typescript
 // config.ts — checked into git
 export const config = {
-  model: 'claude-opus-4-20250514',
+  model: 'claude-opus-4-6',
   maxContextTokens: 100_000,     // truncation target
   trustLevel: 'confirm-all' as const,
   alwaysConfirm: ['rm -rf', 'sudo', 'reboot', 'dd ', 'mkfs'],
@@ -241,7 +241,7 @@ The `alwaysConfirm` list is always respected regardless of trust level.
 
 ## Context Window Management
 
-Claude claude-opus-4-20250514 has a 200k token context window. Every API call sends the
+Claude claude-opus-4-6 has a 200k token context window. Every API call sends the
 *entire* conversation history — there's no server-side memory.
 
 The problem: after 20–30 tool calls, context can easily reach 50–100k tokens.
@@ -392,7 +392,7 @@ Full log entry (on disk):
 {
   "type": "api_request",
   "timestamp": "...",
-  "model": "claude-opus-4-20250514",
+  "model": "claude-opus-4-6",
   "request": { "system": "You are Omega...(2,847 chars)", "messages": [...] },
   "response": { "content": "Here is the fix...(14,203 chars)", ... },
   "usage": { "input_tokens": 3847, "output_tokens": 1204 }
@@ -402,7 +402,7 @@ Projected log entry (for self-analysis):
 {
   "type": "api_request",
   "timestamp": "...",
-  "model": "claude-opus-4-20250514",
+  "model": "claude-opus-4-6",
   "request_size": 12403,
   "request_hash": "a7f3c2...",
   "response_size": 14203,
@@ -491,7 +491,7 @@ retains the ability to:
 
 ### M0 — Talking to the Model
 - [ ] Project setup: `bun init`, Ink, Anthropic SDK
-- [ ] Agent core: send a message to Claude claude-opus-4-20250514, stream the response
+- [ ] Agent core: send a message to Claude claude-opus-4-6, stream the response
 - [ ] Terminal UI: display the streamed response in Ink
 - [ ] Show token count and cost after each response
 - [ ] Basic input: type a message, send it, see the response

@@ -16,7 +16,7 @@ export interface TurnMetrics {
 
 // Anthropic pricing per million tokens (as of 2025-02)
 const PRICING: Record<string, { input: number; output: number }> = {
-  "claude-opus-4-20250514": { input: 15, output: 75 },
+  "claude-opus-4-6": { input: 15, output: 75 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
 };
 

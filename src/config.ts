@@ -1,5 +1,5 @@
 export const config = {
-  model: "claude-opus-4-20250514",
+  model: "claude-opus-4-6",
   maxOutputTokens: 8192,
   maxContextTokens: 100_000,
   systemPrompt: [
