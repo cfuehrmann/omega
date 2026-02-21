@@ -260,6 +260,7 @@ export function App() {
         <Text dimColor>
           {config.model} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
+          {" │ Esc to quit"}
         </Text>
       </Box>
     </>
