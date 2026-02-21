@@ -181,6 +181,15 @@ After M2, the agent can improve itself. This is the stable core target.
       - Fix: while streaming (and not pending tool confirmation), show a
         dim `… ` glyph instead of the green `❯`, and dim the placeholder
         text. The `❯` only appears when the user can actually type.
+- [x] **API call inspector UX fixes** ← just completed
+      - Bug 1: `i`/`q` shortcuts fired while user was typing in the prompt
+        (useInput fires for all keypresses regardless of TextInput focus).
+        Fix: gate on `input.length === 0` — only handle when prompt is empty.
+      - Bug 2: separator said "Turn N" but each separator = one API call,
+        and "API call" is the correct term. Renamed to "API call #N".
+      - Bug 3: inspector panel title said "API call #N" but no affordance
+        to navigate between calls. Clarified: panel always shows the most
+        recent API call; the number in the title makes that clear.
 - [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
       `ink-testing-library` to cover: resume prompt, tool confirmation,
       streaming display, Esc interrupt, payload panel toggle.
@@ -226,16 +235,21 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **UI tests** ← NEXT — ink-testing-library coverage for `ui.tsx`.
-2. **Trust levels** — confirm-destructive mode so auto-approve is broader.
+1. **Automated plan maintenance** ← NEXT (meta)
+   The operator has to manually ask me to update the plan after each change,
+   and the Next Steps section keeps getting stale/duplicated. Options to
+   explore:
+   - Agent reads plan/overview.md at the start of every session and proposes
+     a diff to Next Steps before doing any work.
+   - A post-commit hook (or self.ts step) that prompts the agent to update
+     the plan after every commit.
+   - Keep Next Steps to ≤5 items, always in priority order, always reflecting
+     actual current state. Agent is responsible for keeping it clean.
+   Decision needed: pick an approach and implement it.
 
-2. **Trust levels** — confirm-destructive mode so auto-approve is broader.
+2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
 
 3. **Trust levels** — confirm-destructive mode so auto-approve is broader.
 
-3. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
-   via Wayland; truncation still occurs despite the `useEffect` fix. Needs
-   debug logging to pinpoint the drop site.
-
-4. **Remaining M3 items** — log projection, modal input, observability pane,
-   scrollable history, keyboard shortcuts.
+4. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
+   via Wayland; truncation still occurs despite the `useEffect` fix.
