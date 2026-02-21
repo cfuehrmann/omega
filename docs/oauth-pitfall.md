@@ -70,12 +70,32 @@ Omega uses: `org:create_api_key`, `user:inference`, `user:profile`
 The `org:create_api_key` scope is essential. Without it, the
 `create_api_key` endpoint returns an error.
 
+## Startup Verification
+
+Having a key file is not proof of correct billing. On every startup,
+`agent.ts init()` calls `verifyApiKey()` which:
+
+1. Makes a free `POST /v1/messages/count_tokens` call (no tokens billed)
+2. Inspects the `x-ratelimit-limit-requests` response header
+3. Max accounts have limit > 200; pay-per-token Tier 1 has ~50
+
+The UI shows the verified result:
+- `✓ Authenticated: Claude Max (verified ✓)` — confirmed Max billing
+- `⚠ Auth: api-key (pay-per-token ⚠)` — confirmed pay-per-token
+- `⚠ Auth: ⚠ API key invalid: API usage limit reached` — key exhausted
+- `⚠ Auth: oauth-derived (billing unknown)` — couldn't determine
+
+This catches:
+- Old keys from wrong OAuth scopes that bill per-token
+- Exhausted pay-per-token keys (usage limit reached)
+- Expired or revoked keys
+
 ## Files
 
-- `src/auth.ts` — OAuth flow + API key creation + caching
+- `src/auth.ts` — OAuth flow + API key creation + caching + verification
 - `src/login.ts` — Interactive login script
-- `src/agent.ts` — `init()` tries API key first, falls back to env var,
-  then raw OAuth token (with warning)
+- `src/agent.ts` — `init()` tries API key first, verifies billing via
+  `verifyApiKey()`, falls back to env var, then raw OAuth token
 - `~/.config/omega/oauth-token.json` — cached OAuth token
 - `~/.config/omega/api-key` — cached API key (the one that actually matters)
 

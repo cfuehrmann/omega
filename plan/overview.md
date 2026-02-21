@@ -27,13 +27,16 @@ you are modifying yourself.
   latency). Config lists are in `config.ts` (`autoApproveTools`,
   `autoApproveCommands`). Truly destructive commands (e.g. `rm -rf`) still
   require operator confirmation.
-- **Claude Max authentication is implemented.** Run `bun run login` to
-  authenticate. The OAuth token alone is NOT enough — it authenticates but
-  bills per-token. The login flow must exchange the OAuth token for an API
-  key via `/api/oauth/claude_cli/create_api_key` (same as Claude Code does).
-  That API key carries Claude Max billing. See `docs/oauth-pitfall.md` for
-  the full explanation. Falls back to `ANTHROPIC_API_KEY` env var if no
-  OAuth. Token in `~/.config/omega/oauth-token.json`, API key in
+- **Claude Max authentication is implemented and verified.** Run
+  `bun run login` to authenticate. The OAuth token alone is NOT enough —
+  it authenticates but bills per-token. The login flow exchanges the OAuth
+  token for an API key via `/api/oauth/claude_cli/create_api_key` (same as
+  Claude Code does). That API key carries Claude Max billing. On every
+  startup, the key is **verified** against the API (free `count_tokens`
+  call + rate limit header check) to confirm billing type. The first line
+  in the UI shows the verified result. See `docs/oauth-pitfall.md` for the
+  full explanation. Falls back to `ANTHROPIC_API_KEY` env var if no OAuth.
+  Token in `~/.config/omega/oauth-token.json`, API key in
   `~/.config/omega/api-key`.
 - **Model is currently `claude-sonnet-4-6`** (switched from Opus for cost
   savings). Change in `src/config.ts`.
