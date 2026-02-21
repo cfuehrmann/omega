@@ -43,6 +43,23 @@ details from the reference impl. Trim later, not before.
 We enforced red-green for code but not auth integration. A 5-line test
 script after each auth change would have caught every mistake immediately.
 
+## 7. Use `gh` for GitHub operations
+
+The `gh` CLI is installed and authenticated as `cfuehrmann` with `repo` scope.
+Use it instead of raw `git` for anything GitHub-specific:
+
+```bash
+gh repo view          # confirm remote
+gh pr create          # open a PR
+gh issue list         # browse issues
+gh release create     # tag a release
+gh auth status        # check auth
+git push              # still use git for push/pull
+```
+
+Don't construct GitHub API URLs by hand or reach for `curl` — `gh` handles
+auth, JSON parsing, and pagination automatically.
+
 ## Checklist for new API integrations
 
 - [ ] Find and read a working implementation
