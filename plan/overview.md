@@ -714,17 +714,34 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
+1. **Auto-approve: pipes and multi-part compound commands** ← MOST URGENT
+   The current `isAutoApproved` only splits on `&&` and `;`. Pipe (`|`)
+   chains like `cd src && grep -r foo . | head -20` are not handled — the
+   whole command fails the check because `grep … | head -20` doesn't match
+   any single prefix. Common patterns that incorrectly require confirmation:
+   - `cd <subdir> && grep … | head -n`
+   - `grep … | head -n`
+   - `cat file | grep pattern`
+   - `cmd1 && cmd2 && cmd3` (three-part chains)
+   Fix: extend the compound-command splitter to also split on `|`, then
+   check each segment. A pipe segment is safe if every command in it is
+   individually approved. Note: pipe introduces no new privileges — it just
+   connects stdout to stdin between already-approved commands.
+   Also audit the approved-prefix list for any gaps (e.g. `head`, `tail`,
+   `wc` are listed but `sort`, `uniq`, `cut`, `tr`, `sed`, `awk` are not —
+   decide policy for these read-only text processors).
+
+2. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
    via the Wayland compositor. The `useEffect` fix prevents the React
    re-render race from truncating `valueRef`, but the truncation still occurs.
    Next step: add debug logging to `fast-text-input.tsx` to capture every
    `useInput` call and `useEffect` fire during a dictation session, then
    reproduce with `wtype` directly to pinpoint the exact drop site.
 
-2. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
+3. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
    to render `<App>` with a mock agent, drive input via `stdin.write()`, assert
    on rendered text. Key scenarios: resume prompt, tool confirmation, streaming
    display, Esc interrupt.
 
-3. **Remaining M3 items** — log projection, payload viewer, modal input,
+4. **Remaining M3 items** — log projection, payload viewer, modal input,
    observability pane, scrollable history, keyboard shortcuts.
