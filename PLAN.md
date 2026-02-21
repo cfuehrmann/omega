@@ -321,6 +321,7 @@ See `DESIGN-UI.md` for the full layout descriptor specification.
 │  - API call trace store                              │
 │  - Metrics aggregation                               │
 │  - Self-analysis hooks (agent can query its logs)    │
+│  - Log projection (compact view for self-analysis)   │
 ├─────────────────────────────────────────────────────┤
 │              Test Harness                            │
 │  - ink-testing-library (components + E2E)            │
@@ -329,6 +330,56 @@ See `DESIGN-UI.md` for the full layout descriptor specification.
 │  - E2E scenario runner                               │
 └─────────────────────────────────────────────────────┘
 ```
+
+## Log Projection for Self-Analysis
+
+Raw logs are written to disk in full — every API request body, every response,
+every tool output. Nothing is discarded. But when the agent reads its own
+logs for self-analysis (debugging, performance review, self-improvement), the
+full payloads would flood the context window and defeat the purpose.
+
+The observability layer provides a **projection** mode for log queries:
+
+```
+Full log entry (on disk):
+{
+  "type": "api_request",
+  "timestamp": "...",
+  "model": "claude-opus-4-6",
+  "request": { "system": "You are Omega...(2,847 chars)", "messages": [...] },
+  "response": { "content": "Here is the fix...(14,203 chars)", ... },
+  "usage": { "input_tokens": 3847, "output_tokens": 1204 }
+}
+
+Projected log entry (for self-analysis):
+{
+  "type": "api_request",
+  "timestamp": "...",
+  "model": "claude-opus-4-6",
+  "request_size": 12403,
+  "request_hash": "a7f3c2...",
+  "response_size": 14203,
+  "response_hash": "e91b4d...",
+  "system_prompt_tokens": 428,
+  "message_count": 12,
+  "tool_calls": ["read_file", "run_command"],
+  "usage": { "input_tokens": 3847, "output_tokens": 1204 },
+  "cost_usd": 0.042,
+  "latency_ms": 2100,
+  "ttft_ms": 340
+}
+```
+
+The projection replaces large text fields with size + hash, while keeping
+all structural and numeric metadata. The agent can:
+- Spot anomalies (why did this call use 50k input tokens?)
+- Track cost trends
+- Identify which tool calls are expensive
+- Drill into a specific entry by hash if it needs the full content
+
+The projection is not a separate log — it's a **query mode**. The agent
+asks for logs in projected form by default. If it needs the raw content of
+a specific entry, it fetches it by ID or hash.
 
 ## Self-Modification Strategy
 
