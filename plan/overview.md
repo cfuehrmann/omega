@@ -11,8 +11,14 @@ code in `src/` is your own codebase. When you modify files in this project,
 you are modifying yourself.
 
 - **M0 and M1 are complete.** You can stream responses, use tools (read/write
-  files, run commands, list directories), and the operator confirms each tool
-  call.
+  files, run commands, list directories), with a graduated trust policy.
+- **Auto-approve is implemented.** Read-only tools (`read_file`, `list_files`)
+  and `write_file` are auto-approved without operator confirmation. Safe shell
+  commands (`ls`, `cat`, `grep`, `git status/log/diff`, `bun test`, etc.) are
+  also auto-approved. The auto-approve logic lives in `agent.ts` and skips the
+  `tool_pending` event entirely (no UI latency). Config lists are in `config.ts`
+  (`autoApproveTools`, `autoApproveCommands`). Other commands (e.g. arbitrary
+  `run_command`) still require operator confirmation.
 - **M2 is next.** The goal is self-modification: edit your own source, run
   tests, git commit on success, git revert on failure, and restart yourself.
 - Run `bun start` from the project root to launch yourself.
@@ -26,7 +32,7 @@ omega/
     overview.md      ← this file
     ui.md            ← UI layout and interaction design
   src/
-    agent.ts         ← agent core (streaming, tool loop, retry)
+    agent.ts         ← agent core (streaming, tool loop, retry, auto-approve)
     config.ts        ← model, system prompt, settings (TypeScript, not YAML)
     tools.ts         ← tool definitions and execution
     ui.tsx           ← Ink terminal UI (static zone, live zone, status bar)
@@ -533,6 +539,7 @@ retains the ability to:
 - [x] Tool results displayed in the UI
 - [x] Agent can use tools in a loop (model calls tool → gets result → responds)
 - [x] Basic error handling (retry with backoff for provider errors)
+- [x] Auto-approve for read-only tools and safe commands (post-M1 addition)
 
 ### M2 — Self-Improvement Loop
 - [ ] Agent can modify its own source files
@@ -583,5 +590,5 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Set up project** — `bun init`, add Ink + React + Anthropic SDK
-2. **Build M0** — minimal streaming chat in the terminal
+1. **Build M2** — self-modification loop (test infra, structured logging,
+   context truncation, git commit/revert workflow, restart mechanism)
