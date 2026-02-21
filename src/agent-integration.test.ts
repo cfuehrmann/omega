@@ -166,7 +166,8 @@ describe("Agent.sendMessage — plain text response", () => {
     const types = events.map((e) => e.type);
     expect(types[0]).toBe("status"); // "thinking..."
     expect(types).toContain("text");
-    expect(types[types.length - 1]).toBe("metrics");
+    expect(types).toContain("metrics");
+    expect(types[types.length - 1]).toBe("turn_end");
   });
 
   it("accumulates text from chunks", async () => {
@@ -575,8 +576,8 @@ describe("Agent.sendMessage — error handling", () => {
     const errorEvents = events.filter((e) => e.type === "error");
     // Two retry error messages emitted before success
     expect(errorEvents.length).toBe(2);
-    // Final event should be metrics (success)
-    expect(events[events.length - 1].type).toBe("metrics");
+    // Final event should be turn_end (success)
+    expect(events[events.length - 1].type).toBe("turn_end");
   }, 30_000);
 });
 
@@ -786,5 +787,81 @@ describe("Agent — full auto-approve", () => {
     const confirm = async () => { confirmCalled = true; return true; };
     for await (const _ of agent.sendMessage("go", confirm)) {}
     expect(confirmCalled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// turn_end event
+// ---------------------------------------------------------------------------
+
+describe("Agent — turn_end event", () => {
+  it("emits exactly one turn_end per user message", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const turnEnds = events.filter((e) => e.type === "turn_end");
+    expect(turnEnds.length).toBe(1);
+  });
+
+  it("turn_end is the last event emitted", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    expect(events[events.length - 1].type).toBe("turn_end");
+  });
+
+  it("turn_end includes all tool calls across multiple API calls", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("read_file"),
+          toolUseMessage("t1", "read_file", { path: "x.ts" })
+        );
+      }
+      if (call === 2) {
+        return makeMockStream(
+          toolUseStreamEvents("run_command"),
+          toolUseMessage("t2", "run_command", { command: "ls" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "do it");
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd.toolCalls).toEqual(["read_file", "run_command"]);
+  });
+
+  it("turn_end aggregates token counts across all API calls", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("read_file"),
+          toolUseMessage("t1", "read_file", { path: "x.ts" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "go");
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    // toolUseMessage has input:20 output:10, textMessage has input:10 output:5
+    expect(turnEnd.metrics.inputTokens).toBe(30);
+    expect(turnEnd.metrics.outputTokens).toBe(15);
+  });
+
+  it("turn_end toolCalls is empty when no tools used", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd.toolCalls).toEqual([]);
   });
 });

@@ -98,6 +98,7 @@ export type AgentEvent =
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
   | { type: "metrics"; metrics: TurnMetrics }
+  | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[] }
   | { type: "error"; error: string }
   | { type: "interrupted" };
 
@@ -446,6 +447,13 @@ export class Agent {
     // Apply context window truncation before each API call
     this.history = truncateHistory(this.history) as Anthropic.MessageParam[];
 
+    // Cumulative totals across all API calls in this user turn
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalCostUsd = 0;
+    let totalTtftMs: number | null = null;
+    const allToolCalls: string[] = [];
+
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
     while (continueLoop) {
@@ -587,6 +595,12 @@ export class Agent {
       const costUsd = estimateCost(config.model, turnInputTokens, turnOutputTokens);
       this.sessionCostUsd += costUsd;
 
+      // Accumulate turn-level totals
+      totalInputTokens += turnInputTokens;
+      totalOutputTokens += turnOutputTokens;
+      totalCostUsd += costUsd;
+      if (totalTtftMs === null) totalTtftMs = ttftMs; // first API call sets TTFT
+
       const totalMs = performance.now() - startTime;
 
       // Add assistant response to history
@@ -613,6 +627,7 @@ export class Agent {
 
           const result = await executeTool(toolUse.name, toolUse.input);
           toolCallsThisTurn.push(toolUse.name);
+          allToolCalls.push(toolUse.name);
 
           logger.toolExec({
             name: toolUse.name,
@@ -671,5 +686,18 @@ export class Agent {
         },
       };
     }
+
+    // Emit one turn_end after all API calls complete
+    yield {
+      type: "turn_end",
+      metrics: {
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        costUsd: totalCostUsd,
+        ttftMs: totalTtftMs,
+        totalMs: performance.now() - (this._apiCallCount > 0 ? 0 : 0), // wall time not tracked here
+      },
+      toolCalls: allToolCalls,
+    };
   }
 }

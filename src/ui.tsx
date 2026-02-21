@@ -148,8 +148,8 @@ export function App() {
       addItem("user", `❯ ${trimmed}`);
 
       let fullText = "";
-      // Audit log: one entry per tool call this turn, shown as a summary at the end
-      const auditLog: Array<{ name: string; formatted: string; ok: boolean; ms: number }> = [];
+      // Audit log: one entry per tool call this turn, shown as a summary at turn_end
+      const auditLog: Array<{ name: string; ok: boolean; ms: number }> = [];
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -194,16 +194,18 @@ export function App() {
             case "tool_result":
               auditLog.push({
                 name: event.name,
-                formatted: event.name,
                 ok: !event.result.isError,
                 ms: Math.round(event.result.durationMs),
               });
               setActivity("");
               break;
 
-            case "metrics": {
+            case "metrics":
+              // Per-API-call metrics — not shown in UI, aggregated in turn_end
+              break;
+
+            case "turn_end": {
               const m = event.metrics;
-              // Build audit line from all tool calls this turn
               const auditParts = auditLog.map(
                 (t) => `${t.name} ${t.ok ? "✓" : "✗"} ${t.ms}ms`
               );
