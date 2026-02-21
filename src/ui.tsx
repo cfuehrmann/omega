@@ -57,6 +57,7 @@ export function App() {
   }, [agent]);
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [activity, setActivity] = useState("");  // what the agent is currently doing
   const [itemId, setItemId] = useState(0);
 
   // Tool confirmation state
@@ -127,11 +128,13 @@ export function App() {
       };
 
       try {
+        setActivity("thinking...");
         for await (const event of agent.sendMessage(trimmed, confirmTool)) {
           switch (event.type) {
             case "text":
               fullText += event.text;
               setStreamingText(fullText);
+              setActivity("");
               break;
 
             case "tool_pending":
@@ -141,6 +144,7 @@ export function App() {
                 fullText = "";
                 setStreamingText("");
               }
+              setActivity("");
               break;
 
             case "tool_call":
@@ -151,6 +155,7 @@ export function App() {
                 setStreamingText("");
               }
               addItem("tool_call", `🔧 ${event.formatted}`);
+              setActivity(`running ${event.name}...`);
               break;
 
             case "tool_result":
@@ -159,10 +164,12 @@ export function App() {
                 truncateOutput(event.result.output),
                 `  ${event.name} ${event.result.isError ? "✗" : "✓"} ${Math.round(event.result.durationMs)}ms`
               );
+              setActivity("thinking...");
               break;
 
             case "tool_rejected":
               addItem("tool_rejected", `⊘ ${event.name} rejected`);
+              setActivity("thinking...");
               break;
 
             case "metrics": {
@@ -188,6 +195,7 @@ export function App() {
       } finally {
         setStreamingText("");
         setIsStreaming(false);
+        setActivity("");
       }
     },
     [agent, isStreaming, pendingTool, addItem, ready]
@@ -260,11 +268,24 @@ export function App() {
         )}
 
         {/* Input */}
-        {isStreaming && !pendingTool ? (
-          <Box>
-            <Text dimColor>⏳ working...</Text>
+        {/* Streaming response */}
+        {isStreaming && streamingText && !pendingTool && (
+          <Box marginBottom={0}>
+            <Text>
+              {streamingText}
+              <Text dimColor>▊</Text>
+            </Text>
           </Box>
-        ) : (
+        )}
+
+        {/* Activity indicator when working but not streaming text */}
+        {isStreaming && !streamingText && !pendingTool && (
+          <Box>
+            <Text dimColor>⏳ {activity || "working..."}</Text>
+          </Box>
+        )}
+
+        {isStreaming && !pendingTool ? null : (
           <Box>
             <Text bold color={pendingTool ? "yellow" : !ready ? "red" : "green"}>
               {pendingTool ? "? " : !ready ? "… " : "❯ "}
