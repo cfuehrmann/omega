@@ -19,9 +19,17 @@ you are modifying yourself.
   `tool_pending` event entirely (no UI latency). Config lists are in `config.ts`
   (`autoApproveTools`, `autoApproveCommands`). Other commands (e.g. arbitrary
   `run_command`) still require operator confirmation.
+- **OAuth authentication is implemented.** The agent can authenticate via
+  Claude Max (OAuth PKCE flow via `bun run login`) or fall back to an API key
+  (`ANTHROPIC_API_KEY` env var). Token is persisted in
+  `~/.config/omega/oauth-token.json` with auto-refresh. The status bar shows
+  the active auth mode.
+- **Model is currently `claude-sonnet-4-6`** (switched from Opus for cost
+  savings). Change in `src/config.ts`.
 - **M2 is next.** The goal is self-modification: edit your own source, run
   tests, git commit on success, git revert on failure, and restart yourself.
 - Run `bun start` from the project root to launch yourself.
+- Run `bun run login` to authenticate with Claude Max.
 - Run `bun test` to run your test suite (tests to be added in M2).
 
 ### Project Structure
@@ -33,7 +41,9 @@ omega/
     ui.md            ← UI layout and interaction design
   src/
     agent.ts         ← agent core (streaming, tool loop, retry, auto-approve)
+    auth.ts          ← OAuth PKCE flow for Claude Max
     config.ts        ← model, system prompt, settings (TypeScript, not YAML)
+    login.ts         ← interactive login script (bun run login)
     tools.ts         ← tool definitions and execution
     ui.tsx           ← Ink terminal UI (static zone, live zone, status bar)
     main.tsx         ← entry point
