@@ -233,10 +233,28 @@ After M2, the agent can improve itself. This is the stable core target.
 - [ ] E2E tests using ink-testing-library
 
 ### Future
-- [ ] Browser UI (Vite + React, abstract layout extracted from Ink impl)
+- [ ] **Full-screen TUI or browser UI** — Ink does not own the full screen;
+      it only controls a region at the bottom of the terminal. This makes
+      collapsible/expandable history, scrollable trees, and "old content
+      collapses as it scrolls up" impossible. Options researched (2025):
+      - **OpenTUI** (github.com/anomalyco/opentui) — 8,800 stars, actively
+        maintained, Zig core with TypeScript/React bindings, owns the full
+        screen, powers OpenCode in production. Requires Zig installed to
+        build. Pre-1.0 (v0.1.x). Most promising long-term option; watch it.
+      - **unblessed** (github.com/vdeantoni/unblessed) — TypeScript rewrite
+        of blessed, 27+ widgets, 2,355 tests, alpha. Only 6 stars, one
+        maintainer, minimal community. Less safe to bet on.
+      - **Ratatui** (Rust) — would mean a separate Rust frontend process
+        communicating with the Bun backend over JSON/stdout. Clean separation
+        but two languages to maintain.
+      - **Browser UI** (Vite + React) — most flexibility, stays in
+        TypeScript/React, backend unchanged (just add a local WebSocket
+        server). Unlocks full interaction model. Larger upfront cost.
+      Decision: stay with Ink for now. Revisit OpenTUI in a few months once
+      it stabilizes, or move to browser UI if agent capability outgrows the
+      terminal display model.
 - [ ] Provider abstraction (OpenAI, local LLMs)
 - [ ] Voice input (local STT or provider transcription)
-- [ ] Helix keymap details (selections, motions, text objects)
 - [ ] Context summarization (replace truncated messages with summaries)
 - [ ] Two-instance self-modification comparison
 
