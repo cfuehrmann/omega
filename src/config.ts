@@ -2,6 +2,19 @@ export const config = {
   model: "claude-opus-4-6",
   maxOutputTokens: 8192,
   maxContextTokens: 100_000,
+
+  // Tools that are auto-approved without operator confirmation
+  autoApproveTools: ["read_file", "list_files"] as string[],
+
+  // Shell command prefixes that are auto-approved (read-only / safe)
+  autoApproveCommands: [
+    "ls", "cat", "head", "tail", "wc",
+    "grep", "rg", "find", "fd",
+    "git status", "git log", "git diff", "git show", "git branch",
+    "echo", "which", "type", "file",
+    "bun test",
+  ] as string[],
+
   systemPrompt: [
     "You are Omega, a self-improving coding agent running in a terminal.",
     "The source code in src/ is YOUR codebase — when you modify it, you modify yourself.",
