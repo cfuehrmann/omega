@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
-import { getApiKey, getAuthToken, verifyApiKey } from "./auth.js";
+import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
 
@@ -407,54 +407,32 @@ export class Agent {
   }
 
   async init(): Promise<string> {
-    // Try OAuth-derived API key first (Claude Max billing),
-    // then fall back to ANTHROPIC_API_KEY env var,
-    // then fall back to raw OAuth token (per-token billing — not ideal)
-    let apiKey: string | null = null;
-    let source: string = "";
-
-    const maxApiKey = await getApiKey();
-    if (maxApiKey) {
-      apiKey = maxApiKey;
-      source = "oauth-derived";
+    // Claude Code's actual auth flow for Max accounts:
+    // 1. OAuth token as authToken (NOT as apiKey)
+    // 2. The authToken carries Claude Max billing
+    // 3. create_api_key is a fallback, not the primary path
+    //
+    // Priority:
+    // 1. OAuth access token → authToken (Claude Max)
+    // 2. ANTHROPIC_API_KEY env var → apiKey (pay-per-token)
+    const oauthToken = await getAuthToken();
+    if (oauthToken) {
+      this.client = new Anthropic({
+        authToken: oauthToken,
+        apiKey: undefined as any,
+      });
+      this.authMode = "oauth";
+      logger.startup({ authMode: "oauth-max", model: config.model });
+      return "Claude Max (OAuth)";
     } else if (process.env.ANTHROPIC_API_KEY) {
-      apiKey = process.env.ANTHROPIC_API_KEY;
-      source = "env-var";
+      this.client = new Anthropic();
+      this.authMode = "api-key";
+      logger.startup({ authMode: "api-key", model: config.model });
+      return "api-key (pay-per-token ⚠)";
     } else {
-      const oauthToken = await getAuthToken();
-      if (oauthToken) {
-        this.client = new Anthropic({
-          authToken: oauthToken,
-          apiKey: undefined as any,
-        });
-        this.authMode = "oauth";
-        logger.startup({ authMode: "oauth-token-fallback", model: config.model });
-        return "oauth (⚠ token-only, not Max billing — run `bun run login`)";
-      }
       throw new Error(
         "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY."
       );
-    }
-
-    // We have an API key — verify it and check billing type
-    this.client = new Anthropic({ apiKey });
-    const verification = await verifyApiKey(apiKey);
-
-    if (!verification.valid) {
-      this.authMode = "api-key";
-      logger.startup({ authMode: source, billing: "invalid", error: verification.error, model: config.model });
-      return `⚠ API key invalid: ${verification.error}`;
-    }
-
-    this.authMode = verification.billing === "max" ? "oauth" : "api-key";
-    logger.startup({ authMode: source, billing: verification.billing, model: config.model });
-
-    if (verification.billing === "max") {
-      return "Claude Max (verified ✓)";
-    } else if (verification.billing === "api-key") {
-      return `api-key (pay-per-token ⚠)${source === "oauth-derived" ? " — key may not be Max-linked, try re-login" : ""}`;
-    } else {
-      return `${source} (billing unknown — could not determine)`;
     }
   }
 

@@ -2,13 +2,16 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomBytes, createHash } from "crypto";
 
-// OAuth configuration matching Claude Code's flow
+// OAuth configuration matching Claude Code's flow for Claude Max.
+// CRITICAL: Must use claude.ai (not platform.claude.com) for Max billing.
+// platform.claude.com = Console/API (pay-per-token)
+// claude.ai = Claude Max subscription
 const OAUTH_CONFIG = {
   clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-  authorizeUrl: "https://platform.claude.com/oauth/authorize",
+  authorizeUrl: "https://claude.ai/oauth/authorize",
   tokenUrl: "https://platform.claude.com/v1/oauth/token",
   callbackUrl: "https://platform.claude.com/oauth/code/callback",
-  scopes: ["org:create_api_key", "user:inference", "user:profile"],
+  scopes: ["user:inference", "user:profile"],
 };
 
 const TOKEN_FILE = join(
