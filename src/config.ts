@@ -4,7 +4,7 @@ export const config = {
   maxContextTokens: 100_000,
 
   // Tools that are auto-approved without operator confirmation
-  autoApproveTools: ["read_file", "write_file", "edit_file", "list_files"] as string[],
+  autoApproveTools: ["read_file", "write_file", "edit_file", "list_files", "web_search", "fetch_url"] as string[],
 
   // Shell command prefixes that are auto-approved (read-only / safe)
   autoApproveCommands: [

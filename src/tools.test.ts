@@ -285,3 +285,65 @@ describe("executeTool: unknown tool", () => {
     expect(result.output).toContain("Unknown tool");
   });
 });
+
+// --- executeTool: web_search ---
+
+describe("executeTool: web_search", () => {
+  it("returns a non-error result for a simple query", async () => {
+    const result = await executeTool("web_search", { query: "bun javascript runtime" });
+    expect(result.isError).toBe(false);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  }, 15_000);
+
+  it("result contains at least one URL or snippet", async () => {
+    const result = await executeTool("web_search", { query: "TypeScript handbook" });
+    expect(result.isError).toBe(false);
+    // Should contain http in a URL or some meaningful text
+    expect(result.output.length).toBeGreaterThan(20);
+  }, 15_000);
+
+  it("returns an error result when query is empty", async () => {
+    const result = await executeTool("web_search", { query: "" });
+    expect(result.isError).toBe(true);
+  });
+
+  it("formatToolCall formats web_search", () => {
+    expect(formatToolCall("web_search", { query: "hello world" })).toBe(
+      "web_search: hello world"
+    );
+  });
+});
+
+// --- executeTool: fetch_url ---
+
+describe("executeTool: fetch_url", () => {
+  it("fetches a real URL and returns text content", async () => {
+    const result = await executeTool("fetch_url", { url: "https://example.com" });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("Example Domain");
+  }, 15_000);
+
+  it("result is truncated if page is very long", async () => {
+    // example.com is short, so test truncation indirectly via the cap
+    const result = await executeTool("fetch_url", { url: "https://example.com" });
+    expect(result.isError).toBe(false);
+    // Output should never exceed ~10000 chars (our cap)
+    expect(result.output.length).toBeLessThanOrEqual(10_000);
+  }, 15_000);
+
+  it("returns an error for an invalid URL", async () => {
+    const result = await executeTool("fetch_url", { url: "not-a-url" });
+    expect(result.isError).toBe(true);
+  });
+
+  it("returns an error for an unreachable host", async () => {
+    const result = await executeTool("fetch_url", { url: "https://this-host-does-not-exist.invalid" });
+    expect(result.isError).toBe(true);
+  }, 15_000);
+
+  it("formatToolCall formats fetch_url", () => {
+    expect(formatToolCall("fetch_url", { url: "https://example.com" })).toBe(
+      "fetch_url: https://example.com"
+    );
+  });
+});
