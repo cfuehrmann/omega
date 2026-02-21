@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
+import { saveSession, loadLatestSession, type Session } from "./session.js";
 
 // --- Types ---
 
@@ -164,10 +165,12 @@ export class Agent {
   public sessionCostUsd = 0;
 
   private authMode: "api-key" | "oauth" = "api-key";
+  public readonly sessionId: string;
 
   constructor() {
     // Will be initialized in init()
     this.client = new Anthropic();
+    this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
   async init(): Promise<string> {
@@ -199,6 +202,40 @@ export class Agent {
 
   getHistory(): readonly Anthropic.MessageParam[] {
     return this.history;
+  }
+
+  /**
+   * Check if there is a prior session on disk that can be resumed.
+   * Returns the session metadata if found, null otherwise.
+   */
+  async checkPriorSession(): Promise<Session | null> {
+    return loadLatestSession();
+  }
+
+  /**
+   * Restore history from a prior session.
+   * Call this when the operator confirms they want to resume.
+   */
+  resumeSession(session: Session): void {
+    this.history = session.history as Anthropic.MessageParam[];
+    logger.info("session_resumed", {
+      sessionId: session.id,
+      messageCount: session.history.length,
+    });
+  }
+
+  /**
+   * Persist the current session to disk.
+   * Called after every turn so the latest state is always saved.
+   */
+  private async persistSession(): Promise<void> {
+    const session: Session = {
+      id: this.sessionId,
+      savedAt: new Date().toISOString(),
+      model: config.model,
+      history: this.history,
+    };
+    await saveSession(session);
   }
 
   async *sendMessage(
@@ -411,6 +448,11 @@ export class Agent {
         totalMs,
         toolCalls: toolCallsThisTurn,
         stopReason: response.stop_reason ?? "unknown",
+      });
+
+      // Persist session to disk after every turn (fire-and-forget)
+      this.persistSession().catch((err) => {
+        logger.warn("session_persist_failed", { error: err.message });
       });
 
       // Emit metrics for this turn

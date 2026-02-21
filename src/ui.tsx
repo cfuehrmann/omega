@@ -3,6 +3,7 @@ import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "./fast-text-input.js";
 import { Agent, type AgentEvent, type TurnMetrics } from "./agent.js";
 import { config } from "./config.js";
+import type { Session } from "./session.js";
 
 // --- Types ---
 
@@ -44,6 +45,10 @@ export function App() {
   const [ready, setReady] = useState(false);
   const [input, setInput] = useState("");
 
+  // Resume prompt state
+  const [priorSession, setPriorSession] = useState<Session | null>(null);
+  const [resumePromptDone, setResumePromptDone] = useState(false);
+
   // All completed items go to Static (scrollback). Never put streaming text here.
   const [completedItems, setCompletedItems] = useState<CompletedItem[]>([]);
 
@@ -62,13 +67,22 @@ export function App() {
   // Last completed response — shown in live zone until next message
   const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
 
-  // Initialize agent (auth)
+  // Initialize agent (auth + check for prior session)
   useEffect(() => {
-    agent.init().then((mode) => {
+    agent.init().then(async (mode) => {
       setAuthMode(mode);
-      setReady(true);
+      // Check for a resumable session before marking ready
+      const prior = await agent.checkPriorSession();
+      if (prior && prior.history.length > 0) {
+        setPriorSession(prior);
+        // ready stays false until resume prompt is resolved
+      } else {
+        setResumePromptDone(true);
+        setReady(true);
+      }
     }).catch((err) => {
       setAuthMode(`error: ${err.message}`);
+      setResumePromptDone(true);
       setReady(true);
     });
   }, [agent]);
@@ -85,6 +99,25 @@ export function App() {
 
   const handleSubmit = useCallback(
     async (value: string) => {
+      // Handle resume prompt
+      if (priorSession && !resumePromptDone) {
+        const v = value.trim().toLowerCase();
+        const resume = v === "y" || v === "yes" || v === "";
+        if (resume) {
+          agent.resumeSession(priorSession);
+          const msgCount = priorSession.history.length;
+          const savedAt = new Date(priorSession.savedAt).toLocaleString();
+          addItem("turn", `↩ Resumed session from ${savedAt} (${msgCount} messages)`);
+        } else {
+          addItem("turn", "↩ Starting fresh session");
+        }
+        setPriorSession(null);
+        setResumePromptDone(true);
+        setReady(true);
+        setInput("");
+        return;
+      }
+
       // Handle tool confirmation
       if (pendingTool && confirmResolveRef.current) {
         const v = value.trim().toLowerCase();
@@ -201,7 +234,7 @@ export function App() {
         setActivity("");
       }
     },
-    [agent, isStreaming, pendingTool, addItem, ready, lastResponse]
+    [agent, isStreaming, pendingTool, addItem, ready, lastResponse, priorSession, resumePromptDone]
   );
 
   useInput((input, key) => {
@@ -272,6 +305,18 @@ export function App() {
           </Box>
         )}
 
+        {/* Resume prompt */}
+        {priorSession && !resumePromptDone && (
+          <Box flexDirection="column" marginBottom={0}>
+            <Text color="cyan">
+              {"↩ Prior session found: "}
+              {new Date(priorSession.savedAt).toLocaleString()}
+              {` (${priorSession.history.length} messages)`}
+            </Text>
+            <Text dimColor>{"  Resume? [Y/n] "}</Text>
+          </Box>
+        )}
+
         {/* Tool confirmation */}
         {pendingTool && (
           <Box flexDirection="column" marginBottom={0}>
@@ -280,17 +325,29 @@ export function App() {
           </Box>
         )}
 
-        {/* Input prompt — hidden while streaming (unless confirming tool) */}
-        {isStreaming && !pendingTool ? null : (
+        {/* Input prompt — hidden while streaming (unless confirming tool or resume prompt) */}
+        {isStreaming && !pendingTool && resumePromptDone ? null : (
           <Box>
-            <Text bold color={pendingTool ? "yellow" : !ready ? "red" : "green"}>
-              {pendingTool ? "? " : !ready ? "… " : "❯ "}
+            <Text bold color={
+              priorSession && !resumePromptDone ? "cyan"
+              : pendingTool ? "yellow"
+              : !ready ? "red"
+              : "green"
+            }>
+              {priorSession && !resumePromptDone ? "? "
+               : pendingTool ? "? "
+               : !ready ? "… "
+               : "❯ "}
             </Text>
             <TextInput
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
-              placeholder={pendingTool ? "y/n" : "message"}
+              placeholder={
+                priorSession && !resumePromptDone ? "y/n"
+                : pendingTool ? "y/n"
+                : "message"
+              }
             />
           </Box>
         )}

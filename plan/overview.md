@@ -12,6 +12,10 @@ you are modifying yourself.
 
 - **M0 and M1 are complete.** You can stream responses, use tools (read/write
   files, run commands, list directories), with a graduated trust policy.
+- **M2 is complete.** Self-modification loop: edit source, run `bun test`,
+  git commit on pass, git revert on fail, restart. Structured JSON-lines
+  logging (`src/logger.ts`), context window truncation, frozen core interfaces.
+  81 tests, all passing.
 - **Auto-approve is implemented.** Read-only tools (`read_file`, `list_files`)
   and `write_file` are auto-approved without operator confirmation. Safe shell
   commands (`ls`, `cat`, `grep`, `git status/log/diff`, `bun test`, etc.) are
@@ -26,11 +30,14 @@ you are modifying yourself.
   the active auth mode.
 - **Model is currently `claude-sonnet-4-6`** (switched from Opus for cost
   savings). Change in `src/config.ts`.
-- **M2 is next.** The goal is self-modification: edit your own source, run
-  tests, git commit on success, git revert on failure, and restart yourself.
+- **M3 is next.** The first and most important M3 item is **conversation
+  history persistence**: saving session history to disk and restoring it on
+  restart. This is the critical missing piece for the self-modification loop —
+  when the agent restarts itself after a commit, it currently loses all context.
+  Persistence makes restarts seamless and enables long multi-session tasks.
 - Run `bun start` from the project root to launch yourself.
 - Run `bun run login` to authenticate with Claude Max.
-- Run `bun test` to run your test suite (tests to be added in M2).
+- Run `bun test` to run the test suite.
 
 ### Project Structure
 
@@ -40,11 +47,14 @@ omega/
     overview.md      ← this file
     ui.md            ← UI layout and interaction design
   src/
-    agent.ts         ← agent core (streaming, tool loop, retry, auto-approve)
+    agent.ts         ← agent core (streaming, tool loop, retry, auto-approve, truncation)
     auth.ts          ← OAuth PKCE flow for Claude Max
     config.ts        ← model, system prompt, settings (TypeScript, not YAML)
+    fast-text-input.tsx ← custom text input (fixes paste/dictation issues)
+    logger.ts        ← structured JSON-lines logger (→ ~/.local/share/omega/logs/)
     login.ts         ← interactive login script (bun run login)
-    tools.ts         ← tool definitions and execution
+    self.ts          ← self-modification orchestration (test→commit/revert→restart)
+    tools.ts         ← tool definitions and execution (read/write/run/list/edit_file)
     ui.tsx           ← Ink terminal UI (static zone, live zone, status bar)
     main.tsx         ← entry point
   package.json
@@ -573,26 +583,33 @@ retains the ability to:
 - [x] Basic error handling (retry with backoff for provider errors)
 - [x] Auto-approve for read-only tools and safe commands (post-M1 addition)
 
-### M2 — Self-Improvement Loop
-- [ ] Agent can modify its own source files
-- [ ] Agent runs `bun test` to validate changes
-- [ ] Git commit on success, git revert on failure
-- [ ] Agent restarts itself after successful self-modification
-- [ ] Structured logging (JSON lines to disk)
-- [ ] Frozen core interfaces
-- [ ] Context window management (truncation with token budget)
-- [ ] Cost/token tracking with session aggregation
+### M2 — Self-Improvement Loop ✅
+- [x] Agent can modify its own source files
+- [x] Agent runs `bun test` to validate changes
+- [x] Git commit on success, git revert on failure
+- [x] Agent restarts itself after successful self-modification
+- [x] Structured logging (JSON lines to disk → `~/.local/share/omega/logs/`)
+- [x] Frozen core interfaces
+- [x] Context window management (truncation with token budget)
+- [x] Cost/token tracking with session aggregation
+- [x] `edit_file` tool for surgical edits (red-green tested)
+- [x] Fixed input: custom fast-text-input (paste/dictation reliability)
+- [x] Red-green testing enforced in system prompt and plan
 
 After M2, the agent can improve itself. This is the stable core target.
 
 ### M3 — Observability + Rich UI
+- [ ] **Conversation history persistence** ← START HERE (most important)
+      - Save `agent.history` to `~/.local/share/omega/sessions/<id>.json` after each turn
+      - On startup, detect the most recent session and offer to resume it
+      - Makes post-commit restarts seamless; enables multi-session long tasks
+      - The planning files + persistent history = full recovery after any restart
 - [ ] Log projection for self-analysis
 - [ ] Model payload viewer (collapsible, shows what goes to the model)
 - [ ] Modal input: normal mode / insert mode (Helix-inspired)
 - [ ] Side pane with observability data (collapsible, collapsed by default)
 - [ ] Status bar: mode, model, tokens, cost, latency, provider health
 - [ ] Scrollable history for completed turns
-- [ ] Conversation history persistence to disk
 - [ ] Keyboard shortcuts
 
 ### M4 — Full Machine Agent
@@ -622,5 +639,10 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Build M2** — self-modification loop (test infra, structured logging,
-   context truncation, git commit/revert workflow, restart mechanism)
+1. **Conversation history persistence** (first M3 item) — save session history
+   to disk, restore on startup with a resume prompt. ~150 lines of code.
+   Critical because the self-modification loop restarts the agent, losing all
+   context. Persistence + planning files = full recovery after any restart.
+
+2. **Remaining M3 items** — log projection, payload viewer, modal input,
+   observability pane, scrollable history, keyboard shortcuts.
