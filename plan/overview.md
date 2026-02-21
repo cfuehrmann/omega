@@ -174,6 +174,13 @@ After M2, the agent can improve itself. This is the stable core target.
         off-screen by new static output.
       - Panel capped at 20 messages; shows call number and truncation notice.
       - Turn separator: bold cyan `▶ Turn N ~X tokens` (was: weak dim line).
+- [x] **Input prompt blocked-state visual**
+      - Bug: while agent is acting, prompt shows normal green `❯` — looks
+        identical to idle/ready state. Input is actually unfocused/blocked
+        but there is no visual cue.
+      - Fix: while streaming (and not pending tool confirmation), show a
+        dim `… ` glyph instead of the green `❯`, and dim the placeholder
+        text. The `❯` only appears when the user can actually type.
 - [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
       `ink-testing-library` to cover: resume prompt, tool confirmation,
       streaming display, Esc interrupt, payload panel toggle.
@@ -219,7 +226,8 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **UI tests** ← NEXT — ink-testing-library coverage for `ui.tsx`.
+1. **Input prompt blocked-state visual** ← NEXT (small fix)
+2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
 
 2. **Trust levels** — confirm-destructive mode so auto-approve is broader.
 
