@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
-import TextInput from "ink-text-input";
+import TextInput from "./fast-text-input.js";
 import { Agent, type AgentEvent, type TurnMetrics } from "./agent.js";
 import { config } from "./config.js";
 
