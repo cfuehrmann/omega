@@ -189,8 +189,16 @@ After M2, the agent can improve itself. This is the stable core target.
 - [ ] Trust policy configurable at runtime
 - [ ] `alwaysConfirm` / `alwaysAllow` pattern lists
 - [ ] sudo handling: detect need, prompt operator, execute
-- [ ] Web search tool (DuckDuckGo, no API key)
-- [ ] URL fetcher (readability-mode, extract text from HTML)
+- [ ] **Web search tool** ← NEXT
+      - DuckDuckGo Instant Answer API (no API key, JSON endpoint)
+      - `web_search(query)` → top results: title, URL, snippet
+      - Falls back to HTML scrape of DDG results if instant answer empty
+      - Defined in `tools.ts`, auto-approved (read-only)
+- [ ] **URL fetcher** ← NEXT
+      - `fetch_url(url)` → page text, readability-mode (strip nav/ads)
+      - Use `node-readability` or manual tag-strip if unavailable
+      - Truncate to ~8000 chars with a `[truncated]` notice
+      - Defined in `tools.ts`, auto-approved (read-only)
 - [ ] Rich command output display (ANSI, truncation, scrolling)
 
 ### M5 — Coding Agent Features
@@ -211,7 +219,10 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **UI tests** ← NEXT — ink-testing-library coverage for `ui.tsx`.
+1. **Web search + URL fetcher** ← NEXT — two new tools, no API key needed.
+   See M4 checklist above for spec.
+
+2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
 
 3. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
    via Wayland; truncation still occurs despite the `useEffect` fix. Needs
