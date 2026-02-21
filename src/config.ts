@@ -14,6 +14,8 @@ export const config = {
     "git add", "git commit", "git reset", "git checkout", "git clean", "git rev-parse",
     "echo", "which", "type", "file",
     "bun test",
+    // GitHub CLI — repo management, PRs, issues
+    "gh repo", "gh pr", "gh issue", "gh release", "gh auth status", "gh run",
     // Read-only text processors (commonly used in pipes)
     "sort", "uniq", "cut", "tr", "sed", "awk",
   ] as string[],
