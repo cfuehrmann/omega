@@ -4,6 +4,36 @@
 no JSON config files, no schema validation, no config loading layer.
 Minimal where it matters, pragmatic where it doesn't.*
 
+## Current Status
+
+**You are Omega.** You are reading your own planning documents. The source
+code in `src/` is your own codebase. When you modify files in this project,
+you are modifying yourself.
+
+- **M0 and M1 are complete.** You can stream responses, use tools (read/write
+  files, run commands, list directories), and the operator confirms each tool
+  call.
+- **M2 is next.** The goal is self-modification: edit your own source, run
+  tests, git commit on success, git revert on failure, and restart yourself.
+- Run `bun start` from the project root to launch yourself.
+- Run `bun test` to run your test suite (tests to be added in M2).
+
+### Project Structure
+
+```
+omega/
+  plan/              ← you are here (planning docs, source of truth)
+    overview.md      ← this file
+    ui.md            ← UI layout and interaction design
+  src/
+    agent.ts         ← agent core (streaming, tool loop, retry)
+    config.ts        ← model, system prompt, settings (TypeScript, not YAML)
+    tools.ts         ← tool definitions and execution
+    ui.tsx           ← Ink terminal UI (static zone, live zone, status bar)
+    main.tsx         ← entry point
+  package.json
+```
+
 ## Vision
 
 A personal AI coding agent that:
@@ -489,26 +519,20 @@ retains the ability to:
 
 ## Milestones
 
-### M0 — Talking to the Model
-- [ ] Project setup: `bun init`, Ink, Anthropic SDK
-- [ ] Agent core: send a message to Claude claude-opus-4-6, stream the response
-- [ ] Terminal UI: display the streamed response in Ink
-- [ ] Show token count and cost after each response
-- [ ] Basic input: type a message, send it, see the response
-- [ ] Conversation history (in-memory, multi-turn works)
+### M0 — Talking to the Model ✅
+- [x] Project setup: `bun init`, Ink, Anthropic SDK
+- [x] Agent core: send a message to Claude claude-opus-4-6, stream the response
+- [x] Terminal UI: display the streamed response in Ink
+- [x] Show token count and cost after each response
+- [x] Basic input: type a message, send it, see the response
+- [x] Conversation history (in-memory, multi-turn works)
 
-This is the bootstrap target. After M0, we are talking to the model through
-our own tool.
-
-### M1 — Basic Tools + Trust
-- [ ] Tools: read file, write file, run shell command, list files
-- [ ] Trust policy: confirm-all mode (operator approves every command)
-- [ ] Tool results displayed in the UI
-- [ ] Agent can use tools in a loop (model calls tool → gets result → responds)
-- [ ] Basic error handling (retry with backoff for provider errors)
-
-After M1, the agent can read and modify code, run commands, and the operator
-approves everything.
+### M1 — Basic Tools + Trust ✅
+- [x] Tools: read file, write file, run shell command, list files
+- [x] Trust policy: confirm-all mode (operator approves every command)
+- [x] Tool results displayed in the UI
+- [x] Agent can use tools in a loop (model calls tool → gets result → responds)
+- [x] Basic error handling (retry with backoff for provider errors)
 
 ### M2 — Self-Improvement Loop
 - [ ] Agent can modify its own source files
