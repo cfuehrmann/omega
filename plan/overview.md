@@ -1,8 +1,8 @@
 # Omega — Self-Improving AI Coding Agent
 
-*In the spirit of the [suckless philosophy](https://suckless.org/philosophy/):
-minimal, clear, frugal. Configuration is code. Complexity is removed, not
-managed. The tool does what you need and nothing else.*
+*Configuration is code — edit TypeScript, rebuild, done. No YAML, no TOML,
+no JSON config files, no schema validation, no config loading layer.
+Minimal where it matters, pragmatic where it doesn't.*
 
 ## Vision
 
@@ -164,7 +164,7 @@ export const config = {
 }
 ```
 
-This is suckless-style: the config is a source file. Change it, restart.
+No config format to learn or parse. Change the source file, restart.
 
 ## Tool Strategy
 
