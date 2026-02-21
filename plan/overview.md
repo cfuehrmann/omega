@@ -164,16 +164,32 @@ After M2, the agent can improve itself. This is the stable core target.
       one at a time via Wayland. Further diagnosis needed to understand
       exactly where truncation occurs and whether additional buffering is
       required in `fast-text-input.tsx`.
-- [x] **API call visibility**
-      - `api_call_start` event emitted by `Agent` before each stream call,
-        carrying a snapshot of `model`, `system`, `tools`, `messages`, and
-        `callNumber`. 4 integration tests (all pass).
-      - **Turn separators**: dim `── API call #N ── ~X tokens ──` line
-        pushed into the static zone on each `api_call_start`.
-      - **Payload panel**: press `p` (when idle) to toggle `PayloadPanel`
-        in the live zone. Shows model, est. tokens, tool count, system chars,
-        and per-message summaries. `p` again or `Esc` closes it.
-      - Status bar shows `p payload` hint after first API call.
+- [x] **API call visibility** (v1 — UX rework needed, see below)
+      - `api_call_start` event emitted by `Agent` before each stream call.
+      - Turn separators and payload panel shipped but have UX issues.
+- [~] **API call visibility UX rework** ← NEXT
+      - **Problems identified:**
+        1. Payload panel opens on first `api_call_start` automatically —
+           should only open on explicit user action, never auto-open.
+        2. Panel close keybinding (`p` / `Esc`) does not work reliably;
+           `Esc` conflicts with stream-interrupt; `p` is not discoverable.
+        3. Panel lives in the live zone between static scrollback and the
+           input box — new static items (tool calls, text) push it off-screen.
+        4. Turn separators are too weak visually — a bare dim line doesn't
+           clearly mark the boundary between human turn and agent turn.
+      - **Fixes:**
+        1. Never auto-open the panel. Only open on `i` keypress (idle only).
+           `i` is mnemonic for "inspect" and is unused by any other binding.
+        2. Close on `i` again (toggle) or `q`. Remove `p`. Remove panel
+           from Esc chain entirely — Esc stays purely for interrupt/reject.
+        3. Move panel above the static zone (render before `<Static>`) so
+           it is always pinned near the top of the visible terminal, not
+           pushed away by new output. Actually: render it in its own
+           fixed position just above the input box but below the live zone,
+           and keep it short (max 20 lines, scroll hint if more).
+        4. Stronger separator: blank line + `▶ Turn N` in bold cyan on its
+           own line, replacing the dim dash line. Makes human/agent boundary
+           obvious at a glance.
 - [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
       `ink-testing-library` to cover: resume prompt, tool confirmation,
       streaming display, Esc interrupt, payload panel toggle.
@@ -219,9 +235,11 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **UI tests** ← NEXT — ink-testing-library coverage for `ui.tsx`.
+1. **API call visibility UX rework** ← NEXT — see M3 checklist above.
 
-2. **Trust levels** — confirm-destructive mode so auto-approve is broader.
+2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
+
+3. **Trust levels** — confirm-destructive mode so auto-approve is broader.
 
 3. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
    via Wayland; truncation still occurs despite the `useEffect` fix. Needs
