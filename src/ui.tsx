@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "./fast-text-input.js";
-import { Agent, type AgentEvent, type TurnMetrics } from "./agent.js";
+import { Agent, type AgentEvent, type TurnMetrics, type ApiCallPayload, formatPayloadSummary } from "./agent.js";
 import { config } from "./config.js";
 import type { Session } from "./session.js";
 
@@ -9,9 +9,33 @@ import type { Session } from "./session.js";
 
 interface CompletedItem {
   id: number;
-  type: "turn" | "tool_call" | "tool_result" | "tool_rejected" | "error" | "user";
+  type: "turn" | "tool_call" | "tool_result" | "tool_rejected" | "error" | "user" | "separator";
   text: string;
   dimText?: string;
+}
+
+// --- PayloadPanel ---
+
+function PayloadPanel({ payload }: { payload: ApiCallPayload }) {
+  const summary = formatPayloadSummary(payload);
+  return (
+    <Box flexDirection="column" borderStyle="single" borderColor="cyan" paddingX={1} marginBottom={1}>
+      <Text bold color="cyan">── Payload Inspector ──</Text>
+      <Text>  Model: <Text bold>{payload.model}</Text></Text>
+      <Text>  Est. tokens: <Text bold>{summary.estimatedTokens.toLocaleString()}</Text>  Tools: {summary.toolCount}  Messages: {summary.messageCount}</Text>
+      <Text>  System prompt: {summary.systemChars} chars</Text>
+      <Text dimColor>  ── Messages ──</Text>
+      {summary.messageSummaries.map((m, i) => (
+        <Text key={i} dimColor={m.role === "assistant"}>
+          {"  "}
+          <Text bold color={m.role === "user" ? "green" : "blue"}>{m.role}</Text>
+          {` (~${m.tokenEstimate}t) `}
+          {m.preview}
+        </Text>
+      ))}
+      <Text dimColor>  p or Esc to close</Text>
+    </Box>
+  );
 }
 
 // --- Formatting ---
@@ -66,6 +90,10 @@ export function App() {
 
   // Abort controller for the current stream — replaced on each new message
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Payload panel: last API call params + toggle
+  const [lastPayload, setLastPayload] = useState<ApiCallPayload | null>(null);
+  const [showPayloadPanel, setShowPayloadPanel] = useState(false);
 
   // Last completed response — shown in live zone until next message
   const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
@@ -180,6 +208,28 @@ export function App() {
       try {
         for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
           switch (event.type) {
+            case "api_call_start": {
+              // Save payload for the panel
+              setLastPayload({
+                model: event.model,
+                system: event.system,
+                tools: event.tools,
+                messages: event.messages,
+              });
+              // Push a dim separator into the static zone
+              const est = formatPayloadSummary({
+                model: event.model,
+                system: event.system,
+                tools: event.tools,
+                messages: event.messages,
+              }).estimatedTokens;
+              addItem(
+                "separator",
+                `── API call #${event.callNumber} ── ~${est.toLocaleString()} tokens ──`
+              );
+              break;
+            }
+
             case "status":
               setActivity(event.message);
               break;
@@ -265,7 +315,9 @@ export function App() {
 
   useInput((input, key) => {
     if (key.escape) {
-      if (pendingTool && confirmResolveRef.current) {
+      if (showPayloadPanel) {
+        setShowPayloadPanel(false);
+      } else if (pendingTool && confirmResolveRef.current) {
         // Escape rejects a pending tool confirmation
         confirmResolveRef.current(false);
         confirmResolveRef.current = null;
@@ -275,6 +327,10 @@ export function App() {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+    }
+    // p toggles the payload panel (only when not typing in the input box)
+    if (input === "p" && !isStreaming && !pendingTool && ready && resumePromptDone) {
+      if (lastPayload) setShowPayloadPanel((v) => !v);
     }
     if (input === "c" && key.ctrl) {
       exit();
@@ -288,6 +344,7 @@ export function App() {
         {(item) => (
           <Box key={item.id} flexDirection="column">
             <Text
+              dimColor={item.type === "separator"}
               color={
                 item.type === "error"
                   ? "red"
@@ -308,6 +365,11 @@ export function App() {
           </Box>
         )}
       </Static>
+
+      {/* Payload inspector panel (toggled with p) */}
+      {showPayloadPanel && lastPayload && (
+        <PayloadPanel payload={lastPayload} />
+      )}
 
       {/* Live zone — only one thing shows at a time */}
       <Box flexDirection="column">
@@ -388,7 +450,11 @@ export function App() {
         <Text dimColor>
           {config.model} │ {authMode} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
-          {isStreaming && !pendingTool ? " │ Esc to interrupt" : " │ Ctrl+C quit"}
+          {isStreaming && !pendingTool
+            ? " │ Esc to interrupt"
+            : lastPayload && !isStreaming
+              ? " │ p payload │ Ctrl+C quit"
+              : " │ Ctrl+C quit"}
         </Text>
       </Box>
     </>

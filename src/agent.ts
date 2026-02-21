@@ -373,6 +373,7 @@ export class Agent {
   public sessionInputTokens = 0;
   public sessionOutputTokens = 0;
   public sessionCostUsd = 0;
+  private _apiCallCount = 0;
 
   private authMode: "api-key" | "oauth" = "api-key";
   public readonly sessionId: string;
@@ -508,17 +509,28 @@ export class Agent {
       // Signal the UI that we're about to call the API
       yield { type: "status", message: "thinking..." } as AgentEvent;
 
+      // For OAuth, system prompt must start with Claude Code identity
+      const systemPrompt = this.authMode === "oauth"
+        ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
+        : config.systemPrompt;
+
+      // Emit api_call_start with a snapshot of the params before each call
+      this._apiCallCount += 1;
+      yield {
+        type: "api_call_start",
+        callNumber: this._apiCallCount,
+        model: config.model,
+        system: systemPrompt,
+        tools: toolDefinitions,
+        messages: [...this.history],  // snapshot — not a live reference
+      } as AgentEvent;
+
       // Call API with retry
       let response: Anthropic.Message | null = null;
       let lastError: any = null;
       for (let attempt = 0; attempt < 5; attempt++) {
         try {
           let fullText = "";
-
-          // For OAuth, system prompt must start with Claude Code identity
-          const systemPrompt = this.authMode === "oauth"
-            ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
-            : config.systemPrompt;
 
           const streamParams = {
             model: config.model,
