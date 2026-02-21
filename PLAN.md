@@ -165,6 +165,21 @@ It can:
 - Access the network (APIs, downloads, SSH to other machines)
 - Use any tool installed or installable on the machine
 
+### Web Search
+
+The agent can search the web — look up documentation, error messages, API
+references, package versions, etc. This is distinct from fetching a known URL
+(which is just `curl`).
+
+Implementation: a lightweight search tool that queries a search engine
+(DuckDuckGo instant answers API, or similar — no API key required) and
+returns a list of results (title, URL, snippet). The agent can then fetch
+specific URLs with `curl` or a readability-mode fetcher that extracts article
+text from HTML.
+
+This is a first-class tool, not an afterthought. An agent that can't search
+is guessing when it could be looking things up.
+
 ### The sudo Boundary
 
 The only hard boundary is privilege escalation. When a command requires `sudo`:
@@ -365,16 +380,25 @@ Projected log entry (for self-analysis):
   "tool_calls": ["read_file", "run_command"],
   "usage": { "input_tokens": 3847, "output_tokens": 1204 },
   "cost_usd": 0.042,
-  "latency_ms": 2100,
-  "ttft_ms": 340
+  // Provider timing
+  "provider_ttft_ms": 340,        // time to first token from provider
+  "provider_total_ms": 2100,      // full response time from provider
+  // Agent timing
+  "agent_prep_ms": 12,            // time agent spent building the request
+  "agent_tool_dispatch_ms": 845,  // time executing tool calls in this turn
+  "agent_think_ms": 3,            // time between response received and next action
+  "turn_total_ms": 2960           // wall clock for the full turn
 }
 ```
 
 The projection replaces large text fields with size + hash, while keeping
-all structural and numeric metadata. The agent can:
+all structural and numeric metadata — including full timing breakdown. The
+agent can:
 - Spot anomalies (why did this call use 50k input tokens?)
 - Track cost trends
 - Identify which tool calls are expensive
+- Find its own bottlenecks (is tool dispatch slow? is request prep slow?)
+- Compare provider latency across calls and models
 - Drill into a specific entry by hash if it needs the full content
 
 The projection is not a separate log — it's a **query mode**. The agent
@@ -431,6 +455,8 @@ retains the ability to:
 
 ### M1 — Self-Improvement Loop (stable core target)
 - [ ] Tools: read file, write file, run shell command, list files
+- [ ] Tool: web search (DuckDuckGo or similar, no API key)
+- [ ] Tool: fetch URL (readability-mode, extract text from HTML)
 - [ ] Trust policy: confirm-all mode (operator approves every command)
 - [ ] Agent can modify its own code
 - [ ] Spawn-validate-swap self-modification flow
