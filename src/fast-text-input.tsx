@@ -31,10 +31,19 @@ export default function FastTextInput({
   const valueRef = useRef(value);
   const cursorRef = useRef(value.length);
 
-  // Sync ref when value prop changes from outside (e.g. cleared after submit)
+  // Only sync the ref when the value is reset externally (e.g. cleared to ""
+  // after submit). We must NOT sync on every prop change — that is the race:
+  // if React re-renders with a stale intermediate value mid-dictation, syncing
+  // here would overwrite the ref with old data and truncate the accumulated text.
+  //
+  // The safe rule: if value === "" it's definitely an external reset (we never
+  // call onChange("") ourselves). For any other value we trust our own ref,
+  // which is always ahead of the prop.
   useEffect(() => {
-    valueRef.current = value;
-    cursorRef.current = value.length;
+    if (value === "") {
+      valueRef.current = "";
+      cursorRef.current = 0;
+    }
   }, [value]);
 
   useInput(
