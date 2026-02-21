@@ -16,24 +16,29 @@ interface CompletedItem {
 
 // --- PayloadPanel ---
 
-function PayloadPanel({ payload }: { payload: ApiCallPayload }) {
+const PANEL_MAX_MSGS = 20;
+
+function PayloadPanel({ payload, callNumber }: { payload: ApiCallPayload; callNumber: number }) {
   const summary = formatPayloadSummary(payload);
+  const msgs = summary.messageSummaries;
+  const truncated = msgs.length > PANEL_MAX_MSGS;
+  const visible = truncated ? msgs.slice(-PANEL_MAX_MSGS) : msgs;
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor="cyan" paddingX={1} marginBottom={1}>
-      <Text bold color="cyan">── Payload Inspector ──</Text>
-      <Text>  Model: <Text bold>{payload.model}</Text></Text>
-      <Text>  Est. tokens: <Text bold>{summary.estimatedTokens.toLocaleString()}</Text>  Tools: {summary.toolCount}  Messages: {summary.messageCount}</Text>
-      <Text>  System prompt: {summary.systemChars} chars</Text>
-      <Text dimColor>  ── Messages ──</Text>
-      {summary.messageSummaries.map((m, i) => (
-        <Text key={i} dimColor={m.role === "assistant"}>
+    <Box flexDirection="column" borderStyle="single" borderColor="cyan" paddingX={1}>
+      <Text bold color="cyan">Payload inspector — API call #{callNumber}</Text>
+      <Text>  Model: <Text bold>{payload.model}</Text>  Est. tokens: <Text bold>{summary.estimatedTokens.toLocaleString()}</Text>  Tools: {summary.toolCount}</Text>
+      <Text>  System: {summary.systemChars} chars  Messages: {summary.messageCount}</Text>
+      <Text dimColor>  ─── messages ───</Text>
+      {truncated && <Text dimColor>  … {msgs.length - PANEL_MAX_MSGS} earlier messages hidden</Text>}
+      {visible.map((m, i) => (
+        <Text key={i}>
           {"  "}
           <Text bold color={m.role === "user" ? "green" : "blue"}>{m.role}</Text>
-          {` (~${m.tokenEstimate}t) `}
-          {m.preview}
+          <Text dimColor>{` (~${m.tokenEstimate}t) `}</Text>
+          <Text dimColor>{m.preview}</Text>
         </Text>
       ))}
-      <Text dimColor>  p or Esc to close</Text>
+      <Text dimColor>  i or q to close</Text>
     </Box>
   );
 }
@@ -91,8 +96,9 @@ export function App() {
   // Abort controller for the current stream — replaced on each new message
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Payload panel: last API call params + toggle
+  // Payload panel: last API call params + toggle (never auto-opens)
   const [lastPayload, setLastPayload] = useState<ApiCallPayload | null>(null);
+  const [lastCallNumber, setLastCallNumber] = useState(0);
   const [showPayloadPanel, setShowPayloadPanel] = useState(false);
 
   // Last completed response — shown in live zone until next message
@@ -209,23 +215,20 @@ export function App() {
         for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
           switch (event.type) {
             case "api_call_start": {
-              // Save payload for the panel
-              setLastPayload({
+              // Save payload for the inspector panel (panel stays closed — user opens with i)
+              const payload = {
                 model: event.model,
                 system: event.system,
                 tools: event.tools,
                 messages: event.messages,
-              });
-              // Push a dim separator into the static zone
-              const est = formatPayloadSummary({
-                model: event.model,
-                system: event.system,
-                tools: event.tools,
-                messages: event.messages,
-              }).estimatedTokens;
+              };
+              setLastPayload(payload);
+              setLastCallNumber(event.callNumber);
+              // Stronger visual separator: bold turn marker
+              const est = formatPayloadSummary(payload).estimatedTokens;
               addItem(
                 "separator",
-                `── API call #${event.callNumber} ── ~${est.toLocaleString()} tokens ──`
+                `▶ Turn ${event.callNumber}  ~${est.toLocaleString()} tokens`
               );
               break;
             }
@@ -315,9 +318,7 @@ export function App() {
 
   useInput((input, key) => {
     if (key.escape) {
-      if (showPayloadPanel) {
-        setShowPayloadPanel(false);
-      } else if (pendingTool && confirmResolveRef.current) {
+      if (pendingTool && confirmResolveRef.current) {
         // Escape rejects a pending tool confirmation
         confirmResolveRef.current(false);
         confirmResolveRef.current = null;
@@ -328,9 +329,13 @@ export function App() {
         abortControllerRef.current = null;
       }
     }
-    // p toggles the payload panel (only when not typing in the input box)
-    if (input === "p" && !isStreaming && !pendingTool && ready && resumePromptDone) {
+    // i toggles the payload inspector (idle only, mnemonic: inspect)
+    if (input === "i" && !isStreaming && !pendingTool && ready && resumePromptDone) {
       if (lastPayload) setShowPayloadPanel((v) => !v);
+    }
+    // q closes the payload inspector
+    if (input === "q" && showPayloadPanel) {
+      setShowPayloadPanel(false);
     }
     if (input === "c" && key.ctrl) {
       exit();
@@ -344,19 +349,21 @@ export function App() {
         {(item) => (
           <Box key={item.id} flexDirection="column">
             <Text
-              dimColor={item.type === "separator"}
+              bold={item.type === "separator"}
               color={
-                item.type === "error"
-                  ? "red"
-                  : item.type === "tool_call"
-                    ? "yellow"
-                    : item.type === "tool_result"
-                      ? "gray"
-                      : item.type === "tool_rejected"
-                        ? "red"
-                        : item.type === "user"
-                          ? "green"
-                          : undefined
+                item.type === "separator"
+                  ? "cyan"
+                  : item.type === "error"
+                    ? "red"
+                    : item.type === "tool_call"
+                      ? "yellow"
+                      : item.type === "tool_result"
+                        ? "gray"
+                        : item.type === "tool_rejected"
+                          ? "red"
+                          : item.type === "user"
+                            ? "green"
+                            : undefined
               }
             >
               {item.text}
@@ -365,11 +372,6 @@ export function App() {
           </Box>
         )}
       </Static>
-
-      {/* Payload inspector panel (toggled with p) */}
-      {showPayloadPanel && lastPayload && (
-        <PayloadPanel payload={lastPayload} />
-      )}
 
       {/* Live zone — only one thing shows at a time */}
       <Box flexDirection="column">
@@ -418,6 +420,11 @@ export function App() {
           </Box>
         )}
 
+        {/* Payload inspector — pinned just above the input box */}
+        {showPayloadPanel && lastPayload && (
+          <PayloadPanel payload={lastPayload} callNumber={lastCallNumber} />
+        )}
+
         {/* Input prompt */}
         <Box>
           <Text bold color={
@@ -453,7 +460,7 @@ export function App() {
           {isStreaming && !pendingTool
             ? " │ Esc to interrupt"
             : lastPayload && !isStreaming
-              ? " │ p payload │ Ctrl+C quit"
+              ? " │ i inspect │ Ctrl+C quit"
               : " │ Ctrl+C quit"}
         </Text>
       </Box>
