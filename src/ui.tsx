@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "./fast-text-input.js";
-import { Agent, type AgentEvent, type TurnMetrics, type ApiCallPayload, formatPayloadSummary } from "./agent.js";
+import { Agent, type AgentEvent, type TurnMetrics, formatPayloadSummary } from "./agent.js";
 import { config } from "./config.js";
 import type { Session } from "./session.js";
-import { shouldHandleShortcut } from "./ui-logic.js";
+import { formatTokenDelta } from "./ui-logic.js";
 
 // --- Types ---
 
@@ -13,35 +13,6 @@ interface CompletedItem {
   type: "turn" | "tool_call" | "tool_result" | "tool_rejected" | "error" | "user" | "separator";
   text: string;
   dimText?: string;
-}
-
-// --- PayloadPanel ---
-
-const PANEL_MAX_MSGS = 20;
-
-function PayloadPanel({ payload, callNumber }: { payload: ApiCallPayload; callNumber: number }) {
-  const summary = formatPayloadSummary(payload);
-  const msgs = summary.messageSummaries;
-  const truncated = msgs.length > PANEL_MAX_MSGS;
-  const visible = truncated ? msgs.slice(-PANEL_MAX_MSGS) : msgs;
-  return (
-    <Box flexDirection="column" borderStyle="single" borderColor="cyan" paddingX={1}>
-      <Text bold color="cyan">Payload inspector — API call #{callNumber}</Text>
-      <Text>  Model: <Text bold>{payload.model}</Text>  Est. tokens: <Text bold>{summary.estimatedTokens.toLocaleString()}</Text>  Tools: {summary.toolCount}</Text>
-      <Text>  System: {summary.systemChars} chars  Messages: {summary.messageCount}</Text>
-      <Text dimColor>  ─── messages ───</Text>
-      {truncated && <Text dimColor>  … {msgs.length - PANEL_MAX_MSGS} earlier messages hidden</Text>}
-      {visible.map((m, i) => (
-        <Text key={i}>
-          {"  "}
-          <Text bold color={m.role === "user" ? "green" : "blue"}>{m.role}</Text>
-          <Text dimColor>{` (~${m.tokenEstimate}t) `}</Text>
-          <Text dimColor>{m.preview}</Text>
-        </Text>
-      ))}
-      <Text dimColor>  i or q to close</Text>
-    </Box>
-  );
 }
 
 // --- Formatting ---
@@ -97,10 +68,9 @@ export function App() {
   // Abort controller for the current stream — replaced on each new message
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Payload panel: last API call params + toggle (never auto-opens)
-  const [lastPayload, setLastPayload] = useState<ApiCallPayload | null>(null);
-  const [lastCallNumber, setLastCallNumber] = useState(0);
-  const [showPayloadPanel, setShowPayloadPanel] = useState(false);
+  // Token delta tracking: previous call's estimated tokens for Δ display
+  const [lastCallTokens, setLastCallTokens] = useState<number | null>(null);
+  const [tokenDelta, setTokenDelta] = useState<string>("");
 
   // Last completed response — shown in live zone until next message
   const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
@@ -193,6 +163,8 @@ export function App() {
       setInput("");
       setStreamingText("");
       setIsStreaming(true);
+      setTokenDelta("");
+      setLastCallTokens(null);  // reset so first call of new turn shows no delta
 
       addItem("user", `❯ ${trimmed}`);
 
@@ -216,17 +188,14 @@ export function App() {
         for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
           switch (event.type) {
             case "api_call_start": {
-              // Save payload for the inspector panel (panel stays closed — user opens with i)
-              const payload = {
+              const est = formatPayloadSummary({
                 model: event.model,
                 system: event.system,
                 tools: event.tools,
                 messages: event.messages,
-              };
-              setLastPayload(payload);
-              setLastCallNumber(event.callNumber);
-              // Stronger visual separator: bold turn marker
-              const est = formatPayloadSummary(payload).estimatedTokens;
+              }).estimatedTokens;
+              setTokenDelta(formatTokenDelta(est, lastCallTokens));
+              setLastCallTokens(est);
               addItem(
                 "separator",
                 `▶ API call #${event.callNumber}  ~${est.toLocaleString()} tokens`
@@ -330,14 +299,6 @@ export function App() {
         abortControllerRef.current = null;
       }
     }
-    // i/q only fire as shortcuts when the prompt is empty (not mid-typing)
-    const shortcutCtx = { inputValue: inputState, isStreaming, hasPendingTool: !!pendingTool, isReady: ready, resumeDone: resumePromptDone };
-    if (shouldHandleShortcut("i", shortcutCtx)) {
-      if (lastPayload) setShowPayloadPanel((v) => !v);
-    }
-    if (shouldHandleShortcut("q", shortcutCtx) && showPayloadPanel) {
-      setShowPayloadPanel(false);
-    }
     if (input === "c" && key.ctrl) {
       exit();
     }
@@ -421,11 +382,6 @@ export function App() {
           </Box>
         )}
 
-        {/* Payload inspector — pinned just above the input box */}
-        {showPayloadPanel && lastPayload && (
-          <PayloadPanel payload={lastPayload} callNumber={lastCallNumber} />
-        )}
-
         {/* Input prompt */}
         <Box>
           <Text
@@ -465,11 +421,8 @@ export function App() {
         <Text dimColor>
           {config.model} │ {authMode} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
-          {isStreaming && !pendingTool
-            ? " │ Esc to interrupt"
-            : lastPayload && !isStreaming
-              ? " │ i inspect │ Ctrl+C quit"
-              : " │ Ctrl+C quit"}
+          {tokenDelta ? ` │ ${tokenDelta}` : ""}
+          {isStreaming && !pendingTool ? " │ Esc to interrupt" : " │ Ctrl+C quit"}
         </Text>
       </Box>
     </>

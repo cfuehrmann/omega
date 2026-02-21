@@ -1,39 +1,20 @@
 /**
  * Pure UI logic — no React, no Ink, fully unit-testable.
- *
- * Extracted from ui.tsx so shortcut guards and other logic can be tested
- * without needing ink-testing-library.
  */
-
-export interface ShortcutContext {
-  /** Current value of the text input prompt. */
-  inputValue: string;
-  /** Whether the agent is currently streaming a response. */
-  isStreaming: boolean;
-  /** Whether a tool confirmation is pending. */
-  hasPendingTool: boolean;
-  /** Whether the agent is initialised and ready. */
-  isReady: boolean;
-  /** Whether the session resume prompt has been resolved. */
-  resumeDone: boolean;
-}
 
 /**
- * Returns true if the given single-character shortcut key should be handled
- * as a global keyboard shortcut rather than passed to the text input.
+ * Format the token count delta between consecutive API calls for display
+ * in the status bar.
  *
- * Shortcuts only fire when:
- *   - The key is a known shortcut (currently: i, q)
- *   - The prompt is empty (user is not mid-typing)
- *   - The agent is idle (not streaming, no pending tool)
- *   - The UI is fully ready and past any resume prompt
+ * @param current  Estimated token count for the most recent API call.
+ * @param previous Estimated token count for the previous API call, or null
+ *                 if this is the first call in the session.
+ * @returns A compact string like "Δ+342 tok", "Δ-1204 tok", or "" if no
+ *          previous call to compare against.
  */
-export function shouldHandleShortcut(key: string, ctx: ShortcutContext): boolean {
-  if (key !== "i" && key !== "q") return false;
-  if (ctx.inputValue.length > 0) return false;
-  if (ctx.isStreaming) return false;
-  if (ctx.hasPendingTool) return false;
-  if (!ctx.isReady) return false;
-  if (!ctx.resumeDone) return false;
-  return true;
+export function formatTokenDelta(current: number, previous: number | null): string {
+  if (previous === null) return "";
+  const delta = current - previous;
+  const sign = delta >= 0 ? "+" : "";
+  return `Δ${sign}${delta} tok`;
 }
