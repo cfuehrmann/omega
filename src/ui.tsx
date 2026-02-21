@@ -8,7 +8,7 @@ import { config } from "./config.js";
 
 interface CompletedItem {
   id: number;
-  type: "turn" | "tool_call" | "tool_result" | "tool_rejected" | "error";
+  type: "turn" | "tool_call" | "tool_result" | "tool_rejected" | "error" | "user";
   text: string;
   dimText?: string;
 }
@@ -43,22 +43,14 @@ export function App() {
   const [authMode, setAuthMode] = useState<string>("...");
   const [ready, setReady] = useState(false);
   const [input, setInput] = useState("");
+
+  // All completed items go to Static (scrollback). Never put streaming text here.
   const [completedItems, setCompletedItems] = useState<CompletedItem[]>([]);
 
-  // Initialize agent (auth)
-  useEffect(() => {
-    agent.init().then((mode) => {
-      setAuthMode(mode);
-      setReady(true);
-    }).catch((err) => {
-      setAuthMode(`error: ${err.message}`);
-      setReady(true); // allow input even on error so user sees something
-    });
-  }, [agent]);
+  // Live zone state — only one of these is active at a time
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [activity, setActivity] = useState("");  // what the agent is currently doing
-  const [itemId, setItemId] = useState(0);
+  const [activity, setActivity] = useState("");
 
   // Tool confirmation state
   const [pendingTool, setPendingTool] = useState<{
@@ -67,18 +59,22 @@ export function App() {
   } | null>(null);
   const confirmResolveRef = useRef<((approved: boolean) => void) | null>(null);
 
-  const nextId = useCallback(() => {
-    const id = itemId;
-    setItemId((i) => i + 1);
-    return id;
-  }, [itemId]);
+  // Last completed response — shown in live zone until next message
+  const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
+
+  // Initialize agent (auth)
+  useEffect(() => {
+    agent.init().then((mode) => {
+      setAuthMode(mode);
+      setReady(true);
+    }).catch((err) => {
+      setAuthMode(`error: ${err.message}`);
+      setReady(true);
+    });
+  }, [agent]);
 
   const addItem = useCallback(
-    (
-      type: CompletedItem["type"],
-      text: string,
-      dimText?: string
-    ) => {
+    (type: CompletedItem["type"], text: string, dimText?: string) => {
       setCompletedItems((prev) => [
         ...prev,
         { id: prev.length, type, text, dimText },
@@ -106,16 +102,20 @@ export function App() {
       const trimmed = value.trim();
       if (!trimmed || isStreaming || !ready) return;
 
+      // Move last response to static zone before starting new turn
+      if (lastResponse) {
+        addItem("turn", lastResponse.text, lastResponse.dimText);
+        setLastResponse(null);
+      }
+
       setInput("");
       setStreamingText("");
       setIsStreaming(true);
 
-      addItem("turn", `❯ ${trimmed}`);
+      addItem("user", `❯ ${trimmed}`);
 
       let fullText = "";
 
-      // This callback is only invoked for tools that need confirmation
-      // (auto-approved tools are handled in agent.ts and never reach here)
       const confirmTool = (
         name: string,
         input: any,
@@ -138,28 +138,25 @@ export function App() {
               break;
 
             case "tool_pending":
-              // Pause streaming text display while waiting for confirmation
+              // Flush text before confirmation prompt
               if (fullText) {
-                const t = fullText;
+                addItem("turn", fullText);
                 fullText = "";
                 setStreamingText("");
-                await new Promise<void>((r) => setTimeout(() => { addItem("turn", t); r(); }, 0));
               }
               setActivity("");
               break;
 
-            case "tool_call": {
-              // Flush any accumulated text before showing tool call
+            case "tool_call":
+              // Flush text before tool call
               if (fullText) {
-                const t = fullText;
+                addItem("turn", fullText);
                 fullText = "";
                 setStreamingText("");
-                await new Promise<void>((r) => setTimeout(() => { addItem("turn", t); r(); }, 0));
               }
               addItem("tool_call", `🔧 ${event.formatted}`);
               setActivity(`running ${event.name}...`);
               break;
-            }
 
             case "tool_result":
               addItem(
@@ -178,21 +175,15 @@ export function App() {
             case "metrics": {
               const m = event.metrics;
               const metricsLine = `  in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)} total: ${formatMs(m.totalMs)}`;
-              // Clear live text FIRST to avoid duplicate display
-              const textToCommit = fullText;
-              fullText = "";
-              setStreamingText("");
-              // Use setTimeout to ensure live zone clears before static zone adds
-              await new Promise<void>((resolve) => {
-                setTimeout(() => {
-                  if (textToCommit) {
-                    addItem("turn", textToCommit, metricsLine);
-                  } else {
-                    addItem("turn", "", metricsLine);
-                  }
-                  resolve();
-                }, 0);
-              });
+              // Don't add to static — keep in live zone via lastResponse
+              if (fullText) {
+                setLastResponse({ text: fullText, dimText: metricsLine });
+                fullText = "";
+                setStreamingText("");
+              } else {
+                // Metrics-only turn (e.g. after tool loop with no final text)
+                addItem("turn", "", metricsLine);
+              }
               break;
             }
 
@@ -209,19 +200,17 @@ export function App() {
         setActivity("");
       }
     },
-    [agent, isStreaming, pendingTool, addItem, ready]
+    [agent, isStreaming, pendingTool, addItem, ready, lastResponse]
   );
 
   useInput((input, key) => {
     if (key.escape) {
-      // Reject pending tool confirmation
       if (pendingTool && confirmResolveRef.current) {
         confirmResolveRef.current(false);
         confirmResolveRef.current = null;
         setPendingTool(null);
       }
     }
-    // Ctrl+C to quit (Ink sends this as input === 'c' when ctrl is true)
     if (input === "c" && key.ctrl) {
       exit();
     }
@@ -229,7 +218,7 @@ export function App() {
 
   return (
     <>
-      {/* Static zone: completed items */}
+      {/* Static zone: scrollback history */}
       <Static items={completedItems}>
         {(item) => (
           <Box key={item.id} flexDirection="column">
@@ -243,7 +232,9 @@ export function App() {
                       ? "gray"
                       : item.type === "tool_rejected"
                         ? "red"
-                        : undefined
+                        : item.type === "user"
+                          ? "green"
+                          : undefined
               }
             >
               {item.text}
@@ -253,9 +244,9 @@ export function App() {
         )}
       </Static>
 
-      {/* Live zone */}
+      {/* Live zone — only one thing shows at a time */}
       <Box flexDirection="column">
-        {/* Streaming response */}
+        {/* Streaming response text */}
         {isStreaming && streamingText && !pendingTool && (
           <Box marginBottom={0}>
             <Text>
@@ -265,37 +256,30 @@ export function App() {
           </Box>
         )}
 
-        {/* Tool confirmation prompt */}
-        {pendingTool && (
-          <Box flexDirection="column" marginBottom={0}>
-            <Text color="yellow">
-              {"🔧 "}
-              {pendingTool.formatted}
-            </Text>
-            <Text dimColor>
-              {"  Allow? [Y/n] "}
-            </Text>
-          </Box>
-        )}
-
-        {/* Input */}
-        {/* Streaming response */}
-        {isStreaming && streamingText && !pendingTool && (
-          <Box marginBottom={0}>
-            <Text>
-              {streamingText}
-              <Text dimColor>▊</Text>
-            </Text>
-          </Box>
-        )}
-
-        {/* Activity indicator when working but not streaming text */}
+        {/* Activity indicator (no streaming text yet) */}
         {isStreaming && !streamingText && !pendingTool && (
           <Box>
             <Text dimColor>⏳ {activity || "working..."}</Text>
           </Box>
         )}
 
+        {/* Last completed response (stays here until next message) */}
+        {!isStreaming && lastResponse && (
+          <Box flexDirection="column">
+            <Text>{lastResponse.text}</Text>
+            {lastResponse.dimText && <Text dimColor>{lastResponse.dimText}</Text>}
+          </Box>
+        )}
+
+        {/* Tool confirmation */}
+        {pendingTool && (
+          <Box flexDirection="column" marginBottom={0}>
+            <Text color="yellow">{"🔧 "}{pendingTool.formatted}</Text>
+            <Text dimColor>{"  Allow? [Y/n] "}</Text>
+          </Box>
+        )}
+
+        {/* Input prompt — hidden while streaming (unless confirming tool) */}
         {isStreaming && !pendingTool ? null : (
           <Box>
             <Text bold color={pendingTool ? "yellow" : !ready ? "red" : "green"}>
