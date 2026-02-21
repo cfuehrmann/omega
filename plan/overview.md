@@ -192,8 +192,7 @@ specific URLs with a readability-mode fetcher that extracts article text
 from HTML.
 
 This is a first-class tool, not an afterthought. An agent that can't search
-is guessing when it could be looking things up. Added in M2 (after the agent
-can already modify itself).
+is guessing when it could be looking things up. Added in M4.
 
 ### The sudo Boundary
 
@@ -270,14 +269,14 @@ exactly which messages are included and which were truncated.
 ### Planning Files as Persistent Context
 
 Truncation is low-risk for this project because the ground truth lives in
-files, not in conversation history. `PLAN.md`, `DESIGN-UI.md`, and the
+files, not in conversation history. The planning files in `plan/` and the
 source code are always available via tool calls.
 
 The system prompt makes this explicit:
 
-> Your project's planning files (`PLAN.md`, `DESIGN-UI.md`) are the source
-> of truth for goals, architecture, and decisions. If your conversation
-> history has been truncated and you've lost context, re-read these files.
+> Your project's planning files are in `plan/`. They are the source of truth
+> for goals, architecture, and decisions. If your conversation history has
+> been truncated and you've lost context, `ls plan/` and re-read the files.
 > They are always current.
 
 This means the agent can recover from aggressive truncation: it loses the
@@ -362,7 +361,6 @@ signals that need a different approach:
 │  - Tool dispatch (full machine access)               │
 │  - Trust policy enforcement                          │
 │  - Self-modification orchestration                   │
-│  - Decision trace                                    │
 ├──────────────────────────────────────────────────────┤
 │               Provider Adapter                       │
 │  - Anthropic Messages API (streaming SSE)            │
