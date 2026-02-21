@@ -140,23 +140,26 @@ export function App() {
             case "tool_pending":
               // Pause streaming text display while waiting for confirmation
               if (fullText) {
-                addItem("turn", fullText);
+                const t = fullText;
                 fullText = "";
                 setStreamingText("");
+                await new Promise<void>((r) => setTimeout(() => { addItem("turn", t); r(); }, 0));
               }
               setActivity("");
               break;
 
-            case "tool_call":
+            case "tool_call": {
               // Flush any accumulated text before showing tool call
               if (fullText) {
-                addItem("turn", fullText);
+                const t = fullText;
                 fullText = "";
                 setStreamingText("");
+                await new Promise<void>((r) => setTimeout(() => { addItem("turn", t); r(); }, 0));
               }
               addItem("tool_call", `🔧 ${event.formatted}`);
               setActivity(`running ${event.name}...`);
               break;
+            }
 
             case "tool_result":
               addItem(
@@ -175,13 +178,21 @@ export function App() {
             case "metrics": {
               const m = event.metrics;
               const metricsLine = `  in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)} total: ${formatMs(m.totalMs)}`;
-              if (fullText) {
-                addItem("turn", fullText, metricsLine);
-                fullText = "";
-                setStreamingText("");
-              } else {
-                addItem("turn", "", metricsLine);
-              }
+              // Clear live text FIRST to avoid duplicate display
+              const textToCommit = fullText;
+              fullText = "";
+              setStreamingText("");
+              // Use setTimeout to ensure live zone clears before static zone adds
+              await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                  if (textToCommit) {
+                    addItem("turn", textToCommit, metricsLine);
+                  } else {
+                    addItem("turn", "", metricsLine);
+                  }
+                  resolve();
+                }, 0);
+              });
               break;
             }
 
