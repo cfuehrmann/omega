@@ -24,12 +24,17 @@ async function main() {
   console.log("4. Paste the code below\n");
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const code = await new Promise<string>((resolve) => {
+  let code = await new Promise<string>((resolve) => {
     rl.question("Code: ", (answer) => {
       rl.close();
       resolve(answer.trim());
     });
   });
+
+  // Strip the #state suffix if the user pasted the full redirect value
+  if (code.includes("#")) {
+    code = code.split("#")[0];
+  }
 
   if (!code) {
     console.log("No code provided. Aborting.");
