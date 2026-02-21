@@ -107,13 +107,13 @@ export async function startOAuthFlow(): Promise<{
   const exchangeCode = async (code: string): Promise<TokenData> => {
     const body = {
       grant_type: "authorization_code",
-      client_id: OAUTH_CONFIG.clientId,
       code,
       redirect_uri: OAUTH_CONFIG.callbackUrl,
+      client_id: OAUTH_CONFIG.clientId,
       code_verifier: verifier,
+      state,
     };
 
-    // Try JSON format first (some OAuth servers prefer it)
     const resp = await fetch(OAUTH_CONFIG.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
