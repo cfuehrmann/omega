@@ -242,7 +242,6 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Full auto-approve + audit summary** ← NEXT (in progress)
-2. **Automated plan maintenance** — discuss approach, implement.
-3. **UI tests** — ink-testing-library coverage for `ui.tsx`.
-4. **Dictation truncation bug** — `wtype` injects keys one at a time.
+1. **Automated plan maintenance** ← NEXT — discuss approach, implement.
+2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
+3. **Dictation truncation bug** — `wtype` injects keys one at a time.
