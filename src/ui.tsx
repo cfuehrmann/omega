@@ -4,6 +4,7 @@ import TextInput from "./fast-text-input.js";
 import { Agent, type AgentEvent, type TurnMetrics, type ApiCallPayload, formatPayloadSummary } from "./agent.js";
 import { config } from "./config.js";
 import type { Session } from "./session.js";
+import { shouldHandleShortcut } from "./ui-logic.js";
 
 // --- Types ---
 
@@ -72,7 +73,7 @@ export function App() {
   const [agent] = useState(() => new Agent());
   const [authMode, setAuthMode] = useState<string>("...");
   const [ready, setReady] = useState(false);
-  const [input, setInput] = useState("");
+  const [inputState, setInput] = useState("");
 
   // Resume prompt state
   const [priorSession, setPriorSession] = useState<Session | null>(null);
@@ -228,7 +229,7 @@ export function App() {
               const est = formatPayloadSummary(payload).estimatedTokens;
               addItem(
                 "separator",
-                `▶ Turn ${event.callNumber}  ~${est.toLocaleString()} tokens`
+                `▶ API call #${event.callNumber}  ~${est.toLocaleString()} tokens`
               );
               break;
             }
@@ -329,12 +330,12 @@ export function App() {
         abortControllerRef.current = null;
       }
     }
-    // i toggles the payload inspector (idle only, mnemonic: inspect)
-    if (input === "i" && !isStreaming && !pendingTool && ready && resumePromptDone) {
+    // i/q only fire as shortcuts when the prompt is empty (not mid-typing)
+    const shortcutCtx = { inputValue: inputState, isStreaming, hasPendingTool: !!pendingTool, isReady: ready, resumeDone: resumePromptDone };
+    if (shouldHandleShortcut("i", shortcutCtx)) {
       if (lastPayload) setShowPayloadPanel((v) => !v);
     }
-    // q closes the payload inspector
-    if (input === "q" && showPayloadPanel) {
+    if (shouldHandleShortcut("q", shortcutCtx) && showPayloadPanel) {
       setShowPayloadPanel(false);
     }
     if (input === "c" && key.ctrl) {
@@ -445,7 +446,7 @@ export function App() {
              : "❯ "}
           </Text>
           <TextInput
-            value={input}
+            value={inputState}
             onChange={setInput}
             onSubmit={handleSubmit}
             focus={!isStreaming || !!pendingTool || !resumePromptDone}
