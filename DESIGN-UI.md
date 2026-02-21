@@ -8,6 +8,10 @@ rendered in a terminal (Ink) or a browser (HTML/CSS).
 The layout is a **data structure**. Renderers consume it. Adding a pane or
 changing proportions means editing the descriptor, not the rendering code.
 
+The primary renderer is Ink (terminal). The agent can read its own rendered
+output as text, making the terminal the fastest iteration environment for a
+text-native AI.
+
 ## Layout Zones
 
 The screen is divided into three vertical zones, top to bottom:
@@ -21,8 +25,8 @@ here.
 Properties:
 - Grows upward (new items push old ones off screen)
 - Never re-rendered after initial display
-- In Ink: maps to `<Static items={...}>`
-- In web: maps to a scrollable container with append-only DOM
+- In Ink (primary): maps to `<Static items={...}>`
+- In web (future): maps to a scrollable container with append-only DOM
 
 Content types:
 - Completed assistant messages
@@ -178,7 +182,7 @@ const defaultLayout: Layout = {
 
 ## Rendering Contract
 
-Any renderer (Ink or web) must implement:
+Any renderer (Ink is the primary; web is future) must implement:
 
 ```typescript
 interface UIRenderer {
