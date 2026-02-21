@@ -74,7 +74,12 @@ async function sleep(ms: number): Promise<void> {
 export function isRetryable(err: any): boolean {
   if (!err) return false;
   const status = err.status ?? err.statusCode;
-  return status === 429 || status === 529 || status === 500 || status === 503;
+  if (status === 429 || status === 529 || status === 500 || status === 503) return true;
+  // The Anthropic SDK throws this when the server restarts a stream mid-flight
+  // (a new message_start arrives before message_stop). No HTTP status code —
+  // it's thrown internally by MessageStream. Treat as transient and retry.
+  if (typeof err.message === "string" && err.message.includes("Unexpected event order")) return true;
+  return false;
 }
 
 // --- Context window management ---

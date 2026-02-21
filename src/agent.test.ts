@@ -130,6 +130,18 @@ describe("isRetryable", () => {
   it("supports statusCode (alternative field)", () => {
     expect(isRetryable({ statusCode: 429 })).toBe(true);
   });
+
+  it("retries on SDK stream ordering error (message_start before message_stop)", () => {
+    // The Anthropic SDK throws this from within the stream iterator when the
+    // server restarts a stream mid-flight. It has no HTTP status code — it's
+    // a plain AnthropicError thrown by MessageStream.#accumulateMessage().
+    // We must treat it as retryable so the agent retries instead of surfacing
+    // a hard error to the user.
+    const sdkStreamError = new Error(
+      'Unexpected event order, got message_start before receiving "message_stop"'
+    );
+    expect(isRetryable(sdkStreamError)).toBe(true);
+  });
 });
 
 // --- Context window truncation ---

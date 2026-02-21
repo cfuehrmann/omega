@@ -96,4 +96,45 @@ describe("FastTextInput: handles rapid input correctly", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(lastValue).toBe("hello");
   });
+
+  test("external value reset (e.g. after submit) clears the input correctly", async () => {
+    // After submit, the parent resets value to "". FastTextInput must sync
+    // its ref to "" so subsequent typing starts fresh.
+    let lastValue = "sentinel";
+
+    function ResettingApp({ onValue }: { onValue: (v: string) => void }) {
+      const [input, setInput] = React.useState("");
+      const [submitted, setSubmitted] = React.useState(false);
+      return (
+        <Box>
+          <FastTextInput
+            value={submitted ? "" : input}
+            onChange={(v: string) => {
+              setInput(v);
+              onValue(v);
+            }}
+            onSubmit={() => {
+              setSubmitted(true);
+              // After a brief moment, simulate parent clearing value
+            }}
+          />
+        </Box>
+      );
+    }
+
+    const { stdin } = render(<ResettingApp onValue={(v) => { lastValue = v; }} />);
+
+    stdin.write("hello");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lastValue).toBe("hello");
+
+    // Submit clears the field
+    stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Now type again — should start fresh, not append to old value
+    stdin.write("world");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(lastValue).toBe("world");
+  });
 });
