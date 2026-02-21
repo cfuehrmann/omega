@@ -345,36 +345,31 @@ export function App() {
           </Box>
         )}
 
-        {/* Input prompt — always visible; shows Esc hint while streaming */}
-        {!(isStreaming && !pendingTool && resumePromptDone) ? (
-          <Box>
-            <Text bold color={
-              priorSession && !resumePromptDone ? "cyan"
-              : pendingTool ? "yellow"
-              : !ready ? "red"
-              : "green"
-            }>
-              {priorSession && !resumePromptDone ? "? "
-               : pendingTool ? "? "
-               : !ready ? "… "
-               : "❯ "}
-            </Text>
-            <TextInput
-              value={input}
-              onChange={setInput}
-              onSubmit={handleSubmit}
-              placeholder={
-                priorSession && !resumePromptDone ? "y/n"
-                : pendingTool ? "y/n"
-                : "message"
-              }
-            />
-          </Box>
-        ) : (
-          <Box>
-            <Text dimColor>  Esc to interrupt</Text>
-          </Box>
-        )}
+        {/* Input prompt */}
+        <Box>
+          <Text bold color={
+            priorSession && !resumePromptDone ? "cyan"
+            : pendingTool ? "yellow"
+            : !ready ? "red"
+            : "green"
+          }>
+            {priorSession && !resumePromptDone ? "? "
+             : pendingTool ? "? "
+             : !ready ? "… "
+             : "❯ "}
+          </Text>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            focus={!isStreaming || !!pendingTool || !resumePromptDone}
+            placeholder={
+              priorSession && !resumePromptDone ? "y/n"
+              : pendingTool ? "y/n"
+              : "message"
+            }
+          />
+        </Box>
       </Box>
 
       {/* Status bar */}
@@ -382,7 +377,7 @@ export function App() {
         <Text dimColor>
           {config.model} │ {authMode} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
-          {" │ Ctrl+C quit"}
+          {isStreaming && !pendingTool ? " │ Esc to interrupt" : " │ Ctrl+C quit"}
         </Text>
       </Box>
     </>
