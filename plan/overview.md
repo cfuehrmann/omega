@@ -372,10 +372,32 @@ signals that need a different approach:
 
 ## Testing Strategy
 
+### Red-Green Testing (mandatory)
+
+Every bug fix and every feature MUST follow red-green discipline:
+
+1. **Red**: Write a test that describes the desired behavior. Run it.
+   It MUST fail. If it passes immediately, the test is wrong — it's not
+   testing what you think. Rewrite until it fails.
+2. **Green**: Change production code to make the failing test pass.
+   Run all tests. They must all pass.
+3. **Commit**: Only commit when all tests are green.
+
+**Why this matters for a self-improving agent:** When the agent writes both
+the test and the fix together, the test might accidentally pass for the
+wrong reason (e.g., testing the new code path instead of the broken one,
+or not exercising the actual edge case). A test that never failed has never
+proven it catches anything. Red-green eliminates this class of false
+confidence.
+
+**The system prompt enforces this.** The agent is instructed to follow
+red-green in `config.ts`. If you see the agent skip the red step, that's
+a bug in the agent's behavior.
+
 ### Layered Approach
 
 1. **Unit tests**: Pure functions (message formatting, cost calculation,
-   tool parsing)
+   tool parsing, UI event→state mapping)
 2. **Component tests**: Ink components via ink-testing-library (render to
    string, assert on text output)
 3. **Integration tests**: Agent core + mock provider (no real API calls)
