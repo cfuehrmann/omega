@@ -427,14 +427,20 @@ export function App() {
 
         {/* Input prompt */}
         <Box>
-          <Text bold color={
-            priorSession && !resumePromptDone ? "cyan"
-            : pendingTool ? "yellow"
-            : !ready ? "red"
-            : "green"
-          }>
+          <Text
+            bold={!isStreaming || !!pendingTool}
+            dimColor={isStreaming && !pendingTool}
+            color={
+              priorSession && !resumePromptDone ? "cyan"
+              : pendingTool ? "yellow"
+              : isStreaming ? undefined
+              : !ready ? undefined
+              : "green"
+            }
+          >
             {priorSession && !resumePromptDone ? "? "
              : pendingTool ? "? "
+             : isStreaming ? "… "
              : !ready ? "… "
              : "❯ "}
           </Text>
@@ -446,6 +452,7 @@ export function App() {
             placeholder={
               priorSession && !resumePromptDone ? "y/n"
               : pendingTool ? "y/n"
+              : isStreaming ? ""
               : "message"
             }
           />
