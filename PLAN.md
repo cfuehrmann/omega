@@ -30,11 +30,9 @@ A personal AI coding agent that:
    Token usage and estimated cost are always shown.
 5. **Low latency UX** — Streaming responses from the first token. The UI must
    never block or feel sluggish.
-6. **UI-technology-independent design** — The *logical layout* (what
-   information goes where, how panes relate) is defined abstractly. The same
-   layout specification drives any renderer. If the layout should show a chat
-   pane beside an observability pane, that's true regardless of whether it's
-   rendered with Ink in a terminal or React in a browser.
+6. **Small-window-first** — The UI must work well in a small terminal window.
+   Panes are collapsible (and collapsed by default where appropriate). The
+   layout degrades gracefully. Full-screen is a luxury, not a requirement.
 7. **Self-testable** — From an early version onward, the agent must be able to
    drive itself (send inputs, observe outputs) for automated end-to-end
    testing. Features are pinned down by E2E tests so regressions are caught.
@@ -83,11 +81,12 @@ Bun is the best fit for a self-improving agent:
 - Fastest startup (~5x faster than Node+tsx) — critical when the agent
   restarts itself on every self-modification
 - Built-in test runner (can replace Vitest if desired)
+- Built-in package manager (no separate pnpm/npm needed)
 - Full compatibility with the Anthropic SDK
 - Ink 6.x + ink-testing-library 4.x confirmed working (smoke-tested)
 - npm-compatible — full ecosystem access
 
-**Verified compatibility** (smoke test 2025-02-21):
+**Verified compatibility** (2025-02-21):
 - Ink rendering, flexbox layout, borders, text styling ✅
 - `<Static>` zone ✅
 - State updates / streaming simulation ✅
@@ -95,7 +94,14 @@ Bun is the best fit for a self-improving agent:
 - `useInput` with TTY ✅
 - Clean exit ✅
 
-### UI Strategy: Terminal-First (Ink), Browser Later (Vite + React)
+### Model: Claude claude-opus-4-6 (starting point)
+
+The operator has a Claude Max account. We start with `claude-opus-4-6` as
+the fixed model. Provider abstraction (OpenAI, local LLMs, etc.) is a future
+concern — the provider adapter interface will make it possible, but we don't
+build for it now.
+
+### UI Strategy: Terminal-First (Ink), Browser Later
 
 **Terminal-first for fastest agent iteration:**
 - The agent's tools are all terminal-based (read files, write files, run
@@ -109,18 +115,9 @@ Bun is the best fit for a self-improving agent:
 - Edit → run → see output. The tightest possible loop for a text-native AI.
 
 **Browser later for richer human experience:**
-- Vite + React will be added as a second renderer
-- Same React component model, same hooks, same layout descriptor
-- The abstract layout ensures the browser UI is a bounded implementation task,
-  not a rearchitecting effort
-- Browser DevTools, visual layout inspection, etc. benefit the human operator
-
-**Why terminal-first over browser-first?**
-The primary developer of this agent is the agent itself. Browser DevTools are
-excellent for humans but invisible to the model. The agent cannot see hot
-reloads, inspect DOM elements, or use React DevTools. In the terminal, the
-agent can see everything. Optimizing for the agent's iteration speed means
-terminal-first.
+- Vite + React will be added as a second renderer much later.
+- At that point, extract an abstract layout descriptor from the Ink
+  implementation. Not before — we'd be guessing at the interface.
 
 **Architecture implication:**
 ```
@@ -128,13 +125,12 @@ Agent Core (pure TypeScript — no framework imports)
     ↓ exposes
 Agent API (function calls, events, state)
     ↓ consumed by
-├── Terminal Renderer (Ink)             ← M0
-└── Browser Renderer (Vite + React)    ← future
+Terminal Renderer (Ink)             ← now
+(Browser Renderer)                  ← much later
 ```
 
-The agent core must never import from `react`, `ink`, or `vite`. Renderers
-are thin consumers of the core API. Shared React hooks (like
-`useStreamingMessage()`) can live in a shared package used by both renderers.
+The agent core must never import from `react` or `ink`. The renderer is a
+thin consumer of the core API.
 
 ### API Interaction: Streaming SSE
 
@@ -151,6 +147,24 @@ The TypeScript SDK wraps this with `client.messages.stream()` which provides
 - **User-facing interactions**: Always streaming (low latency)
 - **Background/batch operations**: May use non-streaming for simplicity
 - **Token usage**: Available in `message_delta` event and final `usage` object
+
+### Configuration
+
+Secrets (API keys) are stored outside the repo — environment variables or
+a `.env` file in `.gitignore`. Everything else is TypeScript:
+
+```typescript
+// config.ts — checked into git
+export const config = {
+  model: 'claude-opus-4-6',
+  maxContextTokens: 100_000,     // truncation target
+  trustLevel: 'confirm-all' as const,
+  alwaysConfirm: ['rm -rf', 'sudo', 'reboot', 'dd ', 'mkfs'],
+  alwaysAllow: ['ls', 'cat', 'git status', 'git log', 'grep', 'find', 'wc'],
+}
+```
+
+This is suckless-style: the config is a source file. Change it, restart.
 
 ## Tool Strategy
 
@@ -174,11 +188,12 @@ references, package versions, etc. This is distinct from fetching a known URL
 Implementation: a lightweight search tool that queries a search engine
 (DuckDuckGo instant answers API, or similar — no API key required) and
 returns a list of results (title, URL, snippet). The agent can then fetch
-specific URLs with `curl` or a readability-mode fetcher that extracts article
-text from HTML.
+specific URLs with a readability-mode fetcher that extracts article text
+from HTML.
 
 This is a first-class tool, not an afterthought. An agent that can't search
-is guessing when it could be looking things up.
+is guessing when it could be looking things up. Added in M2 (after the agent
+can already modify itself).
 
 ### The sudo Boundary
 
@@ -225,6 +240,72 @@ patterns (sudo, rm -rf, etc.). The operator has decided they trust the agent.
 The trust level can be changed at any time via a command in the agent UI.
 The `alwaysConfirm` list is always respected regardless of trust level.
 
+## Context Window Management
+
+Claude claude-opus-4-6 has a 200k token context window. Every API call sends the
+*entire* conversation history — there's no server-side memory.
+
+The problem: after 20–30 tool calls, context can easily reach 50–100k tokens.
+Each call pays for *all* accumulated history again. Cost grows quadratically
+with conversation length.
+
+### Strategy: Truncation with Token Budget
+
+Start simple. Set a budget (e.g., 100k tokens). When the conversation exceeds
+the budget:
+
+1. **Always keep**: system prompt, tool definitions, the original task message
+2. **Always keep**: the last N turns (e.g., last 10)
+3. **Drop**: oldest middle messages first
+4. **Future enhancement**: replace dropped messages with a one-paragraph
+   summary (costs one extra API call but preserves key context)
+
+The token count is tracked per-message (the provider adapter records it).
+When building a request, the agent sums from newest to oldest and stops
+adding messages when the budget is reached.
+
+The payload viewer (Principle 11) makes this visible: the operator sees
+exactly which messages are included and which were truncated.
+
+### What This Means in Practice
+
+- Short tasks (< 20 turns): no truncation, full history
+- Medium tasks (20–50 turns): oldest turns get dropped, recent work preserved
+- Long tasks: the operator may need to start a new session with a handoff
+  summary (Principle 12)
+
+Summarization is a future enhancement. Truncation is the M1 implementation.
+
+## Error Handling
+
+### Three Categories
+
+**A. Our bugs** — Malformed request, crash during tool execution, can't parse
+a valid response. These are code errors.
+
+Strategy: surface loudly with full stack trace. Log everything. The agent (or
+operator) fixes the code. No retry — retrying a bug doesn't help.
+
+**B. Provider/infrastructure** — Rate limits (HTTP 429), server overload
+(529), network timeouts, API down. These are transient.
+
+Strategy: retry with exponential backoff. Start at 1s, double each retry, cap
+at 60s, max 5 attempts. Show the operator what's happening ("Rate limited,
+retrying in 8s..."). Log every retry. If all retries fail, surface the error
+and let the operator decide.
+
+The status bar shows provider status: 🟢 when healthy, 🟡 when retrying,
+🔴 when failed.
+
+**C. Operational limits** — Model refuses a request, output truncated
+(hit `max_tokens`), unexpected `stop_reason`, content filter triggered.
+
+Strategy: detect and report clearly. These aren't failures to retry — they're
+signals that need a different approach:
+- Truncated output → continue the response ("please continue")
+- Refusal → report to operator, let them rephrase
+- Unexpected stop_reason → log and surface
+
 ## Testing Strategy
 
 ### Layered Approach
@@ -240,110 +321,44 @@ The `alwaysConfirm` list is always respected regardless of trust level.
 5. **Self-tests**: Agent drives itself through scenarios (programmatic
    API, not UI)
 
-### Why ink-testing-library Works for Agent Self-Iteration
-
-The agent can:
-- Render any component and read the output as a string
-- Send keystrokes and input programmatically
-- Assert that the right text appears
-- Do all of this in-process, fast, no external dependencies
-
-This is vastly simpler than Playwright for the agent's purposes. The agent
-reads text natively. The UI outputs text. Perfect match.
-
-### Self-Operation
-
-The agent can also test itself via the **Agent API** directly (bypassing UI):
-- Send a message programmatically
-- Observe the response, tool calls, token usage
-- Verify correctness
-
-This is even faster than UI tests and validates core logic independent of
-rendering.
-
 ### Test Infrastructure
 
-- Test runner: `bun test` (native, fast, built-in) or Vitest
+- Test runner: `bun test` (native, fast, built-in)
 - Component testing: ink-testing-library
 - API mocking: Record/replay of SSE streams, or mock provider adapter
 - CI: Tests run on every self-modification before the new version is accepted
 
-## UI Architecture
-
-### Abstract Layout Model
-
-The layout is defined as a **logical structure** independent of rendering
-technology. This same structure drives the Ink renderer and (later) the
-browser renderer.
-
-```
-┌─ Layout ──────────────────────────────────────────────┐
-│                                                       │
-│  ┌─ Static Zone (scroll-off) ────────────────────┐   │
-│  │ Completed messages, finished tool calls,       │   │
-│  │ committed output — never re-rendered           │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  ┌─ Live Zone ────────────────────────────────────┐   │
-│  │                                                │   │
-│  │  ┌─ Main Pane ───────────────────┐             │   │
-│  │  │ Current streaming response    │  ┌─ Side ─┐ │   │
-│  │  │ Active tool execution         │  │ Tokens │ │   │
-│  │  │ User input area               │  │ Cost   │ │   │
-│  │  │                               │  │ Logs   │ │   │
-│  │  │                               │  │ API    │ │   │
-│  │  └───────────────────────────────┘  └────────┘ │   │
-│  │                                                │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-│  ┌─ Status Bar ──────────────────────────────────┐   │
-│  │ Model │ Tokens (in/out) │ Cost │ Latency      │   │
-│  └────────────────────────────────────────────────┘   │
-│                                                       │
-└───────────────────────────────────────────────────────┘
-```
-
-In Ink, the Static Zone maps directly to `<Static>`. The Live Zone is the
-re-rendering area. The Status Bar is a fixed-position bottom row.
-
-See `DESIGN-UI.md` for the full layout descriptor specification.
-
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│              Layout Descriptor (abstract)            │
-│  Defines panes, sizes, content bindings              │
-├──────────────────┬──────────────────────────────────┤
-│  Ink Renderer    │  (Future) Vite + React            │
-│  Terminal UI     │  Browser UI                       │
-├──────────────────┴──────────────────────────────────┤
+┌──────────────────────────────────────────────────────┐
+│  Ink Renderer (Terminal UI)                          │
+│  - React components consuming agent state            │
+│  - Modal input dispatcher (normal / insert)          │
+│  - Collapsible panes, status bar                     │
+├──────────────────────────────────────────────────────┤
 │                    Agent Core                        │
 │  - Conversation loop                                 │
+│  - Context window management (truncation)            │
 │  - Tool dispatch (full machine access)               │
 │  - Trust policy enforcement                          │
 │  - Self-modification orchestration                   │
 │  - Decision trace                                    │
-├─────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────┤
 │               Provider Adapter                       │
 │  - Anthropic Messages API (streaming SSE)            │
 │  - Request/response logging                          │
 │  - Token counting & cost estimation                  │
 │  - Cache control management                          │
-├─────────────────────────────────────────────────────┤
+│  - Retry with backoff (429, 529, network errors)     │
+├──────────────────────────────────────────────────────┤
 │              Observability Layer                     │
 │  - Structured log sink (file + in-memory ring)       │
 │  - API call trace store                              │
 │  - Metrics aggregation                               │
 │  - Self-analysis hooks (agent can query its logs)    │
 │  - Log projection (compact view for self-analysis)   │
-├─────────────────────────────────────────────────────┤
-│              Test Harness                            │
-│  - ink-testing-library (components + E2E)            │
-│  - Mock provider adapter (record/replay)             │
-│  - Self-operation interface (agent API)              │
-│  - E2E scenario runner                               │
-└─────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────┘
 ```
 
 ## Log Projection for Self-Analysis
@@ -407,30 +422,44 @@ a specific entry, it fetches it by ID or hash.
 
 ## Self-Modification Strategy
 
-The agent needs to modify itself and validate the changes. The approach:
+The agent modifies its own source code and validates the changes using git
+as the safety net.
 
-1. **Edit** — Agent writes changes to its own source files (tool use)
-2. **Validate** — Agent runs its test suite against the modified code
-3. **Spawn** — Agent starts a new process with the modified code
-4. **Smoke test** — New process runs a self-test scenario
-5. **Swap** — If all checks pass, the new process takes over; old one exits
-6. **Rollback** — If any check fails, changes are reverted (git)
+### Workflow (simple, initial)
 
-State (conversation history, config) is persisted to disk so it survives
-process restarts.
+1. **Edit** — Agent writes changes to source files (uncommitted)
+2. **Test** — Agent runs `bun test` against the modified code
+3. **Commit or revert**:
+   - Tests pass → `git add -A && git commit -m "..."`
+   - Tests fail → `git checkout .` (revert all changes)
+4. **Restart** — Agent restarts itself with the new (or reverted) code
 
-Git is integral: every self-modification is a commit. Failed modifications
-are reverted. The git log becomes an audit trail of the agent's evolution.
+The working tree is the experiment. Committed code is stable. This is simple
+and sufficient for early self-improvement.
+
+### Future Enhancement: Two-Instance Comparison
+
+Later, the agent could run two instances side-by-side — the stable committed
+version and the experimental modified version — and compare behavior before
+committing. This adds complexity (port conflicts, shared state) and is
+deferred until the simple restart flow feels limiting.
+
+### Git Hygiene
+
+- Every self-modification is a commit with a descriptive message
+- The git log is an audit trail of the agent's evolution
+- State (conversation history, config) is persisted to disk so it survives
+  restarts
+- `.gitignore` excludes logs, secrets, and ephemeral state
 
 ## Stable Core Contract
 
-From M1 onward, the following interfaces are frozen (backwards-compatible
+From M2 onward, the following interfaces are frozen (backwards-compatible
 changes only):
 
 - **Tool interface**: How tools are defined, dispatched, and return results
 - **Provider adapter interface**: How the agent talks to the LLM
 - **Observability hooks**: How logs and metrics are emitted
-- **Self-operation interface**: How the agent drives itself for testing
 - **Trust policy interface**: How trust levels and confirmation work
 
 This guarantees that even if the agent introduces a bug in surface code, it
@@ -443,74 +472,75 @@ retains the ability to:
 
 ## Milestones
 
-### M0 — Minimal Viable Agent (bootstrap target)
-- [ ] Project setup (TypeScript, Ink, Anthropic SDK, `bun test`)
-- [ ] Agent core: send messages to Anthropic API with streaming
-- [ ] Terminal UI: display streamed response in Ink
-- [ ] Modal input: normal mode / insert mode (minimal, Helix-inspired)
-- [ ] Model payload viewer (collapsible, shows what goes to the model)
-- [ ] Log every API call with token counts
-- [ ] Status bar showing mode + model + token usage
-- [ ] First E2E test using ink-testing-library
+### M0 — Talking to the Model
+- [ ] Project setup: `bun init`, Ink, Anthropic SDK
+- [ ] Agent core: send a message to Claude claude-opus-4-6, stream the response
+- [ ] Terminal UI: display the streamed response in Ink
+- [ ] Show token count and cost after each response
+- [ ] Basic input: type a message, send it, see the response
+- [ ] Conversation history (in-memory, multi-turn works)
 
-### M1 — Self-Improvement Loop (stable core target)
+This is the bootstrap target. After M0, we are talking to the model through
+our own tool.
+
+### M1 — Basic Tools + Trust
 - [ ] Tools: read file, write file, run shell command, list files
-- [ ] Tool: web search (DuckDuckGo or similar, no API key)
-- [ ] Tool: fetch URL (readability-mode, extract text from HTML)
 - [ ] Trust policy: confirm-all mode (operator approves every command)
-- [ ] Agent can modify its own code
-- [ ] Spawn-validate-swap self-modification flow
-- [ ] Structured logging (JSON lines)
+- [ ] Tool results displayed in the UI
+- [ ] Agent can use tools in a loop (model calls tool → gets result → responds)
+- [ ] Basic error handling (retry with backoff for provider errors)
+
+After M1, the agent can read and modify code, run commands, and the operator
+approves everything.
+
+### M2 — Self-Improvement Loop
+- [ ] Agent can modify its own source files
+- [ ] Agent runs `bun test` to validate changes
+- [ ] Git commit on success, git revert on failure
+- [ ] Agent restarts itself after successful self-modification
+- [ ] Structured logging (JSON lines to disk)
 - [ ] Frozen core interfaces
-- [ ] Test suite the agent runs on itself before accepting changes
+- [ ] Context window management (truncation with token budget)
 - [ ] Cost/token tracking with session aggregation
 
-### M2 — Full Machine Agent
+After M2, the agent can improve itself. This is the stable core target.
+
+### M3 — Observability + Rich UI
+- [ ] Log projection for self-analysis
+- [ ] Model payload viewer (collapsible, shows what goes to the model)
+- [ ] Modal input: normal mode / insert mode (Helix-inspired)
+- [ ] Side pane with observability data (collapsible, collapsed by default)
+- [ ] Status bar: mode, model, tokens, cost, latency, provider health
+- [ ] Scrollable history for completed turns
+- [ ] Conversation history persistence to disk
+- [ ] Keyboard shortcuts
+
+### M4 — Full Machine Agent
 - [ ] Trust levels: confirm-all → confirm-destructive → auto
-- [ ] Trust policy configurable at runtime (command in UI)
+- [ ] Trust policy configurable at runtime
 - [ ] `alwaysConfirm` / `alwaysAllow` pattern lists
 - [ ] sudo handling: detect need, prompt operator, execute
+- [ ] Web search tool (DuckDuckGo, no API key)
+- [ ] URL fetcher (readability-mode, extract text from HTML)
 - [ ] Rich command output display (ANSI, truncation, scrolling)
-- [ ] Abstract layout descriptor driving Ink rendering
-- [ ] Side pane with observability data (toggleable)
-- [ ] Scrollable history for completed turns
-- [ ] Conversation history persistence
-- [ ] Keyboard shortcuts / command palette
 
-### M3 — Coding Agent Features
+### M5 — Coding Agent Features
 - [ ] Project context awareness (file tree, git status)
 - [ ] Intelligent file search (grep, glob)
 - [ ] Multi-file editing with diff review
 - [ ] Test execution and error analysis
 - [ ] Agent self-tests its coding features
+- [ ] E2E tests using ink-testing-library
 
-### M4 — Browser UI (rich human experience)
-- [ ] Vite + React renderer consuming the same layout descriptor
-- [ ] Browser DevTools for human debugging
-- [ ] Parity with terminal UI features
-- [ ] Playwright E2E tests for browser
-
-## Future Considerations
-
-These are not planned for any milestone yet but should not be designed out.
-
-### Voice Input
-
-The operator dictates into the agent by voice. A local speech-to-text model
-(already prototyped in a separate repository) transcribes and feeds text into
-the input. Alternatively, the main model's provider could be used for
-transcription if it offers better context-aware accuracy. The input interface
-should accept text from any source — keyboard, pipe, or external process —
-so voice integration is a matter of wiring, not architecture.
-
-### Helix Keymap Details
-
-The full keymap (selections, motions, text objects, multiple cursors) is
-deferred. The relevant architectural constraint is: the input layer must
-support modal dispatch (keystrokes routed differently based on current mode)
-and the UI must indicate the active mode visibly.
+### Future
+- [ ] Browser UI (Vite + React, abstract layout extracted from Ink impl)
+- [ ] Provider abstraction (OpenAI, local LLMs)
+- [ ] Voice input (local STT or provider transcription)
+- [ ] Helix keymap details (selections, motions, text objects)
+- [ ] Context summarization (replace truncated messages with summaries)
+- [ ] Two-instance self-modification comparison
 
 ## Next Steps
 
-1. **Set up project** — `bun init`, Ink, Anthropic SDK, `bun test`
-2. **Build M0** — minimal streaming chat with token logging in the terminal
+1. **Set up project** — `bun init`, add Ink + React + Anthropic SDK
+2. **Build M0** — minimal streaming chat in the terminal
