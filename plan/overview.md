@@ -40,7 +40,7 @@ you are modifying yourself.
 - **M3 is in progress.** Conversation history persistence is done:
   `src/session.ts` saves history to `~/.local/share/omega/sessions/` after
   every turn; `ui.tsx` offers a resume prompt on startup. The `Agent` class
-  accepts an injectable `StreamProvider` for testing. 132 tests passing.
+  accepts an injectable `StreamProvider` for testing. 148 tests passing.
 - **Test coverage audit completed.** The test suite is layered correctly:
   unit tests pin pure functions with boundary cases; integration tests
   (mock provider) verify the full `sendMessage` loop, tool dispatch, session
@@ -675,15 +675,26 @@ After M2, the agent can improve itself. This is the stable core target.
       one at a time via Wayland. Further diagnosis needed to understand
       exactly where truncation occurs and whether additional buffering is
       required in `fast-text-input.tsx`.
-- [ ] **UI tests** ← NEXT (only remaining untested layer)
-      - `ui.tsx` has zero automated tests: resume prompt, tool confirmation,
-        streaming display, Esc interrupt are manual-only right now
-      - Use `ink-testing-library`: render `<App>`, drive via `stdin.write()`,
-        assert on rendered text output
-      - Key scenarios: resume prompt Y/N, tool pending → approve/reject,
-        streaming text appears, Esc interrupts
+- [ ] **API call visibility** ← NEXT
+      - Two-part feature: turn separators + payload inspector panel.
+      - Add `api_call_start` event to `AgentEvent` carrying a snapshot of
+        the full `streamParams` (model, system prompt, tool definitions,
+        messages, estimated token count). Emitted just before each stream
+        call inside the agentic loop.
+      - **Turn separators**: handle `api_call_start` in `ui.tsx` — push a
+        dim `── API call #N ─── ~X tokens ───` line into the static zone so
+        the boundary between every round-trip is visible in the scrollback.
+      - **Payload panel**: press `p` (while not in the input box) to toggle
+        a `PayloadPanel` component in the live zone. Shows the last API
+        call's full context — model, tokens, cost, system prompt size, tool
+        count, and each conversation message summarised. Sub-sections
+        expandable individually. `p` again or `Esc` closes it.
+      - Payload formatting logic is pure/unit-tested. Panel is a new Ink
+        component in `ui.tsx`.
+- [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
+      `ink-testing-library` to cover: resume prompt, tool confirmation,
+      streaming display, Esc interrupt, payload panel toggle.
 - [ ] Log projection for self-analysis
-- [ ] Model payload viewer (collapsible, shows what goes to the model)
 - [ ] Modal input: normal mode / insert mode (Helix-inspired)
 - [ ] Side pane with observability data (collapsible, collapsed by default)
 - [ ] Status bar: mode, model, tokens, cost, latency, provider health
@@ -717,34 +728,14 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Auto-approve: pipes and multi-part compound commands** ← MOST URGENT
-   The current `isAutoApproved` only splits on `&&` and `;`. Pipe (`|`)
-   chains like `cd src && grep -r foo . | head -20` are not handled — the
-   whole command fails the check because `grep … | head -20` doesn't match
-   any single prefix. Common patterns that incorrectly require confirmation:
-   - `cd <subdir> && grep … | head -n`
-   - `grep … | head -n`
-   - `cat file | grep pattern`
-   - `cmd1 && cmd2 && cmd3` (three-part chains)
-   Fix: extend the compound-command splitter to also split on `|`, then
-   check each segment. A pipe segment is safe if every command in it is
-   individually approved. Note: pipe introduces no new privileges — it just
-   connects stdout to stdin between already-approved commands.
-   Also audit the approved-prefix list for any gaps (e.g. `head`, `tail`,
-   `wc` are listed but `sort`, `uniq`, `cut`, `tr`, `sed`, `awk` are not —
-   decide policy for these read-only text processors).
+1. **API call visibility** ← NEXT — turn separators + `p`-key payload panel.
+   See M3 checklist above for full spec.
 
-2. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
-   via the Wayland compositor. The `useEffect` fix prevents the React
-   re-render race from truncating `valueRef`, but the truncation still occurs.
-   Next step: add debug logging to `fast-text-input.tsx` to capture every
-   `useInput` call and `useEffect` fire during a dictation session, then
-   reproduce with `wtype` directly to pinpoint the exact drop site.
+2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
 
-3. **UI tests** (`ui.tsx`) — the last untested layer. Use `ink-testing-library`
-   to render `<App>` with a mock agent, drive input via `stdin.write()`, assert
-   on rendered text. Key scenarios: resume prompt, tool confirmation, streaming
-   display, Esc interrupt.
+3. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
+   via Wayland; truncation still occurs despite the `useEffect` fix. Needs
+   debug logging to pinpoint the drop site.
 
-4. **Remaining M3 items** — log projection, payload viewer, modal input,
-   observability pane, scrollable history, keyboard shortcuts.
+4. **Remaining M3 items** — log projection, modal input, observability pane,
+   scrollable history, keyboard shortcuts.

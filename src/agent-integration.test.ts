@@ -683,3 +683,67 @@ describe("Agent.sendMessage — abort", () => {
     expect(history[0].role).toBe("user");
   });
 });
+
+// ---------------------------------------------------------------------------
+// api_call_start event
+// ---------------------------------------------------------------------------
+
+describe("api_call_start event", () => {
+  it("emits api_call_start before the first API call", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const startEvents = events.filter((e) => e.type === "api_call_start");
+    expect(startEvents.length).toBe(1);
+  });
+
+  it("api_call_start carries model, system, tools, messages, and callNumber", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const e = events.find((e) => e.type === "api_call_start") as any;
+    expect(e).toBeDefined();
+    expect(typeof e.model).toBe("string");
+    expect(typeof e.system).toBe("string");
+    expect(Array.isArray(e.tools)).toBe(true);
+    expect(Array.isArray(e.messages)).toBe(true);
+    expect(typeof e.callNumber).toBe("number");
+    expect(e.callNumber).toBe(1);
+  });
+
+  it("emits api_call_start once per round-trip in a tool loop", async () => {
+    // First call: tool_use; second call: text response
+    let callCount = 0;
+    const mockProvider: StreamProvider = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("list_files"),
+          toolUseMessage("t1", "list_files", { path: "." })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "list files");
+    const startEvents = events.filter((e) => e.type === "api_call_start");
+    expect(startEvents.length).toBe(2);
+    expect((startEvents[0] as any).callNumber).toBe(1);
+    expect((startEvents[1] as any).callNumber).toBe(2);
+  });
+
+  it("api_call_start messages snapshot is correct (not a live reference)", async () => {
+    // The messages array in api_call_start should reflect history AT CALL TIME,
+    // not after further mutations (i.e. it must be a snapshot copy).
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("reply"), textMessage("reply"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hello");
+    const e = events.find((ev) => ev.type === "api_call_start") as any;
+    // At call time, history had 1 message (the user message)
+    expect(e.messages.length).toBe(1);
+    expect(e.messages[0].role).toBe("user");
+  });
+});

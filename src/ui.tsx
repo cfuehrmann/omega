@@ -74,6 +74,17 @@ export function App() {
   useEffect(() => {
     agent.init().then(async (mode) => {
       setAuthMode(mode);
+      // Show auth mode as first completed item so it's always visible
+      setCompletedItems((prev) => [
+        ...prev,
+        {
+          id: prev.length,
+          type: mode === "Claude Max" ? "turn" as const : "error" as const,
+          text: mode === "Claude Max"
+            ? `✓ Authenticated: ${mode}`
+            : `⚠ Auth: ${mode}${mode.includes("api-key") ? " (pay-per-token)" : ""}`,
+        },
+      ]);
       // Check for a resumable session before marking ready
       const prior = await agent.checkPriorSession();
       if (prior && prior.history.length > 0) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { estimateCost, isAutoApproved, isRetryable, truncateHistory, PRICING } from "./agent.js";
+import { estimateCost, isAutoApproved, isRetryable, truncateHistory, PRICING, formatPayloadSummary } from "./agent.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // ---------------------------------------------------------------------------
@@ -410,5 +410,92 @@ describe("truncateHistory", () => {
 
     // Must be under budget (100K tokens * 4 chars/token = 400K chars)
     expect(resultSize).toBeLessThan(400_000);
+  });
+});
+
+// --- formatPayloadSummary ---
+
+describe("formatPayloadSummary", () => {
+  const basePayload = {
+    model: "claude-sonnet-4-6",
+    system: "You are Omega. ".repeat(50), // ~750 chars
+    tools: [{ name: "read_file" }, { name: "write_file" }, { name: "run_command" }] as any[],
+    messages: [
+      { role: "user" as const, content: "Hello" },
+      { role: "assistant" as const, content: "Hi there" },
+      { role: "user" as const, content: "Do something" },
+    ],
+  };
+
+  it("returns an object with estimatedTokens, systemChars, toolCount, messageCount", () => {
+    const s = formatPayloadSummary(basePayload);
+    expect(typeof s.estimatedTokens).toBe("number");
+    expect(typeof s.systemChars).toBe("number");
+    expect(s.toolCount).toBe(3);
+    expect(s.messageCount).toBe(3);
+  });
+
+  it("estimatedTokens is positive and proportional to content size", () => {
+    const s = formatPayloadSummary(basePayload);
+    expect(s.estimatedTokens).toBeGreaterThan(0);
+    // system is ~750 chars → ~187 tokens; messages are small; tools are small
+    // total should be well under 1000 for this small payload
+    expect(s.estimatedTokens).toBeLessThan(1000);
+  });
+
+  it("systemChars matches the system prompt length", () => {
+    const s = formatPayloadSummary(basePayload);
+    expect(s.systemChars).toBe(basePayload.system.length);
+  });
+
+  it("returns message summaries with role and a short preview", () => {
+    const s = formatPayloadSummary(basePayload);
+    expect(Array.isArray(s.messageSummaries)).toBe(true);
+    expect(s.messageSummaries.length).toBe(3);
+    expect(s.messageSummaries[0].role).toBe("user");
+    expect(typeof s.messageSummaries[0].preview).toBe("string");
+    expect(s.messageSummaries[0].preview.length).toBeGreaterThan(0);
+  });
+
+  it("preview is truncated for long messages", () => {
+    const longPayload = {
+      ...basePayload,
+      messages: [{ role: "user" as const, content: "x".repeat(500) }],
+    };
+    const s = formatPayloadSummary(longPayload);
+    expect(s.messageSummaries[0].preview.length).toBeLessThan(500);
+  });
+
+  it("tool_use blocks are described in the message summary", () => {
+    const withToolUse = {
+      ...basePayload,
+      messages: [
+        {
+          role: "assistant" as const,
+          content: [
+            { type: "text", text: "I'll read the file." },
+            { type: "tool_use", id: "t1", name: "read_file", input: { path: "src/agent.ts" } },
+          ],
+        },
+      ],
+    };
+    const s = formatPayloadSummary(withToolUse);
+    expect(s.messageSummaries[0].preview).toContain("read_file");
+  });
+
+  it("tool_result blocks are described in the message summary", () => {
+    const withToolResult = {
+      ...basePayload,
+      messages: [
+        {
+          role: "user" as const,
+          content: [
+            { type: "tool_result", tool_use_id: "t1", content: "file contents here" },
+          ],
+        },
+      ],
+    };
+    const s = formatPayloadSummary(withToolResult);
+    expect(s.messageSummaries[0].preview).toContain("tool_result");
   });
 });

@@ -15,9 +15,86 @@ export interface TurnMetrics {
   totalMs: number;
 }
 
+export interface ApiCallPayload {
+  model: string;
+  system: string;
+  tools: Anthropic.Tool[];
+  messages: Anthropic.MessageParam[];
+}
+
+export interface PayloadSummary {
+  estimatedTokens: number;
+  systemChars: number;
+  toolCount: number;
+  messageCount: number;
+  messageSummaries: Array<{ role: string; preview: string; tokenEstimate: number }>;
+}
+
+/** Summarise an API payload for display — pure function, no side effects. */
+export function formatPayloadSummary(payload: ApiCallPayload): PayloadSummary {
+  const PREVIEW_LEN = 120;
+
+  function estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+
+  function previewMessage(msg: Anthropic.MessageParam): string {
+    if (typeof msg.content === "string") {
+      return msg.content.length > PREVIEW_LEN
+        ? msg.content.slice(0, PREVIEW_LEN) + "…"
+        : msg.content;
+    }
+    if (!Array.isArray(msg.content)) return "(empty)";
+    const parts: string[] = [];
+    for (const block of msg.content) {
+      const b = block as any;
+      if (b.type === "text") {
+        const t = b.text as string;
+        parts.push(t.length > PREVIEW_LEN ? t.slice(0, PREVIEW_LEN) + "…" : t);
+      } else if (b.type === "tool_use") {
+        parts.push(`[tool_use: ${b.name}]`);
+      } else if (b.type === "tool_result") {
+        const content = typeof b.content === "string" ? b.content : JSON.stringify(b.content);
+        const preview = content.length > 60 ? content.slice(0, 60) + "…" : content;
+        parts.push(`[tool_result: ${preview}]`);
+      } else {
+        parts.push(`[${b.type}]`);
+      }
+    }
+    return parts.join(" ") || "(empty)";
+  }
+
+  function msgText(msg: Anthropic.MessageParam): string {
+    if (typeof msg.content === "string") return msg.content;
+    return JSON.stringify(msg.content);
+  }
+
+  const systemTokens = estimateTokens(payload.system);
+  const toolsTokens = estimateTokens(JSON.stringify(payload.tools));
+  const messagesTokens = payload.messages.reduce(
+    (sum, m) => sum + estimateTokens(msgText(m)),
+    0
+  );
+
+  const messageSummaries = payload.messages.map((m) => ({
+    role: m.role,
+    preview: previewMessage(m),
+    tokenEstimate: estimateTokens(msgText(m)),
+  }));
+
+  return {
+    estimatedTokens: systemTokens + toolsTokens + messagesTokens,
+    systemChars: payload.system.length,
+    toolCount: payload.tools.length,
+    messageCount: payload.messages.length,
+    messageSummaries,
+  };
+}
+
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "status"; message: string }
+  | { type: "api_call_start"; callNumber: number; model: string; system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_pending"; id: string; name: string; formatted: string }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
