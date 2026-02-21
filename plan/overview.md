@@ -226,8 +226,8 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Input prompt blocked-state visual** ← NEXT (small fix)
-2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
+1. **UI tests** ← NEXT — ink-testing-library coverage for `ui.tsx`.
+2. **Trust levels** — confirm-destructive mode so auto-approve is broader.
 
 2. **Trust levels** — confirm-destructive mode so auto-approve is broader.
 
