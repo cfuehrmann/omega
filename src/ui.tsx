@@ -149,7 +149,7 @@ export function App() {
 
       let fullText = "";
       // Audit log: one entry per tool call this turn, shown as a summary at turn_end
-      const auditLog: Array<{ name: string; ok: boolean; ms: number }> = [];
+      const auditLog: Array<{ formatted: string; ok: boolean; ms: number }> = [];
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -170,9 +170,10 @@ export function App() {
               }).estimatedTokens;
               setTokenDelta(formatTokenDelta(est, lastCallTokens));
               setLastCallTokens(est);
+              const timestamp = new Date().toLocaleTimeString("en-GB");
               addItem(
                 "separator",
-                `▶ API call #${event.callNumber}  ~${est.toLocaleString()} tokens`
+                `▶ API call #${event.callNumber}  ~${est.toLocaleString()} tok  ${timestamp}`
               );
               break;
             }
@@ -193,7 +194,7 @@ export function App() {
 
             case "tool_result":
               auditLog.push({
-                name: event.name,
+                formatted: event.formatted,
                 ok: !event.result.isError,
                 ms: Math.round(event.result.durationMs),
               });
@@ -201,13 +202,14 @@ export function App() {
               break;
 
             case "metrics":
-              // Per-API-call metrics — not shown in UI, aggregated in turn_end
+              // Show duration as a dim line after each API call separator
+              addItem("tool_result", "", `  ${formatMs(event.metrics.totalMs)}`);
               break;
 
             case "turn_end": {
               const m = event.metrics;
               const auditParts = auditLog.map(
-                (t) => `${t.name} ${t.ok ? "✓" : "✗"} ${t.ms}ms`
+                (t) => `${t.formatted} ${t.ok ? "✓" : "✗"} ${t.ms}ms`
               );
               const toolSummary = auditParts.length > 0
                 ? `  🔧 ${auditParts.join("  ·  ")}`

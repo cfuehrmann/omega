@@ -865,3 +865,72 @@ describe("Agent — turn_end event", () => {
     expect(turnEnd.toolCalls).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// tool_result carries formatted string
+// ---------------------------------------------------------------------------
+
+describe("Agent — tool_result formatted field", () => {
+  it("tool_result event carries the formatted string from formatToolCall", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("list_files"),
+          toolUseMessage("t1", "list_files", { path: "src/" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "list files");
+    const result = events.find((e) => e.type === "tool_result") as any;
+    expect(result.formatted).toBe("list_files: src/");
+  });
+
+  it("tool_result formatted includes command for run_command", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("run_command"),
+          toolUseMessage("t1", "run_command", { command: "echo hi" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "test");
+    const result = events.find((e) => e.type === "tool_result") as any;
+    expect(result.formatted).toBe("run_command: echo hi");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// metrics carries durationMs and startedAt
+// ---------------------------------------------------------------------------
+
+describe("Agent — metrics timing fields", () => {
+  it("metrics event carries durationMs", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const m = events.find((e) => e.type === "metrics") as any;
+    expect(typeof m.metrics.totalMs).toBe("number");
+    expect(m.metrics.totalMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("metrics event carries startedAt timestamp string", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const m = events.find((e) => e.type === "metrics") as any;
+    expect(typeof m.startedAt).toBe("string");
+    // Should be a valid time string HH:MM:SS
+    expect(m.startedAt).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+});

@@ -96,8 +96,8 @@ export type AgentEvent =
   | { type: "status"; message: string }
   | { type: "api_call_start"; callNumber: number; model: string; system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
-  | { type: "tool_result"; id: string; name: string; result: ToolResult }
-  | { type: "metrics"; metrics: TurnMetrics }
+  | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
+  | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[] }
   | { type: "error"; error: string }
   | { type: "interrupted" };
@@ -460,6 +460,7 @@ export class Agent {
       continueLoop = false;
 
       const startTime = performance.now();
+      const startedAt = new Date().toLocaleTimeString("en-GB"); // HH:MM:SS
       let ttftMs: number | null = null;
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
@@ -641,6 +642,7 @@ export class Agent {
             type: "tool_result",
             id: toolUse.id,
             name: toolUse.name,
+            formatted,
             result,
           };
 
@@ -677,6 +679,7 @@ export class Agent {
       // Emit metrics for this turn
       yield {
         type: "metrics",
+        startedAt,
         metrics: {
           inputTokens: turnInputTokens,
           outputTokens: turnOutputTokens,
