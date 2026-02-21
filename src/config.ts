@@ -11,6 +11,7 @@ export const config = {
     "ls", "cat", "head", "tail", "wc",
     "grep", "rg", "find", "fd",
     "git status", "git log", "git diff", "git show", "git branch",
+    "git add", "git commit", "git reset", "git checkout", "git clean", "git rev-parse",
     "echo", "which", "type", "file",
     "bun test",
   ] as string[],

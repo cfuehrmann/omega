@@ -79,8 +79,28 @@ describe("isAutoApproved", () => {
     expect(isAutoApproved("run_command", { command: "rm -rf ." })).toBe(false);
   });
 
-  it("does NOT auto-approve 'git commit'", () => {
-    expect(isAutoApproved("run_command", { command: "git commit -m test" })).toBe(false);
+  it("auto-approves 'git add -A' (self-modification flow)", () => {
+    expect(isAutoApproved("run_command", { command: "git add -A" })).toBe(true);
+  });
+
+  it("auto-approves 'git commit -m ...' (self-modification flow)", () => {
+    expect(isAutoApproved("run_command", { command: 'git commit -m "fix: something"' })).toBe(true);
+  });
+
+  it("auto-approves 'git reset HEAD .' (revert flow)", () => {
+    expect(isAutoApproved("run_command", { command: "git reset HEAD ." })).toBe(true);
+  });
+
+  it("auto-approves 'git checkout .' (revert flow)", () => {
+    expect(isAutoApproved("run_command", { command: "git checkout ." })).toBe(true);
+  });
+
+  it("auto-approves 'git clean -fd' (revert flow)", () => {
+    expect(isAutoApproved("run_command", { command: "git clean -fd" })).toBe(true);
+  });
+
+  it("auto-approves 'git rev-parse --short HEAD' (commit hash)", () => {
+    expect(isAutoApproved("run_command", { command: "git rev-parse --short HEAD" })).toBe(true);
   });
 
   it("does NOT auto-approve unknown tool", () => {
