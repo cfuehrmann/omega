@@ -114,6 +114,35 @@ describe("isAutoApproved", () => {
   it("does NOT auto-approve missing command", () => {
     expect(isAutoApproved("run_command", {})).toBe(false);
   });
+
+  // Compound commands: cd into project subdir + safe command
+  it("auto-approves 'cd src && grep ...'", () => {
+    expect(isAutoApproved("run_command", { command: "cd src && grep -r foo ." })).toBe(true);
+  });
+
+  it("auto-approves 'cd src/lib && ls'", () => {
+    expect(isAutoApproved("run_command", { command: "cd src/lib && ls" })).toBe(true);
+  });
+
+  it("auto-approves 'cd src && bun test'", () => {
+    expect(isAutoApproved("run_command", { command: "cd src && bun test" })).toBe(true);
+  });
+
+  it("does NOT auto-approve 'cd /etc && grep ...' (absolute path outside project)", () => {
+    expect(isAutoApproved("run_command", { command: "cd /etc && grep foo ." })).toBe(false);
+  });
+
+  it("does NOT auto-approve 'cd .. && grep ...' (escapes project dir)", () => {
+    expect(isAutoApproved("run_command", { command: "cd .. && grep foo ." })).toBe(false);
+  });
+
+  it("does NOT auto-approve 'cd src && rm -rf .' (safe cd, dangerous second command)", () => {
+    expect(isAutoApproved("run_command", { command: "cd src && rm -rf ." })).toBe(false);
+  });
+
+  it("does NOT auto-approve 'cd /tmp && ls' (absolute path)", () => {
+    expect(isAutoApproved("run_command", { command: "cd /tmp && ls" })).toBe(false);
+  });
 });
 
 // --- Retry logic ---

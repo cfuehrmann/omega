@@ -33,15 +33,46 @@ type ConfirmFn = (
 
 // --- Auto-approve logic ---
 
+/** Returns true if a single (non-compound) command matches an approved prefix. */
+function isSingleCommandApproved(cmd: string): boolean {
+  const trimmed = cmd.trim();
+  return config.autoApproveCommands.some(
+    (prefix) => trimmed === prefix || trimmed.startsWith(prefix + " ")
+  );
+}
+
+/**
+ * Returns true if a `cd` argument is safe — i.e. a relative path that stays
+ * within the project directory (no absolute paths, no `..` components).
+ */
+function isSafeCdArg(arg: string): boolean {
+  if (!arg) return false;
+  // Reject absolute paths
+  if (arg.startsWith("/") || arg.startsWith("~")) return false;
+  // Reject any path component that is ".."
+  const parts = arg.split(/[/\\]/);
+  if (parts.some((p) => p === "..")) return false;
+  return true;
+}
+
 export function isAutoApproved(toolName: string, toolInput: any): boolean {
   if (config.autoApproveTools.includes(toolName)) {
     return true;
   }
   if (toolName === "run_command" && toolInput?.command) {
     const cmd = toolInput.command.trim();
-    return config.autoApproveCommands.some(
-      (prefix) => cmd === prefix || cmd.startsWith(prefix + " ")
-    );
+
+    // Split compound commands on && or ; and check each part individually.
+    // Every part must be independently approved. A `cd` into a relative
+    // project subdirectory (no absolute path, no ..) counts as approved.
+    const parts = cmd.split(/&&|;/).map((p: string) => p.trim()).filter(Boolean);
+    return parts.every((part: string) => {
+      if (isSingleCommandApproved(part)) return true;
+      // Allow: cd <relative-safe-path>
+      const cdMatch = part.match(/^cd\s+(\S+)$/);
+      if (cdMatch) return isSafeCdArg(cdMatch[1]);
+      return false;
+    });
   }
   return false;
 }
