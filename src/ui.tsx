@@ -172,15 +172,18 @@ export function App() {
     [agent, isStreaming, pendingTool, addItem]
   );
 
-  useInput((_, key) => {
+  useInput((input, key) => {
     if (key.escape) {
+      // Reject pending tool confirmation
       if (pendingTool && confirmResolveRef.current) {
         confirmResolveRef.current(false);
         confirmResolveRef.current = null;
         setPendingTool(null);
-      } else {
-        exit();
       }
+    }
+    // Ctrl+C to quit (Ink sends this as input === 'c' when ctrl is true)
+    if (input === "c" && key.ctrl) {
+      exit();
     }
   });
 
@@ -260,7 +263,7 @@ export function App() {
         <Text dimColor>
           {config.model} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
-          {" │ Esc to quit"}
+          {" │ Ctrl+C quit"}
         </Text>
       </Box>
     </>
