@@ -181,15 +181,14 @@ After M2, the agent can improve itself. This is the stable core target.
       - Fix: while streaming (and not pending tool confirmation), show a
         dim `… ` glyph instead of the green `❯`, and dim the placeholder
         text. The `❯` only appears when the user can actually type.
-- [x] **API call inspector UX fixes** ← just completed
+- [x] **API call inspector UX fixes**
       - Bug 1: `i`/`q` shortcuts fired while user was typing in the prompt
         (useInput fires for all keypresses regardless of TextInput focus).
-        Fix: gate on `input.length === 0` — only handle when prompt is empty.
-      - Bug 2: separator said "Turn N" but each separator = one API call,
-        and "API call" is the correct term. Renamed to "API call #N".
-      - Bug 3: inspector panel title said "API call #N" but no affordance
-        to navigate between calls. Clarified: panel always shows the most
-        recent API call; the number in the title makes that clear.
+        Fix: extracted `shouldHandleShortcut()` pure function to `ui-logic.ts`
+        (10 unit tests); gates on `inputState.length === 0`.
+      - Bug 2: separator said "Turn N" → renamed to "API call #N".
+      - Bug 3: panel always shows most recent API call; call number in title
+        makes that clear. No navigation needed for now.
 - [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
       `ink-testing-library` to cover: resume prompt, tool confirmation,
       streaming display, Esc interrupt, payload panel toggle.
@@ -235,7 +234,7 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **Automated plan maintenance** ← NEXT (meta)
+1. **Automated plan maintenance** ← NEXT
    The operator has to manually ask me to update the plan after each change,
    and the Next Steps section keeps getting stale/duplicated. Options to
    explore:
