@@ -164,22 +164,16 @@ After M2, the agent can improve itself. This is the stable core target.
       one at a time via Wayland. Further diagnosis needed to understand
       exactly where truncation occurs and whether additional buffering is
       required in `fast-text-input.tsx`.
-- [ ] **API call visibility** ← NEXT
-      - Two-part feature: turn separators + payload inspector panel.
-      - Add `api_call_start` event to `AgentEvent` carrying a snapshot of
-        the full `streamParams` (model, system prompt, tool definitions,
-        messages, estimated token count). Emitted just before each stream
-        call inside the agentic loop.
-      - **Turn separators**: handle `api_call_start` in `ui.tsx` — push a
-        dim `── API call #N ─── ~X tokens ───` line into the static zone so
-        the boundary between every round-trip is visible in the scrollback.
-      - **Payload panel**: press `p` (while not in the input box) to toggle
-        a `PayloadPanel` component in the live zone. Shows the last API
-        call's full context — model, tokens, cost, system prompt size, tool
-        count, and each conversation message summarised. Sub-sections
-        expandable individually. `p` again or `Esc` closes it.
-      - Payload formatting logic is pure/unit-tested. Panel is a new Ink
-        component in `ui.tsx`.
+- [x] **API call visibility**
+      - `api_call_start` event emitted by `Agent` before each stream call,
+        carrying a snapshot of `model`, `system`, `tools`, `messages`, and
+        `callNumber`. 4 integration tests (all pass).
+      - **Turn separators**: dim `── API call #N ── ~X tokens ──` line
+        pushed into the static zone on each `api_call_start`.
+      - **Payload panel**: press `p` (when idle) to toggle `PayloadPanel`
+        in the live zone. Shows model, est. tokens, tool count, system chars,
+        and per-message summaries. `p` again or `Esc` closes it.
+      - Status bar shows `p payload` hint after first API call.
 - [ ] **UI tests** — `ui.tsx` has zero automated tests. Use
       `ink-testing-library` to cover: resume prompt, tool confirmation,
       streaming display, Esc interrupt, payload panel toggle.
@@ -217,10 +211,7 @@ After M2, the agent can improve itself. This is the stable core target.
 
 ## Next Steps
 
-1. **API call visibility** ← NEXT — turn separators + `p`-key payload panel.
-   See M3 checklist above for full spec.
-
-2. **UI tests** — ink-testing-library coverage for `ui.tsx`.
+1. **UI tests** ← NEXT — ink-testing-library coverage for `ui.tsx`.
 
 3. **Dictation truncation bug** — `wtype` injects keystrokes one at a time
    via Wayland; truncation still occurs despite the `useEffect` fix. Needs
