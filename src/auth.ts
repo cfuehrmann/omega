@@ -8,7 +8,7 @@ const OAUTH_CONFIG = {
   authorizeUrl: "https://platform.claude.com/oauth/authorize",
   tokenUrl: "https://platform.claude.com/v1/oauth/token",
   callbackUrl: "https://platform.claude.com/oauth/code/callback",
-  scopes: ["user:inference", "user:profile"],
+  scopes: ["org:create_api_key", "user:inference", "user:profile"],
 };
 
 const TOKEN_FILE = join(
@@ -140,8 +140,56 @@ export async function startOAuthFlow(): Promise<{
   return { url, exchangeCode };
 }
 
-// Get a valid auth token, refreshing if needed
-export async function getAuthToken(): Promise<string | null> {
+const API_KEY_FILE = join(
+  process.env.HOME ?? "~",
+  ".config",
+  "omega",
+  "api-key"
+);
+
+// Exchange OAuth token for an API key (Claude Max billing)
+// This is the critical step: Claude Code does this same call to
+// /api/oauth/claude_cli/create_api_key to get a key that bills
+// through the Max subscription instead of per-token.
+async function createApiKeyFromOAuth(accessToken: string): Promise<string | null> {
+  try {
+    const resp = await fetch(
+      "https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!resp.ok) return null;
+
+    const data = (await resp.json()) as any;
+    return data.raw_key ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveApiKey(key: string): Promise<void> {
+  await mkdir(join(process.env.HOME ?? "~", ".config", "omega"), {
+    recursive: true,
+  });
+  await writeFile(API_KEY_FILE, key, "utf-8");
+}
+
+async function loadApiKey(): Promise<string | null> {
+  try {
+    return (await readFile(API_KEY_FILE, "utf-8")).trim();
+  } catch {
+    return null;
+  }
+}
+
+// Get a valid OAuth access token, refreshing if needed
+async function getValidAccessToken(): Promise<string | null> {
   const token = await loadToken();
   if (!token) return null;
 
@@ -149,10 +197,36 @@ export async function getAuthToken(): Promise<string | null> {
   if (token.expires_at && token.expires_at < Date.now() / 1000 + 300) {
     const refreshed = await refreshToken(token);
     if (refreshed) return refreshed.access_token;
-    return null; // Refresh failed, need re-auth
+    return null;
   }
 
   return token.access_token;
 }
 
-export { TOKEN_FILE, type TokenData };
+// Get a working API key derived from OAuth (Claude Max billing).
+// Flow: OAuth token → /create_api_key → API key
+// The API key is cached to disk so we don't create a new one every startup.
+export async function getApiKey(): Promise<string | null> {
+  // Try cached API key first
+  const cached = await loadApiKey();
+  if (cached) return cached;
+
+  // No cached key — need OAuth token to create one
+  const accessToken = await getValidAccessToken();
+  if (!accessToken) return null;
+
+  const apiKey = await createApiKeyFromOAuth(accessToken);
+  if (apiKey) {
+    await saveApiKey(apiKey);
+    return apiKey;
+  }
+
+  return null;
+}
+
+// Legacy: get raw OAuth token (for fallback / debugging)
+export async function getAuthToken(): Promise<string | null> {
+  return getValidAccessToken();
+}
+
+export { TOKEN_FILE, API_KEY_FILE, type TokenData };

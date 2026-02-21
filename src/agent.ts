@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
-import { getAuthToken } from "./auth.js";
+import { getApiKey, getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
 
@@ -253,22 +253,31 @@ export class Agent {
   }
 
   async init(): Promise<string> {
-    // Try OAuth token first (Claude Max), fall back to API key
-    const oauthToken = await getAuthToken();
-    if (oauthToken) {
-      this.client = new Anthropic({
-        authToken: oauthToken,
-        apiKey: undefined as any,
-      });
+    // Try OAuth-derived API key first (Claude Max billing),
+    // then fall back to ANTHROPIC_API_KEY env var,
+    // then fall back to raw OAuth token (per-token billing — not ideal)
+    const maxApiKey = await getApiKey();
+    if (maxApiKey) {
+      this.client = new Anthropic({ apiKey: maxApiKey });
       this.authMode = "oauth";
-      logger.startup({ authMode: "oauth", model: config.model });
-      return "oauth (Claude Max)";
+      logger.startup({ authMode: "claude-max", model: config.model });
+      return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";
       logger.startup({ authMode: "api-key", model: config.model });
       return "api-key";
     } else {
+      const oauthToken = await getAuthToken();
+      if (oauthToken) {
+        this.client = new Anthropic({
+          authToken: oauthToken,
+          apiKey: undefined as any,
+        });
+        this.authMode = "oauth";
+        logger.startup({ authMode: "oauth-token-fallback", model: config.model });
+        return "oauth (⚠ token-only, not Max billing)";
+      }
       throw new Error(
         "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY."
       );
