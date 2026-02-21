@@ -157,6 +157,25 @@ export function processStreamEvents(streamEvents: Iterable<any>): AgentEvent[] {
 
 // --- Agent ---
 
+/**
+ * A StreamProvider is a function that calls the Anthropic messages API
+ * (or a mock in tests) and returns an object with an async iterator of
+ * raw stream events and a finalMessage() method.
+ *
+ * By accepting a StreamProvider in the constructor, the Agent can be
+ * tested without hitting the real API.
+ */
+export type StreamProvider = (params: {
+  model: string;
+  max_tokens: number;
+  system: string;
+  tools: Anthropic.Tool[];
+  messages: Anthropic.MessageParam[];
+}) => Promise<{
+  [Symbol.asyncIterator](): AsyncIterator<any>;
+  finalMessage(): Promise<Anthropic.Message>;
+}>;
+
 export class Agent {
   private client: Anthropic;
   private history: Anthropic.MessageParam[] = [];
@@ -167,10 +186,18 @@ export class Agent {
   private authMode: "api-key" | "oauth" = "api-key";
   public readonly sessionId: string;
 
-  constructor() {
+  /** Optional override for the session storage directory (used in tests). */
+  private readonly sessionDir: string | undefined;
+
+  /** Optional injectable stream provider (used in tests). */
+  private readonly streamProvider: StreamProvider | undefined;
+
+  constructor(streamProvider?: StreamProvider, sessionDir?: string) {
     // Will be initialized in init()
     this.client = new Anthropic();
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.streamProvider = streamProvider;
+    this.sessionDir = sessionDir;
   }
 
   async init(): Promise<string> {
@@ -209,7 +236,7 @@ export class Agent {
    * Returns the session metadata if found, null otherwise.
    */
   async checkPriorSession(): Promise<Session | null> {
-    return loadLatestSession();
+    return loadLatestSession(this.sessionDir);
   }
 
   /**
@@ -235,7 +262,7 @@ export class Agent {
       model: config.model,
       history: this.history,
     };
-    await saveSession(session);
+    await saveSession(session, this.sessionDir);
   }
 
   async *sendMessage(
@@ -268,13 +295,16 @@ export class Agent {
         try {
           let fullText = "";
 
-          const stream = this.client.messages.stream({
+          const streamParams = {
             model: config.model,
             max_tokens: config.maxOutputTokens,
             system: config.systemPrompt,
             tools: toolDefinitions,
             messages: this.history,
-          });
+          };
+          const stream = this.streamProvider
+            ? await this.streamProvider(streamParams)
+            : this.client.messages.stream(streamParams);
 
           for await (const event of stream) {
             if (
