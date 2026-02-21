@@ -1,5 +1,9 @@
 # Omega — Self-Improving AI Coding Agent
 
+*In the spirit of the [suckless philosophy](https://suckless.org/philosophy/):
+minimal, clear, frugal. Configuration is code. Complexity is removed, not
+managed. The tool does what you need and nothing else.*
+
 ## Vision
 
 A personal AI coding agent that:
@@ -46,6 +50,20 @@ A personal AI coding agent that:
     confirm commands before executing them. As trust is established, the
     operator can widen the auto-approve policy until only destructive or
     privileged operations require confirmation.
+11. **Full payload visibility** — The operator can see exactly what goes to
+    the model on every call: system prompt, conversation history, tool
+    definitions, cached prefixes — everything. This is shown in the UI as a
+    collapsible section (collapsed by default) with a byte/token size count.
+    No hidden magic. If the system prompt changes, the operator notices.
+12. **Session handoff** — Sessions are designed so work can be handed off to
+    a different model or a new session when limits are reached. The planning
+    document and structured session state are the handoff mechanism. The
+    incoming model reads the plan and picks up where the previous left off.
+13. **Helix-style interaction** — The UI uses modal editing inspired by the
+    Helix editor: a **normal mode** for navigation and commands, and an
+    **insert mode** for text input. Mouse support is included. Details of the
+    keymap are deferred, but the architecture assumes modal input from the
+    start.
 
 ## Decisions Made
 
@@ -351,11 +369,13 @@ retains the ability to:
 ## Milestones
 
 ### M0 — Minimal Viable Agent (bootstrap target)
-- [ ] Project setup (TypeScript, Ink, Vitest, Anthropic SDK)
+- [ ] Project setup (TypeScript, Ink, Anthropic SDK, `bun test`)
 - [ ] Agent core: send messages to Anthropic API with streaming
 - [ ] Terminal UI: display streamed response in Ink
+- [ ] Modal input: normal mode / insert mode (minimal, Helix-inspired)
+- [ ] Model payload viewer (collapsible, shows what goes to the model)
 - [ ] Log every API call with token counts
-- [ ] Status bar showing model + token usage
+- [ ] Status bar showing mode + model + token usage
 - [ ] First E2E test using ink-testing-library
 
 ### M1 — Self-Improvement Loop (stable core target)
@@ -392,6 +412,26 @@ retains the ability to:
 - [ ] Browser DevTools for human debugging
 - [ ] Parity with terminal UI features
 - [ ] Playwright E2E tests for browser
+
+## Future Considerations
+
+These are not planned for any milestone yet but should not be designed out.
+
+### Voice Input
+
+The operator dictates into the agent by voice. A local speech-to-text model
+(already prototyped in a separate repository) transcribes and feeds text into
+the input. Alternatively, the main model's provider could be used for
+transcription if it offers better context-aware accuracy. The input interface
+should accept text from any source — keyboard, pipe, or external process —
+so voice integration is a matter of wiring, not architecture.
+
+### Helix Keymap Details
+
+The full keymap (selections, motions, text objects, multiple cursors) is
+deferred. The relevant architectural constraint is: the input layer must
+support modal dispatch (keystrokes routed differently based on current mode)
+and the UI must indicate the active mode visibly.
 
 ## Next Steps
 

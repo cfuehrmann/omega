@@ -72,21 +72,48 @@ Properties:
   `Ctrl+O`). When collapsed, main pane takes full width.
 - Proportions defined in layout descriptor, not hardcoded.
 
+#### Model Payload Viewer (in main pane)
+
+At the top of the main pane (or as a collapsible overlay), a **payload
+section** shows exactly what is sent to the model on the current/last call:
+
+```
+▶ Model Payload [3,847 tokens / 12.4 KB]          (click or key to expand)
+```
+
+When expanded:
+```
+▼ Model Payload [3,847 tokens / 12.4 KB]
+  ┌─ System Prompt (428 tokens) ─────────────────────┐
+  │ You are Omega, a self-improving coding agent...   │
+  └───────────────────────────────────────────────────┘
+  ┌─ Tool Definitions (1,204 tokens) ────────────────┐
+  │ read_file, write_file, run_command, ...           │
+  └───────────────────────────────────────────────────┘
+  ┌─ Conversation (2,215 tokens) ────────────────────┐
+  │ [12 messages, 3 tool calls]                       │
+  └───────────────────────────────────────────────────┘
+```
+
+Collapsed by default. Always shows the total size. The operator can drill
+into any section to see the exact text. No hidden content — if it goes to
+the model, it's visible here.
+
 ### 3. Status Bar (fixed bottom)
 
 Single line. Always visible. Dense information at a glance.
 
 ```
- claude-opus-4-6 │ In: 1,234 Out: 567 │ $0.042 │ TTFT: 340ms │ Session: 5m │ [Ctrl+O: observability]
+ NOR │ claude-opus-4-6 │ In: 1,234 Out: 567 │ $0.042 │ TTFT: 340ms │ Session: 5m
 ```
 
 Fields:
+- Current mode (NOR / INS)
 - Model name
 - Token counts (input / output, current turn and/or session)
 - Cost estimate
 - Time-to-first-token for last request
 - Session duration
-- Keyboard shortcut hints
 
 ## Layout Descriptor (TypeScript type)
 
@@ -98,6 +125,7 @@ type PaneContent =
   | { type: 'cost' }           // cost tracker widget
   | { type: 'latency' }        // latency metrics widget
   | { type: 'logs' }           // recent log entries
+  | { type: 'payload' }        // model payload viewer (system prompt, tools, history)
   | { type: 'api-trace' }      // raw API request/response viewer
   | { type: 'file-tree' }      // project file browser (future)
   | { type: 'diff' }           // file diff viewer (future)
@@ -167,16 +195,46 @@ const defaultLayout: Layout = {
 }
 ```
 
+## Input Modes (Helix-inspired)
+
+The UI is **modal**, inspired by the Helix editor:
+
+### Normal Mode (default)
+
+Navigation, commands, and pane management. Keystrokes are interpreted as
+commands, not text input. The status bar shows `NOR` or similar indicator.
+
+### Insert Mode
+
+Text input for composing messages. Entered via `i` (or similar) from normal
+mode. Exited via `Escape` back to normal mode. The status bar shows `INS`.
+
+Mouse is supported in both modes (click to focus panes, scroll, select text).
+
+The full keymap is deferred (see PLAN.md, Future Considerations), but the
+architecture assumes modal dispatch from the start: every keystroke goes
+through a mode-aware dispatcher.
+
 ## Keyboard Shortcuts (Initial Set)
+
+**Normal mode:**
+
+| Key | Action |
+|-----|--------|
+| `i` | Enter insert mode |
+| `o` | Toggle observability side pane |
+| `p` | Toggle model payload viewer |
+| `t` | Show API trace for last request |
+| `Ctrl+L` | Clear static zone |
+| `Ctrl+C` | Cancel current operation / exit |
+| `j/k` | Scroll history |
+
+**Insert mode:**
 
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message |
-| `Ctrl+C` | Cancel current operation / exit |
-| `Ctrl+O` | Toggle observability side pane |
-| `Ctrl+L` | Clear static zone |
-| `Ctrl+T` | Show API trace for last request |
-| `Escape` | Cancel current input / dismiss overlay |
+| `Escape` | Back to normal mode |
 | `Up/Down` | Input history navigation |
 | `Tab` | Autocomplete (future) |
 
