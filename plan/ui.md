@@ -99,12 +99,12 @@ Single line. Always visible. Dense information at a glance.
 
 **M0 version:**
 ```
- claude-opus-4-6 │ In: 1,234 Out: 567 │ $0.042
+ claude-opus-4-20250514 │ In: 1,234 Out: 567 │ $0.042
 ```
 
 **Full version (M3+):**
 ```
- NOR │ claude-opus-4-6 │ In: 1,234 Out: 567 │ $0.042 │ TTFT: 340ms │ 🟢
+ NOR │ claude-opus-4-20250514 │ In: 1,234 Out: 567 │ $0.042 │ TTFT: 340ms │ 🟢
 ```
 
 Fields (added incrementally):
