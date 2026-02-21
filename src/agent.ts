@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
-import { getAuthToken } from "./auth.js";
+import { getAuthToken, getApiKey } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
 
@@ -407,23 +407,20 @@ export class Agent {
   }
 
   async init(): Promise<string> {
-    // Claude Code's actual auth flow for Max accounts:
-    // 1. OAuth token as authToken (NOT as apiKey)
-    // 2. The authToken carries Claude Max billing
-    // 3. create_api_key is a fallback, not the primary path
+    // Claude Code's auth flow for Max accounts:
+    // 1. OAuth via claude.ai → access_token (Max-linked)
+    // 2. POST /api/oauth/claude_cli/create_api_key → raw_key
+    // 3. Use raw_key as apiKey — inherits Max billing
     //
-    // Priority:
-    // 1. OAuth access token → authToken (Claude Max)
-    // 2. ANTHROPIC_API_KEY env var → apiKey (pay-per-token)
-    const oauthToken = await getAuthToken();
-    if (oauthToken) {
-      this.client = new Anthropic({
-        authToken: oauthToken,
-        apiKey: undefined as any,
-      });
+    // The API does NOT accept OAuth tokens directly (authToken → 401).
+    // The create_api_key endpoint creates a key whose billing matches
+    // the OAuth account: claude.ai = Max, platform.claude.com = pay-per-token.
+    const apiKey = await getApiKey();
+    if (apiKey) {
+      this.client = new Anthropic({ apiKey });
       this.authMode = "oauth";
-      logger.startup({ authMode: "oauth-max", model: config.model });
-      return "Claude Max (OAuth)";
+      logger.startup({ authMode: "claude-max", model: config.model });
+      return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";

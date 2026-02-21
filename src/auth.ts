@@ -11,7 +11,7 @@ const OAUTH_CONFIG = {
   authorizeUrl: "https://claude.ai/oauth/authorize",
   tokenUrl: "https://platform.claude.com/v1/oauth/token",
   callbackUrl: "https://platform.claude.com/oauth/code/callback",
-  scopes: ["user:inference", "user:profile"],
+  scopes: ["org:create_api_key", "user:inference", "user:profile"],
 };
 
 const TOKEN_FILE = join(
