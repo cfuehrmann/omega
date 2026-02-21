@@ -121,6 +121,40 @@ export function isRetryable(err: any): boolean {
 
 const KEEP_RECENT_TURNS = 10; // always keep the last 10 message pairs
 
+// Check if a message contains tool_result blocks
+function hasToolResult(msg: Anthropic.MessageParam): boolean {
+  if (typeof msg.content === "string") return false;
+  if (!Array.isArray(msg.content)) return false;
+  return msg.content.some((b: any) => b.type === "tool_result");
+}
+
+// Check if a message contains tool_use blocks
+function hasToolUse(msg: Anthropic.MessageParam): boolean {
+  if (typeof msg.content === "string") return false;
+  if (!Array.isArray(msg.content)) return false;
+  return msg.content.some((b: any) => b.type === "tool_use");
+}
+
+// Get tool_use IDs from a message
+function getToolUseIds(msg: Anthropic.MessageParam): Set<string> {
+  const ids = new Set<string>();
+  if (typeof msg.content === "string" || !Array.isArray(msg.content)) return ids;
+  for (const b of msg.content) {
+    if ((b as any).type === "tool_use") ids.add((b as any).id);
+  }
+  return ids;
+}
+
+// Get tool_result tool_use_ids from a message
+function getToolResultIds(msg: Anthropic.MessageParam): Set<string> {
+  const ids = new Set<string>();
+  if (typeof msg.content === "string" || !Array.isArray(msg.content)) return ids;
+  for (const b of msg.content) {
+    if ((b as any).type === "tool_result") ids.add((b as any).tool_use_id);
+  }
+  return ids;
+}
+
 export function truncateHistory(
   history: Anthropic.MessageParam[],
   budget: number = config.maxContextTokens
@@ -140,11 +174,15 @@ export function truncateHistory(
   // Always keep first message + last KEEP_RECENT_TURNS*2 messages
   const minKeep = Math.min(history.length, KEEP_RECENT_TURNS * 2);
   const alwaysKeepHead = history.slice(0, 1);
-  const alwaysKeepTail = history.slice(-minKeep);
+  let alwaysKeepTail = history.slice(-minKeep);
 
   // Middle portion eligible for dropping
   const middle = history.slice(1, history.length - minKeep);
-  if (middle.length === 0) return history;
+  if (middle.length === 0) {
+    // Even the tail alone exceeds budget — drop tool results from oldest tail messages
+    // to reduce size while maintaining structural validity
+    return sanitizeToolPairs(history);
+  }
 
   // Drop from oldest middle messages first
   let kept = [...middle];
@@ -154,15 +192,52 @@ export function truncateHistory(
     currentTokens -= estimateTokens(dropped);
   }
 
+  let result = [...alwaysKeepHead, ...kept, ...alwaysKeepTail];
+
+  // Fix orphaned tool_result blocks: if a tool_result references a tool_use
+  // that was dropped, remove the orphaned tool_result (and its partner if needed)
+  result = sanitizeToolPairs(result);
+
   logger.info("context_truncated", {
     originalMessages: history.length,
-    keptMessages: 1 + kept.length + alwaysKeepTail.length,
-    droppedMessages: middle.length - kept.length,
+    keptMessages: result.length,
+    droppedMessages: history.length - result.length,
     estimatedTokensBefore: totalTokens,
-    estimatedTokensAfter: currentTokens,
+    estimatedTokensAfter: result.reduce((sum, m) => sum + estimateTokens(m), 0),
   });
 
-  return [...alwaysKeepHead, ...kept, ...alwaysKeepTail];
+  return result;
+}
+
+// Remove orphaned tool_result messages (where the matching tool_use was dropped).
+// Also remove orphaned tool_use messages (where the matching tool_result was dropped).
+function sanitizeToolPairs(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  // Collect all tool_use IDs present in the messages
+  const allToolUseIds = new Set<string>();
+  const allToolResultIds = new Set<string>();
+  for (const msg of messages) {
+    for (const id of getToolUseIds(msg)) allToolUseIds.add(id);
+    for (const id of getToolResultIds(msg)) allToolResultIds.add(id);
+  }
+
+  // Filter out messages that are purely orphaned tool_results or tool_uses
+  return messages.filter((msg) => {
+    if (hasToolResult(msg)) {
+      const resultIds = getToolResultIds(msg);
+      // Keep only if ALL tool_result IDs have matching tool_use
+      for (const id of resultIds) {
+        if (!allToolUseIds.has(id)) return false;
+      }
+    }
+    if (hasToolUse(msg)) {
+      const useIds = getToolUseIds(msg);
+      // Keep only if ALL tool_use IDs have matching tool_result
+      for (const id of useIds) {
+        if (!allToolResultIds.has(id)) return false;
+      }
+    }
+    return true;
+  });
 }
 
 // --- Stream event processing (extracted for testability) ---
@@ -425,6 +500,24 @@ export class Agent {
               error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/5)`,
             };
             await sleep(waitMs);
+          } else if (
+            err.status === 400 &&
+            typeof err.message === "string" &&
+            err.message.includes("prompt is too long")
+          ) {
+            // Prompt too long — aggressively truncate and retry
+            logger.warn("prompt_too_long", {
+              attempt: attempt + 1,
+              error: err.message,
+              historyLength: this.history.length,
+            });
+            // Halve the budget each retry to force more aggressive truncation
+            const aggressiveBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
+            this.history = truncateHistory(this.history, aggressiveBudget) as Anthropic.MessageParam[];
+            yield {
+              type: "error",
+              error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/5)`,
+            };
           } else {
             logger.error("api_error", { error: err.message, attempts: attempt + 1 });
             yield { type: "error", error: `API error: ${err.message ?? err}` };

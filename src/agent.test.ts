@@ -249,4 +249,107 @@ describe("truncateHistory", () => {
     // With only 2 messages, nothing can be dropped
     expect(result.length).toBe(2);
   });
+
+  it("never produces orphaned tool_result without matching tool_use", () => {
+    // The bug: truncation drops messages one-by-one from the middle.
+    // If an assistant(tool_use) gets dropped but the following user(tool_result)
+    // lands in the "kept tail", the API rejects with:
+    // "unexpected tool_use_id found in tool_result blocks"
+    //
+    // To trigger this, we place a tool_use/tool_result pair right at the
+    // boundary between "droppable middle" and "kept tail" (last 20 messages).
+    const msgs: Anthropic.MessageParam[] = [
+      { role: "user", content: "Start" },
+    ];
+
+    // Fill middle with enough messages to force truncation
+    for (let i = 0; i < 20; i++) {
+      msgs.push(makeMsg(i % 2 === 0 ? "assistant" : "user", LONG));
+    }
+
+    // Now add a tool_use/tool_result pair right before the "tail" section
+    msgs.push({
+      role: "assistant",
+      content: [
+        { type: "text", text: "I'll update the plan." },
+        { type: "tool_use", id: "tool_boundary", name: "write_file", input: { path: "x", content: LONG } },
+      ],
+    });
+    msgs.push({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "tool_boundary", content: "Wrote file" },
+      ],
+    });
+
+    // Add exactly KEEP_RECENT_TURNS*2 - 1 more messages so the tool_result
+    // above is at the very start of the tail
+    for (let i = 0; i < 19; i++) {
+      msgs.push(makeMsg(i % 2 === 0 ? "assistant" : "user", LONG));
+    }
+
+    const result = truncateHistory(msgs, 8000);
+
+    // Check: every tool_result must have a preceding tool_use with matching ID
+    for (let i = 0; i < result.length; i++) {
+      const msg = result[i];
+      if (typeof msg.content === "string") continue;
+      if (!Array.isArray(msg.content)) continue;
+
+      for (const block of msg.content) {
+        if ((block as any).type === "tool_result") {
+          const toolResultId = (block as any).tool_use_id;
+          // Search ALL preceding messages for matching tool_use
+          let found = false;
+          for (let j = 0; j < i; j++) {
+            const prev = result[j];
+            if (prev.role !== "assistant") continue;
+            if (typeof prev.content === "string") continue;
+            if (!Array.isArray(prev.content)) continue;
+            for (const prevBlock of prev.content) {
+              if ((prevBlock as any).type === "tool_use" && (prevBlock as any).id === toolResultId) {
+                found = true;
+              }
+            }
+          }
+          expect(found).withContext(`tool_result for ${toolResultId} has no matching tool_use`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("handles prompt-too-long by actually reducing token count", () => {
+    // Simulate what causes 1.17M tokens: tool results with huge file contents
+    const msgs: Anthropic.MessageParam[] = [
+      { role: "user", content: "Read the big file" },
+    ];
+    // Add many turns with large tool results
+    for (let i = 0; i < 50; i++) {
+      msgs.push({
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: `tool_${i}`, name: "read_file", input: { path: "big.txt" } },
+        ],
+      });
+      msgs.push({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: `tool_${i}`, content: "x".repeat(20000) },
+        ],
+      });
+    }
+    msgs.push({ role: "assistant", content: "Here's the summary." });
+
+    // Total is ~50 * 20000 / 4 = 250K estimated tokens, way over 100K budget
+    const result = truncateHistory(msgs, 100_000);
+
+    // Result must be significantly smaller
+    const resultSize = result.reduce((sum, m) => {
+      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      return sum + text.length;
+    }, 0);
+
+    // Must be under budget (100K tokens * 4 chars/token = 400K chars)
+    expect(resultSize).toBeLessThan(400_000);
+  });
 });
