@@ -128,9 +128,12 @@ export function App() {
       };
 
       try {
-        setActivity("thinking...");
         for await (const event of agent.sendMessage(trimmed, confirmTool)) {
           switch (event.type) {
+            case "status":
+              setActivity(event.message);
+              break;
+
             case "text":
               fullText += event.text;
               setStreamingText(fullText);
@@ -164,12 +167,10 @@ export function App() {
                 truncateOutput(event.result.output),
                 `  ${event.name} ${event.result.isError ? "✗" : "✓"} ${Math.round(event.result.durationMs)}ms`
               );
-              setActivity("thinking...");
               break;
 
             case "tool_rejected":
               addItem("tool_rejected", `⊘ ${event.name} rejected`);
-              setActivity("thinking...");
               break;
 
             case "metrics": {

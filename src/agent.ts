@@ -16,6 +16,7 @@ export interface TurnMetrics {
 
 export type AgentEvent =
   | { type: "text"; text: string }
+  | { type: "status"; message: string }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_pending"; id: string; name: string; formatted: string }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
@@ -192,6 +193,9 @@ export class Agent {
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
       const toolCallsThisTurn: string[] = [];
+
+      // Signal the UI that we're about to call the API
+      yield { type: "status", message: "thinking..." } as AgentEvent;
 
       // Call API with retry
       let response: Anthropic.Message | null = null;
