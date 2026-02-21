@@ -13,25 +13,6 @@ interface CompletedItem {
   dimText?: string;
 }
 
-// --- Auto-approve logic ---
-
-function isAutoApproved(toolName: string, toolInput: any): boolean {
-  // Check if the tool itself is auto-approved
-  if (config.autoApproveTools.includes(toolName)) {
-    return true;
-  }
-
-  // For run_command, check if the command matches auto-approve prefixes
-  if (toolName === "run_command" && toolInput?.command) {
-    const cmd = toolInput.command.trim();
-    return config.autoApproveCommands.some(
-      (prefix) => cmd === prefix || cmd.startsWith(prefix + " ")
-    );
-  }
-
-  return false;
-}
-
 // --- Formatting ---
 
 function formatCost(usd: number): string {
@@ -119,16 +100,13 @@ export function App() {
 
       let fullText = "";
 
+      // This callback is only invoked for tools that need confirmation
+      // (auto-approved tools are handled in agent.ts and never reach here)
       const confirmTool = (
         name: string,
         input: any,
         formatted: string
       ): Promise<boolean> => {
-        // Auto-approve read-only / safe tools
-        if (isAutoApproved(name, input)) {
-          return Promise.resolve(true);
-        }
-        // Otherwise ask the operator
         return new Promise((resolve) => {
           confirmResolveRef.current = resolve;
           setPendingTool({ name, formatted });

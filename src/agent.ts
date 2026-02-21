@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
-import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
+import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 
 // --- Types ---
 
@@ -26,6 +26,21 @@ type ConfirmFn = (
   input: any,
   formatted: string
 ) => Promise<boolean>;
+
+// --- Auto-approve logic ---
+
+function isAutoApproved(toolName: string, toolInput: any): boolean {
+  if (config.autoApproveTools.includes(toolName)) {
+    return true;
+  }
+  if (toolName === "run_command" && toolInput?.command) {
+    const cmd = toolInput.command.trim();
+    return config.autoApproveCommands.some(
+      (prefix) => cmd === prefix || cmd.startsWith(prefix + " ")
+    );
+  }
+  return false;
+}
 
 // --- Pricing ---
 
@@ -95,8 +110,6 @@ export class Agent {
       let lastError: any = null;
       for (let attempt = 0; attempt < 5; attempt++) {
         try {
-          // Stream the response
-          const contentBlocks: Anthropic.ContentBlock[] = [];
           let fullText = "";
 
           const stream = this.client.messages.stream({
@@ -166,22 +179,28 @@ export class Agent {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
         for (const toolUse of toolUseBlocks) {
-          const { formatToolCall } = await import("./tools.js");
           const formatted = formatToolCall(toolUse.name, toolUse.input);
+          const autoApproved = isAutoApproved(toolUse.name, toolUse.input);
 
-          // Ask for confirmation
-          yield {
-            type: "tool_pending",
-            id: toolUse.id,
-            name: toolUse.name,
-            formatted,
-          };
+          let approved: boolean;
+          if (autoApproved) {
+            // Skip confirmation entirely — just emit tool_call directly
+            approved = true;
+          } else {
+            // Ask for confirmation via UI
+            yield {
+              type: "tool_pending",
+              id: toolUse.id,
+              name: toolUse.name,
+              formatted,
+            };
 
-          const approved = await confirmTool(
-            toolUse.name,
-            toolUse.input,
-            formatted
-          );
+            approved = await confirmTool(
+              toolUse.name,
+              toolUse.input,
+              formatted
+            );
+          }
 
           if (approved) {
             yield {
