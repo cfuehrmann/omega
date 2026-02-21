@@ -144,6 +144,12 @@ export function App() {
               break;
 
             case "tool_call":
+              // Flush any accumulated text before showing tool call
+              if (fullText) {
+                addItem("turn", fullText);
+                fullText = "";
+                setStreamingText("");
+              }
               addItem("tool_call", `🔧 ${event.formatted}`);
               break;
 
@@ -159,18 +165,18 @@ export function App() {
               addItem("tool_rejected", `⊘ ${event.name} rejected`);
               break;
 
-            case "metrics":
+            case "metrics": {
+              const m = event.metrics;
+              const metricsLine = `  in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)} total: ${formatMs(m.totalMs)}`;
               if (fullText) {
-                const m = event.metrics;
-                addItem(
-                  "turn",
-                  fullText,
-                  `  in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)} total: ${formatMs(m.totalMs)}`
-                );
+                addItem("turn", fullText, metricsLine);
                 fullText = "";
                 setStreamingText("");
+              } else {
+                addItem("turn", "", metricsLine);
               }
               break;
+            }
 
             case "error":
               addItem("error", `⚠ ${event.error}`);
@@ -254,23 +260,23 @@ export function App() {
         )}
 
         {/* Input */}
-        <Box>
-          <Text bold color={pendingTool ? "yellow" : isStreaming ? "gray" : !ready ? "red" : "green"}>
-            {pendingTool ? "? " : !ready ? "… " : "❯ "}
-          </Text>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            placeholder={
-              pendingTool
-                ? "y/n"
-                : isStreaming
-                  ? "waiting..."
-                  : "message"
-            }
-          />
-        </Box>
+        {isStreaming && !pendingTool ? (
+          <Box>
+            <Text dimColor>⏳ working...</Text>
+          </Box>
+        ) : (
+          <Box>
+            <Text bold color={pendingTool ? "yellow" : !ready ? "red" : "green"}>
+              {pendingTool ? "? " : !ready ? "… " : "❯ "}
+            </Text>
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder={pendingTool ? "y/n" : "message"}
+            />
+          </Box>
+        )}
       </Box>
 
       {/* Status bar */}
