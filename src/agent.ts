@@ -408,12 +408,22 @@ export class Agent {
 
   async init(): Promise<string> {
     // Auth flow (matching pi-ai's anthropic.js):
-    // 1. OAuth via claude.ai → access_token
-    // 2. access_token IS the API key (no create_api_key needed)
-    // 3. Pass as apiKey to Anthropic SDK
+    // OAuth via claude.ai → access_token (sk-ant-oat-...)
+    // Pass as authToken (Bearer auth) with Claude Code identity headers.
+    // The API requires claude-code-20250219 + oauth-2025-04-20 betas.
     const accessToken = await getAuthToken();
     if (accessToken) {
-      this.client = new Anthropic({ apiKey: accessToken });
+      this.client = new Anthropic({
+        apiKey: null as any,
+        authToken: accessToken,
+        defaultHeaders: {
+          "accept": "application/json",
+          "anthropic-dangerous-direct-browser-access": "true",
+          "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+          "user-agent": "claude-cli/2.1.2 (external, cli)",
+          "x-app": "cli",
+        },
+      });
       this.authMode = "oauth";
       logger.startup({ authMode: "claude-max", model: config.model });
       return "Claude Max";
@@ -505,10 +515,15 @@ export class Agent {
         try {
           let fullText = "";
 
+          // For OAuth, system prompt must start with Claude Code identity
+          const systemPrompt = this.authMode === "oauth"
+            ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
+            : config.systemPrompt;
+
           const streamParams = {
             model: config.model,
             max_tokens: config.maxOutputTokens,
-            system: config.systemPrompt,
+            system: systemPrompt,
             tools: toolDefinitions,
             messages: this.history,
           };
