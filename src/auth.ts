@@ -229,4 +229,57 @@ export async function getAuthToken(): Promise<string | null> {
   return getValidAccessToken();
 }
 
+// Verify that an API key actually works and check billing type.
+// Makes a minimal API call (count tokens for a tiny message) and inspects
+// the response. Returns { valid, billing } where billing is "max", "api-key",
+// or "unknown".
+export async function verifyApiKey(apiKey: string): Promise<{
+  valid: boolean;
+  billing: "max" | "api-key" | "unknown";
+  error?: string;
+}> {
+  try {
+    // Use the count_tokens endpoint — cheapest possible API call (no tokens billed)
+    const resp = await fetch("https://api.anthropic.com/v1/messages/count_tokens", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      if (text.includes("usage limits")) {
+        return { valid: false, billing: "api-key", error: "API usage limit reached" };
+      }
+      return { valid: false, billing: "unknown", error: `${resp.status}: ${text.slice(0, 200)}` };
+    }
+
+    // Check rate limit headers — Max accounts have much higher limits
+    const rateLimit = resp.headers.get("x-ratelimit-limit-requests");
+    const rateLimitTokens = resp.headers.get("x-ratelimit-limit-input-tokens");
+
+    // Tier 1 pay-per-token: 50 req/min, 30k input tokens/min
+    // Max accounts: much higher (typically 1000+ req/min)
+    if (rateLimit) {
+      const limit = parseInt(rateLimit, 10);
+      if (limit > 200) {
+        return { valid: true, billing: "max" };
+      } else {
+        return { valid: true, billing: "api-key" };
+      }
+    }
+
+    return { valid: true, billing: "unknown" };
+  } catch (err: any) {
+    return { valid: false, billing: "unknown", error: err.message };
+  }
+}
+
 export { TOKEN_FILE, API_KEY_FILE, type TokenData };
