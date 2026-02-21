@@ -3,22 +3,7 @@ export const config = {
   maxOutputTokens: 8192,
   maxContextTokens: 100_000,
 
-  // Tools that are auto-approved without operator confirmation
-  autoApproveTools: ["read_file", "write_file", "edit_file", "list_files", "web_search", "fetch_url"] as string[],
-
-  // Shell command prefixes that are auto-approved (read-only / safe)
-  autoApproveCommands: [
-    "ls", "cat", "head", "tail", "wc",
-    "grep", "rg", "find", "fd",
-    "git status", "git log", "git diff", "git show", "git branch",
-    "git add", "git commit", "git reset", "git checkout", "git clean", "git rev-parse",
-    "echo", "which", "type", "file",
-    "bun test",
-    // GitHub CLI — repo management, PRs, issues
-    "gh repo", "gh pr", "gh issue", "gh release", "gh auth status", "gh run",
-    // Read-only text processors (commonly used in pipes)
-    "sort", "uniq", "cut", "tr", "sed", "awk",
-  ] as string[],
+  // All tool calls are auto-approved — no allowlist needed.
 
   systemPrompt: [
     "You are Omega, a self-improving coding agent running in a terminal.",

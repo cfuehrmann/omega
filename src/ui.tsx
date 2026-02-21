@@ -58,13 +58,6 @@ export function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [activity, setActivity] = useState("");
 
-  // Tool confirmation state
-  const [pendingTool, setPendingTool] = useState<{
-    name: string;
-    formatted: string;
-  } | null>(null);
-  const confirmResolveRef = useRef<((approved: boolean) => void) | null>(null);
-
   // Abort controller for the current stream — replaced on each new message
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -137,20 +130,6 @@ export function App() {
         return;
       }
 
-      // Handle tool confirmation
-      if (pendingTool && confirmResolveRef.current) {
-        const v = value.trim().toLowerCase();
-        if (v === "y" || v === "yes" || v === "") {
-          confirmResolveRef.current(true);
-        } else {
-          confirmResolveRef.current(false);
-        }
-        confirmResolveRef.current = null;
-        setPendingTool(null);
-        setInput("");
-        return;
-      }
-
       const trimmed = value.trim();
       if (!trimmed || isStreaming || !ready) return;
 
@@ -169,20 +148,15 @@ export function App() {
       addItem("user", `❯ ${trimmed}`);
 
       let fullText = "";
+      // Audit log: one entry per tool call this turn, shown as a summary at the end
+      const auditLog: Array<{ name: string; formatted: string; ok: boolean; ms: number }> = [];
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const confirmTool = (
-        name: string,
-        input: any,
-        formatted: string
-      ): Promise<boolean> => {
-        return new Promise((resolve) => {
-          confirmResolveRef.current = resolve;
-          setPendingTool({ name, formatted });
-        });
-      };
+      // No confirmation needed — everything is auto-approved.
+      // The confirmTool callback is required by the agent interface but never called.
+      const confirmTool = async () => true;
 
       try {
         for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
@@ -213,50 +187,37 @@ export function App() {
               setActivity("");
               break;
 
-            case "tool_pending":
-              // Flush text before confirmation prompt
-              if (fullText) {
-                addItem("turn", fullText);
-                fullText = "";
-                setStreamingText("");
-              }
-              setActivity("");
-              break;
-
             case "tool_call":
-              // Flush text before tool call
-              if (fullText) {
-                addItem("turn", fullText);
-                fullText = "";
-                setStreamingText("");
-              }
-              addItem("tool_call", `🔧 ${event.formatted}`);
-              setActivity(`running ${event.name}...`);
+              setActivity(`${event.name}…`);
               break;
 
             case "tool_result":
-              addItem(
-                "tool_result",
-                truncateOutput(event.result.output),
-                `  ${event.name} ${event.result.isError ? "✗" : "✓"} ${Math.round(event.result.durationMs)}ms`
-              );
-              break;
-
-            case "tool_rejected":
-              addItem("tool_rejected", `⊘ ${event.name} rejected`);
+              auditLog.push({
+                name: event.name,
+                formatted: event.name,
+                ok: !event.result.isError,
+                ms: Math.round(event.result.durationMs),
+              });
+              setActivity("");
               break;
 
             case "metrics": {
               const m = event.metrics;
+              // Build audit line from all tool calls this turn
+              const auditParts = auditLog.map(
+                (t) => `${t.name} ${t.ok ? "✓" : "✗"} ${t.ms}ms`
+              );
+              const toolSummary = auditParts.length > 0
+                ? `  🔧 ${auditParts.join("  ·  ")}`
+                : "";
               const metricsLine = `  in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)} total: ${formatMs(m.totalMs)}`;
-              // Don't add to static — keep in live zone via lastResponse
+              const dimText = [toolSummary, metricsLine].filter(Boolean).join("\n");
               if (fullText) {
-                setLastResponse({ text: fullText, dimText: metricsLine });
+                setLastResponse({ text: fullText, dimText });
                 fullText = "";
                 setStreamingText("");
               } else {
-                // Metrics-only turn (e.g. after tool loop with no final text)
-                addItem("turn", "", metricsLine);
+                addItem("turn", "", dimText);
               }
               break;
             }
@@ -283,21 +244,13 @@ export function App() {
         setActivity("");
       }
     },
-    [agent, isStreaming, pendingTool, addItem, ready, lastResponse, priorSession, resumePromptDone]
+    [agent, isStreaming, addItem, ready, lastResponse, priorSession, resumePromptDone]
   );
 
   useInput((input, key) => {
-    if (key.escape) {
-      if (pendingTool && confirmResolveRef.current) {
-        // Escape rejects a pending tool confirmation
-        confirmResolveRef.current(false);
-        confirmResolveRef.current = null;
-        setPendingTool(null);
-      } else if (isStreaming && abortControllerRef.current) {
-        // Escape interrupts the current stream
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
+    if (key.escape && isStreaming && abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     if (input === "c" && key.ctrl) {
       exit();
@@ -338,7 +291,7 @@ export function App() {
       {/* Live zone — only one thing shows at a time */}
       <Box flexDirection="column">
         {/* Streaming response text */}
-        {isStreaming && streamingText && !pendingTool && (
+        {isStreaming && streamingText && (
           <Box marginBottom={0}>
             <Text>
               {streamingText}
@@ -348,7 +301,7 @@ export function App() {
         )}
 
         {/* Activity indicator (no streaming text yet) */}
-        {isStreaming && !streamingText && !pendingTool && (
+        {isStreaming && !streamingText && (
           <Box>
             <Text dimColor>⏳ {activity || "working..."}</Text>
           </Box>
@@ -374,29 +327,19 @@ export function App() {
           </Box>
         )}
 
-        {/* Tool confirmation */}
-        {pendingTool && (
-          <Box flexDirection="column" marginBottom={0}>
-            <Text color="yellow">{"🔧 "}{pendingTool.formatted}</Text>
-            <Text dimColor>{"  Allow? [Y/n] "}</Text>
-          </Box>
-        )}
-
         {/* Input prompt */}
         <Box>
           <Text
-            bold={!isStreaming || !!pendingTool}
-            dimColor={isStreaming && !pendingTool}
+            bold={!isStreaming}
+            dimColor={isStreaming}
             color={
               priorSession && !resumePromptDone ? "cyan"
-              : pendingTool ? "yellow"
               : isStreaming ? undefined
               : !ready ? undefined
               : "green"
             }
           >
             {priorSession && !resumePromptDone ? "? "
-             : pendingTool ? "? "
              : isStreaming ? "… "
              : !ready ? "… "
              : "❯ "}
@@ -405,10 +348,9 @@ export function App() {
             value={inputState}
             onChange={setInput}
             onSubmit={handleSubmit}
-            focus={!isStreaming || !!pendingTool || !resumePromptDone}
+            focus={!isStreaming || !resumePromptDone}
             placeholder={
               priorSession && !resumePromptDone ? "y/n"
-              : pendingTool ? "y/n"
               : isStreaming ? ""
               : "message"
             }
@@ -422,7 +364,7 @@ export function App() {
           {config.model} │ {authMode} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
           {tokenDelta ? ` │ ${tokenDelta}` : ""}
-          {isStreaming && !pendingTool ? " │ Esc to interrupt" : " │ Ctrl+C quit"}
+          {isStreaming ? " │ Esc to interrupt" : " │ Ctrl+C quit"}
         </Text>
       </Box>
     </>

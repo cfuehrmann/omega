@@ -281,29 +281,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(result.result.isError).toBe(false);
   });
 
-  it("emits tool_pending then tool_rejected when operator rejects", async () => {
-    let call = 0;
-    const mockProvider: StreamProvider = async () => {
-      call++;
-      if (call === 1) {
-        return makeMockStream(
-          toolUseStreamEvents("run_command"),
-          toolUseMessage("t1", "run_command", { command: "rm -rf /" })
-        );
-      }
-      return makeMockStream(textStreamEvents("OK"), textMessage("OK"));
-    };
 
-    const agent = new Agent(mockProvider);
-    // Always reject
-    const events = await collectEvents(agent, "do it", async () => false);
-
-    const pendingEvents = events.filter((e) => e.type === "tool_pending");
-    const rejectedEvents = events.filter((e) => e.type === "tool_rejected");
-    expect(pendingEvents.length).toBe(1);
-    expect(rejectedEvents.length).toBe(1);
-    expect((rejectedEvents[0] as any).name).toBe("run_command");
-  });
 
   it("adds tool results to history and makes a second API call", async () => {
     const calls: any[] = [];
@@ -745,5 +723,68 @@ describe("api_call_start event", () => {
     // At call time, history had 1 message (the user message)
     expect(e.messages.length).toBe(1);
     expect(e.messages[0].role).toBe("user");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Full auto-approve
+// ---------------------------------------------------------------------------
+
+describe("Agent — full auto-approve", () => {
+  it("never emits tool_pending even for previously-rejected commands", async () => {
+    // run_command with a dangerous command — should auto-approve, never ask
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("run_command"),
+          toolUseMessage("t1", "run_command", { command: "rm -rf /" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "do it");
+    const pending = events.filter((e) => e.type === "tool_pending");
+    expect(pending.length).toBe(0);
+  });
+
+  it("emits tool_call for every tool regardless of name", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("run_command"),
+          toolUseMessage("t1", "run_command", { command: "rm -rf /" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "do it");
+    const toolCalls = events.filter((e) => e.type === "tool_call");
+    expect(toolCalls.length).toBe(1);
+    expect((toolCalls[0] as any).name).toBe("run_command");
+  });
+
+  it("confirmTool callback is never invoked", async () => {
+    let confirmCalled = false;
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("run_command"),
+          toolUseMessage("t1", "run_command", { command: "echo hi" })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const confirm = async () => { confirmCalled = true; return true; };
+    for await (const _ of agent.sendMessage("go", confirm)) {}
+    expect(confirmCalled).toBe(false);
   });
 });

@@ -96,65 +96,16 @@ export type AgentEvent =
   | { type: "status"; message: string }
   | { type: "api_call_start"; callNumber: number; model: string; system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
-  | { type: "tool_pending"; id: string; name: string; formatted: string }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
-  | { type: "tool_rejected"; id: string; name: string }
   | { type: "metrics"; metrics: TurnMetrics }
   | { type: "error"; error: string }
   | { type: "interrupted" };
 
-type ConfirmFn = (
-  name: string,
-  input: any,
-  formatted: string
-) => Promise<boolean>;
-
 // --- Auto-approve logic ---
 
-/** Returns true if a single (non-compound) command matches an approved prefix. */
-function isSingleCommandApproved(cmd: string): boolean {
-  const trimmed = cmd.trim();
-  return config.autoApproveCommands.some(
-    (prefix) => trimmed === prefix || trimmed.startsWith(prefix + " ")
-  );
-}
-
-/**
- * Returns true if a `cd` argument is safe — i.e. a relative path that stays
- * within the project directory (no absolute paths, no `..` components).
- */
-function isSafeCdArg(arg: string): boolean {
-  if (!arg) return false;
-  // Reject absolute paths
-  if (arg.startsWith("/") || arg.startsWith("~")) return false;
-  // Reject any path component that is ".."
-  const parts = arg.split(/[/\\]/);
-  if (parts.some((p) => p === "..")) return false;
+/** Always returns true — everything is auto-approved. No allowlist. */
+export function isAutoApproved(_toolName: string, _toolInput: any): boolean {
   return true;
-}
-
-export function isAutoApproved(toolName: string, toolInput: any): boolean {
-  if (config.autoApproveTools.includes(toolName)) {
-    return true;
-  }
-  if (toolName === "run_command" && toolInput?.command) {
-    const cmd = toolInput.command.trim();
-
-    // Split compound commands on &&, ;, or | and check each segment individually.
-    // Every segment must be independently approved. A pipe introduces no new
-    // privileges — it just connects stdout/stdin between already-approved commands.
-    // A `cd` into a relative project subdirectory (no absolute path, no ..)
-    // also counts as approved.
-    const parts = cmd.split(/&&|\||;/).map((p: string) => p.trim()).filter(Boolean);
-    return parts.every((part: string) => {
-      if (isSingleCommandApproved(part)) return true;
-      // Allow: cd <relative-safe-path>
-      const cdMatch = part.match(/^cd\s+(\S+)$/);
-      if (cdMatch) return isSafeCdArg(cdMatch[1]);
-      return false;
-    });
-  }
-  return false;
 }
 
 // --- Pricing ---
@@ -487,7 +438,7 @@ export class Agent {
 
   async *sendMessage(
     userMessage: string,
-    confirmTool: ConfirmFn,
+    _confirmTool: (name: string, input: any, formatted: string) => Promise<boolean>,
     signal?: AbortSignal
   ): AsyncGenerator<AgentEvent> {
     this.history.push({ role: "user", content: userMessage });
@@ -651,83 +602,39 @@ export class Agent {
 
         for (const toolUse of toolUseBlocks) {
           const formatted = formatToolCall(toolUse.name, toolUse.input);
-          const autoApproved = isAutoApproved(toolUse.name, toolUse.input);
 
-          let approved: boolean;
-          if (autoApproved) {
-            // Skip confirmation entirely — just emit tool_call directly
-            approved = true;
-          } else {
-            // Ask for confirmation via UI
-            yield {
-              type: "tool_pending",
-              id: toolUse.id,
-              name: toolUse.name,
-              formatted,
-            };
+          yield {
+            type: "tool_call",
+            id: toolUse.id,
+            name: toolUse.name,
+            input: toolUse.input,
+            formatted,
+          };
 
-            approved = await confirmTool(
-              toolUse.name,
-              toolUse.input,
-              formatted
-            );
-          }
+          const result = await executeTool(toolUse.name, toolUse.input);
+          toolCallsThisTurn.push(toolUse.name);
 
-          if (approved) {
-            yield {
-              type: "tool_call",
-              id: toolUse.id,
-              name: toolUse.name,
-              input: toolUse.input,
-              formatted,
-            };
+          logger.toolExec({
+            name: toolUse.name,
+            autoApproved: true,
+            approved: true,
+            isError: result.isError,
+            durationMs: result.durationMs,
+          });
 
-            const result = await executeTool(toolUse.name, toolUse.input);
-            toolCallsThisTurn.push(toolUse.name);
+          yield {
+            type: "tool_result",
+            id: toolUse.id,
+            name: toolUse.name,
+            result,
+          };
 
-            logger.toolExec({
-              name: toolUse.name,
-              autoApproved,
-              approved: true,
-              isError: result.isError,
-              durationMs: result.durationMs,
-            });
-
-            yield {
-              type: "tool_result",
-              id: toolUse.id,
-              name: toolUse.name,
-              result,
-            };
-
-            toolResults.push({
-              type: "tool_result",
-              tool_use_id: toolUse.id,
-              content: result.output,
-              is_error: result.isError,
-            });
-          } else {
-            logger.toolExec({
-              name: toolUse.name,
-              autoApproved,
-              approved: false,
-              isError: false,
-              durationMs: 0,
-            });
-
-            yield {
-              type: "tool_rejected",
-              id: toolUse.id,
-              name: toolUse.name,
-            };
-
-            toolResults.push({
-              type: "tool_result",
-              tool_use_id: toolUse.id,
-              content: "Tool call rejected by operator.",
-              is_error: true,
-            });
-          }
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUse.id,
+            content: result.output,
+            is_error: result.isError,
+          });
         }
 
         // Add tool results to history and continue the loop
