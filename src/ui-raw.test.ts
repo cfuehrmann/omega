@@ -5,9 +5,26 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { parseKeys } from "./ui-raw.js";
+import { parseKeys, displayWidth } from "./ui-raw.js";
 
 describe("parseKeys", () => {
+  it("displayWidth returns 1 for ASCII characters", () => {
+    expect(displayWidth("a")).toBe(1);
+    expect(displayWidth(">")).toBe(1);
+    expect(displayWidth(" ")).toBe(1);
+  });
+
+  it("displayWidth returns 2 for CJK characters", () => {
+    expect(displayWidth("你")).toBe(2);
+    expect(displayWidth("語")).toBe(2);
+    expect(displayWidth("あ")).toBe(2);
+  });
+
+  it("displayWidth returns 1 for common non-ASCII 1-column chars", () => {
+    expect(displayWidth("é")).toBe(1);
+    expect(displayWidth("ñ")).toBe(1);
+  });
+
   it("calls onExit once when Ctrl+C appears once", () => {
     let exits = 0;
     parseKeys("\x03", { onSubmit: () => {}, onEscape: () => {}, onExit: () => { exits++; } });
@@ -117,6 +134,74 @@ describe("parseKeys", () => {
     const cb = { onSubmit: () => { submits++; }, onEscape: () => {}, onExit: () => {} };
     parseKeys("\r", cb, buf);
     expect(submits).toBe(1);
+  });
+
+  it("backspace does not write to stdout when buffer is empty (prevents erasing prompt)", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any, ...args: any[]) => {
+      written.push(typeof s === "string" ? s : String(s));
+      return true;
+    };
+    try {
+      const buf = { value: "" };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      // Press backspace when buffer is empty — must not write anything
+      parseKeys("\x7f", cb, buf);
+      expect(written.join("")).toBe("");
+      expect(buf.value).toBe("");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("backspace removes last character from buffer and erases it visually", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any, ...args: any[]) => {
+      written.push(typeof s === "string" ? s : String(s));
+      return true;
+    };
+    try {
+      const buf = { value: "ab" };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x7f", cb, buf);
+      expect(buf.value).toBe("a");
+      expect(written.join("")).toBe("\b \b");
+      // Second backspace removes 'a'
+      written.length = 0;
+      parseKeys("\x7f", cb, buf);
+      expect(buf.value).toBe("");
+      expect(written.join("")).toBe("\b \b");
+      // Third backspace with empty buffer — must not write
+      written.length = 0;
+      parseKeys("\x7f", cb, buf);
+      expect(buf.value).toBe("");
+      expect(written.join("")).toBe("");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("backspace erases double-width character using two \\b sequences", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any, ...args: any[]) => {
+      written.push(typeof s === "string" ? s : String(s));
+      return true;
+    };
+    try {
+      // '你' is a 2-column CJK character
+      const buf = { value: "你", columns: 2 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x7f", cb, buf);
+      expect(buf.value).toBe("");
+      expect(buf.columns).toBe(0);
+      // Must emit two backspace-erase-backspace sequences (4 chars each direction * 2 columns)
+      expect(written.join("")).toBe("\b\b  \b\b");
+    } finally {
+      process.stdout.write = origWrite;
+    }
   });
 
   it("echoes pasted content to stdout when paste ends", () => {

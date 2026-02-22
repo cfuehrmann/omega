@@ -290,13 +290,39 @@ export interface KeyCallbacks {
  * @param buf       Current input buffer (defaults to shared module buffer).
  * @returns         Updated input buffer after processing.
  */
+/**
+ * Returns the number of terminal columns a Unicode character occupies.
+ * CJK and other wide characters occupy 2 columns; everything else 1.
+ * Control characters and zero-width characters return 0.
+ */
+export function displayWidth(ch: string): number {
+  const cp = ch.codePointAt(0);
+  if (cp === undefined) return 0;
+  // Control characters
+  if (cp < 32 || (cp >= 0x7f && cp < 0xa0)) return 0;
+  // Wide/fullwidth Unicode ranges (East Asian Width W or F):
+  // CJK Unified Ideographs and extensions
+  if (cp >= 0x1100 && cp <= 0x115f) return 2;  // Hangul Jamo
+  if (cp === 0x2329 || cp === 0x232a) return 2;
+  if (cp >= 0x2e80 && cp <= 0x303e) return 2;  // CJK Radicals, Kangxi, etc.
+  if (cp >= 0x3041 && cp <= 0x33bf) return 2;  // Hiragana, Katakana, Bopomofo, etc.
+  if (cp >= 0x33ff && cp <= 0xfe4f) return 2;  // Many CJK blocks
+  if (cp >= 0xfe51 && cp <= 0xfe6f) return 2;  // Small/fullwidth forms
+  if (cp >= 0xff01 && cp <= 0xff60) return 2;  // Fullwidth ASCII, half/fullwidth
+  if (cp >= 0xffe0 && cp <= 0xffe6) return 2;
+  if (cp >= 0x1f004 && cp <= 0x1f9ff) return 2; // Emoji/symbols (broad range)
+  if (cp >= 0x20000 && cp <= 0x2fffd) return 2; // CJK Extension B+
+  if (cp >= 0x30000 && cp <= 0x3fffd) return 2;
+  return 1;
+}
+
 /** Persistent bracketed-paste state shared across calls in production. */
 const sharedPasteState = { inPaste: false };
 
 export function parseKeys(
   chunk: string,
   callbacks: KeyCallbacks,
-  buf: { value: string } = sharedBuffer,
+  buf: { value: string; columns?: number } = sharedBuffer,
   options: { inputEnabled?: boolean; pasteState?: { inPaste: boolean } } = {},
 ): string {
   const { onSubmit, onEscape, onExit } = callbacks;
@@ -343,6 +369,7 @@ export function parseKeys(
         // Normal Enter: submit
         const line = buf.value;
         buf.value = "";
+        if (buf.columns !== undefined) buf.columns = 0;
         onSubmit(line);
       }
       continue;
@@ -350,16 +377,22 @@ export function parseKeys(
 
     if (code === 127 || code === 8) {          // Backspace
       if (buf.value.length > 0) {
-        buf.value = buf.value.slice(0, -1);
-        // Erase last char: backspace, space, backspace
-        process.stdout.write("\b \b");
+        // Get the last code point (handle surrogate pairs)
+        const lastCodePoint = [...buf.value].at(-1) ?? "";
+        const w = displayWidth(lastCodePoint) || 1;
+        buf.value = buf.value.slice(0, -lastCodePoint.length);
+        if (buf.columns !== undefined) buf.columns -= w;
+        // Erase: move back w columns, overwrite with spaces, move back again
+        process.stdout.write("\b".repeat(w) + " ".repeat(w) + "\b".repeat(w));
       }
       continue;
     }
 
     // Printable character
     if (code >= 32 || code > 127) {
+      const w = displayWidth(ch) || 1;
       buf.value += ch;
+      if (buf.columns !== undefined) buf.columns += w;
       if (!pasteState.inPaste) process.stdout.write(ch);  // echo only when not pasting
     }
   }
@@ -368,7 +401,7 @@ export function parseKeys(
 }
 
 /** Shared mutable buffer used by setupRawInput in production. */
-const sharedBuffer = { value: "" };
+const sharedBuffer: { value: string; columns: number } = { value: "", columns: 0 };
 
 function setupRawInput(
   onSubmit: (line: string) => void,

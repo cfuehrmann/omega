@@ -25,10 +25,10 @@ No raw session persistence. No "resume session?" prompt. The world file is the o
 The system prompt references only `world-state.md` and `future.md`.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table; `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table; `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s including `world_state_saved`
 - `src/compaction.ts` — `compactTurn()`, `compactWorldState()` — LLM-based compaction; world-state prompt caps last-session section to 1–4 sentences, bans commit hashes and procedural detail
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
-- `src/ui-raw.ts` — raw terminal UI; `shutdown()` drains the `foldCurrentSessionIntoWorldState()` generator and renders each event; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; `KeyCallbacks` interface; `runApp()` guarded by `if (import.meta.main)`; exports `renderToolStart(name, input)` and `renderToolResult(result)` for immediate per-event rendering; `renderToolExecution` retained for the shutdown/fold path
+- `src/ui-raw.ts` — raw terminal UI; `shutdown()` prints a magenta `"Ctrl+C — compacting to world file and shutting down"` banner, drains the `foldCurrentSessionIntoWorldState()` generator, handles `world_state_saved` with a dim status line; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; `KeyCallbacks` interface; `runApp()` guarded by `if (import.meta.main)`; exports `renderToolStart(name, input)` and `renderToolResult(result)` for immediate per-event rendering; `renderToolExecution` retained for the shutdown/fold path
 - `src/ui-raw.test.ts` — 13 tests for `parseKeys` covering Ctrl+C, Enter, Escape, CSI skip, printable accumulation, bracketed paste (no submit on inner newline, full paste submitted on Enter, normal Enter unaffected, stdout echo on paste end)
 - `src/tool-renderers.test.ts` — 11 tests for `renderToolStart` and `renderToolResult`
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }` — two ANSI-dimmed labelled lines with `turn:` / `session:` prefixes, column-aligned `in:`/`out:`, model and `ttft` on turn line only
@@ -39,12 +39,15 @@ The system prompt references only `world-state.md` and `future.md`.
 - `src/planning-files.test.ts` — structural invariant tests: asserts `future.md` exists, `past.md`/`present.md` do not exist, system prompt references `world-state.md` + `future.md` but not deleted files
 - `src/turn-footer.test.ts` — 11 tests for `formatTurnFooter`
 - `src/openai.test.ts` — tests for `buildOpenAiRequest`, `parseOpenAiResponse`, and abort signal forwarding
-- `src/fold-events.test.ts` — 8 tests covering generator shape, no events for null path/empty history, `api_call_start`, `api_response` with token usage, `tool_result` with name `write_file`, file written to disk, error event on LLM failure
+- `src/fold-events.test.ts` — 8 tests covering generator shape, no events for null path/empty history, `api_call_start`, `api_response` with token usage, `world_state_saved` event (with `path` and `charCount` fields), file written to disk, absence of `tool_result`, error event on LLM failure
 - `src/fold-at-quit.test.ts` — tests for `foldCurrentSessionIntoWorldState()` as a generator (drains with `for await`)
-- `plan/future.md` — 4 discrete actionable backlog items (see Open Issues below)
+- `plan/future.md` — 4 discrete actionable backlog items
+
+### AgentEvent Union (notable members)
+- `world_state_saved` — `{ type: "world_state_saved"; path: string; charCount: number }` — emitted by `foldCurrentSessionIntoWorldState()` after writing the world file; rendered as a dim status line by `shutdown()`; replaces the former `tool_result` semantic lie
 
 ### UI — Tool Rendering
-`tool_call` events now render immediately via `printBlock(now(), renderToolStart(name, input))` with a live timestamp; `tool_result` events render separately via `printBlock(now(), renderToolResult(result))` with a fresh timestamp. Both use the same yellow color. The `pendingInputs` map was removed. `renderToolExecution` is retained only for the shutdown/fold path.
+`tool_call` events render immediately via `printBlock(now(), renderToolStart(name, input))` with a live timestamp; `tool_result` events render separately via `printBlock(now(), renderToolResult(result))` with a fresh timestamp. Both use the same yellow color. The `pendingInputs` map was removed. `renderToolExecution` is retained only for the shutdown/fold path.
 
 ### UI — Turn Footer
 After each turn, two dimmed lines are printed:
@@ -60,13 +63,4 @@ After each turn, two dimmed lines are printed:
 - `claude-opus-4-6`: $5 input / $25 output per MTok
 - `claude-sonnet-4-6`: $3 input / $15 output per MTok
 - `claude-sonnet-4-20250514`: $3 input / $15 output per MTok
-- `gpt-5.2-codex`: $1.25 input / $10.00 output per MTok
-- Fallback default: $5 input / $25 output per MTok
-
-Note: Dollar costs are meaningless under Claude Max (OAuth/flat-rate). Token counts are accurate.
-
-### Testing Discipline
-Red-green mandatory for bugs/features. Structural invariant tests for refactors. 225 tests across 20 files, all passing. Compaction calls use the same injectable `StreamProvider` as real turns — tests use mock providers.
-
-### What Was Accomplished in the Last Session
-Tool-use UI
+- `gpt-5.2-
