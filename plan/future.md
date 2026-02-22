@@ -4,22 +4,9 @@ Discrete, prioritised, actionable. Keep in priority order.
 
 ---
 
-## 1. Provider-specific caching (Anthropic prompt caching)
-
-Anthropic supports prompt caching via `cache_control` headers. The system
-prompt and world-state are stable across turns and would benefit most.
-Could meaningfully reduce input token costs for long sessions.
-Implement Anthropic-side first; OpenAI caching is automatic.
-
-Infrastructure ready: `estimateCostWithCache()` is implemented and tested.
-Remaining: add `cache_control` to system message blocks in API calls,
-parse `cache_read_input_tokens` / `cache_creation_input_tokens` from usage,
-route through `estimateCostWithCache` in cost accounting.
-
----
-
 ## Closed / dismissed items (for reference)
 
+- **Anthropic prompt caching** — Done. `cache_control: { type: "ephemeral" }` on system message block and last tool definition. Cache tokens extracted from usage, routed through `estimateCostWithCache()`. `TurnMetrics` and session totals track cache tokens. Turn footer shows `cache_write`/`cache_read` when non-zero. 16 tests.
 - **UI tests** — Done. 231+ tests in `ui-raw.test.ts` and `tool-renderers.test.ts`.
 - **Rate-limit retry** — Done. Provider-aware retry with `getOpenAiRetryDelayMs` (parses "try again in Ns") and `getAnthropicRetryDelayMs` (exponential backoff). Already at ms precision.
 - **OAuth auto-relogin** — Done. `forceRefreshToken()` in auth.ts, `isAuthExpired()` + `reinitAuth()` in agent.ts. 401 in Anthropic stream loop triggers one reauth+retry. 401 in `foldCurrentSessionIntoWorldState` triggers reauth and retries compaction. Clear "run login.ts" error if reauth fails.
