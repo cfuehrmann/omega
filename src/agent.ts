@@ -5,6 +5,8 @@ import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
+import { compactTurn, compactWorldState } from "./compaction.js";
+import { readWorldState, writeWorldState, defaultWorldStatePath } from "./world-state.js";
 
 
 // --- Types ---
@@ -329,6 +331,15 @@ export class Agent {
   /** Session storage directory. null = persistence disabled. undefined = use default. */
   private readonly sessionDir: string | null | undefined;
 
+  /** World state file path. null = disabled. undefined = use default. */
+  private readonly worldStatePath: string | null | undefined;
+
+  /** Zone 2 summary: the compacted summary of all prior turns this session. */
+  private zone2Summary: string | null = null;
+
+  /** Zone 1: world state loaded at session start, injected into system prompt. */
+  private worldStateContent: string | null = null;
+
   /** Optional injectable stream provider (used in tests). */
   private readonly streamProvider: StreamProvider | undefined;
 
@@ -347,7 +358,8 @@ export class Agent {
   constructor(
     streamProvider?: StreamProvider,
     sessionDir?: string | null,
-    openAiCaller: typeof callOpenAi = callOpenAi
+    openAiCaller: typeof callOpenAi = callOpenAi,
+    worldStatePath?: string | null
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
@@ -360,6 +372,12 @@ export class Agent {
       this.sessionDir = null; // explicitly disabled
     } else {
       this.sessionDir = sessionDir;
+    }
+    // World state: if mock provider given and worldStatePath not specified, disable.
+    if (streamProvider !== undefined && worldStatePath === undefined) {
+      this.worldStatePath = null;
+    } else {
+      this.worldStatePath = worldStatePath;
     }
   }
 
@@ -449,6 +467,67 @@ export class Agent {
     await saveSession(session, this.sessionDir);
   }
 
+  /**
+   * Get a StreamProvider wrapping the real Anthropic client (or the injected
+   * mock, in tests). Used for compaction LLM calls.
+   */
+  private getStreamProvider(): StreamProvider {
+    if (this.streamProvider) return this.streamProvider;
+    const client = this.client;
+    return async (params) => client.messages.stream(params as any);
+  }
+
+  /**
+   * Compact the just-completed turn into the zone 2 summary.
+   * Replaces this.history with [zone2Summary (2 msgs)] only —
+   * zone 3 (the turn just finished) is folded in.
+   *
+   * Fire-and-forget safe: called without await after turn_end.
+   */
+  private async compactAfterTurn(turnMessages: Anthropic.MessageParam[]): Promise<void> {
+    try {
+      const provider = this.getStreamProvider();
+      const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider);
+      this.zone2Summary = (newSummaryMsgs[0].content as string).replace(/^\[session summary[^\]]*\]\n/, "");
+      this.history = newSummaryMsgs as Anthropic.MessageParam[];
+    } catch (err: any) {
+      logger.warn("compaction_failed", { error: err.message });
+    }
+  }
+
+  /**
+   * Fold the prior session history into the world state file.
+   * Called at session start when a prior session is being discarded.
+   * No-op if worldStatePath is null.
+   */
+  async foldSessionIntoWorldState(priorHistory: Anthropic.MessageParam[]): Promise<void> {
+    const path = this.worldStatePath === undefined ? defaultWorldStatePath() : this.worldStatePath;
+    if (path === null) return;
+    try {
+      const prior = await readWorldState(path);
+      const provider = this.getStreamProvider();
+      const newState = await compactWorldState(prior, priorHistory, provider);
+      await writeWorldState(newState, path);
+      logger.info("world_state_updated", { path });
+    } catch (err: any) {
+      logger.warn("world_state_update_failed", { error: err.message });
+    }
+  }
+
+  /**
+   * Load world state from disk into memory so it can be injected into the
+   * system prompt. Call once at session start, after init().
+   */
+  async loadWorldState(): Promise<void> {
+    const path = this.worldStatePath === undefined ? defaultWorldStatePath() : this.worldStatePath;
+    if (path === null) return;
+    try {
+      this.worldStateContent = await readWorldState(path);
+    } catch {
+      this.worldStateContent = null;
+    }
+  }
+
   async *sendMessage(
     userMessage: string,
     _confirmTool: (name: string, input: any, formatted: string) => Promise<boolean>,
@@ -467,6 +546,9 @@ export class Agent {
       }
       return;
     }
+
+    // Record where zone 3 starts (index of the new user message in history)
+    const zone3Start = this.history.length;
 
     this.history.push({ role: "user", content: userMessage });
 
@@ -504,9 +586,13 @@ export class Agent {
       yield { type: "status", message: "thinking..." } as AgentEvent;
 
       // For OAuth, system prompt must start with Claude Code identity
-      const systemPrompt = this.authMode === "oauth"
+      const basePrompt = this.authMode === "oauth"
         ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
         : config.systemPrompt;
+      // Inject zone 1 world state if available
+      const systemPrompt = this.worldStateContent
+        ? basePrompt + "\n\n## World State (from previous sessions)\n\n" + this.worldStateContent
+        : basePrompt;
 
       if (this.provider === "openai" && !fallbackEnabled) {
         yield { type: "error", error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
@@ -857,5 +943,11 @@ export class Agent {
       provider: endProvider,
       model: endModel,
     };
+
+    // Compact zone 3 (current turn) into zone 2 summary (fire-and-forget)
+    const turnMessages = this.history.slice(zone3Start);
+    this.compactAfterTurn(turnMessages).catch((err) => {
+      logger.warn("compaction_failed", { error: err.message });
+    });
   }
 }

@@ -351,12 +351,17 @@ export async function runApp(): Promise<void> {
     printBlock(now(), [red(`⚠ Auth error: ${err.message}`)]);
   }
 
-  // Check for prior session
+  // Load world state (zone 1) into memory for system prompt injection
+  await agent.loadWorldState().catch(() => {});
+
+  // Check for prior session and fold it into world state
   let priorSession: Session | null = null;
   try {
     const prior = await agent.checkPriorSession();
     if (prior && prior.history.length > 0) {
       priorSession = prior;
+      // Fold prior session into world state (fire-and-forget; non-blocking)
+      agent.foldSessionIntoWorldState(prior.history as any).catch(() => {});
     }
   } catch { /* no prior session */ }
 
