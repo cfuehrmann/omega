@@ -313,6 +313,15 @@ describe("executeTool: web_search", () => {
     expect(result.isError).toBe(true);
   });
 
+  it("uses Brave Search when BRAVE_SEARCH_API_KEY is set and returns full https:// URLs", async () => {
+    // This test only runs when the key is available (CI may skip via env)
+    if (!process.env.BRAVE_SEARCH_API_KEY) return;
+    const result = await executeTool("web_search", { query: "TypeScript official documentation" });
+    expect(result.isError).toBe(false);
+    // Brave returns real full URLs, not bare domain names
+    expect(result.output).toMatch(/https?:\/\/[a-z]/);
+  }, 15_000);
+
   it("formatToolCall formats web_search", () => {
     expect(formatToolCall("web_search", { query: "hello world" })).toBe(
       "web_search: hello world"

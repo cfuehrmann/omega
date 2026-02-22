@@ -42,11 +42,40 @@ function htmlToText(html: string): string {
   return text;
 }
 
-async function executeWebSearch(input: { query: string }): Promise<string> {
-  if (!input.query || !input.query.trim()) {
-    throw new Error("query is required");
+async function executeBraveSearch(query: string, apiKey: string): Promise<string> {
+  const q = encodeURIComponent(query.trim());
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${q}&count=10&text_decorations=0&search_lang=en`;
+  const res = await fetch(url, {
+    headers: {
+      "Accept": "application/json",
+      "Accept-Encoding": "gzip",
+      "X-Subscription-Token": apiKey,
+    },
+    signal: AbortSignal.timeout(10_000),
+    ...FETCH_TLS_OPTIONS,
+  } as any);
+  if (!res.ok) throw new Error(`Brave Search API error: ${res.status}`);
+
+  const data = await res.json() as any;
+  const webResults: Array<{ title: string; url: string; description?: string }> =
+    data?.web?.results ?? [];
+
+  if (webResults.length === 0) return "No results found.";
+
+  const lines: string[] = ["Results:"];
+  for (const r of webResults) {
+    lines.push(`• ${r.url}`);
+    lines.push(`  ${r.title}`);
+    if (r.description) lines.push(`  ${r.description}`);
   }
-  const q = encodeURIComponent(input.query.trim());
+  const output = lines.join("\n");
+  return output.length > FETCH_MAX_CHARS
+    ? output.slice(0, FETCH_MAX_CHARS) + "\n[truncated]"
+    : output;
+}
+
+async function executeDuckDuckGoSearch(query: string): Promise<string> {
+  const q = encodeURIComponent(query.trim());
 
   // DuckDuckGo Instant Answer API — no API key required
   const apiUrl = `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
@@ -58,7 +87,6 @@ async function executeWebSearch(input: { query: string }): Promise<string> {
   if (!res.ok) throw new Error(`DuckDuckGo API error: ${res.status}`);
 
   const data = await res.json() as any;
-
   const lines: string[] = [];
 
   // Abstract (direct answer)
@@ -101,7 +129,6 @@ async function executeWebSearch(input: { query: string }): Promise<string> {
     } as any);
     if (!htmlRes.ok) throw new Error(`DuckDuckGo HTML error: ${htmlRes.status}`);
     const html = await htmlRes.text();
-    // Pull out result snippets: <a class="result__snippet">…</a>
     const snippetRe = /<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
     const urlRe = /<a[^>]+class="[^"]*result__url[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
     const snippets: string[] = [];
@@ -128,6 +155,17 @@ async function executeWebSearch(input: { query: string }): Promise<string> {
   return output.length > FETCH_MAX_CHARS
     ? output.slice(0, FETCH_MAX_CHARS) + "\n[truncated]"
     : output;
+}
+
+async function executeWebSearch(input: { query: string }): Promise<string> {
+  if (!input.query || !input.query.trim()) {
+    throw new Error("query is required");
+  }
+  const braveKey = process.env.BRAVE_SEARCH_API_KEY;
+  if (braveKey) {
+    return executeBraveSearch(input.query, braveKey);
+  }
+  return executeDuckDuckGoSearch(input.query);
 }
 
 async function executeFetchUrl(input: { url: string }): Promise<string> {
@@ -283,7 +321,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "web_search",
     description:
-      "Search the web using DuckDuckGo. Returns titles, URLs, and snippets for the top results. " +
+      "Search the web using Brave Search (or DuckDuckGo as fallback). Returns titles, URLs, and snippets for the top results. " +
       "Use this to look up documentation, current information, or anything not in local files.",
     input_schema: {
       type: "object" as const,
