@@ -77,6 +77,19 @@ Ink cannot own the full screen. Alternatives:
 Decision: stay with Ink. Revisit OpenTUI or browser UI when capability
 outgrows the current display model.
 
+## Core purpose
+
+The UI redesign to API-terminology (messages, roles, content blocks, tool
+execution) was identified as a critical breakthrough. The goal is not just a
+useful agent — it's a system where the human contributor can see exactly what
+flows through every layer, understand the types at every boundary, and make
+informed decisions from that basis. Observability of the actual data structures
+is a first-class design goal, not a debugging aid.
+
+This is why "types on the table" (the operator's framing, rooted in type
+theory) drives UI decisions: the display should reflect the real data model,
+not a simplified human-friendly abstraction of it.
+
 ## Planning system
 
 Replaced `plan/overview.md` + `plan/ui.md` with `plan/past.md` (this file),
