@@ -1,0 +1,164 @@
+/**
+ * Tests for structured events emitted by foldCurrentSessionIntoWorldState.
+ *
+ * When the world-state fold runs (on shutdown), it should emit the same
+ * structured AgentEvents as a regular turn — api_call_start, api_response,
+ * and a tool_result for the file write — so the UI can render them visibly.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import type { StreamProvider, AgentEvent } from "./agent.js";
+import { Agent } from "./agent.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+let tempDir: string;
+
+beforeEach(async () => {
+  tempDir = await mkdtemp(join(tmpdir(), "omega-fold-events-test-"));
+});
+
+afterEach(async () => {
+  await rm(tempDir, { recursive: true, force: true });
+});
+
+function makeMockStream(responseText: string) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+      yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: responseText } };
+      yield { type: "content_block_stop", index: 0 };
+      yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } };
+      yield { type: "message_stop" };
+    },
+    async finalMessage() {
+      return {
+        id: "msg_test",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: responseText }],
+        model: "claude-sonnet-4-6",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      } as any;
+    },
+  };
+}
+
+function makeMockProvider(responseText = "new world state"): StreamProvider {
+  return async () => makeMockStream(responseText);
+}
+
+async function collectSendMessage(agent: Agent, message: string) {
+  const events: AgentEvent[] = [];
+  for await (const event of agent.sendMessage(message, async () => true)) {
+    events.push(event);
+  }
+  return events;
+}
+
+async function collectFold(agent: Agent): Promise<AgentEvent[]> {
+  const events: AgentEvent[] = [];
+  for await (const event of agent.foldCurrentSessionIntoWorldState()) {
+    events.push(event);
+  }
+  return events;
+}
+
+// ---------------------------------------------------------------------------
+// foldCurrentSessionIntoWorldState is an async generator
+// ---------------------------------------------------------------------------
+
+describe("foldCurrentSessionIntoWorldState — structured events", () => {
+  it("is an async generator (returns AsyncGenerator)", () => {
+    const agent = new Agent(makeMockProvider(), null, undefined, null);
+    const result = agent.foldCurrentSessionIntoWorldState();
+    // AsyncGenerators have Symbol.asyncIterator
+    expect(typeof result[Symbol.asyncIterator]).toBe("function");
+    // Clean up (drain so no leak)
+    result.return(undefined);
+  });
+
+  it("emits no events when worldStatePath is null", async () => {
+    const agent = new Agent(makeMockProvider(), null, undefined, null);
+    const events = await collectFold(agent);
+    expect(events).toHaveLength(0);
+  });
+
+  it("emits no events when history is empty", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const agent = new Agent(makeMockProvider(), null, undefined, worldStatePath);
+    // Do NOT send any message — history is empty
+    const events = await collectFold(agent);
+    expect(events).toHaveLength(0);
+  });
+
+  it("emits api_call_start event", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const agent = new Agent(makeMockProvider(), null, undefined, worldStatePath);
+    await collectSendMessage(agent, "hello");
+
+    const events = await collectFold(agent);
+    const apiCallStart = events.find(e => e.type === "api_call_start");
+    expect(apiCallStart).toBeDefined();
+    expect((apiCallStart as any).provider).toBe("anthropic");
+  });
+
+  it("emits api_response event with token usage", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const agent = new Agent(makeMockProvider(), null, undefined, worldStatePath);
+    await collectSendMessage(agent, "hello");
+
+    const events = await collectFold(agent);
+    const apiResponse = events.find(e => e.type === "api_response");
+    expect(apiResponse).toBeDefined();
+    expect((apiResponse as any).usage).toBeDefined();
+    expect(typeof (apiResponse as any).usage.input_tokens).toBe("number");
+    expect(typeof (apiResponse as any).usage.output_tokens).toBe("number");
+  });
+
+  it("emits tool_result event for the file write", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const agent = new Agent(makeMockProvider(), null, undefined, worldStatePath);
+    await collectSendMessage(agent, "hello");
+
+    const events = await collectFold(agent);
+    const toolResult = events.find(e => e.type === "tool_result");
+    expect(toolResult).toBeDefined();
+    expect((toolResult as any).name).toBe("write_file");
+  });
+
+  it("still writes the world state file to disk", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const agent = new Agent(makeMockProvider("the new state"), null, undefined, worldStatePath);
+    await collectSendMessage(agent, "hello");
+
+    await collectFold(agent);
+
+    const file = Bun.file(worldStatePath);
+    const exists = await file.exists();
+    expect(exists).toBe(true);
+    const content = await file.text();
+    expect(content).toContain("the new state");
+  });
+
+  it("emits an error event (not throw) on LLM failure", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const failProvider: StreamProvider = async () => {
+      throw new Error("LLM exploded");
+    };
+    const agent = new Agent(failProvider, null, undefined, worldStatePath);
+    await collectSendMessage(agent, "hello");
+
+    const events = await collectFold(agent);
+    const errorEvent = events.find(e => e.type === "error");
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent as any).error).toContain("LLM exploded");
+  });
+});

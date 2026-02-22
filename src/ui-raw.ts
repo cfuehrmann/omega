@@ -358,15 +358,52 @@ function printPrompt(prefix: string): void {
 
 /** Fold session into world state and exit. Used for all clean-shutdown paths. */
 async function shutdown(agent: Agent, code: number = 0): Promise<never> {
-  // Clear the current prompt line, then print shutdown status.
+  // Clear the current prompt line before rendering shutdown events.
   process.stdout.write("\r\x1b[2K");  // CR + erase entire line
-  printBlock(now(), [dim("Saving session to world state… (please wait)")]);
-  try {
-    await agent.foldCurrentSessionIntoWorldState();
-    printBlock(now(), [dim("✓ World state saved.")]);
-  } catch (err: any) {
-    printBlock(now(), [red(`⚠ World state save failed: ${err.message}`)]);
+
+  let hadEvents = false;
+  for await (const event of agent.foldCurrentSessionIntoWorldState()) {
+    hadEvents = true;
+    switch (event.type) {
+      case "api_call_start":
+        printBlock(now(), renderApiRequest(
+          event.callNumber,
+          event.provider,
+          event.url,
+          event.request,
+        ));
+        break;
+
+      case "api_response":
+        printBlock(now(), renderApiResponse(
+          event.provider,
+          event.url,
+          event.stopReason,
+          event.usage,
+          event.content,
+          event.raw,
+        ));
+        break;
+
+      case "tool_result":
+        // For shutdown events the "input" is the formatted description string
+        printBlock(now(), renderToolExecution(
+          event.name,
+          event.formatted,
+          event.result,
+        ));
+        break;
+
+      case "error":
+        printBlock(now(), [red(`⚠ World state save failed: ${event.error}`)]);
+        break;
+    }
   }
+
+  if (!hadEvents) {
+    // No history to save — exit silently (no message needed).
+  }
+
   process.exit(code);
 }
 

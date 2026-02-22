@@ -114,7 +114,8 @@ describe("Agent.foldCurrentSessionIntoWorldState", () => {
     const agent = new Agent(makeMockProvider("summary of session"), null, undefined, worldStatePath);
     await collectEvents(agent, "hello");
 
-    await agent.foldCurrentSessionIntoWorldState();
+    // foldCurrentSessionIntoWorldState is now an async generator — drain it
+    for await (const _ of agent.foldCurrentSessionIntoWorldState()) { /* drain */ }
 
     const content = await readWorldState(worldStatePath);
     expect(content).not.toBeNull();
@@ -124,8 +125,10 @@ describe("Agent.foldCurrentSessionIntoWorldState", () => {
 
   it("is a no-op when worldStatePath is null", async () => {
     const agent = new Agent(makeMockProvider(), null, undefined, null);
-    // Should not throw
-    await expect(agent.foldCurrentSessionIntoWorldState()).resolves.toBeUndefined();
+    // Should not throw and should emit no events
+    const events: any[] = [];
+    for await (const e of agent.foldCurrentSessionIntoWorldState()) { events.push(e); }
+    expect(events).toHaveLength(0);
   });
 
   it("incorporates prior world state when one exists", async () => {
@@ -135,17 +138,19 @@ describe("Agent.foldCurrentSessionIntoWorldState", () => {
     const { writeWorldState } = await import("./world-state.js");
     await writeWorldState("Prior state: project was started.", worldStatePath);
 
-    let capturedPrompt = "";
+    let capturedFoldPrompt = "";
     const provider: StreamProvider = async (params) => {
-      capturedPrompt = params.messages[0].content as string;
+      // The world-state fold prompt contains the prior world state
+      const msg = params.messages[0].content as string;
+      if (msg.includes("Prior state")) capturedFoldPrompt = msg;
       return makeMockStream("Updated state.");
     };
 
     const agent = new Agent(provider, null, undefined, worldStatePath);
     await collectEvents(agent, "do something");
-    await agent.foldCurrentSessionIntoWorldState();
+    for await (const _ of agent.foldCurrentSessionIntoWorldState()) { /* drain */ }
 
-    expect(capturedPrompt).toContain("Prior state: project was started.");
+    expect(capturedFoldPrompt).toContain("Prior state: project was started.");
   });
 });
 

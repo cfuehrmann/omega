@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { buildOpenAiRequest, parseOpenAiResponse } from "./openai.js";
+import { buildOpenAiRequest, parseOpenAiResponse, callOpenAi } from "./openai.js";
 
 function msg(role: "user" | "assistant", content: any): Anthropic.MessageParam {
   return { role, content } as Anthropic.MessageParam;
@@ -112,5 +112,34 @@ describe("parseOpenAiResponse", () => {
     expect(required).toContain("path");
     expect(required).toContain("offset");
     expect(required).toContain("limit");
+  });
+});
+
+describe("callOpenAi abort", () => {
+  it("rejects immediately when signal is already aborted (fetch receives signal)", async () => {
+    // Patch global fetch to capture the signal passed to it
+    const originalFetch = globalThis.fetch;
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_url: any, opts: any) => {
+      capturedSignal = opts?.signal;
+      // Simulate a slow response that never resolves
+      await new Promise((_resolve, reject) => {
+        if (opts?.signal?.aborted) reject(new DOMException("Aborted", "AbortError"));
+        opts?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+      return new Response("{}");
+    }) as any;
+
+    const controller = new AbortController();
+    controller.abort(); // already aborted
+
+    process.env.OPENAI_API_KEY = "test-key";
+    try {
+      await expect(callOpenAi([], "sys", "model", 10, controller.signal)).rejects.toThrow();
+      expect(capturedSignal).toBeDefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.OPENAI_API_KEY;
+    }
   });
 });

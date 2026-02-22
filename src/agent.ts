@@ -451,20 +451,79 @@ export class Agent {
   /**
    * Fold the current session history into the world state file.
    * Call this on clean shutdown (SIGINT, SIGTERM, normal exit).
-   * No-op if worldStatePath is null or history is empty.
+   * No-op (yields nothing) if worldStatePath is null or history is empty.
+   *
+   * Yields structured AgentEvents so the UI can render the LLM call and
+   * file write the same way it renders regular turns.
    */
-  async foldCurrentSessionIntoWorldState(): Promise<void> {
+  async *foldCurrentSessionIntoWorldState(): AsyncGenerator<AgentEvent> {
     const path = this.worldStatePath === undefined ? projectWorldStatePath() : this.worldStatePath;
     if (path === null) return;
     if (this.history.length === 0) return;
     try {
       const prior = await readWorldState(path);
       const provider = this.getStreamProvider();
-      const newState = await compactWorldState(prior, this.history, provider);
+
+      // Build the request params so we can show them in api_call_start
+      const compactionUrl = "https://api.anthropic.com/v1/messages";
+      const compactionRequest = {
+        model: "claude-sonnet-4-6",
+        max_tokens: 2048,
+        system: "You are a context compactor. Respond only with the requested summary, no preamble.",
+        tools: [],
+        messages: [{ role: "user", content: "<world-state compaction prompt>" }],
+      };
+
+      yield {
+        type: "api_call_start",
+        callNumber: 1,
+        provider: "anthropic",
+        url: compactionUrl,
+        request: compactionRequest,
+      } as AgentEvent;
+
+      // Call compactWorldState — it makes the real LLM call internally.
+      // We capture usage by wrapping the provider to intercept finalMessage.
+      let capturedUsage: { input_tokens: number; output_tokens: number } | null = null;
+      let capturedContent: any[] = [];
+      const wrappedProvider: StreamProvider = async (params) => {
+        const stream = await provider(params);
+        return {
+          [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
+          async finalMessage() {
+            const msg = await stream.finalMessage();
+            capturedUsage = msg.usage;
+            capturedContent = msg.content;
+            return msg;
+          },
+        };
+      };
+
+      const newState = await compactWorldState(prior, this.history, wrappedProvider);
+
+      yield {
+        type: "api_response",
+        provider: "anthropic",
+        url: compactionUrl,
+        stopReason: "end_turn",
+        usage: capturedUsage ?? { input_tokens: 0, output_tokens: 0 },
+        content: capturedContent,
+      } as AgentEvent;
+
       await writeWorldState(newState, path);
       logger.info("world_state_updated", { path });
+
+      yield {
+        type: "tool_result",
+        id: "world-state-write",
+        name: "write_file",
+        formatted: `write_file(path: "${path}")`,
+        result: { output: `Written ${newState.length} chars to ${path}`, isError: false },
+      } as AgentEvent;
+
     } catch (err: any) {
       logger.warn("world_state_update_failed", { error: err.message });
+      yield { type: "error", error: err.message } as AgentEvent;
     }
   }
 

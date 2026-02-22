@@ -44,6 +44,30 @@ describe("parseKeys", () => {
     expect(escapes).toBe(1);
   });
 
+  it("ignores printable/backspace/enter when input is disabled", () => {
+    let submitted = "";
+    const buf = { value: "keep" };
+    parseKeys("a\b\r", {
+      onSubmit: (line) => { submitted = line; },
+      onEscape: () => {},
+      onExit: () => {},
+    }, buf, { inputEnabled: false });
+    expect(submitted).toBe("");
+    expect(buf.value).toBe("keep");
+  });
+
+  it("still handles Escape when input is disabled", () => {
+    let escapes = 0;
+    const buf = { value: "keep" };
+    parseKeys("\x1b", {
+      onSubmit: () => {},
+      onEscape: () => { escapes++; },
+      onExit: () => {},
+    }, buf, { inputEnabled: false });
+    expect(escapes).toBe(1);
+    expect(buf.value).toBe("keep");
+  });
+
   it("skips arrow-key CSI sequences without calling any callback", () => {
     let calls = 0;
     const cb = {
