@@ -168,4 +168,51 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect(errorEvent).toBeDefined();
     expect((errorEvent as any).error).toContain("LLM exploded");
   });
+
+  it("uses the OpenAI caller for fold when OpenAI is the active provider", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+
+    // Anthropic stream provider that must NOT be called during fold
+    let anthropicCalled = false;
+    const anthropicProvider: StreamProvider = async () => {
+      anthropicCalled = true;
+      return makeMockStream("anthropic response");
+    };
+
+    // OpenAI caller that MUST be called during fold
+    let openAiCalled = false;
+    const mockOpenAiCaller: any = async () => {
+      openAiCalled = true;
+      return {
+        text: "openai world state",
+        response: {
+          content: [{ type: "text", text: "openai world state" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 8, output_tokens: 3 },
+        },
+        raw: {},
+      };
+    };
+
+    const agent = new Agent(anthropicProvider, null, mockOpenAiCaller, worldStatePath);
+    // Switch to OpenAI provider before fold
+    await collectSendMessage(agent, "/gpt");
+    // Send a real message so history is non-empty (sendMessage with /gpt won't add to history)
+    await collectSendMessage(agent, "hello");
+    // Reset flags after sendMessage (the Anthropic provider may have been called during sendMessage for the hello turn)
+    anthropicCalled = false;
+
+    const events = await collectFold(agent);
+
+    expect(openAiCalled).toBe(true);
+    expect(anthropicCalled).toBe(false);
+
+    // The saved world state should come from OpenAI
+    const saved = events.find(e => e.type === "world_state_saved");
+    expect(saved).toBeDefined();
+
+    // The api_call_start event should identify OpenAI as the provider
+    const apiCallStart = events.find(e => e.type === "api_call_start");
+    expect((apiCallStart as any).provider).toBe("openai");
+  });
 });

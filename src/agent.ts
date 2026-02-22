@@ -487,6 +487,60 @@ export class Agent {
   }
 
   /**
+   * Get a StreamProvider for the currently active provider.
+   * If OpenAI is active, wraps `callOpenAi` to match the StreamProvider interface.
+   * If Anthropic is active, returns the standard Anthropic stream provider.
+   */
+  private getActiveFoldProvider(): { provider: StreamProvider; providerName: ProviderName; url: string } {
+    if (this.provider === "openai") {
+      const openAiCaller = this.openAiCaller;
+      const model = config.fallbackModel as string;
+      const url = getOpenAiUrl();
+      const openAiProvider: StreamProvider = async (_params) => {
+        // compactWorldState always sends a single user message — extract it
+        const messages = _params.messages as any[];
+        const lastUserMsg = messages[messages.length - 1];
+        const prompt = typeof lastUserMsg?.content === "string"
+          ? lastUserMsg.content
+          : JSON.stringify(lastUserMsg?.content ?? "");
+        const result = await openAiCaller(
+          [{ role: "user", content: prompt }],
+          _params.system,
+          model,
+          _params.max_tokens,
+          undefined
+        );
+        const responseText = result.text;
+        const usage = result.response.usage;
+        // Return a StreamProvider-compatible object
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: responseText } };
+          },
+          async finalMessage() {
+            return {
+              id: "openai-fold",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: responseText }],
+              model,
+              stop_reason: "end_turn",
+              stop_sequence: null,
+              usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
+            } as any;
+          },
+        };
+      };
+      return { provider: openAiProvider, providerName: "openai", url };
+    }
+    return {
+      provider: this.getStreamProvider(),
+      providerName: "anthropic",
+      url: "https://api.anthropic.com/v1/messages",
+    };
+  }
+
+  /**
    * Compact the just-completed turn into the zone 2 summary.
    * Replaces this.history with [zone2Summary (2 msgs)] only —
    * zone 3 (the turn just finished) is folded in.
@@ -518,12 +572,11 @@ export class Agent {
     if (this.history.length === 0) return;
     try {
       const prior = await readWorldState(path);
-      const provider = this.getStreamProvider();
+      const { provider, providerName, url: compactionUrl } = this.getActiveFoldProvider();
 
       // Build the request params so we can show them in api_call_start
-      const compactionUrl = "https://api.anthropic.com/v1/messages";
       const compactionRequest = {
-        model: "claude-sonnet-4-6",
+        model: providerName === "openai" ? (config.fallbackModel as string) : "claude-sonnet-4-6",
         max_tokens: 2048,
         system: "You are a context compactor. Respond only with the requested summary, no preamble.",
         tools: [],
@@ -533,7 +586,7 @@ export class Agent {
       yield {
         type: "api_call_start",
         callNumber: 1,
-        provider: "anthropic",
+        provider: providerName,
         url: compactionUrl,
         request: compactionRequest,
       } as AgentEvent;
@@ -542,8 +595,8 @@ export class Agent {
       // We capture usage by wrapping the provider to intercept finalMessage.
       let capturedUsage: { input_tokens: number; output_tokens: number } | null = null;
       let capturedContent: any[] = [];
-      const wrappedProvider: StreamProvider = async (params) => {
-        const stream = await provider(params);
+      const wrapProvider = (p: StreamProvider): StreamProvider => async (params) => {
+        const stream = await p(params);
         return {
           [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
           async finalMessage() {
@@ -554,13 +607,14 @@ export class Agent {
           },
         };
       };
+      const wrappedProvider = wrapProvider(provider);
 
-      // Attempt compaction with one re-auth retry on 401
+      // Attempt compaction with one re-auth retry on 401 (Anthropic only)
       let newState: string;
       try {
         newState = await compactWorldState(prior, this.history, wrappedProvider);
       } catch (compactErr: any) {
-        if (isAuthExpired(compactErr)) {
+        if (isAuthExpired(compactErr) && providerName === "anthropic") {
           logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh" });
           const reauthed = await this.reinitAuth();
           if (!reauthed) {
@@ -569,21 +623,10 @@ export class Agent {
             return;
           }
           // Rebuild wrappedProvider with the fresh client
-          const freshProvider = this.getStreamProvider();
+          const { provider: freshProvider } = this.getActiveFoldProvider();
           capturedUsage = null;
           capturedContent = [];
-          const retryWrapped: StreamProvider = async (params) => {
-            const stream = await freshProvider(params);
-            return {
-              [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
-              async finalMessage() {
-                const msg = await stream.finalMessage();
-                capturedUsage = msg.usage;
-                capturedContent = msg.content;
-                return msg;
-              },
-            };
-          };
+          const retryWrapped = wrapProvider(freshProvider);
           newState = await compactWorldState(prior, this.history, retryWrapped);
         } else {
           throw compactErr;
@@ -592,7 +635,7 @@ export class Agent {
 
       yield {
         type: "api_response",
-        provider: "anthropic",
+        provider: providerName,
         url: compactionUrl,
         stopReason: "end_turn",
         usage: capturedUsage ?? { input_tokens: 0, output_tokens: 0 },
