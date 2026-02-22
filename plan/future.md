@@ -23,3 +23,4 @@ Discrete, prioritised, actionable. Keep in priority order.
 - **`sudo` handling** — Wait for a real pain point.
 - **Multi-file edit atomicity** — The test-revert discipline (run `bun test`, revert on red) provides the safety net. No code change needed.
 - **Interrupt/cancel** — Esc already sends abort signal. No gap.
+- **Line editing** — Done. Cursor-aware editing in `parseKeys`: Left/Right arrows (char), Ctrl+Left/Right (word), Ctrl+Backspace / Ctrl+Delete (delete word backward/forward). Insert and backspace work at any cursor position with correct ANSI redraw. 14 new tests.

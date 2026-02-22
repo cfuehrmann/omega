@@ -230,3 +230,98 @@ describe("prompt caching — cost accounting", () => {
     expect(costWithCache).toBeLessThan(costNoCache);
   });
 });
+
+describe("prompt caching — savings math identity", () => {
+  // The critical identity: cost + saved === hypothetical cost without caching.
+  // This validates that the savings calculation is correct and consistent
+  // with the cost calculation, not inflated or double-counted.
+
+  it("cost + saved === hypothetical no-cache cost (Sonnet, pure cache read)", async () => {
+    // Scenario: 500 uncached input + 40000 cache-read + 1000 output, 0 cache write
+    // Sonnet: $3/M input, $15/M output
+    // Actual cost = (500×3 + 1000×15 + 40000×3×0.1) / 1M = (1500+15000+12000)/1M = 0.0285
+    // Savings = 40000 × 3 × 0.9 / 1M = 108000/1M = 0.108
+    // Hypothetical (no caching) = (500+40000)×3/M + 1000×15/M = 121500+15000 = 136500/1M = 0.1365
+    // Check: 0.0285 + 0.108 = 0.1365 ✅
+    const { estimateCostWithCache, estimateCacheSavings, estimateCost } = await import("./agent.js");
+
+    const model = "claude-sonnet-4-6";
+    const inputTokens = 500;
+    const outputTokens = 1000;
+    const cacheCreation = 0;
+    const cacheRead = 40000;
+
+    const actualCost = estimateCostWithCache(model, inputTokens, outputTokens, cacheCreation, cacheRead);
+    const saved = estimateCacheSavings(model, cacheRead);
+    const hypotheticalNoCacheCost = estimateCost(model, inputTokens + cacheCreation + cacheRead, outputTokens);
+
+    expect(actualCost).toBeCloseTo(0.0285, 6);
+    expect(saved).toBeCloseTo(0.108, 6);
+    expect(actualCost + saved).toBeCloseTo(hypotheticalNoCacheCost, 6);
+  });
+
+  it("cost + saved === hypothetical no-cache cost (Opus)", async () => {
+    const { estimateCostWithCache, estimateCacheSavings, estimateCost } = await import("./agent.js");
+
+    const model = "claude-opus-4-6";
+    const inputTokens = 300;
+    const outputTokens = 800;
+    const cacheCreation = 0;
+    const cacheRead = 50000;
+
+    const actualCost = estimateCostWithCache(model, inputTokens, outputTokens, cacheCreation, cacheRead);
+    const saved = estimateCacheSavings(model, cacheRead);
+    const hypotheticalNoCacheCost = estimateCost(model, inputTokens + cacheCreation + cacheRead, outputTokens);
+
+    // Opus: $5/M input, $25/M output
+    // Actual = (300×5 + 800×25 + 50000×5×0.1)/1M = (1500+20000+25000)/1M = 0.0465
+    // Saved = 50000×5×0.9/1M = 225000/1M = 0.225
+    // Hypothetical = (50300×5 + 800×25)/1M = (251500+20000)/1M = 0.2715
+    expect(actualCost).toBeCloseTo(0.0465, 6);
+    expect(saved).toBeCloseTo(0.225, 6);
+    expect(actualCost + saved).toBeCloseTo(hypotheticalNoCacheCost, 6);
+  });
+
+  it("savings can legitimately exceed cost when cache read tokens dominate", async () => {
+    // This validates that "implausibly high savings" is expected behavior.
+    // With heavy caching (typical in long sessions), savings > cost is normal
+    // because you're paying 0.1× instead of 1.0× for most input tokens.
+    const { estimateCostWithCache, estimateCacheSavings } = await import("./agent.js");
+
+    const model = "claude-sonnet-4-6";
+    // Realistic late-session turn: small uncached part, huge cache read
+    const inputTokens = 200;       // new user message tokens
+    const outputTokens = 500;      // model response
+    const cacheCreation = 0;       // nothing new cached
+    const cacheRead = 80000;       // system + tools + history from cache
+
+    const cost = estimateCostWithCache(model, inputTokens, outputTokens, cacheCreation, cacheRead);
+    const saved = estimateCacheSavings(model, cacheRead);
+
+    // cost = (200×3 + 500×15 + 80000×0.3)/1M = (600+7500+24000)/1M = 0.0321
+    // saved = 80000×3×0.9/1M = 216000/1M = 0.216
+    // Ratio: saved/cost ≈ 6.7×
+    expect(cost).toBeCloseTo(0.0321, 4);
+    expect(saved).toBeCloseTo(0.216, 4);
+    expect(saved).toBeGreaterThan(cost * 5); // savings > 5× cost is normal
+  });
+
+  it("cache write turns have zero savings (no double-counting)", async () => {
+    const { estimateCostWithCache, estimateCacheSavings, estimateCost } = await import("./agent.js");
+
+    const model = "claude-sonnet-4-6";
+    const inputTokens = 100;
+    const outputTokens = 50;
+    const cacheCreation = 5000;
+    const cacheRead = 0;
+
+    const cost = estimateCostWithCache(model, inputTokens, outputTokens, cacheCreation, cacheRead);
+    const saved = estimateCacheSavings(model, cacheRead);
+
+    // No cache reads → no savings. Cache writes actually cost MORE than base.
+    expect(saved).toBe(0);
+    // Cache write cost > equivalent uncached cost (1.25× vs 1.0×)
+    const uncachedCost = estimateCost(model, inputTokens + cacheCreation, outputTokens);
+    expect(cost).toBeGreaterThan(uncachedCost);
+  });
+});
