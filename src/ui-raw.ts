@@ -382,6 +382,10 @@ export async function runApp(): Promise<void> {
             ));
             break;
 
+          case "api_error":
+            printBlock(now(), [red(`api error (${event.model}): ${event.error}`)]);
+            break;
+
           case "status":
             // No live zone — skip
             break;

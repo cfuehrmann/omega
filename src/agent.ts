@@ -29,6 +29,7 @@ export type AgentEvent =
   | { type: "user_message"; content: string }
   | { type: "api_call_start"; callNumber: number; model: string; system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] }
   | { type: "api_response"; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[] }
+  | { type: "api_error"; model: string; error: string }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
@@ -273,6 +274,9 @@ export class Agent {
   /** Optional injectable stream provider (used in tests). */
   private readonly streamProvider: StreamProvider | undefined;
 
+  /** Optional injectable OpenAI caller (used in tests). */
+  private readonly openAiCaller: typeof callOpenAi;
+
   /**
    * Production: new Agent()
    *   — uses real Anthropic client, persists to default session dir
@@ -282,11 +286,16 @@ export class Agent {
    *     safe default for tests. Pass a temp dir from makeTempDir(), or pass
    *     null to disable persistence entirely.
    */
-  constructor(streamProvider?: StreamProvider, sessionDir?: string | null) {
+  constructor(
+    streamProvider?: StreamProvider,
+    sessionDir?: string | null,
+    openAiCaller: typeof callOpenAi = callOpenAi
+  ) {
     // Will be initialized in init()
     this.client = new Anthropic();
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
+    this.openAiCaller = openAiCaller;
     // If a mock provider is given but no sessionDir, disable persistence.
     // This prevents tests from accidentally writing to the real session dir.
     if (streamProvider !== undefined && sessionDir === undefined) {
@@ -499,6 +508,11 @@ export class Agent {
               error: err.message,
             });
             yield {
+              type: "api_error",
+              model: config.model,
+              error: err.message ?? String(err),
+            } as AgentEvent;
+            yield {
               type: "status",
               message: `Anthropic rate limit — falling back to ${config.fallbackModel}`,
             } as AgentEvent;
@@ -516,7 +530,7 @@ export class Agent {
             } as AgentEvent;
 
             try {
-              const openai = await callOpenAi(this.history, systemPrompt, activeModel, config.maxOutputTokens);
+              const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens);
               if (ttftMs === null) {
                 ttftMs = performance.now() - startTime;
               }
