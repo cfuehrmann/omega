@@ -83,6 +83,12 @@ This is why "types on the table" (the operator's framing, rooted in type
 theory) drives UI decisions: the display should reflect the real data model,
 not a simplified human-friendly abstraction of it.
 
+Provider design principle: no least-common-denominator API. Each provider is
+first-class and uses its native features (caching, usage fields, limits).
+Session is a provider-agnostic superset that can be projected into each
+provider's request format. UI must show provider-native property names and
+actual request URLs (shortened).
+
 ## Testing discipline
 
 Red-green for bugs/features. Structural invariant tests for refactors.
