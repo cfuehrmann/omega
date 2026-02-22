@@ -83,6 +83,17 @@ This is why "types on the table" (the operator's framing, rooted in type
 theory) drives UI decisions: the display should reflect the real data model,
 not a simplified human-friendly abstraction of it.
 
+## Testing discipline
+
+Red-green for bugs/features. Structural invariant tests for refactors.
+
+After Ink removal, `package.json` start script pointed at a deleted file.
+`bun test` didn't catch it — no test covered the entry point. Added
+`entry.test.ts`: verifies start/login scripts point to existing files and
+that the entry file actually calls `runApp()`. Rule: when renaming or
+deleting files, write a test that guards the invariant BEFORE making the
+change, not after discovering breakage manually.
+
 ## Planning system
 
 Replaced `plan/overview.md` + `plan/ui.md` with `plan/past.md` (this file),

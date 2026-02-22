@@ -7,40 +7,34 @@ to `past.md`. Keep in priority order.
 
 ## 1. UI tests for `ui-raw.ts`
 
-`ui.tsx` has zero automated tests. Use `ink-testing-library` to cover the
-main states: resume prompt, streaming display, activity indicator, Esc
-interrupt, dim prompt while agent acts.
+No automated tests for the UI layer. Can't use ink-testing-library (Ink was
+removed). Options: test the render helpers as pure functions, or spawn a
+pty and assert on output. Start with pure-function tests for the block
+renderers (renderUserMessage, renderApiRequest, etc.).
 
-## 2. Dictation truncation bug
-
-`wtype` (Wayland) injects keystrokes one at a time. Text gets truncated on
-long dictated inputs despite the `useEffect` fix in `fast-text-input.tsx`.
-Root cause not fully pinned. Needs debug logging to find the drop site.
-
-## 3. `sudo` handling
+## 2. `sudo` handling
 
 Detect when a tool call needs `sudo`, surface it clearly to the operator,
 handle the elevated execution. Currently unhandled.
 
-## 4. Context summarisation
+## 3. Context summarisation
 
 When context is truncated, old messages are dropped silently. Better:
 summarise dropped content and inject the summary so the agent retains
 semantic history even with a full context window.
 
+## 4. Rich command output
+
+`run_command` output is truncated. No scrolling. Improve for long-running
+commands (build output, test runs).
+
 ## 5. Full-screen TUI or browser UI
 
-Ink can't do collapsible/expandable history. OpenTUI (Zig+TypeScript, 8.8k
-stars) is the most promising terminal option — revisit when it reaches 1.0.
-Browser UI (Vite + React + local WebSocket) is the most flexible option.
-Neither is urgent while the agent is still growing in capability.
+Raw terminal can't do collapsible/expandable history. OpenTUI
+(Zig+TypeScript) is a promising option — revisit when stable. Browser UI
+(Vite + React + local WebSocket) is the most flexible. Neither is urgent.
 
-## 6. Rich command output
-
-`run_command` output is truncated to 20 lines. ANSI codes stripped. No
-scrolling. Improve for long-running commands (build output, test runs).
-
-## 7. Provider abstraction
+## 6. Provider abstraction
 
 Support OpenAI and local LLMs alongside Claude. Deferred until the agent
 is genuinely useful enough to want alternatives.
