@@ -36,5 +36,7 @@ Raw terminal can't do collapsible/expandable history. OpenTUI
 
 ## 6. Provider abstraction
 
-Support OpenAI and local LLMs alongside Claude. Deferred until the agent
-is genuinely useful enough to want alternatives.
+OpenAI Codex fallback exists, but the provider layer is still Anthropic-
+centric. Longer-term: clean provider interface, per-provider settings,
+and streaming abstraction. Deferred until the agent is useful enough to
+justify multi-provider maintenance.

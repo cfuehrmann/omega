@@ -4,6 +4,8 @@ import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from ".
 import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
+import { callOpenAi } from "./openai.js";
+import { shouldFallbackToCodex } from "./fallback.js";
 
 // --- Types ---
 
@@ -15,7 +17,11 @@ export interface TurnMetrics {
   totalMs: number;
 }
 
-
+interface ModelResponse {
+  content: Anthropic.ContentBlock[];
+  stop_reason?: string;
+  usage: { input_tokens: number; output_tokens: number };
+}
 
 export type AgentEvent =
   | { type: "text"; text: string }
@@ -44,6 +50,8 @@ export const PRICING: Record<string, { input: number; output: number }> = {
   "claude-opus-4-6": { input: 15, output: 75 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
+  // OpenAI Codex pricing unknown here — leave 0 until configured
+  "gpt-5.2-codex": { input: 0, output: 0 },
 };
 
 export function estimateCost(
@@ -389,6 +397,8 @@ export class Agent {
     let totalTtftMs: number | null = null;
     const allToolCalls: string[] = [];
 
+    const fallbackEnabled = Boolean(config.fallbackModel && process.env.OPENAI_API_KEY);
+
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
     while (continueLoop) {
@@ -409,21 +419,23 @@ export class Agent {
         ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
         : config.systemPrompt;
 
+      let activeModel = config.model;
+
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
       yield {
         type: "api_call_start",
         callNumber: this._apiCallCount,
-        model: config.model,
+        model: activeModel,
         system: systemPrompt,
         tools: toolDefinitions,
         messages: [...this.history],  // snapshot — not a live reference
       } as AgentEvent;
 
       // Call API with retry
-      let response: Anthropic.Message | null = null;
+      let response: ModelResponse | null = null;
       let lastError: any = null;
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 5; attempt++) { 
         try {
           let fullText = "";
 
@@ -479,6 +491,48 @@ export class Agent {
           break;
         } catch (err: any) {
           lastError = err;
+
+          if (shouldFallbackToCodex(err, fallbackEnabled) && config.fallbackModel) {
+            logger.warn("api_fallback", {
+              from: config.model,
+              to: config.fallbackModel,
+              error: err.message,
+            });
+            yield {
+              type: "status",
+              message: `Anthropic rate limit — falling back to ${config.fallbackModel}`,
+            } as AgentEvent;
+
+            // Emit a new api_call_start for the fallback call
+            this._apiCallCount += 1;
+            activeModel = config.fallbackModel;
+            yield {
+              type: "api_call_start",
+              callNumber: this._apiCallCount,
+              model: activeModel,
+              system: systemPrompt,
+              tools: toolDefinitions,
+              messages: [...this.history],
+            } as AgentEvent;
+
+            try {
+              const openai = await callOpenAi(this.history, systemPrompt, activeModel, config.maxOutputTokens);
+              if (ttftMs === null) {
+                ttftMs = performance.now() - startTime;
+              }
+              if (openai.text) {
+                yield { type: "text", text: openai.text };
+              }
+              response = openai.response;
+              lastError = null;
+              break;
+            } catch (fallbackErr: any) {
+              logger.error("api_fallback_error", { error: fallbackErr.message });
+              yield { type: "error", error: `OpenAI fallback failed: ${fallbackErr.message ?? fallbackErr}` };
+              return;
+            }
+          }
+
           if (isRetryable(err) && attempt < 4) {
             const waitMs = Math.min(1000 * Math.pow(2, attempt), 60000);
             logger.warn("api_retry", {
@@ -528,7 +582,7 @@ export class Agent {
       turnOutputTokens = response.usage.output_tokens;
       this.sessionInputTokens += turnInputTokens;
       this.sessionOutputTokens += turnOutputTokens;
-      const costUsd = estimateCost(config.model, turnInputTokens, turnOutputTokens);
+      const costUsd = estimateCost(activeModel, turnInputTokens, turnOutputTokens);
       this.sessionCostUsd += costUsd;
 
       // Accumulate turn-level totals
@@ -617,7 +671,7 @@ export class Agent {
 
       // Log the API call
       logger.apiCall({
-        model: config.model,
+        model: activeModel,
         inputTokens: turnInputTokens,
         outputTokens: turnOutputTokens,
         costUsd,

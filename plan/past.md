@@ -94,6 +94,12 @@ that the entry file actually calls `runApp()`. Rule: when renaming or
 deleting files, write a test that guards the invariant BEFORE making the
 change, not after discovering breakage manually.
 
+## Fallback model
+
+Anthropic rate limits caused outages. Added OpenAI Codex 5.2 fallback:
+when Anthropic returns 429, Omega replays the call against OpenAI using
+`OPENAI_API_KEY` (optional `OPENAI_BASE_URL`). See `docs/openai-codex.md`.
+
 ## Planning system
 
 Replaced `plan/overview.md` + `plan/ui.md` with `plan/past.md` (this file),

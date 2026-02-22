@@ -1,5 +1,6 @@
 export const config = {
   model: "claude-sonnet-4-6",
+  fallbackModel: "gpt-5.2-codex",
   maxOutputTokens: 8192,
   maxContextTokens: 100_000,
 
