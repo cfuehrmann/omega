@@ -603,7 +603,7 @@ export class Agent {
       if (useOpenAi) {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
           try {
-            const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens);
+            const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens, signal);
             if (ttftMs === null) {
               ttftMs = performance.now() - startTime;
             }

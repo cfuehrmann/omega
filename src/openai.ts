@@ -194,7 +194,8 @@ export async function callOpenAi(
   history: Anthropic.MessageParam[],
   systemPrompt: string,
   model: string,
-  maxTokens = config.maxOutputTokens
+  maxTokens = config.maxOutputTokens,
+  signal?: AbortSignal
 ): Promise<OpenAiResult> {
   const apiKey = getOpenAiApiKey();
   const url = getOpenAiUrl();
@@ -208,6 +209,7 @@ export async function callOpenAi(
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!resp.ok) {
