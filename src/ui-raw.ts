@@ -273,8 +273,10 @@ export function parseKeys(
   chunk: string,
   callbacks: KeyCallbacks,
   buf: { value: string } = sharedBuffer,
+  options: { inputEnabled?: boolean } = {},
 ): string {
   const { onSubmit, onEscape, onExit } = callbacks;
+  const inputEnabled = options.inputEnabled ?? true;
 
   for (let i = 0; i < chunk.length; i++) {
     const ch = chunk[i];
@@ -292,6 +294,8 @@ export function parseKeys(
       }
       continue;
     }
+
+    if (!inputEnabled) continue;
 
     if (ch === "\r" || ch === "\n") {          // Enter
       const line = buf.value;
@@ -354,15 +358,15 @@ function printPrompt(prefix: string): void {
 
 /** Fold session into world state and exit. Used for all clean-shutdown paths. */
 async function shutdown(agent: Agent, code: number = 0): Promise<never> {
-  process.stdout.write("\n");
-  printBlock(now(), [dim("Saving session to world state…")]);
+  // Clear the current prompt line, then print shutdown status.
+  process.stdout.write("\r\x1b[2K");  // CR + erase entire line
+  printBlock(now(), [dim("Saving session to world state… (please wait)")]);
   try {
     await agent.foldCurrentSessionIntoWorldState();
     printBlock(now(), [dim("✓ World state saved.")]);
   } catch (err: any) {
     printBlock(now(), [red(`⚠ World state save failed: ${err.message}`)]);
   }
-  process.stdin.setRawMode?.(false);
   process.exit(code);
 }
 
@@ -534,6 +538,11 @@ export async function runApp(): Promise<void> {
   function initiateShutdown(): void {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Stop accepting input immediately so keypresses during world-state save
+    // don't produce confusing "empty input" warnings or trigger handlers.
+    process.stdin.removeAllListeners("data");
+    process.stdin.setRawMode?.(false);
+    process.stdin.pause();
     // Abort any in-flight stream so the world-state fold sees the latest context.
     if (abortController) { abortController.abort(); abortController = null; }
     shutdown(agent, 0);
