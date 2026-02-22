@@ -221,4 +221,205 @@ describe("parseKeys", () => {
       process.stdout.write = origWrite;
     }
   });
+
+  // -----------------------------------------------------------------------
+  // Cursor movement & line editing
+  // -----------------------------------------------------------------------
+
+  it("left arrow moves cursor back one character", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "abc", cursor: 3 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[D", cb, buf); // Left arrow
+      expect(buf.cursor).toBe(2);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("right arrow moves cursor forward one character", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "abc", cursor: 1 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[C", cb, buf); // Right arrow
+      expect(buf.cursor).toBe(2);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("left arrow does not go below 0", () => {
+    const buf = { value: "abc", cursor: 0 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[D", cb, buf);
+    expect(buf.cursor).toBe(0);
+  });
+
+  it("right arrow does not go past end", () => {
+    const buf = { value: "abc", cursor: 3 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[C", cb, buf);
+    expect(buf.cursor).toBe(3);
+  });
+
+  it("typing inserts at cursor position", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "ac", cursor: 1 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("b", cb, buf);
+      expect(buf.value).toBe("abc");
+      expect(buf.cursor).toBe(2);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("backspace at cursor mid-line deletes char before cursor", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "abc", cursor: 2 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x7f", cb, buf);
+      expect(buf.value).toBe("ac");
+      expect(buf.cursor).toBe(1);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Ctrl+Backspace deletes word backward", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "hello world", cursor: 11 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b\x7f", cb, buf); // Ctrl+Backspace (sent as ESC DEL by many terminals)
+      expect(buf.value).toBe("hello ");
+      expect(buf.cursor).toBe(6);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Ctrl+Backspace deletes word backward from middle of line", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      // cursor after "two" space: "one two| three"  (| = cursor at 7)
+      // wordBoundaryBack skips non-spaces (two) → lands at 4, deletes chars 4..6
+      const buf = { value: "one two three", cursor: 7 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b\x7f", cb, buf); // Ctrl+Backspace
+      expect(buf.value).toBe("one  three");
+      expect(buf.cursor).toBe(4);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Ctrl+Backspace via \\x08 deletes word backward", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "hello world", cursor: 11 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x08", cb, buf); // Some terminals send 0x08 for Ctrl+Backspace
+      expect(buf.value).toBe("hello ");
+      expect(buf.cursor).toBe(6);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Ctrl+Delete deletes word forward", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "hello world", cursor: 5 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[3;5~", cb, buf); // Ctrl+Delete CSI sequence
+      expect(buf.value).toBe("hello");
+      expect(buf.cursor).toBe(5);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Ctrl+Delete deletes word forward from middle", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      // cursor after "one": "one| two three"  (| = cursor at 3)
+      // wordBoundaryForward skips space then "two" → lands at 7, deletes chars 3..6
+      const buf = { value: "one two three", cursor: 3 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[3;5~", cb, buf); // Ctrl+Delete
+      expect(buf.value).toBe("one three");
+      expect(buf.cursor).toBe(3);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Ctrl+Left moves cursor one word backward", () => {
+    const buf = { value: "hello world", cursor: 11 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[1;5D", cb, buf); // Ctrl+Left CSI sequence
+    expect(buf.cursor).toBe(6);
+  });
+
+  it("Ctrl+Right moves cursor one word forward", () => {
+    const buf = { value: "hello world", cursor: 0 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[1;5C", cb, buf); // Ctrl+Right CSI sequence
+    expect(buf.cursor).toBe(5);
+  });
+
+  it("Ctrl+Left skips trailing spaces then word", () => {
+    const buf = { value: "one two  ", cursor: 9 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[1;5D", cb, buf);
+    expect(buf.cursor).toBe(4);
+  });
+
+  it("Ctrl+Right skips leading spaces then word", () => {
+    const buf = { value: "hello  world", cursor: 5 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[1;5C", cb, buf);
+    expect(buf.cursor).toBe(12);
+  });
+
+  it("submit resets cursor to 0", () => {
+    let submitted = "";
+    const buf = { value: "hello", cursor: 3 };
+    const cb = { onSubmit: (l: string) => { submitted = l; }, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\r", cb, buf);
+    expect(submitted).toBe("hello");
+    expect(buf.value).toBe("");
+    expect(buf.cursor).toBe(0);
+  });
+
+  it("backward compatibility: buf without cursor field works (cursor defaults to end)", () => {
+    let submitted = "";
+    const buf = { value: "" };
+    const cb = { onSubmit: (l: string) => { submitted = l; }, onEscape: () => {}, onExit: () => {} };
+    parseKeys("hi\r", cb, buf);
+    expect(submitted).toBe("hi");
+  });
 });

@@ -319,10 +319,60 @@ export function displayWidth(ch: string): number {
 /** Persistent bracketed-paste state shared across calls in production. */
 const sharedPasteState = { inPaste: false };
 
+// ---------------------------------------------------------------------------
+// Cursor helpers — work on character arrays to handle surrogate pairs
+// ---------------------------------------------------------------------------
+
+/** Get effective cursor position, defaulting to end of buffer. */
+function getCursor(buf: { value: string; cursor?: number }): number {
+  return buf.cursor ?? [...buf.value].length;
+}
+
+/** Set cursor, clamping to valid range. */
+function setCursor(buf: { value: string; cursor?: number }, pos: number): void {
+  const chars = [...buf.value];
+  buf.cursor = Math.max(0, Math.min(pos, chars.length));
+}
+
+/** Display width of a substring (array of chars). */
+function charsDisplayWidth(chars: string[]): number {
+  let w = 0;
+  for (const ch of chars) w += displayWidth(ch) || 1;
+  return w;
+}
+
+/** Find word boundary backward from cursor (skips spaces, then non-spaces). */
+function wordBoundaryBack(chars: string[], cursor: number): number {
+  let pos = cursor;
+  while (pos > 0 && chars[pos - 1] === " ") pos--;
+  while (pos > 0 && chars[pos - 1] !== " ") pos--;
+  return pos;
+}
+
+/** Find word boundary forward from cursor (skips spaces, then non-spaces). */
+function wordBoundaryForward(chars: string[], cursor: number): number {
+  let pos = cursor;
+  while (pos < chars.length && chars[pos] === " ") pos++;
+  while (pos < chars.length && chars[pos] !== " ") pos++;
+  return pos;
+}
+
+/**
+ * Redraw the line from cursor to end after an edit.
+ * Writes: chars after cursor, clears leftover, moves cursor back.
+ */
+function redrawFromCursor(chars: string[], cursor: number): void {
+  const tail = chars.slice(cursor).join("");
+  const tailWidth = charsDisplayWidth(chars.slice(cursor));
+  // Write tail + clear any leftover chars + move cursor back to position
+  process.stdout.write(tail + "\x1b[K");
+  if (tailWidth > 0) process.stdout.write(`\x1b[${tailWidth}D`);
+}
+
 export function parseKeys(
   chunk: string,
   callbacks: KeyCallbacks,
-  buf: { value: string; columns?: number } = sharedBuffer,
+  buf: { value: string; cursor?: number; columns?: number } = sharedBuffer,
   options: { inputEnabled?: boolean; pasteState?: { inPaste: boolean } } = {},
 ): string {
   const { onSubmit, onEscape, onExit } = callbacks;
@@ -349,10 +399,94 @@ export function parseKeys(
         process.stdout.write(buf.value);
         continue;
       }
+
+      // ESC + DEL = Ctrl+Backspace (delete word backward) in many terminals
+      if (i + 1 < chunk.length && chunk.charCodeAt(i + 1) === 127) {
+        i++; // consume the DEL
+        if (!inputEnabled) continue;
+        const chars = [...buf.value];
+        const cursor = getCursor(buf);
+        if (cursor === 0) continue;
+        const newPos = wordBoundaryBack(chars, cursor);
+        const deleted = chars.splice(newPos, cursor - newPos);
+        const deletedWidth = charsDisplayWidth(deleted);
+        buf.value = chars.join("");
+        buf.cursor = newPos;
+        // Move cursor back, redraw from there
+        if (deletedWidth > 0) process.stdout.write(`\x1b[${deletedWidth}D`);
+        redrawFromCursor(chars, newPos);
+        continue;
+      }
+
       if (i + 1 < chunk.length && chunk[i + 1] === "[") {
-        // Arrow key or other CSI sequence — skip it
-        i += 2;
-        while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) i++;
+        // CSI sequence — parse it
+        i += 2; // skip ESC [
+        let params = "";
+        while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) {
+          params += chunk[i];
+          i++;
+        }
+        const final = i < chunk.length ? chunk[i] : "";
+
+        if (!inputEnabled) continue;
+
+        const chars = [...buf.value];
+        const cursor = getCursor(buf);
+
+        // Arrow keys: A=Up B=Down C=Right D=Left
+        if (final === "D" && !params) {
+          // Left arrow
+          if (cursor > 0) {
+            const w = displayWidth(chars[cursor - 1]) || 1;
+            buf.cursor = cursor - 1;
+            process.stdout.write(`\x1b[${w}D`);
+          }
+          continue;
+        }
+        if (final === "C" && !params) {
+          // Right arrow
+          if (cursor < chars.length) {
+            const w = displayWidth(chars[cursor]) || 1;
+            buf.cursor = cursor + 1;
+            process.stdout.write(`\x1b[${w}C`);
+          }
+          continue;
+        }
+
+        // Ctrl+Left: \x1b[1;5D
+        if (final === "D" && params === "1;5") {
+          const newPos = wordBoundaryBack(chars, cursor);
+          if (newPos < cursor) {
+            const moveWidth = charsDisplayWidth(chars.slice(newPos, cursor));
+            buf.cursor = newPos;
+            process.stdout.write(`\x1b[${moveWidth}D`);
+          }
+          continue;
+        }
+        // Ctrl+Right: \x1b[1;5C
+        if (final === "C" && params === "1;5") {
+          const newPos = wordBoundaryForward(chars, cursor);
+          if (newPos > cursor) {
+            const moveWidth = charsDisplayWidth(chars.slice(cursor, newPos));
+            buf.cursor = newPos;
+            process.stdout.write(`\x1b[${moveWidth}C`);
+          }
+          continue;
+        }
+
+        // Ctrl+Delete: \x1b[3;5~
+        if (final === "~" && params === "3;5") {
+          if (cursor >= chars.length) continue;
+          const newEnd = wordBoundaryForward(chars, cursor);
+          chars.splice(cursor, newEnd - cursor);
+          buf.value = chars.join("");
+          buf.cursor = cursor;
+          redrawFromCursor(chars, cursor);
+          continue;
+        }
+
+        // All other CSI sequences (Up, Down, etc.) — ignore
+        continue;
       } else {
         if (!pasteState.inPaste) onEscape();
       }
@@ -365,25 +499,51 @@ export function parseKeys(
       if (pasteState.inPaste) {
         // Inside a paste: preserve newlines literally in the buffer
         buf.value += "\n";
+        if (buf.cursor !== undefined) buf.cursor++;
       } else {
         // Normal Enter: submit
         const line = buf.value;
         buf.value = "";
+        buf.cursor = 0;
         if (buf.columns !== undefined) buf.columns = 0;
         onSubmit(line);
       }
       continue;
     }
 
-    if (code === 127 || code === 8) {          // Backspace
-      if (buf.value.length > 0) {
-        // Get the last code point (handle surrogate pairs)
-        const lastCodePoint = [...buf.value].at(-1) ?? "";
-        const w = displayWidth(lastCodePoint) || 1;
-        buf.value = buf.value.slice(0, -lastCodePoint.length);
+    // Ctrl+Backspace: some terminals send 0x08
+    if (code === 8) {
+      const chars = [...buf.value];
+      const cursor = getCursor(buf);
+      if (cursor === 0) continue;
+      const newPos = wordBoundaryBack(chars, cursor);
+      const deleted = chars.splice(newPos, cursor - newPos);
+      const deletedWidth = charsDisplayWidth(deleted);
+      buf.value = chars.join("");
+      buf.cursor = newPos;
+      if (deletedWidth > 0) process.stdout.write(`\x1b[${deletedWidth}D`);
+      redrawFromCursor(chars, newPos);
+      continue;
+    }
+
+    if (code === 127) {                        // Backspace (DEL)
+      const chars = [...buf.value];
+      const cursor = getCursor(buf);
+      if (cursor > 0) {
+        const deleted = chars[cursor - 1];
+        const w = displayWidth(deleted) || 1;
+        chars.splice(cursor - 1, 1);
+        buf.value = chars.join("");
+        buf.cursor = cursor - 1;
         if (buf.columns !== undefined) buf.columns -= w;
-        // Erase: move back w columns, overwrite with spaces, move back again
-        process.stdout.write("\b".repeat(w) + " ".repeat(w) + "\b".repeat(w));
+        if (cursor === chars.length + 1) {
+          // Was at end of line — simple erase
+          process.stdout.write("\b".repeat(w) + " ".repeat(w) + "\b".repeat(w));
+        } else {
+          // Mid-line: move back, redraw from cursor
+          process.stdout.write(`\x1b[${w}D`);
+          redrawFromCursor(chars, cursor - 1);
+        }
       }
       continue;
     }
@@ -391,9 +551,22 @@ export function parseKeys(
     // Printable character
     if (code >= 32 || code > 127) {
       const w = displayWidth(ch) || 1;
-      buf.value += ch;
+      const chars = [...buf.value];
+      const cursor = getCursor(buf);
+      chars.splice(cursor, 0, ch);
+      buf.value = chars.join("");
+      buf.cursor = cursor + 1;
       if (buf.columns !== undefined) buf.columns += w;
-      if (!pasteState.inPaste) process.stdout.write(ch);  // echo only when not pasting
+      if (!pasteState.inPaste) {
+        if (cursor === chars.length - 1) {
+          // Appending at end — just echo the char
+          process.stdout.write(ch);
+        } else {
+          // Mid-line insert: write char + tail, then move cursor back
+          process.stdout.write(ch);
+          redrawFromCursor(chars, cursor + 1);
+        }
+      }
     }
   }
 
@@ -401,7 +574,7 @@ export function parseKeys(
 }
 
 /** Shared mutable buffer used by setupRawInput in production. */
-const sharedBuffer: { value: string; columns: number } = { value: "", columns: 0 };
+const sharedBuffer: { value: string; cursor: number; columns: number } = { value: "", cursor: 0, columns: 0 };
 
 function setupRawInput(
   onSubmit: (line: string) => void,
