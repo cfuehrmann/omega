@@ -1,6 +1,6 @@
 export const config = {
   model: "claude-sonnet-4-6",
-  fallbackModel: "gpt-5.2-codex",
+  fallbackModel: "gpt-5.2-codex", // no auto-fallback; used for /gpt
   maxOutputTokens: 8192,
   maxContextTokens: 100_000,
 

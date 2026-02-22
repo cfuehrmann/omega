@@ -5,7 +5,7 @@ import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
-import { shouldFallbackToCodex } from "./fallback.js";
+
 
 // --- Types ---
 
@@ -38,6 +38,8 @@ export type AgentEvent =
   | { type: "error"; error: string }
   | { type: "interrupted" };
 
+export type ProviderName = "anthropic" | "openai";
+
 // --- Auto-approve logic ---
 
 /** Always returns true — everything is auto-approved. No allowlist. */
@@ -68,8 +70,22 @@ export function estimateCost(
 
 // --- Retry logic ---
 
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    };
+    signal?.addEventListener("abort", onAbort);
+  });
 }
 
 export function isRetryable(err: any): boolean {
@@ -95,6 +111,26 @@ function hasToolResult(msg: Anthropic.MessageParam): boolean {
   if (typeof msg.content === "string") return false;
   if (!Array.isArray(msg.content)) return false;
   return msg.content.some((b: any) => b.type === "tool_result");
+}
+
+function getOpenAiRetryDelayMs(err: any, attempt: number, baseMs: number, maxMs: number): number {
+  const msg = typeof err?.message === "string" ? err.message : "";
+  const match = msg.match(/try again in\s*(\d+(?:\.\d+)?)\s*s/i);
+  if (match) {
+    const seconds = Number(match[1]);
+    if (!Number.isNaN(seconds)) {
+      return Math.min(Math.ceil(seconds * 1000), maxMs);
+    }
+  }
+  const jitter = Math.random() * 0.2 + 0.9; // 0.9–1.1
+  const delay = baseMs * Math.pow(2, attempt) * jitter;
+  return Math.min(Math.round(delay), maxMs);
+}
+
+function getAnthropicRetryDelayMs(_err: any, attempt: number, baseMs: number, maxMs: number): number {
+  const jitter = Math.random() * 0.2 + 0.9; // 0.9–1.1
+  const delay = baseMs * Math.pow(2, attempt) * jitter;
+  return Math.min(Math.round(delay), maxMs);
 }
 
 // Check if a message contains tool_use blocks
@@ -266,8 +302,11 @@ export class Agent {
   private _apiCallCount = 0;
 
   private authMode: "api-key" | "oauth" = "api-key";
-  private fallbackModeActive = false;
+  private provider: ProviderName = "anthropic";
   public readonly sessionId: string;
+  private readonly retryBaseMs = Number(process.env.OMEGA_RETRY_BASE_MS ?? 1000);
+  private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
+  private readonly retryMaxAttempts = Number(process.env.OMEGA_RETRY_ATTEMPTS ?? 5);
 
   /** Session storage directory. null = persistence disabled. undefined = use default. */
   private readonly sessionDir: string | null | undefined;
@@ -339,6 +378,10 @@ export class Agent {
     }
   }
 
+  setProvider(provider: ProviderName): void {
+    this.provider = provider;
+  }
+
   getAuthMode(): string {
     return this.authMode;
   }
@@ -389,6 +432,20 @@ export class Agent {
     _confirmTool: (name: string, input: any, formatted: string) => Promise<boolean>,
     signal?: AbortSignal
   ): AsyncGenerator<AgentEvent> {
+    if (userMessage.startsWith("/")) {
+      const cmd = userMessage.trim().toLowerCase();
+      if (cmd === "/gpt" || cmd === "/openai") {
+        this.provider = "openai";
+        yield { type: "status", message: "Switched provider to OpenAI" };
+      } else if (cmd === "/opus" || cmd === "/anthropic") {
+        this.provider = "anthropic";
+        yield { type: "status", message: "Switched provider to Anthropic" };
+      } else {
+        yield { type: "error", error: `Unknown command: ${userMessage}` };
+      }
+      return;
+    }
+
     this.history.push({ role: "user", content: userMessage });
 
     // Emit user message event for UI display
@@ -429,19 +486,24 @@ export class Agent {
         ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
         : config.systemPrompt;
 
-      const useFallback = this.fallbackModeActive && fallbackEnabled && Boolean(config.fallbackModel);
-      let activeModel = useFallback ? (config.fallbackModel as string) : config.model;
+      if (this.provider === "openai" && !fallbackEnabled) {
+        yield { type: "error", error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
+        return;
+      }
 
-      if (useFallback) {
+      const useOpenAi = this.provider === "openai";
+      let activeModel = useOpenAi ? (config.fallbackModel as string) : config.model;
+
+      if (useOpenAi) {
         yield {
           type: "status",
-          message: `OpenAI fallback active — using ${activeModel}`,
+          message: `OpenAI provider active — using ${activeModel}`,
         } as AgentEvent;
       }
 
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
-      if (useFallback) {
+      if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
           this.history,
           systemPrompt,
@@ -476,32 +538,52 @@ export class Agent {
       let response: ModelResponse | null = null;
       let lastError: any = null;
 
-      if (useFallback) {
-        try {
-          const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens);
-          if (ttftMs === null) {
-            ttftMs = performance.now() - startTime;
+      if (useOpenAi) {
+        for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
+          try {
+            const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens);
+            if (ttftMs === null) {
+              ttftMs = performance.now() - startTime;
+            }
+            if (openai.text) {
+              yield { type: "text", text: openai.text };
+            }
+            response = openai.response as any;
+            (response as any).raw = openai.raw;
+            lastError = null;
+            break;
+          } catch (err: any) {
+            lastError = err;
+            if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
+              const waitMs = getOpenAiRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
+              logger.warn("api_retry", {
+                attempt: attempt + 1,
+                status: err.status ?? err.statusCode,
+                waitMs,
+                error: err.message,
+              });
+              yield {
+                type: "error",
+                error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
+              };
+              await sleep(waitMs, signal);
+              continue;
+            }
+            logger.error("api_openai_error", { error: err.message });
+            yield {
+              type: "api_error",
+              provider: "openai",
+              url: getOpenAiUrl(),
+              error: err.message ?? String(err),
+            } as AgentEvent;
+            yield { type: "error", error: "OpenAI rate limit. Try /opus or wait and retry." };
+            return;
           }
-          if (openai.text) {
-            yield { type: "text", text: openai.text };
-          }
-          response = openai.response;
-          lastError = null;
-        } catch (fallbackErr: any) {
-          logger.error("api_fallback_error", { error: fallbackErr.message });
-          yield {
-            type: "api_error",
-            provider: "openai",
-            url: getOpenAiUrl(),
-            error: fallbackErr.message ?? String(fallbackErr),
-          } as AgentEvent;
-          yield { type: "error", error: `OpenAI fallback failed: ${fallbackErr.message ?? fallbackErr}` };
-          return;
         }
       } else {
-        for (let attempt = 0; attempt < 5; attempt++) { 
-        try {
-          let fullText = "";
+        for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
+          try {
+            let fullText = "";
 
           const streamParams = {
             model: config.model,
@@ -556,61 +638,8 @@ export class Agent {
         } catch (err: any) {
           lastError = err;
 
-          if (shouldFallbackToCodex(err, fallbackEnabled) && config.fallbackModel) {
-            this.fallbackModeActive = true;
-            logger.warn("api_fallback", {
-              from: config.model,
-              to: config.fallbackModel,
-              error: err.message,
-            });
-            yield {
-              type: "api_error",
-              provider: "anthropic",
-              url: "https://api.anthropic.com/v1/messages",
-              error: err.message ?? String(err),
-            } as AgentEvent;
-            yield {
-              type: "status",
-              message: `Anthropic rate limit — falling back to ${config.fallbackModel}`,
-            } as AgentEvent;
-
-            // Emit a new api_call_start for the fallback call
-            this._apiCallCount += 1;
-            activeModel = config.fallbackModel;
-            const openAiRequest = buildOpenAiRequest(
-              this.history,
-              systemPrompt,
-              activeModel,
-              config.maxOutputTokens
-            );
-            yield {
-              type: "api_call_start",
-              callNumber: this._apiCallCount,
-              provider: "openai",
-              url: getOpenAiUrl(),
-              request: openAiRequest,
-            } as AgentEvent;
-
-            try {
-              const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens);
-              if (ttftMs === null) {
-                ttftMs = performance.now() - startTime;
-              }
-              if (openai.text) {
-                yield { type: "text", text: openai.text };
-              }
-              response = openai.response;
-              lastError = null;
-              break;
-            } catch (fallbackErr: any) {
-              logger.error("api_fallback_error", { error: fallbackErr.message });
-              yield { type: "error", error: `OpenAI fallback failed: ${fallbackErr.message ?? fallbackErr}` };
-              return;
-            }
-          }
-
-          if (isRetryable(err) && attempt < 4) {
-            const waitMs = Math.min(1000 * Math.pow(2, attempt), 60000);
+          if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
+            const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
             logger.warn("api_retry", {
               attempt: attempt + 1,
               status: err.status ?? err.statusCode,
@@ -619,9 +648,9 @@ export class Agent {
             });
             yield {
               type: "error",
-              error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/5)`,
+              error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
             };
-            await sleep(waitMs);
+            await sleep(waitMs, signal);
           } else if (
             err.status === 400 &&
             typeof err.message === "string" &&
@@ -638,11 +667,21 @@ export class Agent {
             this.history = truncateHistory(this.history, aggressiveBudget) as Anthropic.MessageParam[];
             yield {
               type: "error",
-              error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/5)`,
+              error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})`,
             };
           } else {
             logger.error("api_error", { error: err.message, attempts: attempt + 1 });
-            yield { type: "error", error: `API error: ${err.message ?? err}` };
+            yield {
+              type: "api_error",
+              provider: "anthropic",
+              url: "https://api.anthropic.com/v1/messages",
+              error: err.message ?? String(err),
+            } as AgentEvent;
+            if (isRetryable(err)) {
+              yield { type: "error", error: "Anthropic rate limit. Try /gpt to switch providers." };
+            } else {
+              yield { type: "error", error: `API error: ${err.message ?? err}` };
+            }
             return;
           }
         }
@@ -673,15 +712,15 @@ export class Agent {
       // Emit API response event for UI display
       yield {
         type: "api_response",
-        provider: useFallback ? "openai" : "anthropic",
-        url: useFallback ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
+        provider: useOpenAi ? "openai" : "anthropic",
+        url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
         stopReason: response.stop_reason ?? "unknown",
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,
         },
         content: response.content,
-        raw: useFallback ? (response as any).raw : undefined,
+        raw: useOpenAi ? (response as any).raw : undefined,
       };
 
       // Add assistant response to history

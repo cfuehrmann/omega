@@ -558,6 +558,10 @@ describe("Agent.sendMessage — error handling", () => {
   });
 
   it("emits retry error events then succeeds on transient failure", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+    process.env.OMEGA_RETRY_ATTEMPTS = "3";
+
     let attempts = 0;
     const mockProvider: StreamProvider = async () => {
       attempts++;
@@ -571,6 +575,10 @@ describe("Agent.sendMessage — error handling", () => {
 
     const agent = new Agent(mockProvider);
     const events = await collectEvents(agent, "test");
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+    delete process.env.OMEGA_RETRY_ATTEMPTS;
 
     // Should have retried and eventually succeeded
     expect(attempts).toBe(3);

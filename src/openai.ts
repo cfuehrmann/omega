@@ -212,7 +212,9 @@ export async function callOpenAi(
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(`OpenAI error (${resp.status}): ${text}`);
+    const err: any = new Error(`OpenAI error (${resp.status}): ${text}`);
+    err.status = resp.status;
+    throw err;
   }
 
   const data = await resp.json();
