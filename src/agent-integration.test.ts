@@ -8,14 +8,13 @@
  * mock that returns pre-scripted responses.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, rmSync, readdirSync } from "fs";
+import { describe, it, expect } from "bun:test";
+import { mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
 import { Agent, type AgentEvent, type StreamProvider } from "./agent.js";
-import { loadLatestSession } from "./session.js";
 
 // ---------------------------------------------------------------------------
 // Mock provider helpers
@@ -124,29 +123,28 @@ function makeTempDir(): string {
 // Pollution guard
 // ---------------------------------------------------------------------------
 
-// Tests that use a mock StreamProvider must never write to the real session
-// directory (~/.local/share/omega/sessions/). This test proves the contract:
-// when a streamProvider is given without a sessionDir, Agent must NOT fall
-// back to the real default directory.
-describe("Agent — test isolation (no production session pollution)", () => {
-  it("does not write to the real session dir when no sessionDir is given", async () => {
+// Tests that use a mock StreamProvider must never write to the real world-state
+// file. This test proves the contract: when a streamProvider is given without
+// a worldStatePath, Agent must NOT write to any project world-state file.
+describe("Agent — test isolation (no production world-state pollution)", () => {
+  it("does not write to any world-state file when worldStatePath is not given", async () => {
     const { homedir } = await import("os");
-    const realDir = join(homedir(), ".local", "share", "omega", "sessions");
-    const { existsSync } = await import("fs");
+    const omegaDir = join(homedir(), ".local", "share", "omega");
+    const { existsSync, readdirSync: rds } = await import("fs");
 
-    // Snapshot real dir before
-    const before = existsSync(realDir) ? readdirSync(realDir).length : 0;
+    // Snapshot omega dir before
+    const before = existsSync(omegaDir) ? rds(omegaDir).filter(f => f.startsWith("world-")).length : 0;
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    // No sessionDir passed — this is the pollution case
+    // No worldStatePath passed — must not write to real world-state
     const agent = new Agent(mockProvider);
-    await collectEvents(agent, "should not persist");
+    await collectEvents(agent, "should not persist world state");
     await Bun.sleep(100);
 
-    // Real dir must be unchanged
-    const after = existsSync(realDir) ? readdirSync(realDir).length : 0;
+    // World state files must be unchanged
+    const after = existsSync(omegaDir) ? rds(omegaDir).filter(f => f.startsWith("world-")).length : 0;
     expect(after).toBe(before);
   });
 });
@@ -340,203 +338,7 @@ describe("Agent.sendMessage — tool call loop", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Session persistence
-// ---------------------------------------------------------------------------
 
-describe("Agent — session persistence", () => {
-  it("persists session to disk after a turn", async () => {
-    const dir = makeTempDir();
-    try {
-      const mockProvider: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-
-      const agent = new Agent(mockProvider, dir);
-      await collectEvents(agent, "hello");
-
-      // Give the fire-and-forget persist a moment to complete
-      await Bun.sleep(100);
-
-      const saved = await loadLatestSession(dir);
-      expect(saved).not.toBeNull();
-      expect(saved!.id).toBe(agent.sessionId);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("saved session contains the full history", async () => {
-    const dir = makeTempDir();
-    try {
-      const mockProvider: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("world"), textMessage("world"));
-
-      const agent = new Agent(mockProvider, dir);
-      await collectEvents(agent, "hello");
-      await Bun.sleep(100);
-
-      const saved = await loadLatestSession(dir);
-      expect(saved!.history.length).toBe(2);
-      expect(saved!.history[0]).toEqual({ role: "user", content: "hello" });
-      expect(saved!.history[1].role).toBe("assistant");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("overwrites the session file on each turn, not accumulates", async () => {
-    const dir = makeTempDir();
-    try {
-      const mockProvider: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-
-      const agent = new Agent(mockProvider, dir);
-      await collectEvents(agent, "first");
-      await Bun.sleep(100);
-      await collectEvents(agent, "second");
-      await Bun.sleep(100);
-
-      const saved = await loadLatestSession(dir);
-      // 4 messages: user, assistant, user, assistant
-      expect(saved!.history.length).toBe(4);
-
-      // Should still be just one file (overwritten, not duplicated)
-      const files = readdirSync(dir);
-      expect(files.length).toBe(1);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("saved session includes model and savedAt", async () => {
-    const dir = makeTempDir();
-    try {
-      const mockProvider: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-
-      const agent = new Agent(mockProvider, dir);
-      await collectEvents(agent, "hello");
-      await Bun.sleep(100);
-
-      const saved = await loadLatestSession(dir);
-      expect(typeof saved!.model).toBe("string");
-      expect(saved!.model.length).toBeGreaterThan(0);
-      expect(typeof saved!.savedAt).toBe("string");
-      expect(new Date(saved!.savedAt).getTime()).toBeGreaterThan(0);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Session resume
-// ---------------------------------------------------------------------------
-
-describe("Agent — session resume", () => {
-  it("checkPriorSession returns null when no sessions exist", async () => {
-    const dir = makeTempDir();
-    try {
-      const agent = new Agent(async () => makeMockStream([], textMessage("")), dir);
-      const prior = await agent.checkPriorSession();
-      expect(prior).toBeNull();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("checkPriorSession returns a session after one has been saved", async () => {
-    const dir = makeTempDir();
-    try {
-      const mockProvider: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-
-      const agent = new Agent(mockProvider, dir);
-      await collectEvents(agent, "hello");
-      await Bun.sleep(100);
-
-      const agent2 = new Agent(mockProvider, dir);
-      const prior = await agent2.checkPriorSession();
-      expect(prior).not.toBeNull();
-      expect(prior!.id).toBe(agent.sessionId);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("resumeSession restores history so next sendMessage uses it", async () => {
-    const dir = makeTempDir();
-    try {
-      // Agent 1: have a conversation and persist it
-      const provider1: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-
-      const agent1 = new Agent(provider1, dir);
-      await collectEvents(agent1, "first message");
-      await Bun.sleep(100);
-
-      // Agent 2: separate provider to capture only its calls.
-      // Snapshot params.messages immediately — it's this.history by reference
-      // and will be mutated (assistant push) after the call returns.
-      const agent2Messages: Anthropic.MessageParam[][] = [];
-      const provider2: StreamProvider = async (params) => {
-        agent2Messages.push([...params.messages] as Anthropic.MessageParam[]);
-        return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-      };
-
-      const agent2 = new Agent(provider2, dir);
-      const prior = await agent2.checkPriorSession();
-      expect(prior).not.toBeNull();
-      expect(prior!.history.length).toBe(2);
-      agent2.resumeSession(prior!);
-
-      await collectEvents(agent2, "second message");
-
-      // Agent2 should have made at least one real API call (compaction adds more)
-      expect(agent2Messages.length).toBeGreaterThanOrEqual(1);
-      // The first call is the real turn — check its messages
-      const sentMessages = agent2Messages[0];
-
-      // Should contain: user:"first message", assistant(from turn1), user:"second message"
-      expect(sentMessages.length).toBe(3);
-      expect(sentMessages[0]).toEqual({ role: "user", content: "first message" });
-      expect(sentMessages[sentMessages.length - 1]).toEqual({
-        role: "user",
-        content: "second message",
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("resumeSession replaces (not appends to) current history", async () => {
-    const dir = makeTempDir();
-    try {
-      const mockProvider: StreamProvider = async () =>
-        makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-
-      const session = {
-        id: "prior-session",
-        savedAt: new Date().toISOString(),
-        model: "claude-sonnet-4-6",
-        history: [
-          { role: "user" as const, content: "old message" },
-          { role: "assistant" as const, content: "old response" },
-        ],
-      };
-
-      const agent = new Agent(mockProvider, dir);
-      agent.resumeSession(session);
-
-      const history = agent.getHistory();
-      expect(history.length).toBe(2);
-      expect(history[0].content).toBe("old message");
-      expect(history[1].content).toBe("old response");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Error handling

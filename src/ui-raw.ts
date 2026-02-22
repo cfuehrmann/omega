@@ -8,7 +8,6 @@
 
 import { Agent } from "./agent.js";
 import { config } from "./config.js";
-import type { Session } from "./session.js";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -336,6 +335,20 @@ function printPrompt(prefix: string): void {
 // Main
 // ---------------------------------------------------------------------------
 
+/** Fold session into world state and exit. Used for all clean-shutdown paths. */
+async function shutdown(agent: Agent, code: number = 0): Promise<never> {
+  process.stdout.write("\n");
+  printBlock(now(), [dim("Saving session to world state…")]);
+  try {
+    await agent.foldCurrentSessionIntoWorldState();
+    printBlock(now(), [dim("✓ World state saved.")]);
+  } catch (err: any) {
+    printBlock(now(), [red(`⚠ World state save failed: ${err.message}`)]);
+  }
+  process.stdin.setRawMode?.(false);
+  process.exit(code);
+}
+
 export async function runApp(): Promise<void> {
   const agent = new Agent();
 
@@ -354,44 +367,11 @@ export async function runApp(): Promise<void> {
   // Load world state (zone 1) into memory for system prompt injection
   await agent.loadWorldState().catch(() => {});
 
-  // Check for prior session and fold it into world state
-  let priorSession: Session | null = null;
-  try {
-    const prior = await agent.checkPriorSession();
-    if (prior && prior.history.length > 0) {
-      priorSession = prior;
-      // Fold prior session into world state (fire-and-forget; non-blocking)
-      agent.foldSessionIntoWorldState(prior.history as any).catch(() => {});
-    }
-  } catch { /* no prior session */ }
-
   let abortController: AbortController | null = null;
   let isStreaming = false;
 
   async function handleSubmit(line: string): Promise<void> {
     println("");  // newline after inline-echoed input
-
-    // Resume prompt
-    if (priorSession) {
-      const v = line.trim().toLowerCase();
-      if (v !== "y" && v !== "yes" && v !== "" && v !== "n" && v !== "no") {
-        printBlock(now(), [red("⚠ Please answer y or n")]);
-        printPrompt(dim("? "));
-        return;
-      }
-      const resume = v === "y" || v === "yes" || v === "";
-      if (resume) {
-        agent.resumeSession(priorSession);
-        printBlock(now(), [`↩ Resumed session (${priorSession.history.length} messages)`]);
-      } else {
-        printBlock(now(), ["↩ Starting fresh session"]);
-      }
-      priorSession = null;
-      // Now show status and main prompt
-      printBlock(now(), [renderStatus(agent, false)]);
-      printPrompt(bold(green("❯ ")));
-      return;
-    }
 
     const trimmed = line.trim();
     if (!trimmed) {
@@ -525,23 +505,19 @@ export async function runApp(): Promise<void> {
     }
   }
 
+  // Handle SIGINT and SIGTERM: fold world state then exit cleanly
+  process.once("SIGINT",  () => { shutdown(agent, 0); });
+  process.once("SIGTERM", () => { shutdown(agent, 0); });
+
   setupRawInput(
     (line) => { handleSubmit(line).catch(console.error); },
     () => { if (abortController) { abortController.abort(); abortController = null; } },
-    () => { process.stdin.setRawMode(false); process.stdout.write("\n"); process.exit(0); },
+    () => { shutdown(agent, 0); },
   );
 
-  // Initial prompt — resume or normal
-  if (priorSession) {
-    printBlock(now(), [
-      cyan(`↩ Prior session: ${new Date(priorSession.savedAt).toLocaleString()} (${priorSession.history.length} messages)`),
-      dim("  Resume? [Y/n]"),
-    ]);
-    printPrompt(dim("? "));
-  } else {
-    printBlock(now(), [renderStatus(agent, false)]);
-    printPrompt(bold(green("❯ ")));
-  }
+  // Initial prompt
+  printBlock(now(), [renderStatus(agent, false)]);
+  printPrompt(bold(green("❯ ")));
 }
 
 // Entry point

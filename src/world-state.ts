@@ -11,13 +11,33 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { createHash } from "crypto";
 
 // ---------------------------------------------------------------------------
-// Defaults
+// Paths
 // ---------------------------------------------------------------------------
 
+/**
+ * Return a world-state path that is specific to the given working directory.
+ * Two different directories → two different files, so project switching is free.
+ *
+ * Format: ~/.local/share/omega/world-<slug>-<hash6>.md
+ *   slug = last path component, sanitised
+ *   hash = first 6 hex chars of SHA-256 of the full path (collision avoidance)
+ */
+export function projectWorldStatePath(cwd: string = process.cwd()): string {
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(-30) || "root";
+  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 6);
+  const filename = `world-${slug}-${hash}.md`;
+  return join(homedir(), ".local", "share", "omega", filename);
+}
+
+/**
+ * @deprecated Use projectWorldStatePath() instead.
+ * Kept for backward compatibility in tests that pass explicit paths.
+ */
 export function defaultWorldStatePath(): string {
-  return join(homedir(), ".local", "share", "omega", "world-state.md");
+  return projectWorldStatePath();
 }
 
 // ---------------------------------------------------------------------------

@@ -3,10 +3,9 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
-import { saveSession, loadLatestSession, type Session } from "./session.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactTurn, compactWorldState } from "./compaction.js";
-import { readWorldState, writeWorldState, defaultWorldStatePath } from "./world-state.js";
+import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
 
 
 // --- Types ---
@@ -328,10 +327,7 @@ export class Agent {
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
   private readonly retryMaxAttempts = Number(process.env.OMEGA_RETRY_ATTEMPTS ?? 5);
 
-  /** Session storage directory. null = persistence disabled. undefined = use default. */
-  private readonly sessionDir: string | null | undefined;
-
-  /** World state file path. null = disabled. undefined = use default. */
+  /** World state file path. null = disabled. undefined = use project default. */
   private readonly worldStatePath: string | null | undefined;
 
   /** Zone 2 summary: the compacted summary of all prior turns this session. */
@@ -348,16 +344,17 @@ export class Agent {
 
   /**
    * Production: new Agent()
-   *   — uses real Anthropic client, persists to default session dir
-   * Test: new Agent(mockProvider, dir)
-   *   — uses mock provider, persists to isolated temp dir
-   *   — sessionDir is REQUIRED when streamProvider is given; there is no
-   *     safe default for tests. Pass a temp dir from makeTempDir(), or pass
-   *     null to disable persistence entirely.
+   *   — uses real Anthropic client, world state at project-specific path
+   * Test: new Agent(mockProvider, null, undefined, worldStatePath)
+   *   — uses mock provider, world state disabled unless worldStatePath given
+   *
+   * The sessionDir parameter is removed. Session persistence no longer exists.
+   * The second parameter (formerly sessionDir) is kept as a positional placeholder
+   * accepting null so existing test call-sites still compile.
    */
   constructor(
     streamProvider?: StreamProvider,
-    sessionDir?: string | null,
+    _sessionDir?: string | null,
     openAiCaller: typeof callOpenAi = callOpenAi,
     worldStatePath?: string | null
   ) {
@@ -366,13 +363,6 @@ export class Agent {
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
     this.openAiCaller = openAiCaller;
-    // If a mock provider is given but no sessionDir, disable persistence.
-    // This prevents tests from accidentally writing to the real session dir.
-    if (streamProvider !== undefined && sessionDir === undefined) {
-      this.sessionDir = null; // explicitly disabled
-    } else {
-      this.sessionDir = sessionDir;
-    }
     // World state: if mock provider given and worldStatePath not specified, disable.
     if (streamProvider !== undefined && worldStatePath === undefined) {
       this.worldStatePath = null;
@@ -431,43 +421,6 @@ export class Agent {
   }
 
   /**
-   * Check if there is a prior session on disk that can be resumed.
-   * Returns the session metadata if found, null otherwise.
-   */
-  async checkPriorSession(): Promise<Session | null> {
-    if (this.sessionDir === null) return null;
-    return loadLatestSession(this.sessionDir);
-  }
-
-  /**
-   * Restore history from a prior session.
-   * Call this when the operator confirms they want to resume.
-   */
-  resumeSession(session: Session): void {
-    this.history = session.history as Anthropic.MessageParam[];
-    logger.info("session_resumed", {
-      sessionId: session.id,
-      messageCount: session.history.length,
-    });
-  }
-
-  /**
-   * Persist the current session to disk.
-   * Called after every turn so the latest state is always saved.
-   * No-op if sessionDir is null (persistence disabled).
-   */
-  private async persistSession(): Promise<void> {
-    if (this.sessionDir === null) return;
-    const session: Session = {
-      id: this.sessionId,
-      savedAt: new Date().toISOString(),
-      model: config.model,
-      history: this.history,
-    };
-    await saveSession(session, this.sessionDir);
-  }
-
-  /**
    * Get a StreamProvider wrapping the real Anthropic client (or the injected
    * mock, in tests). Used for compaction LLM calls.
    */
@@ -496,17 +449,18 @@ export class Agent {
   }
 
   /**
-   * Fold the prior session history into the world state file.
-   * Called at session start when a prior session is being discarded.
-   * No-op if worldStatePath is null.
+   * Fold the current session history into the world state file.
+   * Call this on clean shutdown (SIGINT, SIGTERM, normal exit).
+   * No-op if worldStatePath is null or history is empty.
    */
-  async foldSessionIntoWorldState(priorHistory: Anthropic.MessageParam[]): Promise<void> {
-    const path = this.worldStatePath === undefined ? defaultWorldStatePath() : this.worldStatePath;
+  async foldCurrentSessionIntoWorldState(): Promise<void> {
+    const path = this.worldStatePath === undefined ? projectWorldStatePath() : this.worldStatePath;
     if (path === null) return;
+    if (this.history.length === 0) return;
     try {
       const prior = await readWorldState(path);
       const provider = this.getStreamProvider();
-      const newState = await compactWorldState(prior, priorHistory, provider);
+      const newState = await compactWorldState(prior, this.history, provider);
       await writeWorldState(newState, path);
       logger.info("world_state_updated", { path });
     } catch (err: any) {
@@ -519,7 +473,7 @@ export class Agent {
    * system prompt. Call once at session start, after init().
    */
   async loadWorldState(): Promise<void> {
-    const path = this.worldStatePath === undefined ? defaultWorldStatePath() : this.worldStatePath;
+    const path = this.worldStatePath === undefined ? projectWorldStatePath() : this.worldStatePath;
     if (path === null) return;
     try {
       this.worldStateContent = await readWorldState(path);
@@ -906,11 +860,6 @@ export class Agent {
         totalMs,
         toolCalls: toolCallsThisTurn,
         stopReason: response.stop_reason ?? "unknown",
-      });
-
-      // Persist session to disk after every turn (fire-and-forget)
-      this.persistSession().catch((err) => {
-        logger.warn("session_persist_failed", { error: err.message });
       });
 
       // Emit metrics for this turn
