@@ -308,10 +308,6 @@ export async function runApp(): Promise<void> {
     const prior = await agent.checkPriorSession();
     if (prior && prior.history.length > 0) {
       priorSession = prior;
-      printBlock(now(), [
-        cyan(`↩ Prior session: ${new Date(prior.savedAt).toLocaleString()} (${prior.history.length} messages)`),
-        dim("  Resume? [Y/n]"),
-      ]);
     }
   } catch { /* no prior session */ }
 
@@ -319,12 +315,16 @@ export async function runApp(): Promise<void> {
   let isStreaming = false;
 
   async function handleSubmit(line: string): Promise<void> {
-    // Echo the completed input line properly
-    println("");  // newline after the inline-echoed input
+    println("");  // newline after inline-echoed input
 
     // Resume prompt
     if (priorSession) {
       const v = line.trim().toLowerCase();
+      if (v !== "y" && v !== "yes" && v !== "" && v !== "n" && v !== "no") {
+        printBlock(now(), [red("⚠ Please answer y or n")]);
+        printPrompt(dim("? "));
+        return;
+      }
       const resume = v === "y" || v === "yes" || v === "";
       if (resume) {
         agent.resumeSession(priorSession);
@@ -333,12 +333,19 @@ export async function runApp(): Promise<void> {
         printBlock(now(), ["↩ Starting fresh session"]);
       }
       priorSession = null;
+      // Now show status and main prompt
+      printBlock(now(), [renderStatus(agent, false)]);
       printPrompt(bold(green("❯ ")));
       return;
     }
 
     const trimmed = line.trim();
-    if (!trimmed || isStreaming) {
+    if (!trimmed) {
+      printBlock(now(), [dim("(empty input — type a message)")]);
+      printPrompt(bold(green("❯ ")));
+      return;
+    }
+    if (isStreaming) {
       printPrompt(bold(green("❯ ")));
       return;
     }
@@ -449,7 +456,15 @@ export async function runApp(): Promise<void> {
     () => { process.stdin.setRawMode(false); process.stdout.write("\n"); process.exit(0); },
   );
 
-  // Initial prompt
-  printBlock(now(), [renderStatus(agent, false)]);
-  printPrompt(bold(green("❯ ")));
+  // Initial prompt — resume or normal
+  if (priorSession) {
+    printBlock(now(), [
+      cyan(`↩ Prior session: ${new Date(priorSession.savedAt).toLocaleString()} (${priorSession.history.length} messages)`),
+      dim("  Resume? [Y/n]"),
+    ]);
+    printPrompt(dim("? "));
+  } else {
+    printBlock(now(), [renderStatus(agent, false)]);
+    printPrompt(bold(green("❯ ")));
+  }
 }
