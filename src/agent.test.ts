@@ -17,14 +17,14 @@ describe("estimateCost", () => {
   });
 
   it("calculates cost for opus correctly", () => {
-    // 1000 input at $15/M + 1000 output at $75/M = $0.015 + $0.075 = $0.09
+    // 1000 input at $5/M + 1000 output at $25/M = $0.005 + $0.025 = $0.03
     const cost = estimateCost("claude-opus-4-6", 1000, 1000);
-    expect(cost).toBeCloseTo(0.09, 6);
+    expect(cost).toBeCloseTo(0.03, 6);
   });
 
   it("falls back to opus pricing for unknown model", () => {
     const cost = estimateCost("unknown-model", 1000, 0);
-    expect(cost).toBeCloseTo(0.015, 6);
+    expect(cost).toBeCloseTo(0.005, 6);
   });
 
   it("returns 0 for zero tokens", () => {

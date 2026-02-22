@@ -51,7 +51,7 @@ export function isAutoApproved(_toolName: string, _toolInput: any): boolean {
 // --- Pricing ---
 
 export const PRICING: Record<string, { input: number; output: number }> = {
-  "claude-opus-4-6": { input: 15, output: 75 },
+  "claude-opus-4-6": { input: 5, output: 25 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
   // OpenAI Codex pricing unknown here — leave 0 until configured
@@ -63,7 +63,7 @@ export function estimateCost(
   inputTokens: number,
   outputTokens: number
 ): number {
-  const pricing = PRICING[model] ?? { input: 15, output: 75 };
+  const pricing = PRICING[model] ?? { input: 5, output: 25 };
   return (
     (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000
   );
