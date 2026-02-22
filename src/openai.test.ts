@@ -85,4 +85,10 @@ describe("parseOpenAiResponse", () => {
     expect(tool.id).toBe("c1");
     expect(tool.name).toBe("read_file");
   });
+
+  it("marks tools as strict for OpenAI validation", () => {
+    const req = buildOpenAiRequest([], "sys", "gpt-5.2-codex", 10);
+    const tool = req.tools[0];
+    expect(tool.strict).toBe(true);
+  });
 });

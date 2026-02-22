@@ -35,6 +35,7 @@ fallbackModel: "gpt-5.2-codex"
   results map to `function_call_output`. If tool_result appears before the
   tool_use in history, Omega injects the missing `function_call` before the
   output to satisfy the Responses API.
+- Tools are sent with `strict: true` so the model must supply required fields.
 - Once a rate limit triggers, fallback stays active for the rest of the
   runtime (no automatic switch-back).
 

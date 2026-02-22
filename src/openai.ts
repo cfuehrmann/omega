@@ -34,6 +34,7 @@ function toOpenAiTools() {
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
+    strict: true,
   }));
 }
 
