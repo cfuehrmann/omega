@@ -94,11 +94,13 @@ export function formatPayloadSummary(payload: ApiCallPayload): PayloadSummary {
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "status"; message: string }
+  | { type: "user_message"; content: string }
   | { type: "api_call_start"; callNumber: number; model: string; system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] }
+  | { type: "api_response"; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[] }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
+  | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
-  | { type: "api_response"; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[] }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[] }
   | { type: "error"; error: string }
   | { type: "interrupted" };
@@ -445,6 +447,9 @@ export class Agent {
   ): AsyncGenerator<AgentEvent> {
     this.history.push({ role: "user", content: userMessage });
 
+    // Emit user message event for UI display
+    yield { type: "user_message", content: userMessage };
+
     // Apply context window truncation before each API call
     this.history = truncateHistory(this.history) as Anthropic.MessageParam[];
 
@@ -665,6 +670,16 @@ export class Agent {
             is_error: result.isError,
           });
         }
+
+        // Emit tool_result_message for UI display (the user message going back to API)
+        yield {
+          type: "tool_result_message",
+          results: toolResults.map(r => ({
+            tool_use_id: r.tool_use_id,
+            content: r.content as string,
+            is_error: r.is_error ?? false,
+          })),
+        };
 
         // Add tool results to history and continue the loop
         this.history.push({ role: "user", content: toolResults });

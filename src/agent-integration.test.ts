@@ -164,7 +164,8 @@ describe("Agent.sendMessage — plain text response", () => {
     const events = await collectEvents(agent, "hi");
 
     const types = events.map((e) => e.type);
-    expect(types[0]).toBe("status"); // "thinking..."
+    expect(types[0]).toBe("user_message");
+    expect(types).toContain("status");
     expect(types).toContain("text");
     expect(types).toContain("metrics");
     expect(types[types.length - 1]).toBe("turn_end");
@@ -979,5 +980,83 @@ describe("Agent — metrics timing fields", () => {
     expect(typeof m.startedAt).toBe("string");
     // Should be a valid time string HH:MM:SS
     expect(m.startedAt).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// user_message event
+// ---------------------------------------------------------------------------
+
+describe("Agent — user_message event", () => {
+  it("emits user_message as first event with the prompt text", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hello there");
+    const um = events.find((e) => e.type === "user_message") as any;
+    expect(um).toBeDefined();
+    expect(um.content).toBe("hello there");
+  });
+
+  it("user_message is emitted before api_call_start", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const types = events.map((e) => e.type);
+    const umIdx = types.indexOf("user_message");
+    const apiIdx = types.indexOf("api_call_start");
+    expect(umIdx).toBeGreaterThanOrEqual(0);
+    expect(umIdx).toBeLessThan(apiIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tool_result_message event
+// ---------------------------------------------------------------------------
+
+describe("Agent — tool_result_message event", () => {
+  it("emits tool_result_message after tool results are collected", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("list_files"),
+          toolUseMessage("t1", "list_files", { path: "." })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "list");
+    const trm = events.find((e) => e.type === "tool_result_message") as any;
+    expect(trm).toBeDefined();
+    expect(Array.isArray(trm.results)).toBe(true);
+    expect(trm.results.length).toBe(1);
+    expect(trm.results[0].tool_use_id).toBe("t1");
+    expect(typeof trm.results[0].content).toBe("string");
+    expect(typeof trm.results[0].is_error).toBe("boolean");
+  });
+
+  it("tool_result_message is emitted after tool_result and before next api_call_start", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("list_files"),
+          toolUseMessage("t1", "list_files", { path: "." })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "list");
+    const types = events.map((e) => e.type);
+    const trmIdx = types.lastIndexOf("tool_result_message");
+    const lastApiIdx = types.lastIndexOf("api_call_start");
+    expect(trmIdx).toBeGreaterThan(0);
+    expect(trmIdx).toBeLessThan(lastApiIdx);
   });
 });

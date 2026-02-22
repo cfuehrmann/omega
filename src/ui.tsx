@@ -10,20 +10,20 @@ import type Anthropic from "@anthropic-ai/sdk";
 // --- Types ---
 
 type ItemType =
-  | "user"
+  | "user_message"
   | "api_request"
   | "api_response"
-  | "tool_call"
-  | "tool_result"
-  | "assistant"
+  | "tool_execution"
+  | "tool_result_message"
+  | "assistant_message"
   | "error"
   | "system";
 
 interface CompletedItem {
   id: number;
   type: ItemType;
-  time: string;      // HH:MM:SS
-  lines: Line[];     // rendered lines (text + color + bold)
+  time: string;
+  lines: Line[];
 }
 
 interface Line {
@@ -36,8 +36,11 @@ interface Line {
 // --- Constants ---
 
 const TIME_WIDTH = 10; // "HH:MM:SS  "
+const INDENT = "  ";
+const INDENT2 = "    ";
+const INDENT3 = "      ";
 
-// --- Formatting helpers ---
+// --- Helpers ---
 
 function now(): string {
   return new Date().toLocaleTimeString("en-GB");
@@ -60,7 +63,19 @@ function truncateOutput(text: string, maxLines: number = 10): string {
   return lines.slice(0, maxLines).join("\n") + `\n… [${lines.length - maxLines} more lines]`;
 }
 
-// Render a pseudo-JSON block for the API request
+// --- Line builders ---
+
+function userMessageLines(content: string): Line[] {
+  const lines: Line[] = [];
+  lines.push({ text: "message", bold: true, color: "green" });
+  lines.push({ text: `${INDENT}role: "user"`, color: "green" });
+  lines.push({ text: `${INDENT}content:`, color: "green" });
+  for (const line of content.split("\n")) {
+    lines.push({ text: `${INDENT2}${line}`, color: "green", bold: true });
+  }
+  return lines;
+}
+
 function apiRequestLines(
   callNumber: number,
   model: string,
@@ -70,64 +85,107 @@ function apiRequestLines(
   estimatedTokens: number,
 ): Line[] {
   const lines: Line[] = [];
-  lines.push({ text: `▶ API call #${callNumber}  ~${estimatedTokens.toLocaleString()} tokens`, bold: true, color: "cyan" });
-  lines.push({ text: `  {`, color: "cyan" });
-  lines.push({ text: `    model: "${model}",`, color: "cyan" });
-  lines.push({ text: `    system: <${system.length} chars>,`, color: "cyan" });
-  lines.push({ text: `    tools: [${tools.map(t => `"${t.name}"`).join(", ")}],`, color: "cyan" });
-  lines.push({ text: `    max_tokens: ${config.maxOutputTokens},`, color: "cyan" });
-  lines.push({ text: `    messages: <${messages.length} messages>,`, color: "cyan" });
-  lines.push({ text: `  }`, color: "cyan" });
+  lines.push({ text: `api call #${callNumber}  ~${estimatedTokens.toLocaleString()} tokens`, bold: true, color: "cyan" });
+  lines.push({ text: `${INDENT}model: "${model}"`, color: "cyan" });
+  lines.push({ text: `${INDENT}system: <${system.length} chars>`, color: "cyan" });
+  lines.push({ text: `${INDENT}tools: [${tools.map(t => `"${t.name}"`).join(", ")}]`, color: "cyan" });
+  lines.push({ text: `${INDENT}max_tokens: ${config.maxOutputTokens}`, color: "cyan" });
+  lines.push({ text: `${INDENT}messages: <${messages.length} messages>`, color: "cyan" });
   return lines;
 }
 
-
-// Render a pseudo-JSON block for the API response
 function apiResponseLines(
   stopReason: string,
   usage: { input_tokens: number; output_tokens: number },
   content: Anthropic.ContentBlock[],
 ): Line[] {
   const lines: Line[] = [];
-  lines.push({ text: `◀ response`, bold: true, color: "blue" });
-  lines.push({ text: `  {`, color: "blue" });
-  lines.push({ text: `    stop_reason: "${stopReason}",`, color: "blue" });
-  lines.push({ text: `    usage: { input_tokens: ${usage.input_tokens}, output_tokens: ${usage.output_tokens} },`, color: "blue" });
-  lines.push({ text: `    content: [`, color: "blue" });
+  lines.push({ text: "api response", bold: true, color: "blue" });
+  lines.push({ text: `${INDENT}stop_reason: "${stopReason}"`, color: "blue" });
+  lines.push({ text: `${INDENT}usage:`, color: "blue" });
+  lines.push({ text: `${INDENT2}input_tokens: ${usage.input_tokens}`, color: "blue", dimColor: true });
+  lines.push({ text: `${INDENT2}output_tokens: ${usage.output_tokens}`, color: "blue", dimColor: true });
+  lines.push({ text: `${INDENT}content:`, color: "blue" });
   for (const block of content) {
     if (block.type === "text") {
-      const preview = block.text.length <= 80
-        ? `"${block.text.replace(/\n/g, "\\n")}"`
-        : `<text: ${block.text.length} chars>`;
-      lines.push({ text: `      { type: "text", text: ${preview} },`, color: "blue", dimColor: true });
+      lines.push({ text: `${INDENT2}text:`, color: "blue" });
+      const preview = block.text.length <= 120 ? block.text : `<${block.text.length} chars>`;
+      for (const line of preview.split("\n")) {
+        lines.push({ text: `${INDENT3}${line}`, color: "blue", dimColor: true });
+      }
     } else if (block.type === "tool_use") {
-      lines.push({ text: `      { type: "tool_use", name: "${block.name}", input: ${JSON.stringify(block.input)} },`, color: "blue", dimColor: true });
+      lines.push({ text: `${INDENT2}tool_use:`, color: "blue" });
+      lines.push({ text: `${INDENT3}name: "${block.name}"`, color: "blue", dimColor: true });
+      lines.push({ text: `${INDENT3}input: ${JSON.stringify(block.input)}`, color: "blue", dimColor: true });
     } else {
-      lines.push({ text: `      { type: "${block.type}" },`, color: "blue", dimColor: true });
+      lines.push({ text: `${INDENT2}${block.type}`, color: "blue", dimColor: true });
     }
   }
-  lines.push({ text: `    ]`, color: "blue" });
-  lines.push({ text: `  }`, color: "blue" });
   return lines;
 }
 
-// --- Render a single completed item ---
+function toolExecutionLines(
+  name: string,
+  input: any,
+  formatted: string,
+  result: { output: string; isError: boolean },
+): Line[] {
+  const lines: Line[] = [];
+  lines.push({ text: "tool execution", bold: true, color: "yellow" });
+  lines.push({ text: `${INDENT}name: "${name}"`, color: "yellow" });
+  lines.push({ text: `${INDENT}input: ${JSON.stringify(input)}`, color: "yellow" });
+  lines.push({ text: `${INDENT}result:`, color: "yellow" });
+  lines.push({ text: `${INDENT2}is_error: ${result.isError}`, color: "yellow", dimColor: true });
+  lines.push({ text: `${INDENT2}content:`, color: "yellow", dimColor: true });
+  for (const line of truncateOutput(result.output).split("\n")) {
+    lines.push({ text: `${INDENT3}${line}`, color: "yellow", dimColor: true });
+  }
+  return lines;
+}
+
+function toolResultMessageLines(
+  results: Array<{ tool_use_id: string; content: string; is_error: boolean }>,
+): Line[] {
+  const lines: Line[] = [];
+  lines.push({ text: "message", bold: true, color: "magenta" });
+  lines.push({ text: `${INDENT}role: "user"`, color: "magenta" });
+  lines.push({ text: `${INDENT}content:`, color: "magenta" });
+  for (const r of results) {
+    lines.push({ text: `${INDENT2}tool_result:`, color: "magenta" });
+    lines.push({ text: `${INDENT3}tool_use_id: "${r.tool_use_id}"`, color: "magenta", dimColor: true });
+    lines.push({ text: `${INDENT3}is_error: ${r.is_error}`, color: "magenta", dimColor: true });
+    lines.push({ text: `${INDENT3}content: <${r.content.length} chars>`, color: "magenta", dimColor: true });
+  }
+  return lines;
+}
+
+function assistantMessageLines(text: string, dimText?: string): Line[] {
+  const lines: Line[] = [];
+  lines.push({ text: "message", bold: true });
+  lines.push({ text: `${INDENT}role: "assistant"` });
+  lines.push({ text: `${INDENT}content:` });
+  for (const line of text.split("\n")) {
+    lines.push({ text: `${INDENT2}${line}` });
+  }
+  if (dimText) {
+    for (const line of dimText.split("\n")) {
+      lines.push({ text: `${INDENT}${line}`, dimColor: true });
+    }
+  }
+  return lines;
+}
+
+// --- Item renderer ---
 
 function ItemRow({ item }: { item: CompletedItem }) {
   return (
     <Box flexDirection="column">
       {item.lines.map((line, i) => (
         <Box key={i} flexDirection="row">
-          {/* Time column — only on first line */}
-          <Box width={TIME_WIDTH}>
+          <Box width={TIME_WIDTH} flexShrink={0}>
             <Text dimColor>{i === 0 ? item.time : ""}</Text>
           </Box>
-          {/* Content */}
-          <Text
-            color={line.color as any}
-            dimColor={line.dimColor}
-            bold={line.bold}
-          >
+          <Text color={line.color as any} dimColor={line.dimColor} bold={line.bold}>
             {line.text}
           </Text>
         </Box>
@@ -173,14 +231,10 @@ export function App() {
   useEffect(() => {
     agent.init().then(async (mode) => {
       setAuthMode(mode);
-      addItem("system", now(), [
-        {
-          text: mode === "Claude Max"
-            ? `✓ Authenticated: ${mode}`
-            : `⚠ Auth: ${mode}`,
-          color: mode === "Claude Max" ? undefined : "red",
-        },
-      ]);
+      addItem("system", now(), [{
+        text: mode === "Claude Max" ? `✓ Authenticated: ${mode}` : `⚠ Auth: ${mode}`,
+        color: mode === "Claude Max" ? undefined : "red",
+      }]);
       const prior = await agent.checkPriorSession();
       if (prior && prior.history.length > 0) {
         setPriorSession(prior);
@@ -197,7 +251,6 @@ export function App() {
 
   const handleSubmit = useCallback(
     async (value: string) => {
-      // Handle resume prompt
       if (priorSession && !resumePromptDone) {
         const v = value.trim().toLowerCase();
         const resume = v === "y" || v === "yes" || v === "";
@@ -219,14 +272,10 @@ export function App() {
       const trimmed = value.trim();
       if (!trimmed || isStreaming || !ready) return;
 
-      // Move last response to static zone
       if (lastResponse) {
-        addItem("assistant", now(), [
-          { text: lastResponse.text },
-          ...(lastResponse.dimText
-            ? lastResponse.dimText.split("\n").map(l => ({ text: l, dimColor: true }))
-            : []),
-        ]);
+        addItem("assistant_message", now(), assistantMessageLines(
+          lastResponse.text, lastResponse.dimText
+        ));
         setLastResponse(null);
       }
 
@@ -236,14 +285,6 @@ export function App() {
       setTokenDelta("");
       setLastCallTokens(null);
 
-      // User prompt — strong visual prominence with separator lines
-      const sep = "─".repeat(60);
-      addItem("user", now(), [
-        { text: sep, color: "green", bold: true },
-        { text: `❯ ${trimmed}`, color: "green", bold: true },
-        { text: sep, color: "green", bold: true },
-      ]);
-
       let fullText = "";
       const confirmTool = async () => true;
       const controller = new AbortController();
@@ -252,6 +293,10 @@ export function App() {
       try {
         for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
           switch (event.type) {
+
+            case "user_message":
+              addItem("user_message", now(), userMessageLines(event.content));
+              break;
 
             case "api_call_start": {
               const est = formatPayloadSummary({
@@ -273,14 +318,13 @@ export function App() {
               break;
             }
 
-            case "api_response": {
+            case "api_response":
               addItem("api_response", now(), apiResponseLines(
                 event.stopReason,
                 event.usage,
                 event.content,
               ));
               break;
-            }
 
             case "status":
               setActivity(event.message);
@@ -296,29 +340,32 @@ export function App() {
               setActivity(`${event.name}…`);
               break;
 
-            case "tool_result": {
-              const resultPreview = truncateOutput(event.result.output);
-              addItem("tool_call", now(), [
-                { text: `⚙ ${event.formatted}`, color: "yellow", bold: true },
-                { text: `  ${event.result.isError ? "✗" : "✓"} ${resultPreview}`, color: "yellow", dimColor: true },
-              ]);
+            case "tool_result":
+              addItem("tool_execution", now(), toolExecutionLines(
+                event.name,
+                event.input,
+                event.formatted,
+                event.result,
+              ));
               setActivity("");
               break;
-            }
+
+            case "tool_result_message":
+              addItem("tool_result_message", now(), toolResultMessageLines(event.results));
+              break;
 
             case "metrics":
-              // No longer displayed — aggregated in turn_end
               break;
 
             case "turn_end": {
               const m = event.metrics;
-              const metricsLine = `in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)}`;
+              const dimText = `in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)}`;
               if (fullText) {
-                setLastResponse({ text: fullText, dimText: metricsLine });
+                setLastResponse({ text: fullText, dimText });
                 fullText = "";
                 setStreamingText("");
               } else {
-                addItem("assistant", now(), [{ text: metricsLine, dimColor: true }]);
+                addItem("system", now(), [{ text: dimText, dimColor: true }]);
               }
               break;
             }
@@ -329,7 +376,7 @@ export function App() {
 
             case "interrupted":
               if (fullText) {
-                addItem("assistant", now(), [{ text: fullText }]);
+                addItem("assistant_message", now(), assistantMessageLines(fullText));
                 fullText = "";
                 setStreamingText("");
               }
@@ -365,33 +412,59 @@ export function App() {
       </Static>
 
       <Box flexDirection="column">
-        {/* Streaming response text */}
+        {/* Streaming assistant message */}
         {isStreaming && streamingText && (
-          <Box>
-            <Box width={TIME_WIDTH}><Text dimColor>{now()}</Text></Box>
-            <Text>{streamingText}<Text dimColor>▊</Text></Text>
+          <Box flexDirection="column">
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text dimColor>{now()}</Text></Box>
+              <Text bold>message</Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text>{INDENT}role: "assistant"</Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text>{INDENT}content:</Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text>{INDENT2}{streamingText}<Text dimColor>▊</Text></Text>
+            </Box>
           </Box>
         )}
 
         {/* Activity indicator */}
         {isStreaming && !streamingText && (
           <Box>
-            <Box width={TIME_WIDTH}><Text dimColor>{now()}</Text></Box>
+            <Box width={TIME_WIDTH} flexShrink={0}><Text dimColor>{now()}</Text></Box>
             <Text dimColor>⏳ {activity || "working..."}</Text>
           </Box>
         )}
 
-        {/* Last completed response */}
+        {/* Last completed response — shown until next message */}
         {!isStreaming && lastResponse && (
           <Box flexDirection="column">
             <Box>
-              <Box width={TIME_WIDTH}><Text dimColor>{""}</Text></Box>
-              <Text>{lastResponse.text}</Text>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text bold>message</Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text>{INDENT}role: "assistant"</Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text>{INDENT}content:</Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+              <Text>{INDENT2}{lastResponse.text}</Text>
             </Box>
             {lastResponse.dimText && (
               <Box>
-                <Box width={TIME_WIDTH}><Text>{""}</Text></Box>
-                <Text dimColor>{lastResponse.dimText}</Text>
+                <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
+                <Text dimColor>{INDENT}{lastResponse.dimText}</Text>
               </Box>
             )}
           </Box>
@@ -401,7 +474,7 @@ export function App() {
         {priorSession && !resumePromptDone && (
           <Box flexDirection="column">
             <Box>
-              <Box width={TIME_WIDTH}><Text dimColor>{now()}</Text></Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text dimColor>{now()}</Text></Box>
               <Text color="cyan">
                 {"↩ Prior session: "}
                 {new Date(priorSession.savedAt).toLocaleString()}
@@ -409,7 +482,7 @@ export function App() {
               </Text>
             </Box>
             <Box>
-              <Box width={TIME_WIDTH}><Text>{""}</Text></Box>
+              <Box width={TIME_WIDTH} flexShrink={0}><Text>{""}</Text></Box>
               <Text dimColor>Resume? [Y/n] </Text>
             </Box>
           </Box>
@@ -417,7 +490,9 @@ export function App() {
 
         {/* Input prompt */}
         <Box>
-          <Box width={TIME_WIDTH}><Text dimColor>{isStreaming ? "" : now()}</Text></Box>
+          <Box width={TIME_WIDTH} flexShrink={0}>
+            <Text dimColor>{isStreaming ? "" : now()}</Text>
+          </Box>
           <Text
             bold={!isStreaming}
             dimColor={isStreaming}
