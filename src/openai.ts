@@ -17,6 +17,7 @@ interface OpenAiRequest {
   tools: any[];
   tool_choice: "auto";
   max_output_tokens: number;
+  instructions?: string;
 }
 
 function getOpenAiApiKey(): string {
@@ -36,14 +37,6 @@ function toOpenAiTools() {
   }));
 }
 
-function pushTextMessage(target: any[], role: string, text: string) {
-  if (!text) return;
-  target.push({
-    role,
-    content: [{ type: "input_text", text }],
-  });
-}
-
 export function buildOpenAiRequest(
   history: Anthropic.MessageParam[],
   systemPrompt: string,
@@ -52,12 +45,9 @@ export function buildOpenAiRequest(
 ): OpenAiRequest {
   const input: any[] = [];
 
-  // System prompt
-  pushTextMessage(input, "system", systemPrompt);
-
   for (const msg of history) {
     if (typeof msg.content === "string") {
-      pushTextMessage(input, msg.role, msg.content);
+      input.push({ role: msg.role, content: msg.content });
       continue;
     }
     if (!Array.isArray(msg.content)) continue;
@@ -76,7 +66,7 @@ export function buildOpenAiRequest(
 
       const textBlocks = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text);
       if (textBlocks.length > 0) {
-        pushTextMessage(input, "user", textBlocks.join("\n"));
+        input.push({ role: "user", content: textBlocks.join("\n") });
       }
       continue;
     }
@@ -84,7 +74,7 @@ export function buildOpenAiRequest(
     if (msg.role === "assistant") {
       const textBlocks = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text);
       if (textBlocks.length > 0) {
-        pushTextMessage(input, "assistant", textBlocks.join("\n"));
+        input.push({ role: "assistant", content: textBlocks.join("\n") });
       }
       continue;
     }
@@ -96,6 +86,7 @@ export function buildOpenAiRequest(
     tools: toOpenAiTools(),
     tool_choice: "auto",
     max_output_tokens: maxTokens,
+    instructions: systemPrompt,
   };
 }
 

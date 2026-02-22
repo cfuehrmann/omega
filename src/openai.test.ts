@@ -7,6 +7,18 @@ function msg(role: "user" | "assistant", content: any): Anthropic.MessageParam {
 }
 
 describe("buildOpenAiRequest", () => {
+  it("uses string content for input messages (no input_text blocks)", () => {
+    const history: Anthropic.MessageParam[] = [
+      msg("user", "hello"),
+      msg("assistant", "hi"),
+    ];
+
+    const req = buildOpenAiRequest(history, "sys", "gpt-5.2-codex", 10);
+    const message = req.input.find((i: any) => i.role === "user");
+    expect(typeof message.content).toBe("string");
+    expect(JSON.stringify(req.input)).not.toContain("input_text");
+  });
+
   it("maps tool_result blocks to function_call_output inputs", () => {
     const history: Anthropic.MessageParam[] = [
       msg("user", [
