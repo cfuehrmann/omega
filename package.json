@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/main-raw.ts",
+    "start": "bun run src/ui-raw.ts",
     "login": "bun run src/login.ts"
   },
   "devDependencies": {

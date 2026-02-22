@@ -44,5 +44,11 @@ export const config = {
     "Never write the fix and the test in the same step. The test must fail",
     "first to prove it actually tests the right thing. If a new test passes",
     "immediately, it is not testing the bug — rewrite it until it fails.",
+    "",
+    "## After renaming, moving, or deleting files",
+    "",
+    "Update ALL references: package.json scripts, imports, plan docs.",
+    "Then run BOTH `bun start` (app launches) AND `bun test` (tests pass).",
+    "Tests alone won't catch a broken start script.",
   ].join("\n"),
 };

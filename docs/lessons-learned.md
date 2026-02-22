@@ -60,9 +60,25 @@ git push              # still use git for push/pull
 Don't construct GitHub API URLs by hand or reach for `curl` — `gh` handles
 auth, JSON parsing, and pagination automatically.
 
+## 8. Verify the build after every refactor
+
+After renaming/moving/deleting files, immediately run `bun start` (or the
+equivalent entry point) to confirm the app still launches. `bun test` only
+tests what tests cover — it won't catch a broken `package.json` `start`
+script pointing at a deleted file. Make it a habit: rename a file → update
+every reference → run the app.
+
 ## Checklist for new API integrations
 
 - [ ] Find and read a working implementation
 - [ ] Note every URL, param, header (especially non-obvious ones)
 - [ ] Write a standalone test script; confirm it works
 - [ ] Only then build the full integration
+
+## Checklist after file rename/move/delete
+
+- [ ] Update `package.json` scripts (`start`, `login`, etc.)
+- [ ] Update imports in all source files
+- [ ] Update plan docs if they reference the old filename
+- [ ] Run `bun start` to confirm the app launches
+- [ ] Run `bun test` to confirm tests pass
