@@ -752,6 +752,17 @@ export class Agent {
         this.activeModel = config.fallbackModel as string;
         yield { type: "status", message: `Switched to OpenAI codex (${this.activeModel})` };
       } else if (cmd === "/help") {
+        const isOpenAi = this.provider === "openai";
+        const footerLegend = isOpenAi
+          ? [
+              "",
+              "Footer:  new: <non-cached input tokens>  out: <output tokens>  cost: <=<ceiling>",
+            ]
+          : [
+              "",
+              "Footer:  new: <non-cached input>  write: <cache-write>  read: <cache-read>  out: <output>",
+              "         cost: <actual>  saved: <cache savings>",
+            ];
         yield {
           type: "status",
           message: [
@@ -759,6 +770,7 @@ export class Agent {
             "/opus    — Anthropic claude-opus-4-6",
             "/codex   — OpenAI Codex (gpt-5.2-codex)",
             "/help    — show this help",
+            ...footerLegend,
           ].join("\n"),
         };
       } else {

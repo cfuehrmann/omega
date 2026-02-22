@@ -994,6 +994,30 @@ describe("slash commands", () => {
     expect(status.message).toContain("/help");
   });
 
+  it("/help (Anthropic) includes footer legend with all three input buckets and saved:", async () => {
+    const agent = new Agent(null as any, null); // default = anthropic
+    const events = await collectEvents(agent, "/help");
+    const status = events.find((e) => e.type === "status") as any;
+    expect(status.message).toContain("new:");
+    expect(status.message).toContain("write:");
+    expect(status.message).toContain("read:");
+    expect(status.message).toContain("out:");
+    expect(status.message).toContain("saved:");
+  });
+
+  it("/help (OpenAI after /codex) shows shorter legend — no write:/read:/saved:", async () => {
+    const agent = new Agent(null as any, null);
+    await collectEvents(agent, "/codex"); // switch to openai
+    const events = await collectEvents(agent, "/help");
+    const status = events.find((e) => e.type === "status") as any;
+    expect(status.message).toContain("new:");
+    expect(status.message).toContain("out:");
+    // OpenAI footer has no cache breakdown or saved
+    expect(status.message).not.toContain("write:");
+    expect(status.message).not.toContain("read:");
+    expect(status.message).not.toContain("saved:");
+  });
+
   it("old /gpt command is rejected as unknown", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/gpt");
