@@ -53,15 +53,18 @@ Ink owns only the bottom region of the terminal — not the full screen. Content
 that scrolls into the terminal's scrollback is outside Ink's control forever.
 This makes collapsible/expandable history impossible in Ink.
 
-Current layout: static zone (append-only scrollback) + live zone (streaming
-text, activity indicator, input prompt) + status bar. Each API call gets a
-bold cyan `▶ API call #N ~X tokens` separator in the static zone. Status bar
-shows `Δ±N tok` (context size delta between consecutive API calls within a
-turn). Dim `…` prompt while agent is acting; green `❯` when idle.
+Log-style layout: time column (HH:MM:SS) on the left of every block.
+Three visual prominence levels via color:
+- User prompts: bright green bold `───` separator + text (strongest)
+- API requests (cyan): pseudo-JSON showing model, system size, tool names,
+  message summaries (not full content)
+- API responses (blue): pseudo-JSON showing stop_reason, usage, content blocks
+- Tool calls (yellow): formatted call + result preview
+- Status bar: model, auth, session tokens, cost, Δ tok, Esc hint
 
-Payload inspector panel and `i`/`q` shortcuts were built then removed —
-simpler to show delta in status bar since context is always a
-prefix-superset across calls.
+`api_response` AgentEvent added (stop_reason, usage, content blocks).
+`turn_end` AgentEvent aggregates all tool calls and metrics across a turn.
+Tool audit summary shown once at turn end, not per-API-call.
 
 ## TUI alternatives researched (2025)
 
