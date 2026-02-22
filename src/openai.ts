@@ -44,6 +44,18 @@ export function buildOpenAiRequest(
   maxTokens: number
 ): OpenAiRequest {
   const input: any[] = [];
+  const toolUseById = new Map<string, { name: string; input: any }>();
+  const emittedToolCalls = new Set<string>();
+
+  // Pre-scan for tool_use blocks so we can insert missing function_call entries
+  for (const msg of history) {
+    if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const b of msg.content as any[]) {
+      if (b.type === "tool_use") {
+        toolUseById.set(b.id, { name: b.name, input: b.input ?? {} });
+      }
+    }
+  }
 
   for (const msg of history) {
     if (typeof msg.content === "string") {
@@ -56,12 +68,24 @@ export function buildOpenAiRequest(
       const toolResults = msg.content.filter((b: any) => b.type === "tool_result");
       if (toolResults.length > 0) {
         for (const tr of toolResults) {
-          input.push({
-            type: "function_call_output",
-            call_id: tr.tool_use_id,
-            output: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content),
-          });
+        if (!emittedToolCalls.has(tr.tool_use_id)) {
+          const toolUse = toolUseById.get(tr.tool_use_id);
+          if (toolUse) {
+            input.push({
+              type: "function_call",
+              call_id: tr.tool_use_id,
+              name: toolUse.name,
+              arguments: JSON.stringify(toolUse.input ?? {}),
+            });
+            emittedToolCalls.add(tr.tool_use_id);
+          }
         }
+        input.push({
+          type: "function_call_output",
+          call_id: tr.tool_use_id,
+          output: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content),
+        });
+      }
       }
 
       const textBlocks = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text);
@@ -85,6 +109,7 @@ export function buildOpenAiRequest(
           name: tu.name,
           arguments: JSON.stringify(tu.input ?? {}),
         });
+        emittedToolCalls.add(tu.id);
       }
       continue;
     }

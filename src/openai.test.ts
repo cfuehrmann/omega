@@ -49,6 +49,24 @@ describe("buildOpenAiRequest", () => {
     expect(out.call_id).toBe("tool123");
     expect(out.output).toBe("ok");
   });
+
+  it("inserts a function_call before function_call_output when history is out of order", () => {
+    const history: Anthropic.MessageParam[] = [
+      msg("user", [
+        { type: "tool_result", tool_use_id: "tool123", content: "ok", is_error: false },
+      ]),
+      msg("assistant", [
+        { type: "tool_use", id: "tool123", name: "read_file", input: { path: "x" } },
+      ]),
+    ];
+
+    const req = buildOpenAiRequest(history, "sys", "gpt-5.2-codex", 10);
+    const callIndex = req.input.findIndex((i: any) => i.type === "function_call" && i.call_id === "tool123");
+    const outIndex = req.input.findIndex((i: any) => i.type === "function_call_output" && i.call_id === "tool123");
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    expect(outIndex).toBeGreaterThanOrEqual(0);
+    expect(callIndex).toBeLessThan(outIndex);
+  });
 });
 
 describe("parseOpenAiResponse", () => {

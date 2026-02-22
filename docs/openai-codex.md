@@ -32,8 +32,9 @@ fallbackModel: "gpt-5.2-codex"
 - The fallback call uses the OpenAI Responses API (`/v1/responses`). Input
   messages are sent as string `content` (not `input_text` blocks).
 - Anthropic `tool_use` blocks are mapped to `function_call` inputs; tool
-  results map to `function_call_output`. This prevents missing call_id
-  errors.
+  results map to `function_call_output`. If tool_result appears before the
+  tool_use in history, Omega injects the missing `function_call` before the
+  output to satisfy the Responses API.
 - Once a rate limit triggers, fallback stays active for the rest of the
   runtime (no automatic switch-back).
 
