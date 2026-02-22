@@ -263,3 +263,78 @@ describe("formatTurnFooter — cost savings display", () => {
     expect(tPlain.indexOf("saved:")).toBe(sPlain.indexOf("saved:"));
   });
 });
+
+describe("formatTurnFooter — OpenAI provider", () => {
+  const provider = "openai" as const;
+  const model = "gpt-5.2-codex";
+
+  const metrics = {
+    inputTokens: 2000,
+    outputTokens: 300,
+    costUsd: 0.0042,
+    savedUsd: 0.001,            // should be ignored for OpenAI
+    ttftMs: 600,
+    cacheCreationTokens: 100,   // should be ignored for OpenAI
+    cacheReadTokens: 400,       // should be ignored for OpenAI
+  };
+  const session = {
+    inputTokens: 8000,
+    outputTokens: 900,
+    costUsd: 0.015,
+    savedUsd: 0.003,            // should be ignored for OpenAI
+    cacheCreationTokens: 200,   // should be ignored for OpenAI
+    cacheReadTokens: 1000,      // should be ignored for OpenAI
+  };
+
+  it("turn line cost shows '<=' prefix", () => {
+    const { turnLine } = formatTurnFooter(metrics, session, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).toContain("cost: <=$");
+  });
+
+  it("session line cost shows '<=' prefix", () => {
+    const { sessionLine } = formatTurnFooter(metrics, session, provider, model);
+    const plain = stripAnsi(sessionLine);
+    expect(plain).toContain("cost: <=$");
+  });
+
+  it("turn line does NOT show 'saved:' for OpenAI", () => {
+    const { turnLine } = formatTurnFooter(metrics, session, provider, model);
+    expect(stripAnsi(turnLine)).not.toContain("saved:");
+  });
+
+  it("session line does NOT show 'saved:' for OpenAI", () => {
+    const { sessionLine } = formatTurnFooter(metrics, session, provider, model);
+    expect(stripAnsi(sessionLine)).not.toContain("saved:");
+  });
+
+  it("turn line does NOT show cache fields for OpenAI", () => {
+    const { turnLine } = formatTurnFooter(metrics, session, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).not.toContain("cache_write");
+    expect(plain).not.toContain("cache_read");
+  });
+
+  it("session line does NOT show cache fields for OpenAI", () => {
+    const { sessionLine } = formatTurnFooter(metrics, session, provider, model);
+    const plain = stripAnsi(sessionLine);
+    expect(plain).not.toContain("cache_write");
+    expect(plain).not.toContain("cache_read");
+  });
+
+  it("'cost:' column aligns between turn and session lines for OpenAI", () => {
+    const { turnLine, sessionLine } = formatTurnFooter(metrics, session, provider, model);
+    const tPlain = stripAnsi(turnLine);
+    const sPlain = stripAnsi(sessionLine);
+    expect(tPlain.indexOf("cost:")).toBe(sPlain.indexOf("cost:"));
+  });
+
+  it("turn line still shows in:, out:, ttft:, and provider/model", () => {
+    const { turnLine } = formatTurnFooter(metrics, session, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).toContain("in: 2000");
+    expect(plain).toContain("out: 300");
+    expect(plain).toContain("ttft:");
+    expect(plain).toContain(model);
+  });
+});

@@ -6,6 +6,10 @@
  *
  * "in:" and "cost:" are column-aligned between the two lines.
  * "saved:" only appears when caching produced savings (savedUsd > 0).
+ *
+ * Provider differences:
+ *   Anthropic — shows cost (actual), saved, cache_write, cache_read.
+ *   OpenAI    — shows cost ceiling only (prefix "<="), no saved, no cache fields.
  */
 
 const CSI = "\x1b[";
@@ -21,11 +25,13 @@ function dim(s: string): string {
 }
 
 /**
- * Format a cost in USD to a fixed-width string so columns align.
- * We always use 4 decimal places. The result is left-padded to `width` chars.
+ * Format a cost in USD. Always uses 4 dp for values < $0.01, else 3 dp.
+ * An optional prefix (e.g. "<=") is prepended before the dollar sign.
+ * Result is padEnd'd to `width` chars when width > 0.
  */
-function formatCost(usd: number, width = 0): string {
-  const formatted = usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(3)}`;
+function formatCost(usd: number, width = 0, prefix = ""): string {
+  const usdStr = usd < 0.01 ? usd.toFixed(4) : usd.toFixed(3);
+  const formatted = prefix + "$" + usdStr;
   return width > 0 ? formatted.padEnd(width) : formatted;
 }
 
@@ -65,6 +71,7 @@ export interface TurnFooter {
  * Returns two plain-text (but ANSI-dimmed) lines for the turn footer.
  * The "in:" and "cost:" fields are column-aligned between both lines.
  * "saved:" is shown only when savedUsd > 0 (on either line), and also aligned.
+ * Provider-specific: OpenAI shows cost ceiling only; Anthropic shows full detail.
  */
 export function formatTurnFooter(
   turn: TurnMetrics,
@@ -86,29 +93,35 @@ export function formatTurnFooter(
     return parts.length > 0 ? "  " + parts.join("  ") : "";
   };
 
-  // Determine if either line has savings to show
-  const turnSaved = turn.savedUsd ?? 0;
-  const sessionSaved = session.savedUsd ?? 0;
+  const isOpenAi = provider === "openai";
+
+  // OpenAI: ceiling cost only, no saved, no cache fields.
+  // Anthropic: full detail — actual cost, saved, cache_write, cache_read.
+  const costPrefix = isOpenAi ? "<=" : "";
+
+  // Determine if either line has savings to show (Anthropic only)
+  const turnSaved = isOpenAi ? 0 : (turn.savedUsd ?? 0);
+  const sessionSaved = isOpenAi ? 0 : (session.savedUsd ?? 0);
   const showSaved = turnSaved > 0 || sessionSaved > 0;
 
   // Compute cost string widths for alignment.
   // Both cost fields use the same width = max of both formatted lengths.
-  const turnCostStr   = formatCost(turn.costUsd);
-  const sessionCostStr = formatCost(session.costUsd);
+  const turnCostStr    = formatCost(turn.costUsd, 0, costPrefix);
+  const sessionCostStr = formatCost(session.costUsd, 0, costPrefix);
   const costWidth = Math.max(turnCostStr.length, sessionCostStr.length);
 
   // Same for saved (only when shown)
   let savedWidth = 0;
   if (showSaved) {
-    const turnSavedStr   = formatCost(turnSaved);
+    const turnSavedStr    = formatCost(turnSaved);
     const sessionSavedStr = formatCost(sessionSaved);
     savedWidth = Math.max(turnSavedStr.length, sessionSavedStr.length);
   }
 
-  const turnCache = cacheFields(turn.cacheCreationTokens, turn.cacheReadTokens);
-  const sessionCache = cacheFields(session.cacheCreationTokens, session.cacheReadTokens);
+  const turnCache    = isOpenAi ? "" : cacheFields(turn.cacheCreationTokens, turn.cacheReadTokens);
+  const sessionCache = isOpenAi ? "" : cacheFields(session.cacheCreationTokens, session.cacheReadTokens);
 
-  const costPart = (usd: number) => `cost: ${formatCost(usd, costWidth)}`;
+  const costPart  = (usd: number) => `cost: ${formatCost(usd, costWidth, costPrefix)}`;
   const savedPart = (usd: number) => showSaved ? `  saved: ${formatCost(usd, savedWidth)}` : "";
 
   const turnBody =
