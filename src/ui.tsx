@@ -76,39 +76,11 @@ function apiRequestLines(
   lines.push({ text: `    system: <${system.length} chars>,`, color: "cyan" });
   lines.push({ text: `    tools: [${tools.map(t => `"${t.name}"`).join(", ")}],`, color: "cyan" });
   lines.push({ text: `    max_tokens: ${config.maxOutputTokens},`, color: "cyan" });
-  lines.push({ text: `    messages: [`, color: "cyan" });
-  for (const msg of messages) {
-    const contentSummary = summariseContent(msg.content);
-    lines.push({ text: `      { role: "${msg.role}", content: ${contentSummary} },`, color: "cyan", dimColor: true });
-  }
-  lines.push({ text: `    ]`, color: "cyan" });
+  lines.push({ text: `    messages: <${messages.length} messages>,`, color: "cyan" });
   lines.push({ text: `  }`, color: "cyan" });
   return lines;
 }
 
-function summariseContent(content: Anthropic.MessageParam["content"]): string {
-  if (typeof content === "string") {
-    if (content.length <= 60) return `"${content}"`;
-    return `<${content.length} chars>`;
-  }
-  if (!Array.isArray(content) || content.length === 0) return "[]";
-  if (content.length === 1) {
-    const b = content[0] as any;
-    if (b.type === "text") {
-      const t = b.text as string;
-      return t.length <= 60 ? `"${t}"` : `<text: ${t.length} chars>`;
-    }
-    if (b.type === "tool_result") return `<tool_result>`;
-    if (b.type === "tool_use") return `<tool_use: ${b.name}>`;
-    return `<${b.type}>`;
-  }
-  // Multiple blocks — summarise by type
-  const counts: Record<string, number> = {};
-  for (const b of content as any[]) {
-    counts[b.type] = (counts[b.type] ?? 0) + 1;
-  }
-  return `[${Object.entries(counts).map(([t, n]) => `${n} ${t}`).join(", ")}]`;
-}
 
 // Render a pseudo-JSON block for the API response
 function apiResponseLines(
