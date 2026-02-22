@@ -5,18 +5,11 @@ to `past.md`. Keep in priority order.
 
 ---
 
-## 0. Rearchitect context management: fold at quit, not at startup
+## 0. Rearchitect context management: fold at quit, not at startup ✓ DONE
 
-**Decision made (not yet implemented).** Replace fire-and-forget fold-at-startup with fold-at-quit:
+Implemented (commit ad32390). `projectWorldStatePath()` keys world-state to cwd. `foldCurrentSessionIntoWorldState()` called on SIGINT/SIGTERM/Ctrl+C. Session persistence, resume prompt, and raw-history machinery all removed.
 
-- Fold session history into the world-state file **on clean shutdown** (SIGINT/SIGTERM + normal exit), not at the next startup.
-- Treat the world file as project-specific (keyed to working directory) so project-switching is natural.
-- Remove the "resume session?" prompt — Omega always resumes, the prompt is pointless.
-- Remove raw-history persistence (`persistSession` / `resumeSession`) — the world file is the only cross-session artifact.
-- Shutdown path must be **robustly tested** (signal handling, async fold completes before exit).
-- Acceptable tradeoff: mid-session crash loses conversational context (not work product, which is saved files).
-
-**Future / deferred:** periodic in-session world folding (e.g. every N turns) to reduce crash-loss window. Do NOT implement now — note only.
+**Deferred:** periodic in-session world folding — note only, not yet implemented.
 
 ---
 
