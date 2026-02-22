@@ -1,5 +1,11 @@
 # Future — Issue Tracker
 
+## Open items
+
+- **Provider/model architecture** — current design has `provider` (binary: anthropic/openai) + `activeModel` (string). Works for now. Future: consider a unified `{ provider, model }` pair or registry to make adding new providers/models cleaner.
+
+---
+
 Discrete, prioritised, actionable. Keep in priority order.
 
 ---

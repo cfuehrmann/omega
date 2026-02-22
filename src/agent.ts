@@ -374,6 +374,7 @@ export class Agent {
 
   private authMode: "api-key" | "oauth" = "api-key";
   private provider: ProviderName = "anthropic";
+  private activeModel: string = config.model;
   public readonly sessionId: string;
   private readonly retryBaseMs = Number(process.env.OMEGA_RETRY_BASE_MS ?? 1000);
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
@@ -466,6 +467,10 @@ export class Agent {
 
   getProvider(): ProviderName {
     return this.provider;
+  }
+
+  getActiveModel(): string {
+    return this.activeModel;
   }
 
   /**
@@ -698,12 +703,28 @@ export class Agent {
   ): AsyncGenerator<AgentEvent> {
     if (userMessage.startsWith("/")) {
       const cmd = userMessage.trim().toLowerCase();
-      if (cmd === "/gpt" || cmd === "/openai") {
-        this.provider = "openai";
-        yield { type: "status", message: "Switched provider to OpenAI" };
-      } else if (cmd === "/opus" || cmd === "/anthropic") {
+      if (cmd === "/sonnet") {
         this.provider = "anthropic";
-        yield { type: "status", message: "Switched provider to Anthropic" };
+        this.activeModel = "claude-sonnet-4-6";
+        yield { type: "status", message: "Switched to Anthropic claude-sonnet-4-6" };
+      } else if (cmd === "/opus") {
+        this.provider = "anthropic";
+        this.activeModel = "claude-opus-4-6";
+        yield { type: "status", message: "Switched to Anthropic claude-opus-4-6" };
+      } else if (cmd === "/codex") {
+        this.provider = "openai";
+        this.activeModel = config.fallbackModel as string;
+        yield { type: "status", message: `Switched to OpenAI codex (${this.activeModel})` };
+      } else if (cmd === "/help") {
+        yield {
+          type: "status",
+          message: [
+            "/sonnet  — Anthropic claude-sonnet-4-6 (default)",
+            "/opus    — Anthropic claude-opus-4-6",
+            "/codex   — OpenAI Codex (gpt-5.2-codex)",
+            "/help    — show this help",
+          ].join("\n"),
+        };
       } else {
         yield { type: "error", error: `Unknown command: ${userMessage}` };
       }
@@ -766,7 +787,7 @@ export class Agent {
       }
 
       const useOpenAi = this.provider === "openai";
-      let activeModel = useOpenAi ? (config.fallbackModel as string) : config.model;
+      let activeModel = this.activeModel;
 
       if (useOpenAi) {
         yield {
@@ -814,7 +835,7 @@ export class Agent {
         } as AgentEvent;
       } else {
         const request = {
-          model: config.model,
+          model: activeModel,
           max_tokens: config.maxOutputTokens,
           system: systemBlocks,
           tools: cachedTools,
@@ -871,7 +892,7 @@ export class Agent {
               url: getOpenAiUrl(),
               error: err.message ?? String(err),
             } as AgentEvent;
-            yield { type: "error", error: "OpenAI rate limit. Try /opus or wait and retry." };
+            yield { type: "error", error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
             return;
           }
         }
@@ -881,7 +902,7 @@ export class Agent {
             let fullText = "";
 
           const streamParams = {
-            model: config.model,
+            model: activeModel,
             max_tokens: config.maxOutputTokens,
             system: systemBlocks,
             tools: cachedTools,
@@ -995,7 +1016,7 @@ export class Agent {
               error: err.message ?? String(err),
             } as AgentEvent;
             if (isRetryable(err)) {
-              yield { type: "error", error: "Anthropic rate limit. Try /gpt to switch providers." };
+              yield { type: "error", error: "Anthropic rate limit. Try /codex to switch providers." };
             } else {
               yield { type: "error", error: `API error: ${err.message ?? err}` };
             }

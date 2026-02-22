@@ -264,7 +264,7 @@ function renderAssistantMessage(text: string, dimText?: string): string[] {
 }
 
 function renderStatus(streaming: boolean): string {
-  return dim(streaming ? "Esc to interrupt" : "Ctrl+C to quit  /gpt /anthropic /opus");
+  return dim(streaming ? "Esc to interrupt" : "Ctrl+C to quit  /sonnet /opus /codex /help");
 }
 
 // ---------------------------------------------------------------------------

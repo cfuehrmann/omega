@@ -927,3 +927,78 @@ describe("Agent — zone 2 compaction", () => {
     expect(events.some((e) => e.type === "turn_end")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Slash command tests
+// ---------------------------------------------------------------------------
+
+describe("slash commands", () => {
+  it("/sonnet switches to Anthropic provider with sonnet model", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/sonnet");
+    const status = events.find((e) => e.type === "status") as any;
+    expect(status).toBeDefined();
+    expect(status.message).toContain("sonnet");
+    expect(agent.getProvider()).toBe("anthropic");
+    expect(agent.getActiveModel()).toBe("claude-sonnet-4-6");
+  });
+
+  it("/opus switches to Anthropic provider with opus model", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/opus");
+    const status = events.find((e) => e.type === "status") as any;
+    expect(status).toBeDefined();
+    expect(status.message).toContain("opus");
+    expect(agent.getProvider()).toBe("anthropic");
+    expect(agent.getActiveModel()).toBe("claude-opus-4-6");
+  });
+
+  it("/codex switches to OpenAI provider", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/codex");
+    const status = events.find((e) => e.type === "status") as any;
+    expect(status).toBeDefined();
+    expect(status.message).toContain("codex");
+    expect(agent.getProvider()).toBe("openai");
+  });
+
+  it("/help emits a status event with command list", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/help");
+    const status = events.find((e) => e.type === "status") as any;
+    expect(status).toBeDefined();
+    expect(status.message).toContain("/sonnet");
+    expect(status.message).toContain("/opus");
+    expect(status.message).toContain("/codex");
+    expect(status.message).toContain("/help");
+  });
+
+  it("old /gpt command is rejected as unknown", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/gpt");
+    const err = events.find((e) => e.type === "error") as any;
+    expect(err).toBeDefined();
+  });
+
+  it("old /openai command is rejected as unknown", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/openai");
+    const err = events.find((e) => e.type === "error") as any;
+    expect(err).toBeDefined();
+  });
+
+  it("old /anthropic command is rejected as unknown", async () => {
+    const agent = new Agent(null as any, null);
+    const events = await collectEvents(agent, "/anthropic");
+    const err = events.find((e) => e.type === "error") as any;
+    expect(err).toBeDefined();
+  });
+
+  it("/sonnet followed by /opus changes active model", async () => {
+    const agent = new Agent(null as any, null);
+    await collectEvents(agent, "/sonnet");
+    await collectEvents(agent, "/opus");
+    expect(agent.getActiveModel()).toBe("claude-opus-4-6");
+    expect(agent.getProvider()).toBe("anthropic");
+  });
+});

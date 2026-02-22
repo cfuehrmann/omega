@@ -50,7 +50,7 @@ describe("rate limit backoff", () => {
     expect(openAiCalls).toBe(3);
     const errors = events.filter((e) => e.type === "error") as any[];
     if (errors.length > 0) {
-      expect(errors[errors.length - 1].error).not.toContain("/opus");
+      expect(errors[errors.length - 1].error).not.toContain("/sonnet");
     }
 
     delete process.env.OMEGA_RETRY_BASE_MS;
@@ -58,7 +58,7 @@ describe("rate limit backoff", () => {
     delete process.env.OMEGA_RETRY_ATTEMPTS;
   });
 
-  it("OpenAI gives up after retries and suggests /opus", async () => {
+  it("OpenAI gives up after retries and suggests /sonnet or /opus", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
@@ -74,14 +74,14 @@ describe("rate limit backoff", () => {
     const errors = events.filter((e) => e.type === "error") as any[];
     const error = errors[errors.length - 1];
     expect(error).toBeTruthy();
-    expect(error.error).toContain("/opus");
+    expect(error.error).toContain("/sonnet");
 
     delete process.env.OMEGA_RETRY_BASE_MS;
     delete process.env.OMEGA_RETRY_MAX_MS;
     delete process.env.OMEGA_RETRY_ATTEMPTS;
   });
 
-  it("Anthropic gives up after retries and suggests /gpt", async () => {
+  it("Anthropic gives up after retries and suggests /codex", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
@@ -97,7 +97,7 @@ describe("rate limit backoff", () => {
     const errors = events.filter((e) => e.type === "error") as any[];
     const error = errors[errors.length - 1];
     expect(error).toBeTruthy();
-    expect(error.error).toContain("/gpt");
+    expect(error.error).toContain("/codex");
 
     delete process.env.OMEGA_RETRY_BASE_MS;
     delete process.env.OMEGA_RETRY_MAX_MS;

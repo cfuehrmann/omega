@@ -196,8 +196,8 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
 
     const agent = new Agent(anthropicProvider, null, mockOpenAiCaller, worldStatePath);
     // Switch to OpenAI provider before fold
-    await collectSendMessage(agent, "/gpt");
-    // Send a real message so history is non-empty (sendMessage with /gpt won't add to history)
+    await collectSendMessage(agent, "/codex");
+    // Send a real message so history is non-empty (sendMessage with /codex won't add to history)
     await collectSendMessage(agent, "hello");
     // Reset flags after sendMessage (the Anthropic provider may have been called during sendMessage for the hello turn)
     anthropicCalled = false;
