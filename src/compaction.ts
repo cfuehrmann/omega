@@ -113,13 +113,14 @@ export async function compactWorldState(
 - The overall purpose and current state of the project
 - Key architectural decisions and why they were made
 - Important files and what they do
-- What was accomplished in the most recent session
+- What was accomplished in the most recent session (1–4 sentences max; omit commit hashes, step-by-step procedural detail, and anything already captured in the durable sections above — only record net outcomes and decisions that change how future sessions should behave)
 - Open issues or known problems
 - Anything the agent should know to continue working effectively
 
 This document will be injected into the system prompt for the next session.
 Write in present tense for current state, past tense for history.
-Be concise but complete. No preamble, just the document.`;
+Be concise but complete. Ruthlessly prune: prefer one accurate sentence over three redundant ones.
+No preamble, just the document.`;
 
   return callLlm(prompt, provider);
 }
