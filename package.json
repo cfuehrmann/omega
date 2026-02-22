@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run src/main.tsx",
+    "start-raw": "bun run src/main-raw.ts",
     "login": "bun run src/login.ts"
   },
   "devDependencies": {
