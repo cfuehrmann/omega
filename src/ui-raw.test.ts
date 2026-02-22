@@ -118,4 +118,22 @@ describe("parseKeys", () => {
     parseKeys("\r", cb, buf);
     expect(submits).toBe(1);
   });
+
+  it("echoes pasted content to stdout when paste ends", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any, ...args: any[]) => {
+      written.push(s);
+      return true;
+    };
+    try {
+      const buf = { value: "" };
+      const pasteState = { inPaste: false };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[200~hello\nworld\x1b[201~", cb, buf, { pasteState });
+      expect(written.join("")).toContain("hello\nworld");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
 });

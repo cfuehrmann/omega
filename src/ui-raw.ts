@@ -298,6 +298,8 @@ export function parseKeys(
       if (chunk.startsWith("[201~", i + 1)) {
         pasteState.inPaste = false;
         i += 5; // skip past "[201~"
+        // Echo the full buffer so the user can see what was pasted
+        process.stdout.write(buf.value);
         continue;
       }
       if (i + 1 < chunk.length && chunk[i + 1] === "[") {
