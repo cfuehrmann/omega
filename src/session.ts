@@ -37,12 +37,7 @@ export interface Session {
   history: MessageParam[];
 }
 
-export interface SessionMeta {
-  id: string;
-  savedAt: string;
-  model: string;
-  messageCount: number;
-}
+
 
 // --- Helpers ---
 
@@ -115,45 +110,4 @@ export async function loadLatestSession(
   return sessions[0];
 }
 
-/**
- * List all saved sessions as lightweight metadata (no full history).
- * Returns sessions sorted newest first.
- * @param dir - Optional override for the storage directory (used in tests).
- */
-export async function listSessions(
-  dir: string = defaultDir()
-): Promise<SessionMeta[]> {
-  if (!existsSync(dir)) return [];
 
-  let files: string[];
-  try {
-    files = await readdir(dir);
-  } catch {
-    return [];
-  }
-
-  const jsonFiles = files.filter((f) => f.endsWith(".json"));
-  if (jsonFiles.length === 0) return [];
-
-  const metas: SessionMeta[] = [];
-  for (const file of jsonFiles) {
-    try {
-      const raw = await readFile(join(dir, file), "utf-8");
-      const parsed = JSON.parse(raw) as Session;
-      metas.push({
-        id: parsed.id,
-        savedAt: parsed.savedAt,
-        model: parsed.model,
-        messageCount: parsed.history.length,
-      });
-    } catch {
-      // Skip malformed files
-    }
-  }
-
-  metas.sort((a, b) => {
-    return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
-  });
-
-  return metas;
-}

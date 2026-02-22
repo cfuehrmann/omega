@@ -153,4 +153,4 @@ export async function getAuthToken(): Promise<string | null> {
   return token.access_token;
 }
 
-export { TOKEN_FILE, type TokenData };
+// TOKEN_FILE and TokenData are internal — not exported

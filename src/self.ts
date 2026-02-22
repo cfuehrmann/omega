@@ -18,7 +18,7 @@
 
 import { spawn, execSync } from "child_process";
 
-export interface SelfModifyResult {
+interface SelfModifyResult {
   success: boolean;
   testsPassed: boolean;
   committed: boolean;
@@ -166,7 +166,7 @@ export async function commitOrRevert(
  * Only call this after a successful commit. The new process will run the
  * freshly committed code.
  */
-export function restart(): never {
+function restart(): never {
   const args = process.argv.slice(1); // e.g. ["src/main.tsx"]
   const bun = process.execPath;       // path to the bun binary
 

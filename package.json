@@ -1,11 +1,11 @@
 {
   "name": "omega",
-  "module": "src/main.tsx",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "bun run src/ui-raw.ts",
-    "login": "bun run src/login.ts"
+    "login": "bun run src/login.ts",
+    "check": "bun test && bunx knip"
   },
   "devDependencies": {
     "@types/bun": "latest"

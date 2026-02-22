@@ -16,16 +16,16 @@ import { appendFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { homedir } from "os";
 
-export type LogLevel = "debug" | "info" | "warn" | "error";
+type LogLevel = "debug" | "info" | "warn" | "error";
 
-export interface LogEntry {
+interface LogEntry {
   ts: string;          // ISO 8601
   level: LogLevel;
   event: string;       // event type / name
   [key: string]: any;  // arbitrary structured fields
 }
 
-export interface ApiCallLog {
+interface ApiCallLog {
   model: string;
   inputTokens: number;
   outputTokens: number;

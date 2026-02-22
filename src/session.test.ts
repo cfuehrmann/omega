@@ -15,7 +15,6 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import {
   saveSession,
   loadLatestSession,
-  listSessions,
   type Session,
 } from "./session.js";
 
@@ -193,56 +192,4 @@ describe("loadLatestSession", () => {
   });
 });
 
-// --- listSessions ---
 
-describe("listSessions", () => {
-  it("returns empty array when directory is empty", async () => {
-    const result = await listSessions(TEST_DIR);
-    expect(result).toEqual([]);
-  });
-
-  it("returns empty array when directory does not exist", async () => {
-    const result = await listSessions(join(TEST_DIR, "nonexistent"));
-    expect(result).toEqual([]);
-  });
-
-  it("returns one entry per saved session", async () => {
-    await saveSession({ id: "a", savedAt: new Date().toISOString(), model: "m", history: [] }, TEST_DIR);
-    await saveSession({ id: "b", savedAt: new Date().toISOString(), model: "m", history: [] }, TEST_DIR);
-    await saveSession({ id: "c", savedAt: new Date().toISOString(), model: "m", history: [] }, TEST_DIR);
-
-    const sessions = await listSessions(TEST_DIR);
-    expect(sessions.length).toBe(3);
-  });
-
-  it("returns sessions sorted newest first", async () => {
-    const t0 = new Date(Date.now() - 20_000).toISOString();
-    const t1 = new Date(Date.now() - 10_000).toISOString();
-    const t2 = new Date().toISOString();
-
-    await saveSession({ id: "mid", savedAt: t1, model: "m", history: [] }, TEST_DIR);
-    await saveSession({ id: "old", savedAt: t0, model: "m", history: [] }, TEST_DIR);
-    await saveSession({ id: "new", savedAt: t2, model: "m", history: [] }, TEST_DIR);
-
-    const sessions = await listSessions(TEST_DIR);
-    expect(sessions[0].id).toBe("new");
-    expect(sessions[1].id).toBe("mid");
-    expect(sessions[2].id).toBe("old");
-  });
-
-  it("each entry has id, savedAt, model, and messageCount", async () => {
-    const history: MessageParam[] = [
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
-    ];
-    await saveSession({ id: "meta-test", savedAt: new Date().toISOString(), model: "claude-sonnet-4-6", history }, TEST_DIR);
-
-    const sessions = await listSessions(TEST_DIR);
-    const entry = sessions[0];
-    expect(entry.id).toBe("meta-test");
-    expect(typeof entry.savedAt).toBe("string");
-    expect(entry.model).toBe("claude-sonnet-4-6");
-    expect(entry.messageCount).toBe(3);
-  });
-});
