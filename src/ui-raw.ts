@@ -194,6 +194,27 @@ function renderApiResponse(
   return lines;
 }
 
+/** Render the start of a tool call (name + input only). Shown immediately when the call is issued. */
+export function renderToolStart(name: string, input: any): string[] {
+  const lines: string[] = [];
+  lines.push(bold(yellow(`tool call`)));
+  lines.push(yellow(`${INDENT}name: "${name}"`));
+  lines.push(yellow(`${INDENT}input: ${JSON.stringify(input)}`));
+  return lines;
+}
+
+/** Render the result of a tool call. Shown with a fresh timestamp when the tool completes. */
+export function renderToolResult(result: { output: string; isError: boolean }): string[] {
+  const lines: string[] = [];
+  lines.push(bold(yellow(`tool result`)));
+  lines.push(dim(yellow(`${INDENT}is_error: ${result.isError}`)));
+  lines.push(dim(yellow(`${INDENT}content:`)));
+  for (const line of truncateOutput(result.output).split("\n")) {
+    lines.push(dim(yellow(`${INDENT2}${line}`)));
+  }
+  return lines;
+}
+
 function renderToolExecution(
   name: string,
   input: any,
@@ -476,7 +497,6 @@ export async function runApp(): Promise<void> {
     abortController = new AbortController();
     let fullText = "";
     let streamingStarted = false;
-    const pendingInputs = new Map<string, any>(); // tool call id → input
 
     try {
       for await (const event of agent.sendMessage(trimmed, confirmTool, abortController.signal)) {
@@ -536,15 +556,11 @@ export async function runApp(): Promise<void> {
             break;
 
           case "tool_call":
-            pendingInputs.set(event.id, event.input);
+            printBlock(now(), renderToolStart(event.name, event.input));
             break;
 
           case "tool_result": {
-            const input = pendingInputs.get(event.id);
-            pendingInputs.delete(event.id);
-            printBlock(now(), renderToolExecution(
-              event.name, input, event.result,
-            ));
+            printBlock(now(), renderToolResult(event.result));
             break;
           }
 

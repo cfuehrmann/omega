@@ -25,11 +25,11 @@ No raw session persistence. No "resume session?" prompt. The world file is the o
 The system prompt references only `world-state.md` and `future.md`.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table; `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s
 - `src/compaction.ts` — `compactTurn()`, `compactWorldState()` — LLM-based compaction; world-state prompt caps last-session section to 1–4 sentences, bans commit hashes and procedural detail
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
-- `src/ui-raw.ts` — raw terminal UI; exports `parseKeys(chunk, callbacks, buf?)` pure function and `KeyCallbacks` interface; `setupRawInput` delegates to `parseKeys` via `sharedBuffer`; `runApp()` guarded by `if (import.meta.main)`; `shutdown()` uses `initiateShutdown()` idempotent wrapper with `shuttingDown` flag; on first Ctrl+C, stdin listeners are removed, raw mode disabled, and stdin paused immediately before the async world-state save begins, so all keypresses during the save are discarded at the OS level
-- `src/ui-raw.test.ts` — 7 tests for `parseKeys` covering Ctrl+C (single, double, stops-after), Enter, Escape, CSI skip, printable accumulation
+- `src/ui-raw.ts` — raw terminal UI; `shutdown()` drains the `foldCurrentSessionIntoWorldState()` generator and renders each event; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; `KeyCallbacks` interface; `runApp()` guarded by `if (import.meta.main)`
+- `src/ui-raw.test.ts` — 13 tests for `parseKeys` covering Ctrl+C, Enter, Escape, CSI skip, printable accumulation, bracketed paste (no submit on inner newline, full paste submitted on Enter, normal Enter unaffected, stdout echo on paste end)
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }` — two ANSI-dimmed labelled lines with `turn:` / `session:` prefixes, column-aligned `in:`/`out:`, model and `ttft` on turn line only
 - `src/session.ts` — session persistence module (no longer imported by production code; kept for independent tests)
 - `src/tools.ts` — `read_file`, `write_file`, `edit_file`, `list_files`, `run_command`, `web_search`, `fetch_url`
@@ -38,6 +38,8 @@ The system prompt references only `world-state.md` and `future.md`.
 - `src/planning-files.test.ts` — structural invariant tests: asserts `future.md` exists, `past.md`/`present.md` do not exist, system prompt references `world-state.md` + `future.md` but not deleted files
 - `src/turn-footer.test.ts` — 11 tests for `formatTurnFooter`
 - `src/openai.test.ts` — tests for `buildOpenAiRequest`, `parseOpenAiResponse`, and abort signal forwarding
+- `src/fold-events.test.ts` — 8 tests covering generator shape, no events for null path/empty history, `api_call_start`, `api_response` with token usage, `tool_result` with name `write_file`, file written to disk, error event on LLM failure
+- `src/fold-at-quit.test.ts` — tests for `foldCurrentSessionIntoWorldState()` as a generator (drains with `for await`)
 - `plan/future.md` — 4 discrete actionable backlog items (see Open Issues below)
 
 ### UI — Turn Footer
@@ -60,14 +62,12 @@ After each turn, two dimmed lines are printed:
 Note: Dollar costs are meaningless under Claude Max (OAuth/flat-rate). Token counts are accurate.
 
 ### Testing Discipline
-Red-green mandatory for bugs/features. Structural invariant tests for refactors. 202 tests across ~18 files, all passing. Compaction calls use the same injectable `StreamProvider` as real turns — tests use mock providers.
+Red-green mandatory for bugs/features. Structural invariant tests for refactors. 214 tests across 19 files, all passing. Compaction calls use the same injectable `StreamProvider` as real turns — tests use mock providers.
 
 ### What Was Accomplished in the Last Session
-Fixed confusing shutdown behavior: `initiateShutdown()` now immediately removes stdin listeners, disables raw mode, and pauses stdin before beginning the async world-state save, so keypresses during the save (which can take 10–30 seconds) are discarded at the OS level. The prompt line is also cleared and a `(please wait)` hint is shown when shutdown begins.
+Fixed a bug where pasted text was invisibly captured but never echoed to the terminal: `parseKeys` now calls `process.stdout.write(buf.value)` when the bracketed paste end marker `[201~` is received, making pasted content visible immediately.
 
 ### Open Issues / Known Problems
 1. **Backspace past prompt border** — `parseKeys` guards `buf.value.length > 0` before writing `\b \b`, but under some circumstances backspace still erases the prompt prefix and timestamp. Root cause not confirmed.
 2. **Provider-specific rate-limit retry policy** — no retry logic for 429s from either provider.
-3. **UI tests for `ui-raw.ts`** — `parseKeys` is tested; full integration-level UI tests remain unwritten.
-4. **Sudo / elevated command handling** — `run_command` does not handle sudo prompts or privilege escalation.
-5. **Rich command output** — `run_command` returns plain text; no structured output, progress streaming, or ANSI passthrough.
+3. **UI tests for `ui-raw.ts`** — `parseKeys` is tested; full integration-level UI tests
