@@ -76,6 +76,16 @@ export function buildOpenAiRequest(
       if (textBlocks.length > 0) {
         input.push({ role: "assistant", content: textBlocks.join("\n") });
       }
+
+      const toolUses = msg.content.filter((b: any) => b.type === "tool_use");
+      for (const tu of toolUses) {
+        input.push({
+          type: "function_call",
+          call_id: tu.id,
+          name: tu.name,
+          arguments: JSON.stringify(tu.input ?? {}),
+        });
+      }
       continue;
     }
   }

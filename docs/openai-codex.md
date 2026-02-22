@@ -30,8 +30,10 @@ fallbackModel: "gpt-5.2-codex"
 - If an Anthropic call fails with rate limit (429), Omega logs a fallback
   event and replays the request against OpenAI.
 - The fallback call uses the OpenAI Responses API (`/v1/responses`). Input
-  messages are sent as string `content` (not `input_text` blocks). Outputs
-  are mapped back into Anthropic-style content blocks.
+  messages are sent as string `content` (not `input_text` blocks).
+- Anthropic `tool_use` blocks are mapped to `function_call` inputs; tool
+  results map to `function_call_output`. This prevents missing call_id
+  errors.
 
 ## Notes
 

@@ -19,16 +19,33 @@ describe("buildOpenAiRequest", () => {
     expect(JSON.stringify(req.input)).not.toContain("input_text");
   });
 
+  it("maps tool_use blocks to function_call inputs", () => {
+    const history: Anthropic.MessageParam[] = [
+      msg("assistant", [
+        { type: "tool_use", id: "tool123", name: "read_file", input: { path: "x" } },
+      ]),
+    ];
+
+    const req = buildOpenAiRequest(history, "sys", "gpt-5.2-codex", 10);
+    const call = req.input.find((i: any) => i.type === "function_call");
+    expect(call).toBeTruthy();
+    expect(call.call_id).toBe("tool123");
+    expect(call.name).toBe("read_file");
+  });
+
   it("maps tool_result blocks to function_call_output inputs", () => {
     const history: Anthropic.MessageParam[] = [
+      msg("assistant", [
+        { type: "tool_use", id: "tool123", name: "read_file", input: { path: "x" } },
+      ]),
       msg("user", [
         { type: "tool_result", tool_use_id: "tool123", content: "ok", is_error: false },
       ]),
     ];
 
     const req = buildOpenAiRequest(history, "sys", "gpt-5.2-codex", 10);
-    expect(req.input.some((i: any) => i.type === "function_call_output")).toBe(true);
     const out = req.input.find((i: any) => i.type === "function_call_output");
+    expect(out).toBeTruthy();
     expect(out.call_id).toBe("tool123");
     expect(out.output).toBe("ok");
   });
