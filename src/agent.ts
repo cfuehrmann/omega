@@ -110,6 +110,42 @@ export function estimateCacheSavings(
 
 // --- Retry logic ---
 
+/**
+ * Return a shallow copy of the messages array where the last message has
+ * cache_control: {type: "ephemeral"} on its last content block.
+ * This creates a third cache breakpoint (after system and tools) so the
+ * entire conversation prefix is cached.  Important for Opus which requires
+ * ≥4096 prefix tokens before caching activates.
+ */
+function addCacheControlToLastMessage(
+  messages: Anthropic.MessageParam[]
+): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+  const result = [...messages];
+  const last = result[result.length - 1];
+
+  // Normalise content to an array of blocks
+  let blocks: Anthropic.ContentBlockParam[];
+  if (typeof last.content === "string") {
+    blocks = [{ type: "text" as const, text: last.content }];
+  } else if (Array.isArray(last.content)) {
+    blocks = [...(last.content as Anthropic.ContentBlockParam[])];
+  } else {
+    return result; // unexpected shape — leave untouched
+  }
+
+  if (blocks.length === 0) return result;
+
+  // Add cache_control to the last block
+  blocks[blocks.length - 1] = {
+    ...blocks[blocks.length - 1],
+    cache_control: { type: "ephemeral" },
+  } as any;
+
+  result[result.length - 1] = { ...last, content: blocks };
+  return result;
+}
+
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -818,6 +854,13 @@ export class Agent {
           ]
         : toolDefinitions;
 
+      // Build cached messages: add cache_control to the last content block of
+      // the last message so the entire conversation prefix is cached. This is the
+      // third breakpoint (after system and tools). Opus 4.6 requires ≥4096 prefix
+      // tokens for caching to activate; the extra breakpoint on messages ensures
+      // the growing conversation eventually crosses that threshold.
+      const cachedMessages = addCacheControlToLastMessage(this.history);
+
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
       if (useOpenAi) {
@@ -840,7 +883,7 @@ export class Agent {
           max_tokens: config.maxOutputTokens,
           system: systemBlocks,
           tools: cachedTools,
-          messages: [...this.history],
+          messages: [...cachedMessages],
         };
         yield {
           type: "api_call_start",
@@ -907,7 +950,7 @@ export class Agent {
             max_tokens: config.maxOutputTokens,
             system: systemBlocks,
             tools: cachedTools,
-            messages: this.history,
+            messages: cachedMessages,
           };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)

@@ -86,6 +86,25 @@ describe("prompt caching — cache_control in streamParams", () => {
     expect(hasCacheControl).toBe(true);
   });
 
+  it("injects cache_control on the last message in the conversation", async () => {
+    let firstParams: any = null;
+    const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    await runTurn(agent);
+
+    // The messages array should have cache_control on the last message's content
+    const messages: any[] = firstParams.messages;
+    expect(messages.length).toBeGreaterThan(0);
+    const lastMsg = messages[messages.length - 1];
+    // The last message content should be an array with cache_control on the last block
+    // (the helper normalises string content to [{type:"text", text:…}])
+    const content = lastMsg.content;
+    expect(Array.isArray(content)).toBe(true);
+    const lastBlock = content[content.length - 1];
+    expect(lastBlock.cache_control?.type).toBe("ephemeral");
+  });
+
   it("injects cache_control on the last tool definition", async () => {
     let firstParams: any = null;
     const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
