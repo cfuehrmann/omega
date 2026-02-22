@@ -501,3 +501,118 @@ describe("formatToolCall: grep_files", () => {
     expect(s).toBe("grep_files: foo in src [*.ts]");
   });
 });
+
+// --- executeTool: find_files ---
+
+describe("executeTool: find_files", () => {
+  it("finds files matching a glob pattern", async () => {
+    await writeFile(join(TMP, "alpha.ts"), "");
+    await writeFile(join(TMP, "beta.js"), "");
+    await writeFile(join(TMP, "gamma.ts"), "");
+    const result = await executeTool("find_files", {
+      pattern: "*.ts",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("alpha.ts");
+    expect(result.output).toContain("gamma.ts");
+    expect(result.output).not.toContain("beta.js");
+  });
+
+  it("finds directories when type=d", async () => {
+    await mkdir(join(TMP, "mydir"));
+    await writeFile(join(TMP, "myfile.txt"), "");
+    const result = await executeTool("find_files", {
+      pattern: "mydir",
+      path: TMP,
+      type: "d",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("mydir");
+    expect(result.output).not.toContain("myfile.txt");
+  });
+
+  it("returns no matches message when nothing found", async () => {
+    await writeFile(join(TMP, "readme.txt"), "");
+    const result = await executeTool("find_files", {
+      pattern: "*.xyz",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("No files found");
+  });
+
+  it("respects max_results cap and annotates truncation", async () => {
+    // Create 15 .ts files
+    for (let i = 0; i < 15; i++) {
+      await writeFile(join(TMP, `file${i}.ts`), "");
+    }
+    const result = await executeTool("find_files", {
+      pattern: "*.ts",
+      path: TMP,
+      max_results: 5,
+    });
+    expect(result.isError).toBe(false);
+    const lines = result.output.split("\n").filter(l => l.endsWith(".ts"));
+    expect(lines.length).toBeLessThanOrEqual(5);
+    expect(result.output).toContain("truncated");
+  });
+
+  it("finds files recursively in subdirectories", async () => {
+    await mkdir(join(TMP, "sub"));
+    await writeFile(join(TMP, "sub", "deep.ts"), "");
+    const result = await executeTool("find_files", {
+      pattern: "*.ts",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("deep.ts");
+  });
+
+  it("returns error when path is missing", async () => {
+    const result = await executeTool("find_files", { pattern: "*.ts" });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("path");
+  });
+
+  it("returns error when pattern is missing", async () => {
+    const result = await executeTool("find_files", { path: TMP });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("pattern");
+  });
+
+  it("does not include hidden files by default", async () => {
+    await writeFile(join(TMP, ".hidden.ts"), "");
+    await writeFile(join(TMP, "visible.ts"), "");
+    const result = await executeTool("find_files", {
+      pattern: "*.ts",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("visible.ts");
+    expect(result.output).not.toContain(".hidden.ts");
+  });
+
+  it("includes hidden files when hidden=true", async () => {
+    await writeFile(join(TMP, ".secret.ts"), "");
+    const result = await executeTool("find_files", {
+      pattern: "*.ts",
+      path: TMP,
+      hidden: true,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain(".secret.ts");
+  });
+});
+
+describe("formatToolCall: find_files", () => {
+  it("formats find_files with pattern and path", () => {
+    const s = formatToolCall("find_files", { pattern: "*.ts", path: "src" });
+    expect(s).toBe("find_files: *.ts in src");
+  });
+
+  it("includes type when provided", () => {
+    const s = formatToolCall("find_files", { pattern: "*.ts", path: "src", type: "f" });
+    expect(s).toBe("find_files: *.ts in src [type=f]");
+  });
+});

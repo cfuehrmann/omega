@@ -390,6 +390,41 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ["pattern", "path"],
     },
   },
+  {
+    name: "find_files",
+    description:
+      "Find files and directories by name/glob pattern using fd (with find fallback). " +
+      "Returns a list of matching paths, capped at max_results (default 200). " +
+      "Use this to locate files when you know the name or extension but not the exact path. " +
+      "Ignores hidden files and .gitignore'd paths by default (set hidden=true to include them). " +
+      "Chain with read_file or grep_files to inspect contents.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Glob or regex pattern to match against file/directory names",
+        },
+        path: {
+          type: "string",
+          description: "Root directory to search in",
+        },
+        type: {
+          type: "string",
+          description: "Filter by entry type: 'f' (files), 'd' (directories), 'l' (symlinks). Omit for all.",
+        },
+        hidden: {
+          type: "boolean",
+          description: "Include hidden files and .gitignore'd paths (default false)",
+        },
+        max_results: {
+          type: "number",
+          description: "Maximum number of results to return (default 200)",
+        },
+      },
+      required: ["pattern", "path"],
+    },
+  },
 ];
 
 // Tool execution
@@ -647,6 +682,75 @@ async function executeGrepFiles(input: {
   return `${truncated}\n\n[truncated: showing ${maxResults} of ${lines.length} matches]`;
 }
 
+async function executeFindFiles(input: {
+  pattern: string;
+  path: string;
+  type?: string;
+  hidden?: boolean;
+  max_results?: number;
+}): Promise<string> {
+  const maxResults = input.max_results ?? 200;
+  const includeHidden = input.hidden ?? false;
+
+  // Try fd first, fall back to find
+  const hasFd = await new Promise<boolean>((resolve) => {
+    const p = spawn("which", ["fd"], { stdio: "ignore" });
+    p.on("close", (code) => resolve(code === 0));
+    p.on("error", () => resolve(false));
+  });
+
+  let args: string[];
+  if (hasFd) {
+    args = [
+      "fd",
+      "--glob",
+      input.pattern,
+      input.path,
+      ...(input.type ? ["--type", input.type] : []),
+      ...(includeHidden ? ["--hidden", "--no-ignore"] : []),
+    ];
+  } else {
+    // find fallback
+    const typeFlag = input.type === "f" ? "f" : input.type === "d" ? "d" : input.type === "l" ? "l" : null;
+    args = [
+      "find",
+      input.path,
+      ...(typeFlag ? ["-type", typeFlag] : []),
+      "-name",
+      input.pattern,
+      ...(includeHidden ? [] : ["!", "-name", ".*"]),
+    ];
+  }
+
+  const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
+    (resolve) => {
+      let stdout = "";
+      let stderr = "";
+      const proc = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+      proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+      proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+      proc.on("close", (code) => resolve({ stdout, stderr, code }));
+      proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: -1 }));
+    }
+  );
+
+  if (result.code !== 0 && result.code !== 1) {
+    const msg = result.stderr.trim() || `find_files failed (exit ${result.code})`;
+    throw new Error(msg);
+  }
+
+  const raw = result.stdout.trim();
+  if (!raw) return "No files found.";
+
+  const lines = raw.split("\n").filter(Boolean);
+  if (lines.length <= maxResults) {
+    return lines.join("\n");
+  }
+
+  const truncated = lines.slice(0, maxResults).join("\n");
+  return `${truncated}\n\n[truncated: showing ${maxResults} of ${lines.length} results]`;
+}
+
 function validateToolInput(name: string, input: any): void {
   const tool = toolDefinitions.find((t) => t.name === name);
   if (!tool) return;
@@ -701,6 +805,9 @@ export async function executeTool(
       case "grep_files":
         output = await executeGrepFiles(input);
         break;
+      case "find_files":
+        output = await executeFindFiles(input);
+        break;
       default:
         return {
           output: `Unknown tool: ${name}`,
@@ -749,6 +856,11 @@ export function formatToolCall(name: string, input: any): string {
     case "grep_files": {
       let s = `grep_files: ${input.pattern} in ${input.path}`;
       if (input.file_glob) s += ` [${input.file_glob}]`;
+      return s;
+    }
+    case "find_files": {
+      let s = `find_files: ${input.pattern} in ${input.path}`;
+      if (input.type) s += ` [type=${input.type}]`;
       return s;
     }
     default:
