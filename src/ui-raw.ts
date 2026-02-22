@@ -359,6 +359,7 @@ export async function runApp(): Promise<void> {
     abortController = new AbortController();
     let fullText = "";
     let streamingStarted = false;
+    const pendingInputs = new Map<string, any>(); // tool call id → input
 
     try {
       for await (const event of agent.sendMessage(trimmed, confirmTool, abortController.signal)) {
@@ -401,14 +402,17 @@ export async function runApp(): Promise<void> {
             break;
 
           case "tool_call":
-            // No live zone — skip
+            pendingInputs.set(event.id, event.input);
             break;
 
-          case "tool_result":
+          case "tool_result": {
+            const input = pendingInputs.get(event.id);
+            pendingInputs.delete(event.id);
             printBlock(now(), renderToolExecution(
-              event.name, event.input, event.result,
+              event.name, input, event.result,
             ));
             break;
+          }
 
           case "tool_result_message":
             printBlock(now(), renderToolResultMessage(event.results));
