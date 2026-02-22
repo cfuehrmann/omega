@@ -97,4 +97,31 @@ describe("Agent fallback", () => {
     expect(providerCalls).toBe(1); // no more Anthropic calls
     expect(openAiCalls).toBe(2);
   });
+
+  it("emits fallback api_call_start with provider/url/request", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const mockProvider: StreamProvider = async () => {
+      throw makeRateLimitError();
+    };
+
+    const openAiCaller = async () => ({
+      response: {
+        content: [{ type: "text", text: "ok" } as any],
+        stop_reason: "stop",
+        usage: { input_tokens: 1, output_tokens: 2 },
+      },
+      text: "ok",
+    });
+
+    const agent = new Agent(mockProvider, null, openAiCaller as any);
+    const events = await collectEvents(agent, "hello");
+
+    const fallbackCall = events.find(
+      (e) => e.type === "api_call_start" && (e as any).provider === "openai"
+    ) as any;
+    expect(fallbackCall).toBeTruthy();
+    expect(fallbackCall.url).toContain("/v1/responses");
+    expect(fallbackCall.request).toBeTruthy();
+  });
 });
