@@ -577,13 +577,18 @@ export class Agent {
             // Emit a new api_call_start for the fallback call
             this._apiCallCount += 1;
             activeModel = config.fallbackModel;
+            const openAiRequest = buildOpenAiRequest(
+              this.history,
+              systemPrompt,
+              activeModel,
+              config.maxOutputTokens
+            );
             yield {
               type: "api_call_start",
               callNumber: this._apiCallCount,
-              model: activeModel,
-              system: systemPrompt,
-              tools: toolDefinitions,
-              messages: [...this.history],
+              provider: "openai",
+              url: getOpenAiUrl(),
+              request: openAiRequest,
             } as AgentEvent;
 
             try {

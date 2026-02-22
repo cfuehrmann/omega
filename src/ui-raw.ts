@@ -436,9 +436,11 @@ export async function runApp(): Promise<void> {
             ));
             break;
 
-          case "api_error":
-            printBlock(now(), [red(`api error (${event.model}): ${event.error}`)]);
+          case "api_error": {
+            const shortUrl = event.url ? event.url.replace(/^https?:\/\//, "") : "unknown";
+            printBlock(now(), [red(`api error (${event.provider} ${shortUrl}): ${event.error}`)]);
             break;
+          }
 
           case "status":
             // No live zone — skip
