@@ -10,26 +10,18 @@
 
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
-import { homedir } from "os";
-import { createHash } from "crypto";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
 /**
- * Return a world-state path that is specific to the given working directory.
- * Two different directories → two different files, so project switching is free.
- *
- * Format: ~/.local/share/omega/world-<slug>-<hash6>.md
- *   slug = last path component, sanitised
- *   hash = first 6 hex chars of SHA-256 of the full path (collision avoidance)
+ * Return the world-state path for the given project directory.
+ * The file lives inside the project itself at plan/world-state.md,
+ * so it travels with the repo and is under source control.
  */
 export function projectWorldStatePath(cwd: string = process.cwd()): string {
-  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(-30) || "root";
-  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 6);
-  const filename = `world-${slug}-${hash}.md`;
-  return join(homedir(), ".local", "share", "omega", filename);
+  return join(cwd, "plan", "world-state.md");
 }
 
 /**

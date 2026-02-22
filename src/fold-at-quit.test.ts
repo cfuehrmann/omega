@@ -93,9 +93,9 @@ describe("projectWorldStatePath", () => {
     expect(p1).toBe(p2);
   });
 
-  it("path lives under ~/.local/share/omega/", () => {
+  it("path lives inside the project directory as plan/world-state.md", () => {
     const p = projectWorldStatePath("/some/project");
-    expect(p).toContain(".local/share/omega");
+    expect(p).toBe("/some/project/plan/world-state.md");
   });
 });
 
