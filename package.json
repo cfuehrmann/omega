@@ -4,22 +4,16 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/main.tsx",
-    "start-raw": "bun run src/main-raw.ts",
+    "start": "bun run src/main-raw.ts",
     "login": "bun run src/login.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/react": "^19.2.14",
-    "ink-testing-library": "^4.0.0"
+    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
-    "ink": "^6.8.0",
-    "ink-text-input": "^6.0.0",
-    "react": "^19.2.4"
+    "@anthropic-ai/sdk": "^0.78.0"
   }
 }
