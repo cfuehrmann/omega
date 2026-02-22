@@ -377,6 +377,10 @@ export async function runApp(): Promise<void> {
             break;
 
           case "api_response":
+            if (streamingStarted) {
+              println("");
+              streamingStarted = false;
+            }
             printBlock(now(), renderApiResponse(
               event.stopReason, event.usage, event.content,
             ));
