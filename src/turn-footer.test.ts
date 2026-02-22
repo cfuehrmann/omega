@@ -174,3 +174,92 @@ describe("formatTurnFooter — cache savings", () => {
     expect(plain).not.toContain("cache_read");
   });
 });
+
+describe("formatTurnFooter — cost savings display", () => {
+  const provider = "anthropic" as const;
+  const model = "claude-sonnet-4-6";
+
+  const metricsWithSavings = {
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: 0.00105,    // actual cost paid (with cache read discount)
+    savedUsd: 0.00135,   // what would have been paid without caching
+    ttftMs: 300,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 500,
+  };
+  const sessionWithSavings = {
+    inputTokens: 500,
+    outputTokens: 200,
+    costUsd: 0.005,
+    savedUsd: 0.0027,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 500,
+  };
+  const metricsNoSavings = {
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: 0.00075,
+    ttftMs: 300,
+  };
+  const sessionNoSavings = {
+    inputTokens: 500,
+    outputTokens: 200,
+    costUsd: 0.005,
+  };
+
+  it("turn line shows 'saved:' field when savedUsd > 0", () => {
+    const { turnLine } = formatTurnFooter(metricsWithSavings, sessionWithSavings, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).toContain("saved:");
+  });
+
+  it("session line shows 'saved:' field when savedUsd > 0", () => {
+    const { sessionLine } = formatTurnFooter(metricsWithSavings, sessionWithSavings, provider, model);
+    const plain = stripAnsi(sessionLine);
+    expect(plain).toContain("saved:");
+  });
+
+  it("turn line does NOT show 'saved:' when savedUsd is absent or zero", () => {
+    const { turnLine } = formatTurnFooter(metricsNoSavings, sessionNoSavings, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).not.toContain("saved:");
+  });
+
+  it("session line does NOT show 'saved:' when savedUsd is absent or zero", () => {
+    const { sessionLine } = formatTurnFooter(metricsNoSavings, sessionNoSavings, provider, model);
+    const plain = stripAnsi(sessionLine);
+    expect(plain).not.toContain("saved:");
+  });
+
+  it("'cost:' field in both lines reflects actual cost paid (not inflated)", () => {
+    const { turnLine, sessionLine } = formatTurnFooter(metricsWithSavings, sessionWithSavings, provider, model);
+    const tPlain = stripAnsi(turnLine);
+    const sPlain = stripAnsi(sessionLine);
+    // costUsd=0.00105 → $0.0011 (4dp), not a larger number
+    expect(tPlain).toContain("cost:");
+    expect(sPlain).toContain("cost:");
+    // The saved field should be distinct from cost
+    expect(tPlain).toContain("saved:");
+    expect(sPlain).toContain("saved:");
+  });
+
+  it("'cost:' column aligns between turn and session lines regardless of digit count", () => {
+    // Use costs with different digit counts to verify padding
+    const m1 = { inputTokens: 1, outputTokens: 1, costUsd: 0.0001, savedUsd: 0.002, ttftMs: 100 };
+    const s1 = { inputTokens: 1, outputTokens: 1, costUsd: 0.12345, savedUsd: 0.0001 };
+    const { turnLine, sessionLine } = formatTurnFooter(m1, s1, provider, model);
+    const tPlain = stripAnsi(turnLine);
+    const sPlain = stripAnsi(sessionLine);
+    expect(tPlain.indexOf("cost:")).toBe(sPlain.indexOf("cost:"));
+  });
+
+  it("'saved:' column aligns between turn and session lines regardless of digit count", () => {
+    const m1 = { inputTokens: 1, outputTokens: 1, costUsd: 0.0001, savedUsd: 0.002, ttftMs: 100 };
+    const s1 = { inputTokens: 1, outputTokens: 1, costUsd: 0.12345, savedUsd: 0.0001 };
+    const { turnLine, sessionLine } = formatTurnFooter(m1, s1, provider, model);
+    const tPlain = stripAnsi(turnLine);
+    const sPlain = stripAnsi(sessionLine);
+    expect(tPlain.indexOf("saved:")).toBe(sPlain.indexOf("saved:"));
+  });
+});

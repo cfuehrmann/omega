@@ -14,6 +14,7 @@ export interface TurnMetrics {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  savedUsd?: number;
   ttftMs: number | null;
   totalMs: number;
   cacheCreationTokens?: number;
@@ -91,6 +92,20 @@ export function estimateCostWithCache(
     cacheCreationTokens * pricing.input * 1.25 +
     cacheReadTokens * pricing.input * 0.1
   ) / 1_000_000;
+}
+
+/**
+ * Estimate how much was saved by prompt caching vs. paying full input rate.
+ * Only cache reads produce net savings (they cost 0.1× instead of 1.0× input rate).
+ * Cache writes cost 1.25× input rate, so they don't save on the turn they're written.
+ */
+export function estimateCacheSavings(
+  model: string,
+  cacheReadTokens: number
+): number {
+  const pricing = PRICING[model] ?? { input: 5, output: 25 };
+  // Saving per cache-read token = (1.0 - 0.1) × input rate = 0.9 × input rate
+  return (cacheReadTokens * pricing.input * 0.9) / 1_000_000;
 }
 
 // --- Retry logic ---
@@ -354,6 +369,7 @@ export class Agent {
   public sessionCostUsd = 0;
   public sessionCacheCreationTokens = 0;
   public sessionCacheReadTokens = 0;
+  public sessionSavedUsd = 0;
   private _apiCallCount = 0;
 
   private authMode: "api-key" | "oauth" = "api-key";
@@ -712,6 +728,7 @@ export class Agent {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     let totalCostUsd = 0;
+    let totalSavedUsd = 0;
     let totalCacheCreationTokens = 0;
     let totalCacheReadTokens = 0;
     let totalTtftMs: number | null = null;
@@ -1009,12 +1026,15 @@ export class Agent {
         turnCacheCreation,
         turnCacheRead
       );
+      const savedUsd = estimateCacheSavings(activeModel, turnCacheRead);
       this.sessionCostUsd += costUsd;
+      this.sessionSavedUsd += savedUsd;
 
       // Accumulate turn-level totals
       totalInputTokens += turnInputTokens;
       totalOutputTokens += turnOutputTokens;
       totalCostUsd += costUsd;
+      totalSavedUsd += savedUsd;
       totalCacheCreationTokens += turnCacheCreation;
       totalCacheReadTokens += turnCacheRead;
       if (totalTtftMs === null) totalTtftMs = ttftMs; // first API call sets TTFT
@@ -1120,6 +1140,7 @@ export class Agent {
           inputTokens: turnInputTokens,
           outputTokens: turnOutputTokens,
           costUsd,
+          savedUsd,
           ttftMs,
           totalMs,
           cacheCreationTokens: turnCacheCreation,
@@ -1137,6 +1158,7 @@ export class Agent {
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
         costUsd: totalCostUsd,
+        savedUsd: totalSavedUsd,
         ttftMs: totalTtftMs,
         totalMs: performance.now() - (this._apiCallCount > 0 ? 0 : 0), // wall time not tracked here
         cacheCreationTokens: totalCacheCreationTokens,
