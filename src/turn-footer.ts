@@ -5,7 +5,7 @@
  *   session: in: NNN  out: NNN  cost: $N.NNN   saved: $N.NNN
  *
  * "in:" and "cost:" are column-aligned between the two lines.
- * "saved:" only appears when caching produced savings (savedUsd > 0).
+ * "saved:" always appears for Anthropic (even when $0), never for OpenAI.
  *
  * Provider differences:
  *   Anthropic — shows cost (actual), saved, cache_write, cache_read.
@@ -70,7 +70,7 @@ export interface TurnFooter {
 /**
  * Returns two plain-text (but ANSI-dimmed) lines for the turn footer.
  * The "in:" and "cost:" fields are column-aligned between both lines.
- * "saved:" is shown only when savedUsd > 0 (on either line), and also aligned.
+ * "saved:" is always shown for Anthropic (even $0.0000), never for OpenAI.
  * Provider-specific: OpenAI shows cost ceiling only; Anthropic shows full detail.
  */
 export function formatTurnFooter(
@@ -99,10 +99,9 @@ export function formatTurnFooter(
   // Anthropic: full detail — actual cost, saved, cache_write, cache_read.
   const costPrefix = isOpenAi ? "<=" : "";
 
-  // Determine if either line has savings to show (Anthropic only)
+  // Saved amounts (Anthropic always shows; OpenAI never shows)
   const turnSaved = isOpenAi ? 0 : (turn.savedUsd ?? 0);
   const sessionSaved = isOpenAi ? 0 : (session.savedUsd ?? 0);
-  const showSaved = turnSaved > 0 || sessionSaved > 0;
 
   // Compute cost string widths for alignment.
   // Both cost fields use the same width = max of both formatted lengths.
@@ -110,19 +109,15 @@ export function formatTurnFooter(
   const sessionCostStr = formatCost(session.costUsd, 0, costPrefix);
   const costWidth = Math.max(turnCostStr.length, sessionCostStr.length);
 
-  // Same for saved (only when shown)
-  let savedWidth = 0;
-  if (showSaved) {
-    const turnSavedStr    = formatCost(turnSaved);
-    const sessionSavedStr = formatCost(sessionSaved);
-    savedWidth = Math.max(turnSavedStr.length, sessionSavedStr.length);
-  }
+  // Same for saved (Anthropic always, OpenAI never)
+  const savedWidth = isOpenAi ? 0
+    : Math.max(formatCost(turnSaved).length, formatCost(sessionSaved).length);
 
   const turnCache    = isOpenAi ? "" : cacheFields(turn.cacheCreationTokens, turn.cacheReadTokens);
   const sessionCache = isOpenAi ? "" : cacheFields(session.cacheCreationTokens, session.cacheReadTokens);
 
   const costPart  = (usd: number) => `cost: ${formatCost(usd, costWidth, costPrefix)}`;
-  const savedPart = (usd: number) => showSaved ? `  saved: ${formatCost(usd, savedWidth)}` : "";
+  const savedPart = (usd: number) => isOpenAi ? "" : `  saved: ${formatCost(usd, savedWidth)}`;
 
   const turnBody =
     `${inOut(turn.inputTokens, turn.outputTokens)}  ${costPart(turn.costUsd)}${savedPart(turnSaved)}${turnCache}  ttft: ${formatMs(turn.ttftMs)}  [${provider}/${model}]`;

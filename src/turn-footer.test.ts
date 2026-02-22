@@ -220,16 +220,16 @@ describe("formatTurnFooter — cost savings display", () => {
     expect(plain).toContain("saved:");
   });
 
-  it("turn line does NOT show 'saved:' when savedUsd is absent or zero", () => {
+  it("turn line shows 'saved: $0.0000' when savedUsd is absent or zero", () => {
     const { turnLine } = formatTurnFooter(metricsNoSavings, sessionNoSavings, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).not.toContain("saved:");
+    expect(plain).toContain("saved: $0.0000");
   });
 
-  it("session line does NOT show 'saved:' when savedUsd is absent or zero", () => {
+  it("session line shows 'saved: $0.0000' when savedUsd is absent or zero", () => {
     const { sessionLine } = formatTurnFooter(metricsNoSavings, sessionNoSavings, provider, model);
     const plain = stripAnsi(sessionLine);
-    expect(plain).not.toContain("saved:");
+    expect(plain).toContain("saved: $0.0000");
   });
 
   it("'cost:' field in both lines reflects actual cost paid (not inflated)", () => {
