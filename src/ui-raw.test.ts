@@ -90,4 +90,32 @@ describe("parseKeys", () => {
     parseKeys("\r", { onSubmit: (l) => { submitted = l; }, onEscape: () => {}, onExit: () => {} });
     expect(submitted).toBe("hi");
   });
+
+  // Bracketed paste: newlines in pasted text must NOT trigger onSubmit mid-paste
+  it("does not submit on newline inside bracketed paste", () => {
+    let submits = 0;
+    const buf = { value: "" };
+    const cb = { onSubmit: () => { submits++; }, onEscape: () => {}, onExit: () => {} };
+    // Simulate a paste: start marker, multi-line text, end marker
+    parseKeys("\x1b[200~line one\nline two\x1b[201~", cb, buf);
+    expect(submits).toBe(0);
+    expect(buf.value).toBe("line one\nline two");
+  });
+
+  it("submits accumulated paste content on Enter after paste ends", () => {
+    let submitted = "";
+    const buf = { value: "" };
+    const cb = { onSubmit: (l: string) => { submitted = l; }, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[200~line one\nline two\x1b[201~", cb, buf);
+    parseKeys("\r", cb, buf);
+    expect(submitted).toBe("line one\nline two");
+  });
+
+  it("treats newline as submit when NOT in paste mode (normal typing)", () => {
+    let submits = 0;
+    const buf = { value: "typed" };
+    const cb = { onSubmit: () => { submits++; }, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\r", cb, buf);
+    expect(submits).toBe(1);
+  });
 });

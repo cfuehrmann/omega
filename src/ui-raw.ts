@@ -100,7 +100,7 @@ function summariseContent(content: any): string {
   return `[${parts.join(", ")}]`;
 }
 
-function renderApiRequest(
+export function renderApiRequest(
   callNumber: number,
   provider: "anthropic" | "openai",
   url: string,
@@ -269,14 +269,18 @@ export interface KeyCallbacks {
  * @param buf       Current input buffer (defaults to shared module buffer).
  * @returns         Updated input buffer after processing.
  */
+/** Persistent bracketed-paste state shared across calls in production. */
+const sharedPasteState = { inPaste: false };
+
 export function parseKeys(
   chunk: string,
   callbacks: KeyCallbacks,
   buf: { value: string } = sharedBuffer,
-  options: { inputEnabled?: boolean } = {},
+  options: { inputEnabled?: boolean; pasteState?: { inPaste: boolean } } = {},
 ): string {
   const { onSubmit, onEscape, onExit } = callbacks;
   const inputEnabled = options.inputEnabled ?? true;
+  const pasteState = options.pasteState ?? sharedPasteState;
 
   for (let i = 0; i < chunk.length; i++) {
     const ch = chunk[i];
@@ -284,23 +288,40 @@ export function parseKeys(
 
     if (ch === "\x03") { onExit(); return buf.value; }  // Ctrl+C — stop processing
 
-    if (ch === "\x1b") {                       // Escape or sequence
+    if (ch === "\x1b") {                       // Escape or CSI sequence
+      // Check for bracketed paste markers: \x1b[200~ (start) and \x1b[201~ (end)
+      if (chunk.startsWith("[200~", i + 1)) {
+        pasteState.inPaste = true;
+        i += 5; // skip past "[200~"
+        continue;
+      }
+      if (chunk.startsWith("[201~", i + 1)) {
+        pasteState.inPaste = false;
+        i += 5; // skip past "[201~"
+        continue;
+      }
       if (i + 1 < chunk.length && chunk[i + 1] === "[") {
         // Arrow key or other CSI sequence — skip it
         i += 2;
         while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) i++;
       } else {
-        onEscape();
+        if (!pasteState.inPaste) onEscape();
       }
       continue;
     }
 
     if (!inputEnabled) continue;
 
-    if (ch === "\r" || ch === "\n") {          // Enter
-      const line = buf.value;
-      buf.value = "";
-      onSubmit(line);
+    if (ch === "\r" || ch === "\n") {
+      if (pasteState.inPaste) {
+        // Inside a paste: preserve newlines literally in the buffer
+        buf.value += "\n";
+      } else {
+        // Normal Enter: submit
+        const line = buf.value;
+        buf.value = "";
+        onSubmit(line);
+      }
       continue;
     }
 
@@ -316,7 +337,7 @@ export function parseKeys(
     // Printable character
     if (code >= 32 || code > 127) {
       buf.value += ch;
-      process.stdout.write(ch);                // echo
+      if (!pasteState.inPaste) process.stdout.write(ch);  // echo only when not pasting
     }
   }
 
@@ -338,6 +359,9 @@ function setupRawInput(
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf-8");
+
+  // Enable bracketed paste mode so pasted newlines don't trigger submit
+  process.stdout.write("\x1b[?2004h");
 
   process.stdin.on("data", (chunk: string) => {
     parseKeys(chunk, { onSubmit, onEscape, onExit });
@@ -404,6 +428,8 @@ async function shutdown(agent: Agent, code: number = 0): Promise<never> {
     // No history to save — exit silently (no message needed).
   }
 
+  // Disable bracketed paste mode before exit so the terminal is clean
+  process.stdout.write("\x1b[?2004l");
   process.exit(code);
 }
 
