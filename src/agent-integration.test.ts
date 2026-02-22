@@ -678,19 +678,28 @@ describe("api_call_start event", () => {
     expect(startEvents.length).toBe(1);
   });
 
-  it("api_call_start carries model, system, tools, messages, and callNumber", async () => {
+  it("api_call_start carries provider, url, request, and callNumber", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
     const e = events.find((e) => e.type === "api_call_start") as any;
     expect(e).toBeDefined();
-    expect(typeof e.model).toBe("string");
-    expect(typeof e.system).toBe("string");
-    expect(Array.isArray(e.tools)).toBe(true);
-    expect(Array.isArray(e.messages)).toBe(true);
+    expect(e.provider).toBe("anthropic");
+    expect(typeof e.url).toBe("string");
+    expect(typeof e.request).toBe("object");
     expect(typeof e.callNumber).toBe("number");
     expect(e.callNumber).toBe(1);
+  });
+
+  it("api_call_start exposes request messages", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const e = events.find((e) => e.type === "api_call_start") as any;
+    expect(Array.isArray(e.request.messages)).toBe(true);
+    expect(e.request.messages[0].role).toBe("user");
   });
 
   it("emits api_call_start once per round-trip in a tool loop", async () => {
@@ -714,17 +723,14 @@ describe("api_call_start event", () => {
     expect((startEvents[1] as any).callNumber).toBe(2);
   });
 
-  it("api_call_start messages snapshot is correct (not a live reference)", async () => {
-    // The messages array in api_call_start should reflect history AT CALL TIME,
-    // not after further mutations (i.e. it must be a snapshot copy).
+  it("api_call_start request snapshot is correct (not a live reference)", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hello");
     const e = events.find((ev) => ev.type === "api_call_start") as any;
-    // At call time, history had 1 message (the user message)
-    expect(e.messages.length).toBe(1);
-    expect(e.messages[0].role).toBe("user");
+    expect(e.request.messages.length).toBe(1);
+    expect(e.request.messages[0].role).toBe("user");
   });
 });
 
@@ -879,6 +885,8 @@ describe("Agent — api_response event", () => {
     const events = await collectEvents(agent, "hi");
     const r = events.find((e) => e.type === "api_response") as any;
     expect(r).toBeDefined();
+    expect(r.provider).toBe("anthropic");
+    expect(r.url).toBe("https://api.anthropic.com/v1/messages");
     expect(r.stopReason).toBe("end_turn");
     expect(r.usage.input_tokens).toBe(10);
     expect(r.usage.output_tokens).toBe(5);

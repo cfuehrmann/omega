@@ -51,6 +51,7 @@ describe("Agent fallback", () => {
         usage: { input_tokens: 1, output_tokens: 2 },
       },
       text: "hi",
+      raw: { usage: { input_tokens: 1, output_tokens: 2 } },
     });
 
     const agent = new Agent(mockProvider, null, openAiCaller as any);
@@ -58,7 +59,8 @@ describe("Agent fallback", () => {
 
     const apiError = events.find((e) => e.type === "api_error") as any;
     expect(apiError).toBeTruthy();
-    expect(apiError.model).toBe("claude-sonnet-4-6");
+    expect(apiError.provider).toBe("anthropic");
+    expect(apiError.url).toBe("https://api.anthropic.com/v1/messages");
     expect(apiError.error).toContain("rate limit");
   });
 
@@ -82,6 +84,7 @@ describe("Agent fallback", () => {
           usage: { input_tokens: 1, output_tokens: 2 },
         },
         text: "ok",
+        raw: { usage: { input_tokens: 1, output_tokens: 2 } },
       };
     };
 

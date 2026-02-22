@@ -9,9 +9,10 @@ export interface OpenAiResult {
     usage: { input_tokens: number; output_tokens: number };
   };
   text: string;
+  raw: any;
 }
 
-interface OpenAiRequest {
+export interface OpenAiRequest {
   model: string;
   input: any[];
   tools: any[];
@@ -184,6 +185,11 @@ export function parseOpenAiResponse(data: any): OpenAiResult {
   };
 }
 
+export function getOpenAiUrl(baseUrl?: string): string {
+  const base = baseUrl ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  return `${base.replace(/\/$/, "")}/responses`;
+}
+
 export async function callOpenAi(
   history: Anthropic.MessageParam[],
   systemPrompt: string,
@@ -191,11 +197,11 @@ export async function callOpenAi(
   maxTokens = config.maxOutputTokens
 ): Promise<OpenAiResult> {
   const apiKey = getOpenAiApiKey();
-  const baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  const url = getOpenAiUrl();
 
   const body = buildOpenAiRequest(history, systemPrompt, model, maxTokens);
 
-  const resp = await fetch(`${baseUrl}/responses`, {
+  const resp = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -210,5 +216,6 @@ export async function callOpenAi(
   }
 
   const data = await resp.json();
-  return parseOpenAiResponse(data);
+  const parsed = parseOpenAiResponse(data);
+  return { ...parsed, raw: data };
 }

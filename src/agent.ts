@@ -4,7 +4,7 @@ import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from ".
 import { getAuthToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { saveSession, loadLatestSession, type Session } from "./session.js";
-import { callOpenAi } from "./openai.js";
+import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { shouldFallbackToCodex } from "./fallback.js";
 
 // --- Types ---
@@ -27,9 +27,9 @@ export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "status"; message: string }
   | { type: "user_message"; content: string }
-  | { type: "api_call_start"; callNumber: number; model: string; system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] }
-  | { type: "api_response"; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[] }
-  | { type: "api_error"; model: string; error: string }
+  | { type: "api_call_start"; callNumber: number; provider: "openai" | "anthropic"; url: string; request: any }
+  | { type: "api_response"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
+  | { type: "api_error"; provider: "openai" | "anthropic"; url: string; error: string }
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
@@ -441,14 +441,36 @@ export class Agent {
 
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
-      yield {
-        type: "api_call_start",
-        callNumber: this._apiCallCount,
-        model: activeModel,
-        system: systemPrompt,
-        tools: toolDefinitions,
-        messages: [...this.history],  // snapshot — not a live reference
-      } as AgentEvent;
+      if (useFallback) {
+        const openAiRequest = buildOpenAiRequest(
+          this.history,
+          systemPrompt,
+          activeModel,
+          config.maxOutputTokens
+        );
+        yield {
+          type: "api_call_start",
+          callNumber: this._apiCallCount,
+          provider: "openai",
+          url: getOpenAiUrl(),
+          request: openAiRequest,
+        } as AgentEvent;
+      } else {
+        const request = {
+          model: config.model,
+          max_tokens: config.maxOutputTokens,
+          system: systemPrompt,
+          tools: toolDefinitions,
+          messages: [...this.history],
+        };
+        yield {
+          type: "api_call_start",
+          callNumber: this._apiCallCount,
+          provider: "anthropic",
+          url: "https://api.anthropic.com/v1/messages",
+          request,
+        } as AgentEvent;
+      }
 
       // Call API with retry
       let response: ModelResponse | null = null;
@@ -467,6 +489,12 @@ export class Agent {
           lastError = null;
         } catch (fallbackErr: any) {
           logger.error("api_fallback_error", { error: fallbackErr.message });
+          yield {
+            type: "api_error",
+            provider: "openai",
+            url: getOpenAiUrl(),
+            error: fallbackErr.message ?? String(fallbackErr),
+          } as AgentEvent;
           yield { type: "error", error: `OpenAI fallback failed: ${fallbackErr.message ?? fallbackErr}` };
           return;
         }
@@ -537,7 +565,8 @@ export class Agent {
             });
             yield {
               type: "api_error",
-              model: config.model,
+              provider: "anthropic",
+              url: "https://api.anthropic.com/v1/messages",
               error: err.message ?? String(err),
             } as AgentEvent;
             yield {
@@ -639,12 +668,15 @@ export class Agent {
       // Emit API response event for UI display
       yield {
         type: "api_response",
+        provider: useFallback ? "openai" : "anthropic",
+        url: useFallback ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
         stopReason: response.stop_reason ?? "unknown",
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,
         },
         content: response.content,
+        raw: useFallback ? (response as any).raw : undefined,
       };
 
       // Add assistant response to history

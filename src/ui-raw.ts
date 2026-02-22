@@ -112,37 +112,80 @@ function summariseContent(content: any): string {
 
 function renderApiRequest(
   callNumber: number,
-  model: string,
-  system: string,
-  tools: any[],
-  messages: any[],
+  provider: "anthropic" | "openai",
+  url: string,
+  request: any,
 ): string[] {
-  const last = messages[messages.length - 1];
+  const shortUrl = url.replace(/^https?:\/\//, "");
   const lines: string[] = [];
-  lines.push(bold(cyan(`api call #${callNumber}`)));
-  lines.push(cyan(`${INDENT}model: "${model}"`));
-  lines.push(cyan(`${INDENT}system: <${system.length} chars>`));
-  lines.push(cyan(`${INDENT}tools: [${tools.map((t: any) => `"${t.name}"`).join(", ")}]`));
-  lines.push(cyan(`${INDENT}max_tokens: ${config.maxOutputTokens}`));
-  lines.push(cyan(`${INDENT}messages: <${messages.length}> …`));
-  if (last) {
-    lines.push(dim(cyan(`${INDENT2}{ role: "${last.role}", content: ${summariseContent(last.content)} }`)));
+  lines.push(bold(cyan(`${shortUrl}  #${callNumber}`)));
+  if (provider === "anthropic") {
+    const last = request.messages?.[request.messages.length - 1];
+    lines.push(cyan(`${INDENT}model: "${request.model}"`));
+    lines.push(cyan(`${INDENT}system: <${request.system.length} chars>`));
+    lines.push(cyan(`${INDENT}tools: [${request.tools.map((t: any) => `"${t.name}"`).join(", ")}]`));
+    lines.push(cyan(`${INDENT}max_tokens: ${request.max_tokens}`));
+    lines.push(cyan(`${INDENT}messages: <${request.messages.length}> …`));
+    if (last) {
+      lines.push(dim(cyan(`${INDENT2}{ role: "${last.role}", content: ${summariseContent(last.content)} }`)));
+    }
+  } else {
+    const last = request.input?.[request.input.length - 1];
+    lines.push(cyan(`${INDENT}model: "${request.model}"`));
+    lines.push(cyan(`${INDENT}instructions: <${(request.instructions ?? "").length} chars>`));
+    lines.push(cyan(`${INDENT}tools: <${request.tools?.length ?? 0}>`));
+    lines.push(cyan(`${INDENT}max_output_tokens: ${request.max_output_tokens}`));
+    lines.push(cyan(`${INDENT}input: <${request.input?.length ?? 0}> …`));
+    if (last) {
+      lines.push(dim(cyan(`${INDENT2}${summariseOpenAiInput(last)}`)));
+    }
   }
   return lines;
 }
 
+function summariseOpenAiInput(item: any): string {
+  if (item.role && typeof item.content === "string") {
+    return `{ role: "${item.role}", content: ${item.content.length <= 60 ? `"${item.content}"` : `<${item.content.length} chars>`} }`;
+  }
+  if (item.type === "function_call") {
+    return `{ type: "function_call", name: "${item.name}", arguments: <${(item.arguments ?? "").length} chars> }`;
+  }
+  if (item.type === "function_call_output") {
+    return `{ type: "function_call_output", call_id: "${item.call_id}", output: <${(item.output ?? "").length} chars> }`;
+  }
+  return `{ ${JSON.stringify(item).slice(0, 80)} }`;
+}
+
 function renderApiResponse(
+  provider: "anthropic" | "openai",
+  url: string,
   stopReason: string,
   usage: { input_tokens: number; output_tokens: number },
   content: any[],
+  raw?: any,
 ): string[] {
+  const shortUrl = url.replace(/^https?:\/\//, "");
   const lines: string[] = [];
-  lines.push(bold(blue("api response")));
-  lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
-  lines.push(blue(`${INDENT}usage:`));
-  lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
-  lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
-  lines.push(blue(`${INDENT}content:`));
+  lines.push(bold(blue(`${shortUrl} response`)));
+  if (provider === "anthropic") {
+    lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
+    lines.push(blue(`${INDENT}usage:`));
+    lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
+    lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
+    lines.push(blue(`${INDENT}content:`));
+  } else {
+    lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
+    lines.push(blue(`${INDENT}usage:`));
+    lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
+    lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
+    if (raw?.usage?.cached_input_tokens !== undefined) {
+      lines.push(dim(blue(`${INDENT2}cached_input_tokens: ${raw.usage.cached_input_tokens}`)));
+    }
+    if (raw?.usage?.cache_creation_input_tokens !== undefined) {
+      lines.push(dim(blue(`${INDENT2}cache_creation_input_tokens: ${raw.usage.cache_creation_input_tokens}`)));
+    }
+    lines.push(blue(`${INDENT}content:`));
+  }
   for (const block of content) {
     if (block.type === "text") {
       lines.push(blue(`${INDENT2}text:`));
@@ -371,8 +414,10 @@ export async function runApp(): Promise<void> {
 
           case "api_call_start":
             printBlock(now(), renderApiRequest(
-              event.callNumber, event.model, event.system,
-              event.tools, event.messages,
+              event.callNumber,
+              event.provider,
+              event.url,
+              event.request,
             ));
             break;
 
@@ -382,7 +427,12 @@ export async function runApp(): Promise<void> {
               streamingStarted = false;
             }
             printBlock(now(), renderApiResponse(
-              event.stopReason, event.usage, event.content,
+              event.provider,
+              event.url,
+              event.stopReason,
+              event.usage,
+              event.content,
+              event.raw,
             ));
             break;
 
