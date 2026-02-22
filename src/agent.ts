@@ -34,6 +34,7 @@ export type AgentEvent =
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
+  | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
   | { type: "error"; error: string }
@@ -514,11 +515,9 @@ export class Agent {
       logger.info("world_state_updated", { path });
 
       yield {
-        type: "tool_result",
-        id: "world-state-write",
-        name: "write_file",
-        formatted: `write_file(path: "${path}")`,
-        result: { output: `Written ${newState.length} chars to ${path}`, isError: false },
+        type: "world_state_saved",
+        path,
+        charCount: newState.length,
       } as AgentEvent;
 
     } catch (err: any) {

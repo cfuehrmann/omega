@@ -123,15 +123,22 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect(typeof (apiResponse as any).usage.output_tokens).toBe("number");
   });
 
-  it("emits tool_result event for the file write", async () => {
+  it("emits world_state_saved event for the file write (not tool_result)", async () => {
     const worldStatePath = join(tempDir, "world-state.md");
     const agent = new Agent(makeMockProvider(), null, undefined, worldStatePath);
     await collectSendMessage(agent, "hello");
 
     const events = await collectFold(agent);
+
+    // Must have a dedicated world_state_saved event
+    const saved = events.find(e => e.type === "world_state_saved");
+    expect(saved).toBeDefined();
+    expect((saved as any).path).toBe(worldStatePath);
+    expect(typeof (saved as any).charCount).toBe("number");
+
+    // Must NOT use the generic tool_result event type for this
     const toolResult = events.find(e => e.type === "tool_result");
-    expect(toolResult).toBeDefined();
-    expect((toolResult as any).name).toBe("write_file");
+    expect(toolResult).toBeUndefined();
   });
 
   it("still writes the world state file to disk", async () => {

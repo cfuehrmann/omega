@@ -410,7 +410,11 @@ async function shutdown(agent: Agent, code: number = 0): Promise<never> {
 
   let hadEvents = false;
   for await (const event of agent.foldCurrentSessionIntoWorldState()) {
-    hadEvents = true;
+    if (!hadEvents) {
+      // Print the shutdown banner once, before the first event.
+      printBlock(now(), [magenta("Ctrl+C — compacting to world file and shutting down")]);
+      hadEvents = true;
+    }
     switch (event.type) {
       case "api_call_start":
         printBlock(now(), renderApiRequest(
@@ -432,20 +436,14 @@ async function shutdown(agent: Agent, code: number = 0): Promise<never> {
         ));
         break;
 
-      case "tool_result":
-        // Synthetic file-write notification — show as a simple status line,
-        // not as a "tool execution" (the LLM never called this tool).
-        printBlock(now(), [dim(`✓ world state saved  ${event.result.output}`)]);
+      case "world_state_saved":
+        printBlock(now(), [dim(`✓ world state saved  Written ${event.charCount} chars to ${event.path}`)]);
         break;
 
       case "error":
         printBlock(now(), [red(`⚠ World state save failed: ${event.error}`)]);
         break;
     }
-  }
-
-  if (!hadEvents) {
-    // No history to save — exit silently (no message needed).
   }
 
   // Disable bracketed paste mode before exit so the terminal is clean
