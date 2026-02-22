@@ -111,27 +111,7 @@ Acceptance criteria:
 
 ---
 
-#### TOOLS-1: `grep_files` — code/text search tool
-**Priority: high — most common missing primitive**
 
-The most frequent pain point in the current toolset: finding all occurrences of
-a symbol, pattern, or string across the codebase requires either repeated
-`read_file` passes (slow, token-expensive) or a raw `run_command: grep -r …`
-(works but output is unstyled and not schema-describable).
-
-Goal: a first-class `grep_files` tool wrapping `ripgrep` (with `grep -r`
-fallback) that:
-- accepts `pattern` (regex or literal), `path`, optional `file_glob`,
-  `context_lines`, `case_sensitive`, `max_results`
-- returns structured `file:line: snippet` output, capped and annotated when
-  truncated
-
-Acceptance criteria:
-- Common `grep` patterns no longer need `run_command`
-- Output is capped at a sensible limit (e.g. 200 matches) with a note
-- Tests: mock filesystem, confirm structured output format
-
----
 
 #### TOOLS-INV: Investigate full range of useful agent tools
 **Priority: medium — inform future roadmap**
@@ -176,6 +156,7 @@ Discrete, prioritised, actionable. Keep in priority order.
 
 ## Closed / dismissed items (for reference)
 
+- **TOOLS-1: `grep_files`** — Done. `executeGrepFiles` in `src/tools.ts` wraps `rg` (ripgrep) with `grep -rn` fallback. Accepts `pattern`, `path`, `file_glob`, `context_lines`, `case_sensitive`, `max_results` (default 200). Case-insensitive by default. Returns structured `file:line:text` output, capped with truncation note. 13 tests.
 - **Cache savings display** — Done. Turn footer shows `cost:` (actual paid) and `saved:` (cache read savings = 0.9× input rate × read tokens) when savings > 0. Both fields column-aligned between turn/session lines via `padEnd`. `savedUsd` added to `TurnMetrics`/`SessionTotals` in both `turn-footer.ts` and `agent.ts`. `estimateCacheSavings()` exported from `agent.ts`. `sessionSavedUsd` accumulates across turns. 7 new tests.
 - **Anthropic prompt caching** — Done. `cache_control: { type: "ephemeral" }` on system message block, last tool definition, and last message in conversation. Three breakpoints ensure Opus 4.6 (≥4096 token minimum) benefits from caching once conversation grows past first turn. Cache tokens extracted from usage, routed through `estimateCostWithCache()`. `TurnMetrics` and session totals track cache tokens. Turn footer shows `cache_write`/`cache_read` when non-zero. 17 tests.
 - **UI tests** — Done. 231+ tests in `ui-raw.test.ts` and `tool-renderers.test.ts`.

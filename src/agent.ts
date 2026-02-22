@@ -638,7 +638,7 @@ export class Agent {
       // Build the request params so we can show them in api_call_start
       const compactionRequest = {
         model: providerName === "openai" ? (config.fallbackModel as string) : this.activeModel,
-        max_tokens: 2048,
+        max_tokens: 4096,
         system: "You are a context compactor. Respond only with the requested summary, no preamble.",
         tools: [],
         messages: [{ role: "user", content: "<world-state compaction prompt>" }],
