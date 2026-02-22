@@ -97,4 +97,11 @@ describe("parseOpenAiResponse", () => {
     const tool = req.tools[0];
     expect(tool.parameters.additionalProperties).toBe(false);
   });
+
+  it("uses input_schema as parameters with type object", () => {
+    const req = buildOpenAiRequest([], "sys", "gpt-5.2-codex", 10);
+    const tool = req.tools.find((t: any) => t.name === "read_file");
+    expect(tool.parameters.type).toBe("object");
+    expect(tool.parameters.properties.path.type).toBe("string");
+  });
 });

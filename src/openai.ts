@@ -34,7 +34,7 @@ function toOpenAiTools() {
     name: tool.name,
     description: tool.description,
     parameters: {
-      ...(tool.parameters ?? {}),
+      ...((tool as any).input_schema ?? {}),
       additionalProperties: false,
     },
     strict: true,
