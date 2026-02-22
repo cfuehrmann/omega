@@ -352,6 +352,44 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ["url"],
     },
   },
+  {
+    name: "grep_files",
+    description:
+      "Search for a pattern across files in a directory using ripgrep (rg) with grep fallback. " +
+      "Returns structured file:line:text matches, capped at max_results (default 200). " +
+      "Use this to find all occurrences of a symbol, string, or regex across the codebase " +
+      "instead of reading files speculatively. Chain with read_file to inspect context.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Regex or literal string to search for",
+        },
+        path: {
+          type: "string",
+          description: "Directory (or file) path to search in",
+        },
+        file_glob: {
+          type: "string",
+          description: "Optional glob to restrict which files are searched (e.g. '*.ts')",
+        },
+        context_lines: {
+          type: "number",
+          description: "Number of context lines to include before and after each match (optional)",
+        },
+        case_sensitive: {
+          type: "boolean",
+          description: "If true, match is case-sensitive. Default: false (case-insensitive)",
+        },
+        max_results: {
+          type: "number",
+          description: "Maximum number of match lines to return (default 200)",
+        },
+      },
+      required: ["pattern", "path"],
+    },
+  },
 ];
 
 // Tool execution
@@ -536,6 +574,79 @@ async function executeListFiles(input: {
   return output;
 }
 
+async function executeGrepFiles(input: {
+  pattern: string;
+  path: string;
+  file_glob?: string;
+  context_lines?: number;
+  case_sensitive?: boolean;
+  max_results?: number;
+}): Promise<string> {
+  const maxResults = input.max_results ?? 200;
+  const caseSensitive = input.case_sensitive ?? false;
+
+  // Try ripgrep first, fall back to grep
+  const hasRg = await new Promise<boolean>((resolve) => {
+    const p = spawn("which", ["rg"], { stdio: "ignore" });
+    p.on("close", (code) => resolve(code === 0));
+    p.on("error", () => resolve(false));
+  });
+
+  let args: string[];
+  if (hasRg) {
+    args = [
+      "rg",
+      "--line-number",
+      "--with-filename",
+      "--no-heading",
+      ...(caseSensitive ? ["--case-sensitive"] : ["--ignore-case"]),
+      ...(input.file_glob ? ["--glob", input.file_glob] : []),
+      ...(input.context_lines ? ["--context", String(input.context_lines)] : []),
+      input.pattern,
+      input.path,
+    ];
+  } else {
+    args = [
+      "grep",
+      "-rn",
+      ...(caseSensitive ? [] : ["-i"]),
+      ...(input.file_glob ? [`--include=${input.file_glob}`] : []),
+      ...(input.context_lines ? [`-C${input.context_lines}`] : []),
+      input.pattern,
+      input.path,
+    ];
+  }
+
+  const output = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
+    (resolve) => {
+      let stdout = "";
+      let stderr = "";
+      const proc = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+      proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+      proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+      proc.on("close", (code) => resolve({ stdout, stderr, code }));
+      proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: -1 }));
+    }
+  );
+
+  // Exit code 1 from grep/rg means "no matches" — not an error
+  if (output.code !== 0 && output.code !== 1) {
+    const msg = output.stderr.trim() || `Search failed (exit ${output.code})`;
+    throw new Error(msg);
+  }
+
+  const raw = output.stdout.trim();
+  if (!raw) return "No matches found.";
+
+  const lines = raw.split("\n");
+  if (lines.length <= maxResults) {
+    return lines.join("\n");
+  }
+
+  const truncated = lines.slice(0, maxResults).join("\n");
+  return `${truncated}\n\n[truncated: showing ${maxResults} of ${lines.length} matches]`;
+}
+
 function validateToolInput(name: string, input: any): void {
   const tool = toolDefinitions.find((t) => t.name === name);
   if (!tool) return;
@@ -587,6 +698,9 @@ export async function executeTool(
       case "fetch_url":
         output = await executeFetchUrl(input);
         break;
+      case "grep_files":
+        output = await executeGrepFiles(input);
+        break;
       default:
         return {
           output: `Unknown tool: ${name}`,
@@ -632,6 +746,11 @@ export function formatToolCall(name: string, input: any): string {
       return `web_search: ${input.query}`;
     case "fetch_url":
       return `fetch_url: ${input.url}`;
+    case "grep_files": {
+      let s = `grep_files: ${input.pattern} in ${input.path}`;
+      if (input.file_glob) s += ` [${input.file_glob}]`;
+      return s;
+    }
     default:
       return `${name}: ${JSON.stringify(input)}`;
   }

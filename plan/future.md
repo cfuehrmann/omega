@@ -106,6 +106,62 @@ Acceptance criteria:
 
 ---
 
+### [TOPIC] Tool set expansion
+*Current tools: `read_file`, `write_file`, `edit_file`, `list_files`, `run_command`, `web_search`, `fetch_url`.*
+
+---
+
+#### TOOLS-1: `grep_files` — code/text search tool
+**Priority: high — most common missing primitive**
+
+The most frequent pain point in the current toolset: finding all occurrences of
+a symbol, pattern, or string across the codebase requires either repeated
+`read_file` passes (slow, token-expensive) or a raw `run_command: grep -r …`
+(works but output is unstyled and not schema-describable).
+
+Goal: a first-class `grep_files` tool wrapping `ripgrep` (with `grep -r`
+fallback) that:
+- accepts `pattern` (regex or literal), `path`, optional `file_glob`,
+  `context_lines`, `case_sensitive`, `max_results`
+- returns structured `file:line: snippet` output, capped and annotated when
+  truncated
+
+Acceptance criteria:
+- Common `grep` patterns no longer need `run_command`
+- Output is capped at a sensible limit (e.g. 200 matches) with a note
+- Tests: mock filesystem, confirm structured output format
+
+---
+
+#### TOOLS-INV: Investigate full range of useful agent tools
+**Priority: medium — inform future roadmap**
+
+Before adding more tools ad hoc, do a deliberate survey of what the broader
+agent-tool ecosystem has converged on, then map each candidate against Omega's
+use cases and decide add / skip / already-covered.
+
+Candidate areas to evaluate:
+- **Code intelligence** — `grep_files` (TOOLS-1 above), `find_files` (glob
+  search, not just list), symbol navigation (LSP-based, heavier)
+- **File system** — `move_file`, `delete_file`, `copy_file`  
+  (currently done via `run_command mv/cp/rm` — worth making explicit?)
+- **Git** — `git_status`, `git_diff`, `git_log` as structured tools vs.
+  `run_command git …`  
+  (probably stay with `run_command` — git CLI is already rich)
+- **HTTP / API calls** — `fetch_url` already covers GET; POST/headers needed?
+- **Diff / patch** — structured diff output, patch application
+  (vs. `edit_file` + `run_command diff`)
+- **Process management** — long-running processes, background jobs  
+  (currently: `run_command` with timeout; no background support)
+- **Clipboard / stdin injection** — for pasting into other programs
+- **Structured data** — `jq`-style JSON querying, CSV parsing
+  (vs. `run_command jq`)
+
+Output: a short decision table in this file (add/skip/already-covered for each)
+after the investigation is done, then close this item.
+
+---
+
 ### [OTHER] Provider/model architecture
 Old item: current design has `provider` (binary: anthropic/openai) + `activeModel`
 (string). Works for now. Future: consider a unified `{ provider, model }` pair

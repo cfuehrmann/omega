@@ -362,3 +362,142 @@ describe("executeTool: fetch_url", () => {
     );
   });
 });
+
+// --- executeTool: grep_files ---
+
+describe("executeTool: grep_files", () => {
+  it("finds a literal pattern in a file", async () => {
+    const path = join(TMP, "alpha.ts");
+    await writeFile(path, "const foo = 1;\nconst bar = 2;\nconst foo2 = 3;\n");
+    const result = await executeTool("grep_files", {
+      pattern: "foo",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("alpha.ts");
+    expect(result.output).toContain("foo");
+  });
+
+  it("returns structured file:line:text output", async () => {
+    const path = join(TMP, "beta.ts");
+    await writeFile(path, "hello world\ngoodbye world\n");
+    const result = await executeTool("grep_files", {
+      pattern: "hello",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    // Should contain line number
+    expect(result.output).toMatch(/1:/);
+    expect(result.output).toContain("hello world");
+  });
+
+  it("respects file_glob to restrict search", async () => {
+    await writeFile(join(TMP, "code.ts"), "const x = myFunc();\n");
+    await writeFile(join(TMP, "notes.txt"), "myFunc is important\n");
+    const result = await executeTool("grep_files", {
+      pattern: "myFunc",
+      path: TMP,
+      file_glob: "*.ts",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("code.ts");
+    expect(result.output).not.toContain("notes.txt");
+  });
+
+  it("returns no matches message when pattern not found", async () => {
+    await writeFile(join(TMP, "empty.ts"), "nothing here\n");
+    const result = await executeTool("grep_files", {
+      pattern: "zzz_not_present_zzz",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("No matches");
+  });
+
+  it("is case-insensitive by default", async () => {
+    await writeFile(join(TMP, "case.ts"), "Hello World\n");
+    const result = await executeTool("grep_files", {
+      pattern: "hello",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("Hello World");
+  });
+
+  it("case_sensitive=true respects case", async () => {
+    await writeFile(join(TMP, "case2.ts"), "Hello World\nhello world\n");
+    const result = await executeTool("grep_files", {
+      pattern: "Hello",
+      path: TMP,
+      case_sensitive: true,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("Hello World");
+    // Should not match "hello world" (lowercase)
+    const lines = result.output.split("\n").filter(l => l.includes("hello world"));
+    expect(lines.length).toBe(0);
+  });
+
+  it("respects max_results cap and annotates truncation", async () => {
+    // Write a file with 300 matching lines
+    const lines = Array.from({ length: 300 }, (_, i) => `match line ${i}`).join("\n");
+    await writeFile(join(TMP, "big.ts"), lines);
+    const result = await executeTool("grep_files", {
+      pattern: "match line",
+      path: TMP,
+      max_results: 10,
+    });
+    expect(result.isError).toBe(false);
+    const matchLines = result.output.split("\n").filter(l => l.includes("match line"));
+    expect(matchLines.length).toBeLessThanOrEqual(10);
+    expect(result.output).toContain("truncated");
+  });
+
+  it("default max_results caps at 200", async () => {
+    const lines = Array.from({ length: 300 }, (_, i) => `item ${i}`).join("\n");
+    await writeFile(join(TMP, "large.ts"), lines);
+    const result = await executeTool("grep_files", {
+      pattern: "item",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    const matchLines = result.output.split("\n").filter(l => l.includes("item"));
+    expect(matchLines.length).toBeLessThanOrEqual(200);
+  });
+
+  it("returns error when pattern is missing", async () => {
+    const result = await executeTool("grep_files", { path: TMP });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("pattern");
+  });
+
+  it("returns error when path is missing", async () => {
+    const result = await executeTool("grep_files", { pattern: "foo" });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("path");
+  });
+
+  it("searches multiple files and returns matches from each", async () => {
+    await writeFile(join(TMP, "file1.ts"), "export function alpha() {}\n");
+    await writeFile(join(TMP, "file2.ts"), "import { alpha } from './file1';\n");
+    const result = await executeTool("grep_files", {
+      pattern: "alpha",
+      path: TMP,
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("file1.ts");
+    expect(result.output).toContain("file2.ts");
+  });
+});
+
+describe("formatToolCall: grep_files", () => {
+  it("formats grep_files with pattern and path", () => {
+    const s = formatToolCall("grep_files", { pattern: "compactTurn", path: "src" });
+    expect(s).toBe("grep_files: compactTurn in src");
+  });
+
+  it("includes file_glob when provided", () => {
+    const s = formatToolCall("grep_files", { pattern: "foo", path: "src", file_glob: "*.ts" });
+    expect(s).toBe("grep_files: foo in src [*.ts]");
+  });
+});
