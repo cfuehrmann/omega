@@ -1,10 +1,9 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "./fast-text-input.js";
-import { Agent, formatPayloadSummary } from "./agent.js";
+import { Agent } from "./agent.js";
 import { config } from "./config.js";
 import type { Session } from "./session.js";
-import { formatTokenDelta } from "./ui-logic.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // --- Types ---
@@ -96,10 +95,9 @@ function apiRequestLines(
   system: string,
   tools: Anthropic.Tool[],
   messages: Anthropic.MessageParam[],
-  estimatedTokens: number,
 ): Line[] {
   const lines: Line[] = [];
-  lines.push({ text: `api call #${callNumber}  ~${estimatedTokens.toLocaleString()} tokens`, bold: true, color: "cyan" });
+  lines.push({ text: `api call #${callNumber}`, bold: true, color: "cyan" });
   lines.push({ text: `${INDENT}model: "${model}"`, color: "cyan" });
   lines.push({ text: `${INDENT}system: <${system.length} chars>`, color: "cyan" });
   lines.push({ text: `${INDENT}tools: [${tools.map(t => `"${t.name}"`).join(", ")}]`, color: "cyan" });
@@ -230,8 +228,6 @@ export function App() {
   const [activity, setActivity] = useState("");
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [lastCallTokens, setLastCallTokens] = useState<number | null>(null);
-  const [tokenDelta, setTokenDelta] = useState<string>("");
   const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
 
   const nextId = useRef(0);
@@ -300,8 +296,6 @@ export function App() {
       setInput("");
       setStreamingText("");
       setIsStreaming(true);
-      setTokenDelta("");
-      setLastCallTokens(null);
 
       let fullText = "";
       const confirmTool = async () => true;
@@ -316,25 +310,15 @@ export function App() {
               addItem("user_message", now(), userMessageLines(event.content));
               break;
 
-            case "api_call_start": {
-              const est = formatPayloadSummary({
-                model: event.model,
-                system: event.system,
-                tools: event.tools,
-                messages: event.messages,
-              }).estimatedTokens;
-              setTokenDelta(formatTokenDelta(est, lastCallTokens));
-              setLastCallTokens(est);
+            case "api_call_start":
               addItem("api_request", now(), apiRequestLines(
                 event.callNumber,
                 event.model,
                 event.system,
                 event.tools,
                 event.messages,
-                est,
               ));
               break;
-            }
 
             case "api_response":
               addItem("api_response", now(), apiResponseLines(
@@ -545,7 +529,6 @@ export function App() {
         <Text dimColor>
           {config.model} │ {authMode} │ in: {agent.sessionInputTokens} out:{" "}
           {agent.sessionOutputTokens} │ {formatCost(agent.sessionCostUsd)}
-          {tokenDelta ? ` │ ${tokenDelta}` : ""}
           {isStreaming ? " │ Esc to interrupt" : " │ Ctrl+C quit"}
         </Text>
       </Box>
