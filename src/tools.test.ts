@@ -616,3 +616,99 @@ describe("formatToolCall: find_files", () => {
     expect(s).toBe("find_files: *.ts in src [type=f]");
   });
 });
+
+// --- executeTool: run_background ---
+
+describe("executeTool: run_background", () => {
+  it("returns pid and logFile immediately without blocking", async () => {
+    // sleep is a long-running process; run_background must not wait for it
+    const result = await executeTool("run_background", {
+      command: "sleep 30",
+    });
+    expect(result.isError).toBe(false);
+    const data = JSON.parse(result.output);
+    expect(typeof data.pid).toBe("number");
+    expect(data.pid).toBeGreaterThan(0);
+    expect(typeof data.logFile).toBe("string");
+    expect(data.logFile.length).toBeGreaterThan(0);
+    // Clean up
+    try { process.kill(data.pid, "SIGKILL"); } catch {}
+  });
+
+  it("log file captures stdout of the process", async () => {
+    const result = await executeTool("run_background", {
+      command: "echo hello_background",
+    });
+    expect(result.isError).toBe(false);
+    const data = JSON.parse(result.output);
+    // Wait briefly for the fast command to finish
+    await new Promise(r => setTimeout(r, 200));
+    const { readFile: rf } = await import("fs/promises");
+    const log = await rf(data.logFile, "utf-8");
+    expect(log).toContain("hello_background");
+  });
+
+  it("returns error when command is missing", async () => {
+    const result = await executeTool("run_background", {});
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("command");
+  });
+
+  it("formatToolCall formats run_background", () => {
+    const s = formatToolCall("run_background", { command: "bun run dev" });
+    expect(s).toBe("run_background: bun run dev");
+  });
+});
+
+// --- executeTool: kill_process ---
+
+describe("executeTool: kill_process", () => {
+  it("kills a running process and reports success", async () => {
+    // Start a background process
+    const bgResult = await executeTool("run_background", { command: "sleep 30" });
+    expect(bgResult.isError).toBe(false);
+    const { pid } = JSON.parse(bgResult.output);
+
+    // Kill it
+    const killResult = await executeTool("kill_process", { pid });
+    expect(killResult.isError).toBe(false);
+    expect(killResult.output).toContain(String(pid));
+  });
+
+  it("handles already-dead process gracefully", async () => {
+    // Start a fast process that will exit quickly
+    const bgResult = await executeTool("run_background", { command: "sleep 0" });
+    expect(bgResult.isError).toBe(false);
+    const { pid } = JSON.parse(bgResult.output);
+    // Wait for it to die
+    await new Promise(r => setTimeout(r, 300));
+    // Try to kill the dead process — should not error
+    const killResult = await executeTool("kill_process", { pid });
+    expect(killResult.isError).toBe(false);
+    expect(killResult.output).toMatch(/already exited|no such process|not running/i);
+  });
+
+  it("returns error when pid is missing", async () => {
+    const result = await executeTool("kill_process", {});
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("pid");
+  });
+
+  it("supports custom signal", async () => {
+    const bgResult = await executeTool("run_background", { command: "sleep 30" });
+    const { pid } = JSON.parse(bgResult.output);
+    const killResult = await executeTool("kill_process", { pid, signal: "SIGKILL" });
+    expect(killResult.isError).toBe(false);
+    expect(killResult.output).toContain(String(pid));
+  });
+
+  it("formatToolCall formats kill_process", () => {
+    const s = formatToolCall("kill_process", { pid: 12345 });
+    expect(s).toBe("kill_process: pid 12345");
+  });
+
+  it("formatToolCall formats kill_process with signal", () => {
+    const s = formatToolCall("kill_process", { pid: 12345, signal: "SIGKILL" });
+    expect(s).toBe("kill_process: pid 12345 (SIGKILL)");
+  });
+});

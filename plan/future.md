@@ -31,24 +31,6 @@ Acceptance criteria:
 
 ---
 
-#### FEAT-1: Parallel tool execution (Anthropic + OpenAI)
-**Priority: high — wall-clock latency, zero downside risk**
-
-Tools are executed sequentially with `for (const toolUse of toolUseBlocks)`.
-When a model returns multiple tool_use blocks in one response, they wait on
-each other unnecessarily.
-
-Goal: `Promise.all(toolUseBlocks.map(...))` — execute all tools in a batch
-concurrently, then collect results in original order.
-
-Acceptance criteria:
-- Multiple tools in one response run concurrently
-- Results are pushed to history in the original tool-call order
-- `tool_call` / `tool_result` events are still emitted (order may interleave)
-- Existing tests pass; add a test that confirms parallel dispatch
-
----
-
 #### FEAT-2: Anthropic extended thinking
 **Priority: medium — quality gain on complex tasks, Opus/Sonnet only**
 
@@ -113,32 +95,31 @@ Acceptance criteria:
 
 
 
-#### TOOLS-INV: Investigate full range of useful agent tools
-**Priority: medium — inform future roadmap**
+#### TOOLS-3: Background process management (`run_background` + `kill_process`)
+**Priority: high — enables server/watcher workflows currently impossible**
 
-Before adding more tools ad hoc, do a deliberate survey of what the broader
-agent-tool ecosystem has converged on, then map each candidate against Omega's
-use cases and decide add / skip / already-covered.
+`run_command` blocks until the process exits (with timeout). There is no way
+to start a long-running process, do other work, inspect its output, and then
+stop it cleanly. Workarounds (`& echo PID=$!`) leak processes across turns.
 
-Candidate areas to evaluate:
-- **Code intelligence** — `grep_files` (TOOLS-1 above), `find_files` (glob
-  search, not just list), symbol navigation (LSP-based, heavier)
-- **File system** — `move_file`, `delete_file`, `copy_file`  
-  (currently done via `run_command mv/cp/rm` — worth making explicit?)
-- **Git** — `git_status`, `git_diff`, `git_log` as structured tools vs.
-  `run_command git …`  
-  (probably stay with `run_command` — git CLI is already rich)
-- **HTTP / API calls** — `fetch_url` already covers GET; POST/headers needed?
-- **Diff / patch** — structured diff output, patch application
-  (vs. `edit_file` + `run_command diff`)
-- **Process management** — long-running processes, background jobs  
-  (currently: `run_command` with timeout; no background support)
-- **Clipboard / stdin injection** — for pasting into other programs
-- **Structured data** — `jq`-style JSON querying, CSV parsing
-  (vs. `run_command jq`)
+Goal: two new tools —
+- `run_background(command, cwd?)` → returns `{ pid, logFile }` immediately;
+  stdout+stderr are redirected to a temp log file.
+- `kill_process(pid, signal?)` → sends signal (default SIGTERM), returns
+  exit status.
 
-Output: a short decision table in this file (add/skip/already-covered for each)
-after the investigation is done, then close this item.
+Practical use cases:
+- Start a dev server, test against it, stop it.
+- Run a file watcher (`bun --watch test`), confirm it fires, stop it.
+- Any "start → inspect → stop" workflow.
+
+Acceptance criteria:
+- `run_background` returns pid + log path without blocking
+- `kill_process` terminates the process and returns exit info
+- Leaked processes are not Omega's responsibility (operator must clean up
+  if Omega crashes mid-task), but kill_process should handle "already dead"
+  gracefully
+- Tests use mock process spawning (no real process in unit tests)
 
 ---
 
@@ -155,6 +136,22 @@ Discrete, prioritised, actionable. Keep in priority order.
 ---
 
 ## Closed / dismissed items (for reference)
+
+- **TOOLS-INV: Tool set survey** — Done. Decision table:
+  | Candidate | Decision | Reason |
+  |-----------|----------|--------|
+  | `grep_files` | ✅ Added (TOOLS-1) | High value, no good CLI substitute |
+  | `find_files` | ✅ Added (TOOLS-2) | High value, `list_files` too blunt |
+  | Background processes | ✅ Add (TOOLS-3) | Enables server/watcher workflows |
+  | `move_file`/`delete_file`/`copy_file` | ⏭ Skip | `run_command mv/cp/rm` is sufficient |
+  | Git structured tools | ⏭ Skip | `run_command git …` already rich |
+  | `fetch_url` POST/headers | 🔜 Low priority | Useful for REST; low effort; defer |
+  | Diff/patch tools | ⏭ Skip | `edit_file` + `run_command diff` covers it |
+  | Clipboard/stdin injection | ⏭ Skip | No clear agentic use case for Omega |
+  | Structured data (`jq`) | ⏭ Skip | `run_command jq` is sufficient |
+  | Symbol navigation (LSP) | ⏭ Skip | Heavy; `grep_files` covers most needs |
+
+- **FEAT-1: Parallel tool execution** — Done. `Promise.all` in agentic loop; all `tool_call` events emitted before any `tool_result`; results in original order. Test in `agent-integration.test.ts`.
 
 - **TOOLS-1: `grep_files`** — Done. `executeGrepFiles` in `src/tools.ts` wraps `rg` (ripgrep) with `grep -rn` fallback. Accepts `pattern`, `path`, `file_glob`, `context_lines`, `case_sensitive`, `max_results` (default 200). Case-insensitive by default. Returns structured `file:line:text` output, capped with truncation note. 13 tests.
 - **TOOLS-2: `find_files`** — Done. `executeFindFiles` in `src/tools.ts` wraps `fd` with `find` fallback. Accepts `pattern` (glob), `path`, `type` (f/d/l), `hidden` (default false), `max_results` (default 200). Ignores hidden/.gitignored by default. Returns one path per line, capped with truncation note. 11 tests.

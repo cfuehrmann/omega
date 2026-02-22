@@ -1,6 +1,7 @@
 import { readFile, writeFile, readdir, stat } from "fs/promises";
 import { join, relative } from "path";
 import { spawn } from "child_process";
+import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // ---------------------------------------------------------------------------
@@ -425,6 +426,50 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ["pattern", "path"],
     },
   },
+  {
+    name: "run_background",
+    description:
+      "Start a long-running process in the background and return immediately. " +
+      "stdout and stderr are redirected to a temporary log file. " +
+      "Returns { pid, logFile } — use read_file on logFile to inspect output, " +
+      "and kill_process(pid) to stop the process when done. " +
+      "Use this for dev servers, file watchers, or any 'start → inspect → stop' workflow.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        command: {
+          type: "string",
+          description: "Shell command to run in the background",
+        },
+        cwd: {
+          type: "string",
+          description: "Working directory for the process (optional, defaults to cwd)",
+        },
+      },
+      required: ["command"],
+    },
+  },
+  {
+    name: "kill_process",
+    description:
+      "Send a signal to a background process started with run_background. " +
+      "Returns a status message. Handles already-exited processes gracefully. " +
+      "Default signal is SIGTERM (graceful shutdown); use SIGKILL to force.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pid: {
+          type: "number",
+          description: "Process ID returned by run_background",
+        },
+        signal: {
+          type: "string",
+          description: "Signal to send (optional, default SIGTERM). E.g. SIGTERM, SIGKILL, SIGINT.",
+        },
+      },
+      required: ["pid"],
+    },
+  },
 ];
 
 // Tool execution
@@ -751,6 +796,50 @@ async function executeFindFiles(input: {
   return `${truncated}\n\n[truncated: showing ${maxResults} of ${lines.length} results]`;
 }
 
+async function executeRunBackground(input: {
+  command: string;
+  cwd?: string;
+}): Promise<string> {
+  const logFile = join(tmpdir(), `omega-bg-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
+
+  // Open the log file for writing
+  const { open } = await import("fs/promises");
+  const fh = await open(logFile, "w");
+  const fd = fh.fd;
+
+  const proc = spawn("bash", ["-c", input.command], {
+    stdio: ["ignore", fd, fd],
+    detached: true,
+    cwd: input.cwd,
+  });
+  proc.unref();
+
+  await fh.close();
+
+  if (proc.pid == null) {
+    throw new Error("Failed to spawn background process");
+  }
+
+  return JSON.stringify({ pid: proc.pid, logFile });
+}
+
+function executeKillProcess(input: {
+  pid: number;
+  signal?: string;
+}): string {
+  const sig = (input.signal ?? "SIGTERM") as NodeJS.Signals;
+  try {
+    process.kill(input.pid, sig);
+    return `Sent ${sig} to pid ${input.pid}`;
+  } catch (err: any) {
+    // ESRCH = no such process (already dead)
+    if (err.code === "ESRCH") {
+      return `pid ${input.pid} already exited (no such process)`;
+    }
+    throw err;
+  }
+}
+
 function validateToolInput(name: string, input: any): void {
   const tool = toolDefinitions.find((t) => t.name === name);
   if (!tool) return;
@@ -808,6 +897,12 @@ export async function executeTool(
       case "find_files":
         output = await executeFindFiles(input);
         break;
+      case "run_background":
+        output = await executeRunBackground(input);
+        break;
+      case "kill_process":
+        output = executeKillProcess(input);
+        break;
       default:
         return {
           output: `Unknown tool: ${name}`,
@@ -861,6 +956,13 @@ export function formatToolCall(name: string, input: any): string {
     case "find_files": {
       let s = `find_files: ${input.pattern} in ${input.path}`;
       if (input.type) s += ` [type=${input.type}]`;
+      return s;
+    }
+    case "run_background":
+      return `run_background: ${input.command}`;
+    case "kill_process": {
+      let s = `kill_process: pid ${input.pid}`;
+      if (input.signal) s += ` (${input.signal})`;
       return s;
     }
     default:
