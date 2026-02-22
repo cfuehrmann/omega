@@ -760,7 +760,7 @@ export class Agent {
             ]
           : [
               "",
-              "Footer:  new: <non-cached input>  write: <cache-write>  read: <cache-read>  out: <output>",
+              "Footer:  new: <non-cached input, 1×>  write: <cache-write, 1.25×>  read: <cache-read, 0.1×>  out: <output>",
               "         cost: <actual>  saved: <cache savings>",
             ];
         yield {

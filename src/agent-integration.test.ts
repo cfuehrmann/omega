@@ -994,7 +994,7 @@ describe("slash commands", () => {
     expect(status.message).toContain("/help");
   });
 
-  it("/help (Anthropic) includes footer legend with all three input buckets and saved:", async () => {
+  it("/help (Anthropic) includes footer legend with all three input buckets, saved, and cost multipliers", async () => {
     const agent = new Agent(null as any, null); // default = anthropic
     const events = await collectEvents(agent, "/help");
     const status = events.find((e) => e.type === "status") as any;
@@ -1003,6 +1003,10 @@ describe("slash commands", () => {
     expect(status.message).toContain("read:");
     expect(status.message).toContain("out:");
     expect(status.message).toContain("saved:");
+    // cost multipliers
+    expect(status.message).toContain("1×");
+    expect(status.message).toContain("1.25×");
+    expect(status.message).toContain("0.1×");
   });
 
   it("/help (OpenAI after /codex) shows shorter legend — no write:/read:/saved:", async () => {
