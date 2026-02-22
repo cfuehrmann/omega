@@ -336,6 +336,57 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(history[2].role).toBe("user"); // tool result
     expect(history[3].role).toBe("assistant");
   });
+
+  it("executes multiple tools in parallel (both tool_call events before any tool_result)", async () => {
+    // Build a response with two tool_use blocks (list_files + list_files)
+    const twoToolMessage: Anthropic.Message = {
+      id: "msg_two_tools",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-6",
+      content: [
+        { type: "tool_use", id: "tA", name: "list_files", input: { path: "src" } },
+        { type: "tool_use", id: "tB", name: "list_files", input: { path: "plan" } },
+      ],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 20, output_tokens: 10 },
+    };
+    const twoToolStreamEvents: any[] = [
+      { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tA", name: "list_files" } },
+      { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"path":"src"}' } },
+      { type: "content_block_stop", index: 0 },
+      { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tB", name: "list_files" } },
+      { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path":"plan"}' } },
+      { type: "content_block_stop", index: 1 },
+      { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
+      { type: "message_stop" },
+    ];
+
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(twoToolStreamEvents, twoToolMessage);
+      return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
+    };
+
+    const agent = new Agent(mockProvider);
+    const events = await collectEvents(agent, "list dirs");
+
+    const toolCallEvents = events.filter((e) => e.type === "tool_call");
+    const toolResultEvents = events.filter((e) => e.type === "tool_result");
+    expect(toolCallEvents.length).toBe(2);
+    expect(toolResultEvents.length).toBe(2);
+
+    // Parallel execution: both tool_call events appear before any tool_result event.
+    // Sequential execution would interleave: call_A, result_A, call_B, result_B.
+    const firstResultIndex = events.findIndex((e) => e.type === "tool_result");
+    const lastCallIndex = events.reduce(
+      (idx, e, i) => (e.type === "tool_call" ? i : idx),
+      -1
+    );
+    expect(lastCallIndex).toBeLessThan(firstResultIndex);
+  });
 });
 
 

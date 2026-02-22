@@ -2,7 +2,115 @@
 
 ## Open items
 
-- **Provider/model architecture** — current design has `provider` (binary: anthropic/openai) + `activeModel` (string). Works for now. Future: consider a unified `{ provider, model }` pair or registry to make adding new providers/models cleaner.
+### [TOPIC] Provider feature parity & architecture
+*See "Provider Feature Gaps" section in world-state.md for full analysis.*
+
+The gap between what we send to providers and what they support falls into two
+categories: architecture (how the code is structured) and features (what we
+use). Work in priority order below.
+
+---
+
+#### ARCH-1: Clean provider boundary in agent.ts
+**Priority: do first — unblocks everything below**
+
+`agent.ts` currently has large `if (useOpenAi) { ... } else { ... }` blocks
+inside the agentic loop: two separate retry blocks, two separate
+`api_call_start` builders, etc. This makes it hard to add provider-specific
+features (e.g. Anthropic extended thinking, OpenAI `previous_response_id`)
+without touching unrelated code.
+
+Goal: extract a clean `callAnthropicTurn()` and `callOpenAiTurn()` helper
+(or similar boundary), so each provider's agentic-loop slice is fully
+self-contained. Common plumbing (retry, abort, token accounting) stays shared.
+
+Acceptance criteria:
+- `agent.ts` agentic loop body has no large `if (useOpenAi)` branch
+- Each provider helper is independently testable
+- All existing tests still pass
+
+---
+
+#### FEAT-1: Parallel tool execution (Anthropic + OpenAI)
+**Priority: high — wall-clock latency, zero downside risk**
+
+Tools are executed sequentially with `for (const toolUse of toolUseBlocks)`.
+When a model returns multiple tool_use blocks in one response, they wait on
+each other unnecessarily.
+
+Goal: `Promise.all(toolUseBlocks.map(...))` — execute all tools in a batch
+concurrently, then collect results in original order.
+
+Acceptance criteria:
+- Multiple tools in one response run concurrently
+- Results are pushed to history in the original tool-call order
+- `tool_call` / `tool_result` events are still emitted (order may interleave)
+- Existing tests pass; add a test that confirms parallel dispatch
+
+---
+
+#### FEAT-2: Anthropic extended thinking
+**Priority: medium — quality gain on complex tasks, Opus/Sonnet only**
+
+We never pass `thinking: { type: "enabled", budget_tokens: N }` to Anthropic.
+Extended thinking would improve reasoning quality on multi-step problems.
+
+Goal: enable thinking on Anthropic calls. Thinking tokens are output tokens
+for billing; budget should be a fraction of `max_tokens`.
+
+Sub-tasks:
+1. Add `thinking` param to Anthropic stream call (Sonnet: budget ~8k, Opus: ~16k)
+2. Handle `thinking` content blocks in the event stream (don't yield as text;
+   optionally emit as a separate `thinking` event type for debug logging)
+3. Add thinking tokens to turn footer / cost accounting if billed separately
+4. Tests: mock stream includes thinking blocks; verify they don't corrupt history
+
+Note: requires `anthropic-beta: interleaved-thinking-2025-05-14` header.
+The OAuth client already sets beta headers; the API-key client does not — this
+must be fixed as part of this task (add the header to the API-key client path
+or unify the client initialisation).
+
+---
+
+#### FEAT-3: OpenAI `previous_response_id`
+**Priority: medium — cuts OpenAI input token cost by ~80% on long sessions**
+
+`callOpenAi()` currently resends the full `this.history` on every call inside
+the agentic loop. The Responses API supports `previous_response_id` to let the
+server maintain history, so we only send the new user message each time.
+
+Goal: store the last response ID and pass it on successive calls within a turn.
+History management across turns (compaction) still happens client-side.
+
+Sub-tasks:
+1. `callOpenAi()` accepts and returns `previousResponseId`
+2. Inside the agentic loop, thread the ID through successive calls
+3. On turn boundary (compaction), reset the ID (start fresh next turn)
+4. Tests: mock verifies the ID is forwarded on call 2+
+
+---
+
+#### FEAT-4: Anthropic beta headers on API-key path
+**Priority: low-medium — prerequisite for FEAT-2 on API-key auth**
+
+The OAuth client sets `anthropic-beta: claude-code-20250219,oauth-2025-04-20`.
+The API-key client (`new Anthropic()`) sends no beta headers, which blocks
+extended thinking (`interleaved-thinking-2025-05-14`) and other betas.
+
+Goal: unify beta header injection so both auth paths get the same betas
+(minus the oauth-specific one on the API-key path).
+
+Acceptance criteria:
+- API-key client includes `interleaved-thinking-2025-05-14` (and others as needed)
+- Existing auth tests still pass
+
+---
+
+### [OTHER] Provider/model architecture
+Old item: current design has `provider` (binary: anthropic/openai) + `activeModel`
+(string). Works for now. Future: consider a unified `{ provider, model }` pair
+or registry to make adding new providers/models cleaner. Low priority until
+more providers are added.
 
 ---
 

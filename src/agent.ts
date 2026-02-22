@@ -1143,18 +1143,31 @@ export class Agent {
       if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
+        // Emit all tool_call events first, then execute all tools in parallel,
+        // then emit all tool_result events. This reduces wall-clock latency when
+        // the model returns multiple tool_use blocks in one response.
+        const formattedCalls: Array<{ toolUse: Anthropic.ToolUseBlock; formatted: string }> = [];
         for (const toolUse of toolUseBlocks) {
           const formatted = formatToolCall(toolUse.name, toolUse.input);
-
+          formattedCalls.push({ toolUse, formatted });
           yield {
             type: "tool_call",
             id: toolUse.id,
             name: toolUse.name,
             input: toolUse.input,
             formatted,
-          };
+          } as AgentEvent;
+        }
 
-          const result = await executeTool(toolUse.name, toolUse.input);
+        // Execute all tools concurrently
+        const results = await Promise.all(
+          formattedCalls.map(({ toolUse }) => executeTool(toolUse.name, toolUse.input))
+        );
+
+        for (let i = 0; i < formattedCalls.length; i++) {
+          const { toolUse, formatted } = formattedCalls[i];
+          const result = results[i];
+
           toolCallsThisTurn.push(toolUse.name);
           allToolCalls.push(toolUse.name);
 
@@ -1172,7 +1185,7 @@ export class Agent {
             name: toolUse.name,
             formatted,
             result,
-          };
+          } as AgentEvent;
 
           toolResults.push({
             type: "tool_result",
