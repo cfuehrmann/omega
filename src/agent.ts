@@ -611,7 +611,7 @@ export class Agent {
   private async compactAfterTurn(turnMessages: Anthropic.MessageParam[]): Promise<void> {
     try {
       const provider = this.getStreamProvider();
-      const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider);
+      const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider, this.activeModel);
       this.zone2Summary = (newSummaryMsgs[0].content as string).replace(/^\[session summary[^\]]*\]\n/, "");
       this.history = newSummaryMsgs as Anthropic.MessageParam[];
     } catch (err: any) {
@@ -637,7 +637,7 @@ export class Agent {
 
       // Build the request params so we can show them in api_call_start
       const compactionRequest = {
-        model: providerName === "openai" ? (config.fallbackModel as string) : "claude-sonnet-4-6",
+        model: providerName === "openai" ? (config.fallbackModel as string) : this.activeModel,
         max_tokens: 2048,
         system: "You are a context compactor. Respond only with the requested summary, no preamble.",
         tools: [],
@@ -673,7 +673,7 @@ export class Agent {
       // Attempt compaction with one re-auth retry on 401 (Anthropic only)
       let newState: string;
       try {
-        newState = await compactWorldState(prior, this.history, wrappedProvider);
+        newState = await compactWorldState(prior, this.history, wrappedProvider, this.activeModel);
       } catch (compactErr: any) {
         if (isAuthExpired(compactErr) && providerName === "anthropic") {
           logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh" });
@@ -688,7 +688,7 @@ export class Agent {
           capturedUsage = null;
           capturedContent = [];
           const retryWrapped = wrapProvider(freshProvider);
-          newState = await compactWorldState(prior, this.history, retryWrapped);
+          newState = await compactWorldState(prior, this.history, retryWrapped, this.activeModel);
         } else {
           throw compactErr;
         }

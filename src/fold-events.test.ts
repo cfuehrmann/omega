@@ -169,6 +169,32 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect((errorEvent as any).error).toContain("LLM exploded");
   });
 
+  it("compactTurn uses the active model (e.g. opus) not hardcoded sonnet", async () => {
+    // This tests that when /opus is active, turn compaction calls the provider
+    // with model=claude-opus-4-6, not the hardcoded claude-sonnet-4-6.
+    const modelsUsed: string[] = [];
+    const capturingProvider: StreamProvider = async (params) => {
+      modelsUsed.push(params.model);
+      return makeMockStream("summary text");
+    };
+
+    const agent = new Agent(capturingProvider, null, undefined, null);
+    // Switch to Opus
+    for await (const _ of agent.sendMessage("/opus", async () => true)) { /* drain */ }
+    // Reset captured models (the /opus command doesn't call the provider)
+    modelsUsed.length = 0;
+
+    // Send a real message — this triggers a turn + compactAfterTurn
+    for await (const _ of agent.sendMessage("hello", async () => true)) { /* drain */ }
+
+    // Give compactAfterTurn (fire-and-forget) a moment to run
+    await new Promise(r => setTimeout(r, 50));
+
+    // The main turn call uses opus; compaction should also use opus
+    expect(modelsUsed.every(m => m === "claude-opus-4-6")).toBe(true);
+    expect(modelsUsed.length).toBeGreaterThanOrEqual(2); // at least 1 main call + 1 compaction
+  });
+
   it("uses the OpenAI caller for fold when OpenAI is the active provider", async () => {
     const worldStatePath = join(tempDir, "world-state.md");
 
