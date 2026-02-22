@@ -30,11 +30,9 @@ renderers (renderUserMessage, renderApiRequest, etc.).
 Detect when a tool call needs `sudo`, surface it clearly to the operator,
 handle the elevated execution. Currently unhandled.
 
-## 5. Context summarisation
+## 5. Context summarisation ✓ DONE
 
-When context is truncated, old messages are dropped silently. Better:
-summarise dropped content and inject the summary so the agent retains
-semantic history even with a full context window.
+Three-zone compaction implemented: world state (zone 1), turn summaries (zone 2), verbatim current turn (zone 3). LLM-based. See past.md.
 
 ## 6. Rich command output
 

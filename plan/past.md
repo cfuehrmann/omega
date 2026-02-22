@@ -43,9 +43,14 @@ prompt: test must fail first, then fix, then confirm all pass.
 
 ## Context management
 
-Truncation (drop oldest messages, keep system + recent) rather than
-summarisation. Token budget: 100k. `edit_file` for surgical edits to avoid
-rewriting whole files.
+Three-zone model:
+- **Zone 1** (prior sessions): persisted as `~/.local/share/omega/world-state.md`. Folded in at session start via LLM call. Injected into system prompt as "World State" section.
+- **Zone 2** (prior turns this session): LLM-compacted after each turn into a 2-message synthetic exchange `[session summary…] / Understood.` Zone 2 always exactly 2 messages.
+- **Zone 3** (current turn): always verbatim, no compaction.
+
+Compaction uses the same stream provider as the main turn (injectable for tests). Token budget: 100k. Hard cap: 100 messages (blunt safety net, mostly superseded by zone compaction). `edit_file` for surgical edits to avoid rewriting whole files.
+
+World state update: at startup, prior session history is folded into world-state.md (fire-and-forget). World state loaded into memory after `init()`, injected into system prompt.
 
 ## UI (raw terminal, no library)
 
