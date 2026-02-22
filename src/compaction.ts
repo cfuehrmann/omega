@@ -37,10 +37,15 @@ function serialiseMessages(msgs: MessageParam[]): string {
 }
 
 /** Call the LLM with a single user message and return the text response. */
-async function callLlm(prompt: string, provider: StreamProvider, model = "claude-sonnet-4-6"): Promise<string> {
+async function callLlm(
+  prompt: string,
+  provider: StreamProvider,
+  model = "claude-sonnet-4-6",
+  maxTokens = 2048
+): Promise<string> {
   const stream = await provider({
     model,
-    max_tokens: 2048,
+    max_tokens: maxTokens,
     system: "You are a context compactor. Respond only with the requested summary, no preamble.",
     tools: [],
     messages: [{ role: "user", content: prompt }],
@@ -83,7 +88,7 @@ export async function compactTurn(
 
 Write in past tense, be concise. No preamble, just the summary text.`;
 
-  const summary = await callLlm(prompt, provider, model);
+  const summary = await callLlm(prompt, provider, model, 2048);
 
   return [
     { role: "user", content: `[session summary up to this point]\n${summary}` },
@@ -124,5 +129,5 @@ Write in present tense for current state, past tense for history.
 Be concise but complete. Ruthlessly prune: prefer one accurate sentence over three redundant ones.
 No preamble, just the document.`;
 
-  return callLlm(prompt, provider, model);
+  return callLlm(prompt, provider, model, 4096);
 }
