@@ -759,6 +759,7 @@ export class Agent {
 
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
+    let activeModel = this.activeModel;
     while (continueLoop) {
       continueLoop = false;
 
@@ -787,7 +788,7 @@ export class Agent {
       }
 
       const useOpenAi = this.provider === "openai";
-      let activeModel = this.activeModel;
+      activeModel = this.activeModel;
 
       if (useOpenAi) {
         yield {
@@ -1172,7 +1173,7 @@ export class Agent {
 
     // Emit one turn_end after all API calls complete
     const endProvider: ProviderName = this.provider === "openai" ? "openai" : "anthropic";
-    const endModel = endProvider === "openai" ? (config.fallbackModel as string) : config.model;
+    const endModel = activeModel;
     yield {
       type: "turn_end",
       metrics: {

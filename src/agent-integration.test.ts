@@ -682,6 +682,27 @@ describe("Agent — turn_end event", () => {
     const turnEnd = events.find((e) => e.type === "turn_end") as any;
     expect(turnEnd.toolCalls).toEqual([]);
   });
+
+  it("turn_end model reflects activeModel after /opus switch", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    // Switch to opus first
+    await collectEvents(agent, "/opus");
+    // Send a real message and check the turn_end model
+    const events = await collectEvents(agent, "hi");
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd.model).toBe("claude-opus-4-6");
+  });
+
+  it("turn_end model is sonnet by default", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd.model).toBe("claude-sonnet-4-6");
+  });
 });
 
 // ---------------------------------------------------------------------------
