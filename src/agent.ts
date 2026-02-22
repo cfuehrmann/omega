@@ -450,6 +450,9 @@ export class Agent {
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
 
+    // Reset API call counter — numbered per user prompt, not per session
+    this._apiCallCount = 0;
+
     // Apply context window truncation before each API call
     this.history = truncateHistory(this.history) as Anthropic.MessageParam[];
 
