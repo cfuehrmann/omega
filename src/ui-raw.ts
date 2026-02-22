@@ -8,6 +8,7 @@
 
 import { Agent } from "./agent.js";
 import { config } from "./config.js";
+import { formatTurnFooter } from "./turn-footer.js";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -49,16 +50,6 @@ function now(): string {
   return new Date().toLocaleTimeString("en-GB");
 }
 
-function formatCost(usd: number): string {
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(3)}`;
-}
-
-function formatMs(ms: number | null): string {
-  if (ms === null) return "-";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
 
 function truncateOutput(text: string, maxLines = 10): string {
   const lines = text.split("\n");
@@ -251,13 +242,8 @@ function renderAssistantMessage(text: string, dimText?: string): string[] {
   return lines;
 }
 
-function renderStatus(agent: Agent, streaming: boolean): string {
-  const provider = agent.getProvider();
-  const model = provider === "openai" ? config.fallbackModel : config.model;
-  return dim(
-    `${provider}/${model} │ in: ${agent.sessionInputTokens} out: ${agent.sessionOutputTokens} │ ${formatCost(agent.sessionCostUsd)}` +
-    (streaming ? " │ Esc to interrupt" : " │ Ctrl+C to quit")
-  );
+function renderStatus(streaming: boolean): string {
+  return dim(streaming ? "Esc to interrupt" : "Ctrl+C to quit  /gpt /anthropic /opus");
 }
 
 // ---------------------------------------------------------------------------
@@ -474,9 +460,16 @@ export async function runApp(): Promise<void> {
               streamingStarted = false;
             }
             const m = event.metrics;
-            const dimText = `[${event.provider}/${event.model}] in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)}`;
-            printBlock(now(), [dim(dimText)]);
-            printBlock(now(), [renderStatus(agent, false)]);
+            const provider = event.provider;
+            const model = event.model;
+            const { turnLine, sessionLine } = formatTurnFooter(
+              { inputTokens: m.inputTokens, outputTokens: m.outputTokens, costUsd: m.costUsd, ttftMs: m.ttftMs },
+              { inputTokens: agent.sessionInputTokens, outputTokens: agent.sessionOutputTokens, costUsd: agent.sessionCostUsd },
+              provider,
+              model,
+            );
+            printBlock(now(), [turnLine]);
+            printBlock(now(), [sessionLine]);
             break;
           }
 
@@ -515,8 +508,8 @@ export async function runApp(): Promise<void> {
     () => { shutdown(agent, 0); },
   );
 
-  // Initial prompt
-  printBlock(now(), [renderStatus(agent, false)]);
+  // Initial prompt — show shortcuts once at startup
+  printBlock(now(), [renderStatus(false)]);
   printPrompt(bold(green("❯ ")));
 }
 
