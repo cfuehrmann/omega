@@ -433,12 +433,9 @@ async function shutdown(agent: Agent, code: number = 0): Promise<never> {
         break;
 
       case "tool_result":
-        // For shutdown events the "input" is the formatted description string
-        printBlock(now(), renderToolExecution(
-          event.name,
-          event.formatted,
-          event.result,
-        ));
+        // Synthetic file-write notification — show as a simple status line,
+        // not as a "tool execution" (the LLM never called this tool).
+        printBlock(now(), [dim(`✓ world state saved  ${event.result.output}`)]);
         break;
 
       case "error":
