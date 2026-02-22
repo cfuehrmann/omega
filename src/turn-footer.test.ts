@@ -36,17 +36,22 @@ describe("formatTurnFooter", () => {
     expect(stripAnsi(sessionLine)).toMatch(/^session:/);
   });
 
-  it("turn line contains per-turn in/out tokens", () => {
+  it("turn line contains per-turn new/out tokens", () => {
     const { turnLine } = formatTurnFooter(metrics, session, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).toContain("in: 1234");
+    expect(plain).toContain("new: 1234");
     expect(plain).toContain("out: 567");
   });
 
-  it("session line contains cumulative in/out tokens", () => {
+  it("turn line does NOT use old 'in:' label", () => {
+    const { turnLine } = formatTurnFooter(metrics, session, provider, model);
+    expect(stripAnsi(turnLine)).not.toMatch(/\bin:/);
+  });
+
+  it("session line contains cumulative new/out tokens", () => {
     const { sessionLine } = formatTurnFooter(metrics, session, provider, model);
     const plain = stripAnsi(sessionLine);
-    expect(plain).toContain("in: 9999");
+    expect(plain).toContain("new: 9999");
     expect(plain).toContain("out: 1111");
   });
 
@@ -80,11 +85,11 @@ describe("formatTurnFooter", () => {
     expect(stripAnsi(sessionLine)).not.toContain(model);
   });
 
-  it("'in:' appears at the same column offset in both lines", () => {
+  it("'new:' appears at the same column offset in both lines", () => {
     const { turnLine, sessionLine } = formatTurnFooter(metrics, session, provider, model);
     const tPlain = stripAnsi(turnLine);
     const sPlain = stripAnsi(sessionLine);
-    expect(tPlain.indexOf("in:")).toBe(sPlain.indexOf("in:"));
+    expect(tPlain.indexOf("new:")).toBe(sPlain.indexOf("new:"));
   });
 });
 
@@ -121,19 +126,19 @@ describe("formatTurnFooter — cache savings", () => {
     costUsd: 0.005,
   };
 
-  it("turn line shows cache write tokens when cacheCreationTokens > 0", () => {
+  it("turn line shows write: token count when cacheCreationTokens > 0", () => {
     const { turnLine } = formatTurnFooter(metricsWithCache, sessionNoCache, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).toContain("cache_write: 800");
+    expect(plain).toContain("write: 800");
   });
 
-  it("turn line shows cache read tokens when cacheReadTokens > 0", () => {
+  it("turn line shows read: token count when cacheReadTokens > 0", () => {
     const { turnLine } = formatTurnFooter(metricsWithRead, sessionNoCache, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).toContain("cache_read: 500");
+    expect(plain).toContain("read: 500");
   });
 
-  it("turn line does NOT show cache fields when both are zero", () => {
+  it("turn line shows write: 0 and read: 0 even when both are zero (always-on labels)", () => {
     const metricsZero = {
       inputTokens: 100,
       outputTokens: 50,
@@ -144,11 +149,11 @@ describe("formatTurnFooter — cache savings", () => {
     };
     const { turnLine } = formatTurnFooter(metricsZero, sessionNoCache, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).not.toContain("cache_write");
-    expect(plain).not.toContain("cache_read");
+    expect(plain).toContain("write: 0");
+    expect(plain).toContain("read: 0");
   });
 
-  it("turn line does NOT show cache fields when cache fields are absent", () => {
+  it("turn line shows write: 0 and read: 0 when cache fields absent (defaults to 0)", () => {
     const metricsNone = {
       inputTokens: 100,
       outputTokens: 50,
@@ -157,21 +162,29 @@ describe("formatTurnFooter — cache savings", () => {
     };
     const { turnLine } = formatTurnFooter(metricsNone, sessionNoCache, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).not.toContain("cache_write");
-    expect(plain).not.toContain("cache_read");
+    expect(plain).toContain("write: 0");
+    expect(plain).toContain("read: 0");
   });
 
-  it("session line shows cumulative cache read tokens when present", () => {
+  it("session line shows cumulative read: token count when present", () => {
     const { sessionLine } = formatTurnFooter(metricsWithRead, sessionWithCache, provider, model);
     const plain = stripAnsi(sessionLine);
-    expect(plain).toContain("cache_read: 500");
+    expect(plain).toContain("read: 500");
   });
 
-  it("session line does NOT show cache fields when session has none", () => {
+  it("session line shows write: 0 and read: 0 when session has no cache tokens", () => {
     const { sessionLine } = formatTurnFooter(metricsWithRead, sessionNoCache, provider, model);
     const plain = stripAnsi(sessionLine);
-    expect(plain).not.toContain("cache_write");
-    expect(plain).not.toContain("cache_read");
+    expect(plain).toContain("write: 0");
+    expect(plain).toContain("read: 0");
+  });
+
+  it("old 'cache_write:' and 'cache_read:' labels are gone for Anthropic", () => {
+    const { turnLine, sessionLine } = formatTurnFooter(metricsWithCache, sessionWithCache, provider, model);
+    expect(stripAnsi(turnLine)).not.toContain("cache_write");
+    expect(stripAnsi(turnLine)).not.toContain("cache_read");
+    expect(stripAnsi(sessionLine)).not.toContain("cache_write");
+    expect(stripAnsi(sessionLine)).not.toContain("cache_read");
   });
 });
 
@@ -308,18 +321,18 @@ describe("formatTurnFooter — OpenAI provider", () => {
     expect(stripAnsi(sessionLine)).not.toContain("saved:");
   });
 
-  it("turn line does NOT show cache fields for OpenAI", () => {
+  it("turn line does NOT show write: or read: fields for OpenAI", () => {
     const { turnLine } = formatTurnFooter(metrics, session, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).not.toContain("cache_write");
-    expect(plain).not.toContain("cache_read");
+    expect(plain).not.toContain("write:");
+    expect(plain).not.toContain("read:");
   });
 
-  it("session line does NOT show cache fields for OpenAI", () => {
+  it("session line does NOT show write: or read: fields for OpenAI", () => {
     const { sessionLine } = formatTurnFooter(metrics, session, provider, model);
     const plain = stripAnsi(sessionLine);
-    expect(plain).not.toContain("cache_write");
-    expect(plain).not.toContain("cache_read");
+    expect(plain).not.toContain("write:");
+    expect(plain).not.toContain("read:");
   });
 
   it("'cost:' column aligns between turn and session lines for OpenAI", () => {
@@ -329,10 +342,10 @@ describe("formatTurnFooter — OpenAI provider", () => {
     expect(tPlain.indexOf("cost:")).toBe(sPlain.indexOf("cost:"));
   });
 
-  it("turn line still shows in:, out:, ttft:, and provider/model", () => {
+  it("turn line still shows new:, out:, ttft:, and provider/model for OpenAI", () => {
     const { turnLine } = formatTurnFooter(metrics, session, provider, model);
     const plain = stripAnsi(turnLine);
-    expect(plain).toContain("in: 2000");
+    expect(plain).toContain("new: 2000");
     expect(plain).toContain("out: 300");
     expect(plain).toContain("ttft:");
     expect(plain).toContain(model);
