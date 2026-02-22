@@ -100,17 +100,22 @@ What actually goes over the wire (simplified to what we use):
   max_tokens: number,             // config.maxOutputTokens = 8192
   system: string,                 // system prompt (plain text)
   tools: Tool[],                  // see tool shapes below
-  messages: MessageParam[],       // conversation history
+  messages: MessageParam[],       // conversation history — grows each loop iteration
 }
 
+// Each message is one of:
 type MessageParam =
   | { role: "user";      content: string | ContentBlockParam[] }
   | { role: "assistant"; content: string | ContentBlockParam[] }
 
+// Content blocks within a message:
 type ContentBlockParam =
   | { type: "text";        text: string }
   | { type: "tool_use";    id: string; name: string; input: object }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
+
+// Note: the UI shows messages as a count only ("messages: <N messages>")
+// since the full content is visible in the scrollback.
 ```
 
 **Context growth:** Every agentic loop iteration appends to `messages`:
