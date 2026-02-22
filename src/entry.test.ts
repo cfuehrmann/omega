@@ -24,14 +24,16 @@ describe("entry points", () => {
     expect(() => readFileSync(entryFile)).not.toThrow();
   });
 
-  it("start entry file has a top-level runApp() call", () => {
+  it("start entry file invokes runApp() at top level or under import.meta.main guard", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8"));
     const match = pkg.scripts.start.match(/bun run (\S+)/);
     const source = readFileSync(join(ROOT, match![1]), "utf-8");
 
-    // Must have a top-level call (not just export)
-    // Match runApp() at the start of a line (not inside a function body)
-    expect(source).toMatch(/^runApp\(/m);
+    // Must have a top-level call (not just export).
+    // Accept bare `runApp()` at start of a line, or guarded by import.meta.main.
+    const hasBareCall   = /^runApp\(/m.test(source);
+    const hasGuardedCall = /import\.meta\.main/.test(source) && source.includes("runApp(");
+    expect(hasBareCall || hasGuardedCall).toBe(true);
   });
 
   it("package.json login script points to a file that exists", () => {

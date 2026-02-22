@@ -250,7 +250,77 @@ function renderStatus(streaming: boolean): string {
 // Raw stdin
 // ---------------------------------------------------------------------------
 
-let inputBuffer = "";
+/** Callbacks for key input parsing. */
+export interface KeyCallbacks {
+  onSubmit: (line: string) => void;
+  onEscape: () => void;
+  onExit: () => void;
+}
+
+/**
+ * Parse a raw terminal chunk and dispatch to callbacks.
+ * Maintains input buffer state across calls via a module-level variable
+ * (for production use via setupRawInput) or via the returned buffer value.
+ *
+ * Exported for unit testing without requiring a real TTY.
+ *
+ * @param chunk     Raw bytes from stdin (UTF-8 string).
+ * @param callbacks Handlers for submit, escape, and exit.
+ * @param buf       Current input buffer (defaults to shared module buffer).
+ * @returns         Updated input buffer after processing.
+ */
+export function parseKeys(
+  chunk: string,
+  callbacks: KeyCallbacks,
+  buf: { value: string } = sharedBuffer,
+): string {
+  const { onSubmit, onEscape, onExit } = callbacks;
+
+  for (let i = 0; i < chunk.length; i++) {
+    const ch = chunk[i];
+    const code = chunk.charCodeAt(i);
+
+    if (ch === "\x03") { onExit(); return buf.value; }  // Ctrl+C — stop processing
+
+    if (ch === "\x1b") {                       // Escape or sequence
+      if (i + 1 < chunk.length && chunk[i + 1] === "[") {
+        // Arrow key or other CSI sequence — skip it
+        i += 2;
+        while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) i++;
+      } else {
+        onEscape();
+      }
+      continue;
+    }
+
+    if (ch === "\r" || ch === "\n") {          // Enter
+      const line = buf.value;
+      buf.value = "";
+      onSubmit(line);
+      continue;
+    }
+
+    if (code === 127 || code === 8) {          // Backspace
+      if (buf.value.length > 0) {
+        buf.value = buf.value.slice(0, -1);
+        // Erase last char: backspace, space, backspace
+        process.stdout.write("\b \b");
+      }
+      continue;
+    }
+
+    // Printable character
+    if (code >= 32 || code > 127) {
+      buf.value += ch;
+      process.stdout.write(ch);                // echo
+    }
+  }
+
+  return buf.value;
+}
+
+/** Shared mutable buffer used by setupRawInput in production. */
+const sharedBuffer = { value: "" };
 
 function setupRawInput(
   onSubmit: (line: string) => void,
@@ -266,46 +336,7 @@ function setupRawInput(
   process.stdin.setEncoding("utf-8");
 
   process.stdin.on("data", (chunk: string) => {
-    for (let i = 0; i < chunk.length; i++) {
-      const ch = chunk[i];
-      const code = chunk.charCodeAt(i);
-
-      if (ch === "\x03") { onExit(); return; }  // Ctrl+C
-
-      if (ch === "\x1b") {                       // Escape or sequence
-        if (i + 1 < chunk.length && chunk[i + 1] === "[") {
-          // Arrow key or other CSI sequence — skip it
-          i += 2;
-          while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) i++;
-        } else {
-          onEscape();
-        }
-        continue;
-      }
-
-      if (ch === "\r" || ch === "\n") {          // Enter
-        const line = inputBuffer;
-        inputBuffer = "";
-        // Reprint the prompt line with the submitted text (it was shown inline)
-        onSubmit(line);
-        continue;
-      }
-
-      if (code === 127 || code === 8) {          // Backspace
-        if (inputBuffer.length > 0) {
-          inputBuffer = inputBuffer.slice(0, -1);
-          // Erase last char: backspace, space, backspace
-          process.stdout.write("\b \b");
-        }
-        continue;
-      }
-
-      // Printable character
-      if (code >= 32 || code > 127) {
-        inputBuffer += ch;
-        process.stdout.write(ch);                // echo
-      }
-    }
+    parseKeys(chunk, { onSubmit, onEscape, onExit });
   });
 }
 
@@ -355,6 +386,7 @@ export async function runApp(): Promise<void> {
 
   let abortController: AbortController | null = null;
   let isStreaming = false;
+  let shuttingDown = false;
 
   async function handleSubmit(line: string): Promise<void> {
     println("");  // newline after inline-echoed input
@@ -498,14 +530,23 @@ export async function runApp(): Promise<void> {
     }
   }
 
+  /** Idempotent shutdown — guards against double-invocation (e.g. two Ctrl+C). */
+  function initiateShutdown(): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // Abort any in-flight stream so the world-state fold sees the latest context.
+    if (abortController) { abortController.abort(); abortController = null; }
+    shutdown(agent, 0);
+  }
+
   // Handle SIGINT and SIGTERM: fold world state then exit cleanly
-  process.once("SIGINT",  () => { shutdown(agent, 0); });
-  process.once("SIGTERM", () => { shutdown(agent, 0); });
+  process.once("SIGINT",  initiateShutdown);
+  process.once("SIGTERM", initiateShutdown);
 
   setupRawInput(
     (line) => { handleSubmit(line).catch(console.error); },
     () => { if (abortController) { abortController.abort(); abortController = null; } },
-    () => { shutdown(agent, 0); },
+    initiateShutdown,
   );
 
   // Initial prompt — show shortcuts once at startup
@@ -513,8 +554,10 @@ export async function runApp(): Promise<void> {
   printPrompt(bold(green("❯ ")));
 }
 
-// Entry point
-runApp().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Entry point — only run when executed directly, not when imported in tests
+if (import.meta.main) {
+  runApp().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

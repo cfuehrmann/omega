@@ -55,7 +55,7 @@ export const PRICING: Record<string, { input: number; output: number }> = {
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
   // OpenAI Codex pricing unknown here — leave 0 until configured
-  "gpt-5.2-codex": { input: 0, output: 0 },
+  "gpt-5.2-codex": { input: 1.25, output: 10 },
 };
 
 export function estimateCost(
