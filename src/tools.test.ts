@@ -168,6 +168,12 @@ describe("executeTool: run_command", () => {
     });
     expect(result.output).toBe("(no output)");
   });
+
+  it("errors when command is missing", async () => {
+    const result = await executeTool("run_command", {});
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("Missing required field: command");
+  });
 });
 
 // --- executeTool: list_files ---

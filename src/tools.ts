@@ -498,12 +498,34 @@ async function executeListFiles(input: {
   return output;
 }
 
+function validateToolInput(name: string, input: any): void {
+  const tool = toolDefinitions.find((t) => t.name === name);
+  if (!tool) return;
+  const schema = (tool as any).input_schema;
+  if (!schema) return;
+
+  const required: string[] = schema.required ?? [];
+  const props: Record<string, any> = schema.properties ?? {};
+
+  for (const key of required) {
+    if (input == null || input[key] == null) {
+      throw new Error(`Missing required field: ${key}`);
+    }
+    const expectedType = props[key]?.type;
+    if (expectedType && typeof input[key] !== expectedType) {
+      throw new Error(`Invalid type for ${key}: expected ${expectedType}`);
+    }
+  }
+}
+
 export async function executeTool(
   name: string,
   input: any
 ): Promise<ToolResult> {
   const startTime = performance.now();
   try {
+    validateToolInput(name, input);
+
     let output: string;
     switch (name) {
       case "read_file":
