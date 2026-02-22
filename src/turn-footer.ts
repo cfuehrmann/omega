@@ -35,12 +35,16 @@ export interface TurnMetrics {
   outputTokens: number;
   costUsd: number;
   ttftMs: number | null;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 export interface SessionTotals {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 export interface TurnFooter {
@@ -67,10 +71,20 @@ export function formatTurnFooter(
   const inOut = (inp: number, out: number) =>
     `in: ${inp}  out: ${out}`;
 
+  const cacheFields = (creation?: number, read?: number): string => {
+    const parts: string[] = [];
+    if (creation && creation > 0) parts.push(`cache_write: ${creation}`);
+    if (read && read > 0) parts.push(`cache_read: ${read}`);
+    return parts.length > 0 ? "  " + parts.join("  ") : "";
+  };
+
+  const turnCache = cacheFields(turn.cacheCreationTokens, turn.cacheReadTokens);
+  const sessionCache = cacheFields(session.cacheCreationTokens, session.cacheReadTokens);
+
   const turnBody =
-    `${inOut(turn.inputTokens, turn.outputTokens)}  cost: ${formatCost(turn.costUsd)}  ttft: ${formatMs(turn.ttftMs)}  [${provider}/${model}]`;
+    `${inOut(turn.inputTokens, turn.outputTokens)}  cost: ${formatCost(turn.costUsd)}${turnCache}  ttft: ${formatMs(turn.ttftMs)}  [${provider}/${model}]`;
   const sessionBody =
-    `${inOut(session.inputTokens, session.outputTokens)}  cost: ${formatCost(session.costUsd)}`;
+    `${inOut(session.inputTokens, session.outputTokens)}  cost: ${formatCost(session.costUsd)}${sessionCache}`;
 
   return {
     turnLine:    dim(`${TURN_LABEL} ${turnBody}`),

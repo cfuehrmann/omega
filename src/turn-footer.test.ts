@@ -87,3 +87,90 @@ describe("formatTurnFooter", () => {
     expect(tPlain.indexOf("in:")).toBe(sPlain.indexOf("in:"));
   });
 });
+
+describe("formatTurnFooter — cache savings", () => {
+  const provider = "anthropic" as const;
+  const model = "claude-sonnet-4-6";
+
+  const metricsWithCache = {
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: 0.0015,
+    ttftMs: 400,
+    cacheCreationTokens: 800,
+    cacheReadTokens: 0,
+  };
+  const metricsWithRead = {
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: 0.0005,
+    ttftMs: 300,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 500,
+  };
+  const sessionWithCache = {
+    inputTokens: 500,
+    outputTokens: 200,
+    costUsd: 0.005,
+    cacheCreationTokens: 800,
+    cacheReadTokens: 500,
+  };
+  const sessionNoCache = {
+    inputTokens: 500,
+    outputTokens: 200,
+    costUsd: 0.005,
+  };
+
+  it("turn line shows cache write tokens when cacheCreationTokens > 0", () => {
+    const { turnLine } = formatTurnFooter(metricsWithCache, sessionNoCache, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).toContain("cache_write: 800");
+  });
+
+  it("turn line shows cache read tokens when cacheReadTokens > 0", () => {
+    const { turnLine } = formatTurnFooter(metricsWithRead, sessionNoCache, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).toContain("cache_read: 500");
+  });
+
+  it("turn line does NOT show cache fields when both are zero", () => {
+    const metricsZero = {
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0005,
+      ttftMs: 300,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    };
+    const { turnLine } = formatTurnFooter(metricsZero, sessionNoCache, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).not.toContain("cache_write");
+    expect(plain).not.toContain("cache_read");
+  });
+
+  it("turn line does NOT show cache fields when cache fields are absent", () => {
+    const metricsNone = {
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0005,
+      ttftMs: 300,
+    };
+    const { turnLine } = formatTurnFooter(metricsNone, sessionNoCache, provider, model);
+    const plain = stripAnsi(turnLine);
+    expect(plain).not.toContain("cache_write");
+    expect(plain).not.toContain("cache_read");
+  });
+
+  it("session line shows cumulative cache read tokens when present", () => {
+    const { sessionLine } = formatTurnFooter(metricsWithRead, sessionWithCache, provider, model);
+    const plain = stripAnsi(sessionLine);
+    expect(plain).toContain("cache_read: 500");
+  });
+
+  it("session line does NOT show cache fields when session has none", () => {
+    const { sessionLine } = formatTurnFooter(metricsWithRead, sessionNoCache, provider, model);
+    const plain = stripAnsi(sessionLine);
+    expect(plain).not.toContain("cache_write");
+    expect(plain).not.toContain("cache_read");
+  });
+});

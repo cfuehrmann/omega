@@ -16,12 +16,14 @@ export interface TurnMetrics {
   costUsd: number;
   ttftMs: number | null;
   totalMs: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 interface ModelResponse {
   content: Anthropic.ContentBlock[];
   stop_reason?: string;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
 }
 
 export type AgentEvent =
@@ -336,7 +338,7 @@ export function processStreamEvents(streamEvents: Iterable<any>): AgentEvent[] {
 export type StreamProvider = (params: {
   model: string;
   max_tokens: number;
-  system: string;
+  system: string | Anthropic.TextBlockParam[];
   tools: Anthropic.Tool[];
   messages: Anthropic.MessageParam[];
 }) => Promise<{
@@ -350,6 +352,8 @@ export class Agent {
   public sessionInputTokens = 0;
   public sessionOutputTokens = 0;
   public sessionCostUsd = 0;
+  public sessionCacheCreationTokens = 0;
+  public sessionCacheReadTokens = 0;
   private _apiCallCount = 0;
 
   private authMode: "api-key" | "oauth" = "api-key";
@@ -708,6 +712,8 @@ export class Agent {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     let totalCostUsd = 0;
+    let totalCacheCreationTokens = 0;
+    let totalCacheReadTokens = 0;
     let totalTtftMs: number | null = null;
     const allToolCalls: string[] = [];
 
@@ -752,6 +758,27 @@ export class Agent {
         } as AgentEvent;
       }
 
+      // Build cached system blocks and cached tools for Anthropic prompt caching.
+      // The system prompt is split into blocks with cache_control on the last block,
+      // so the entire system prompt (including world state) is cached after the first call.
+      // The last tool definition also gets cache_control to cache all tool definitions.
+      const systemBlocks: Anthropic.TextBlockParam[] = [
+        {
+          type: "text",
+          text: systemPrompt,
+          cache_control: { type: "ephemeral" },
+        },
+      ];
+      const cachedTools: Anthropic.Tool[] = toolDefinitions.length > 0
+        ? [
+            ...toolDefinitions.slice(0, -1),
+            {
+              ...(toolDefinitions[toolDefinitions.length - 1] as any),
+              cache_control: { type: "ephemeral" },
+            },
+          ]
+        : toolDefinitions;
+
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
       if (useOpenAi) {
@@ -772,8 +799,8 @@ export class Agent {
         const request = {
           model: config.model,
           max_tokens: config.maxOutputTokens,
-          system: systemPrompt,
-          tools: toolDefinitions,
+          system: systemBlocks,
+          tools: cachedTools,
           messages: [...this.history],
         };
         yield {
@@ -839,8 +866,8 @@ export class Agent {
           const streamParams = {
             model: config.model,
             max_tokens: config.maxOutputTokens,
-            system: systemPrompt,
-            tools: toolDefinitions,
+            system: systemBlocks,
+            tools: cachedTools,
             messages: this.history,
           };
           const stream = this.streamProvider
@@ -969,15 +996,27 @@ export class Agent {
       // Track tokens
       turnInputTokens = response.usage.input_tokens;
       turnOutputTokens = response.usage.output_tokens;
+      const turnCacheCreation = (response.usage as any).cache_creation_input_tokens ?? 0;
+      const turnCacheRead = (response.usage as any).cache_read_input_tokens ?? 0;
       this.sessionInputTokens += turnInputTokens;
       this.sessionOutputTokens += turnOutputTokens;
-      const costUsd = estimateCost(activeModel, turnInputTokens, turnOutputTokens);
+      this.sessionCacheCreationTokens += turnCacheCreation;
+      this.sessionCacheReadTokens += turnCacheRead;
+      const costUsd = estimateCostWithCache(
+        activeModel,
+        turnInputTokens,
+        turnOutputTokens,
+        turnCacheCreation,
+        turnCacheRead
+      );
       this.sessionCostUsd += costUsd;
 
       // Accumulate turn-level totals
       totalInputTokens += turnInputTokens;
       totalOutputTokens += turnOutputTokens;
       totalCostUsd += costUsd;
+      totalCacheCreationTokens += turnCacheCreation;
+      totalCacheReadTokens += turnCacheRead;
       if (totalTtftMs === null) totalTtftMs = ttftMs; // first API call sets TTFT
 
       const totalMs = performance.now() - startTime;
@@ -1083,6 +1122,8 @@ export class Agent {
           costUsd,
           ttftMs,
           totalMs,
+          cacheCreationTokens: turnCacheCreation,
+          cacheReadTokens: turnCacheRead,
         },
       };
     }
@@ -1098,6 +1139,8 @@ export class Agent {
         costUsd: totalCostUsd,
         ttftMs: totalTtftMs,
         totalMs: performance.now() - (this._apiCallCount > 0 ? 0 : 0), // wall time not tracked here
+        cacheCreationTokens: totalCacheCreationTokens,
+        cacheReadTokens: totalCacheReadTokens,
       },
       toolCalls: allToolCalls,
       provider: endProvider,

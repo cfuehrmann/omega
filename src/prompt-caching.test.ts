@@ -1,0 +1,213 @@
+/**
+ * Tests for Anthropic prompt caching implementation.
+ *
+ * Verifies:
+ * 1. cache_control breakpoints are injected into streamParams (system message and last tool)
+ * 2. cache_creation_input_tokens / cache_read_input_tokens are extracted from usage
+ * 3. estimateCostWithCache is used for cost accounting (not estimateCost)
+ * 4. TurnMetrics includes cacheCreationTokens and cacheReadTokens
+ * 5. Session-level cache totals are tracked
+ */
+
+import { describe, it, expect } from "bun:test";
+import { Agent } from "./agent.js";
+import type { AgentEvent, TurnMetrics, StreamProvider } from "./agent.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeStreamProvider(overrides: {
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  captureParams?: (p: any) => void;
+  captureFirstParams?: (p: any) => void;
+}): StreamProvider {
+  let callCount = 0;
+  return async (params) => {
+    callCount++;
+    if (callCount === 1) overrides.captureFirstParams?.(params);
+    overrides.captureParams?.(params);
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } };
+      },
+      async finalMessage() {
+        return {
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "hello" }],
+          model: "claude-sonnet-4-6",
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: overrides.cacheCreationTokens ?? 0,
+            cache_read_input_tokens: overrides.cacheReadTokens ?? 0,
+          },
+        } as any;
+      },
+    };
+  };
+}
+
+async function runTurn(agent: Agent): Promise<AgentEvent[]> {
+  const events: AgentEvent[] = [];
+  for await (const event of agent.sendMessage(
+    "hello",
+    async () => true
+  )) {
+    events.push(event);
+  }
+  return events;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("prompt caching — cache_control in streamParams", () => {
+  it("injects cache_control on system message blocks", async () => {
+    let firstParams: any = null;
+    const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    await runTurn(agent);
+
+    // System should be an array (not a plain string) when caching is enabled
+    expect(Array.isArray(firstParams.system)).toBe(true);
+    const blocks: any[] = firstParams.system;
+    // At least one block must have cache_control
+    const hasCacheControl = blocks.some(
+      (b: any) => b.cache_control?.type === "ephemeral"
+    );
+    expect(hasCacheControl).toBe(true);
+  });
+
+  it("injects cache_control on the last tool definition", async () => {
+    let firstParams: any = null;
+    const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    await runTurn(agent);
+
+    const tools: any[] = firstParams.tools;
+    expect(tools.length).toBeGreaterThan(0);
+    const lastTool = tools[tools.length - 1];
+    expect(lastTool.cache_control?.type).toBe("ephemeral");
+  });
+});
+
+describe("prompt caching — cache token extraction", () => {
+  it("includes cacheCreationTokens in turn_end metrics", async () => {
+    const provider = makeStreamProvider({ cacheCreationTokens: 800, cacheReadTokens: 0 });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    const events = await runTurn(agent);
+
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd).toBeDefined();
+    expect(turnEnd.metrics.cacheCreationTokens).toBe(800);
+    expect(turnEnd.metrics.cacheReadTokens).toBe(0);
+  });
+
+  it("includes cacheReadTokens in turn_end metrics", async () => {
+    const provider = makeStreamProvider({ cacheCreationTokens: 0, cacheReadTokens: 500 });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    const events = await runTurn(agent);
+
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd).toBeDefined();
+    expect(turnEnd.metrics.cacheCreationTokens).toBe(0);
+    expect(turnEnd.metrics.cacheReadTokens).toBe(500);
+  });
+
+  it("session totals accumulate cacheCreationTokens across turns", async () => {
+    const provider = makeStreamProvider({ cacheCreationTokens: 300, cacheReadTokens: 0 });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    await runTurn(agent);
+    await runTurn(agent);
+
+    expect((agent as any).sessionCacheCreationTokens).toBe(600);
+  });
+
+  it("session totals accumulate cacheReadTokens across turns", async () => {
+    const provider = makeStreamProvider({ cacheCreationTokens: 0, cacheReadTokens: 200 });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    await runTurn(agent);
+    await runTurn(agent);
+
+    expect((agent as any).sessionCacheReadTokens).toBe(400);
+  });
+});
+
+describe("prompt caching — cost accounting", () => {
+  it("uses cache-aware cost when cache tokens present", async () => {
+    // Sonnet: $3 input/M, $15 output/M
+    // cache write: 1.25× = $3.75/M, cache read: 0.1× = $0.30/M
+    // input=100, output=50, cacheCreation=800, cacheRead=0
+    // = (100*3 + 50*15 + 800*3.75) / 1_000_000
+    // = (300 + 750 + 3000) / 1_000_000 = 0.004050
+    const provider = makeStreamProvider({ cacheCreationTokens: 800, cacheReadTokens: 0 });
+    const agent = new Agent(provider, null, undefined, null);
+    await agent.init();
+    const events = await runTurn(agent);
+
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd.metrics.costUsd).toBeCloseTo(0.00405, 6);
+  });
+
+  it("cache read tokens are cheaper than equivalent input tokens", async () => {
+    // Scenario: 600 total prompt tokens
+    // Without caching: 600 input tokens, 50 output
+    //   cost = (600*3 + 50*15) / 1M = (1800+750)/1M = 0.00255
+    // With caching: 100 non-cached input + 500 cache read, 50 output
+    //   cost = (100*3 + 50*15 + 500*0.3) / 1M = (300+750+150)/1M = 0.00120
+    //   Cache reads are 0.1x input rate = cheaper than full input rate
+    const makeProvider = (inputTokens: number, cacheReadTokens: number): StreamProvider => {
+      return async (params) => {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } };
+          },
+          async finalMessage() {
+            return {
+              id: "msg_test",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "hello" }],
+              model: "claude-sonnet-4-6",
+              stop_reason: "end_turn",
+              stop_sequence: null,
+              usage: {
+                input_tokens: inputTokens,
+                output_tokens: 50,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: cacheReadTokens,
+              },
+            } as any;
+          },
+        };
+      };
+    };
+
+    const agentWithCache = new Agent(makeProvider(100, 500), null, undefined, null);
+    const agentNoCache = new Agent(makeProvider(600, 0), null, undefined, null);
+    await agentWithCache.init();
+    await agentNoCache.init();
+
+    const eventsWithCache = await runTurn(agentWithCache);
+    const eventsNoCache = await runTurn(agentNoCache);
+
+    const costWithCache = (eventsWithCache.find((e) => e.type === "turn_end") as any).metrics.costUsd;
+    const costNoCache = (eventsNoCache.find((e) => e.type === "turn_end") as any).metrics.costUsd;
+
+    // 0.00120 < 0.00255
+    expect(costWithCache).toBeLessThan(costNoCache);
+  });
+});

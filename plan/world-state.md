@@ -28,10 +28,10 @@ No raw session persistence. No "resume session?" prompt. The world file is the o
 The system prompt references only `world-state.md` and `future.md`.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table; `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s including `world_state_saved`
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table; `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s including `world_state_saved`; `getActiveFoldProvider()` returns a provider wrapping the currently active provider (Anthropic or OpenAI) for use during shutdown fold
 - `src/compaction.ts` — `compactTurn()`, `compactWorldState()` — LLM-based compaction; world-state prompt caps last-session section to 1–4 sentences, bans commit hashes and procedural detail
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
-- `src/ui-raw.ts` — raw terminal UI; `shutdown()` prints a magenta banner, drains `foldCurrentSessionIntoWorldState()`, handles `world_state_saved` with a dim status line; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; exports `renderToolStart(name, input)` and `renderToolResult(result)` for immediate per-event rendering; `renderToolExecution` retained for the shutdown/fold path; exports `displayWidth(ch: string): number` (returns 2 for CJK/wide Unicode, 1 otherwise); backspace uses column-aware erasure (`\b`.repeat(w) + ` `.repeat(w) + `\b`.repeat(w))
+- `src/ui-raw.ts` — raw terminal UI; `shutdown()` prints a magenta banner, drains `foldCurrentSessionIntoWorldState()`, handles `world_state_saved` with a dim status line; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; exports `renderToolStart(name, input)` and `renderToolResult(result)` for immediate per-event rendering; `renderToolExecution` retained for the shutdown/fold path; exports `displayWidth(ch: string): number` (returns 2 for CJK/wide Unicode, 1 otherwise); backspace uses column-aware erasure
 - `src/ui-raw.test.ts` — 231 tests for `parseKeys`, `displayWidth`, backspace behavior, bracketed paste, tool rendering
 - `src/tool-renderers.test.ts` — 11 tests for `renderToolStart` and `renderToolResult`
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }` — two ANSI-dimmed labelled lines with `turn:` / `session:` prefixes, column-aligned `in:`/`out:`, model and `ttft` on turn line only
@@ -42,9 +42,9 @@ The system prompt references only `world-state.md` and `future.md`.
 - `src/planning-files.test.ts` — structural invariant tests: asserts `future.md` exists, `past.md`/`present.md` do not exist, system prompt references `world-state.md` + `future.md` but not deleted files
 - `src/turn-footer.test.ts` — 11 tests for `formatTurnFooter`
 - `src/openai.test.ts` — tests for `buildOpenAiRequest`, `parseOpenAiResponse`, and abort signal forwarding
-- `src/fold-events.test.ts` — 8 tests covering generator shape, no events for null path/empty history, `api_call_start`, `api_response` with token usage, `world_state_saved` event (with `path` and `charCount` fields), file written to disk, absence of `tool_result`, error event on LLM failure
+- `src/fold-events.test.ts` — 9 tests covering generator shape, no events for null path/empty history, `api_call_start`, `api_response` with token usage, `world_state_saved` event, file written to disk, absence of `tool_result`, error event on LLM failure, and correct provider used for fold when OpenAI is active
 - `src/fold-at-quit.test.ts` — tests for `foldCurrentSessionIntoWorldState()` as a generator (drains with `for await`)
-- `plan/future.md` — 4 discrete actionable backlog items
+- `plan/future.md` — 1 discrete actionable backlog item (prompt caching)
 
 ### AgentEvent Union (notable members)
 - `world_state_saved` — `{ type: "world_state_saved"; path: string; charCount: number }` — emitted by `foldCurrentSessionIntoWorldState()` after writing the world file; rendered as a dim status line by `shutdown()`
@@ -66,4 +66,3 @@ After each turn, two dimmed lines are printed:
 - `claude-opus-4-6`: $5 input / $25 output per MTok
 - `claude-sonnet-4-6`: $3 input / $15 output per MTok
 - `claude-sonnet-4-20250514`: $3 input / $15 output per MTok
-- `gpt-5.2-codex`: $

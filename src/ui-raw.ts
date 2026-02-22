@@ -608,8 +608,8 @@ export async function runApp(): Promise<void> {
             const provider = event.provider;
             const model = event.model;
             const { turnLine, sessionLine } = formatTurnFooter(
-              { inputTokens: m.inputTokens, outputTokens: m.outputTokens, costUsd: m.costUsd, ttftMs: m.ttftMs },
-              { inputTokens: agent.sessionInputTokens, outputTokens: agent.sessionOutputTokens, costUsd: agent.sessionCostUsd },
+              { inputTokens: m.inputTokens, outputTokens: m.outputTokens, costUsd: m.costUsd, ttftMs: m.ttftMs, cacheCreationTokens: m.cacheCreationTokens, cacheReadTokens: m.cacheReadTokens },
+              { inputTokens: agent.sessionInputTokens, outputTokens: agent.sessionOutputTokens, costUsd: agent.sessionCostUsd, cacheCreationTokens: agent.sessionCacheCreationTokens, cacheReadTokens: agent.sessionCacheReadTokens },
               provider,
               model,
             );
