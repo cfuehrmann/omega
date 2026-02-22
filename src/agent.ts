@@ -172,17 +172,34 @@ export function truncateHistory(
     return Math.ceil(text.length / 4);
   };
 
+  const MAX_MESSAGES = 100;
+
+  let working = history;
+  const reasons: string[] = [];
+
+  // Enforce message cap first (drop from middle)
+  if (working.length > MAX_MESSAGES) {
+    const minKeep = Math.min(working.length, KEEP_RECENT_TURNS * 2);
+    const alwaysKeepHead = working.slice(0, 1);
+    const alwaysKeepTail = working.slice(-minKeep);
+    const middle = working.slice(1, working.length - minKeep);
+    const excess = working.length - MAX_MESSAGES;
+    const trimmedMiddle = middle.slice(excess);
+    working = sanitizeToolPairs([...alwaysKeepHead, ...trimmedMiddle, ...alwaysKeepTail]);
+    reasons.push("message_cap");
+  }
+
   // Count total estimated tokens
-  const totalTokens = history.reduce((sum, m) => sum + estimateTokens(m), 0);
-  if (totalTokens <= budget) return history;
+  const totalTokens = working.reduce((sum, m) => sum + estimateTokens(m), 0);
+  if (totalTokens <= budget) return working;
 
   // Always keep first message + last KEEP_RECENT_TURNS*2 messages
-  const minKeep = Math.min(history.length, KEEP_RECENT_TURNS * 2);
-  const alwaysKeepHead = history.slice(0, 1);
-  let alwaysKeepTail = history.slice(-minKeep);
+  const minKeep = Math.min(working.length, KEEP_RECENT_TURNS * 2);
+  const alwaysKeepHead = working.slice(0, 1);
+  let alwaysKeepTail = working.slice(-minKeep);
 
   // Middle portion eligible for dropping
-  const middle = history.slice(1, history.length - minKeep);
+  const middle = working.slice(1, working.length - minKeep);
   if (middle.length === 0) {
     // Even the tail alone exceeds budget — drop tool results from oldest tail messages
     // to reduce size while maintaining structural validity
@@ -207,8 +224,9 @@ export function truncateHistory(
     originalMessages: history.length,
     keptMessages: result.length,
     droppedMessages: history.length - result.length,
-    estimatedTokensBefore: totalTokens,
+    estimatedTokensBefore: history.reduce((sum, m) => sum + estimateTokens(m), 0),
     estimatedTokensAfter: result.reduce((sum, m) => sum + estimateTokens(m), 0),
+    reason: reasons.length ? reasons.join("+") : "token_budget",
   });
 
   return result;

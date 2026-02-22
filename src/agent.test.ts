@@ -116,6 +116,16 @@ describe("truncateHistory", () => {
     expect(result).toEqual(history);
   });
 
+  it("caps history length at 100 messages", () => {
+    const msgs: Anthropic.MessageParam[] = [];
+    for (let i = 0; i < 160; i++) {
+      msgs.push(makeMsg(i % 2 === 0 ? "user" : "assistant", SHORT));
+    }
+    const result = truncateHistory(msgs, 100_000);
+    expect(result.length).toBeLessThanOrEqual(100);
+    expect(result[0]).toEqual(msgs[0]);
+  });
+
   it("preserves the first message", () => {
     // Create a history that's well over budget
     const msgs: Anthropic.MessageParam[] = [];
