@@ -153,4 +153,17 @@ export async function getAuthToken(): Promise<string | null> {
   return token.access_token;
 }
 
+/**
+ * Force a token refresh regardless of expiry.
+ * Call this when a 401 "OAuth token has expired" error is received mid-session.
+ * Returns the new access token, or null if refresh failed (no refresh_token, or
+ * the refresh itself was rejected).
+ */
+export async function forceRefreshToken(): Promise<string | null> {
+  const token = await loadToken();
+  if (!token) return null;
+  const refreshed = await refreshToken(token);
+  return refreshed ? refreshed.access_token : null;
+}
+
 // TOKEN_FILE and TokenData are internal — not exported

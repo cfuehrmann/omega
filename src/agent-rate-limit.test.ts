@@ -2,6 +2,12 @@ import { describe, it, expect } from "bun:test";
 import { Agent, type AgentEvent } from "./agent.js";
 import type { StreamProvider } from "./agent.js";
 
+function authExpiredError() {
+  const err: any = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}');
+  err.status = 401;
+  return err;
+}
+
 function rateLimitError(message = "rate limit: try again in 0.01s") {
   const err: any = new Error(message);
   err.status = 429;
@@ -96,5 +102,74 @@ describe("rate limit backoff", () => {
     delete process.env.OMEGA_RETRY_BASE_MS;
     delete process.env.OMEGA_RETRY_MAX_MS;
     delete process.env.OMEGA_RETRY_ATTEMPTS;
+  });
+});
+
+describe("OAuth token expiry reauth", () => {
+  it("retries after 401 when reinitAuth succeeds", async () => {
+    // First call throws 401; second call (after mock reauth) succeeds.
+    // Note: the provider may also be called for post-turn compaction — we track
+    // only whether the API call sequence had exactly one 401 before success.
+    let apiCallCount = 0;
+    let hadAuthError = false;
+    let hadSuccess = false;
+
+    const mockProvider: StreamProvider = async () => {
+      apiCallCount += 1;
+      if (apiCallCount === 1) {
+        hadAuthError = true;
+        throw authExpiredError();
+      }
+      hadSuccess = true;
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } };
+        },
+        async finalMessage() {
+          return {
+            id: "msg_ok",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: "ok" }],
+            model: "claude-sonnet-4-6",
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            usage: { input_tokens: 5, output_tokens: 2 },
+          } as any;
+        },
+      };
+    };
+
+    const agent = new Agent(mockProvider, null);
+    // Override reinitAuth so it doesn't touch the real token file
+    (agent as any).reinitAuth = async () => {
+      (agent as any).authMode = "oauth"; // stays oauth
+      return true; // pretend refresh succeeded
+    };
+
+    const events = await collectEvents(agent, "hello");
+    expect(hadAuthError).toBe(true);
+    expect(hadSuccess).toBe(true);
+    const texts = events.filter(e => e.type === "text").map((e: any) => e.text);
+    expect(texts.join("")).toContain("ok");
+    // No hard error event (only status events are ok)
+    const errors = events.filter(e => e.type === "error") as any[];
+    expect(errors).toHaveLength(0);
+  });
+
+  it("reports login required when reinitAuth fails", async () => {
+    const mockProvider: StreamProvider = async () => {
+      throw authExpiredError();
+    };
+
+    const agent = new Agent(mockProvider, null);
+    // Override reinitAuth to fail
+    (agent as any).reinitAuth = async () => false;
+
+    const events = await collectEvents(agent, "hello");
+    const errors = events.filter(e => e.type === "error") as any[];
+    expect(errors.length).toBeGreaterThan(0);
+    const lastError = errors[errors.length - 1];
+    expect(lastError.error).toContain("login");
   });
 });

@@ -9,6 +9,9 @@ TypeScript + Bun. Raw terminal I/O (`src/ui-raw.ts`). No UI library. Agent core 
 ### Auth
 Claude Max via OAuth PKCE through `claude.ai` (sk-ant-oat-… tokens). System prompt must be prefixed with Claude Code identity string for OAuth. Falls back to `ANTHROPIC_API_KEY`. OpenAI Codex fallback via `OPENAI_API_KEY` for `/gpt` command and rate-limit fallback.
 
+### Git Push Cadence
+Push to origin at least every 3 commits (enforced via system prompt rule added to `src/config.ts`).
+
 ### Context Management (three-zone model)
 - **Zone 1** — `plan/world-state.md` (inside the project repo): LLM-compacted summary of all prior sessions. Loaded at session start into system prompt as `## World State (from previous sessions)`. Updated by `foldCurrentSessionIntoWorldState()` on clean shutdown (SIGINT/SIGTERM/Ctrl+C). Lives under source control.
 - **Zone 2** — turn summaries: after each `turn_end`, completed turn messages are LLM-compacted into a 2-message synthetic exchange. History is always exactly 2 messages after compaction. Implemented in `src/compaction.ts` via `compactTurn()`.
@@ -28,14 +31,14 @@ The system prompt references only `world-state.md` and `future.md`.
 - `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, compaction wiring, zone tracking, `PRICING` table; `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s including `world_state_saved`
 - `src/compaction.ts` — `compactTurn()`, `compactWorldState()` — LLM-based compaction; world-state prompt caps last-session section to 1–4 sentences, bans commit hashes and procedural detail
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
-- `src/ui-raw.ts` — raw terminal UI; `shutdown()` prints a magenta `"Ctrl+C — compacting to world file and shutting down"` banner, drains the `foldCurrentSessionIntoWorldState()` generator, handles `world_state_saved` with a dim status line; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; `KeyCallbacks` interface; `runApp()` guarded by `if (import.meta.main)`; exports `renderToolStart(name, input)` and `renderToolResult(result)` for immediate per-event rendering; `renderToolExecution` retained for the shutdown/fold path
-- `src/ui-raw.test.ts` — 13 tests for `parseKeys` covering Ctrl+C, Enter, Escape, CSI skip, printable accumulation, bracketed paste (no submit on inner newline, full paste submitted on Enter, normal Enter unaffected, stdout echo on paste end)
+- `src/ui-raw.ts` — raw terminal UI; `shutdown()` prints a magenta banner, drains `foldCurrentSessionIntoWorldState()`, handles `world_state_saved` with a dim status line; `parseKeys(chunk, callbacks, buf?, options?)` pure function with `options.pasteState` for bracketed paste injection; `setupRawInput` enables bracketed paste mode (`\x1b[?2004h`) on startup; shutdown disables it (`\x1b[?2004l`) before exit; on paste end (`[201~`), echoes full buffer to stdout; exports `renderToolStart(name, input)` and `renderToolResult(result)` for immediate per-event rendering; `renderToolExecution` retained for the shutdown/fold path; exports `displayWidth(ch: string): number` (returns 2 for CJK/wide Unicode, 1 otherwise); backspace uses column-aware erasure (`\b`.repeat(w) + ` `.repeat(w) + `\b`.repeat(w))
+- `src/ui-raw.test.ts` — 231 tests for `parseKeys`, `displayWidth`, backspace behavior, bracketed paste, tool rendering
 - `src/tool-renderers.test.ts` — 11 tests for `renderToolStart` and `renderToolResult`
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }` — two ANSI-dimmed labelled lines with `turn:` / `session:` prefixes, column-aligned `in:`/`out:`, model and `ttft` on turn line only
 - `src/session.ts` — session persistence module (no longer imported by production code; kept for independent tests)
 - `src/tools.ts` — `read_file`, `write_file`, `edit_file`, `list_files`, `run_command`, `web_search`, `fetch_url`
 - `src/openai.ts` — OpenAI Codex integration; `callOpenAi(prompt, model, provider, options, signal?)` accepts and forwards `AbortSignal` to `fetch`
-- `src/config.ts` — model (`claude-sonnet-4-6`), fallback model (`gpt-5.2-codex`), system prompt, token limits
+- `src/config.ts` — model (`claude-sonnet-4-6`), fallback model (`gpt-5.2-codex`), system prompt, token limits; includes git push cadence rule
 - `src/planning-files.test.ts` — structural invariant tests: asserts `future.md` exists, `past.md`/`present.md` do not exist, system prompt references `world-state.md` + `future.md` but not deleted files
 - `src/turn-footer.test.ts` — 11 tests for `formatTurnFooter`
 - `src/openai.test.ts` — tests for `buildOpenAiRequest`, `parseOpenAiResponse`, and abort signal forwarding
@@ -44,17 +47,17 @@ The system prompt references only `world-state.md` and `future.md`.
 - `plan/future.md` — 4 discrete actionable backlog items
 
 ### AgentEvent Union (notable members)
-- `world_state_saved` — `{ type: "world_state_saved"; path: string; charCount: number }` — emitted by `foldCurrentSessionIntoWorldState()` after writing the world file; rendered as a dim status line by `shutdown()`; replaces the former `tool_result` semantic lie
+- `world_state_saved` — `{ type: "world_state_saved"; path: string; charCount: number }` — emitted by `foldCurrentSessionIntoWorldState()` after writing the world file; rendered as a dim status line by `shutdown()`
 
 ### UI — Tool Rendering
-`tool_call` events render immediately via `printBlock(now(), renderToolStart(name, input))` with a live timestamp; `tool_result` events render separately via `printBlock(now(), renderToolResult(result))` with a fresh timestamp. Both use the same yellow color. The `pendingInputs` map was removed. `renderToolExecution` is retained only for the shutdown/fold path.
+`tool_call` events render immediately via `printBlock(now(), renderToolStart(name, input))` with a live timestamp; `tool_result` events render separately via `printBlock(now(), renderToolResult(result))` with a fresh timestamp. Both use the same yellow color. `renderToolExecution` is retained only for the shutdown/fold path.
 
 ### UI — Turn Footer
 After each turn, two dimmed lines are printed:
 - `turn:   [model] [ttft]  in: X  out: Y  cost: $Z`
 - `session:               in: X  out: Y  cost: $Z`
 
-`in:` is column-aligned between both lines. Cost shown in USD. `renderStatus(streaming)` shows only keyboard shortcuts (not repeated token counts); displayed at startup and during streaming.
+`in:` is column-aligned between both lines. Cost shown in USD. `renderStatus(streaming)` shows only keyboard shortcuts; displayed at startup and during streaming.
 
 ### Provider Display
 `turn_end` event includes `provider` and `model` fields. `/gpt` switches to OpenAI (`gpt-5.2-codex`), `/opus` or `/anthropic` switches back to Anthropic.
@@ -63,4 +66,4 @@ After each turn, two dimmed lines are printed:
 - `claude-opus-4-6`: $5 input / $25 output per MTok
 - `claude-sonnet-4-6`: $3 input / $15 output per MTok
 - `claude-sonnet-4-20250514`: $3 input / $15 output per MTok
-- `gpt-5.2-
+- `gpt-5.2-codex`: $

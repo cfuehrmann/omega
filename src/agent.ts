@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
-import { getAuthToken } from "./auth.js";
+import { getAuthToken, forceRefreshToken } from "./auth.js";
 import { logger } from "./logger.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactTurn, compactWorldState } from "./compaction.js";
@@ -70,6 +70,27 @@ export function estimateCost(
   );
 }
 
+/**
+ * Estimate cost including Anthropic prompt cache tokens.
+ * Cache write tokens are billed at 1.25× input rate.
+ * Cache read tokens are billed at 0.1× input rate.
+ */
+export function estimateCostWithCache(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationTokens: number,
+  cacheReadTokens: number
+): number {
+  const pricing = PRICING[model] ?? { input: 5, output: 25 };
+  return (
+    inputTokens * pricing.input +
+    outputTokens * pricing.output +
+    cacheCreationTokens * pricing.input * 1.25 +
+    cacheReadTokens * pricing.input * 0.1
+  ) / 1_000_000;
+}
+
 // --- Retry logic ---
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -99,6 +120,16 @@ export function isRetryable(err: any): boolean {
   // it's thrown internally by MessageStream. Treat as transient and retry.
   if (typeof err.message === "string" && err.message.includes("Unexpected event order")) return true;
   return false;
+}
+
+/** Returns true if the error is an OAuth token expiry (401 authentication_error). */
+export function isAuthExpired(err: any): boolean {
+  if (!err) return false;
+  const status = err.status ?? err.statusCode;
+  if (status !== 401) return false;
+  // Anthropic 401 body: {"type":"error","error":{"type":"authentication_error",...}}
+  const msg: string = typeof err.message === "string" ? err.message : JSON.stringify(err);
+  return msg.includes("authentication_error") || msg.includes("OAuth token has expired");
 }
 
 // --- Context window management ---
@@ -417,6 +448,30 @@ export class Agent {
     return this.provider;
   }
 
+  /**
+   * Force-refresh the OAuth token and reinitialize the Anthropic client.
+   * Call this after receiving a 401 authentication_error mid-session.
+   * Returns true if reinit succeeded, false if refresh failed.
+   */
+  async reinitAuth(): Promise<boolean> {
+    if (this.authMode !== "oauth") return false; // nothing to refresh for API keys
+    const newToken = await forceRefreshToken();
+    if (!newToken) return false;
+    this.client = new Anthropic({
+      apiKey: null as any,
+      authToken: newToken,
+      defaultHeaders: {
+        "accept": "application/json",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+        "user-agent": "claude-cli/2.1.2 (external, cli)",
+        "x-app": "cli",
+      },
+    });
+    logger.info("oauth_reauthed", { hint: "token refreshed after 401" });
+    return true;
+  }
+
   getHistory(): readonly Anthropic.MessageParam[] {
     return this.history;
   }
@@ -500,7 +555,40 @@ export class Agent {
         };
       };
 
-      const newState = await compactWorldState(prior, this.history, wrappedProvider);
+      // Attempt compaction with one re-auth retry on 401
+      let newState: string;
+      try {
+        newState = await compactWorldState(prior, this.history, wrappedProvider);
+      } catch (compactErr: any) {
+        if (isAuthExpired(compactErr)) {
+          logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh" });
+          const reauthed = await this.reinitAuth();
+          if (!reauthed) {
+            logger.warn("world_state_update_failed", { error: compactErr.message });
+            yield { type: "error", error: `World state save failed (auth refresh failed): ${compactErr.message}` } as AgentEvent;
+            return;
+          }
+          // Rebuild wrappedProvider with the fresh client
+          const freshProvider = this.getStreamProvider();
+          capturedUsage = null;
+          capturedContent = [];
+          const retryWrapped: StreamProvider = async (params) => {
+            const stream = await freshProvider(params);
+            return {
+              [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
+              async finalMessage() {
+                const msg = await stream.finalMessage();
+                capturedUsage = msg.usage;
+                capturedContent = msg.content;
+                return msg;
+              },
+            };
+          };
+          newState = await compactWorldState(prior, this.history, retryWrapped);
+        } else {
+          throw compactErr;
+        }
+      }
 
       yield {
         type: "api_response",
@@ -758,7 +846,29 @@ export class Agent {
         } catch (err: any) {
           lastError = err;
 
-          if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
+          if (isAuthExpired(err) && attempt === 0) {
+            // OAuth token expired mid-session — try to refresh and retry once
+            logger.warn("oauth_token_expired", { attempt: attempt + 1 });
+            yield {
+              type: "status",
+              message: "OAuth token expired — refreshing...",
+            } as AgentEvent;
+            const reauthed = await this.reinitAuth();
+            if (reauthed) {
+              yield { type: "status", message: "Token refreshed, retrying..." } as AgentEvent;
+              // Loop continues — the next iteration will use the fresh client
+            } else {
+              logger.error("oauth_reauth_failed", { error: err.message });
+              yield {
+                type: "api_error",
+                provider: "anthropic",
+                url: "https://api.anthropic.com/v1/messages",
+                error: err.message ?? String(err),
+              } as AgentEvent;
+              yield { type: "error", error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
+              return;
+            }
+          } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
             logger.warn("api_retry", {
               attempt: attempt + 1,

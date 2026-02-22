@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { estimateCost, isAutoApproved, isRetryable, truncateHistory, PRICING } from "./agent.js";
+import { estimateCost, estimateCostWithCache, isAutoApproved, isRetryable, isAuthExpired, truncateHistory, PRICING } from "./agent.js";
 // isAutoApproved is kept exported for logging purposes; it always returns true.
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -29,6 +29,25 @@ describe("estimateCost", () => {
 
   it("returns 0 for zero tokens", () => {
     expect(estimateCost("claude-sonnet-4-6", 0, 0)).toBe(0);
+  });
+});
+
+// --- Prompt caching cost estimation ---
+
+describe("estimateCostWithCache", () => {
+  it("accounts for cache read and creation tokens", () => {
+    // For Sonnet: input=$3/M, output=$15/M, cache write=1.25x input, cache read=0.1x input
+    // base input: 1000 tokens, cache creation: 200, cache read: 300, output: 500
+    // cost = input(1000)*3 + output(500)*15 + cache_creation(200)*3.75 + cache_read(300)*0.3
+    // = 0.003 + 0.0075 + 0.00075 + 0.00009 = 0.01134
+    const cost = estimateCostWithCache("claude-sonnet-4-6", 1000, 500, 200, 300);
+    expect(cost).toBeCloseTo(0.01134, 6);
+  });
+
+  it("falls back to estimateCost when cache tokens are zero", () => {
+    const base = estimateCost("claude-sonnet-4-6", 1000, 500);
+    const cost = estimateCostWithCache("claude-sonnet-4-6", 1000, 500, 0, 0);
+    expect(cost).toBeCloseTo(base, 6);
   });
 });
 
@@ -96,6 +115,42 @@ describe("isRetryable", () => {
       'Unexpected event order, got message_start before receiving "message_stop"'
     );
     expect(isRetryable(sdkStreamError)).toBe(true);
+  });
+});
+
+// --- Auth expiry detection ---
+
+describe("isAuthExpired", () => {
+  it("returns true for 401 with authentication_error in message", () => {
+    const err: any = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}');
+    err.status = 401;
+    expect(isAuthExpired(err)).toBe(true);
+  });
+
+  it("returns true for 401 with 'OAuth token has expired' in message", () => {
+    const err: any = new Error("OAuth token has expired. Please obtain a new token.");
+    err.status = 401;
+    expect(isAuthExpired(err)).toBe(true);
+  });
+
+  it("returns false for non-401 status", () => {
+    const err: any = new Error("authentication_error");
+    err.status = 403;
+    expect(isAuthExpired(err)).toBe(false);
+  });
+
+  it("returns false for 429 (rate limit)", () => {
+    expect(isAuthExpired({ status: 429 })).toBe(false);
+  });
+
+  it("returns false for null", () => {
+    expect(isAuthExpired(null)).toBe(false);
+  });
+
+  it("returns false for 401 without auth_error keyword", () => {
+    const err: any = new Error("Not found");
+    err.status = 401;
+    expect(isAuthExpired(err)).toBe(false);
   });
 });
 
