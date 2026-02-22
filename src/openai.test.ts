@@ -91,4 +91,10 @@ describe("parseOpenAiResponse", () => {
     const tool = req.tools[0];
     expect(tool.strict).toBe(true);
   });
+
+  it("sets additionalProperties=false in tool schemas", () => {
+    const req = buildOpenAiRequest([], "sys", "gpt-5.2-codex", 10);
+    const tool = req.tools[0];
+    expect(tool.parameters.additionalProperties).toBe(false);
+  });
 });

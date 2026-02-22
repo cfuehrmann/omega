@@ -33,7 +33,10 @@ function toOpenAiTools() {
     type: "function",
     name: tool.name,
     description: tool.description,
-    parameters: tool.parameters,
+    parameters: {
+      ...(tool.parameters ?? {}),
+      additionalProperties: false,
+    },
     strict: true,
   }));
 }
