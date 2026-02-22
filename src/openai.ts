@@ -29,16 +29,22 @@ function getOpenAiApiKey(): string {
 }
 
 function toOpenAiTools() {
-  return toolDefinitions.map((tool) => ({
-    type: "function",
-    name: tool.name,
-    description: tool.description,
-    parameters: {
-      ...((tool as any).input_schema ?? {}),
-      additionalProperties: false,
-    },
-    strict: true,
-  }));
+  return toolDefinitions.map((tool) => {
+    const schema = (tool as any).input_schema ?? {};
+    const props = schema.properties ?? {};
+    const requiredAll = Object.keys(props);
+    return {
+      type: "function",
+      name: tool.name,
+      description: tool.description,
+      parameters: {
+        ...schema,
+        required: requiredAll,
+        additionalProperties: false,
+      },
+      strict: true,
+    };
+  });
 }
 
 export function buildOpenAiRequest(

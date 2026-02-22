@@ -104,4 +104,13 @@ describe("parseOpenAiResponse", () => {
     expect(tool.parameters.type).toBe("object");
     expect(tool.parameters.properties.path.type).toBe("string");
   });
+
+  it("requires all properties when strict", () => {
+    const req = buildOpenAiRequest([], "sys", "gpt-5.2-codex", 10);
+    const tool = req.tools.find((t: any) => t.name === "read_file");
+    const required = tool.parameters.required;
+    expect(required).toContain("path");
+    expect(required).toContain("offset");
+    expect(required).toContain("limit");
+  });
 });
