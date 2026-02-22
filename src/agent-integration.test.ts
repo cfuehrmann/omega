@@ -867,6 +867,53 @@ describe("Agent — turn_end event", () => {
 });
 
 // ---------------------------------------------------------------------------
+// api_response event
+// ---------------------------------------------------------------------------
+
+describe("Agent — api_response event", () => {
+  it("emits api_response after each API call with stop_reason and usage", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const r = events.find((e) => e.type === "api_response") as any;
+    expect(r).toBeDefined();
+    expect(r.stopReason).toBe("end_turn");
+    expect(r.usage.input_tokens).toBe(10);
+    expect(r.usage.output_tokens).toBe(5);
+  });
+
+  it("api_response content includes text blocks", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "hi");
+    const r = events.find((e) => e.type === "api_response") as any;
+    expect(r.content.some((b: any) => b.type === "text")).toBe(true);
+  });
+
+  it("api_response content includes tool_use blocks when model requests tools", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) {
+        return makeMockStream(
+          toolUseStreamEvents("list_files"),
+          toolUseMessage("t1", "list_files", { path: "." })
+        );
+      }
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const agent = new Agent(mockProvider, null);
+    const events = await collectEvents(agent, "list");
+    const responses = events.filter((e) => e.type === "api_response") as any[];
+    const first = responses[0];
+    expect(first.content.some((b: any) => b.type === "tool_use")).toBe(true);
+    expect(first.content.find((b: any) => b.type === "tool_use").name).toBe("list_files");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // tool_result carries formatted string
 // ---------------------------------------------------------------------------
 

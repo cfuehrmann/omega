@@ -1,21 +1,47 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "./fast-text-input.js";
-import { Agent, type AgentEvent, type TurnMetrics, formatPayloadSummary } from "./agent.js";
+import { Agent, formatPayloadSummary } from "./agent.js";
 import { config } from "./config.js";
 import type { Session } from "./session.js";
 import { formatTokenDelta } from "./ui-logic.js";
+import type Anthropic from "@anthropic-ai/sdk";
 
 // --- Types ---
 
+type ItemType =
+  | "user"
+  | "api_request"
+  | "api_response"
+  | "tool_call"
+  | "tool_result"
+  | "assistant"
+  | "error"
+  | "system";
+
 interface CompletedItem {
   id: number;
-  type: "turn" | "tool_call" | "tool_result" | "tool_rejected" | "error" | "user" | "separator";
-  text: string;
-  dimText?: string;
+  type: ItemType;
+  time: string;      // HH:MM:SS
+  lines: Line[];     // rendered lines (text + color + bold)
 }
 
-// --- Formatting ---
+interface Line {
+  text: string;
+  color?: string;
+  dimColor?: boolean;
+  bold?: boolean;
+}
+
+// --- Constants ---
+
+const TIME_WIDTH = 10; // "HH:MM:SS  "
+
+// --- Formatting helpers ---
+
+function now(): string {
+  return new Date().toLocaleTimeString("en-GB");
+}
 
 function formatCost(usd: number): string {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
@@ -28,12 +54,113 @@ function formatMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function truncateOutput(text: string, maxLines: number = 20): string {
+function truncateOutput(text: string, maxLines: number = 10): string {
   const lines = text.split("\n");
   if (lines.length <= maxLines) return text;
+  return lines.slice(0, maxLines).join("\n") + `\n… [${lines.length - maxLines} more lines]`;
+}
+
+// Render a pseudo-JSON block for the API request
+function apiRequestLines(
+  callNumber: number,
+  model: string,
+  system: string,
+  tools: Anthropic.Tool[],
+  messages: Anthropic.MessageParam[],
+  estimatedTokens: number,
+): Line[] {
+  const lines: Line[] = [];
+  lines.push({ text: `▶ API call #${callNumber}  ~${estimatedTokens.toLocaleString()} tokens`, bold: true, color: "cyan" });
+  lines.push({ text: `  {`, color: "cyan" });
+  lines.push({ text: `    model: "${model}",`, color: "cyan" });
+  lines.push({ text: `    system: <${system.length} chars>,`, color: "cyan" });
+  lines.push({ text: `    tools: [${tools.map(t => `"${t.name}"`).join(", ")}],`, color: "cyan" });
+  lines.push({ text: `    max_tokens: ${config.maxOutputTokens},`, color: "cyan" });
+  lines.push({ text: `    messages: [`, color: "cyan" });
+  for (const msg of messages) {
+    const contentSummary = summariseContent(msg.content);
+    lines.push({ text: `      { role: "${msg.role}", content: ${contentSummary} },`, color: "cyan", dimColor: true });
+  }
+  lines.push({ text: `    ]`, color: "cyan" });
+  lines.push({ text: `  }`, color: "cyan" });
+  return lines;
+}
+
+function summariseContent(content: Anthropic.MessageParam["content"]): string {
+  if (typeof content === "string") {
+    if (content.length <= 60) return `"${content}"`;
+    return `<${content.length} chars>`;
+  }
+  if (!Array.isArray(content) || content.length === 0) return "[]";
+  if (content.length === 1) {
+    const b = content[0] as any;
+    if (b.type === "text") {
+      const t = b.text as string;
+      return t.length <= 60 ? `"${t}"` : `<text: ${t.length} chars>`;
+    }
+    if (b.type === "tool_result") return `<tool_result>`;
+    if (b.type === "tool_use") return `<tool_use: ${b.name}>`;
+    return `<${b.type}>`;
+  }
+  // Multiple blocks — summarise by type
+  const counts: Record<string, number> = {};
+  for (const b of content as any[]) {
+    counts[b.type] = (counts[b.type] ?? 0) + 1;
+  }
+  return `[${Object.entries(counts).map(([t, n]) => `${n} ${t}`).join(", ")}]`;
+}
+
+// Render a pseudo-JSON block for the API response
+function apiResponseLines(
+  stopReason: string,
+  usage: { input_tokens: number; output_tokens: number },
+  content: Anthropic.ContentBlock[],
+): Line[] {
+  const lines: Line[] = [];
+  lines.push({ text: `◀ response`, bold: true, color: "blue" });
+  lines.push({ text: `  {`, color: "blue" });
+  lines.push({ text: `    stop_reason: "${stopReason}",`, color: "blue" });
+  lines.push({ text: `    usage: { input_tokens: ${usage.input_tokens}, output_tokens: ${usage.output_tokens} },`, color: "blue" });
+  lines.push({ text: `    content: [`, color: "blue" });
+  for (const block of content) {
+    if (block.type === "text") {
+      const preview = block.text.length <= 80
+        ? `"${block.text.replace(/\n/g, "\\n")}"`
+        : `<text: ${block.text.length} chars>`;
+      lines.push({ text: `      { type: "text", text: ${preview} },`, color: "blue", dimColor: true });
+    } else if (block.type === "tool_use") {
+      lines.push({ text: `      { type: "tool_use", name: "${block.name}", input: ${JSON.stringify(block.input)} },`, color: "blue", dimColor: true });
+    } else {
+      lines.push({ text: `      { type: "${block.type}" },`, color: "blue", dimColor: true });
+    }
+  }
+  lines.push({ text: `    ]`, color: "blue" });
+  lines.push({ text: `  }`, color: "blue" });
+  return lines;
+}
+
+// --- Render a single completed item ---
+
+function ItemRow({ item }: { item: CompletedItem }) {
   return (
-    lines.slice(0, maxLines).join("\n") +
-    `\n... [${lines.length - maxLines} more lines]`
+    <Box flexDirection="column">
+      {item.lines.map((line, i) => (
+        <Box key={i} flexDirection="row">
+          {/* Time column — only on first line */}
+          <Box width={TIME_WIDTH}>
+            <Text dimColor>{i === 0 ? item.time : ""}</Text>
+          </Box>
+          {/* Content */}
+          <Text
+            color={line.color as any}
+            dimColor={line.dimColor}
+            bold={line.bold}
+          >
+            {line.text}
+          </Text>
+        </Box>
+      ))}
+    </Box>
   );
 }
 
@@ -46,48 +173,45 @@ export function App() {
   const [ready, setReady] = useState(false);
   const [inputState, setInput] = useState("");
 
-  // Resume prompt state
   const [priorSession, setPriorSession] = useState<Session | null>(null);
   const [resumePromptDone, setResumePromptDone] = useState(false);
 
-  // All completed items go to Static (scrollback). Never put streaming text here.
   const [completedItems, setCompletedItems] = useState<CompletedItem[]>([]);
-
-  // Live zone state — only one of these is active at a time
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [activity, setActivity] = useState("");
 
-  // Abort controller for the current stream — replaced on each new message
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Token delta tracking: previous call's estimated tokens for Δ display
   const [lastCallTokens, setLastCallTokens] = useState<number | null>(null);
   const [tokenDelta, setTokenDelta] = useState<string>("");
-
-  // Last completed response — shown in live zone until next message
   const [lastResponse, setLastResponse] = useState<{ text: string; dimText?: string } | null>(null);
 
-  // Initialize agent (auth + check for prior session)
+  const nextId = useRef(0);
+
+  const addItem = useCallback(
+    (type: ItemType, time: string, lines: Line[]) => {
+      setCompletedItems((prev) => [
+        ...prev,
+        { id: nextId.current++, type, time, lines },
+      ]);
+    },
+    []
+  );
+
   useEffect(() => {
     agent.init().then(async (mode) => {
       setAuthMode(mode);
-      // Show auth mode as first completed item so it's always visible
-      setCompletedItems((prev) => [
-        ...prev,
+      addItem("system", now(), [
         {
-          id: prev.length,
-          type: mode === "Claude Max" ? "turn" as const : "error" as const,
           text: mode === "Claude Max"
             ? `✓ Authenticated: ${mode}`
-            : `⚠ Auth: ${mode}${mode.includes("api-key") ? " (pay-per-token)" : ""}`,
+            : `⚠ Auth: ${mode}`,
+          color: mode === "Claude Max" ? undefined : "red",
         },
       ]);
-      // Check for a resumable session before marking ready
       const prior = await agent.checkPriorSession();
       if (prior && prior.history.length > 0) {
         setPriorSession(prior);
-        // ready stays false until resume prompt is resolved
       } else {
         setResumePromptDone(true);
         setReady(true);
@@ -99,16 +223,6 @@ export function App() {
     });
   }, [agent]);
 
-  const addItem = useCallback(
-    (type: CompletedItem["type"], text: string, dimText?: string) => {
-      setCompletedItems((prev) => [
-        ...prev,
-        { id: prev.length, type, text, dimText },
-      ]);
-    },
-    []
-  );
-
   const handleSubmit = useCallback(
     async (value: string) => {
       // Handle resume prompt
@@ -119,9 +233,9 @@ export function App() {
           agent.resumeSession(priorSession);
           const msgCount = priorSession.history.length;
           const savedAt = new Date(priorSession.savedAt).toLocaleString();
-          addItem("turn", `↩ Resumed session from ${savedAt} (${msgCount} messages)`);
+          addItem("system", now(), [{ text: `↩ Resumed session from ${savedAt} (${msgCount} messages)` }]);
         } else {
-          addItem("turn", "↩ Starting fresh session");
+          addItem("system", now(), [{ text: "↩ Starting fresh session" }]);
         }
         setPriorSession(null);
         setResumePromptDone(true);
@@ -133,9 +247,14 @@ export function App() {
       const trimmed = value.trim();
       if (!trimmed || isStreaming || !ready) return;
 
-      // Move last response to static zone before starting new turn
+      // Move last response to static zone
       if (lastResponse) {
-        addItem("turn", lastResponse.text, lastResponse.dimText);
+        addItem("assistant", now(), [
+          { text: lastResponse.text },
+          ...(lastResponse.dimText
+            ? lastResponse.dimText.split("\n").map(l => ({ text: l, dimColor: true }))
+            : []),
+        ]);
         setLastResponse(null);
       }
 
@@ -143,24 +262,25 @@ export function App() {
       setStreamingText("");
       setIsStreaming(true);
       setTokenDelta("");
-      setLastCallTokens(null);  // reset so first call of new turn shows no delta
+      setLastCallTokens(null);
 
-      addItem("user", `❯ ${trimmed}`);
+      // User prompt — strong visual prominence with separator lines
+      const sep = "─".repeat(60);
+      addItem("user", now(), [
+        { text: sep, color: "green", bold: true },
+        { text: `❯ ${trimmed}`, color: "green", bold: true },
+        { text: sep, color: "green", bold: true },
+      ]);
 
       let fullText = "";
-      // Audit log: one entry per tool call this turn, shown as a summary at turn_end
-      const auditLog: Array<{ formatted: string; ok: boolean; ms: number }> = [];
-
+      const confirmTool = async () => true;
       const controller = new AbortController();
       abortControllerRef.current = controller;
-
-      // No confirmation needed — everything is auto-approved.
-      // The confirmTool callback is required by the agent interface but never called.
-      const confirmTool = async () => true;
 
       try {
         for await (const event of agent.sendMessage(trimmed, confirmTool, controller.signal)) {
           switch (event.type) {
+
             case "api_call_start": {
               const est = formatPayloadSummary({
                 model: event.model,
@@ -170,11 +290,23 @@ export function App() {
               }).estimatedTokens;
               setTokenDelta(formatTokenDelta(est, lastCallTokens));
               setLastCallTokens(est);
-              const timestamp = new Date().toLocaleTimeString("en-GB");
-              addItem(
-                "separator",
-                `▶ API call #${event.callNumber}  ~${est.toLocaleString()} tok  ${timestamp}`
-              );
+              addItem("api_request", now(), apiRequestLines(
+                event.callNumber,
+                event.model,
+                event.system,
+                event.tools,
+                event.messages,
+                est,
+              ));
+              break;
+            }
+
+            case "api_response": {
+              addItem("api_response", now(), apiResponseLines(
+                event.stopReason,
+                event.usage,
+                event.content,
+              ));
               break;
             }
 
@@ -192,56 +324,49 @@ export function App() {
               setActivity(`${event.name}…`);
               break;
 
-            case "tool_result":
-              auditLog.push({
-                formatted: event.formatted,
-                ok: !event.result.isError,
-                ms: Math.round(event.result.durationMs),
-              });
+            case "tool_result": {
+              const resultPreview = truncateOutput(event.result.output);
+              addItem("tool_call", now(), [
+                { text: `⚙ ${event.formatted}`, color: "yellow", bold: true },
+                { text: `  ${event.result.isError ? "✗" : "✓"} ${resultPreview}`, color: "yellow", dimColor: true },
+              ]);
               setActivity("");
               break;
+            }
 
             case "metrics":
-              // Show duration as a dim line after each API call separator
-              addItem("tool_result", "", `  ${formatMs(event.metrics.totalMs)}`);
+              // No longer displayed — aggregated in turn_end
               break;
 
             case "turn_end": {
               const m = event.metrics;
-              const auditParts = auditLog.map(
-                (t) => `${t.formatted} ${t.ok ? "✓" : "✗"} ${t.ms}ms`
-              );
-              const toolSummary = auditParts.length > 0
-                ? `  🔧 ${auditParts.join("  ·  ")}`
-                : "";
-              const metricsLine = `  in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)} total: ${formatMs(m.totalMs)}`;
-              const dimText = [toolSummary, metricsLine].filter(Boolean).join("\n");
+              const metricsLine = `in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)}`;
               if (fullText) {
-                setLastResponse({ text: fullText, dimText });
+                setLastResponse({ text: fullText, dimText: metricsLine });
                 fullText = "";
                 setStreamingText("");
               } else {
-                addItem("turn", "", dimText);
+                addItem("assistant", now(), [{ text: metricsLine, dimColor: true }]);
               }
               break;
             }
 
             case "error":
-              addItem("error", `⚠ ${event.error}`);
+              addItem("error", now(), [{ text: `⚠ ${event.error}`, color: "red" }]);
               break;
 
             case "interrupted":
               if (fullText) {
-                addItem("turn", fullText);
+                addItem("assistant", now(), [{ text: fullText }]);
                 fullText = "";
                 setStreamingText("");
               }
-              addItem("error", "⊘ Interrupted");
+              addItem("error", now(), [{ text: "⊘ Interrupted", color: "red" }]);
               break;
           }
         }
       } catch (err: any) {
-        addItem("error", `⚠ ${err.message}`);
+        addItem("error", now(), [{ text: `⚠ ${err.message}`, color: "red" }]);
       } finally {
         setStreamingText("");
         setIsStreaming(false);
@@ -263,76 +388,64 @@ export function App() {
 
   return (
     <>
-      {/* Static zone: scrollback history */}
       <Static items={completedItems}>
-        {(item) => (
-          <Box key={item.id} flexDirection="column">
-            <Text
-              bold={item.type === "separator"}
-              color={
-                item.type === "separator"
-                  ? "cyan"
-                  : item.type === "error"
-                    ? "red"
-                    : item.type === "tool_call"
-                      ? "yellow"
-                      : item.type === "tool_result"
-                        ? "gray"
-                        : item.type === "tool_rejected"
-                          ? "red"
-                          : item.type === "user"
-                            ? "green"
-                            : undefined
-              }
-            >
-              {item.text}
-            </Text>
-            {item.dimText && <Text dimColor>{item.dimText}</Text>}
-          </Box>
-        )}
+        {(item) => <ItemRow key={item.id} item={item} />}
       </Static>
 
-      {/* Live zone — only one thing shows at a time */}
       <Box flexDirection="column">
         {/* Streaming response text */}
         {isStreaming && streamingText && (
-          <Box marginBottom={0}>
-            <Text>
-              {streamingText}
-              <Text dimColor>▊</Text>
-            </Text>
+          <Box>
+            <Box width={TIME_WIDTH}><Text dimColor>{now()}</Text></Box>
+            <Text>{streamingText}<Text dimColor>▊</Text></Text>
           </Box>
         )}
 
-        {/* Activity indicator (no streaming text yet) */}
+        {/* Activity indicator */}
         {isStreaming && !streamingText && (
           <Box>
+            <Box width={TIME_WIDTH}><Text dimColor>{now()}</Text></Box>
             <Text dimColor>⏳ {activity || "working..."}</Text>
           </Box>
         )}
 
-        {/* Last completed response (stays here until next message) */}
+        {/* Last completed response */}
         {!isStreaming && lastResponse && (
           <Box flexDirection="column">
-            <Text>{lastResponse.text}</Text>
-            {lastResponse.dimText && <Text dimColor>{lastResponse.dimText}</Text>}
+            <Box>
+              <Box width={TIME_WIDTH}><Text dimColor>{""}</Text></Box>
+              <Text>{lastResponse.text}</Text>
+            </Box>
+            {lastResponse.dimText && (
+              <Box>
+                <Box width={TIME_WIDTH}><Text>{""}</Text></Box>
+                <Text dimColor>{lastResponse.dimText}</Text>
+              </Box>
+            )}
           </Box>
         )}
 
         {/* Resume prompt */}
         {priorSession && !resumePromptDone && (
-          <Box flexDirection="column" marginBottom={0}>
-            <Text color="cyan">
-              {"↩ Prior session found: "}
-              {new Date(priorSession.savedAt).toLocaleString()}
-              {` (${priorSession.history.length} messages)`}
-            </Text>
-            <Text dimColor>{"  Resume? [Y/n] "}</Text>
+          <Box flexDirection="column">
+            <Box>
+              <Box width={TIME_WIDTH}><Text dimColor>{now()}</Text></Box>
+              <Text color="cyan">
+                {"↩ Prior session: "}
+                {new Date(priorSession.savedAt).toLocaleString()}
+                {` (${priorSession.history.length} messages)`}
+              </Text>
+            </Box>
+            <Box>
+              <Box width={TIME_WIDTH}><Text>{""}</Text></Box>
+              <Text dimColor>Resume? [Y/n] </Text>
+            </Box>
           </Box>
         )}
 
         {/* Input prompt */}
         <Box>
+          <Box width={TIME_WIDTH}><Text dimColor>{isStreaming ? "" : now()}</Text></Box>
           <Text
             bold={!isStreaming}
             dimColor={isStreaming}

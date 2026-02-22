@@ -98,6 +98,7 @@ export type AgentEvent =
   | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
+  | { type: "api_response"; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[] }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[] }
   | { type: "error"; error: string }
   | { type: "interrupted" };
@@ -603,6 +604,17 @@ export class Agent {
       if (totalTtftMs === null) totalTtftMs = ttftMs; // first API call sets TTFT
 
       const totalMs = performance.now() - startTime;
+
+      // Emit API response event for UI display
+      yield {
+        type: "api_response",
+        stopReason: response.stop_reason ?? "unknown",
+        usage: {
+          input_tokens: response.usage.input_tokens ?? 0,
+          output_tokens: response.usage.output_tokens,
+        },
+        content: response.content,
+      };
 
       // Add assistant response to history
       this.history.push({ role: "assistant", content: response.content });
