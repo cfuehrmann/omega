@@ -76,6 +76,20 @@ function userMessageLines(content: string): Line[] {
   return lines;
 }
 
+function summariseMessageContent(content: Anthropic.MessageParam["content"]): string {
+  if (typeof content === "string") {
+    return content.length <= 60 ? `"${content}"` : `<${content.length} chars>`;
+  }
+  if (!Array.isArray(content) || content.length === 0) return "[]";
+  const parts = (content as any[]).map((b) => {
+    if (b.type === "text") return `text: <${b.text.length} chars>`;
+    if (b.type === "tool_use") return `tool_use: "${b.name}"`;
+    if (b.type === "tool_result") return `tool_result: <${(b.content as string).length} chars>`;
+    return b.type;
+  });
+  return `[${parts.join(", ")}]`;
+}
+
 function apiRequestLines(
   callNumber: number,
   model: string,
@@ -90,7 +104,11 @@ function apiRequestLines(
   lines.push({ text: `${INDENT}system: <${system.length} chars>`, color: "cyan" });
   lines.push({ text: `${INDENT}tools: [${tools.map(t => `"${t.name}"`).join(", ")}]`, color: "cyan" });
   lines.push({ text: `${INDENT}max_tokens: ${config.maxOutputTokens}`, color: "cyan" });
-  lines.push({ text: `${INDENT}messages: <${messages.length} messages>`, color: "cyan" });
+  const last = messages[messages.length - 1];
+  lines.push({ text: `${INDENT}messages: <${messages.length}> …`, color: "cyan" });
+  if (last) {
+    lines.push({ text: `${INDENT2}{ role: "${last.role}", content: ${summariseMessageContent(last.content)} }`, color: "cyan", dimColor: true });
+  }
   return lines;
 }
 
