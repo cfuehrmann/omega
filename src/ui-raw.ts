@@ -227,6 +227,10 @@ function setupRawInput(
   onEscape: () => void,
   onExit: () => void,
 ): void {
+  if (!process.stdin.setRawMode) {
+    console.error("Error: stdin is not a TTY. Run in an interactive terminal.");
+    process.exit(1);
+  }
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf-8");
@@ -468,3 +472,9 @@ export async function runApp(): Promise<void> {
     printPrompt(bold(green("❯ ")));
   }
 }
+
+// Entry point
+runApp().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
