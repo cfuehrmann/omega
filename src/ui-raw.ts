@@ -194,19 +194,24 @@ function renderApiResponse(
   return lines;
 }
 
+/** Returns a short display suffix for a tool call ID (last 6 chars). */
+function shortId(id: string): string {
+  return id.length <= 6 ? id : `…${id.slice(-6)}`;
+}
+
 /** Render the start of a tool call (name + input only). Shown immediately when the call is issued. */
-export function renderToolStart(name: string, input: any): string[] {
+export function renderToolStart(name: string, input: any, id: string): string[] {
   const lines: string[] = [];
-  lines.push(bold(yellow(`tool call`)));
+  lines.push(bold(yellow(`tool call`)) + dim(yellow(`  [${shortId(id)}]`)));
   lines.push(yellow(`${INDENT}name: "${name}"`));
   lines.push(yellow(`${INDENT}input: ${JSON.stringify(input)}`));
   return lines;
 }
 
 /** Render the result of a tool call. Shown with a fresh timestamp when the tool completes. */
-export function renderToolResult(result: { output: string; isError: boolean }): string[] {
+export function renderToolResult(result: { output: string; isError: boolean }, id: string): string[] {
   const lines: string[] = [];
-  lines.push(bold(yellow(`tool result`)));
+  lines.push(bold(yellow(`tool result`)) + dim(yellow(`  [${shortId(id)}]`)));
   lines.push(dim(yellow(`${INDENT}is_error: ${result.isError}`)));
   lines.push(dim(yellow(`${INDENT}content:`)));
   for (const line of truncateOutput(result.output).split("\n")) {
@@ -757,11 +762,11 @@ export async function runApp(): Promise<void> {
             break;
 
           case "tool_call":
-            printBlock(now(), renderToolStart(event.name, event.input));
+            printBlock(now(), renderToolStart(event.name, event.input, event.id));
             break;
 
           case "tool_result": {
-            printBlock(now(), renderToolResult(event.result));
+            printBlock(now(), renderToolResult(event.result, event.id));
             break;
           }
 
