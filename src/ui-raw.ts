@@ -565,7 +565,7 @@ export async function runApp(): Promise<void> {
           }
 
           case "status":
-            // No live zone — skip
+            printBlock(now(), event.message.split("\n"));
             break;
 
           case "text":
