@@ -34,7 +34,7 @@ export type AgentEvent =
   | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
-  | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[] }
+  | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
   | { type: "error"; error: string }
   | { type: "interrupted" };
 
@@ -384,6 +384,10 @@ export class Agent {
 
   getAuthMode(): string {
     return this.authMode;
+  }
+
+  getProvider(): ProviderName {
+    return this.provider;
   }
 
   getHistory(): readonly Anthropic.MessageParam[] {
@@ -820,6 +824,8 @@ export class Agent {
     }
 
     // Emit one turn_end after all API calls complete
+    const endProvider: ProviderName = this.provider === "openai" ? "openai" : "anthropic";
+    const endModel = endProvider === "openai" ? (config.fallbackModel as string) : config.model;
     yield {
       type: "turn_end",
       metrics: {
@@ -830,6 +836,8 @@ export class Agent {
         totalMs: performance.now() - (this._apiCallCount > 0 ? 0 : 0), // wall time not tracked here
       },
       toolCalls: allToolCalls,
+      provider: endProvider,
+      model: endModel,
     };
   }
 }

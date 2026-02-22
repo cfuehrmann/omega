@@ -253,8 +253,10 @@ function renderAssistantMessage(text: string, dimText?: string): string[] {
 }
 
 function renderStatus(agent: Agent, streaming: boolean): string {
+  const provider = agent.getProvider();
+  const model = provider === "openai" ? config.fallbackModel : config.model;
   return dim(
-    `${config.model} │ in: ${agent.sessionInputTokens} out: ${agent.sessionOutputTokens} │ ${formatCost(agent.sessionCostUsd)}` +
+    `${provider}/${model} │ in: ${agent.sessionInputTokens} out: ${agent.sessionOutputTokens} │ ${formatCost(agent.sessionCostUsd)}` +
     (streaming ? " │ Esc to interrupt" : " │ Ctrl+C to quit")
   );
 }
@@ -487,7 +489,7 @@ export async function runApp(): Promise<void> {
               streamingStarted = false;
             }
             const m = event.metrics;
-            const dimText = `in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)}`;
+            const dimText = `[${event.provider}/${event.model}] in: ${m.inputTokens} out: ${m.outputTokens} cost: ${formatCost(m.costUsd)} ttft: ${formatMs(m.ttftMs)}`;
             printBlock(now(), [dim(dimText)]);
             printBlock(now(), [renderStatus(agent, false)]);
             break;
