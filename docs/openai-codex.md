@@ -34,6 +34,8 @@ fallbackModel: "gpt-5.2-codex"
 - Anthropic `tool_use` blocks are mapped to `function_call` inputs; tool
   results map to `function_call_output`. This prevents missing call_id
   errors.
+- Once a rate limit triggers, fallback stays active for the rest of the
+  runtime (no automatic switch-back).
 
 ## Notes
 

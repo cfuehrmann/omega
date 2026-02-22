@@ -61,4 +61,37 @@ describe("Agent fallback", () => {
     expect(apiError.model).toBe("claude-sonnet-4-6");
     expect(apiError.error).toContain("rate limit");
   });
+
+  it("sticks to fallback for subsequent calls", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    let providerCalls = 0;
+    let openAiCalls = 0;
+
+    const mockProvider: StreamProvider = async () => {
+      providerCalls += 1;
+      throw makeRateLimitError();
+    };
+
+    const openAiCaller = async () => {
+      openAiCalls += 1;
+      return {
+        response: {
+          content: [{ type: "text", text: "ok" } as any],
+          stop_reason: "stop",
+          usage: { input_tokens: 1, output_tokens: 2 },
+        },
+        text: "ok",
+      };
+    };
+
+    const agent = new Agent(mockProvider, null, openAiCaller as any);
+    await collectEvents(agent, "first");
+    expect(providerCalls).toBe(1);
+    expect(openAiCalls).toBe(1);
+
+    await collectEvents(agent, "second");
+    expect(providerCalls).toBe(1); // no more Anthropic calls
+    expect(openAiCalls).toBe(2);
+  });
 });

@@ -266,6 +266,7 @@ export class Agent {
   private _apiCallCount = 0;
 
   private authMode: "api-key" | "oauth" = "api-key";
+  private fallbackModeActive = false;
   public readonly sessionId: string;
 
   /** Session storage directory. null = persistence disabled. undefined = use default. */
@@ -428,7 +429,15 @@ export class Agent {
         ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
         : config.systemPrompt;
 
-      let activeModel = config.model;
+      const useFallback = this.fallbackModeActive && fallbackEnabled && Boolean(config.fallbackModel);
+      let activeModel = useFallback ? (config.fallbackModel as string) : config.model;
+
+      if (useFallback) {
+        yield {
+          type: "status",
+          message: `OpenAI fallback active — using ${activeModel}`,
+        } as AgentEvent;
+      }
 
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
@@ -444,7 +453,25 @@ export class Agent {
       // Call API with retry
       let response: ModelResponse | null = null;
       let lastError: any = null;
-      for (let attempt = 0; attempt < 5; attempt++) { 
+
+      if (useFallback) {
+        try {
+          const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens);
+          if (ttftMs === null) {
+            ttftMs = performance.now() - startTime;
+          }
+          if (openai.text) {
+            yield { type: "text", text: openai.text };
+          }
+          response = openai.response;
+          lastError = null;
+        } catch (fallbackErr: any) {
+          logger.error("api_fallback_error", { error: fallbackErr.message });
+          yield { type: "error", error: `OpenAI fallback failed: ${fallbackErr.message ?? fallbackErr}` };
+          return;
+        }
+      } else {
+        for (let attempt = 0; attempt < 5; attempt++) { 
         try {
           let fullText = "";
 
@@ -502,6 +529,7 @@ export class Agent {
           lastError = err;
 
           if (shouldFallbackToCodex(err, fallbackEnabled) && config.fallbackModel) {
+            this.fallbackModeActive = true;
             logger.warn("api_fallback", {
               from: config.model,
               to: config.fallbackModel,
@@ -583,6 +611,7 @@ export class Agent {
             yield { type: "error", error: `API error: ${err.message ?? err}` };
             return;
           }
+        }
         }
       }
 
