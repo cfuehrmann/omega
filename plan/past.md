@@ -4,9 +4,9 @@ Compressed record of what shaped the current state. Distill, don't accumulate.
 
 ## Stack and architecture
 
-TypeScript + Bun: native TS, fastest startup for self-restart loop. Ink for
-the terminal UI. Agent core (`agent.ts`) never imports React/Ink — clean
-separation. Config is code (`config.ts`), no YAML/JSON.
+TypeScript + Bun: native TS, fastest startup for self-restart loop. Raw
+terminal I/O for the UI (no library). Agent core (`agent.ts`) has no UI
+imports — clean separation. Config is code (`config.ts`), no YAML/JSON.
 
 The agent is an async generator (`sendMessage`) that emits typed `AgentEvent`
 values. The UI consumes the stream; the agent knows nothing about rendering.
@@ -47,35 +47,28 @@ Truncation (drop oldest messages, keep system + recent) rather than
 summarisation. Token budget: 100k. `edit_file` for surgical edits to avoid
 rewriting whole files.
 
-## UI (Ink)
+## UI (raw terminal, no library)
 
-Ink owns only the bottom region of the terminal — not the full screen. Content
-that scrolls into the terminal's scrollback is outside Ink's control forever.
-This makes collapsible/expandable history impossible in Ink.
+Ink was dropped. The operator's dictation tool (Wayland virtual keyboard,
+`wrtype` crate) simulates keystrokes — Ink's React render cycle dropped
+characters under rapid input. Raw stdin with `setRawMode` handles the full
+byte stream per chunk, so dictation works correctly.
 
-Log-style layout: time column (HH:MM:SS) on the left of every block.
-Three visual prominence levels via color:
-- User prompts: bright green bold `───` separator + text (strongest)
-- API requests (cyan): pseudo-JSON showing model, system size, tool names,
-  message summaries (not full content)
-- API responses (blue): pseudo-JSON showing stop_reason, usage, content blocks
-- Tool calls (yellow): formatted call + result preview
-- Status bar: model, auth, session tokens, cost, Δ tok, Esc hint
+Architecture: everything prints to scrollback as it happens. No live zone,
+no cursor movement, no line counting. The terminal owns all layout and reflow.
+Streaming assistant text printed inline as chunks arrive. Status shown at
+turn end. Input echoed character by character with backspace support.
+Resize: no SIGWINCH handler needed — no live zone to redraw.
 
-`api_response` AgentEvent added (stop_reason, usage, content blocks).
-`turn_end` AgentEvent aggregates all tool calls and metrics across a turn.
-Tool audit summary shown once at turn end, not per-API-call.
+Visual layout: time column (HH:MM:SS) on left, color-coded blocks in
+API terminology: user message (green), api call (cyan), api response (blue),
+tool execution (yellow), tool result message (magenta), assistant message (white).
 
-## TUI alternatives researched (2025)
+`api_response`, `user_message`, `tool_result_message` AgentEvents added.
+`turn_end` aggregates metrics across all API calls in a turn.
+API call counter resets per user prompt (not per session).
 
-Ink cannot own the full screen. Alternatives:
-- **OpenTUI** — Zig core, TypeScript/React bindings, 8.8k stars, powers
-  OpenCode. Requires Zig to build. Pre-1.0. Most promising; revisit when stable.
-- **unblessed** — TypeScript blessed rewrite, alpha, 6 stars. Too thin community.
-- **Ratatui** (Rust) — two languages to maintain.
-- **Browser UI** — best long-term flexibility, larger upfront cost.
-Decision: stay with Ink. Revisit OpenTUI or browser UI when capability
-outgrows the current display model.
+Removed: ink, ink-text-input, react, @types/react, ink-testing-library.
 
 ## Core purpose
 

@@ -5,24 +5,7 @@ to `past.md`. Keep in priority order.
 
 ---
 
-## 1. Spike: pi-tui as Ink replacement
-
-`@mariozechner/pi-tui` (from badlogic/pi-mono, 14.5k stars) is a pure
-TypeScript TUI library that owns the full screen, uses differential
-rendering, and handles bracketed paste and the Kitty keyboard protocol.
-Directly addresses Ink's input flakiness.
-
-Goal: build the simplest possible prototype — scrolling output + input box —
-and see if typing feels solid. One to two hours max. Output is a decision,
-not a feature. Code gets thrown away.
-
-Constraint: output must look good on window resize. Verify that SIGWINCH
-triggers a redraw of the live zone at the new width.
-
-If good: add migration to future.md as a proper item.
-If bad: record why and move on.
-
-## 2. UI tests for `ui.tsx`
+## 1. UI tests for `ui-raw.ts`
 
 `ui.tsx` has zero automated tests. Use `ink-testing-library` to cover the
 main states: resume prompt, streaming display, activity indicator, Esc
