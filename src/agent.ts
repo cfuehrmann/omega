@@ -169,10 +169,20 @@ export function isRetryable(err: any): boolean {
   if (!err) return false;
   const status = err.status ?? err.statusCode;
   if (status === 429 || status === 529 || status === 500 || status === 503) return true;
-  // The Anthropic SDK throws this when the server restarts a stream mid-flight
-  // (a new message_start arrives before message_stop). No HTTP status code —
-  // it's thrown internally by MessageStream. Treat as transient and retry.
-  if (typeof err.message === "string" && err.message.includes("Unexpected event order")) return true;
+  if (typeof err.message === "string") {
+    const msg: string = err.message;
+    // The Anthropic SDK throws this when the server restarts a stream mid-flight
+    // (a new message_start arrives before message_stop). No HTTP status code —
+    // it's thrown internally by MessageStream. Treat as transient and retry.
+    if (msg.includes("Unexpected event order")) return true;
+    // Bun throws this when the TCP connection to the API server is closed
+    // unexpectedly (idle connection recycled, server-side keepalive timeout,
+    // network blip). No HTTP status code — it's a fetch-level error.
+    // Seen in diagnosis/2026-02-23T18-36-29-982Z.json during world-state fold.
+    if (msg.includes("socket connection was closed unexpectedly")) return true;
+    // Node/Bun also surfaces TCP resets as ECONNRESET via fetch().
+    if (msg.includes("ECONNRESET")) return true;
+  }
   return false;
 }
 

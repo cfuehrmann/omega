@@ -116,6 +116,21 @@ describe("isRetryable", () => {
     );
     expect(isRetryable(sdkStreamError)).toBe(true);
   });
+
+  it("retries on socket-closed / TCP reset error (no HTTP status)", () => {
+    // Bun throws this when the underlying TCP connection to the API server is
+    // dropped mid-flight (e.g. server closes idle connection, network blip).
+    // The error has no HTTP status code. Seen in the wild during world-state
+    // fold at shutdown: "The socket connection was closed unexpectedly."
+    // Diagnosis: 2026-02-23T18-36-29-982Z.json
+    const socketErr = new Error("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()");
+    expect(isRetryable(socketErr)).toBe(true);
+  });
+
+  it("retries on ECONNRESET fetch error", () => {
+    const resetErr = new Error("fetch failed: read ECONNRESET");
+    expect(isRetryable(resetErr)).toBe(true);
+  });
 });
 
 // --- Auth expiry detection ---
