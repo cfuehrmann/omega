@@ -4,7 +4,7 @@
  * When a hard API error occurs (non-retryable, session-breaking), call
  * `writeDiagnostic()` to capture the full context at the moment of failure:
  * error body, request payload, conversation history, and a plain-English
- * summary. The file is written to `plan/diagnosis/` and persists across
+ * summary. The file is written to `diagnosis/` at the repo root and persists across
  * sessions so the next Omega instance can read it with hard data rather than
  * reconstructing from memory.
  *
@@ -38,7 +38,7 @@ export interface DiagnosticData {
   extra?: Record<string, unknown>;
 }
 
-const DIAGNOSIS_DIR = "plan/diagnosis";
+const DIAGNOSIS_DIR = "diagnosis";
 
 /**
  * Write a diagnostic snapshot file. Silently swallows any I/O errors —

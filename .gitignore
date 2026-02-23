@@ -22,6 +22,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # session persistence (web server event log — runtime artifact)
 sessions/
 
+# fatal API error diagnostic snapshots (runtime artifacts, not committed)
+diagnosis/
+
 # test session persistence (e2e test server)
 sessions-test/
 
