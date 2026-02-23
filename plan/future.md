@@ -122,6 +122,23 @@ Closed. Two problems fixed (commit 7344295):
    This keeps latency O(1) for the dominant typing/wtype-injection path.
 6 new tests added (paste correctness + latency guard). 358 tests total.
 
+### [INFRA] LOG-2: Complete event taxonomy renaming (pino side)
+**Priority: medium — consistency; true duals unified, pino wrappers still use old names**
+
+Commit 899f136 unified the three true-dual AgentEvent/pino pairs (`api_response→llm_to_agent`, `tool_call→agent_to_agent_tool_call`, `tool_result→agent_to_agent_tool_result`). Remaining pino-side renames:
+
+1. Per-iteration pino events `api_request` → `agent_to_llm`, `api_response` (already gone as AgentEvent, but the pino call inside the Anthropic stream loop is now `llm_to_agent` — check consistency)
+2. Per-turn aggregate pino `api_call` (via `logger.apiCall()` wrapper, emits `"api_call"`) → rename to something turn-scoped matching the taxonomy (e.g. `turn_llm_summary` or keep as-is and document it as an aggregation, not a dual)
+3. `toolExec` wrapper → lower to `debug` (currently `info`); rename emitted event from `tool_exec` → `agent_to_agent_tool_call` or keep as a separate aggregation log
+4. `apiCall` wrapper → lower to `debug` (currently `info`)
+
+Acceptance criteria:
+- All pino event names follow the coordinate-system taxonomy or are explicitly documented as aggregations (not duals)
+- Log levels match frequency: per-iteration = debug, per-turn aggregate = info only if history changes
+- Existing tests updated to reflect new names
+
+---
+
 ### [TOPIC] Prompt queuing — interruption, injection, and turn sequencing
 **Priority: HIGH — next major design area**
 
