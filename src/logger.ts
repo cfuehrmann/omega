@@ -92,15 +92,20 @@ export function makeLogEntry(
 }
 
 // ---------------------------------------------------------------------------
-// Log file rotation — previous session kept as omega.prev.log
+// Log file selection & rotation
 // ---------------------------------------------------------------------------
 
-const LOG_FILE = "omega.log";
+// When OMEGA_LOG_FILE is set (e.g. by the test-setup preload), use that path
+// directly and skip rotation — tests must not touch omega.log.
+const PROD_LOG_FILE = "omega.log";
 const PREV_LOG_FILE = "omega.prev.log";
+
+const LOG_FILE: string = process.env.OMEGA_LOG_FILE ?? PROD_LOG_FILE;
+const IS_PRODUCTION_LOG = LOG_FILE === PROD_LOG_FILE;
 
 /**
  * Rotate logs: rename omega.log → omega.prev.log (overwriting).
- * Called once at module load time so each session starts with a fresh log.
+ * Only called in production (when OMEGA_LOG_FILE is not set).
  * Errors are silently swallowed — log rotation failure must not crash startup.
  */
 function rotateLogs(): void {
@@ -113,7 +118,9 @@ function rotateLogs(): void {
   }
 }
 
-rotateLogs();
+if (IS_PRODUCTION_LOG) {
+  rotateLogs();
+}
 
 // ---------------------------------------------------------------------------
 // Pino destination — async (buffered), periodic auto-flush, sync-flushable

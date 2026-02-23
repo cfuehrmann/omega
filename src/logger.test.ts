@@ -14,10 +14,25 @@
 import { describe, it, expect } from "bun:test";
 import {
   makeLogEntry,
+  getLogFile,
   type MessageEntry,
   type InfraEntry,
   type LogEntry,
 } from "./logger.js";
+
+// ---------------------------------------------------------------------------
+// Log file isolation — tests must not write to omega.log
+// ---------------------------------------------------------------------------
+
+describe("log file isolation", () => {
+  it("uses OMEGA_LOG_FILE when set, not omega.log", () => {
+    // The test-setup preload sets OMEGA_LOG_FILE=/dev/null.
+    // If the env var is honoured, getLogFile() must not return "omega.log".
+    const logFile = getLogFile();
+    expect(logFile).not.toBe("omega.log");
+    expect(logFile).toBe(process.env.OMEGA_LOG_FILE ?? "omega.log");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // makeLogEntry — shape factory (tested directly)
