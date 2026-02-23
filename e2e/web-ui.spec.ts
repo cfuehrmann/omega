@@ -138,13 +138,13 @@ test("text event shows assistant block", async ({ page, server }) => {
   await expect(assistBlock).toHaveText("Hello from Omega!", { timeout: 3000 });
 });
 
-test("tool_call event shows tool block", async ({ page, server }) => {
+test("agent_to_agent_tool_call event shows tool block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
-    type: "tool_call",
+    type: "agent_to_agent_tool_call",
     id: "tc-001",
     name: "read_file",
     input: { path: "src/agent.ts" },
@@ -218,13 +218,13 @@ test("api_call_start event shows a collapsible api-call block", async ({ page, s
   await expect(block.locator(".block-label")).toContainText("api call");
 });
 
-test("api_response event shows an api-response block", async ({ page, server }) => {
+test("llm_to_agent event shows an api-response block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
-    type: "api_response",
+    type: "llm_to_agent",
     provider: "anthropic",
     url: "https://api.anthropic.com/v1/messages",
     stopReason: "end_turn",

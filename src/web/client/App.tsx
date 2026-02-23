@@ -79,7 +79,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "tool_call") {
+  if (e.type === "agent_to_agent_tool_call") {
     const inputStr = typeof e.input === "object"
       ? JSON.stringify(e.input, null, 2)
       : String(e.input);
@@ -91,7 +91,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "tool_result") {
+  if (e.type === "agent_to_agent_tool_result") {
     const r = e.result;
     const content = r.type === "text" ? truncate(r.text ?? "") : `[${r.type}]`;
     return (
@@ -128,7 +128,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "api_response") {
+  if (e.type === "llm_to_agent") {
     const line = `stop: ${e.stopReason}  in: ${e.usage.input_tokens}  out: ${e.usage.output_tokens}`;
     return (
       <div class="block api-response">

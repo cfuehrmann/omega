@@ -33,10 +33,10 @@ export type AgentEvent =
   | { type: "status"; message: string }
   | { type: "user_message"; content: string }
   | { type: "api_call_start"; callNumber: number; provider: "openai" | "anthropic"; url: string; request: any }
-  | { type: "api_response"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
+  | { type: "llm_to_agent"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
   | { type: "api_error"; provider: "openai" | "anthropic"; url: string; error: string }
-  | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
-  | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
+  | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
+  | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
@@ -756,7 +756,7 @@ export class Agent {
       }
 
       yield {
-        type: "api_response",
+        type: "llm_to_agent",
         provider: providerName,
         url: compactionUrl,
         stopReason: "end_turn",
@@ -1270,9 +1270,9 @@ export class Agent {
 
       const totalMs = performance.now() - startTime;
 
-      // Emit API response event for UI display
+      // Emit LLM response event for UI display
       yield {
-        type: "api_response",
+        type: "llm_to_agent",
         provider: useOpenAi ? "openai" : "anthropic",
         url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
         stopReason: response.stop_reason ?? "unknown",
@@ -1283,7 +1283,7 @@ export class Agent {
         content: response.content,
         raw: useOpenAi ? (response as any).raw : undefined,
       };
-      logger.debug("api_response", {
+      logger.debug("llm_to_agent", {
         provider: useOpenAi ? "openai" : "anthropic",
         stopReason: response.stop_reason ?? "unknown",
         inputTokens: response.usage.input_tokens ?? 0,
@@ -1309,13 +1309,13 @@ export class Agent {
           const formatted = formatToolCall(toolUse.name, toolUse.input);
           formattedCalls.push({ toolUse, formatted });
           yield {
-            type: "tool_call",
+            type: "agent_to_agent_tool_call",
             id: toolUse.id,
             name: toolUse.name,
             input: toolUse.input,
             formatted,
           } as AgentEvent;
-          logger.debug("tool_call", { id: toolUse.id, name: toolUse.name });
+          logger.debug("agent_to_agent_tool_call", { id: toolUse.id, name: toolUse.name });
         }
 
         // Execute all tools concurrently
@@ -1339,13 +1339,13 @@ export class Agent {
           });
 
           yield {
-            type: "tool_result",
+            type: "agent_to_agent_tool_result",
             id: toolUse.id,
             name: toolUse.name,
             formatted,
             result,
           } as AgentEvent;
-          logger.debug("tool_result", { id: toolUse.id, name: toolUse.name, isError: result.isError });
+          logger.debug("agent_to_agent_tool_result", { id: toolUse.id, name: toolUse.name, isError: result.isError });
 
           toolResults.push({
             type: "tool_result",

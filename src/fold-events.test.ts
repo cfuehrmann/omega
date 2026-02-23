@@ -2,8 +2,8 @@
  * Tests for structured events emitted by foldCurrentSessionIntoWorldState.
  *
  * When the world-state fold runs (on shutdown), it should emit the same
- * structured AgentEvents as a regular turn — api_call_start, api_response,
- * and a tool_result for the file write — so the UI can render them visibly.
+ * structured AgentEvents as a regular turn — api_call_start, llm_to_agent,
+ * and a world_state_saved for the file write — so the UI can render them visibly.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
@@ -116,7 +116,7 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     await collectSendMessage(agent, "hello");
 
     const events = await collectFold(agent);
-    const apiResponse = events.find(e => e.type === "api_response");
+    const apiResponse = events.find(e => e.type === "llm_to_agent");
     expect(apiResponse).toBeDefined();
     expect((apiResponse as any).usage).toBeDefined();
     expect(typeof (apiResponse as any).usage.input_tokens).toBe("number");
@@ -136,8 +136,8 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect((saved as any).path).toBe(worldStatePath);
     expect(typeof (saved as any).charCount).toBe("number");
 
-    // Must NOT use the generic tool_result event type for this
-    const toolResult = events.find(e => e.type === "tool_result");
+    // Must NOT use the generic agent_to_agent_tool_result event type for this
+    const toolResult = events.find(e => e.type === "agent_to_agent_tool_result");
     expect(toolResult).toBeUndefined();
   });
 

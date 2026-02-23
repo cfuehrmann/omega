@@ -95,7 +95,7 @@ async function shutdown(agent: Agent, code: number = 0): Promise<never> {
         ));
         break;
 
-      case "api_response":
+      case "llm_to_agent":
         printBlock(now(), renderApiResponse(
           event.provider,
           event.url,
@@ -192,7 +192,7 @@ export async function runApp(): Promise<void> {
             ));
             break;
 
-          case "api_response":
+          case "llm_to_agent":
             if (streamingStarted) {
               println("");
               streamingStarted = false;
@@ -231,11 +231,11 @@ export async function runApp(): Promise<void> {
             fullText += event.text;
             break;
 
-          case "tool_call":
+          case "agent_to_agent_tool_call":
             printBlock(now(), renderToolStart(event.name, event.input, event.id));
             break;
 
-          case "tool_result": {
+          case "agent_to_agent_tool_result": {
             printBlock(now(), renderToolResult(event.result, event.id));
             break;
           }

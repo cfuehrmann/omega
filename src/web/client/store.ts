@@ -21,11 +21,11 @@ export type WsEvent =
   | { type: "reset_done" }
   | { type: "user_message"; content: string }
   | { type: "text"; text: string }
-  | { type: "tool_call"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
+  | { type: "agent_to_agent_tool_call"; id: string; name: string; input: unknown }
+  | { type: "agent_to_agent_tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
   | { type: "status"; message: string }
   | { type: "api_call_start"; callNumber: number; provider: string; url: string; request: unknown }
-  | { type: "api_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
+  | { type: "llm_to_agent"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
   | { type: "api_error"; provider: string; error: string }
@@ -179,11 +179,11 @@ export function dispatch(event: WsEvent): void {
       setState("streaming", false);
       break;
 
-    case "tool_call":
-    case "tool_result":
+    case "agent_to_agent_tool_call":
+    case "agent_to_agent_tool_result":
     case "status":
     case "api_call_start":
-    case "api_response":
+    case "llm_to_agent":
     case "world_state_saved":
     case "api_error":
     case "error":
