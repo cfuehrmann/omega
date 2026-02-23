@@ -2,6 +2,45 @@
 
 ## Open items
 
+### [INFRA] LOG-1: Redesign diagnostic/logging subsystem — DESIGN PHASE
+
+**Status:** Open. Do not implement until design is agreed.
+
+**Background:** Current `diagnosis.ts` has ad-hoc per-error snapshot files with
+`writeDiagnosticWithBuffer` called manually at each error site. This is brittle —
+one missed call site means a missed diagnostic (as happened with prompt-too-long).
+
+**Operator direction (session 2026-02-xx):**
+- Think of it as normal buffered logging, not special-case error snapshots.
+- All significant events (prompts, API calls, tool calls, errors, compaction) go
+  into the log — not just errors.
+- Pre-history before an error is valuable; a pure error-only log loses that.
+- Triggers for flushing to disk: errors (immediate), periodic timer, turn_end.
+- Hard errors (including world-compaction failures) must be logged if at all
+  possible — logging code must stay alive in tough situations.
+- Logging must not be blocking or add meaningful latency to the hot path.
+- Possibly adopt a logging framework rather than rolling our own.
+
+**Open design questions to resolve before coding:**
+1. Log all events vs. log errors + rolling pre-history window?
+   - All events: simplest, most useful, larger files.
+   - Rolling window (e.g. last 200 events): bounded size, loses old history.
+2. Flush strategy: timer interval? turn_end only? size threshold?
+3. File strategy: one overwritten session file vs. rotating/appending?
+4. Logging framework: which one? (pino? winston? bunyan? bun-native?)
+   - Or keep zero-dependency approach with a clean internal EventLog class?
+5. What does `checkDiagnostics()` return to the UI? Error count? Last error summary?
+6. Should session.log persist across sessions (append) or reset on startup (overwrite)?
+
+**Constraints:**
+- Must not crash the agent when the log write fails.
+- Must not block the agentic loop (async fire-and-forget for non-error flushes).
+- Must flush synchronously (or near-synchronously) on error before returning from
+  the error handler — so a subsequent crash doesn't lose the log entry.
+- Tests must not write to the real `diagnosis/` directory.
+
+---
+
 ### [INFRA] REC-0: Git-based known-good anchor — DONE
 **Two-branch model:**
 - `main` = stable. Operator merges `develop → main` after gate + manual tests.
