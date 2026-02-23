@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { StreamProvider, AgentEvent } from "./agent.js";
@@ -233,6 +233,45 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     // The main turn call uses opus; compaction should also use opus
     expect(modelsUsed.every(m => m === "claude-opus-4-6")).toBe(true);
     expect(modelsUsed.length).toBeGreaterThanOrEqual(2); // at least 1 main call + 1 compaction
+  });
+
+  it("writes a diagnostic snapshot when fold fails fatally (after all retries)", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const diagDir = join(tempDir, "diagnosis");
+
+    // Provider that always throws a non-retryable, non-auth error
+    let callCount = 0;
+    const flakyProvider: StreamProvider = async () => {
+      callCount++;
+      if (callCount === 1) {
+        // Main turn succeeds
+        return makeMockStream("main turn response");
+      }
+      // Fold call always fails fatally
+      throw new Error("fatal fold error: disk full");
+    };
+
+    const agent = new Agent(flakyProvider, null, undefined, worldStatePath, diagDir);
+    await collectSendMessage(agent, "hello");
+    await new Promise(r => setTimeout(r, 50)); // wait for compactAfterTurn
+    callCount = 1; // Reset so next call is the fold (treated as call 2)
+
+    const events = await collectFold(agent);
+
+    // Should emit an error event
+    const errorEvent = events.find(e => e.type === "error");
+    expect(errorEvent).toBeDefined();
+
+    // Diagnostic file should have been written
+    let diagFiles: string[] = [];
+    try { diagFiles = await readdir(diagDir); } catch { /* dir may not exist */ }
+    const jsonFiles = diagFiles.filter(f => f.endsWith(".json"));
+    expect(jsonFiles.length).toBe(1);
+
+    // Diagnostic content should reference the fold error
+    const diagContent = await Bun.file(join(diagDir, jsonFiles[0]!)).json();
+    expect(diagContent.summary).toContain("fold");
+    expect(diagContent.errorMessage).toContain("fatal fold error");
   });
 
   it("uses the OpenAI caller for fold when OpenAI is the active provider", async () => {

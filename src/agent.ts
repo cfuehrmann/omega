@@ -439,6 +439,9 @@ export class Agent {
   /** World state file path. null = disabled. undefined = use project default. */
   private readonly worldStatePath: string | null | undefined;
 
+  /** Diagnostic output directory. undefined = use default ("diagnosis/"). */
+  private readonly diagDir: string | undefined;
+
   /** Zone 2 summary: the compacted summary of all prior turns this session. */
   private zone2Summary: string | null = null;
 
@@ -465,7 +468,8 @@ export class Agent {
     streamProvider?: StreamProvider,
     _sessionDir?: string | null,
     openAiCaller: typeof callOpenAi = callOpenAi,
-    worldStatePath?: string | null
+    worldStatePath?: string | null,
+    diagDir?: string
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
@@ -478,6 +482,7 @@ export class Agent {
     } else {
       this.worldStatePath = worldStatePath;
     }
+    this.diagDir = diagDir;
   }
 
   async init(): Promise<string> {
@@ -764,6 +769,22 @@ export class Agent {
 
     } catch (err: any) {
       logger.warn("world_state_update_failed", { error: err.message });
+      // Write a diagnostic snapshot so the next session has full context about
+      // what went wrong during shutdown (event buffer, history, error message).
+      await writeDiagnosticWithBuffer(
+        {
+          summary: `World-state fold failed on shutdown: ${err.message}`,
+          errorMessage: err.message ?? String(err),
+          httpStatus: err.status ?? err.statusCode,
+          provider: this.provider,
+          model: this.activeModel,
+          requestMessages: [],
+          history: this.history,
+          extra: { phase: "fold_shutdown" },
+        },
+        this.eventBuffer,
+        this.diagDir,
+      );
       yield { type: "error", error: err.message } as AgentEvent;
     }
   }
