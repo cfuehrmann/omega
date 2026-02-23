@@ -213,13 +213,140 @@ describe("parseKeys", () => {
     };
     try {
       const buf = { value: "" };
-      const pasteState = { inPaste: false };
+      const pasteState = { inPaste: false, startVisualCol: 0, startCursor: 0 };
       const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
       parseKeys("\x1b[200~hello\nworld\x1b[201~", cb, buf, { pasteState });
+      // The pasted content should appear in stdout output (via redrawLine).
       expect(written.join("")).toContain("hello\nworld");
     } finally {
       process.stdout.write = origWrite;
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // Paste correctness — bracketed paste and wtype/Wayland paste
+  // -----------------------------------------------------------------------
+
+  it("bracketed paste into non-empty buffer: echoes only pasted portion", () => {
+    // Buffer already has "abc", cursor at end (3). Paste "XYZ".
+    // Terminal cursor is at promptWidth(0) + 3 = col 3.
+    // After paste end, stdout must contain "XYZ" (the pasted chars).
+    // The terminal cursor must NOT re-echo "abc" (which is already on screen).
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "abc", cursor: 3 };
+      const pasteState = { inPaste: false, startVisualCol: 3, startCursor: 3 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[200~XYZ\x1b[201~", cb, buf, { pasteState });
+      expect(buf.value).toBe("abcXYZ");
+      expect(buf.cursor).toBe(6);
+      const out = written.join("");
+      // Must contain the pasted chars
+      expect(out).toContain("XYZ");
+      // Must NOT start by re-echoing the existing buffer chars
+      expect(out).not.toContain("abc");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("bracketed paste at mid-buffer: terminal cursor ends at logical cursor (legacy path)", () => {
+    // Buffer "abcdef", cursor at 3 (mid-line). Paste "XY".
+    // After paste: "abcXYdef", cursor at 5. Tail is "def" (3 chars).
+    // Legacy path: write "XYdef" then move back 3 cols.
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "abcdef", cursor: 3 };
+      const pasteState = { inPaste: false, startVisualCol: 3, startCursor: 3 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[200~XY\x1b[201~", cb, buf, { pasteState });
+      expect(buf.value).toBe("abcXYdef");
+      expect(buf.cursor).toBe(5);
+      const out = written.join("");
+      // Must contain pasted chars + tail
+      expect(out).toContain("XYdef");
+      // Tail "def" (3 chars) must be followed by a CUB 3 move-back
+      expect(out).toContain("\x1b[3D");
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("bracketed paste with terminalWidth: wrap-safe redrawLine called at paste end", () => {
+    // termWidth=20, promptWidth=5, buffer "abc" (cursor 3, at visual col 8).
+    // Paste "XYZW" → buffer "abcXYZW", cursor 7, visual col 12.
+    // Wrap-safe path should do a full redraw: CUU to top, CR, CUF(5), write all, position.
+    const buf = { value: "abc", cursor: 3, terminalWidth: 20, promptWidth: 5 };
+    const pasteState = { inPaste: false, startVisualCol: 8, startCursor: 3 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    const out = captureOutput(() =>
+      parseKeys("\x1b[200~XYZW\x1b[201~", cb, buf, { pasteState })
+    );
+    expect(buf.value).toBe("abcXYZW");
+    expect(buf.cursor).toBe(7);
+    // Visual col after paste = promptWidth(5) + 7 chars = 12. Row 0 (col 12 < 20).
+    const pos = simulateCursor(out, 20, 8, 0); // start at pre-paste col 8
+    expect(pos.row).toBe(0);
+    expect(pos.col).toBe(5 + 7); // promptWidth + cursor
+  });
+
+  it("bracketed paste with wrapping: cursor correct when pasted text spans terminal rows", () => {
+    // termWidth=20, promptWidth=5. Buffer empty, paste 20 chars → 2 rows.
+    // After paste: cursor at end, visual col = 5+20 = 25 → row 1, col 5.
+    const buf = { value: "", cursor: 0, terminalWidth: 20, promptWidth: 5 };
+    const pasteState = { inPaste: false, startVisualCol: 5, startCursor: 0 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    const paste20 = "abcdefghijklmnoABCDE"; // 20 chars
+    const out = captureOutput(() =>
+      parseKeys(`\x1b[200~${paste20}\x1b[201~`, cb, buf, { pasteState })
+    );
+    expect(buf.value).toBe(paste20);
+    expect(buf.cursor).toBe(20);
+    // Start: col 5 row 0 (empty buf, promptWidth=5, cursor at 0 → visual col 5)
+    const pos = simulateCursor(out, 20, 5, 0);
+    // visual col = 5 + 20 = 25 → row 1 col 5
+    expect(pos.row).toBe(1);
+    expect(pos.col).toBe(5);
+  });
+
+  it("wtype-style raw injection (no bracketed paste): all chars buffered correctly", () => {
+    // wtype injects keystrokes without bracketed paste markers — they arrive as
+    // regular printable chars.  Simulate injecting "hello world" as separate
+    // chunks (one per char, as wtype typically does) and verify the buffer is
+    // correct.  This also exercises the O(1) fast-append path for each char.
+    const buf = { value: "", cursor: 0 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    for (const ch of "hello world") {
+      parseKeys(ch, cb, buf);
+    }
+    expect(buf.value).toBe("hello world");
+    expect(buf.cursor).toBe(11);
+  });
+
+  it("append-at-end latency: O(1) fast path — single stdout.write per char on large buffer", () => {
+    // With a large buffer, each append-at-end must emit exactly one stdout.write
+    // call (the character itself), not proportional to buffer size.
+    // This guards against O(n) regressions in the hot typing/dictation path.
+    const bigStr = "a".repeat(5000);
+    const buf = { value: bigStr, cursor: 5000 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+
+    let callCount = 0;
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { callCount++; return true; };
+    try {
+      parseKeys("x", cb, buf);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(buf.value).toBe(bigStr + "x");
+    expect(buf.cursor).toBe(5001);
+    // Fast path: exactly 1 write (the character "x")
+    expect(callCount).toBe(1);
   });
 
   // -----------------------------------------------------------------------

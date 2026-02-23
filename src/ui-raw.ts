@@ -322,7 +322,7 @@ export function displayWidth(ch: string): number {
 }
 
 /** Persistent bracketed-paste state shared across calls in production. */
-const sharedPasteState = { inPaste: false };
+const sharedPasteState = { inPaste: false, startVisualCol: 0, startCursor: 0 };
 
 // ---------------------------------------------------------------------------
 // Cursor helpers — work on character arrays to handle surrogate pairs
@@ -475,7 +475,7 @@ export function parseKeys(
   chunk: string,
   callbacks: KeyCallbacks,
   buf: { value: string; cursor?: number; columns?: number; terminalWidth?: number; promptWidth?: number } = sharedBuffer,
-  options: { inputEnabled?: boolean; pasteState?: { inPaste: boolean } } = {},
+  options: { inputEnabled?: boolean; pasteState?: { inPaste: boolean; startVisualCol: number; startCursor: number } } = {},
 ): string {
   const { onSubmit, onEscape, onExit } = callbacks;
   const inputEnabled = options.inputEnabled ?? true;
@@ -491,14 +491,41 @@ export function parseKeys(
       // Check for bracketed paste markers: \x1b[200~ (start) and \x1b[201~ (end)
       if (chunk.startsWith("[200~", i + 1)) {
         pasteState.inPaste = true;
+        // Record where the terminal cursor and logical cursor are at paste-start
+        // so we can echo correctly when the paste ends.
+        const chars = [...buf.value];
+        const cursor = getCursor(buf);
+        pasteState.startVisualCol = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor));
+        pasteState.startCursor = cursor;
         i += 5; // skip past "[200~"
         continue;
       }
       if (chunk.startsWith("[201~", i + 1)) {
         pasteState.inPaste = false;
         i += 5; // skip past "[201~"
-        // Echo the full buffer so the user can see what was pasted
-        process.stdout.write(buf.value);
+        // Echo what was pasted and position the cursor correctly.
+        // Nothing was echoed during the paste, so the terminal cursor is still
+        // at pasteState.startVisualCol (the position it was at paste-start).
+        //
+        // We write the portion of the buffer from startCursor to the current
+        // cursor directly — this covers both the legacy (no terminalWidth) and
+        // wrap-safe paths.  For the wrap-safe path we then do a full redrawLine
+        // which also handles any pre-existing tail beyond the cursor.
+        const chars = [...buf.value];
+        const cursor = getCursor(buf);
+        if (buf.terminalWidth !== undefined && buf.terminalWidth > 0) {
+          // Wrap-safe: full redraw from paste-start visual col.
+          redrawLine(chars, cursor, pasteState.startVisualCol, buf);
+        } else {
+          // Legacy: just write the pasted slice and any tail, then reposition.
+          // Chars from startCursor onward need to be displayed; the terminal
+          // cursor is at pasteState.startVisualCol which corresponds to startCursor.
+          const toEnd = chars.slice(pasteState.startCursor).join("");
+          process.stdout.write(toEnd);
+          // If cursor is not at end, move back.
+          const tailWidth = charsDisplayWidth(chars.slice(cursor));
+          if (tailWidth > 0) process.stdout.write(`\x1b[${tailWidth}D`);
+        }
         continue;
       }
 
@@ -697,19 +724,35 @@ export function parseKeys(
     // Printable character
     if (code >= 32 || code > 127) {
       const w = displayWidth(ch) || 1;
-      const chars = [...buf.value];
       const cursor = getCursor(buf);
+
+      // Fast path: appending at end and not in paste — O(1), no spread needed.
+      // We detect "cursor at end" by checking whether buf.cursor equals the
+      // logical char count.  buf.cursor is always maintained in char units, and
+      // buf.value.length equals the char count for pure-BMP Unicode (which
+      // covers all dictation output).  For safety, we fall back to the full
+      // path whenever the char is outside the BMP (surrogate pairs, emoji).
+      const isBmp = ch.length === 1; // BMP chars are single JS code units
+      if (!pasteState.inPaste && isBmp && buf.cursor !== undefined && buf.cursor === buf.value.length) {
+        buf.value += ch;
+        buf.cursor += 1;
+        if (buf.columns !== undefined) buf.columns += w;
+        process.stdout.write(ch);
+        continue;
+      }
+
+      // General path: mid-line insert or non-BMP or paste mode.
+      const chars = [...buf.value];
       chars.splice(cursor, 0, ch);
       buf.value = chars.join("");
       buf.cursor = cursor + 1;
       if (buf.columns !== undefined) buf.columns += w;
       if (!pasteState.inPaste) {
         if (cursor === chars.length - 1) {
-          // Appending at end — just echo the char (no tail to redraw)
+          // Appending at end (non-BMP case) — just echo the char
           process.stdout.write(ch);
         } else {
           // Mid-line insert: write char, then redraw tail.
-          // After writing ch the terminal cursor is at the visual position of cursor+1.
           process.stdout.write(ch);
           const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor + 1));
           redrawLine(chars, cursor + 1, termVc, buf);
