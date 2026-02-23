@@ -609,11 +609,18 @@ export class Agent {
    * Fire-and-forget safe: called without await after turn_end.
    */
   private async compactAfterTurn(turnMessages: Anthropic.MessageParam[]): Promise<void> {
+    // Snapshot history length NOW (before any awaits). Any messages pushed to
+    // this.history while the async compaction is running belong to the next turn
+    // and must be preserved — not overwritten — when we install the summary.
+    const historyLenAtStart = this.history.length;
     try {
       const provider = this.getStreamProvider();
       const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider, this.activeModel);
       this.zone2Summary = (newSummaryMsgs[0].content as string).replace(/^\[session summary[^\]]*\]\n/, "");
-      this.history = newSummaryMsgs as Anthropic.MessageParam[];
+      // Replace the messages that were compacted, preserving any messages that
+      // were pushed to history while compaction was running (next-turn messages).
+      const tail = this.history.slice(historyLenAtStart);
+      this.history = [...(newSummaryMsgs as Anthropic.MessageParam[]), ...tail];
     } catch (err: any) {
       logger.warn("compaction_failed", { error: err.message });
     }
