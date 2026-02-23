@@ -140,29 +140,35 @@ export function initLogger(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Pino destination — synchronous, no buffering needed at our log volume
-// ---------------------------------------------------------------------------
-
-const dest = pino.destination({
-  dest: LOG_FILE,
-  sync: true,   // synchronous writes — no buffering, no flush ceremony
-  flags: "a",   // we already rotated above; append from here
-});
-
-// ---------------------------------------------------------------------------
-// Pino logger instance
+// Pino logger instance — created lazily after initLogger() rotates the file
 // ---------------------------------------------------------------------------
 
 const level = (process.env.OMEGA_LOG_LEVEL ?? "debug") as pino.Level;
 
-const _pino = pino(
-  {
-    level,
-    base: null,             // omit pid/hostname — not useful for our use-case
-    timestamp: pino.stdTimeFunctions.isoTime,
-  },
-  dest,
-);
+let _pino: pino.Logger | null = null;
+
+/**
+ * Return the pino instance, creating it on first access.
+ * This defers file-open until after initLogger() has had a chance to rotate.
+ */
+function getPino(): pino.Logger {
+  if (!_pino) {
+    const dest = pino.destination({
+      dest: LOG_FILE,
+      sync: true,   // synchronous writes — no buffering, no flush ceremony
+      flags: "a",   // we already rotated above; append from here
+    });
+    _pino = pino(
+      {
+        level,
+        base: null,             // omit pid/hostname — not useful for our use-case
+        timestamp: pino.stdTimeFunctions.isoTime,
+      },
+      dest,
+    );
+  }
+  return _pino;
+}
 
 // ---------------------------------------------------------------------------
 // Thin wrapper — two call-site APIs:
@@ -199,16 +205,16 @@ function buildPinoArg(eventOrEntry: LogArg, fields?: Record<string, unknown>): R
  */
 export const logger = {
   debug(eventOrEntry: LogArg, fields?: Record<string, unknown>): void {
-    _pino.debug(buildPinoArg(eventOrEntry, fields));
+    getPino().debug(buildPinoArg(eventOrEntry, fields));
   },
   info(eventOrEntry: LogArg, fields?: Record<string, unknown>): void {
-    _pino.info(buildPinoArg(eventOrEntry, fields));
+    getPino().info(buildPinoArg(eventOrEntry, fields));
   },
   warn(eventOrEntry: LogArg, fields?: Record<string, unknown>): void {
-    _pino.warn(buildPinoArg(eventOrEntry, fields));
+    getPino().warn(buildPinoArg(eventOrEntry, fields));
   },
   error(eventOrEntry: LogArg, fields?: Record<string, unknown>): void {
-    _pino.error(buildPinoArg(eventOrEntry, fields));
+    getPino().error(buildPinoArg(eventOrEntry, fields));
   },
 };
 
