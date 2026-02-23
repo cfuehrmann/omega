@@ -21,6 +21,14 @@ test:
 test-watch:
     bun test --watch
 
+# Run end-to-end (Playwright) tests — builds frontend first
+e2e: build
+    npx playwright test
+
+# Run e2e tests with headed browser (useful for debugging)
+e2e-debug: build
+    npx playwright test --headed
+
 # Type-check + unused-exports audit
 check:
     bun test && bunx knip

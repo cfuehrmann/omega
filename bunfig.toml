@@ -1,0 +1,4 @@
+[test]
+# Only scan for unit/integration tests in src/.
+# End-to-end tests in e2e/ are run by Playwright (npx playwright test).
+root = "src"

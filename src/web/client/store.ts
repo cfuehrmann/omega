@@ -96,6 +96,9 @@ export function dispatch(event: WsEvent): void {
       for (const e of event.events) {
         dispatch(e);
       }
+      // After replay we are still connected (history arrived over an open socket)
+      setState("connected", true);
+      setState("retryCount", 0);
       break;
     }
 
@@ -134,6 +137,10 @@ export function dispatch(event: WsEvent): void {
           turn.done = true;
         }
       }));
+      // turn_end means the agentic loop finished; clear streaming so replayed
+      // history doesn't leave the UI stuck in streaming state.
+      // turn_ready (which also clears streaming) is excluded from replay.
+      setState("streaming", false);
       break;
 
     case "turn_ready":

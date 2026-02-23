@@ -11,6 +11,7 @@
     "check": "bun test && bunx knip"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/bun": "latest",
     "solid-js": "^1.9.11",
     "vite": "^7.3.1",

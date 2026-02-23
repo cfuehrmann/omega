@@ -11,8 +11,11 @@ let connectAttempts = 0;
 
 function connect() {
   connectAttempts++;
-  // Always connect to the Bun server directly, regardless of the page origin
-  const wsUrl = `ws://${location.hostname}:3000`;
+  // Connect to the same host:port that served the page.
+  // In dev mode (Vite on :5173), the /ws path is proxied to the Bun server.
+  // In production and tests, the Bun server serves both HTTP and WebSocket.
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${proto}//${location.host}/ws`;
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
