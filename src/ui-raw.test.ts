@@ -422,4 +422,208 @@ describe("parseKeys", () => {
     parseKeys("hi\r", cb, buf);
     expect(submitted).toBe("hi");
   });
+
+  // -----------------------------------------------------------------------
+  // Terminal cursor simulation — expose the line-wrap redraw bug
+  //
+  // A minimal ANSI sequence interpreter that tracks the terminal cursor's
+  // visual (col, row) position, given a fixed terminal width.  We use this
+  // to verify that after mid-line edits the cursor ends up in the correct
+  // terminal cell even when the input string wraps across multiple rows.
+  // -----------------------------------------------------------------------
+
+  /**
+   * Simulate a terminal with the given width.  Feed it the raw bytes emitted
+   * by parseKeys (captured via mock stdout.write) and return the final
+   * cursor position as { col, row } (0-indexed).
+   *
+   * Supports: printable chars (auto-wrap), \b (backspace/BS), \r (CR),
+   * \x1b[nD (CUB), \x1b[nC (CUF), \x1b[nA (CUU), \x1b[nB (CUD),
+   * \x1b[K / \x1b[0K (erase to end of line), \x1b[J / \x1b[0J (erase to end of screen).
+   */
+  function simulateCursor(
+    output: string,
+    termWidth: number,
+    startCol: number = 0,
+    startRow: number = 0,
+  ): { col: number; row: number } {
+    let col = startCol;
+    let row = startRow;
+    let i = 0;
+    while (i < output.length) {
+      if (output[i] === "\x1b" && output[i + 1] === "[") {
+        // Parse CSI sequence
+        i += 2;
+        let params = "";
+        while (i < output.length && !/[A-Za-z~]/.test(output[i])) {
+          params += output[i++];
+        }
+        const final = output[i++] ?? "";
+        const n = parseInt(params || "1", 10);
+        if (final === "D") { col = Math.max(0, col - n); }       // CUB
+        else if (final === "C") { col = Math.min(termWidth - 1, col + n); } // CUF
+        else if (final === "A") { row = Math.max(0, row - n); }  // CUU
+        else if (final === "B") { row += n; }                    // CUD
+        else if (final === "K") { /* erase to EOL — no cursor move */ }
+        else if (final === "J") { /* erase to EOS — no cursor move */ }
+        // other CSI sequences ignored
+      } else if (output[i] === "\b") {
+        col = Math.max(0, col - 1);
+        i++;
+      } else if (output[i] === "\r") {
+        col = 0;
+        i++;
+      } else {
+        // Printable (1 col each for simplicity)
+        col++;
+        if (col >= termWidth) { col = 0; row++; }
+        i++;
+      }
+    }
+    return { col, row };
+  }
+
+  /**
+   * Capture all bytes written to stdout during a parseKeys call.
+   */
+  function captureOutput(fn: () => void): string {
+    const chunks: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any, ...args: any[]) => {
+      chunks.push(typeof s === "string" ? s : String(s));
+      return true;
+    };
+    try { fn(); } finally { process.stdout.write = origWrite; }
+    return chunks.join("");
+  }
+
+  it("cursor stays at correct position after mid-line insert (no wrap)", () => {
+    // termWidth=40, promptWidth=5, input "abcde" (5 chars), cursor at 2, type "X"
+    // Expected: cursor at visual col 5+3=8 (prompt 5 + 3 input chars)
+    const buf = { value: "abcde", cursor: 2, terminalWidth: 40, promptWidth: 5 };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    const startCol = 5 + 2; // promptWidth + cursor position
+    const out = captureOutput(() => parseKeys("X", cb, buf));
+    const pos = simulateCursor(out, 40, startCol, 0);
+    // After inserting X at pos 2: "abXcde", cursor at 3 → visual col = promptWidth + 3 = 8
+    expect(buf.value).toBe("abXcde");
+    expect(buf.cursor).toBe(3);
+    expect(pos.col).toBe(5 + 3); // promptWidth + new cursor position
+    expect(pos.row).toBe(0);
+  });
+
+  it("cursor stays at correct position after mid-line insert that causes tail to wrap", () => {
+    // termWidth=20, promptWidth=5
+    // 14 chars of input: prompt(5)+input(14) = 19 chars on line 0, cursor at col 14 (mid-line)
+    // After typing 'X' at position 9: tail is 5 chars, total from cursor = 6 chars
+    // That fills line 0 from col 14: 14+6=20, wraps to line 1
+    // The cursor (after insertion) should be at col 5+10=15 on line 0 — NOT stuck at start of line 1
+    const input14 = "abcdefghijklmn"; // 14 chars
+    // cursor at logical position 9 (after "abcdefghi")
+    const buf = {
+      value: input14,
+      cursor: 9,
+      terminalWidth: 20,
+      promptWidth: 5,
+    };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    // Terminal cursor starts at col promptWidth + cursor = 5+9 = 14
+    const startCol = 5 + 9;
+    const out = captureOutput(() => parseKeys("X", cb, buf));
+    const pos = simulateCursor(out, 20, startCol, 0);
+    expect(buf.value).toBe("abcdefghiXjklmn");
+    expect(buf.cursor).toBe(10);
+    // After insert, cursor should be at col promptWidth + 10 = 15 on row 0 (no wrap yet)
+    expect(pos.col).toBe(5 + 10);
+    expect(pos.row).toBe(0);
+  });
+
+  it("cursor at correct position after backspace when tail wraps", () => {
+    // termWidth=20, promptWidth=5
+    // Input: 20 chars (fills line 0 completely: 5+15=20, then 5 more on line 1)
+    // cursor at logical position 15 (col 0 of line 1)
+    // Press backspace: delete char at 14, cursor goes to 14 (col 5+14=19 of line 0)
+    // Tail is now 5 chars (was 20-15=5; still 5 after deletion of char before cursor)
+    // These 5 chars starting at col 19: 19+5=24, wraps line
+    // redrawFromCursor must place cursor at col 19 of row 0
+    const input20 = "abcdefghijklmnopqrst"; // 20 chars
+    const buf = {
+      value: input20,
+      cursor: 15,
+      terminalWidth: 20,
+      promptWidth: 5,
+    };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    // Terminal cursor at col 0 of row 1 (prompt=5, chars 0-14 = 15 chars, fills row 0 from col5: 5+15=20 → wraps; chars 15-19 on row 1 col 0-4; cursor at end of char 14 = col 0 of row 1)
+    const out = captureOutput(() => parseKeys("\x7f", cb, buf)); // backspace
+    const pos = simulateCursor(out, 20, 0, 1); // start at col 0, row 1
+    expect(buf.value).toBe("abcdefghijklmnpqrst"); // char at index 14 ('o') deleted
+    expect(buf.cursor).toBe(14);
+    // Cursor should end up at col 5+14=19 of row 0
+    expect(pos.row).toBe(0);
+    expect(pos.col).toBe(5 + 14);
+  });
+
+  it("left arrow across line wrap moves to correct visual position (previous row)", () => {
+    // termWidth=20, promptWidth=5
+    // Input: 15 chars "abcdefghijklmno", cursor at 15 (= position 0 on row 1, since 5+15=20)
+    // Pressing Left arrow should move cursor to 14 = col 19 of row 0
+    const buf = {
+      value: "abcdefghijklmno",
+      cursor: 15,
+      terminalWidth: 20,
+      promptWidth: 5,
+    };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    // Terminal starts at col 0, row 1 (since prompt+15 = 20, wraps)
+    const out = captureOutput(() => parseKeys("\x1b[D", cb, buf)); // Left arrow
+    expect(buf.cursor).toBe(14);
+    const pos = simulateCursor(out, 20, 0, 1);
+    // cursor at pos 14 means visual col = 5+14=19 on row 0
+    expect(pos.row).toBe(0);
+    expect(pos.col).toBe(19);
+  });
+
+  it("right arrow wraps to next row when at end of a terminal line", () => {
+    // termWidth=20, promptWidth=5
+    // Input: 15 chars, cursor at 14 = col 19 of row 0 (one before wrap)
+    // Pressing Right arrow should advance to col 0 of row 1
+    const buf = {
+      value: "abcdefghijklmno",
+      cursor: 14,
+      terminalWidth: 20,
+      promptWidth: 5,
+    };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    // Terminal starts at col 19 of row 0
+    const out = captureOutput(() => parseKeys("\x1b[C", cb, buf)); // Right arrow
+    expect(buf.cursor).toBe(15);
+    const pos = simulateCursor(out, 20, 19, 0);
+    // cursor at pos 15 means visual col = 5+15=20 → col 0 of row 1
+    expect(pos.row).toBe(1);
+    expect(pos.col).toBe(0);
+  });
+
+  it("cursor at correct position after Ctrl+Backspace when deleted+tail spans lines", () => {
+    // termWidth=20, promptWidth=5
+    // Input: "hello world extra" (17 chars), cursor at end (17)
+    // Terminal layout: row 0: prompt(5)+"hello world ext"(15), row 1: "ra"(2)
+    // cursor at col 2 of row 1
+    // Ctrl+Backspace deletes "extra" (5 chars), new cursor at 12
+    // After deletion: "hello world " (12 chars), cursor at 12
+    // Visual: row 0: prompt(5)+"hello world "(12)=17 cols → cursor at col 17, row 0
+    const buf = {
+      value: "hello world extra",
+      cursor: 17,
+      terminalWidth: 20,
+      promptWidth: 5,
+    };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    const out = captureOutput(() => parseKeys("\x1b\x7f", cb, buf)); // Ctrl+Backspace
+    const pos = simulateCursor(out, 20, 2, 1); // start: col 2, row 1
+    expect(buf.value).toBe("hello world ");
+    expect(buf.cursor).toBe(12);
+    expect(pos.row).toBe(0);
+    expect(pos.col).toBe(5 + 12);
+  });
 });

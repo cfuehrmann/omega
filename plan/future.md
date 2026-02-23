@@ -2,6 +2,80 @@
 
 ## Open items
 
+### [TOPIC] Prompt queuing — interruption, injection, and turn sequencing
+**Priority: HIGH — next major design area**
+
+*See "Prompt Queuing" section in world-state.md for context and design notes.*
+
+The core question: how should the user interact with Omega *while a turn is
+already in flight*? Today, Esc aborts the turn unconditionally. But there is a
+richer space of intents:
+
+1. **Soft interrupt** — "stop what you're doing, here is a correction/redirect"
+2. **Hard stop** — "abort unconditionally, don't continue"
+3. **Append** — "when you're done with this turn, also do X"
+4. **Inject mid-turn** — "before the next tool call, consider this"
+5. **Replace** — "discard this turn, start fresh with the following prompt"
+
+There is a "mathematics" to this: each interaction is a sequence of context
+states `C₀ → C₁ → … → Cₙ`, where each tool call or agent response advances
+the context. A queued prompt is a function `f` that transforms some future
+state `Cₖ` rather than the current one. The key questions are:
+
+- At what *granularity* can `f` be injected? (after current tool call, after
+  current agentic loop, after full turn compaction)
+- How does the *content* of the injected prompt change depending on the
+  observed context at injection time?
+- Can multiple queued prompts be ordered/merged, and under what algebra?
+
+**Simple use cases to resolve first (design anchors):**
+
+#### UX-Q1: Ideal hard stop
+**How should the user cleanly stop an ongoing turn?**
+
+Current: Esc sends an `AbortSignal`. The turn dies mid-stream. But what
+happens to half-written files? Partial tool calls? The context is left dirty.
+
+Candidates:
+- Esc = abort signal + prompt user "turn aborted — what next?" (current minus
+  the "what next" part)
+- Esc = queue a synthetic `[STOP]` marker; agent finishes current tool call
+  then exits loop cleanly
+- Two-key chord: single Esc = soft abort (finish tool, stop); double Esc =
+  hard kill
+
+Acceptance criteria: define and implement one semantics; document the choice.
+
+#### UX-Q2: Modifying an ongoing turn
+**How should the user redirect a turn that's going in the wrong direction?**
+
+Current: no mechanism other than Esc (destructive) or waiting.
+
+Candidates:
+- A "prompt queue" buffer the user types into while a turn runs; delivered as
+  a new user message at the *next clean break* (after current tool call
+  finishes, before the next API call)
+- A visible "pending" line in the UI showing the queued prompt
+- Allow the queued prompt to arrive mid-agentic-loop (before the next tool
+  use) so the model can course-correct without starting over
+
+**Design questions that need answers before implementation:**
+- Where is the queue buffer stored? (in `ui-raw.ts` state? in `agent.ts`?)
+- How does the agent loop poll or receive the queued message?
+  (shared `AsyncIterable`? a callback? a `Promise` that resolves when enqueued?)
+- Does a queued prompt inject into the *current* turn's history (same context
+  window) or start the *next* turn (after compaction)?
+- What is the UI affordance? (second input line? a mode toggle? a key chord?)
+
+Sub-tasks (to be refined once design is settled):
+1. Design doc / decision record — resolve the questions above
+2. Queue buffer in `ui-raw.ts` — accept input while turn runs, display pending
+3. Agent loop polling — check for queued message between tool calls
+4. Soft-abort semantics — finish current tool, then surface the queued prompt
+5. Tests: verify queue delivery timing, UI state transitions
+
+---
+
 ### [TOPIC] Provider feature parity & architecture
 *See "Provider Feature Gaps" section in world-state.md for full analysis.*
 
@@ -55,7 +129,7 @@ or unify the client initialisation).
 ---
 
 #### FEAT-3: OpenAI `previous_response_id`
-**Priority: medium — cuts OpenAI input token cost by ~80% on long sessions**
+**Priority: high — cuts OpenAI input token cost by ~80% on long sessions; do soon**
 
 `callOpenAi()` currently resends the full `this.history` on every call inside
 the agentic loop. The Responses API supports `previous_response_id` to let the
@@ -93,33 +167,48 @@ Acceptance criteria:
 
 ---
 
+#### TOOLS-4: `run_command_async` + `await_command`
+**Priority: medium — enables parallelism during waits (e.g. read docs while tests run)**
+
+`run_command` is blocking. Adding an async variant lets the agent kick off a
+long-running command (e.g. `bun test`, a build, a download) and do useful
+preparatory work while it runs — reading files, searching docs, writing a
+plan — before awaiting the result.
+
+Goal: two new tools that together replace `run_command` for cases where the
+agent can make progress independently of the result.
+
+Sub-tasks:
+1. `run_command_async(command, cwd?)` — starts the command, returns a `jobId`
+   immediately (similar to `run_background` but waits to be collected, not
+   fire-and-forget).
+2. `await_command(jobId, timeout_ms?)` — blocks until the command finishes (or
+   times out), returns `{ stdout, stderr, exitCode }`.
+3. Tests: spawn a real process, do work between the two calls, verify output.
+4. Update system prompt tools list.
+
+Note: distinct from `run_background`/`kill_process` which are fire-and-forget
+process management. This is about *awaitable* async commands.
+
+---
 
 
-#### TOOLS-3: Background process management (`run_background` + `kill_process`)
-**Priority: high — enables server/watcher workflows currently impossible**
 
-`run_command` blocks until the process exits (with timeout). There is no way
-to start a long-running process, do other work, inspect its output, and then
-stop it cleanly. Workarounds (`& echo PID=$!`) leak processes across turns.
 
-Goal: two new tools —
-- `run_background(command, cwd?)` → returns `{ pid, logFile }` immediately;
-  stdout+stderr are redirected to a temp log file.
-- `kill_process(pid, signal?)` → sends signal (default SIGTERM), returns
-  exit status.
 
-Practical use cases:
-- Start a dev server, test against it, stop it.
-- Run a file watcher (`bun --watch test`), confirm it fires, stop it.
-- Any "start → inspect → stop" workflow.
+### [TOPIC] Web interface
+**Priority: medium — planned for foreseeable future**
 
-Acceptance criteria:
-- `run_background` returns pid + log path without blocking
-- `kill_process` terminates the process and returns exit info
-- Leaked processes are not Omega's responsibility (operator must clean up
-  if Omega crashes mid-task), but kill_process should handle "already dead"
-  gracefully
-- Tests use mock process spawning (no real process in unit tests)
+Replace or supplement the raw terminal UI with a browser-based interface.
+Exact scope TBD. `run_background`/`kill_process` are already in place to serve
+a dev/web server while the agent loop runs.
+
+Candidate directions:
+- Simple HTTP + SSE server streaming `AgentEvent`s to a browser client
+- Full WebSocket bidirectional channel (user input + agent events)
+- Static HTML/JS served by Bun's built-in HTTP server; no framework needed
+
+Decision and sub-tasks to be added once direction is chosen.
 
 ---
 
@@ -151,6 +240,7 @@ Discrete, prioritised, actionable. Keep in priority order.
   | Structured data (`jq`) | ⏭ Skip | `run_command jq` is sufficient |
   | Symbol navigation (LSP) | ⏭ Skip | Heavy; `grep_files` covers most needs |
 
+- **TOOLS-3: Background process management** — Done. `run_background(command, cwd?)` spawns detached, returns `{ pid, logFile }` immediately. `kill_process(pid, signal?)` sends signal (default SIGTERM), handles already-dead processes gracefully. 10 tests. Commit 9023c5a. Primary use case: serving a web interface while Omega continues working (web UI planned for foreseeable future).
 - **FEAT-1: Parallel tool execution** — Done. `Promise.all` in agentic loop; all `tool_call` events emitted before any `tool_result`; results in original order. Test in `agent-integration.test.ts`.
 
 - **TOOLS-1: `grep_files`** — Done. `executeGrepFiles` in `src/tools.ts` wraps `rg` (ripgrep) with `grep -rn` fallback. Accepts `pattern`, `path`, `file_glob`, `context_lines`, `case_sensitive`, `max_results` (default 200). Case-insensitive by default. Returns structured `file:line:text` output, capped with truncation note. 13 tests.

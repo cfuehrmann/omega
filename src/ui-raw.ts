@@ -346,6 +346,36 @@ function charsDisplayWidth(chars: string[]): number {
   return w;
 }
 
+/**
+ * Emit ANSI escape sequences to move the terminal cursor from one absolute
+ * visual column to another.  Works correctly across row boundaries when
+ * `terminalWidth` is known.
+ *
+ * @param fromCol   Current absolute visual column (promptWidth + charWidth sum).
+ * @param toCol     Target absolute visual column.
+ * @param tw        Terminal width in columns.
+ */
+function moveVisualCol(fromCol: number, toCol: number, tw: number): void {
+  if (fromCol === toCol) return;
+  const fromRow = Math.floor(fromCol / tw);
+  const toRow   = Math.floor(toCol   / tw);
+  const fromC   = fromCol % tw;
+  const toC     = toCol   % tw;
+
+  // Vertical movement first.
+  if (toRow < fromRow) process.stdout.write(`\x1b[${fromRow - toRow}A`);
+  else if (toRow > fromRow) process.stdout.write(`\x1b[${toRow - fromRow}B`);
+
+  // Horizontal: use CR + forward-move for robustness (avoids stopping at margins).
+  if (toC === 0) {
+    process.stdout.write("\r");
+  } else if (toC !== fromC) {
+    // CR + advance is always safe regardless of fromC.
+    process.stdout.write("\r");
+    process.stdout.write(`\x1b[${toC}C`);
+  }
+}
+
 /** Find word boundary backward from cursor (skips spaces, then non-spaces). */
 function wordBoundaryBack(chars: string[], cursor: number): number {
   let pos = cursor;
@@ -363,21 +393,88 @@ function wordBoundaryForward(chars: string[], cursor: number): number {
 }
 
 /**
- * Redraw the line from cursor to end after an edit.
- * Writes: chars after cursor, clears leftover, moves cursor back.
+ * Redraw the entire input line after an edit that may span wrapped terminal rows.
+ *
+ * @param chars            The full buffer character array after the edit.
+ * @param logicalCursor    The char index where the cursor should end up.
+ * @param terminalVisualCol The absolute visual column (from col 0) where the
+ *                          terminal cursor currently sits — i.e. promptWidth +
+ *                          display-width of all chars up to the current terminal
+ *                          cursor position, computed from the PRE-EDIT buffer.
+ *                          Only used on the wrap-safe path.
+ * @param buf              Buffer object — used to read terminalWidth / promptWidth.
+ *
+ * When `terminalWidth` and `promptWidth` are known (wrap-safe path) we:
+ *   1. Scroll up to the first row of the input (using terminalVisualCol to compute
+ *      how many rows the terminal cursor is below the input start).
+ *   2. CR to col 0, skip forward past the prompt.
+ *   3. Rewrite the full buffer.
+ *   4. Erase to end of screen (\x1b[J) to clear any wrapped-row leftovers.
+ *   5. Reposition the cursor at logicalCursor.
+ *
+ * When terminal dimensions are unknown we fall back to the old heuristic:
+ * write the tail, erase to EOL, move back.  This requires the terminal cursor
+ * to already be at `logicalCursor` before the call (the caller is responsible
+ * for emitting the necessary pre-move when in legacy mode).
  */
-function redrawFromCursor(chars: string[], cursor: number): void {
-  const tail = chars.slice(cursor).join("");
-  const tailWidth = charsDisplayWidth(chars.slice(cursor));
-  // Write tail + clear any leftover chars + move cursor back to position
-  process.stdout.write(tail + "\x1b[K");
-  if (tailWidth > 0) process.stdout.write(`\x1b[${tailWidth}D`);
+function redrawLine(
+  chars: string[],
+  logicalCursor: number,
+  terminalVisualCol: number,
+  buf: { terminalWidth?: number; promptWidth?: number },
+): void {
+  const tw = buf.terminalWidth;
+  const pw = buf.promptWidth ?? 0;
+
+  if (tw !== undefined && tw > 0) {
+    // --- Full-line redraw (wrap-safe) ---
+
+    const cursorVisualCol = pw + charsDisplayWidth(chars.slice(0, logicalCursor));
+    const totalVisualCol  = pw + charsDisplayWidth(chars);
+
+    // Terminal row of the terminal cursor (relative to the input's first row).
+    const termRow = Math.floor(terminalVisualCol / tw);
+    // Rows to scroll up to reach the input's first row.
+    if (termRow > 0) process.stdout.write(`\x1b[${termRow}A`);
+    // CR to column 0 of that row.
+    process.stdout.write("\r");
+    // Move forward past the prompt (already on screen — just advance cursor).
+    if (pw > 0) process.stdout.write(`\x1b[${pw}C`);
+
+    // Rewrite the entire buffer.
+    process.stdout.write(chars.join(""));
+
+    // Erase any leftover characters to end of screen (clears shrunken content
+    // on wrapped rows that no longer carry text).
+    process.stdout.write("\x1b[J");
+
+    // Reposition cursor at logicalCursor.
+    // After writing all chars the terminal cursor is at totalVisualCol.
+    const totalRow  = Math.floor(totalVisualCol / tw);
+    const cursorRow = Math.floor(cursorVisualCol / tw);
+    const tailRows  = totalRow - cursorRow;
+    if (tailRows > 0) process.stdout.write(`\x1b[${tailRows}A`);
+    const targetCol  = cursorVisualCol % tw;
+    const currentCol = totalVisualCol % tw;
+    if (currentCol > targetCol) {
+      process.stdout.write(`\x1b[${currentCol - targetCol}D`);
+    } else if (targetCol > currentCol) {
+      process.stdout.write(`\x1b[${targetCol - currentCol}C`);
+    }
+  } else {
+    // --- Legacy heuristic (no terminal dimensions) ---
+    // The caller must have already moved the terminal cursor to logicalCursor.
+    const tail = chars.slice(logicalCursor).join("");
+    const tailWidth = charsDisplayWidth(chars.slice(logicalCursor));
+    process.stdout.write(tail + "\x1b[K");
+    if (tailWidth > 0) process.stdout.write(`\x1b[${tailWidth}D`);
+  }
 }
 
 export function parseKeys(
   chunk: string,
   callbacks: KeyCallbacks,
-  buf: { value: string; cursor?: number; columns?: number } = sharedBuffer,
+  buf: { value: string; cursor?: number; columns?: number; terminalWidth?: number; promptWidth?: number } = sharedBuffer,
   options: { inputEnabled?: boolean; pasteState?: { inPaste: boolean } } = {},
 ): string {
   const { onSubmit, onEscape, onExit } = callbacks;
@@ -413,13 +510,17 @@ export function parseKeys(
         const cursor = getCursor(buf);
         if (cursor === 0) continue;
         const newPos = wordBoundaryBack(chars, cursor);
+        // Compute terminal visual col BEFORE splice (terminal cursor is at `cursor`)
+        const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor));
         const deleted = chars.splice(newPos, cursor - newPos);
         const deletedWidth = charsDisplayWidth(deleted);
         buf.value = chars.join("");
         buf.cursor = newPos;
-        // Move cursor back, redraw from there
-        if (deletedWidth > 0) process.stdout.write(`\x1b[${deletedWidth}D`);
-        redrawFromCursor(chars, newPos);
+        if (buf.terminalWidth === undefined && deletedWidth > 0) {
+          // Legacy: pre-move required before redrawLine
+          process.stdout.write(`\x1b[${deletedWidth}D`);
+        }
+        redrawLine(chars, newPos, termVc, buf);
         continue;
       }
 
@@ -442,18 +543,32 @@ export function parseKeys(
         if (final === "D" && !params) {
           // Left arrow
           if (cursor > 0) {
-            const w = displayWidth(chars[cursor - 1]) || 1;
+            const pw = buf.promptWidth ?? 0;
+            const fromCol = pw + charsDisplayWidth(chars.slice(0, cursor));
             buf.cursor = cursor - 1;
-            process.stdout.write(`\x1b[${w}D`);
+            if (buf.terminalWidth !== undefined) {
+              const toCol = pw + charsDisplayWidth(chars.slice(0, cursor - 1));
+              moveVisualCol(fromCol, toCol, buf.terminalWidth);
+            } else {
+              const w = displayWidth(chars[cursor - 1]) || 1;
+              process.stdout.write(`\x1b[${w}D`);
+            }
           }
           continue;
         }
         if (final === "C" && !params) {
           // Right arrow
           if (cursor < chars.length) {
-            const w = displayWidth(chars[cursor]) || 1;
+            const pw = buf.promptWidth ?? 0;
+            const fromCol = pw + charsDisplayWidth(chars.slice(0, cursor));
             buf.cursor = cursor + 1;
-            process.stdout.write(`\x1b[${w}C`);
+            if (buf.terminalWidth !== undefined) {
+              const toCol = pw + charsDisplayWidth(chars.slice(0, cursor + 1));
+              moveVisualCol(fromCol, toCol, buf.terminalWidth);
+            } else {
+              const w = displayWidth(chars[cursor]) || 1;
+              process.stdout.write(`\x1b[${w}C`);
+            }
           }
           continue;
         }
@@ -462,9 +577,16 @@ export function parseKeys(
         if (final === "D" && params === "1;5") {
           const newPos = wordBoundaryBack(chars, cursor);
           if (newPos < cursor) {
-            const moveWidth = charsDisplayWidth(chars.slice(newPos, cursor));
+            const pw = buf.promptWidth ?? 0;
+            const fromCol = pw + charsDisplayWidth(chars.slice(0, cursor));
             buf.cursor = newPos;
-            process.stdout.write(`\x1b[${moveWidth}D`);
+            if (buf.terminalWidth !== undefined) {
+              const toCol = pw + charsDisplayWidth(chars.slice(0, newPos));
+              moveVisualCol(fromCol, toCol, buf.terminalWidth);
+            } else {
+              const moveWidth = charsDisplayWidth(chars.slice(newPos, cursor));
+              process.stdout.write(`\x1b[${moveWidth}D`);
+            }
           }
           continue;
         }
@@ -472,9 +594,16 @@ export function parseKeys(
         if (final === "C" && params === "1;5") {
           const newPos = wordBoundaryForward(chars, cursor);
           if (newPos > cursor) {
-            const moveWidth = charsDisplayWidth(chars.slice(cursor, newPos));
+            const pw = buf.promptWidth ?? 0;
+            const fromCol = pw + charsDisplayWidth(chars.slice(0, cursor));
             buf.cursor = newPos;
-            process.stdout.write(`\x1b[${moveWidth}C`);
+            if (buf.terminalWidth !== undefined) {
+              const toCol = pw + charsDisplayWidth(chars.slice(0, newPos));
+              moveVisualCol(fromCol, toCol, buf.terminalWidth);
+            } else {
+              const moveWidth = charsDisplayWidth(chars.slice(cursor, newPos));
+              process.stdout.write(`\x1b[${moveWidth}C`);
+            }
           }
           continue;
         }
@@ -483,10 +612,12 @@ export function parseKeys(
         if (final === "~" && params === "3;5") {
           if (cursor >= chars.length) continue;
           const newEnd = wordBoundaryForward(chars, cursor);
+          // Compute terminal visual col BEFORE splice (terminal cursor is at `cursor`)
+          const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor));
           chars.splice(cursor, newEnd - cursor);
           buf.value = chars.join("");
           buf.cursor = cursor;
-          redrawFromCursor(chars, cursor);
+          redrawLine(chars, cursor, termVc, buf);
           continue;
         }
 
@@ -522,12 +653,16 @@ export function parseKeys(
       const cursor = getCursor(buf);
       if (cursor === 0) continue;
       const newPos = wordBoundaryBack(chars, cursor);
+      // Compute terminal visual col BEFORE splice (terminal cursor is at `cursor`)
+      const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor));
       const deleted = chars.splice(newPos, cursor - newPos);
       const deletedWidth = charsDisplayWidth(deleted);
       buf.value = chars.join("");
       buf.cursor = newPos;
-      if (deletedWidth > 0) process.stdout.write(`\x1b[${deletedWidth}D`);
-      redrawFromCursor(chars, newPos);
+      if (buf.terminalWidth === undefined && deletedWidth > 0) {
+        process.stdout.write(`\x1b[${deletedWidth}D`);
+      }
+      redrawLine(chars, newPos, termVc, buf);
       continue;
     }
 
@@ -537,17 +672,23 @@ export function parseKeys(
       if (cursor > 0) {
         const deleted = chars[cursor - 1];
         const w = displayWidth(deleted) || 1;
+        // Compute terminal visual col BEFORE splice (terminal cursor is at `cursor`)
+        const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor));
         chars.splice(cursor - 1, 1);
         buf.value = chars.join("");
         buf.cursor = cursor - 1;
         if (buf.columns !== undefined) buf.columns -= w;
-        if (cursor === chars.length + 1) {
-          // Was at end of line — simple erase
+        if (buf.terminalWidth !== undefined) {
+          // Wrap-safe: full-line redraw.
+          redrawLine(chars, cursor - 1, termVc, buf);
+        } else if (cursor === chars.length + 1) {
+          // Legacy, was at end of line — simple erase
           process.stdout.write("\b".repeat(w) + " ".repeat(w) + "\b".repeat(w));
         } else {
-          // Mid-line: move back, redraw from cursor
+          // Legacy, mid-line: move back then redraw tail
           process.stdout.write(`\x1b[${w}D`);
-          redrawFromCursor(chars, cursor - 1);
+          // For legacy, terminal cursor is at cursor-1 after the move-back above
+          redrawLine(chars, cursor - 1, (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor - 1)), buf);
         }
       }
       continue;
@@ -564,12 +705,14 @@ export function parseKeys(
       if (buf.columns !== undefined) buf.columns += w;
       if (!pasteState.inPaste) {
         if (cursor === chars.length - 1) {
-          // Appending at end — just echo the char
+          // Appending at end — just echo the char (no tail to redraw)
           process.stdout.write(ch);
         } else {
-          // Mid-line insert: write char + tail, then move cursor back
+          // Mid-line insert: write char, then redraw tail.
+          // After writing ch the terminal cursor is at the visual position of cursor+1.
           process.stdout.write(ch);
-          redrawFromCursor(chars, cursor + 1);
+          const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor + 1));
+          redrawLine(chars, cursor + 1, termVc, buf);
         }
       }
     }
@@ -579,7 +722,13 @@ export function parseKeys(
 }
 
 /** Shared mutable buffer used by setupRawInput in production. */
-const sharedBuffer: { value: string; cursor: number; columns: number } = { value: "", cursor: 0, columns: 0 };
+const sharedBuffer: {
+  value: string;
+  cursor: number;
+  columns: number;
+  terminalWidth?: number;
+  promptWidth?: number;
+} = { value: "", cursor: 0, columns: 0 };
 
 function setupRawInput(
   onSubmit: (line: string) => void,
@@ -597,6 +746,14 @@ function setupRawInput(
   // Enable bracketed paste mode so pasted newlines don't trigger submit
   process.stdout.write("\x1b[?2004h");
 
+  // Initialise terminal width from the current stdout columns.
+  sharedBuffer.terminalWidth = process.stdout.columns || undefined;
+
+  // Keep terminal width up to date when the user resizes the window.
+  process.stdout.on("resize", () => {
+    sharedBuffer.terminalWidth = process.stdout.columns || undefined;
+  });
+
   process.stdin.on("data", (chunk: string) => {
     parseKeys(chunk, { onSubmit, onEscape, onExit });
   });
@@ -606,8 +763,20 @@ function setupRawInput(
 // Input prompt
 // ---------------------------------------------------------------------------
 
+/** The visible width (columns) of the prompt prefix string, excluding ANSI codes. */
+function promptVisualWidth(prefix: string): number {
+  // Strip ANSI escape sequences and measure printable width.
+  const stripped = prefix.replace(/\x1b\[[0-9;]*m/g, "");
+  let w = 0;
+  for (const ch of [...stripped]) w += displayWidth(ch) || 1;
+  return w;
+}
+
 function printPrompt(prefix: string): void {
-  process.stdout.write(dim(now().padEnd(TIME_WIDTH)) + prefix);
+  const timeStr = dim(now().padEnd(TIME_WIDTH));
+  process.stdout.write(timeStr + prefix);
+  // Record where the user's input will start so redrawLine can position correctly.
+  sharedBuffer.promptWidth = TIME_WIDTH + promptVisualWidth(prefix);
 }
 
 // ---------------------------------------------------------------------------
