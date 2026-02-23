@@ -14,13 +14,12 @@
  * The log level is controlled by the OMEGA_LOG_LEVEL environment variable
  * (default: "debug").  All levels are written; pino filters internally.
  *
- * The buffer flushes automatically when it reaches 1 KB or every 5 seconds
- * (whichever comes first), via SonicBoom's built-in periodicFlush.
- * Call flushLog() before writing a diagnostic snapshot or exiting to ensure
- * all buffered log lines reach disk immediately.
+ * Log writes are synchronous — each entry is written to disk immediately.
+ * Our log volume (human-paced typing + LLM responses) is far too low for
+ * async buffering to matter, and sync writes are simpler and more reliable.
  *
  * Usage:
- *   import { logger, flushLog, makeLogEntry } from "./logger.js";
+ *   import { logger, makeLogEntry } from "./logger.js";
  *   logger.info(makeLogEntry("infra", { event: "turn_end", ... }));
  *   logger.debug(makeLogEntry("message", { sender: "agent", receiver: "llm", message: "call", ... }));
  */
@@ -123,15 +122,13 @@ if (IS_PRODUCTION_LOG) {
 }
 
 // ---------------------------------------------------------------------------
-// Pino destination — async (buffered), periodic auto-flush, sync-flushable
+// Pino destination — synchronous, no buffering needed at our log volume
 // ---------------------------------------------------------------------------
 
 const dest = pino.destination({
   dest: LOG_FILE,
-  sync: false,          // async hot path — no latency on log writes
-  minLength: 1024,      // flush buffer when it reaches 1 KB (~5–10 messages)
-  periodicFlush: 5000,  // also flush every 5 s regardless of buffer size
-  flags: "a",           // we already rotated above; append from here
+  sync: true,   // synchronous writes — no buffering, no flush ceremony
+  flags: "a",   // we already rotated above; append from here
 });
 
 // ---------------------------------------------------------------------------
@@ -198,21 +195,15 @@ export const logger = {
 };
 
 // ---------------------------------------------------------------------------
-// flushLog — call before writing a diagnostic snapshot or exiting
+// flushLog — retained as a no-op shim; call sites will be cleaned up later
 // ---------------------------------------------------------------------------
 
 /**
- * Synchronously flush all buffered log lines to omega.log.
- * Call this immediately before writing a diagnostic snapshot so that the
- * snapshot's logFile pointer refers to a file that is already up to date.
- * Also called on clean shutdown.
+ * No-op. Previously flushed an async buffer; now that writes are synchronous
+ * there is nothing to flush. Kept so existing call sites continue to compile.
  */
 export function flushLog(): void {
-  try {
-    dest.flushSync();
-  } catch {
-    // Flush failure is non-fatal.
-  }
+  // no-op — writes are synchronous
 }
 
 export function getLogFile(): string {
