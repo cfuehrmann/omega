@@ -55,6 +55,7 @@ export const config = {
     "Use `run_background` + `kill_process` for dev servers, file watchers, or any",
     "process that must stay alive while you do other work.",
     "Chain independent tool calls in parallel when results don't depend on each other.",
+    "A `Justfile` exists at the repo root. Run `just --list` to discover available recipes.",
     "",
     "## Testing discipline",
     "",

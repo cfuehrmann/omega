@@ -6,6 +6,7 @@
     "start": "bun run src/ui-raw.ts",
     "web": "bun run src/web/server.ts",
     "web:build": "cd src/web && npx vite build",
+    "web:dev": "cd src/web && npx vite",
     "login": "bun run src/login.ts",
     "check": "bun test && bunx knip"
   },
