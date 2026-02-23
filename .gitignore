@@ -6,6 +6,10 @@ out
 dist
 *.tgz
 
+# web UI build output (run `bun run web:build` to generate)
+src/web/public/assets/
+src/web/public/index.html
+
 # code coverage
 coverage
 *.lcov

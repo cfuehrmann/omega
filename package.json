@@ -4,11 +4,16 @@
   "private": true,
   "scripts": {
     "start": "bun run src/ui-raw.ts",
+    "web": "bun run src/web/server.ts",
+    "web:build": "cd src/web && npx vite build",
     "login": "bun run src/login.ts",
     "check": "bun test && bunx knip"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "solid-js": "^1.9.11",
+    "vite": "^7.3.1",
+    "vite-plugin-solid": "^2.11.10"
   },
   "peerDependencies": {
     "typescript": "^5"

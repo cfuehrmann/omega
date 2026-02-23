@@ -50,6 +50,16 @@ describe("entry points", () => {
     expect(source).toContain("renderToolResult");
   });
 
+  it("web split: src/web/server.ts and src/web/client/index.html exist", () => {
+    expect(existsSync(join(ROOT, "src/web/server.ts"))).toBe(true);
+    expect(existsSync(join(ROOT, "src/web/client/index.html"))).toBe(true);
+  });
+
+  it("web split: src/web/server.ts exports runWebApp", () => {
+    const source = readFileSync(join(ROOT, "src/web/server.ts"), "utf-8");
+    expect(source).toContain("runWebApp");
+  });
+
   it("package.json login script points to a file that exists", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8"));
     const loginScript = pkg.scripts?.login;

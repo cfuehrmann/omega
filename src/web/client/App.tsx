@@ -1,0 +1,269 @@
+import { For, Show, createEffect, onCleanup, createSignal } from "solid-js";
+import { state, dispatch, type Turn, type WsEvent } from "./store";
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+
+const WS_URL = `ws://${location.host}`;
+let ws: WebSocket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onerror = () => {
+    dispatch({ type: "disconnected" });
+  };
+
+  ws.onmessage = (e) => {
+    let event: WsEvent;
+    try { event = JSON.parse(e.data as string); } catch { return; }
+    dispatch(event);
+  };
+
+  ws.onclose = () => {
+    dispatch({ type: "disconnected" });
+    reconnectTimer = setTimeout(connect, 2000);
+  };
+}
+
+connect();
+onCleanup(() => {
+  ws?.close();
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+});
+
+function sendToServer(msg: object) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Event block components
+// ---------------------------------------------------------------------------
+
+function truncate(s: string, max = 3000): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max) + `\n… [${s.length - max} chars truncated]`;
+}
+
+function EventBlock(props: { event: WsEvent }) {
+  const e = props.event;
+
+  if (e.type === "user_message") {
+    return (
+      <div class="block user">
+        <div class="block-label">you</div>
+        <div class="block-body">{e.content}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "text") {
+    return (
+      <div class="block assist">
+        <div class="block-label">assistant</div>
+        <div class="block-body">{e.text}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "tool_call") {
+    const inputStr = typeof e.input === "object"
+      ? JSON.stringify(e.input, null, 2)
+      : String(e.input);
+    return (
+      <div class="block tool">
+        <div class="block-label">tool › {e.name}</div>
+        <div class="block-body">{truncate(inputStr)}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "tool_result") {
+    const r = e.result;
+    const content = r.type === "text" ? truncate(r.text ?? "") : `[${r.type}]`;
+    return (
+      <div class={`block result${r.is_error ? " result-error" : ""}`}>
+        <div class="block-label">result › {e.name}</div>
+        <div class="block-body">{content}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "status") {
+    return (
+      <div class="block status">
+        <div class="block-body">{e.message}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "turn_end") {
+    const m = e.metrics;
+    const cost = m.costUsd != null ? `  cost: $${m.costUsd.toFixed(4)}` : "";
+    const saved = m.savedUsd ? `  saved: $${m.savedUsd.toFixed(4)}` : "";
+    const line = `in: ${m.inputTokens}  out: ${m.outputTokens}${cost}${saved}  model: ${e.model}`;
+    return (
+      <div class="block footer">
+        <div class="block-body">{line}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "api_error") {
+    return (
+      <div class="block error-b">
+        <div class="block-label">api error ({e.provider})</div>
+        <div class="block-body">{e.error}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "error") {
+    return (
+      <div class="block error-b">
+        <div class="block-label">error</div>
+        <div class="block-body">{e.error}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "interrupted") {
+    return <div class="block interrupt">⊘ Interrupted</div>;
+  }
+
+  return null;
+}
+
+function TurnView(props: { turn: Turn }) {
+  return (
+    <div class="turn">
+      <For each={props.turn.events}>{(event) => <EventBlock event={event} />}</For>
+      <Show when={props.turn.streamingText}>
+        <div class="block assist streaming">
+          <div class="block-label">assistant</div>
+          <div class="block-body">
+            {props.turn.streamingText}
+            <span class="cursor" />
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+function InputArea() {
+  let textareaRef!: HTMLTextAreaElement;
+  let feedRef!: HTMLDivElement;
+
+  const [inputValue, setInputValue] = createSignal("");
+
+  function autoResize() {
+    textareaRef.style.height = "auto";
+    textareaRef.style.height = Math.min(textareaRef.scrollHeight, 200) + "px";
+  }
+
+  function send() {
+    const content = inputValue().trim();
+    if (!content || state.streaming || !state.connected) return;
+    sendToServer({ type: "message", content });
+    setInputValue("");
+    setTimeout(autoResize, 0);
+  }
+
+  function abort() {
+    sendToServer({ type: "abort" });
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+    setTimeout(autoResize, 0);
+  }
+
+  return (
+    <div class="input-area">
+      <textarea
+        ref={textareaRef}
+        value={inputValue()}
+        onInput={(e) => { setInputValue(e.currentTarget.value); autoResize(); }}
+        onKeyDown={onKeyDown}
+        placeholder="Message Omega… (Enter to send, Shift+Enter for newline)"
+        rows={1}
+        disabled={!state.connected}
+      />
+      <Show when={state.streaming}
+        fallback={
+          <button class="send-btn" onClick={send} disabled={!state.connected}>
+            Send
+          </button>
+        }
+      >
+        <button class="abort-btn" onClick={abort}>Abort</button>
+      </Show>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Header / status
+// ---------------------------------------------------------------------------
+
+function StatusDot() {
+  const cls = () =>
+    !state.connected ? "dot error"
+    : state.streaming  ? "dot streaming"
+    : "dot connected";
+
+  const label = () =>
+    !state.connected ? "disconnected"
+    : state.streaming  ? "streaming…"
+    : "ready";
+
+  return (
+    <div class="status-row">
+      <span class={cls()} />
+      <h1>Ω Omega</h1>
+      <span class="status-label">{label()}</span>
+      <span class="model-label">{state.authMode}</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Root App
+// ---------------------------------------------------------------------------
+
+export function App() {
+  let feedRef!: HTMLDivElement;
+
+  // Auto-scroll to bottom on new content
+  createEffect(() => {
+    // Access turns length to track changes
+    const _ = state.turns.length;
+    const lastTurn = state.turns[state.turns.length - 1];
+    const __ = lastTurn?.streamingText;
+    queueMicrotask(() => {
+      if (feedRef) feedRef.scrollTop = feedRef.scrollHeight;
+    });
+  });
+
+  return (
+    <div class="app">
+      <StatusDot />
+      <div class="feed" ref={feedRef}>
+        <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
+      </div>
+      <InputArea />
+    </div>
+  );
+}
