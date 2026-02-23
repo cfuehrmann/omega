@@ -169,6 +169,46 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect((errorEvent as any).error).toContain("LLM exploded");
   });
 
+  it("retries once on transient stream error ('Unexpected event order') during fold and succeeds", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+
+    // The main turn always succeeds; only fold calls (2nd+ provider calls) are flaky on first try
+    let foldCallCount = 0;
+    let mainTurnDone = false;
+    const flakyProvider: StreamProvider = async () => {
+      if (!mainTurnDone) {
+        // Main turn call — succeed normally
+        return makeMockStream("main turn response");
+      }
+      // Fold calls
+      foldCallCount++;
+      if (foldCallCount === 1) {
+        // Simulate the transient Anthropic SDK error on first fold attempt
+        throw new Error("Unexpected event order, got message_start before receiving \"message_stop\"");
+      }
+      // Second fold call succeeds
+      return makeMockStream("recovered world state");
+    };
+    const agent = new Agent(flakyProvider, null, undefined, worldStatePath);
+    await collectSendMessage(agent, "hello");
+    // Give compactAfterTurn a moment to finish (it also calls the provider)
+    await new Promise(r => setTimeout(r, 50));
+    mainTurnDone = true;
+
+    const events = await collectFold(agent);
+
+    // Should have retried and succeeded — no error event
+    const errorEvent = events.find(e => e.type === "error");
+    expect(errorEvent).toBeUndefined();
+
+    // Should have saved the world state from the retry
+    const saved = events.find(e => e.type === "world_state_saved");
+    expect(saved).toBeDefined();
+
+    const content = await Bun.file(worldStatePath).text();
+    expect(content).toContain("recovered world state");
+  });
+
   it("compactTurn uses the active model (e.g. opus) not hardcoded sonnet", async () => {
     // This tests that when /opus is active, turn compaction calls the provider
     // with model=claude-opus-4-6, not the hardcoded claude-sonnet-4-6.

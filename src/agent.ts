@@ -711,7 +711,7 @@ export class Agent {
       };
       const wrappedProvider = wrapProvider(provider);
 
-      // Attempt compaction with one re-auth retry on 401 (Anthropic only)
+      // Attempt compaction with retries for transient errors and one re-auth retry on 401 (Anthropic only)
       let newState: string;
       try {
         newState = await compactWorldState(prior, this.history, wrappedProvider, this.activeModel);
@@ -725,6 +725,15 @@ export class Agent {
             return;
           }
           // Rebuild wrappedProvider with the fresh client
+          const { provider: freshProvider } = this.getActiveFoldProvider();
+          capturedUsage = null;
+          capturedContent = [];
+          const retryWrapped = wrapProvider(freshProvider);
+          newState = await compactWorldState(prior, this.history, retryWrapped, this.activeModel);
+        } else if (isRetryable(compactErr)) {
+          // Transient stream error (e.g. "Unexpected event order" from the Anthropic SDK
+          // when the server restarts a stream mid-flight) — retry once with a fresh provider.
+          logger.warn("world_state_fold_transient_error", { error: compactErr.message, hint: "retrying once" });
           const { provider: freshProvider } = this.getActiveFoldProvider();
           capturedUsage = null;
           capturedContent = [];
