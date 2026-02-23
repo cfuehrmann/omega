@@ -18,8 +18,14 @@ export interface ServerHelper {
   drainMessages(): Promise<string[]>;
   /** Wait for the next message from the browser and parse it as JSON */
   nextMessage(): Promise<unknown>;
-  /** Reset event log and received messages */
+  /** Reset event log, received messages, AND disk persistence file */
   reset(): Promise<void>;
+  /** Flush in-memory event log to disk (simulates clean shutdown) */
+  save(): Promise<void>;
+  /** Reload event log from disk, replacing in-memory state (simulates restart) */
+  load(): Promise<void>;
+  /** Return the current disk snapshot without modifying in-memory state */
+  diskSnapshot(): Promise<unknown>;
 }
 
 async function sendEvent(event: object): Promise<void> {
@@ -50,6 +56,19 @@ async function reset(): Promise<void> {
   await fetch(`${CTRL}/control/reset`, { method: "POST" });
 }
 
+async function save(): Promise<void> {
+  await fetch(`${CTRL}/control/save`, { method: "POST" });
+}
+
+async function load(): Promise<void> {
+  await fetch(`${CTRL}/control/load`, { method: "POST" });
+}
+
+async function diskSnapshot(): Promise<unknown> {
+  const res = await fetch(`${CTRL}/control/disk-snapshot`);
+  return res.json();
+}
+
 export interface Fixtures {
   server: ServerHelper;
 }
@@ -57,7 +76,7 @@ export interface Fixtures {
 export const test = base.extend<Fixtures>({
   server: async ({}, use) => {
     await reset();
-    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset };
+    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot };
     await use(helper);
   },
 });

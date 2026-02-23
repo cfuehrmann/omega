@@ -217,6 +217,26 @@ process management. This is about *awaitable* async commands.
 
 
 
+### [TOPIC] Web interface e2e tests — expand coverage
+**Priority: medium — foundation in place**
+
+Playwright e2e test infrastructure is working (15 tests, commit 9cc964d).
+Run with `just e2e`. Uses a lightweight test server (port 3001 + control API
+on 3002) so no real Anthropic auth needed.
+
+**Gaps to fill with more tests:**
+- Reconnection flow: `.reconnect-banner` appears after 2 failed retries
+- Abort button click sends `{type:"abort"}` to server
+- Interrupted event renders `⊘ Interrupted` block
+- Input clears after send
+- Auto-scroll: feed scrolls to bottom on new content
+- WEB-4 renderers (api_call_start, api_response, world_state_saved, auth block) —
+  add tests before or alongside the renderer implementation
+
+Always go RED first: write the failing test, then implement the feature.
+
+---
+
 ### [TOPIC] Web interface
 **Priority: medium — in progress**
 
@@ -240,7 +260,8 @@ Replace or supplement the raw terminal UI with a browser-based interface.
 
 **Remaining:**
 4. WEB-4: Parity pass — review all `AgentEvent` types against what the web client renders; add missing renderers (e.g. `api_call_start`/`api_response` debug view, world_state_saved, auth block in feed)
-5. WEB-5: Graceful shutdown — wire Ctrl+C / SIGTERM on web server to fold world state (mirror what terminal `app.ts` does); currently the server just exits without compacting
+5. ~~WEB-5: Session persistence~~ — DONE (see below)
+6. WEB-6: World-state fold on web server shutdown — call `foldCurrentSessionIntoWorldState()` on SIGINT/SIGTERM (mirrors what terminal `app.ts` does on clean exit); currently the server saves the raw event log but doesn't compact into `plan/world-state.md`
 
 ---
 
@@ -257,6 +278,8 @@ Discrete, prioritised, actionable. Keep in priority order.
 ---
 
 ## Closed / dismissed items (for reference)
+
+- **WEB-5: Session persistence** — Done. `src/web/session-store.ts` serialises the in-memory event log to `sessions/current.jsonl` (JSONL, one event per line, atomic rename). `server.ts` loads it on startup (so history replay works after crashes/restarts), saves after every `turn_end` (incremental, fire-and-forget), and saves on SIGINT/SIGTERM. Test server (`e2e/fixtures/test-server.ts`) mirrors the same logic in `sessions-test/`. 4 new Playwright tests in `e2e/persistence.spec.ts` (incremental save, ordering, save+load restart cycle, reset clears disk). Both dirs gitignored. 19 Playwright tests, 365 Bun tests pass.
 
 - **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit 99a9826). `src/web/server.ts` streams `AgentEvent` JSON over WebSocket; `src/web/client/` is a Vite + Solid.js app with `App.tsx`, `store.ts`, `style.css`; `Turn[]` state model with reactive dispatch; structural invariant tests added.
 

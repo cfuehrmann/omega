@@ -18,11 +18,43 @@
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
+import { readFile, writeFile, unlink, mkdir } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 
 const MAIN_PORT = 3001;
 const CTRL_PORT = 3002;
 const PUBLIC_DIR = join(import.meta.dir, "../../src/web/public");
+
+// Session persistence (mirrors src/web/session-store.ts logic)
+const SESSIONS_DIR = join(import.meta.dir, "../../sessions-test");
+const SESSION_FILE = join(SESSIONS_DIR, "current.jsonl");
+
+async function persistToDisk(events: object[]): Promise<void> {
+  await mkdir(SESSIONS_DIR, { recursive: true });
+  const lines = events.map(e => JSON.stringify(e)).join("\n");
+  await writeFile(SESSION_FILE, lines, "utf8");
+}
+
+async function loadFromDisk(): Promise<object[]> {
+  if (!existsSync(SESSION_FILE)) return [];
+  try {
+    const text = await readFile(SESSION_FILE, "utf8");
+    const result: object[] = [];
+    for (const line of text.split("\n")) {
+      const t = line.trim();
+      if (t) {
+        try { result.push(JSON.parse(t)); } catch { /* skip */ }
+      }
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+async function clearDisk(): Promise<void> {
+  if (existsSync(SESSION_FILE)) await unlink(SESSION_FILE);
+}
 
 // ---------------------------------------------------------------------------
 // Static file serving
@@ -58,7 +90,7 @@ function serveStatic(pathname: string): Response | null {
 
 let activeWs: ServerWebSocket<unknown> | null = null;
 const receivedMessages: string[] = [];
-const eventLog: object[] = [];
+let eventLog: object[] = [];
 
 function sendEvent(event: object): void {
   try { activeWs?.send(JSON.stringify(event)); } catch { /* ignore */ }
@@ -127,6 +159,10 @@ Bun.serve({
           if (idx !== -1) eventLog.splice(idx, 1);
         }
         eventLog.push(event);
+        // Persist after turn_end (mirrors real server behaviour)
+        if (t === "turn_end") {
+          await persistToDisk(eventLog);
+        }
       }
       sendEvent(event);
       return new Response("ok");
@@ -134,8 +170,28 @@ Bun.serve({
 
     if (req.method === "POST" && url.pathname === "/control/reset") {
       eventLog.length = 0;
+      eventLog = [];
       receivedMessages.length = 0;
+      await clearDisk();
       return new Response("ok");
+    }
+
+    if (req.method === "POST" && url.pathname === "/control/save") {
+      await persistToDisk(eventLog);
+      return new Response("ok");
+    }
+
+    if (req.method === "POST" && url.pathname === "/control/load") {
+      // Simulate restart: replace in-memory log with disk contents
+      eventLog = await loadFromDisk();
+      return new Response("ok");
+    }
+
+    if (req.method === "GET" && url.pathname === "/control/disk-snapshot") {
+      const disk = await loadFromDisk();
+      return new Response(JSON.stringify(disk), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     return new Response("Not found", { status: 404 });

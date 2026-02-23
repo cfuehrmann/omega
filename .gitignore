@@ -19,6 +19,12 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
+# session persistence (web server event log — runtime artifact)
+sessions/
+
+# test session persistence (e2e test server)
+sessions-test/
+
 # dotenv environment variable files
 .env
 .env.development.local

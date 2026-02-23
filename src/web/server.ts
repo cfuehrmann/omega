@@ -20,6 +20,7 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
+import { loadSession, saveSession, clearSession } from "./session-store.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_DIR = join(import.meta.dir, "public");
@@ -70,7 +71,7 @@ function serveStatic(pathname: string): Response | null {
  */
 const REPLAY_EXCLUDE = new Set(["connected", "turn_ready"]);
 
-const eventLog: object[] = [];
+let eventLog: object[] = [];
 
 function logEvent(event: object): void {
   const t = (event as any).type as string;
@@ -81,6 +82,10 @@ function logEvent(event: object): void {
     if (idx !== -1) eventLog.splice(idx, 1);
   }
   eventLog.push(event);
+  // Persist after each turn_end — cheap, no LLM calls, protects against crashes
+  if (t === "turn_end") {
+    saveSession(eventLog).catch(() => {}); // fire-and-forget; never blocks a turn
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +159,19 @@ async function handleMessage(session: Session, data: string): Promise<void> {
 // Server
 // ---------------------------------------------------------------------------
 
-export function runWebApp(): void {
+export async function runWebApp(): Promise<void> {
+  // Load persisted session log — enables history replay after crashes/restarts
+  eventLog = await loadSession();
+
+  // Graceful shutdown: persist on SIGINT (Ctrl+C) and SIGTERM
+  const handleShutdown = () => {
+    saveSession(eventLog)
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  };
+  process.on("SIGINT", handleShutdown);
+  process.on("SIGTERM", handleShutdown);
+
   const server = Bun.serve({
     port: PORT,
 
@@ -225,5 +242,8 @@ export function runWebApp(): void {
 // ---------------------------------------------------------------------------
 
 if (import.meta.main) {
-  runWebApp();
+  runWebApp().catch(err => {
+    console.error("Failed to start web server:", err);
+    process.exit(1);
+  });
 }
