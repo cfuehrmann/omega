@@ -218,11 +218,9 @@ process management. This is about *awaitable* async commands.
 
 
 ### [TOPIC] Web interface
-**Priority: medium — planned for foreseeable future**
+**Priority: medium — in progress**
 
 Replace or supplement the raw terminal UI with a browser-based interface.
-`run_background`/`kill_process` are already in place to serve a dev/web server
-while the agent loop runs.
 
 **Architecture seam is in place (commit 4183922):**
 - `src/terminal/input.ts` — key parsing, line editing (terminal-only)
@@ -231,14 +229,18 @@ while the agent loop runs.
 
 **Decided direction:** WebSocket bidirectional channel (user input + agent events), static HTML/JS served by Bun's built-in HTTP server, Solid.js frontend. SSH tunnel for deployment (no public port needed).
 
-**State model:** `Turn[]` in a `store.ts` file (the web architectural seam); each turn holds a list of `AgentEvent`s; UI derives all display from this store.
+**State model:** `Turn[]` in `src/web/client/store.ts`; each turn holds an ordered list of `WsEvent`s; streaming text accumulated separately; UI derives all display from this store.
 
-**Next steps:**
-1. WEB-1: Create `src/web/server.ts` — Bun HTTP server + WebSocket upgrade; serve static `src/web/public/index.html`; stream `AgentEvent`s as JSON over WebSocket; accept user messages back over WebSocket; wire to `agent.ts` (no changes to agent needed)
-2. WEB-2: Create `src/web/public/index.html` + minimal Solid.js client — connect to WebSocket, render `AgentEvent` stream as a chat-like UI
-3. WEB-3: `store.ts` — `Turn[]` state model; all rendering derives from store
-4. WEB-4: Parity pass — ensure all terminal-rendered events have web equivalents (tool calls, footers, status messages)
-5. WEB-5 (optional): Split entry point so `bun run src/ui-raw.ts` starts terminal and `bun run src/web/server.ts` starts web server
+**Stack:** Vite + `vite-plugin-solid` in `src/web/client/`; built output served from `src/web/public/` (gitignored). Usage: `bun run web:build && bun run web`. Dev: `bun run web` in one terminal, `npx vite` in `src/web/` in another (WS proxy to :3000).
+
+**Done:**
+- ~~WEB-1~~: `src/web/server.ts` — Bun HTTP + WebSocket; streams `AgentEvent` JSON; accepts `{type:message}` / `{type:abort}`; serves static build output (commit 99a9826)
+- ~~WEB-2~~: Solid.js client — `App.tsx`, `main.tsx`, `style.css`, `index.html`; EventBlock/TurnView/InputArea/StatusDot components; auto-scroll; Send/Abort (commit 99a9826)
+- ~~WEB-3~~: `store.ts` — `Turn[]` reactive store; `dispatch()` handles all `WsEvent` types (commit 99a9826)
+
+**Remaining:**
+4. WEB-4: Parity pass — review all `AgentEvent` types against what the web client renders; add missing renderers (e.g. `api_call_start`/`api_response` debug view, world_state_saved, auth block in feed)
+5. WEB-5: Graceful shutdown — wire Ctrl+C / SIGTERM on web server to fold world state (mirror what terminal `app.ts` does); currently the server just exits without compacting
 
 ---
 
@@ -255,6 +257,8 @@ Discrete, prioritised, actionable. Keep in priority order.
 ---
 
 ## Closed / dismissed items (for reference)
+
+- **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit 99a9826). `src/web/server.ts` streams `AgentEvent` JSON over WebSocket; `src/web/client/` is a Vite + Solid.js app with `App.tsx`, `store.ts`, `style.css`; `Turn[]` state model with reactive dispatch; structural invariant tests added.
 
 - **WEB-0: Split `ui-raw.ts` into `src/terminal/` modules** — Done (commit 4183922). `input.ts` (key parsing, line editing, shared buffer/paste state), `renderer.ts` (ANSI helpers, all block renderers), `app.ts` (agent-event loop, shutdown, raw-mode setup). `src/ui-raw.ts` is now a 26-line thin re-export shim. Two structural invariant tests added to `src/entry.test.ts`. 360 tests pass.
 
