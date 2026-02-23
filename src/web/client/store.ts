@@ -41,6 +41,8 @@ export interface AppState {
   streaming: boolean;
   authMode: string;
   turns: Turn[];
+  /** Number of consecutive failed reconnect attempts (reset on successful connect) */
+  retryCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,6 +54,7 @@ const [state, setState] = createStore<AppState>({
   streaming: false,
   authMode: "",
   turns: [],
+  retryCount: 0,
 });
 
 export { state };
@@ -74,11 +77,13 @@ export function dispatch(event: WsEvent): void {
     case "connected":
       setState("connected", true);
       setState("streaming", false);
+      setState("retryCount", 0);
       break;
 
     case "disconnected":
       setState("connected", false);
       setState("streaming", false);
+      setState("retryCount", r => r + 1);
       break;
 
     case "history": {

@@ -72,6 +72,27 @@ html, body, #root {
 .status-label { font-size: 11px; color: var(--dim); }
 .model-label  { margin-left: auto; font-size: 11px; color: var(--dim); }
 
+/* ── Reconnect banner ── */
+.reconnect-banner {
+  background: #2a1f00;
+  border: 1px solid var(--yellow);
+  border-radius: var(--radius);
+  color: var(--yellow);
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  flex-shrink: 0;
+  margin: 6px 0;
+}
+
+.reconnect-banner code {
+  background: var(--bg3);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font);
+  font-size: 11px;
+}
+
 /* ── Feed ── */
 .feed {
   flex: 1;

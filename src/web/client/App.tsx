@@ -7,18 +7,21 @@ import { state, dispatch, type Turn, type WsEvent } from "./store";
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let connectAttempts = 0;
 
 function connect() {
+  connectAttempts++;
   // Always connect to the Bun server directly, regardless of the page origin
   const wsUrl = `ws://${location.hostname}:3000`;
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    connectAttempts = 0;
     dispatch({ type: "connected" });
   };
 
   ws.onerror = () => {
-    dispatch({ type: "disconnected" });
+    // onclose fires right after onerror — let onclose handle the dispatch
   };
 
   ws.onmessage = (e) => {
@@ -216,6 +219,23 @@ function InputArea() {
 }
 
 // ---------------------------------------------------------------------------
+// Reconnection banner
+// ---------------------------------------------------------------------------
+
+function ReconnectBanner() {
+  // Show after 2+ consecutive disconnects (i.e. at least one retry has failed)
+  return (
+    <Show when={!state.connected && state.retryCount >= 2}>
+      <div class="reconnect-banner">
+        ⚠ Cannot reach server — retrying… (attempt {state.retryCount})
+        <br />
+        Run <code>just server</code> in a terminal, then this page will reconnect automatically.
+      </div>
+    </Show>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Header / status
 // ---------------------------------------------------------------------------
 
@@ -270,6 +290,7 @@ export function App() {
   return (
     <div class="app">
       <StatusDot />
+      <ReconnectBanner />
       <div class="feed" ref={feedRef}>
         <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
       </div>
