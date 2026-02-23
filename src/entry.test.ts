@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 /**
@@ -34,6 +34,20 @@ describe("entry points", () => {
     const hasBareCall   = /^runApp\(/m.test(source);
     const hasGuardedCall = /import\.meta\.main/.test(source) && source.includes("runApp(");
     expect(hasBareCall || hasGuardedCall).toBe(true);
+  });
+
+  it("terminal split: src/terminal/input.ts, renderer.ts, app.ts all exist", () => {
+    expect(existsSync(join(ROOT, "src/terminal/input.ts"))).toBe(true);
+    expect(existsSync(join(ROOT, "src/terminal/renderer.ts"))).toBe(true);
+    expect(existsSync(join(ROOT, "src/terminal/app.ts"))).toBe(true);
+  });
+
+  it("terminal split: src/ui-raw.ts re-exports parseKeys and displayWidth", () => {
+    const source = readFileSync(join(ROOT, "src/ui-raw.ts"), "utf-8");
+    expect(source).toContain("parseKeys");
+    expect(source).toContain("displayWidth");
+    expect(source).toContain("renderToolStart");
+    expect(source).toContain("renderToolResult");
   });
 
   it("package.json login script points to a file that exists", () => {
