@@ -2,8 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
-import { logger } from "./logger.js";
-import { RollingEventBuffer, writeDiagnosticWithBuffer, type BufferedEvent } from "./diagnosis.js";
+import { logger, flushLog, startup, toolExec, apiCall } from "./logger.js";
+import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactTurn, compactWorldState } from "./compaction.js";
 import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
@@ -419,14 +419,6 @@ export class Agent {
   public sessionSavedUsd = 0;
   private _apiCallCount = 0;
 
-  /**
-   * Rolling event buffer — stores the last 200 significant agent events.
-   * Attached to diagnostic snapshots so post-mortem analysis has full context:
-   * what the user asked, what API calls were made, what tools ran, and what
-   * errors occurred — not just the failing API request.
-   */
-  private readonly eventBuffer = new RollingEventBuffer(200);
-
   private authMode: "api-key" | "oauth" = "api-key";
   private provider: ProviderName = "anthropic";
   private activeModel: string = config.model;
@@ -519,12 +511,12 @@ export class Agent {
         },
       });
       this.authMode = "oauth";
-      logger.startup({ authMode: "claude-max", model: config.model });
+      startup({ authMode: "claude-max", model: config.model });
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";
-      logger.startup({ authMode: "api-key", model: config.model });
+      startup({ authMode: "api-key", model: config.model });
       return "api-key (pay-per-token ⚠)";
     } else {
       throw new Error(
@@ -669,8 +661,7 @@ export class Agent {
         // it correctly points to the first next-turn message.
         const tail = this.history.slice(historyLenAtStart);
         this.history = [...(newSummaryMsgs as Anthropic.MessageParam[]), ...tail];
-        this.eventBuffer.push({
-          type: "session_compacted",
+        logger.debug("session_compacted", {
           turnCount: turnMessages.length,
           summaryLength: this.zone2Summary.length,
         });
@@ -784,9 +775,11 @@ export class Agent {
 
     } catch (err: any) {
       logger.warn("world_state_update_failed", { error: err.message });
+      // Flush log first so the snapshot's logFile pointer is current on disk.
+      flushLog();
       // Write a diagnostic snapshot so the next session has full context about
-      // what went wrong during shutdown (event buffer, history, error message).
-      await writeDiagnosticWithBuffer(
+      // what went wrong during shutdown.
+      await writeDiagnostic(
         {
           summary: `World-state fold failed on shutdown: ${err.message}`,
           errorMessage: err.message ?? String(err),
@@ -797,7 +790,6 @@ export class Agent {
           history: this.history,
           extra: { phase: "fold_shutdown" },
         },
-        this.eventBuffer,
         this.diagDir,
       );
       yield { type: "error", error: err.message } as AgentEvent;
@@ -873,8 +865,7 @@ export class Agent {
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
 
-    // Record the user prompt in the rolling event buffer
-    this.eventBuffer.push({ type: "user_prompt", content: userMessage });
+    logger.debug("user_prompt", { contentLength: userMessage.length });
 
     // Reset API call counter — numbered per user prompt, not per session
     this._apiCallCount = 0;
@@ -978,13 +969,11 @@ export class Agent {
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        this.eventBuffer.push({
-          type: "api_request",
+        logger.debug("api_request", {
           callNumber: this._apiCallCount,
           provider: "openai",
           model: activeModel,
-          url: getOpenAiUrl(),
-          requestSummary: { messageCount: this.history.length },
+          messageCount: this.history.length,
         });
       } else {
         const request = {
@@ -1001,13 +990,11 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
-        this.eventBuffer.push({
-          type: "api_request",
+        logger.debug("api_request", {
           callNumber: this._apiCallCount,
           provider: "anthropic",
           model: activeModel,
-          url: "https://api.anthropic.com/v1/messages",
-          requestSummary: { messageCount: cachedMessages.length },
+          messageCount: cachedMessages.length,
         });
       }
 
@@ -1047,12 +1034,8 @@ export class Agent {
               continue;
             }
             logger.error("api_openai_error", { error: err.message });
-            this.eventBuffer.push({
-              type: "agent_error",
-              message: err.message ?? String(err),
-              retryable: false,
-            });
-            const diagPath = await writeDiagnosticWithBuffer(
+            flushLog();
+            const diagPath = await writeDiagnostic(
               {
                 summary: `OpenAI API error (status ${err.status ?? "unknown"}): ${err.message}`,
                 errorMessage: err.message ?? String(err),
@@ -1064,7 +1047,6 @@ export class Agent {
                 history: this.history,
                 extra: { attempts: attempt + 1 },
               },
-              this.eventBuffer,
               this.diagDir,
             );
             if (diagPath) {
@@ -1186,12 +1168,8 @@ export class Agent {
             });
             // Write a diagnostic so the next session has hard data on what
             // caused the overflow (exact history length, cached messages, etc.)
-            this.eventBuffer.push({
-              type: "agent_error",
-              message: err.message ?? String(err),
-              retryable: true,
-            });
-            const diagPath = await writeDiagnosticWithBuffer(
+            flushLog();
+            const diagPath = await writeDiagnostic(
               {
                 summary: `Prompt too long (attempt ${attempt + 1}): ${err.message}`,
                 errorMessage: err.message ?? String(err),
@@ -1204,7 +1182,6 @@ export class Agent {
                 history: this.history,
                 extra: { attempts: attempt + 1, stopReason: "prompt_too_long" },
               },
-              this.eventBuffer,
               this.diagDir,
             );
             if (diagPath) {
@@ -1219,15 +1196,10 @@ export class Agent {
             };
           } else {
             logger.error("api_error", { error: err.message, attempts: attempt + 1 });
-            // Record the error in the rolling buffer before writing the snapshot
-            this.eventBuffer.push({
-              type: "agent_error",
-              message: err.message ?? String(err),
-              retryable: isRetryable(err),
-            });
             // Write a diagnostic snapshot for non-retryable errors so the next
-            // session has hard data (exact request + history + event buffer) to anchor debugging.
-            const diagPath = await writeDiagnosticWithBuffer(
+            // session has hard data (exact request + history) to anchor debugging.
+            flushLog();
+            const diagPath = await writeDiagnostic(
               {
                 summary: `Anthropic API error (status ${err.status ?? "unknown"}): ${err.message}`,
                 errorMessage: err.message ?? String(err),
@@ -1240,7 +1212,6 @@ export class Agent {
                 history: this.history,
                 extra: { attempts: attempt + 1, stopReason: "api_error" },
               },
-              this.eventBuffer,
               this.diagDir,
             );
             if (diagPath) {
@@ -1312,14 +1283,11 @@ export class Agent {
         content: response.content,
         raw: useOpenAi ? (response as any).raw : undefined,
       };
-      this.eventBuffer.push({
-        type: "api_response",
+      logger.debug("api_response", {
         provider: useOpenAi ? "openai" : "anthropic",
         stopReason: response.stop_reason ?? "unknown",
-        usage: {
-          input_tokens: response.usage.input_tokens ?? 0,
-          output_tokens: response.usage.output_tokens,
-        },
+        inputTokens: response.usage.input_tokens ?? 0,
+        outputTokens: response.usage.output_tokens,
       });
 
       // Add assistant response to history
@@ -1347,12 +1315,7 @@ export class Agent {
             input: toolUse.input,
             formatted,
           } as AgentEvent;
-          this.eventBuffer.push({
-            type: "tool_call",
-            id: toolUse.id,
-            name: toolUse.name,
-            input: toolUse.input,
-          });
+          logger.debug("tool_call", { id: toolUse.id, name: toolUse.name });
         }
 
         // Execute all tools concurrently
@@ -1367,7 +1330,7 @@ export class Agent {
           toolCallsThisTurn.push(toolUse.name);
           allToolCalls.push(toolUse.name);
 
-          logger.toolExec({
+          toolExec({
             name: toolUse.name,
             autoApproved: true,
             approved: true,
@@ -1382,13 +1345,7 @@ export class Agent {
             formatted,
             result,
           } as AgentEvent;
-          this.eventBuffer.push({
-            type: "tool_result",
-            id: toolUse.id,
-            name: toolUse.name,
-            isError: result.isError,
-            outputPreview: result.output.slice(0, 500),
-          });
+          logger.debug("tool_result", { id: toolUse.id, name: toolUse.name, isError: result.isError });
 
           toolResults.push({
             type: "tool_result",
@@ -1414,7 +1371,7 @@ export class Agent {
       }
 
       // Log the API call
-      logger.apiCall({
+      apiCall({
         model: activeModel,
         inputTokens: turnInputTokens,
         outputTokens: turnOutputTokens,

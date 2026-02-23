@@ -1,5 +1,5 @@
 /**
- * Tests for RollingEventBuffer and its integration with writeDiagnostic.
+ * Tests for writeDiagnostic and checkDiagnostics.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
@@ -7,96 +7,14 @@ import { mkdtempSync, rmSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
-  RollingEventBuffer,
-  writeDiagnosticWithBuffer,
-  type BufferedEvent,
+  writeDiagnostic,
 } from "./diagnosis.js";
 
 // ---------------------------------------------------------------------------
-// RollingEventBuffer unit tests
+// writeDiagnostic
 // ---------------------------------------------------------------------------
 
-describe("RollingEventBuffer", () => {
-  it("starts empty", () => {
-    const buf = new RollingEventBuffer(10);
-    expect(buf.snapshot()).toEqual([]);
-  });
-
-  it("stores events in order", () => {
-    const buf = new RollingEventBuffer(10);
-    buf.push({ type: "user_prompt", content: "hello" });
-    buf.push({ type: "api_request", callNumber: 1, provider: "anthropic", model: "claude-sonnet-4-6" });
-    const snap = buf.snapshot();
-    expect(snap).toHaveLength(2);
-    expect(snap[0].event.type).toBe("user_prompt");
-    expect(snap[1].event.type).toBe("api_request");
-  });
-
-  it("each entry has a monotonic seqNo and timestamp", () => {
-    const buf = new RollingEventBuffer(10);
-    buf.push({ type: "user_prompt", content: "a" });
-    buf.push({ type: "user_prompt", content: "b" });
-    const [e0, e1] = buf.snapshot();
-    expect(e1.seqNo).toBeGreaterThan(e0.seqNo);
-    expect(typeof e0.ts).toBe("string"); // ISO string
-  });
-
-  it("evicts oldest events when capacity is exceeded", () => {
-    const buf = new RollingEventBuffer(3);
-    buf.push({ type: "user_prompt", content: "1" });
-    buf.push({ type: "user_prompt", content: "2" });
-    buf.push({ type: "user_prompt", content: "3" });
-    buf.push({ type: "user_prompt", content: "4" });
-    const snap = buf.snapshot();
-    expect(snap).toHaveLength(3);
-    expect((snap[0].event as any).content).toBe("2");
-    expect((snap[2].event as any).content).toBe("4");
-  });
-
-  it("snapshot returns a copy — mutations don't affect the buffer", () => {
-    const buf = new RollingEventBuffer(5);
-    buf.push({ type: "user_prompt", content: "x" });
-    const snap = buf.snapshot();
-    snap.pop();
-    expect(buf.snapshot()).toHaveLength(1);
-  });
-
-  it("clear empties the buffer", () => {
-    const buf = new RollingEventBuffer(5);
-    buf.push({ type: "user_prompt", content: "x" });
-    buf.clear();
-    expect(buf.snapshot()).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// BufferedEvent types
-// ---------------------------------------------------------------------------
-
-describe("BufferedEvent types", () => {
-  it("accepts all documented event kinds", () => {
-    const buf = new RollingEventBuffer(20);
-
-    const events: BufferedEvent[] = [
-      { type: "user_prompt", content: "do something" },
-      { type: "api_request", callNumber: 1, provider: "anthropic", model: "claude-sonnet-4-6", url: "https://x", requestSummary: { messages: 3 } },
-      { type: "api_response", provider: "anthropic", stopReason: "tool_use", usage: { input_tokens: 100, output_tokens: 50 } },
-      { type: "tool_call", id: "tool_abc", name: "read_file", input: { path: "foo.ts" } },
-      { type: "tool_result", id: "tool_abc", name: "read_file", isError: false, outputPreview: "content..." },
-      { type: "agent_error", message: "something went wrong", retryable: false },
-      { type: "session_compacted", turnCount: 3, summaryLength: 500 },
-    ];
-
-    for (const e of events) buf.push(e);
-    expect(buf.snapshot()).toHaveLength(events.length);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// writeDiagnosticWithBuffer
-// ---------------------------------------------------------------------------
-
-describe("writeDiagnosticWithBuffer", () => {
+describe("writeDiagnostic", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -107,39 +25,67 @@ describe("writeDiagnosticWithBuffer", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("writes a file containing the event buffer", async () => {
-    const buf = new RollingEventBuffer(10);
-    buf.push({ type: "user_prompt", content: "fix the bug" });
-    buf.push({ type: "api_request", callNumber: 1, provider: "anthropic", model: "claude-sonnet-4-6" });
-    buf.push({ type: "api_response", provider: "anthropic", stopReason: "end_turn", usage: { input_tokens: 50, output_tokens: 20 } });
-
-    const path = await writeDiagnosticWithBuffer(
+  it("writes a file with standard diagnostic fields", async () => {
+    const path = await writeDiagnostic(
       {
         summary: "test error",
         errorMessage: "boom",
         httpStatus: 500,
         provider: "anthropic",
         model: "claude-sonnet-4-6",
-        requestMessages: [],
-        history: [],
+        requestMessages: [{ role: "user", content: "hello" }],
+        history: [{ role: "user", content: "hello" }],
       },
-      buf,
       tmpDir,
     );
 
     expect(path).not.toBeNull();
     const contents = JSON.parse(readFileSync(path!, "utf-8"));
-    expect(contents.eventBuffer).toBeDefined();
-    expect(Array.isArray(contents.eventBuffer)).toBe(true);
-    expect(contents.eventBuffer).toHaveLength(3);
-    expect(contents.eventBuffer[0].event.type).toBe("user_prompt");
-    expect(contents.eventBuffer[0].event.content).toBe("fix the bug");
+    expect(contents._omega_diagnostic).toBe(true);
+    expect(contents.summary).toBe("test error");
+    expect(contents.errorMessage).toBe("boom");
+    expect(contents.httpStatus).toBe(500);
+    expect(contents.provider).toBe("anthropic");
+    expect(contents.model).toBe("claude-sonnet-4-6");
+    expect(contents.requestMessages).toEqual([{ role: "user", content: "hello" }]);
   });
 
-  it("includes standard diagnostic fields alongside the buffer", async () => {
-    const buf = new RollingEventBuffer(5);
+  it("includes a logFile pointer", async () => {
+    const path = await writeDiagnostic(
+      {
+        summary: "some error",
+        errorMessage: "x",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        requestMessages: [],
+        history: [],
+      },
+      tmpDir,
+    );
 
-    const path = await writeDiagnosticWithBuffer(
+    const contents = JSON.parse(readFileSync(path!, "utf-8"));
+    expect(contents.logFile).toBe("omega.log");
+  });
+
+  it("does NOT include an eventBuffer field", async () => {
+    const path = await writeDiagnostic(
+      {
+        summary: "test",
+        errorMessage: "e",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        requestMessages: [],
+        history: [],
+      },
+      tmpDir,
+    );
+
+    const contents = JSON.parse(readFileSync(path!, "utf-8"));
+    expect(contents.eventBuffer).toBeUndefined();
+  });
+
+  it("includes standard fields alongside requestMessages", async () => {
+    const path = await writeDiagnostic(
       {
         summary: "API 400",
         errorMessage: "bad request",
@@ -150,7 +96,6 @@ describe("writeDiagnosticWithBuffer", () => {
         history: [{ role: "user", content: "hello" }],
         extra: { foo: "bar" },
       },
-      buf,
       tmpDir,
     );
 
@@ -160,12 +105,10 @@ describe("writeDiagnosticWithBuffer", () => {
     expect(contents.model).toBe("claude-opus-4-6");
     expect(contents.requestMessages).toEqual([{ role: "user", content: "hello" }]);
     expect(contents.extra).toEqual({ foo: "bar" });
-    expect(contents.eventBuffer).toEqual([]); // empty buffer
   });
 
   it("silently swallows write errors and returns null", async () => {
-    const buf = new RollingEventBuffer(5);
-    const result = await writeDiagnosticWithBuffer(
+    const result = await writeDiagnostic(
       {
         summary: "err",
         errorMessage: "x",
@@ -174,9 +117,44 @@ describe("writeDiagnosticWithBuffer", () => {
         requestMessages: [],
         history: [],
       },
-      buf,
       "/this/path/does/not/exist/at/all/ever",
     );
     expect(result).toBeNull();
+  });
+
+  it("returns null when diagDir is null (disabled)", async () => {
+    const result = await writeDiagnostic(
+      {
+        summary: "disabled",
+        errorMessage: "x",
+        provider: "anthropic",
+        model: "m",
+        requestMessages: [],
+        history: [],
+      },
+      null,
+    );
+    expect(result).toBeNull();
+    // No files written anywhere
+    expect(readdirSync(tmpDir)).toHaveLength(0);
+  });
+
+  it("creates the directory if it does not exist", async () => {
+    const nestedDir = join(tmpDir, "nested", "diag");
+    const path = await writeDiagnostic(
+      {
+        summary: "nested",
+        errorMessage: "x",
+        provider: "anthropic",
+        model: "m",
+        requestMessages: [],
+        history: [],
+      },
+      nestedDir,
+    );
+    expect(path).not.toBeNull();
+    const files = readdirSync(nestedDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/\.json$/);
   });
 });

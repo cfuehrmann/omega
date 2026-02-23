@@ -1,139 +1,159 @@
 /**
- * Structured JSON-lines logger.
+ * Structured JSON-lines logger backed by pino.
  *
- * Writes one JSON object per line to a log file. The log file is created
- * in ~/.local/share/omega/logs/ with a datestamped filename.
+ * Writes one JSON object per line to omega.log at the repo root.
+ * On startup: renames omega.log → omega.prev.log (if it exists), then creates
+ * a fresh omega.log for the current session.  This keeps exactly two log
+ * files: the current session and the previous one.
+ *
+ * The log level is controlled by the OMEGA_LOG_LEVEL environment variable
+ * (default: "debug").  All levels are written; pino filters internally.
+ *
+ * Call flushLog() before writing a diagnostic snapshot or exiting to ensure
+ * all buffered log lines reach disk.
  *
  * Usage:
- *   import { logger } from "./logger.js";
- *   logger.info("some event", { key: "value" });
- *   logger.apiCall({ model, inputTokens, outputTokens, costUsd, ... });
- *
- * Log files are readable by the agent for self-analysis.
+ *   import { logger, flushLog } from "./logger.js";
+ *   logger.info("api_call_complete", { model, inputTokens, outputTokens });
+ *   // on error:
+ *   flushLog();
+ *   await writeDiagnostic({ ... });
  */
 
-import { appendFile, mkdir } from "fs/promises";
-import { join, dirname } from "path";
-import { homedir } from "os";
+import pino from "pino";
+import { renameSync, existsSync } from "fs";
 
-type LogLevel = "debug" | "info" | "warn" | "error";
+// ---------------------------------------------------------------------------
+// Log file rotation — previous session kept as omega.prev.log
+// ---------------------------------------------------------------------------
 
-interface LogEntry {
-  ts: string;          // ISO 8601
-  level: LogLevel;
-  event: string;       // event type / name
-  [key: string]: any;  // arbitrary structured fields
+const LOG_FILE = "omega.log";
+const PREV_LOG_FILE = "omega.prev.log";
+
+/**
+ * Rotate logs: rename omega.log → omega.prev.log (overwriting).
+ * Called once at module load time so each session starts with a fresh log.
+ * Errors are silently swallowed — log rotation failure must not crash startup.
+ */
+function rotateLogs(): void {
+  try {
+    if (existsSync(LOG_FILE)) {
+      renameSync(LOG_FILE, PREV_LOG_FILE);
+    }
+  } catch {
+    // Rotation failure is non-fatal.
+  }
 }
 
-interface ApiCallLog {
+rotateLogs();
+
+// ---------------------------------------------------------------------------
+// Pino destination — async (buffered), sync-flushable on errors
+// ---------------------------------------------------------------------------
+
+const dest = pino.destination({
+  dest: LOG_FILE,
+  sync: false,       // async hot path — no latency on log writes
+  minLength: 4096,   // flush buffer when it reaches 4 KB
+  flags: "a",        // we already rotated above; append from here
+});
+
+// ---------------------------------------------------------------------------
+// Pino logger instance
+// ---------------------------------------------------------------------------
+
+const level = (process.env.OMEGA_LOG_LEVEL ?? "debug") as pino.Level;
+
+const _pino = pino(
+  {
+    level,
+    base: null,             // omit pid/hostname — not useful for our use-case
+    timestamp: pino.stdTimeFunctions.isoTime,
+  },
+  dest,
+);
+
+// ---------------------------------------------------------------------------
+// Thin wrapper — preserves call-site API: logger.info("event_name", { fields })
+// ---------------------------------------------------------------------------
+
+/**
+ * Structured logger.  Call-site API:
+ *   logger.info("event_name", { key: value })
+ *   logger.warn("event_name", { key: value })
+ *   logger.error("event_name", { key: value })
+ *   logger.debug("event_name", { key: value })
+ *
+ * The event name is stored as the `event` field.  All other fields are merged
+ * at the top level of the JSON log entry.
+ */
+export const logger = {
+  debug(event: string, fields?: Record<string, unknown>): void {
+    _pino.debug({ event, ...fields });
+  },
+  info(event: string, fields?: Record<string, unknown>): void {
+    _pino.info({ event, ...fields });
+  },
+  warn(event: string, fields?: Record<string, unknown>): void {
+    _pino.warn({ event, ...fields });
+  },
+  error(event: string, fields?: Record<string, unknown>): void {
+    _pino.error({ event, ...fields });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// flushLog — call before writing a diagnostic snapshot or exiting
+// ---------------------------------------------------------------------------
+
+/**
+ * Synchronously flush all buffered log lines to omega.log.
+ * Call this immediately before writing a diagnostic snapshot so that the
+ * snapshot's logFile pointer refers to a file that is already up to date.
+ * Also called on clean shutdown.
+ */
+export function flushLog(): void {
+  try {
+    dest.flushSync();
+  } catch {
+    // Flush failure is non-fatal.
+  }
+}
+
+export function getLogFile(): string {
+  return LOG_FILE;
+}
+
+// ---------------------------------------------------------------------------
+// Typed convenience wrappers (preserve call-site compat with old Logger class)
+// ---------------------------------------------------------------------------
+
+/** Log agent startup. */
+export function startup(data: { authMode: string; model: string }): void {
+  logger.info("startup", data);
+}
+
+/** Log a tool execution. */
+export function toolExec(data: {
+  name: string;
+  autoApproved: boolean;
+  approved: boolean;
+  isError: boolean;
+  durationMs: number;
+}): void {
+  logger.info("tool_exec", data);
+}
+
+/** Log an API call turn with timing and token metrics. */
+export function apiCall(data: {
   model: string;
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
   ttftMs: number | null;
   totalMs: number;
-  toolCalls: string[];   // tool names used in this turn
+  toolCalls: string[];
   stopReason: string;
+}): void {
+  logger.info("api_call", data);
 }
-
-class Logger {
-  private logPath: string;
-  private initialized = false;
-  private sessionId: string;
-
-  constructor() {
-    this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const logDir = join(homedir(), ".local", "share", "omega", "logs");
-    this.logPath = join(logDir, `${date}.jsonl`);
-  }
-
-  private async ensureInit(): Promise<void> {
-    if (this.initialized) return;
-    const dir = dirname(this.logPath);
-    await mkdir(dir, { recursive: true });
-    this.initialized = true;
-  }
-
-  private async write(entry: LogEntry): Promise<void> {
-    try {
-      await this.ensureInit();
-      await appendFile(this.logPath, JSON.stringify(entry) + "\n", "utf-8");
-    } catch {
-      // Never throw from logger — log failures are silently swallowed
-      // to avoid crashing the agent over a log write issue
-    }
-  }
-
-  private log(level: LogLevel, event: string, fields: Record<string, any> = {}): void {
-    const entry: LogEntry = {
-      ts: new Date().toISOString(),
-      level,
-      event,
-      session: this.sessionId,
-      ...fields,
-    };
-    // Fire and forget — don't await, don't block the caller
-    this.write(entry).catch(() => {});
-  }
-
-  debug(event: string, fields?: Record<string, any>): void {
-    this.log("debug", event, fields);
-  }
-
-  info(event: string, fields?: Record<string, any>): void {
-    this.log("info", event, fields);
-  }
-
-  warn(event: string, fields?: Record<string, any>): void {
-    this.log("warn", event, fields);
-  }
-
-  error(event: string, fields?: Record<string, any>): void {
-    this.log("error", event, fields);
-  }
-
-  /** Log an API call turn with timing and token metrics. */
-  apiCall(data: ApiCallLog): void {
-    this.log("info", "api_call", data);
-  }
-
-  /** Log a tool execution. */
-  toolExec(data: {
-    name: string;
-    autoApproved: boolean;
-    approved: boolean;
-    isError: boolean;
-    durationMs: number;
-  }): void {
-    this.log("info", "tool_exec", data);
-  }
-
-  /** Log agent startup. */
-  startup(data: { authMode: string; model: string }): void {
-    this.log("info", "startup", data);
-  }
-
-  /** Log a self-modification attempt. */
-  selfModify(data: {
-    description: string;
-    filesChanged: string[];
-    testsPassed: boolean;
-    committed: boolean;
-    commitHash?: string;
-    revertReason?: string;
-  }): void {
-    this.log("info", "self_modify", data);
-  }
-
-  getLogPath(): string {
-    return this.logPath;
-  }
-
-  getSessionId(): string {
-    return this.sessionId;
-  }
-}
-
-// Singleton logger instance shared across the process
-export const logger = new Logger();

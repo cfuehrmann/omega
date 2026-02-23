@@ -250,6 +250,9 @@ describe("prompt-too-long diagnostic", () => {
     expect(diagContent.errorMessage).toContain("prompt is too long");
     expect(diagContent.httpStatus).toBe(400);
     expect((diagContent.extra as any).stopReason).toBe("prompt_too_long");
+    // New format: logFile pointer instead of eventBuffer
+    expect(diagContent.logFile).toBe("omega.log");
+    expect(diagContent.eventBuffer).toBeUndefined();
 
     delete process.env.OMEGA_RETRY_ATTEMPTS;
   });
