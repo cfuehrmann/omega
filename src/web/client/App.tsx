@@ -334,11 +334,11 @@ export function App() {
 
   return (
     <div class="app">
-      <StatusDot />
       <ReconnectBanner />
       <div class="feed" ref={feedRef}>
         <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
       </div>
+      <StatusDot />
       <InputArea />
     </div>
   );
