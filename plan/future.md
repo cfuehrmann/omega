@@ -10,6 +10,19 @@ for wrap-aware arrow navigation. `terminalWidth` read from
 `process.stdout.columns`; `promptWidth` set by `printPrompt`.
 6 new regression tests added. Committed 892cbce.
 
+### [BUG] ~~Bracketed paste garbled display + O(n) append latency~~ — FIXED
+Closed. Two problems fixed (commit 7344295):
+1. At `[201~` the old code wrote `buf.value` from the current terminal cursor
+   position, which garbled the display when the buffer was non-empty before the
+   paste point. Fix: record `startVisualCol` + `startCursor` at `[200~`;
+   at `[201~` call `redrawLine` (wrap-safe) or emit the pasted slice + tail +
+   cursor-back (legacy path).
+2. Each printable-char event did `[...buf.value]` (O(n)) even for plain
+   end-of-buffer append. Fix: fast path for BMP chars appended at end —
+   string concat + increment cursor + one `stdout.write`, no spread.
+   This keeps latency O(1) for the dominant typing/wtype-injection path.
+6 new tests added (paste correctness + latency guard). 358 tests total.
+
 ### [TOPIC] Prompt queuing — interruption, injection, and turn sequencing
 **Priority: HIGH — next major design area**
 
