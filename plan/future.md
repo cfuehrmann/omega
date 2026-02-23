@@ -2,6 +2,18 @@
 
 ## Open items
 
+### [INFRA] Diagnostic snapshots on fatal API errors — DONE
+`src/diagnosis.ts` — `writeDiagnostic()` writes `plan/diagnosis/<timestamp>.json`
+on any non-retryable API error (Anthropic or OpenAI). Snapshot contains: verbatim
+error message, HTTP status, exact `requestMessages` array sent to the API, full
+`this.history` at moment of failure, model, provider, call number, system blocks.
+`checkDiagnostics()` checked at startup; `app.ts` prints a yellow warning block
+if any files exist, anchoring the next session in hard data rather than speculation.
+Files live under source control in `plan/diagnosis/`; delete after resolving.
+Commit 61c4ebd.
+
+
+
 ### [BUG] ~~Line editor cursor stuck on wrapped input~~ — FIXED
 Closed. `redrawFromCursor` used `\x1b[nD`/`\x1b[K` which cannot cross
 terminal row boundaries. Fix: `redrawLine()` with full-line rewrite
