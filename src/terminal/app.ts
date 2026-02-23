@@ -263,6 +263,12 @@ export async function runApp(): Promise<void> {
             );
             printBlock(now(), [turnLine]);
             printBlock(now(), [sessionLine]);
+            // If diagnostic snapshots exist, remind the operator after every turn
+            const diagFiles = await checkDiagnostics();
+            if (diagFiles.length > 0) {
+              const names = diagFiles.map(f => f.replace(/^diagnosis\//, "").replace(/\.json$/, ""));
+              printBlock(now(), [red(`⚠ ${diagFiles.length} diagnostic snapshot(s): ${names.join(", ")}`)]);
+            }
             break;
           }
 
