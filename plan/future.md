@@ -2,40 +2,15 @@
 
 ## Open items
 
-### [INFRA] REC-0: Git-based known-good anchor
-**Priority: HIGH — foundational; do before any large agentic self-edit**
+### [INFRA] REC-0: Git-based known-good anchor — DONE
+**Two-branch model:**
+- `main` = stable. Operator merges `develop → main` after gate + manual tests.
+- `develop` = working branch. Omega commits here only.
+- `just gate` = operator-run full test suite. Never invoked automatically.
+- If tests go red: do not commit. Fix first.
 
-A layer beneath all tooling. No automation — operator-driven, on demand.
-
-**Discipline rules (recorded here as the canonical reference):**
-
-1. **Before any self-modifying session:** create a rollback tag:
-   ```
-   git tag pre-edit-$(date +%Y%m%dT%H%M%S)
-   git push origin --tags
-   ```
-   This gives a named rollback point independent of branch history.
-
-2. **`just gate`** — operator runs this before advancing `stable`. It is the
-   single source of truth for "green". Never run automatically by Omega.
-   The recipe must at minimum run `bun test` (and `just e2e` when relevant).
-
-3. **Advance `stable` only when you decide it's good enough:**
-   ```
-   git push origin main:stable --force-with-lease
-   ```
-   `stable` is the last operator-certified green anchor.
-
-4. **If tests go red during a self-edit session:**
-   - Do NOT attempt further fixes without reading `plan/future.md` first.
-   - Revert to `stable` (or the `pre-edit-*` tag) before re-attempting.
-   - Never commit red code. Never push red code.
-
-**Acceptance criteria:**
-- `just gate` recipe exists in `Justfile` and runs the full test suite
-- `stable` branch exists on origin
-- At least one `pre-edit-*` tag exists on origin
-- These rules are in the system prompt so Omega knows them
+`just gate` recipe in Justfile runs `bun test` + `npx playwright test`.
+System prompt encodes the branch discipline.
 
 ---
 
