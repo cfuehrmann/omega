@@ -8,8 +8,9 @@
 import { Agent } from "../agent.js";
 import { config } from "../config.js";
 import { formatTurnFooter } from "../turn-footer.js";
+import { checkDiagnostics } from "../diagnosis.js";
 import {
-  bold, dim, green, red, magenta,
+  bold, dim, green, red, yellow, magenta,
   TIME_WIDTH, INDENT, INDENT2,
   now, printBlock, println,
   renderUserMessage, renderApiRequest, renderApiResponse,
@@ -135,6 +136,17 @@ export async function runApp(): Promise<void> {
     ]);
   } catch (err: any) {
     printBlock(now(), [red(`⚠ Auth error: ${err.message}`)]);
+  }
+
+  // Warn if any diagnostic snapshots exist from prior crashed sessions
+  const diagFiles = await checkDiagnostics();
+  if (diagFiles.length > 0) {
+    printBlock(now(), [
+      yellow(`⚠ Diagnostic snapshot(s) from a previous crash:`),
+      ...diagFiles.map(f => yellow(`  ${f}`)),
+      yellow(`  Read these files before debugging the error.`),
+      yellow(`  Delete them once the issue is resolved.`),
+    ]);
   }
 
   await agent.loadWorldState().catch(() => {});

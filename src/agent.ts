@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
 import { logger } from "./logger.js";
+import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactTurn, compactWorldState } from "./compaction.js";
 import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
@@ -969,6 +970,20 @@ export class Agent {
               continue;
             }
             logger.error("api_openai_error", { error: err.message });
+            const diagPath = await writeDiagnostic({
+              summary: `OpenAI API error (status ${err.status ?? "unknown"}): ${err.message}`,
+              errorMessage: err.message ?? String(err),
+              httpStatus: err.status ?? err.statusCode,
+              provider: "openai",
+              model: activeModel,
+              callNumber: this._apiCallCount,
+              requestMessages: buildOpenAiRequest(this.history, systemPrompt, activeModel, config.maxOutputTokens),
+              history: this.history,
+              extra: { attempts: attempt + 1 },
+            });
+            if (diagPath) {
+              logger.warn("diagnostic_written", { path: diagPath });
+            }
             yield {
               type: "api_error",
               provider: "openai",
@@ -1092,6 +1107,23 @@ export class Agent {
             };
           } else {
             logger.error("api_error", { error: err.message, attempts: attempt + 1 });
+            // Write a diagnostic snapshot for non-retryable errors so the next
+            // session has hard data (exact request + history) to anchor debugging.
+            const diagPath = await writeDiagnostic({
+              summary: `Anthropic API error (status ${err.status ?? "unknown"}): ${err.message}`,
+              errorMessage: err.message ?? String(err),
+              httpStatus: err.status ?? err.statusCode,
+              provider: "anthropic",
+              model: activeModel,
+              callNumber: this._apiCallCount,
+              requestMessages: cachedMessages,
+              systemBlocks,
+              history: this.history,
+              extra: { attempts: attempt + 1, stopReason: "api_error" },
+            });
+            if (diagPath) {
+              logger.warn("diagnostic_written", { path: diagPath });
+            }
             yield {
               type: "api_error",
               provider: "anthropic",
