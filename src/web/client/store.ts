@@ -15,6 +15,7 @@ import { createStore, produce } from "solid-js/store";
 export type WsEvent =
   | { type: "connected" }
   | { type: "disconnected" }
+  | { type: "history"; events: WsEvent[] }
   | { type: "auth"; mode: string }
   | { type: "turn_ready" }
   | { type: "user_message"; content: string }
@@ -79,6 +80,19 @@ export function dispatch(event: WsEvent): void {
       setState("connected", false);
       setState("streaming", false);
       break;
+
+    case "history": {
+      // Replay all logged events to rebuild the store from scratch.
+      // Reset state first so we don't duplicate on reconnect.
+      setState("turns", []);
+      setState("authMode", "");
+      setState("streaming", false);
+      nextTurnId = 0;
+      for (const e of event.events) {
+        dispatch(e);
+      }
+      break;
+    }
 
     case "auth":
       setState("authMode", event.mode);

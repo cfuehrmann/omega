@@ -1,16 +1,21 @@
-import { For, Show, createEffect, onCleanup, createSignal } from "solid-js";
+import { For, Show, createEffect, onCleanup, createSignal, onMount } from "solid-js";
 import { state, dispatch, type Turn, type WsEvent } from "./store";
 
 // ---------------------------------------------------------------------------
-// WebSocket
+// WebSocket (module-level state, initialised inside App via startWs())
 // ---------------------------------------------------------------------------
 
-const WS_URL = `ws://${location.host}`;
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 function connect() {
-  ws = new WebSocket(WS_URL);
+  // Always connect to the Bun server directly, regardless of the page origin
+  const wsUrl = `ws://${location.hostname}:3000`;
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    dispatch({ type: "connected" });
+  };
 
   ws.onerror = () => {
     dispatch({ type: "disconnected" });
@@ -19,6 +24,8 @@ function connect() {
   ws.onmessage = (e) => {
     let event: WsEvent;
     try { event = JSON.parse(e.data as string); } catch { return; }
+    // Skip redundant server-sent "connected" — we already handled it in onopen
+    if (event.type === "connected") return;
     dispatch(event);
   };
 
@@ -27,12 +34,6 @@ function connect() {
     reconnectTimer = setTimeout(connect, 2000);
   };
 }
-
-connect();
-onCleanup(() => {
-  ws?.close();
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-});
 
 function sendToServer(msg: object) {
   if (ws?.readyState === WebSocket.OPEN) {
@@ -245,6 +246,15 @@ function StatusDot() {
 
 export function App() {
   let feedRef!: HTMLDivElement;
+
+  // Start WebSocket on mount, clean up on unmount
+  onMount(() => {
+    connect();
+  });
+  onCleanup(() => {
+    ws?.close();
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+  });
 
   // Auto-scroll to bottom on new content
   createEffect(() => {

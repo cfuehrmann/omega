@@ -57,6 +57,33 @@ function serveStatic(pathname: string): Response | null {
 }
 
 // ---------------------------------------------------------------------------
+// Event log — replayed to each new client on connect
+// ---------------------------------------------------------------------------
+
+/**
+ * Events that are meaningful for replay (history).
+ * Transient connection events are excluded:
+ *   connected — synthesised from WebSocket open; meaningless to replay
+ *   turn_ready — transient "server ready" signal; replaying it would unlock
+ *                the input before the reconnect sequence completes
+ * auth IS included so the model label re-appears after a browser refresh.
+ */
+const REPLAY_EXCLUDE = new Set(["connected", "turn_ready"]);
+
+const eventLog: object[] = [];
+
+function logEvent(event: object): void {
+  const t = (event as any).type as string;
+  if (REPLAY_EXCLUDE.has(t)) return;
+  // Some events should only appear once — deduplicate by removing older copy first
+  if (t === "auth") {
+    const idx = eventLog.findIndex((e: any) => e.type === "auth");
+    if (idx !== -1) eventLog.splice(idx, 1);
+  }
+  eventLog.push(event);
+}
+
+// ---------------------------------------------------------------------------
 // WebSocket session (one active session per server — single-user for now)
 // ---------------------------------------------------------------------------
 
@@ -72,6 +99,7 @@ let activeSession: Session | null = null;
 function send(ws: ServerWebSocket<unknown>, event: object): void {
   try {
     ws.send(JSON.stringify(event));
+    logEvent(event);
   } catch {
     // WebSocket may have closed
   }
@@ -152,6 +180,14 @@ export function runWebApp(): void {
         };
         activeSession = session;
 
+        // Replay past events before signalling connected — client rebuilds state
+        if (eventLog.length > 0) {
+          try {
+            ws.send(JSON.stringify({ type: "history", events: eventLog }));
+          } catch {
+            // ignore
+          }
+        }
         send(ws, { type: "connected" });
 
         // Init auth + world state in background; send result over socket
