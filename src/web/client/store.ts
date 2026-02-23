@@ -100,6 +100,12 @@ export function dispatch(event: WsEvent): void {
       for (const e of event.events) {
         dispatch(e);
       }
+      // Belt-and-suspenders: if replay ended with an open turn (server crashed
+      // mid-turn before emitting turn_end/interrupted), close it now so the UI
+      // doesn't get stuck in streaming=true with no way to recover.
+      if (state.streaming) {
+        dispatch({ type: "interrupted" });
+      }
       // After replay we are still connected (history arrived over an open socket)
       setState("connected", true);
       setState("retryCount", 0);

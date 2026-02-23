@@ -86,13 +86,52 @@ function serveStatic(pathname: string): Response | null {
  *                the input before the reconnect sequence completes
  * auth IS included so the model label re-appears after a browser refresh.
  */
-const REPLAY_EXCLUDE = new Set(["connected", "turn_ready"]);
+const REPLAY_EXCLUDE = new Set(["connected", "turn_ready", "text"]);
+
+// ---------------------------------------------------------------------------
+// Session integrity helpers (exported for tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if the event should be persisted to the session log.
+ * Streaming `text` events are excluded: they are partial fragments whose only
+ * purpose is live display. The frozen text is committed into the event list by
+ * the store's turn_end handler and doesn't need to be replayed separately.
+ * `connected` and `turn_ready` are transient transport signals.
+ */
+export function shouldLogEvent(event: object): boolean {
+  const t = (event as any).type as string;
+  return !REPLAY_EXCLUDE.has(t);
+}
+
+/**
+ * Ensures the event log has no open (un-closed) turn at the tail.
+ *
+ * A turn is "open" when a `user_message` appears after the last
+ * `turn_end` / `interrupted` marker — i.e. the server was killed / crashed
+ * before the agentic loop finished. Without this fix, replaying the log
+ * would leave `streaming = true` in the client store with no way to recover.
+ *
+ * Returns a new array (does not mutate the input).
+ */
+export function closeOpenTurn(log: object[]): object[] {
+  // Walk backwards to find the last turn boundary
+  for (let i = log.length - 1; i >= 0; i--) {
+    const t = (log[i] as any).type as string;
+    if (t === "turn_end" || t === "interrupted") return log; // already closed
+    if (t === "user_message") {
+      // Found an open turn — append an interrupted marker
+      return [...log, { type: "interrupted" }];
+    }
+  }
+  return log; // no turns at all
+}
 
 let eventLog: object[] = [];
 
 function logEvent(event: object): void {
+  if (!shouldLogEvent(event)) return;
   const t = (event as any).type as string;
-  if (REPLAY_EXCLUDE.has(t)) return;
   // Some events should only appear once — deduplicate by removing older copy first
   if (t === "auth") {
     const idx = eventLog.findIndex((e: any) => e.type === "auth");
@@ -232,7 +271,7 @@ export async function runWebApp(): Promise<void> {
 
   // Graceful shutdown: persist on SIGINT (Ctrl+C) and SIGTERM
   const handleShutdown = () => {
-    saveSession(eventLog)
+    saveSession(closeOpenTurn(eventLog))
       .catch(() => {})
       .then(() => performWebShutdown(persistentAgent))
       .catch(() => {})
