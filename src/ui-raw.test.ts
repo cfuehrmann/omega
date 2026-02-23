@@ -472,6 +472,36 @@ describe("parseKeys", () => {
     }
   });
 
+  it("Delete key deletes char under cursor (forward delete)", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "hello world", cursor: 5 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[3~", cb, buf); // Delete key CSI sequence
+      expect(buf.value).toBe("helloworld");
+      expect(buf.cursor).toBe(5);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
+  it("Delete key at end of line does nothing", () => {
+    const written: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
+    try {
+      const buf = { value: "hello", cursor: 5 };
+      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+      parseKeys("\x1b[3~", cb, buf); // Delete key at end
+      expect(buf.value).toBe("hello");
+      expect(buf.cursor).toBe(5);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+  });
+
   it("Ctrl+Delete deletes word forward", () => {
     const written: string[] = [];
     const origWrite = process.stdout.write.bind(process.stdout);

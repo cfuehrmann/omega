@@ -342,6 +342,18 @@ export function parseKeys(
           continue;
         }
 
+        // Delete: \x1b[3~  (forward-delete one char)
+        if (final === "~" && params === "3") {
+          if (cursor < chars.length) {
+            const termVc = (buf.promptWidth ?? 0) + charsDisplayWidth(chars.slice(0, cursor));
+            chars.splice(cursor, 1);
+            buf.value = chars.join("");
+            buf.cursor = cursor;
+            redrawLine(chars, cursor, termVc, buf);
+          }
+          continue;
+        }
+
         // Ctrl+Delete: \x1b[3;5~
         if (final === "~" && params === "3;5") {
           if (cursor >= chars.length) continue;
