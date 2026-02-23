@@ -15,6 +15,7 @@ import { describe, it, expect } from "bun:test";
 import {
   makeLogEntry,
   getLogFile,
+  initLogger,
   type MessageEntry,
   type InfraEntry,
   type LogEntry,
@@ -31,6 +32,25 @@ describe("log file isolation", () => {
     const logFile = getLogFile();
     expect(logFile).not.toBe("omega.log");
     expect(logFile).toBe(process.env.OMEGA_LOG_FILE ?? "omega.log");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initLogger — explicit rotation guard
+// ---------------------------------------------------------------------------
+
+describe("initLogger", () => {
+  it("is exported as a function", () => {
+    expect(typeof initLogger).toBe("function");
+  });
+
+  it("can be called multiple times without throwing", () => {
+    // Should be idempotent — calling it repeatedly must not throw
+    expect(() => {
+      initLogger();
+      initLogger();
+      initLogger();
+    }).not.toThrow();
   });
 });
 

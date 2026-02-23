@@ -104,8 +104,7 @@ const IS_PRODUCTION_LOG = LOG_FILE === PROD_LOG_FILE;
 
 /**
  * Rotate logs: rename omega.log → omega.prev.log (overwriting).
- * Only called in production (when OMEGA_LOG_FILE is not set).
- * Errors are silently swallowed — log rotation failure must not crash startup.
+ * Only called from initLogger(); errors are silently swallowed.
  */
 function rotateLogs(): void {
   try {
@@ -117,8 +116,27 @@ function rotateLogs(): void {
   }
 }
 
-if (IS_PRODUCTION_LOG) {
-  rotateLogs();
+let _initialized = false;
+
+/**
+ * Initialize the logger for the Omega app process.
+ *
+ * Must be called explicitly by the entry point (`runApp` or `runWebApp`) before
+ * any logging occurs.  Calling this function is what triggers log rotation
+ * (omega.log → omega.prev.log).
+ *
+ * Idempotent: safe to call more than once; rotation only happens on the first call.
+ *
+ * NOT called automatically on module import — this is intentional.  Any other
+ * process that imports `logger.ts` (e.g. the Claude Code tool session, tests)
+ * must NOT rotate the log file out from under a running Omega process.
+ */
+export function initLogger(): void {
+  if (_initialized) return;
+  _initialized = true;
+  if (IS_PRODUCTION_LOG) {
+    rotateLogs();
+  }
 }
 
 // ---------------------------------------------------------------------------

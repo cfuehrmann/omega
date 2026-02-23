@@ -139,6 +139,27 @@ Commit f137610. Spec: `docs/log-taxonomy.md`.
 
 ---
 
+### [INFRA] SHUT-1: Verify shutdown completeness — world-state and future.md updates
+**Priority: medium — data-loss risk on unclean exit**
+
+On clean shutdown, Omega should:
+1. Drain `foldCurrentSessionIntoWorldState()` — compacts the current session into `plan/world-state.md`
+2. The operator manually updates `plan/future.md` (add/close items) based on what was done
+
+Open questions that need investigation and testing:
+- Does the terminal app (`src/terminal/app.ts`) always reach the fold drain, even on SIGTERM / SIGINT?
+- Does the web server (`src/web/server.ts`) fold before exiting? (WEB-6 added `performWebShutdown`; verify it is actually invoked on both SIGINT and SIGTERM)
+- Is `foldCurrentSessionIntoWorldState()` a no-op if the session had no turns? If so, does the world file stay unchanged, or could it be blanked?
+- What happens if the fold LLM call fails mid-write — is the world file left corrupted?
+- Are there any paths where `process.exit()` is called before the fold completes?
+
+Acceptance criteria:
+- All signal handlers in both `app.ts` and `server.ts` are traced through to confirm the fold runs
+- At least one test per entry point (terminal + web) that exercises the shutdown path and asserts `world-state.md` was written (or mock-asserted)
+- If any gaps are found, fix them before closing this item
+
+---
+
 ### [TOPIC] Prompt queuing — interruption, injection, and turn sequencing
 **Priority: HIGH — next major design area**
 

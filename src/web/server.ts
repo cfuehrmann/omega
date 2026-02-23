@@ -20,6 +20,7 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
+import { initLogger } from "../logger.js";
 import type { AgentEvent } from "../agent.js";
 import { loadSession, saveSession, clearSession } from "./session-store.js";
 
@@ -266,6 +267,7 @@ async function handleMessage(session: Session, data: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function runWebApp(): Promise<void> {
+  initLogger(); // must be first — rotates omega.log before any writes
   // Load persisted session log — enables history replay after crashes/restarts
   eventLog = await loadSession();
 
