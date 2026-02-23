@@ -148,8 +148,20 @@ describe("isAuthExpired", () => {
     expect(isAuthExpired(err)).toBe(true);
   });
 
-  it("returns false for non-401 status", () => {
-    const err: any = new Error("authentication_error");
+  it("returns true for 403 permission_error with 'revoked' in message", () => {
+    const err: any = new Error('403 {"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked. Please obtain a new token."}}');
+    err.status = 403;
+    expect(isAuthExpired(err)).toBe(true);
+  });
+
+  it("returns true for 403 with 'OAuth token has been revoked' text", () => {
+    const err: any = new Error("OAuth token has been revoked. Please obtain a new token.");
+    err.status = 403;
+    expect(isAuthExpired(err)).toBe(true);
+  });
+
+  it("returns false for 403 without revoked/auth keyword", () => {
+    const err: any = new Error("Forbidden: insufficient permissions");
     err.status = 403;
     expect(isAuthExpired(err)).toBe(false);
   });

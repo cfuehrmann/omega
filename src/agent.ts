@@ -186,14 +186,25 @@ export function isRetryable(err: any): boolean {
   return false;
 }
 
-/** Returns true if the error is an OAuth token expiry (401 authentication_error). */
+/**
+ * Returns true if the error is an OAuth token auth failure that can be
+ * recovered by refreshing the token. Covers two cases:
+ *  - 401 authentication_error: token expired (normal session timeout)
+ *  - 403 permission_error with "revoked": token was explicitly revoked
+ *    (e.g. the user re-authenticated in another session)
+ */
 export function isAuthExpired(err: any): boolean {
   if (!err) return false;
   const status = err.status ?? err.statusCode;
-  if (status !== 401) return false;
-  // Anthropic 401 body: {"type":"error","error":{"type":"authentication_error",...}}
   const msg: string = typeof err.message === "string" ? err.message : JSON.stringify(err);
-  return msg.includes("authentication_error") || msg.includes("OAuth token has expired");
+  if (status === 401) {
+    return msg.includes("authentication_error") || msg.includes("OAuth token has expired");
+  }
+  if (status === 403) {
+    // Anthropic 403 body: {"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked..."}}
+    return msg.includes("revoked") && (msg.includes("permission_error") || msg.includes("OAuth token"));
+  }
+  return false;
 }
 
 // --- Context window management ---
@@ -724,13 +735,13 @@ export class Agent {
       };
       const wrappedProvider = wrapProvider(provider);
 
-      // Attempt compaction with retries for transient errors and one re-auth retry on 401 (Anthropic only)
+      // Attempt compaction with retries for transient errors and one re-auth retry on 401/403 auth errors (Anthropic only)
       let newState: string;
       try {
         newState = await compactWorldState(prior, this.history, wrappedProvider, this.activeModel);
       } catch (compactErr: any) {
         if (isAuthExpired(compactErr) && providerName === "anthropic") {
-          logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh" });
+          logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh", status: compactErr.status ?? compactErr.statusCode });
           const reauthed = await this.reinitAuth();
           if (!reauthed) {
             logger.warn("world_state_update_failed", { error: compactErr.message });
@@ -1136,11 +1147,11 @@ export class Agent {
           lastError = err;
 
           if (isAuthExpired(err) && attempt === 0) {
-            // OAuth token expired mid-session — try to refresh and retry once
-            logger.warn("oauth_token_expired", { attempt: attempt + 1 });
+            // OAuth token expired or revoked mid-session — try to refresh and retry once
+            logger.warn("oauth_token_expired", { attempt: attempt + 1, status: err.status ?? err.statusCode });
             yield {
               type: "status",
-              message: "OAuth token expired — refreshing...",
+              message: "OAuth token expired/revoked — refreshing...",
             } as AgentEvent;
             const reauthed = await this.reinitAuth();
             if (reauthed) {
