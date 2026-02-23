@@ -439,8 +439,8 @@ export class Agent {
   /** World state file path. null = disabled. undefined = use project default. */
   private readonly worldStatePath: string | null | undefined;
 
-  /** Diagnostic output directory. undefined = use default ("diagnosis/"). */
-  private readonly diagDir: string | undefined;
+  /** Diagnostic output directory. null = disabled (tests). undefined = use default ("diagnosis/"). */
+  private readonly diagDir: string | null | undefined;
 
   /** Zone 2 summary: the compacted summary of all prior turns this session. */
   private zone2Summary: string | null = null;
@@ -469,7 +469,7 @@ export class Agent {
     _sessionDir?: string | null,
     openAiCaller: typeof callOpenAi = callOpenAi,
     worldStatePath?: string | null,
-    diagDir?: string
+    diagDir?: string | null
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
@@ -482,7 +482,12 @@ export class Agent {
     } else {
       this.worldStatePath = worldStatePath;
     }
-    this.diagDir = diagDir;
+    // Diagnostics: if mock provider given and diagDir not specified, disable.
+    if (streamProvider !== undefined && diagDir === undefined) {
+      this.diagDir = null;
+    } else {
+      this.diagDir = diagDir;
+    }
   }
 
   async init(): Promise<string> {
@@ -1050,6 +1055,7 @@ export class Agent {
                 extra: { attempts: attempt + 1 },
               },
               this.eventBuffer,
+              this.diagDir,
             );
             if (diagPath) {
               logger.warn("diagnostic_written", { path: diagPath });
@@ -1199,6 +1205,7 @@ export class Agent {
                 extra: { attempts: attempt + 1, stopReason: "api_error" },
               },
               this.eventBuffer,
+              this.diagDir,
             );
             if (diagPath) {
               logger.warn("diagnostic_written", { path: diagPath });

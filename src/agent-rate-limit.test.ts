@@ -43,7 +43,7 @@ describe("rate limit backoff", () => {
       };
     };
 
-    const agent = new Agent(undefined, null, openAiCaller as any);
+    const agent = new Agent(undefined, null, openAiCaller as any, undefined, null);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 
@@ -67,7 +67,7 @@ describe("rate limit backoff", () => {
       throw rateLimitError("Please try again in 0.01s");
     };
 
-    const agent = new Agent(undefined, null, openAiCaller as any);
+    const agent = new Agent(undefined, null, openAiCaller as any, undefined, null);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 

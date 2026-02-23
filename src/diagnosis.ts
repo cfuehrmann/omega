@@ -164,8 +164,9 @@ const DEFAULT_DIAGNOSIS_DIR = "diagnosis";
 export async function writeDiagnosticWithBuffer(
   data: DiagnosticData,
   buffer: RollingEventBuffer,
-  diagDir: string = DEFAULT_DIAGNOSIS_DIR,
+  diagDir: string | null | undefined = DEFAULT_DIAGNOSIS_DIR,
 ): Promise<string | null> {
+  if (diagDir === null) return null;
   try {
     await mkdir(diagDir, { recursive: true });
 
