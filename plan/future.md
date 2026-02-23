@@ -122,31 +122,20 @@ Closed. Two problems fixed (commit 7344295):
    This keeps latency O(1) for the dominant typing/wtype-injection path.
 6 new tests added (paste correctness + latency guard). 358 tests total.
 
-### [INFRA] LOG-2: Complete event taxonomy renaming (pino side)
-**Priority: medium — consistency; true duals unified, pino wrappers still use old names**
+### ~~[INFRA] LOG-2: Complete event taxonomy renaming (pino side)~~ — DONE
+Commit f137610. Spec: `docs/log-taxonomy.md`.
 
-**Authoritative spec: `docs/log-taxonomy.md`**
-
-The taxonomy document defines the full target shape for all log entries:
-- `kind: "message"` entries carry `sender`, `receiver`, `message` fields
-- `kind: "infra"` entries carry an `event` field; no `sender`/`receiver`
-- TypeScript discriminated union to enforce this at compile time
-
-Commit 899f136 unified the three true-dual AgentEvent/pino pairs (`api_response→llm_to_agent`, `tool_call→agent_to_agent_tool_call`, `tool_result→agent_to_agent_tool_result`). Remaining pino-side renames to reach taxonomy compliance:
-
-1. Per-iteration pino events `api_request` → `{ kind:"message", sender:"agent", receiver:"llm", message:"call" }` etc.
-2. Per-turn aggregate pino `api_call` (via `logger.apiCall()`) → `{ kind:"infra", event:"turn_end", ... }`
-3. `toolExec` wrapper → lower to `debug`; shape → `{ kind:"message", sender:"agent", receiver:"agent", message:"tool_call" }`
-4. `apiCall` wrapper → lower to `debug`
-5. Add `kind` field to all existing pino log sites; add `sender`/`receiver`/`message` or `event` as appropriate
-
-Acceptance criteria:
-- All pino entries have `kind: "message" | "infra"` as first field
-- `kind:"message"` entries always have `sender`, `receiver`, `message`; never `event`
-- `kind:"infra"` entries always have `event`; never `sender`/`receiver`/`message`
-- TypeScript: `LogEntry` discriminated union defined; logger functions typed accordingly
-- Log levels match frequency: per-iteration = debug, per-turn aggregate = info
-- Existing tests updated to reflect new shapes
+**What changed:**
+- `src/logger.ts`: `MessageEntry`, `InfraEntry`, `LogEntry` discriminated union types;
+  `makeLogEntry()` factory with overloads; logger wrapper accepts `LogEntry | string`;
+  removed `toolExec()` and `apiCall()` wrappers; `startup()` now emits infra shape.
+- `src/agent.ts`: all call sites migrated — `api_request→message call (debug)`,
+  `user_prompt→message call (debug)`, `llm_to_agent→message response (debug)` with
+  full token/cost fields (replaces apiCall per-iteration), `tool_call/tool_result→message (debug)`
+  (toolExec removed), `api_retry/diagnostic_written/context_truncated→infra (warn/info)`,
+  new `kind:infra event:turn_end` at info — per-turn aggregate true dual with AgentEvent.
+- `src/logger.test.ts`: 14 tests verifying shape and discriminated union narrowing.
+- All 420 tests pass.
 
 ---
 
