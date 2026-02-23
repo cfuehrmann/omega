@@ -18,6 +18,7 @@ export type WsEvent =
   | { type: "history"; events: WsEvent[] }
   | { type: "auth"; mode: string }
   | { type: "turn_ready" }
+  | { type: "reset_done" }
   | { type: "user_message"; content: string }
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
@@ -107,6 +108,13 @@ export function dispatch(event: WsEvent): void {
 
     case "auth":
       setState("authMode", event.mode);
+      break;
+
+    case "reset_done":
+      // Server has created a new agent — clear all UI state
+      setState("turns", []);
+      setState("streaming", false);
+      nextTurnId = 0;
       break;
 
     case "user_message":

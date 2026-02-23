@@ -26,6 +26,8 @@ export interface ServerHelper {
   load(): Promise<void>;
   /** Return the current disk snapshot without modifying in-memory state */
   diskSnapshot(): Promise<unknown>;
+  /** Return the current server-side agent instance ID (changes on reset) */
+  agentId(): Promise<number>;
 }
 
 async function sendEvent(event: object): Promise<void> {
@@ -69,6 +71,12 @@ async function diskSnapshot(): Promise<unknown> {
   return res.json();
 }
 
+async function agentId(): Promise<number> {
+  const res = await fetch(`${CTRL}/control/agent-id`);
+  const body = await res.json() as { agentId: number };
+  return body.agentId;
+}
+
 export interface Fixtures {
   server: ServerHelper;
 }
@@ -76,7 +84,7 @@ export interface Fixtures {
 export const test = base.extend<Fixtures>({
   server: async ({}, use) => {
     await reset();
-    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot };
+    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId };
     await use(helper);
   },
 });

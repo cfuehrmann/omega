@@ -106,17 +106,35 @@ function logEvent(event: object): void {
 }
 
 // ---------------------------------------------------------------------------
-// WebSocket session (one active session per server — single-user for now)
+// Persistent agent (survives WebSocket reconnects)
+// ---------------------------------------------------------------------------
+
+/**
+ * The agent is created once at server start and reused across all WebSocket
+ * connections. Browser refreshes / reconnects reuse the same agent context
+ * (same history, same model, same OAuth token). This prevents "corpse sessions"
+ * where a reconnect abandons an existing session and creates a fresh one.
+ *
+ * The agent is only replaced when the client sends { type: "reset" }, which
+ * explicitly requests a new session.
+ */
+let persistentAgent: Agent = new Agent();
+
+// ---------------------------------------------------------------------------
+// WebSocket session (transport layer — one active WS at a time)
 // ---------------------------------------------------------------------------
 
 interface Session {
   ws: ServerWebSocket<unknown>;
-  agent: Agent;
   abortController: AbortController | null;
   isStreaming: boolean;
 }
 
 let activeSession: Session | null = null;
+
+function getAgent(): Agent {
+  return persistentAgent;
+}
 
 function send(ws: ServerWebSocket<unknown>, event: object): void {
   try {
@@ -141,6 +159,37 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     return;
   }
 
+  if (msg.type === "reset") {
+    // Abort any running turn first
+    session.abortController?.abort();
+    session.isStreaming = false;
+    session.abortController = null;
+
+    // Replace the persistent agent with a fresh one
+    persistentAgent = new Agent();
+    // Clear the event log so history replay starts clean
+    eventLog = [];
+    clearSession().catch(() => {});
+
+    // Acknowledge: send empty history + reset_done + turn_ready
+    try {
+      session.ws.send(JSON.stringify({ type: "history", events: [] }));
+      session.ws.send(JSON.stringify({ type: "reset_done" }));
+    } catch { /* socket may have closed */ }
+    send(session.ws, { type: "turn_ready" });
+
+    // Init the new agent in background
+    persistentAgent.init()
+      .then(mode => {
+        send(session.ws, { type: "auth", mode });
+        return persistentAgent.loadWorldState().catch(() => {});
+      })
+      .catch((err: any) => {
+        send(session.ws, { type: "auth", mode: `error: ${err.message}` });
+      });
+    return;
+  }
+
   if (msg.type === "message") {
     if (session.isStreaming) {
       send(session.ws, { type: "error", error: "Turn already in progress" });
@@ -152,10 +201,11 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     session.isStreaming = true;
     session.abortController = new AbortController();
     const { ws } = session;
+    const agent = getAgent();
 
     try {
       const confirmTool = async () => true;
-      for await (const event of session.agent.sendMessage(
+      for await (const event of agent.sendMessage(
         content,
         confirmTool,
         session.abortController.signal,
@@ -182,10 +232,9 @@ export async function runWebApp(): Promise<void> {
 
   // Graceful shutdown: persist on SIGINT (Ctrl+C) and SIGTERM
   const handleShutdown = () => {
-    const agent = activeSession?.agent ?? null;
     saveSession(eventLog)
       .catch(() => {})
-      .then(() => performWebShutdown(agent))
+      .then(() => performWebShutdown(persistentAgent))
       .catch(() => {})
       .finally(() => process.exit(0));
   };
@@ -208,10 +257,8 @@ export async function runWebApp(): Promise<void> {
 
     websocket: {
       open(ws) {
-        const agent = new Agent();
         const session: Session = {
           ws,
-          agent,
           abortController: null,
           isStreaming: false,
         };
@@ -227,7 +274,9 @@ export async function runWebApp(): Promise<void> {
         }
         send(ws, { type: "connected" });
 
-        // Init auth + world state in background; send result over socket
+        // If this is the first connection, init the persistent agent.
+        // On reconnects the agent is already initialised — just re-send auth mode.
+        const agent = getAgent();
         agent.init()
           .then(mode => {
             send(ws, { type: "auth", mode });
@@ -247,7 +296,8 @@ export async function runWebApp(): Promise<void> {
 
       close(ws) {
         if (activeSession?.ws === ws) {
-          activeSession.abortController?.abort();
+          // Don't abort on close — the client may reconnect (browser refresh).
+          // The agent survives; only the transport goes away.
           activeSession = null;
         }
       },

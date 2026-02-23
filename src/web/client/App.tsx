@@ -17,6 +17,8 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = `${proto}//${location.host}/ws`;
   ws = new WebSocket(wsUrl);
+  // Expose for e2e tests (harmless in production)
+  (window as any).__omegaWs = ws;
 
   ws.onopen = () => {
     connectAttempts = 0;
@@ -196,7 +198,6 @@ function TurnView(props: { turn: Turn }) {
 
 function InputArea() {
   let textareaRef!: HTMLTextAreaElement;
-  let feedRef!: HTMLDivElement;
 
   const [inputValue, setInputValue] = createSignal("");
 
@@ -215,6 +216,12 @@ function InputArea() {
 
   function abort() {
     sendToServer({ type: "abort" });
+  }
+
+  function newSession() {
+    if (!state.connected || state.streaming) return;
+    if (!confirm("Start a new session? This will clear all history.")) return;
+    sendToServer({ type: "reset" });
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -238,9 +245,16 @@ function InputArea() {
       />
       <Show when={state.streaming}
         fallback={
-          <button class="send-btn" onClick={send} disabled={!state.connected}>
-            Send
-          </button>
+          <div class="btn-group">
+            <button class="send-btn" onClick={send} disabled={!state.connected}>
+              Send
+            </button>
+            <Show when={state.connected && state.turns.length > 0}>
+              <button class="new-session-btn" onClick={newSession} title="Start a new session (clears history)">
+                ＋ New
+              </button>
+            </Show>
+          </div>
         }
       >
         <button class="abort-btn" onClick={abort}>Abort</button>

@@ -92,6 +92,19 @@ let activeWs: ServerWebSocket<unknown> | null = null;
 const receivedMessages: string[] = [];
 let eventLog: object[] = [];
 
+/**
+ * Monotonically increasing agent instance counter.
+ * Increments whenever the "agent" is replaced (i.e. on a reset).
+ * In the real server, the agent is a single persistent object; here we
+ * simulate that same invariant: it starts at 1 and only increments on reset.
+ */
+let currentAgentId = 1;
+
+function resetAgent(): void {
+  currentAgentId += 1;
+  eventLog = [];
+}
+
 function sendEvent(event: object): void {
   try { activeWs?.send(JSON.stringify(event)); } catch { /* ignore */ }
 }
@@ -118,8 +131,22 @@ Bun.serve({
       }
       ws.send(JSON.stringify({ type: "connected" }));
     },
-    message(_ws, data) {
-      receivedMessages.push(String(data));
+    message(ws, data) {
+      const str = String(data);
+      let msg: any;
+      try { msg = JSON.parse(str); } catch { receivedMessages.push(str); return; }
+
+      if (msg.type === "reset") {
+        // Reset: create a new "agent" (increment ID), clear history
+        resetAgent();
+        // Acknowledge with reset_done + empty event log replay + turn_ready
+        ws.send(JSON.stringify({ type: "history", events: [] }));
+        ws.send(JSON.stringify({ type: "reset_done" }));
+        ws.send(JSON.stringify({ type: "turn_ready" }));
+        return;
+      }
+
+      receivedMessages.push(str);
     },
     close() {
       activeWs = null;
@@ -138,6 +165,12 @@ Bun.serve({
 
     if (req.method === "GET" && url.pathname === "/control/ready") {
       return new Response("ok");
+    }
+
+    if (req.method === "GET" && url.pathname === "/control/agent-id") {
+      return new Response(JSON.stringify({ agentId: currentAgentId }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     if (req.method === "GET" && url.pathname === "/control/messages") {
@@ -172,6 +205,7 @@ Bun.serve({
       eventLog.length = 0;
       eventLog = [];
       receivedMessages.length = 0;
+      currentAgentId = 1; // reset to base state for test isolation
       await clearDisk();
       return new Response("ok");
     }
