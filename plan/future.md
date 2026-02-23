@@ -2,6 +2,14 @@
 
 ## Open items
 
+### [BUG] ~~Line editor cursor stuck on wrapped input~~ — FIXED
+Closed. `redrawFromCursor` used `\x1b[nD`/`\x1b[K` which cannot cross
+terminal row boundaries. Fix: `redrawLine()` with full-line rewrite
+(CUU + CR + CUF + write + `\x1b[J` + reposition), and `moveVisualCol()`
+for wrap-aware arrow navigation. `terminalWidth` read from
+`process.stdout.columns`; `promptWidth` set by `printPrompt`.
+6 new regression tests added. Committed 892cbce.
+
 ### [TOPIC] Prompt queuing — interruption, injection, and turn sequencing
 **Priority: HIGH — next major design area**
 
