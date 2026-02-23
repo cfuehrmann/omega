@@ -252,6 +252,26 @@ agent). Hooked into SIGINT/SIGTERM in `runWebApp()` after session-log save.
 
 ---
 
+### ~~[BUG] Web UI stuck streaming after interrupted session~~ — FIXED
+Commit 87bca6d. Three-part fix:
+1. `closeOpenTurn()` exported from `server.ts` — appends `{type:"interrupted"}` to the
+   event log when a turn has no closing `turn_end`/`interrupted`. Called on SIGINT/SIGTERM
+   so the persisted session is always well-formed for replay.
+2. `shouldLogEvent()` exported from `server.ts` — excludes streaming `text` fragment
+   events from the log (partial chunks are display-only; frozen text is committed by
+   `turn_end` in the store). Shrinks session file significantly.
+3. `store.ts` history dispatch — belt-and-suspenders: if replay ends with
+   `streaming=true` (server crashed mid-turn), dispatches a synthetic `interrupted` to
+   clear the flag and mark the turn visually. 19 new tests in `session-resilience.test.ts`.
+
+### ~~[BUG] Terminal UI breakage not caught by tests~~ — FIXED
+Commit 467cdb8. `entry.test.ts` now imports `parseKeys`, `displayWidth`,
+`renderToolStart`, `renderToolResult`, `renderAssistantMessage`, `runApp` directly and
+asserts they are callable. Any agent.ts/terminal module change that silently breaks
+the terminal's exports now fails `bun test` immediately.
+
+---
+
 ### [TOPIC] Web interface e2e tests — expand coverage
 **Priority: medium — foundation in place**
 
