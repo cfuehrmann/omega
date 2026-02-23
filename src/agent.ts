@@ -411,6 +411,17 @@ export class Agent {
   private authMode: "api-key" | "oauth" = "api-key";
   private provider: ProviderName = "anthropic";
   private activeModel: string = config.model;
+
+  /**
+   * Chain of compaction promises. Each compaction is enqueued after the
+   * previous one so that stale (slower) compactions can never overwrite
+   * the results of a newer (faster) compaction that already finished.
+   *
+   * Without serialisation: if turn 2's compaction is slower than turn 3's,
+   * turn 2's compaction finishes last with a stale historyLenAtStart, producing
+   * a tail of [] that wipes turn 4's messages from history.
+   */
+  private compactionQueue: Promise<void> = Promise.resolve();
   public readonly sessionId: string;
   private readonly retryBaseMs = Number(process.env.OMEGA_RETRY_BASE_MS ?? 1000);
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
@@ -606,24 +617,33 @@ export class Agent {
    * Replaces this.history with [zone2Summary (2 msgs)] only —
    * zone 3 (the turn just finished) is folded in.
    *
-   * Fire-and-forget safe: called without await after turn_end.
+   * Compactions are serialized via compactionQueue: each new compaction is
+   * chained after the previous one. This prevents a slow older compaction from
+   * finishing after a fast newer compaction and wiping the newer summary plus
+   * any next-turn messages that had accumulated in the meantime.
    */
-  private async compactAfterTurn(turnMessages: Anthropic.MessageParam[]): Promise<void> {
-    // Snapshot history length NOW (before any awaits). Any messages pushed to
-    // this.history while the async compaction is running belong to the next turn
-    // and must be preserved — not overwritten — when we install the summary.
+  private compactAfterTurn(turnMessages: Anthropic.MessageParam[]): void {
+    // Snapshot history length NOW (synchronously, before anything else). This
+    // captures everything up to and including the just-finished turn. Anything
+    // pushed after this point belongs to the next turn and must be preserved.
     const historyLenAtStart = this.history.length;
-    try {
-      const provider = this.getStreamProvider();
-      const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider, this.activeModel);
-      this.zone2Summary = (newSummaryMsgs[0].content as string).replace(/^\[session summary[^\]]*\]\n/, "");
-      // Replace the messages that were compacted, preserving any messages that
-      // were pushed to history while compaction was running (next-turn messages).
-      const tail = this.history.slice(historyLenAtStart);
-      this.history = [...(newSummaryMsgs as Anthropic.MessageParam[]), ...tail];
-    } catch (err: any) {
-      logger.warn("compaction_failed", { error: err.message });
-    }
+
+    // Chain this compaction onto the previous one so they run in order.
+    this.compactionQueue = this.compactionQueue.then(async () => {
+      try {
+        const provider = this.getStreamProvider();
+        const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider, this.activeModel);
+        this.zone2Summary = (newSummaryMsgs[0].content as string).replace(/^\[session summary[^\]]*\]\n/, "");
+        // Replace the messages that were compacted, preserving any messages that
+        // were pushed to history while compaction was running (next-turn messages).
+        // historyLenAtStart was snapshotted before this compaction's await, so
+        // it correctly points to the first next-turn message.
+        const tail = this.history.slice(historyLenAtStart);
+        this.history = [...(newSummaryMsgs as Anthropic.MessageParam[]), ...tail];
+      } catch (err: any) {
+        logger.warn("compaction_failed", { error: err.message });
+      }
+    });
   }
 
   /**
@@ -1268,8 +1288,6 @@ export class Agent {
 
     // Compact zone 3 (current turn) into zone 2 summary (fire-and-forget)
     const turnMessages = this.history.slice(zone3Start);
-    this.compactAfterTurn(turnMessages).catch((err) => {
-      logger.warn("compaction_failed", { error: err.message });
-    });
+    this.compactAfterTurn(turnMessages);
   }
 }
