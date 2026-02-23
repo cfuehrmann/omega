@@ -217,6 +217,37 @@ process management. This is about *awaitable* async commands.
 
 
 
+### [BUG] ~~Stale compaction wipes next-turn tool_use blocks (second race variant)~~ — FIXED
+Closed. Commit 8c3d9a3. Root cause: multiple concurrent compactions. When turn N-1's
+compaction was slower than turn N's, the older compaction finished last with a stale
+`historyLenAtStart` larger than the current history length (which was already shrunk by
+the newer compaction). This produced an empty tail, replacing history with just
+`[sum_u, sum_a]` and wiping any next-turn messages. Subsequent tool_results push landed
+at position 2 with no matching tool_use at position 1 → Anthropic API 400 error.
+
+Fix: `compactionQueue` chain — each compaction is `.then()`-chained onto the previous
+one, ensuring they run in turn-order regardless of LLM latency. `historyLenAtStart`
+still captured synchronously before queueing. New regression test (4-turn scenario with
+latch-controlled slow compaction). 366+1 tests pass.
+
+---
+
+### [TOPIC] WEB-6: World-state fold on web server shutdown — PARTIAL (tests written, impl missing)
+**Priority: resume next — `server-shutdown.test.ts` exists but `performWebShutdown` not yet implemented in `server.ts`**
+
+Tests written in `src/web/server-shutdown.test.ts` (5 tests). They import
+`performWebShutdown` from `server.ts` which doesn't exist yet. Tests are RED.
+Work was interrupted by the compaction bug above.
+
+Goal: export `performWebShutdown(agent)` from `src/web/server.ts` that:
+- If agent is null/undefined, returns immediately (no-op)
+- Drains `agent.foldCurrentSessionIntoWorldState()` to completion
+- Hook it into the `process.on('SIGINT'/'SIGTERM')` handlers in `server.ts`
+
+Mirrors what `terminal/app.ts` does in its `shutdown()` function.
+
+---
+
 ### [TOPIC] Web interface e2e tests — expand coverage
 **Priority: medium — foundation in place**
 
