@@ -1,6 +1,10 @@
 import { describe, it, expect } from "bun:test";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+// Live import smoke tests — verify the modules actually load without error
+import { parseKeys, displayWidth } from "./terminal/input.js";
+import { renderToolStart, renderToolResult, renderAssistantMessage } from "./terminal/renderer.js";
+import { runApp } from "./terminal/app.js";
 
 /**
  * Smoke tests that catch broken entry points after refactors.
@@ -58,6 +62,17 @@ describe("entry points", () => {
   it("web split: src/web/server.ts exports runWebApp", () => {
     const source = readFileSync(join(ROOT, "src/web/server.ts"), "utf-8");
     expect(source).toContain("runWebApp");
+  });
+
+  it("terminal modules: key exports are callable functions", () => {
+    // If agent.ts or terminal modules change in a way that breaks exports,
+    // this catches it at test time rather than requiring a manual bun start.
+    expect(typeof parseKeys).toBe("function");
+    expect(typeof displayWidth).toBe("function");
+    expect(typeof renderToolStart).toBe("function");
+    expect(typeof renderToolResult).toBe("function");
+    expect(typeof renderAssistantMessage).toBe("function");
+    expect(typeof runApp).toBe("function");
   });
 
   it("package.json login script points to a file that exists", () => {
