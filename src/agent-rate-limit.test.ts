@@ -1,4 +1,7 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtemp, rm, readdir } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { Agent, type AgentEvent } from "./agent.js";
 import type { StreamProvider } from "./agent.js";
 
@@ -171,5 +174,83 @@ describe("OAuth token expiry reauth", () => {
     expect(errors.length).toBeGreaterThan(0);
     const lastError = errors[errors.length - 1];
     expect(lastError.error).toContain("login");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-too-long diagnostic
+// ---------------------------------------------------------------------------
+
+describe("prompt-too-long diagnostic", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "omega-ptl-diag-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  function promptTooLongError() {
+    const err: any = new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens"}}');
+    err.status = 400;
+    return err;
+  }
+
+  function makeMockStream(text: string) {
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
+      },
+      async finalMessage() {
+        return {
+          id: "msg_ok",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text }],
+          model: "claude-sonnet-4-6",
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 5, output_tokens: 2 },
+        } as any;
+      },
+    };
+  }
+
+  it("writes a diagnostic snapshot when 'prompt is too long' is received", async () => {
+    process.env.OMEGA_RETRY_ATTEMPTS = "3";
+
+    const diagDir = join(tempDir, "diagnosis");
+    let callCount = 0;
+
+    const mockProvider: StreamProvider = async () => {
+      callCount++;
+      if (callCount === 1) throw promptTooLongError();
+      return makeMockStream("ok after truncation");
+    };
+
+    // Pass diagDir explicitly so diagnostics are written to tempDir, not repo root
+    const agent = new Agent(mockProvider, null, undefined, undefined, diagDir);
+
+    const events = await collectEvents(agent, "hello");
+
+    // Should have yielded a "prompt too long" error event before recovering
+    const errorEvents = events.filter(e => e.type === "error") as any[];
+    expect(errorEvents.some(e => e.error.includes("Prompt too long"))).toBe(true);
+
+    // Diagnostic file should have been written
+    let diagFiles: string[] = [];
+    try { diagFiles = await readdir(diagDir); } catch { /* dir may not exist on success with no diag */ }
+    const jsonFiles = diagFiles.filter(f => f.endsWith(".json"));
+    expect(jsonFiles.length).toBe(1);
+
+    const diagContent = await Bun.file(join(diagDir, jsonFiles[0]!)).json();
+    expect(diagContent.summary).toContain("Prompt too long");
+    expect(diagContent.errorMessage).toContain("prompt is too long");
+    expect(diagContent.httpStatus).toBe(400);
+    expect((diagContent.extra as any).stopReason).toBe("prompt_too_long");
+
+    delete process.env.OMEGA_RETRY_ATTEMPTS;
   });
 });

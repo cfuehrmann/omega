@@ -1184,6 +1184,32 @@ export class Agent {
               error: err.message,
               historyLength: this.history.length,
             });
+            // Write a diagnostic so the next session has hard data on what
+            // caused the overflow (exact history length, cached messages, etc.)
+            this.eventBuffer.push({
+              type: "agent_error",
+              message: err.message ?? String(err),
+              retryable: true,
+            });
+            const diagPath = await writeDiagnosticWithBuffer(
+              {
+                summary: `Prompt too long (attempt ${attempt + 1}): ${err.message}`,
+                errorMessage: err.message ?? String(err),
+                httpStatus: err.status ?? err.statusCode,
+                provider: "anthropic",
+                model: activeModel,
+                callNumber: this._apiCallCount,
+                requestMessages: cachedMessages,
+                systemBlocks,
+                history: this.history,
+                extra: { attempts: attempt + 1, stopReason: "prompt_too_long" },
+              },
+              this.eventBuffer,
+              this.diagDir,
+            );
+            if (diagPath) {
+              logger.warn("diagnostic_written", { path: diagPath });
+            }
             // Halve the budget each retry to force more aggressive truncation
             const aggressiveBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
             this.history = truncateHistory(this.history, aggressiveBudget) as Anthropic.MessageParam[];
