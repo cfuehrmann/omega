@@ -17,6 +17,12 @@ start:
 test:
     bun test
 
+# Operator-run gate: full test suite + e2e. Run before advancing `stable`.
+# Never invoked automatically by Omega — operator-only.
+gate: build
+    bun test
+    npx playwright test
+
 # Run tests in watch mode
 test-watch:
     bun test --watch
