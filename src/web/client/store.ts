@@ -23,6 +23,9 @@ export type WsEvent =
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
   | { type: "status"; message: string }
+  | { type: "api_call_start"; callNumber: number; provider: string; url: string; request: unknown }
+  | { type: "api_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
+  | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
   | { type: "api_error"; provider: string; error: string }
   | { type: "error"; error: string }
@@ -165,6 +168,9 @@ export function dispatch(event: WsEvent): void {
     case "tool_call":
     case "tool_result":
     case "status":
+    case "api_call_start":
+    case "api_response":
+    case "world_state_saved":
     case "api_error":
     case "error":
       appendEvent(event);

@@ -139,6 +139,25 @@ html, body, #root {
 .block.footer    { border-color: var(--border);  color: var(--dim);     font-size: 11px; }
 .block.error-b   { border-color: var(--red);     color: var(--red);     }
 .block.interrupt { border-color: var(--red);     color: var(--red);     }
+.block.world-state-saved { border-color: var(--green); color: var(--green); font-size: 11px; }
+.block.api-call  { border-color: var(--border);  color: var(--dim);     font-size: 11px; }
+.block.api-response { border-color: var(--border); color: var(--dim);   font-size: 11px; }
+
+/* details/summary reset for api-call block */
+details.block > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.6;
+  margin-bottom: 0;
+}
+details.block > summary::-webkit-details-marker { display: none; }
+details.block[open] > summary { margin-bottom: 3px; }
+details.block > summary::before { content: "▶ "; }
+details.block[open] > summary::before { content: "▼ "; }
 
 /* Streaming cursor */
 .block.streaming .block-label::after {

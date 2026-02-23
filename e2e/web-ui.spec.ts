@@ -173,6 +173,83 @@ test("error event shows error block", async ({ page, server }) => {
 });
 
 // ---------------------------------------------------------------------------
+// Renderer parity — WEB-4
+// ---------------------------------------------------------------------------
+
+test("status event shows status block", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "status", message: "thinking..." });
+
+  const statusBlock = page.locator(".block.status");
+  await expect(statusBlock).toBeVisible({ timeout: 3000 });
+  await expect(statusBlock.locator(".block-body")).toHaveText("thinking...");
+});
+
+test("world_state_saved event shows a status pill", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "world_state_saved", path: "plan/world-state.md", charCount: 1234 });
+
+  const pill = page.locator(".block.world-state-saved");
+  await expect(pill).toBeVisible({ timeout: 3000 });
+  await expect(pill).toContainText("world state saved");
+});
+
+test("api_call_start event shows a collapsible api-call block", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({
+    type: "api_call_start",
+    callNumber: 1,
+    provider: "anthropic",
+    url: "https://api.anthropic.com/v1/messages",
+    request: { model: "claude-sonnet-4-6", max_tokens: 8192 },
+  });
+
+  const block = page.locator(".block.api-call");
+  await expect(block).toBeVisible({ timeout: 3000 });
+  await expect(block.locator(".block-label")).toContainText("api call");
+});
+
+test("api_response event shows an api-response block", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({
+    type: "api_response",
+    provider: "anthropic",
+    url: "https://api.anthropic.com/v1/messages",
+    stopReason: "end_turn",
+    usage: { input_tokens: 100, output_tokens: 50 },
+    content: [],
+  });
+
+  const block = page.locator(".block.api-response");
+  await expect(block).toBeVisible({ timeout: 3000 });
+  await expect(block.locator(".block-label")).toContainText("api response");
+});
+
+test("interrupted event shows interrupt block", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "interrupted" });
+
+  const block = page.locator(".block.interrupt");
+  await expect(block).toBeVisible({ timeout: 3000 });
+  await expect(block).toContainText("Interrupted");
+});
+
+// ---------------------------------------------------------------------------
 // History replay (browser refresh)
 // ---------------------------------------------------------------------------
 

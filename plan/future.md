@@ -244,19 +244,11 @@ latch-controlled slow compaction). 366+1 tests pass.
 
 ---
 
-### [TOPIC] WEB-6: World-state fold on web server shutdown — PARTIAL (tests written, impl missing)
-**Priority: resume next — `server-shutdown.test.ts` exists but `performWebShutdown` not yet implemented in `server.ts`**
-
-Tests written in `src/web/server-shutdown.test.ts` (5 tests). They import
-`performWebShutdown` from `server.ts` which doesn't exist yet. Tests are RED.
-Work was interrupted by the compaction bug above.
-
-Goal: export `performWebShutdown(agent)` from `src/web/server.ts` that:
-- If agent is null/undefined, returns immediately (no-op)
-- Drains `agent.foldCurrentSessionIntoWorldState()` to completion
-- Hook it into the `process.on('SIGINT'/'SIGTERM')` handlers in `server.ts`
-
-Mirrors what `terminal/app.ts` does in its `shutdown()` function.
+### ~~[TOPIC] WEB-6: World-state fold on web server shutdown~~ — DONE
+Commit 737a17d. `performWebShutdown(agent)` exported from `src/web/server.ts`;
+drains `foldCurrentSessionIntoWorldState()` to completion (no-op on null/undefined
+agent). Hooked into SIGINT/SIGTERM in `runWebApp()` after session-log save.
+5 tests in `server-shutdown.test.ts` all pass.
 
 ---
 

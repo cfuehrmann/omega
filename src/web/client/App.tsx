@@ -108,6 +108,34 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
+  if (e.type === "world_state_saved") {
+    return (
+      <div class="block world-state-saved">
+        <div class="block-body">✓ world state saved ({e.charCount} chars)</div>
+      </div>
+    );
+  }
+
+  if (e.type === "api_call_start") {
+    const reqStr = truncate(JSON.stringify(e.request, null, 2), 1000);
+    return (
+      <details class="block api-call">
+        <summary class="block-label">api call #{e.callNumber} › {e.provider}</summary>
+        <div class="block-body">{reqStr}</div>
+      </details>
+    );
+  }
+
+  if (e.type === "api_response") {
+    const line = `stop: ${e.stopReason}  in: ${e.usage.input_tokens}  out: ${e.usage.output_tokens}`;
+    return (
+      <div class="block api-response">
+        <div class="block-label">api response › {e.provider}</div>
+        <div class="block-body">{line}</div>
+      </div>
+    );
+  }
+
   if (e.type === "turn_end") {
     const m = e.metrics;
     const cost = m.costUsd != null ? `  cost: $${m.costUsd.toFixed(4)}` : "";
