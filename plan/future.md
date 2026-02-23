@@ -2,6 +2,59 @@
 
 ## Open items
 
+### [INFRA] Self-protection — preventing Omega from taking itself down
+**Priority: HIGH — do before any large agentic self-edit**
+
+Omega has taken itself down in the past through:
+- compaction race (two concurrent compactions; older one wiped newer history → 400 error)
+- stuck-streaming after restart (open turn in session file → UI permanently locked)
+- silent structural breakage (terminal module rename broke exports; only caught by manual run)
+
+#### REC-1 (HIGH): pre-commit test gate
+Add `.git/hooks/pre-commit` that runs `bun test --bail`. Makes it mechanically
+impossible to commit a self-edit that breaks the test suite. Currently the discipline
+is manual; one lapse takes Omega down.
+
+Acceptance criteria:
+- `.git/hooks/pre-commit` exists, is executable, runs `bun test --bail`
+- Committing with a failing test aborts the commit with a clear message
+- The hook is also documented in the Justfile (`just install-hooks` or similar)
+
+#### REC-2 (HIGH): Structural invariant tests for web server entry point
+`entry.test.ts` guards `ui-raw.ts` and terminal modules. Same pattern needed for
+`src/web/server.ts` exports (`runWebApp`, `performWebShutdown`, `closeOpenTurn`,
+`shouldLogEvent`). If someone renames or restructures `server.ts`, `bun test`
+currently won't catch it.
+
+Acceptance criteria:
+- `entry.test.ts` (or a new `web-entry.test.ts`) imports and asserts callability
+  of the four exports above
+- `bun test` catches a rename/deletion of `server.ts`
+
+#### REC-3 (MEDIUM): Abort-safe agentic loop — soft interrupt at tool boundary
+`AbortSignal` can fire mid-tool-execution. The tool result is lost, leaving a
+`tool_use` block in history with no matching `tool_result` → 400 on next turn.
+Fix: catch the abort *after* the current tool call finishes (soft abort), not
+mid-call. This is also the UX-Q1 "soft interrupt" design question.
+
+Acceptance criteria:
+- Esc mid-tool waits for the in-flight tool to complete, then stops
+- History is always well-formed (every `tool_use` has a matching `tool_result`)
+- Test: abort signal fires during a tool call; next API call succeeds
+
+#### REC-4 (MEDIUM): History validation before every API call
+Add a cheap sanity check at the top of the agentic loop: every `tool_use` block
+in history must have a matching `tool_result` in the next message. If not, write a
+diagnostic and abort the turn rather than sending malformed history to Anthropic
+and getting a cryptic 400. Circuit-breaker pattern; real fix is REC-3.
+
+Acceptance criteria:
+- `validateHistory(messages)` function returns a list of violations
+- Called before every `callAnthropic`/`callOpenAi` invocation
+- On violation: diagnostic snapshot written, `api_error` event emitted, turn aborted
+
+---
+
 ### [INFRA] Diagnostic snapshots on fatal API errors — DONE
 `src/diagnosis.ts` — `writeDiagnostic()` writes `plan/diagnosis/<timestamp>.json`
 on any non-retryable API error (Anthropic or OpenAI). Snapshot contains: verbatim
@@ -290,7 +343,7 @@ Always go RED first: write the failing test, then implement the feature.
 ---
 
 ### [TOPIC] Web interface
-**Priority: medium — in progress**
+**Priority: medium — COMPLETE** (WEB-1 through WEB-6 all done)
 
 Replace or supplement the raw terminal UI with a browser-based interface.
 
