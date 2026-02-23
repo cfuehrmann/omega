@@ -20,10 +20,27 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
+import type { AgentEvent } from "../agent.js";
 import { loadSession, saveSession, clearSession } from "./session-store.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_DIR = join(import.meta.dir, "public");
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — mirrors terminal/app.ts shutdown()
+// ---------------------------------------------------------------------------
+
+/**
+ * Drain foldCurrentSessionIntoWorldState() on the active agent so that the
+ * world-state file is updated before the process exits.  Safe to call with a
+ * null/undefined agent (no-op).
+ */
+export async function performWebShutdown(agent: Agent | null | undefined): Promise<void> {
+  if (!agent) return;
+  for await (const _event of agent.foldCurrentSessionIntoWorldState()) {
+    // Drain all events; the side-effect (writing world-state.md) is what matters.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Static file helpers
@@ -165,7 +182,10 @@ export async function runWebApp(): Promise<void> {
 
   // Graceful shutdown: persist on SIGINT (Ctrl+C) and SIGTERM
   const handleShutdown = () => {
+    const agent = activeSession?.agent ?? null;
     saveSession(eventLog)
+      .catch(() => {})
+      .then(() => performWebShutdown(agent))
       .catch(() => {})
       .finally(() => process.exit(0));
   };
