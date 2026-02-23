@@ -9,8 +9,10 @@
  * The log level is controlled by the OMEGA_LOG_LEVEL environment variable
  * (default: "debug").  All levels are written; pino filters internally.
  *
+ * The buffer flushes automatically when it reaches 1 KB or every 5 seconds
+ * (whichever comes first), via SonicBoom's built-in periodicFlush.
  * Call flushLog() before writing a diagnostic snapshot or exiting to ensure
- * all buffered log lines reach disk.
+ * all buffered log lines reach disk immediately.
  *
  * Usage:
  *   import { logger, flushLog } from "./logger.js";
@@ -48,14 +50,15 @@ function rotateLogs(): void {
 rotateLogs();
 
 // ---------------------------------------------------------------------------
-// Pino destination — async (buffered), sync-flushable on errors
+// Pino destination — async (buffered), periodic auto-flush, sync-flushable
 // ---------------------------------------------------------------------------
 
 const dest = pino.destination({
   dest: LOG_FILE,
-  sync: false,       // async hot path — no latency on log writes
-  minLength: 4096,   // flush buffer when it reaches 4 KB
-  flags: "a",        // we already rotated above; append from here
+  sync: false,          // async hot path — no latency on log writes
+  minLength: 1024,      // flush buffer when it reaches 1 KB (~5–10 messages)
+  periodicFlush: 5000,  // also flush every 5 s regardless of buffer size
+  flags: "a",           // we already rotated above; append from here
 });
 
 // ---------------------------------------------------------------------------
