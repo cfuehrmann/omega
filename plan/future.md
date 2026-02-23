@@ -125,17 +125,28 @@ Closed. Two problems fixed (commit 7344295):
 ### [INFRA] LOG-2: Complete event taxonomy renaming (pino side)
 **Priority: medium — consistency; true duals unified, pino wrappers still use old names**
 
-Commit 899f136 unified the three true-dual AgentEvent/pino pairs (`api_response→llm_to_agent`, `tool_call→agent_to_agent_tool_call`, `tool_result→agent_to_agent_tool_result`). Remaining pino-side renames:
+**Authoritative spec: `docs/log-taxonomy.md`**
 
-1. Per-iteration pino events `api_request` → `agent_to_llm`, `api_response` (already gone as AgentEvent, but the pino call inside the Anthropic stream loop is now `llm_to_agent` — check consistency)
-2. Per-turn aggregate pino `api_call` (via `logger.apiCall()` wrapper, emits `"api_call"`) → rename to something turn-scoped matching the taxonomy (e.g. `turn_llm_summary` or keep as-is and document it as an aggregation, not a dual)
-3. `toolExec` wrapper → lower to `debug` (currently `info`); rename emitted event from `tool_exec` → `agent_to_agent_tool_call` or keep as a separate aggregation log
-4. `apiCall` wrapper → lower to `debug` (currently `info`)
+The taxonomy document defines the full target shape for all log entries:
+- `kind: "message"` entries carry `sender`, `receiver`, `message` fields
+- `kind: "infra"` entries carry an `event` field; no `sender`/`receiver`
+- TypeScript discriminated union to enforce this at compile time
+
+Commit 899f136 unified the three true-dual AgentEvent/pino pairs (`api_response→llm_to_agent`, `tool_call→agent_to_agent_tool_call`, `tool_result→agent_to_agent_tool_result`). Remaining pino-side renames to reach taxonomy compliance:
+
+1. Per-iteration pino events `api_request` → `{ kind:"message", sender:"agent", receiver:"llm", message:"call" }` etc.
+2. Per-turn aggregate pino `api_call` (via `logger.apiCall()`) → `{ kind:"infra", event:"turn_end", ... }`
+3. `toolExec` wrapper → lower to `debug`; shape → `{ kind:"message", sender:"agent", receiver:"agent", message:"tool_call" }`
+4. `apiCall` wrapper → lower to `debug`
+5. Add `kind` field to all existing pino log sites; add `sender`/`receiver`/`message` or `event` as appropriate
 
 Acceptance criteria:
-- All pino event names follow the coordinate-system taxonomy or are explicitly documented as aggregations (not duals)
-- Log levels match frequency: per-iteration = debug, per-turn aggregate = info only if history changes
-- Existing tests updated to reflect new names
+- All pino entries have `kind: "message" | "infra"` as first field
+- `kind:"message"` entries always have `sender`, `receiver`, `message`; never `event`
+- `kind:"infra"` entries always have `event`; never `sender`/`receiver`/`message`
+- TypeScript: `LogEntry` discriminated union defined; logger functions typed accordingly
+- Log levels match frequency: per-iteration = debug, per-turn aggregate = info
+- Existing tests updated to reflect new shapes
 
 ---
 

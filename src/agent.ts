@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
-import { logger, flushLog, startup, toolExec, apiCall } from "./logger.js";
+import { logger, flushLog, startup, makeLogEntry } from "./logger.js";
 import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactTurn, compactWorldState } from "./compaction.js";
@@ -317,14 +317,15 @@ export function truncateHistory(
   // that was dropped, remove the orphaned tool_result (and its partner if needed)
   result = sanitizeToolPairs(result);
 
-  logger.info("context_truncated", {
+  logger.info(makeLogEntry("infra", {
+    event: "context_truncated",
     originalMessages: history.length,
     keptMessages: result.length,
     droppedMessages: history.length - result.length,
     estimatedTokensBefore: history.reduce((sum, m) => sum + estimateTokens(m), 0),
     estimatedTokensAfter: result.reduce((sum, m) => sum + estimateTokens(m), 0),
     reason: reasons.length ? reasons.join("+") : "token_budget",
-  });
+  }));
 
   return result;
 }
@@ -661,10 +662,11 @@ export class Agent {
         // it correctly points to the first next-turn message.
         const tail = this.history.slice(historyLenAtStart);
         this.history = [...(newSummaryMsgs as Anthropic.MessageParam[]), ...tail];
-        logger.debug("session_compacted", {
+        logger.debug(makeLogEntry("infra", {
+          event: "session_compacted",
           turnCount: turnMessages.length,
           summaryLength: this.zone2Summary.length,
-        });
+        }));
       } catch (err: any) {
         logger.warn("compaction_failed", { error: err.message });
       }
@@ -865,7 +867,12 @@ export class Agent {
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
 
-    logger.debug("user_prompt", { contentLength: userMessage.length });
+    logger.debug(makeLogEntry("message", {
+      sender: "user",
+      receiver: "agent",
+      message: "call",
+      contentLength: userMessage.length,
+    }));
 
     // Reset API call counter — numbered per user prompt, not per session
     this._apiCallCount = 0;
@@ -969,12 +976,15 @@ export class Agent {
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        logger.debug("api_request", {
+        logger.debug(makeLogEntry("message", {
+          sender: "agent",
+          receiver: "llm",
+          message: "call",
           callNumber: this._apiCallCount,
           provider: "openai",
           model: activeModel,
           messageCount: this.history.length,
-        });
+        }));
       } else {
         const request = {
           model: activeModel,
@@ -990,12 +1000,15 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
-        logger.debug("api_request", {
+        logger.debug(makeLogEntry("message", {
+          sender: "agent",
+          receiver: "llm",
+          message: "call",
           callNumber: this._apiCallCount,
           provider: "anthropic",
           model: activeModel,
           messageCount: cachedMessages.length,
-        });
+        }));
       }
 
       // Call API with retry
@@ -1020,12 +1033,14 @@ export class Agent {
             lastError = err;
             if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
               const waitMs = getOpenAiRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-              logger.warn("api_retry", {
+              logger.warn(makeLogEntry("infra", {
+                event: "api_retry",
                 attempt: attempt + 1,
+                provider: "openai",
                 status: err.status ?? err.statusCode,
                 waitMs,
                 error: err.message,
-              });
+              }));
               yield {
                 type: "error",
                 error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
@@ -1050,7 +1065,7 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              logger.warn("diagnostic_written", { path: diagPath });
+              logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
             }
             yield {
               type: "api_error",
@@ -1144,12 +1159,14 @@ export class Agent {
             }
           } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-            logger.warn("api_retry", {
+            logger.warn(makeLogEntry("infra", {
+              event: "api_retry",
               attempt: attempt + 1,
+              provider: "anthropic",
               status: err.status ?? err.statusCode,
               waitMs,
               error: err.message,
-            });
+            }));
             yield {
               type: "error",
               error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
@@ -1185,7 +1202,7 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              logger.warn("diagnostic_written", { path: diagPath });
+              logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
             }
             // Halve the budget each retry to force more aggressive truncation
             const aggressiveBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
@@ -1215,7 +1232,7 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              logger.warn("diagnostic_written", { path: diagPath });
+              logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
             }
             yield {
               type: "api_error",
@@ -1283,12 +1300,21 @@ export class Agent {
         content: response.content,
         raw: useOpenAi ? (response as any).raw : undefined,
       };
-      logger.debug("llm_to_agent", {
+      logger.debug(makeLogEntry("message", {
+        sender: "llm",
+        receiver: "agent",
+        message: "response",
         provider: useOpenAi ? "openai" : "anthropic",
+        model: activeModel,
         stopReason: response.stop_reason ?? "unknown",
         inputTokens: response.usage.input_tokens ?? 0,
         outputTokens: response.usage.output_tokens,
-      });
+        cacheCreationTokens: (response.usage as any).cache_creation_input_tokens ?? 0,
+        cacheReadTokens: (response.usage as any).cache_read_input_tokens ?? 0,
+        costUsd,
+        ttftMs,
+        totalMs: performance.now() - startTime,
+      }));
 
       // Add assistant response to history
       this.history.push({ role: "assistant", content: response.content });
@@ -1315,7 +1341,13 @@ export class Agent {
             input: toolUse.input,
             formatted,
           } as AgentEvent;
-          logger.debug("agent_to_agent_tool_call", { id: toolUse.id, name: toolUse.name });
+          logger.debug(makeLogEntry("message", {
+            sender: "agent",
+            receiver: "agent",
+            message: "tool_call",
+            id: toolUse.id,
+            name: toolUse.name,
+          }));
         }
 
         // Execute all tools concurrently
@@ -1330,14 +1362,6 @@ export class Agent {
           toolCallsThisTurn.push(toolUse.name);
           allToolCalls.push(toolUse.name);
 
-          toolExec({
-            name: toolUse.name,
-            autoApproved: true,
-            approved: true,
-            isError: result.isError,
-            durationMs: result.durationMs,
-          });
-
           yield {
             type: "agent_to_agent_tool_result",
             id: toolUse.id,
@@ -1345,7 +1369,15 @@ export class Agent {
             formatted,
             result,
           } as AgentEvent;
-          logger.debug("agent_to_agent_tool_result", { id: toolUse.id, name: toolUse.name, isError: result.isError });
+          logger.debug(makeLogEntry("message", {
+            sender: "agent",
+            receiver: "agent",
+            message: "tool_result",
+            id: toolUse.id,
+            name: toolUse.name,
+            isError: result.isError,
+            durationMs: result.durationMs,
+          }));
 
           toolResults.push({
             type: "tool_result",
@@ -1370,18 +1402,6 @@ export class Agent {
         continueLoop = true;
       }
 
-      // Log the API call
-      apiCall({
-        model: activeModel,
-        inputTokens: turnInputTokens,
-        outputTokens: turnOutputTokens,
-        costUsd,
-        ttftMs,
-        totalMs,
-        toolCalls: toolCallsThisTurn,
-        stopReason: response.stop_reason ?? "unknown",
-      });
-
       // Emit metrics for this turn
       yield {
         type: "metrics",
@@ -1402,6 +1422,19 @@ export class Agent {
     // Emit one turn_end after all API calls complete
     const endProvider: ProviderName = this.provider === "openai" ? "openai" : "anthropic";
     const endModel = activeModel;
+    // Log per-turn aggregate as infra turn_end (info level per taxonomy)
+    logger.info(makeLogEntry("infra", {
+      event: "turn_end",
+      provider: endProvider,
+      model: endModel,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cacheCreationTokens: totalCacheCreationTokens,
+      cacheReadTokens: totalCacheReadTokens,
+      costUsd: totalCostUsd,
+      savedUsd: totalSavedUsd,
+      toolCalls: allToolCalls,
+    }));
     yield {
       type: "turn_end",
       metrics: {
