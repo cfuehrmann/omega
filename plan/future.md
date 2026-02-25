@@ -2,6 +2,37 @@
 
 ## Open items
 
+### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
+**Priority: HIGHEST — ongoing, guided by `manifest.md`**
+
+Omega's codebase was tightly coupled to itself: system prompt, world-state
+compaction, and planning files all assumed Omega was always working on Omega.
+The manifest calls for separating "Omega as a coding agent" from "Omega's own
+source repo being AI-friendly."
+
+#### Step 1: System prompt decoupling + README — DONE
+- System prompt (`src/config.ts`) is now project-agnostic. It tells the agent to
+  read `README.md` in the working directory for orientation.
+- `README.md` created at project root with all omega-specific context (planning
+  files, stack, auth, git/testing discipline, key source files, diagnosis).
+- Structural invariant tests updated (`src/planning-files.test.ts`).
+- All 430 unit + 27 e2e tests pass.
+
+#### Step 2: Abandon automatic compaction (manifest item)
+Replace automatic turn compaction (Zone 2) with verbatim history + prompt caching.
+World-state compaction becomes manual (operator-triggered), producing a "bookmark"
+in the event log rather than shortening context.
+
+#### Step 3: Event-list session model (manifest item)
+Replace the current `MessageParam[]` history with an event-list data structure that
+serves operation, diagnostics, and UI visualization. Persist by appending events to
+files. Context messages in a separate file with hash-based cross-referencing.
+
+#### Step 4: Retire pino (manifest item)
+Once the event-list is the single source of truth, pino becomes redundant. Remove it.
+
+---
+
 ### ~~[INFRA] LOG-1: Redesign diagnostic/logging subsystem~~ — DONE
 Commit 71e7dfc. Implemented **Approach 2: Pino + simplified snapshots**.
 
@@ -32,7 +63,7 @@ Commit 71e7dfc. Implemented **Approach 2: Pino + simplified snapshots**.
 - If tests go red: do not commit. Fix first.
 
 `just gate` recipe in Justfile runs `bun test` + `npx playwright test`.
-System prompt encodes the branch discipline.
+Branch discipline is documented in `README.md` (moved out of system prompt as part of the manifest refactoring).
 
 ---
 

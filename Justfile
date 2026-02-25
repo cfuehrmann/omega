@@ -65,6 +65,12 @@ login:
 push:
     git push
 
+# Install git hooks (pre-commit test gate)
+install-hooks:
+    cp scripts/pre-commit .git/hooks/pre-commit
+    chmod +x .git/hooks/pre-commit
+    @echo "✅  Git hooks installed."
+
 # Run a quick git status
 status:
     git status --short

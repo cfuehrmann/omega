@@ -1,0 +1,21 @@
+#!/bin/sh
+# Pre-commit hook: run unit tests before every commit.
+# Install via: just install-hooks
+#
+# Aborts the commit if any test fails.
+# Does NOT run e2e tests (use `just gate` for the full suite).
+
+echo "Running bun test --bail (pre-commit gate)..."
+bun test --bail
+status=$?
+
+if [ $status -ne 0 ]; then
+  echo ""
+  echo "❌  Tests failed — commit aborted."
+  echo "    Fix the failing tests, then commit again."
+  echo "    To skip this check (emergency only): git commit --no-verify"
+  exit 1
+fi
+
+echo "✅  Tests passed."
+exit 0
