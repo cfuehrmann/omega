@@ -15,22 +15,28 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 ### Workspace Layout
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
-### Context Management (three-zone model) — TRANSITIONAL STATE
+### Context Management — TRANSITIONAL STATE
 - **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated by `foldCurrentSessionIntoWorldState()` on clean shutdown. Lives under source control.
 - **Zone 2** — turn summaries: **REMOVED** (manifest Step 2 complete). `compactTurn()` deleted from `src/compaction.ts`.
 - **Zone 3** — current turn: always verbatim, never compacted.
 - Hard message cap: 100 messages. Token budget: 100k.
 
-No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact.
+**Known problem:** History grows verbatim. Proactive truncation (`truncateHistory`) silently drops middle messages before each turn, which also invalidates the prompt cache prefix for the entire history — the session pays full token rate after any truncation event. This makes Omega poorly suited for sustained multi-file work in a single session. Step 3b (`/compact` slash command) is the near-term fix; Step 3d (non-destructive truncation) is the structural fix.
+
+No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session now also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) as a foundation for Step 3b–3d.
 
 ### Manifest Refactor Status
 `manifest.md` describes a major redesign. Current progress:
 - **Step 1** (DONE): System prompt decoupled from Omega's own repo. Project-agnostic prompt reads `README.md` at startup.
 - **Step 2** (DONE): Abandoned `compactAfterTurn()`. Removed `compactTurn()` from `src/compaction.ts`. History grows verbatim. Prompt caching handles token efficiency.
-- **Step 3** (FUTURE): Replace `MessageParam[]` history with an event-list data structure; persist by appending events to files.
+- **Step 3** (IN PROGRESS): Replace `MessageParam[]` history with an event-list data structure; persist by appending events to files. Broken into four sub-steps in `plan/future.md`:
+  - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl` as it is pushed. Foundation only, no behaviour change.
+  - **3b** (TODO — **highest priority**): `/compact` slash command — operator-triggered mid-session compaction. Collapses history head into a summary, preserves tail. Direct fix for the context ceiling problem.
+  - **3c** (TODO): `SessionEvent` type + dual-write to `sessions/events.jsonl`. Additive; establishes the canonical event log.
+  - **3d** (TODO): Flip the dependency — `this.history` derived from the event log; truncation becomes non-destructive (produces an ephemeral API-call view, never mutates the stored history). Fixes cache prefix invalidation on truncation.
 - **Step 4** (FUTURE): Retire pino — event-list becomes the single source of truth.
 
-**Strategic insight**: REC-3 (soft abort) and REC-4 (history validation) would be superseded by Step 3's event-list model. Recommended path: ARCH-1 (clean provider boundary), then Step 3.
+**Strategic insight**: REC-3 (soft abort) and REC-4 (history validation) would be superseded by Step 3's event-list model. ARCH-1 (clean provider boundary) is still desirable but no longer a prerequisite for Step 3 sub-steps.
 
 ### Planning Files
 - `plan/world-state.md` — Zone 1 world state; auto-maintained; under source control.
@@ -53,6 +59,8 @@ Old commands `/gpt`, `/openai`, `/anthropic` are removed and yield "Unknown comm
 ### Prompt Caching Architecture
 Three cache breakpoints: system prompt, last tool definition, last history message. Within a turn's agentic loop, each successive API call gets massive cache hits on all previously-sent messages. Cross-turn, the entire accumulated history is sent verbatim (no compaction since manifest Step 2), so cache hits grow with session length — the system+tools prefix (~5-7k tokens) is always cached, and an increasingly large history prefix cache-hits on successive turns.
 
+**Cache/truncation interaction:** Truncation drops messages from the middle of history, shifting all subsequent message positions. This makes the history byte sequence differ from the cached prefix at the first dropped position, causing a full cache miss on all history tokens. The system+tools cache breakpoints (1 and 2) are unaffected. This is a fundamental tension in the current architecture: caching wants a stable append-only prefix; truncation mutates it. Step 3d resolves this by making truncation produce an ephemeral API-call view rather than mutating stored history.
+
 ### Event Taxonomy (coordinate-system model)
 Events are named as messages between three parties: **agent**, **user**, **llm**. Direction is explicit in the name.
 
@@ -72,7 +80,8 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 **One-sided only** (UI-only or infra-only, no unification needed): `text`, `status`, `interrupted`, `metrics`, `turn_end`, `api_call_start`; `startup`, `oauth_*`, `context_truncated`, `session_compacted`, `api_retry`, `diagnostic_written`.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, `PRICING` table; history grows **verbatim** (no turn compaction since manifest Step 2); `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s including `world_state_saved`; `getActiveFoldProvider()` returns a provider wrapping the currently active provider for use during shutdown fold; builds `systemBlocks` and `cachedTools` with `cache_control` for prompt caching; extracts and accumulates `sessionCacheCreationTokens`/`sessionCacheReadTokens`; `estimateCostWithCache()` for cost accounting; `estimateCacheSavings()` computes savings; `sessionSavedUsd` accumulates per-turn savings; `TurnMetrics` and `turn_end` events carry `savedUsd`; has `private activeModel: string = config.model` (session-scoped, set by slash commands); `getActiveModel()` exported; agentic loop uses `activeModel` local var (from `this.activeModel`) for all API calls; `provider` stays binary `"anthropic" | "openai"`; `addCacheControlToLastMessage()` helper adds a third cache breakpoint on the last history message without mutating `this.history`; `foldCurrentSessionIntoWorldState` passes `this.activeModel` to `compactWorldState` (both primary and re-auth retry paths); `/help` emits a provider-sensitive footer legend; parallel tool execution: all `agent_to_agent_tool_call` events emitted first, then `Promise.all` executes tools concurrently, then all `agent_to_agent_tool_result` events emitted in original order; both tool events carry `id: string`; on non-retryable fatal errors calls `flushLog()` then `writeDiagnostic()`; `diagDir` field is `string | null | undefined` — when a mock `streamProvider` is injected and no explicit `diagDir` is given, constructor defaults it to `null`; all logging via `logger.debug/info/warn` from `src/logger.ts`
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, `PRICING` table; history grows **verbatim** (no turn compaction since manifest Step 2); `foldCurrentSessionIntoWorldState()` is an async generator yielding `AgentEvent`s including `world_state_saved`; `getActiveFoldProvider()` returns a provider wrapping the currently active provider for use during shutdown fold; builds `systemBlocks` and `cachedTools` with `cache_control` for prompt caching; extracts and accumulates `sessionCacheCreationTokens`/`sessionCacheReadTokens`; `estimateCostWithCache()` for cost accounting; `estimateCacheSavings()` computes savings; `sessionSavedUsd` accumulates per-turn savings; `TurnMetrics` and `turn_end` events carry `savedUsd`; has `private activeModel: string = config.model` (session-scoped, set by slash commands); `getActiveModel()` exported; agentic loop uses `activeModel` local var (from `this.activeModel`) for all API calls; `provider` stays binary `"anthropic" | "openai"`; `addCacheControlToLastMessage()` helper adds a third cache breakpoint on the last history message without mutating `this.history`; `foldCurrentSessionIntoWorldState` passes `this.activeModel` to `compactWorldState` (both primary and re-auth retry paths); `/help` emits a provider-sensitive footer legend; parallel tool execution: all `agent_to_agent_tool_call` events emitted first, then `Promise.all` executes tools concurrently, then all `agent_to_agent_tool_result` events emitted in original order; both tool events carry `id: string`; on non-retryable fatal errors calls `flushLog()` then `writeDiagnostic()`; `diagDir` field is `string | null | undefined` — when a mock `streamProvider` is injected and no explicit `diagDir` is given, constructor defaults it to `null`; all logging via `logger.debug/info/warn` from `src/logger.ts`; calls `appendContextMessage()` (fire-and-forget) after each `this.history.push` in `sendMessage`
+- `src/context-store.ts` — Step 3a foundation. `appendContextMessage(msg, filePath?)` appends a JSONL line to `sessions/context.jsonl` (creates dirs if needed). `clearContextStore(filePath?)` truncates the file to empty (no-op if missing). Both accept an optional path override for testing.
 - `src/compaction.ts` — `compactWorldState()` only — LLM-based world-state fold; accepts a `model` parameter (default `"claude-sonnet-4-6"`) forwarded to `callLlm`; `callLlm` accepts a `maxTokens` parameter (default `2048`); `compactWorldState` explicitly passes `4096`; world-state prompt caps last-session section to 1–4 sentences. `compactTurn()` removed.
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
 - `src/logger.ts` — pino-backed structured logger. Writes JSON-lines synchronously (`sync: true`). Log rotation (`omega.log → omega.prev.log`, exactly 2 sessions retained) triggered explicitly by `initLogger()`, which is idempotent and only rotates when `IS_PRODUCTION_LOG`. **Pino instance is lazy** (`getPino()` factory): file descriptor opened on first actual log write, always after `initLogger()` has rotated. `OMEGA_LOG_FILE` env var overrides the log path. `flushLog()` is a no-op shim. `startup()` convenience wrapper. `makeLogEntry()` factory for taxonomy-compliant discriminated union shapes.
@@ -88,10 +97,10 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 - `src/session.ts` — kept for independent tests; not imported by production code
 - `scripts/pre-commit` — versioned copy of the pre-commit hook; installed via `just install-hooks`
 - `Justfile` — includes `install-hooks` recipe
-- `plan/future.md` — backlog; `[REFACTOR] Manifest-driven redesign` at top (Steps 1–2 done, Step 3 next); ARCH-1 open; REC-2–4 open; WEB-1–6 done; TOOLS-1–3 done, TOOLS-4 open
+- `plan/future.md` — backlog; Step 3a done; 3b–3d open; ARCH-1 open; REC-2–4 open; WEB-1–6 done; TOOLS-1–3 done, TOOLS-4 open
 
 ### Web UI
 The project has a web interface under `src/web/`. Client code lives in `src/web/client/` (`App.tsx`, `main.tsx`, `style.css`). The web server entry point is `src/web/server.ts`. Layout order: `ReconnectBanner → feed (scrollable, flex:1) → StatusDot (status bar) → InputArea`. WEB-1–6 all complete.
 
 ### Recent Session
-The session was orientation-only: confirmed the `~/omega/` git workspace layout (`main`, `dev`, `plan` subdirectories) and established the correct pattern for running the stable agent (`~/omega/main`) on the dev project (`cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`). No files were modified.
+Implemented Step 3a (append-only context store). Added `src/context-store.ts` with `appendContextMessage()` and `clearContextStore()`. Wired three fire-and-forget call sites in `agent.ts` `sendMessage` (after user message push, after assistant response push, after tool results push). Each `MessageParam` is now appended as a JSONL line to `sessions/context.jsonl` as it enters `this.history`. 5 new tests; 431 total pass. Next: Step 3b (`/compact` slash command).
