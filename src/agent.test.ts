@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { estimateCost, estimateCostWithCache, isAutoApproved, isRetryable, isAuthExpired, truncateHistory, PRICING } from "./agent.js";
+import { estimateCost, estimateCostWithCache, isAutoApproved, isRetryable, isAuthExpired, isContextTooLong, truncateHistory, PRICING } from "./agent.js";
 // isAutoApproved is kept exported for logging purposes; it always returns true.
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -130,6 +130,43 @@ describe("isRetryable", () => {
   it("retries on ECONNRESET fetch error", () => {
     const resetErr = new Error("fetch failed: read ECONNRESET");
     expect(isRetryable(resetErr)).toBe(true);
+  });
+
+  it("does NOT retry on 429 'Extra usage is required for long context requests'", () => {
+    // Claude Max OAuth returns 429 with this message when the prompt exceeds
+    // the context window for the account tier. Retrying with the same payload
+    // is futile — treat as non-retryable so we fall through to graceful handling.
+    const longContextErr = Object.assign(
+      new Error("429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Extra usage is required for long context requests.\"}}"),
+      { status: 429 }
+    );
+    expect(isRetryable(longContextErr)).toBe(false);
+  });
+});
+
+// --- isContextTooLong ---
+
+describe("isContextTooLong", () => {
+  it("returns true for 429 with 'Extra usage is required for long context requests'", () => {
+    const err = Object.assign(
+      new Error("429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Extra usage is required for long context requests.\"}}"),
+      { status: 429 }
+    );
+    expect(isContextTooLong(err)).toBe(true);
+  });
+
+  it("returns false for ordinary 429 rate limit", () => {
+    const err = Object.assign(new Error("Rate limit exceeded"), { status: 429 });
+    expect(isContextTooLong(err)).toBe(false);
+  });
+
+  it("returns false for 400 prompt-too-long (different mechanism)", () => {
+    const err = Object.assign(new Error("prompt is too long"), { status: 400 });
+    expect(isContextTooLong(err)).toBe(false);
+  });
+
+  it("returns false for null", () => {
+    expect(isContextTooLong(null)).toBe(false);
   });
 });
 

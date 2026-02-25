@@ -275,6 +275,42 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect(diagContent.errorMessage).toContain("fatal fold error");
   });
 
+  it("yields a clear user-friendly error (no diagnostic) when fold fails with 'context too long' 429", async () => {
+    const worldStatePath = join(tempDir, "world-state.md");
+    const diagDir = join(tempDir, "diagnosis");
+
+    // Provider: main turn succeeds; fold call fails with the long-context 429
+    let callCount = 0;
+    const provider: StreamProvider = async () => {
+      callCount++;
+      if (callCount === 1) return makeMockStream("hello response");
+      // Simulates Claude Max OAuth 429 "long context" error
+      const err = Object.assign(
+        new Error('429 {"type":"error","error":{"type":"rate_limit_error","message":"Extra usage is required for long context requests."}}'),
+        { status: 429 }
+      );
+      throw err;
+    };
+
+    const agent = new Agent(provider, null, undefined, worldStatePath, diagDir);
+    await collectSendMessage(agent, "hello");
+    callCount = 1; // next call is the fold
+
+    const events = await collectFold(agent);
+
+    // Should emit an error event with a helpful message
+    const errorEvent = events.find(e => e.type === "error") as any;
+    expect(errorEvent).toBeDefined();
+    expect(errorEvent.error).toContain("context too long");
+    expect(errorEvent.error).toContain("/compact");
+
+    // Should NOT write a diagnostic (it's not a bug — it's a known limitation)
+    let diagFiles: string[] = [];
+    try { diagFiles = await readdir(diagDir); } catch { /* dir may not exist */ }
+    const jsonFiles = diagFiles.filter(f => f.endsWith(".json"));
+    expect(jsonFiles.length).toBe(0);
+  });
+
   it("uses the OpenAI caller for fold when OpenAI is the active provider", async () => {
     const worldStatePath = join(tempDir, "world-state.md");
 

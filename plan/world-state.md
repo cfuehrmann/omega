@@ -15,23 +15,26 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 ### Workspace Layout
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
+### Branch State
+**`dev` is 17 commits ahead of `main`**; Steps 3a–3c are complete and stable in `dev`. The operator confirmed merging `dev → main` is the correct next action before proceeding with Steps 3d or 4. Run `just gate` first, then merge.
+
 ### Context Management — TRANSITIONAL STATE
 - **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated by `foldCurrentSessionIntoWorldState()` on clean shutdown. Lives under source control.
-- **Zone 2** — turn summaries: **REMOVED** (manifest Step 2 complete). `compactTurn()` deleted from `src/compaction.ts`.
+- **Zone 2** — turn summaries: **REMOVED** (manifest Step 2 complete).
 - **Zone 3** — current turn: always verbatim, never compacted.
 - Hard message cap: 100 messages. Token budget: 100k.
 
-**Known problem:** History grows verbatim. Proactive truncation (`truncateHistory`) silently drops middle messages before each turn, which also invalidates the prompt cache prefix for the entire history — the session pays full token rate after any truncation event. `/compact` (Step 3b, done) is the near-term operator-triggered fix; Step 3d (non-destructive truncation) is the structural fix.
+**Known problem:** History grows verbatim. Proactive truncation (`truncateHistory`) silently drops middle messages before each turn, which also invalidates the prompt cache prefix — the session pays full token rate after any truncation event. `/compact` (Step 3b, done) is the operator-triggered fix; Step 3d (non-destructive truncation) is the structural fix.
 
-No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` before the fresh session starts, preserving exactly one previous session for diagnostics. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
+No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` before the fresh session starts. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
 
 ### Manifest Refactor Status
 `manifest.md` describes a major redesign. Current progress:
 - **Step 1** (DONE): System prompt decoupled from Omega's own repo. Project-agnostic prompt reads `README.md` at startup.
 - **Step 2** (DONE): Abandoned `compactAfterTurn()`. History grows verbatim.
-- **Step 3** (IN PROGRESS): Replace `MessageParam[]` history with an event-list data structure; persist by appending events to files.
+- **Step 3** (IN PROGRESS): Replace `MessageParam[]` history with an event-list data structure.
   - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl`. `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
-  - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.history` in-place and rewrites `sessions/context.jsonl` (truncate in-place, no rotation).
+  - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.history` in-place and rewrites `sessions/context.jsonl`.
   - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. 12-variant discriminated union; all events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
   - **3d** (TODO — **highest priority**): Flip the dependency — `this.history` derived from the event log; truncation becomes non-destructive. Fixes cache prefix invalidation on truncation.
 - **Step 3e** (TODO — discuss before acting): Review event completeness and UI reflection alignment. Currently not persisted: `status` (intentional — ephemeral UI noise), per-API-call `metrics` (aggregate captured in `turn_end`), `tool_result_message`. Decide guiding principle before acting.
@@ -52,7 +55,7 @@ No raw session persistence. No "resume session?" prompt. The world file is the o
 | `/compact` | Collapse history head into LLM summary, keep last 10 turns verbatim |
 | `/help` | Compact command list with provider-sensitive footer legend |
 
-Old commands `/gpt`, `/openai`, `/anthropic` are removed and yield "Unknown command". Rate-limit error messages reference `/sonnet`, `/opus`, `/codex`. Startup hint shows `/sonnet /opus /codex /compact /help`.
+Old commands `/gpt`, `/openai`, `/anthropic` are removed and yield "Unknown command". Startup hint shows `/sonnet /opus /codex /compact /help`.
 
 ### Prompt Caching Architecture
 Three cache breakpoints: system prompt, last tool definition, last history message. Within a turn's agentic loop, each successive API call gets massive cache hits on all previously-sent messages. Cross-turn, the entire accumulated history is sent verbatim, so cache hits grow with session length.

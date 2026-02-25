@@ -167,8 +167,26 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Returns true if the error is a "context too long" refusal from Claude Max's
+ * OAuth endpoint. Claude Max returns 429 (not 400) with the message
+ * "Extra usage is required for long context requests." when the prompt exceeds
+ * the context window allowed for the account tier. Retrying with the same
+ * payload is futile — this must be treated as non-retryable.
+ */
+export function isContextTooLong(err: any): boolean {
+  if (!err) return false;
+  const status = err.status ?? err.statusCode;
+  if (status !== 429) return false;
+  if (typeof err.message !== "string") return false;
+  return err.message.includes("Extra usage is required for long context requests");
+}
+
 export function isRetryable(err: any): boolean {
   if (!err) return false;
+  // A 429 from Claude Max meaning "prompt too long for your tier" is NOT transient.
+  // Exclude it before the blanket status check so we don't retry fruitlessly.
+  if (isContextTooLong(err)) return false;
   const status = err.status ?? err.statusCode;
   if (status === 429 || status === 529 || status === 500 || status === 503) return true;
   if (typeof err.message === "string") {
@@ -726,7 +744,18 @@ export class Agent {
       try {
         newState = await compactWorldState(prior, this.history, wrappedProvider, this.activeModel);
       } catch (compactErr: any) {
-        if (isAuthExpired(compactErr) && providerName === "anthropic") {
+        if (isContextTooLong(compactErr)) {
+          // Claude Max OAuth returns 429 "Extra usage is required for long context requests"
+          // when the session history is too large for the account tier. Retrying is futile.
+          // Yield a clear, actionable message and return without writing a diagnostic
+          // (this is a known limitation, not a bug).
+          logger.warn("world_state_fold_context_too_long", { hint: "session history too large; use /compact to reduce" });
+          yield {
+            type: "error",
+            error: "World state fold skipped: context too long for this account tier. Use /compact to reduce history before quitting.",
+          } as AgentEvent;
+          return;
+        } else if (isAuthExpired(compactErr) && providerName === "anthropic") {
           logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh", status: compactErr.status ?? compactErr.statusCode });
           const reauthed = await this.reinitAuth();
           if (!reauthed) {
@@ -1214,11 +1243,16 @@ export class Agent {
             };
             await sleep(waitMs, signal);
           } else if (
-            err.status === 400 &&
-            typeof err.message === "string" &&
-            err.message.includes("prompt is too long")
+            (err.status === 400 &&
+              typeof err.message === "string" &&
+              err.message.includes("prompt is too long")) ||
+            isContextTooLong(err)
           ) {
-            // Prompt too long — aggressively truncate and retry
+            // Prompt too long — aggressively truncate and retry.
+            // Two cases:
+            //   - 400 "prompt is too long" (standard Anthropic API key endpoint)
+            //   - 429 "Extra usage is required for long context requests"
+            //     (Claude Max OAuth endpoint — same root cause, different HTTP status)
             logger.warn("prompt_too_long", {
               attempt: attempt + 1,
               error: err.message,
