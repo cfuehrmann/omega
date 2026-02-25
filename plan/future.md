@@ -104,6 +104,32 @@ Acceptance criteria:
 
 Scope: ~100 lines total, no changes to agent logic.
 
+**Design note — content-addressed context index (defer to 3c or later):**
+The operator's long-term vision: each `MessageParam` in `context.jsonl` carries a
+short content hash (its stable identity). Each API call event in the event log records
+`contextHashes: string[]` — the exact ordered slice of context hashes that was sent
+in that call. This gives:
+- **Exact replay**: reconstruct precisely what the LLM saw for any call in history
+- **Diff between calls**: compare hash arrays to see what was added or dropped
+  (truncation events become visible as hash deletions)
+- **Compaction audit**: after `/compact` the hash array shrinks; before/after recorded
+- **Referential integrity**: a hash in an event log entry with no matching entry in
+  `context.jsonl` is a detectable invariant violation
+
+**Why defer past 3b:** the hash scheme requires the agentic loop to compute and record
+the hash array at every API call. `agent.ts` currently has no knowledge of `current.jsonl`
+or the event log — wiring this before 3b would be a significant cross-cutting change
+with no immediate payoff. 3b establishes `context.jsonl` as the authoritative message
+store; 3c is then the natural place to add message identity (hashes) and start recording
+hash arrays on API call events; 3d completes the picture by making `this.history`
+derived from the event log rather than maintained in parallel.
+
+**Referential integrity and session scope:** `clearContextStore()` on startup wipes
+`context.jsonl`, which would orphan any prior-session hash references. This is safe
+because `current.jsonl` (web) and `context.jsonl` are both session-scoped after the
+startup-clear fix (commit 65fa12a). Hash references only need to be valid within a
+single session.
+
 ##### Step 3d — Derive history from event log (non-destructive truncation)
 **Status: TODO**
 
