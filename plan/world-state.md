@@ -84,7 +84,7 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 `session_start`, `user_message`, `api_call_start`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `api_error`, `error`, `interrupted`, `world_state_saved`, `session_compacted`. All carry ISO `ts` timestamp.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, truncation, `PRICING` table; history grows **verbatim**; `foldCurrentSessionIntoWorldState()` async generator; `getActiveFoldProvider()`; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `flushLog()` then `writeDiagnostic()`.
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `truncateHistory()` (now also handles short-but-fat history — see Context Poison Prevention), `PRICING` table; history grows **verbatim**; `foldCurrentSessionIntoWorldState()` async generator; `getActiveFoldProvider()`; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `flushLog()` then `writeDiagnostic()`.
 - `src/session-event.ts` — `SessionEvent` discriminated union (12 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`.
 - `src/context-store.ts` — `appendContextMessage()`, `clearContextStore()`, `rotateFile()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` then creates fresh empty file — shared by both context and events stores.
 - `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold on shutdown) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
@@ -95,7 +95,15 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 - `src/terminal/input.ts` — `parseKeys`, `displayWidth`, all line-editing helpers.
 - `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput`, and all block renderers.
 - `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Calls `initLogger()` then `clearContextStore()` then `clearSessionEvents()` as first three statements (log rotation, then rotate both session files). Shutdown drains `foldCurrentSessionIntoWorldState()`.
+- `src/tools.ts` — All tool implementations. `executeTool()` applies `MAX_TOOL_OUTPUT_CHARS = 100_000` cap to all tool results before they enter history; oversized output is truncated with an actionable note.
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }`.
 
+### Context Poison Prevention
+Two bugs fixed in the same session (2026-02-25):
+
+1. **`truncateHistory` no-op when history is short but fat** (`src/agent.ts`): When history had ≤ `KEEP_RECENT_TURNS*2` (20) messages, `middle.length === 0` and the function returned history unchanged — every retry sent the same oversized payload, failing identically all 5 times. Fix: when `middle` is empty, drop from the oldest end of the tail itself, keeping at minimum the last message.
+
+2. **Tool output cap** (`src/tools.ts`): `executeTool()` now caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]` — giving the agent actionable guidance without poisoning the context window. Root cause of the bug these fixes address: `grep_files` on `sessions/events.jsonl.prev` (a JSONL file with large per-line event objects) returned 2MB of output that was stored verbatim in history and re-sent on every subsequent turn.
+
 ### Current Test Count
-461 tests across 27 files. All pass.
+470 tests across 27 files. All pass.

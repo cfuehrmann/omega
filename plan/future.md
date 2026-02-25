@@ -2,6 +2,37 @@
 
 ## Open items
 
+### [BUG FIX — DONE] Tool output cap — prevent context poisoning from large tool results
+A `grep_files` call on `sessions/events.jsonl.prev` returned 2MB of output (200 JSONL
+lines, each a large event object). This was stored verbatim in history and re-sent to
+the API on every subsequent turn, eventually causing a 641k-token prompt-too-long error.
+
+**Fixed (2026-02-25):**
+- `executeTool()` in `src/tools.ts` now applies `MAX_TOOL_OUTPUT_CHARS = 100_000` to
+  all tool results after execution, before the result enters history.
+- Oversized output is sliced and a note appended: `[truncated: tool output was N chars;
+  showing first 100000. Use offset/limit or a more specific query to see other parts.]`
+- Applies uniformly to all tools: `grep_files`, `run_command`, `read_file` (when
+  offset/limit bypass its internal cap), `fetch_url`, etc.
+- 2 new tests; 470 total, all pass.
+
+**Navigation note:** For paging through large JSONL or other files, `read_file` with
+`offset`/`limit` is the right tool — it lets you retrieve specific line ranges without
+pulling the entire file into context.
+
+### [BUG FIX — DONE] `truncateHistory` no-op on short-but-fat history
+When history had ≤ `KEEP_RECENT_TURNS*2` (20) messages, `middle.length === 0` and
+`truncateHistory` returned history unchanged — making all 5 "prompt too long" retries
+futile (identical 641k-token payload each time).
+
+**Fixed (2026-02-25):**
+- When `middle` is empty (all messages within the "always keep" tail), drop from the
+  oldest end of the tail, keeping at minimum the last message.
+- Updated the test that was encoding the buggy behaviour (`"returns all messages if
+  fewer than KEEP_RECENT_TURNS*2"`) — it now only fires when history is under budget.
+- New test: 11 huge messages (~250k estimated tokens) → result is under the 100k budget.
+- 1 test updated + 1 added; 470 total, all pass.
+
 ### [BUG FIX — DONE] Graceful handling of 'context too long' 429 on shutdown fold
 Claude Max OAuth returns 429 "Extra usage is required for long context requests"
 when the session history is too large for the account tier's context window.

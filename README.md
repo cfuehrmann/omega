@@ -40,7 +40,7 @@ If any files exist at session start, read them before doing anything else.
 |------|------|
 | `src/agent.ts` | Agent core — agentic loop, streaming, compaction, tool dispatch |
 | `src/config.ts` | Model selection, system prompt, token limits |
-| `src/tools.ts` | All tool implementations |
+| `src/tools.ts` | All tool implementations; `MAX_TOOL_OUTPUT_CHARS = 100_000` cap applied to every result |
 | `src/compaction.ts` | LLM compaction: `compactWorldState` (world-state fold on shutdown) and `compactHistory` (`/compact` command). |
 | `src/context-store.ts` | Append-only session context file (`sessions/context.jsonl`) |
 | `src/world-state.ts` | Read/write `plan/world-state.md` |
