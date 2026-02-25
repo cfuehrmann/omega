@@ -5,9 +5,9 @@ import { getAuthToken, forceRefreshToken } from "./auth.js";
 import { logger, flushLog, startup, makeLogEntry } from "./logger.js";
 import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
-import { compactWorldState } from "./compaction.js";
+import { compactWorldState, compactHistory } from "./compaction.js";
 import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
-import { appendContextMessage } from "./context-store.js";
+import { appendContextMessage, clearContextStore } from "./context-store.js";
 
 
 // --- Types ---
@@ -803,6 +803,39 @@ export class Agent {
         this.provider = "openai";
         this.activeModel = config.fallbackModel as string;
         yield { type: "status", message: `Switched to OpenAI codex (${this.activeModel})` };
+      } else if (cmd === "/compact") {
+        if (this.history.length === 0) {
+          yield { type: "status", message: "Nothing to compact — history is empty." };
+          return;
+        }
+        yield { type: "status", message: "Compacting context…" };
+        try {
+          const provider = this.getStreamProvider();
+          const { history: newHistory, originalCount, newCount } = await compactHistory(
+            this.history,
+            provider,
+            this.activeModel,
+          );
+          if (newCount === originalCount) {
+            yield { type: "status", message: `Context is already short (${originalCount} messages) — nothing compacted.` };
+          } else {
+            this.history = newHistory as Anthropic.MessageParam[];
+            // Rewrite context file to match the new shorter history.
+            if (this.contextFile !== null) {
+              await clearContextStore(this.contextFile ?? undefined);
+              for (const msg of this.history) {
+                await appendContextMessage(msg, this.contextFile ?? undefined);
+              }
+            }
+            yield {
+              type: "status",
+              message: `Context compacted: ${originalCount} → ${newCount} messages`,
+            };
+          }
+        } catch (err: any) {
+          yield { type: "error", error: `Compaction failed: ${err.message}` };
+        }
+        return;
       } else if (cmd === "/help") {
         const isOpenAi = this.provider === "openai";
         const footerLegend = isOpenAi
@@ -821,6 +854,7 @@ export class Agent {
             "/sonnet  — Anthropic claude-sonnet-4-6 (default)",
             "/opus    — Anthropic claude-opus-4-6",
             "/codex   — OpenAI Codex (gpt-5.2-codex)",
+            "/compact — collapse history head into a summary (frees context)",
             "/help    — show this help",
             ...footerLegend,
           ].join("\n"),

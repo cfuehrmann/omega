@@ -1,11 +1,11 @@
 /**
- * Tests for world-state compaction (zone 1).
+ * Tests for world-state compaction (zone 1) and history compaction (step 3b).
  * Turn compaction (zone 2) was removed in manifest Step 2.
  */
 
 import { describe, it, expect } from "bun:test";
 import type { StreamProvider } from "./agent.js";
-import { compactWorldState } from "./compaction.js";
+import { compactWorldState, compactHistory, KEEP_RECENT_TURNS } from "./compaction.js";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
 // ---------------------------------------------------------------------------
@@ -61,5 +61,71 @@ describe("compactWorldState", () => {
     const result = await compactWorldState(null, sessionHistory, provider);
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compactHistory (Step 3b)
+// ---------------------------------------------------------------------------
+
+/** Build a history of N complete message-pairs (user + assistant). */
+function makeHistory(pairs: number): MessageParam[] {
+  const msgs: MessageParam[] = [];
+  for (let i = 0; i < pairs; i++) {
+    msgs.push({ role: "user", content: `message ${i}` });
+    msgs.push({ role: "assistant", content: [{ type: "text", text: `reply ${i}` }] as any });
+  }
+  return msgs;
+}
+
+describe("compactHistory", () => {
+  it("returns history unchanged when already short enough", async () => {
+    const history = makeHistory(KEEP_RECENT_TURNS); // exactly at the threshold
+    const provider = makeMockProvider("summary"); // should not be called
+    const result = await compactHistory(history, provider);
+    expect(result.originalCount).toBe(history.length);
+    expect(result.newCount).toBe(history.length);
+    expect(result.history).toBe(history); // same reference — no copy
+  });
+
+  it("compacts when history exceeds KEEP_RECENT_TURNS pairs", async () => {
+    const pairs = KEEP_RECENT_TURNS + 3; // 3 extra pairs to compact
+    const history = makeHistory(pairs);
+    const summaryText = "Agent read several files and wrote some code.";
+    const provider = makeMockProvider(summaryText);
+
+    const result = await compactHistory(history, provider);
+
+    // New count: 1 synthetic summary + KEEP_RECENT_TURNS * 2 tail messages
+    const expectedNew = 1 + KEEP_RECENT_TURNS * 2;
+    expect(result.originalCount).toBe(pairs * 2);
+    expect(result.newCount).toBe(expectedNew);
+    expect(result.history).toHaveLength(expectedNew);
+  });
+
+  it("first message in compacted history is the synthetic summary", async () => {
+    const history = makeHistory(KEEP_RECENT_TURNS + 2);
+    const summaryText = "Refactored agent.ts.";
+    const provider = makeMockProvider(summaryText);
+
+    const { history: compacted } = await compactHistory(history, provider);
+
+    const first = compacted[0];
+    expect(first.role).toBe("user");
+    expect(typeof first.content).toBe("string");
+    expect((first.content as string)).toContain("[Compacted context summary:");
+    expect((first.content as string)).toContain(summaryText);
+  });
+
+  it("tail messages are preserved verbatim and in order", async () => {
+    const history = makeHistory(KEEP_RECENT_TURNS + 2);
+    const provider = makeMockProvider("summary");
+
+    const { history: compacted } = await compactHistory(history, provider);
+
+    // The tail should be the last KEEP_RECENT_TURNS * 2 messages of the original
+    const expectedTail = history.slice(-(KEEP_RECENT_TURNS * 2));
+    const actualTail = compacted.slice(1); // skip synthetic summary
+    expect(actualTail).toEqual(expectedTail);
   });
 });

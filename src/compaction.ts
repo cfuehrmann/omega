@@ -55,6 +55,63 @@ async function callLlm(
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Number of message-pairs (user + assistant) to keep verbatim at the tail. */
+export const KEEP_RECENT_TURNS = 10;
+
+/**
+ * Compact the in-memory history by summarising the head and keeping the tail.
+ *
+ * Returns a new (shorter) history array:
+ *   [ syntheticUserSummary, ...tail ]
+ *
+ * If history is short enough that there is nothing to compact (≤ KEEP_RECENT_TURNS
+ * message-pairs), returns the original array unchanged.
+ *
+ * @param history   The full `MessageParam[]` history array.
+ * @param provider  Stream provider for the LLM call.
+ * @param model     Model to use for summarisation.
+ * @returns         New (shorter) history array, plus counts for UI feedback.
+ */
+export async function compactHistory(
+  history: MessageParam[],
+  provider: StreamProvider,
+  model = "claude-sonnet-4-6"
+): Promise<{ history: MessageParam[]; originalCount: number; newCount: number }> {
+  const originalCount = history.length;
+
+  // Keep the last KEEP_RECENT_TURNS complete message-pairs (user + assistant).
+  // Each pair is 2 messages, so tailLength = KEEP_RECENT_TURNS * 2.
+  const tailLength = KEEP_RECENT_TURNS * 2;
+
+  if (originalCount <= tailLength) {
+    // Nothing to compact — history is already short.
+    return { history, originalCount, newCount: originalCount };
+  }
+
+  const head = history.slice(0, originalCount - tailLength);
+  const tail = history.slice(originalCount - tailLength);
+
+  const headText = serialiseMessages(head);
+
+  const prompt =
+    `Below is a portion of a conversation between an AI coding agent and the user. ` +
+    `Summarise what happened: what the user asked for, what the agent did (key tool calls and their outcomes), ` +
+    `what decisions were made, and what the resulting state is. ` +
+    `Be concise but complete — the summary will replace these messages as context for the agent going forward.\n\n` +
+    `<conversation>\n${headText}\n</conversation>\n\n` +
+    `Write a dense, factual summary in plain prose. No preamble.`;
+
+  const summary = await callLlm(prompt, provider, model);
+
+  const syntheticMessage: MessageParam = {
+    role: "user",
+    content: `[Compacted context summary: ${summary}]`,
+  };
+
+  const newHistory: MessageParam[] = [syntheticMessage, ...tail];
+  return { history: newHistory, originalCount, newCount: newHistory.length };
+}
+
 /**
  * Fold a completed session into the persistent world state.
  *

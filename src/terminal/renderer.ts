@@ -249,5 +249,5 @@ export function renderAssistantMessage(text: string, dimText?: string): string[]
 }
 
 export function renderStatus(streaming: boolean): string {
-  return dim(streaming ? "Esc to interrupt" : "Ctrl+C to quit  /sonnet /opus /codex /help");
+  return dim(streaming ? "Esc to interrupt" : "Ctrl+C to quit  /sonnet /opus /codex /compact /help");
 }
