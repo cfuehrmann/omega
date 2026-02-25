@@ -69,29 +69,28 @@ calls `compactHistory`, replaces `this.history` in-place, rewrites `sessions/con
 4 new tests (no-op when short, count correct, synthetic message shape, tail verbatim);
 438 total pass.
 
-##### Step 3c — SessionEvent type + dual-write event log
-**Status: TODO — next priority**
+##### ~~Step 3c — SessionEvent type + dual-write event log~~ — DONE
+Commit 357ec23. `src/session-event.ts` defines 12-variant `SessionEvent` discriminated
+union (session_start, user_message, api_call_start, llm_response, tool_call,
+tool_result, turn_end, api_error, error, interrupted, world_state_saved,
+session_compacted). All events carry ISO `ts` timestamp. `appendSessionEvent()` and
+`clearSessionEvents()` follow the same `null`-is-no-op pattern as `context-store.ts`.
 
-Define a `SessionEvent` discriminated union covering everything that happens in a
-session: user messages, LLM responses, tool calls, tool results, metrics, errors,
-interruptions. Wire dual-write: every `AgentEvent` yielded by `sendMessage` is also
-appended to `sessions/events.jsonl`. Purely additive — `AgentEvent` stream unchanged.
+`agent.ts` wires `logEvent()` (private, fire-and-forget) at every significant site:
+`init()` session_start, user message push, api_call_start (both providers), llm_response,
+tool_call, tool_result, interrupted, turn_end, api_error (all error paths),
+world_state_saved, session_compacted. `eventsFile` field with mock-provider heuristic
+(null when mock injected — automatic test isolation).
 
-Acceptance criteria:
-- `src/session-event.ts` defines `SessionEvent` union type (mirrors `AgentEvent` but
-  is the canonical persistent form)
-- `src/session-event.ts` exports `appendSessionEvent(e: SessionEvent): Promise<void>`
-  and `clearSessionEvents(): Promise<void>`
-- Append calls wired in `agent.ts` — same pattern as `appendContextMessage()`. The
-  agent owns its event log and writes it directly; the UI layer renders but does not
-  persist agent state. UI-agnosticism means no ANSI/WebSocket imports in the agent,
-  not that the agent can't write its own files.
-- `sessions/events.jsonl` is gitignored
-- Existing web `session-store.ts` (`sessions/current.jsonl`) is left intact for now;
-  unification deferred to a later cleanup step
-- Unit tests: round-trip serialisation of every `SessionEvent` variant
+`terminal/app.ts` calls `clearSessionEvents()` at startup alongside `clearContextStore()`.
+`sessions/events.jsonl` is gitignored (covered by `sessions/` entry).
 
-Scope: ~100 lines total, no changes to agent logic.
+**Key design decision recorded:** The agent writes its own event log directly — same
+pattern as `context.jsonl`. UI-agnosticism means no ANSI/WebSocket imports, not that
+the agent can't write its own files.
+
+19 new tests (round-trip for all 12 variants, I/O helpers, null no-op, isolation).
+457 total tests pass.
 
 **Design note — content-addressed context index (defer to 3c or later):**
 The operator's long-term vision: each `MessageParam` in `context.jsonl` carries a
