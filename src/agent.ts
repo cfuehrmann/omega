@@ -7,6 +7,7 @@ import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactWorldState } from "./compaction.js";
 import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
+import { appendContextMessage } from "./context-store.js";
 
 
 // --- Types ---
@@ -819,6 +820,7 @@ export class Agent {
     }
 
     this.history.push({ role: "user", content: userMessage });
+    appendContextMessage({ role: "user", content: userMessage }).catch(() => {}); // fire-and-forget
 
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
@@ -1274,6 +1276,7 @@ export class Agent {
 
       // Add assistant response to history
       this.history.push({ role: "assistant", content: response.content });
+      appendContextMessage({ role: "assistant", content: response.content }).catch(() => {}); // fire-and-forget
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
@@ -1355,6 +1358,7 @@ export class Agent {
 
         // Add tool results to history and continue the loop
         this.history.push({ role: "user", content: toolResults });
+        appendContextMessage({ role: "user", content: toolResults }).catch(() => {}); // fire-and-forget
         continueLoop = true;
       }
 
