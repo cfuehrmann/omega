@@ -329,9 +329,17 @@ export function truncateHistory(
   // Middle portion eligible for dropping
   const middle = working.slice(1, working.length - minKeep);
   if (middle.length === 0) {
-    // Even the tail alone exceeds budget — drop tool results from oldest tail messages
-    // to reduce size while maintaining structural validity
-    return sanitizeToolPairs(history);
+    // All messages are within the "always keep" tail — history is short but each
+    // message is enormous. We must still reduce: drop from the oldest end of the
+    // tail, keeping at minimum the very last message (the current user turn).
+    // This handles the real-world case of 11 huge messages > 641k tokens.
+    let kept = [...alwaysKeepTail];
+    let currentTokens = kept.reduce((sum, m) => sum + estimateTokens(m), 0);
+    while (currentTokens > budget && kept.length > 1) {
+      const dropped = kept.shift()!;
+      currentTokens -= estimateTokens(dropped);
+    }
+    return sanitizeToolPairs(kept);
   }
 
   // Drop from oldest middle messages first

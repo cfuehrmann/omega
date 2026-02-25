@@ -2,6 +2,23 @@
 
 ## Open items
 
+### [BUG FIX — DONE] Graceful handling of 'context too long' 429 on shutdown fold
+Claude Max OAuth returns 429 "Extra usage is required for long context requests"
+when the session history is too large for the account tier's context window.
+Previously this was misclassified as a retryable rate limit, causing a futile
+retry, crash, diagnostic write, and raw error message shown to the user.
+
+**Fixed (2026-02-25):**
+- Added `isContextTooLong()` helper that detects this specific 429.
+- Excluded it from `isRetryable()` (retrying with the same payload is futile).
+- `foldCurrentSessionIntoWorldState()` now yields a clear, actionable message:
+  *"World state fold skipped: context too long for this account tier. Use /compact
+  to reduce history before quitting."* — no diagnostic written (it's a known
+  limitation, not a bug).
+- Main agentic loop treats `isContextTooLong()` like 400 "prompt is too long":
+  truncates history and retries.
+- 6 new tests; 467 total, all pass.
+
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 

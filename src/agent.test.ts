@@ -275,14 +275,44 @@ describe("truncateHistory", () => {
     expect(result.length).toBeLessThan(msgs.length);
   });
 
-  it("returns all messages if fewer than KEEP_RECENT_TURNS*2", () => {
+  it("returns all messages if fewer than KEEP_RECENT_TURNS*2 and under budget", () => {
     const msgs = [
       makeMsg("user", SHORT),
       makeMsg("assistant", SHORT),
     ];
-    const result = truncateHistory(msgs, 1); // tiny budget
-    // With only 2 messages, nothing can be dropped
+    const result = truncateHistory(msgs, 100_000); // comfortably under budget
     expect(result.length).toBe(2);
+  });
+
+  it("reduces token count even when history has fewer than KEEP_RECENT_TURNS*2 messages but each is huge", () => {
+    // Real-world failure: 11 messages, each containing enormous tool results
+    // (641k tokens total). truncateHistory was returning history unchanged because
+    // middle.length === 0, making all 5 retries pointless.
+    const HUGE = "x".repeat(200_000); // ~50k tokens each
+    const msgs: Anthropic.MessageParam[] = [];
+    for (let i = 0; i < 5; i++) {
+      msgs.push({
+        role: "assistant",
+        content: [{ type: "tool_use", id: `t${i}`, name: "read_file", input: {} }],
+      });
+      msgs.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: `t${i}`, content: HUGE }],
+      });
+    }
+    msgs.push(makeMsg("assistant", "done"));
+    // 11 messages, < KEEP_RECENT_TURNS*2=20, but ~250k estimated tokens > 100k budget
+
+    const budget = 100_000;
+    const result = truncateHistory(msgs, budget);
+
+    const resultTokens = result.reduce((sum, m) => {
+      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      return sum + Math.ceil(text.length / 4);
+    }, 0);
+
+    expect(resultTokens).toBeLessThan(budget);
+    expect(result.length).toBeLessThan(msgs.length);
   });
 
   it("never produces orphaned tool_result without matching tool_use", () => {
