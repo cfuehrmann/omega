@@ -26,7 +26,15 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 
 **Known problem:** History grows verbatim. Proactive truncation (`truncateHistory`) silently drops middle messages before each turn, which also invalidates the prompt cache prefix — the session pays full token rate after any truncation event. `/compact` (Step 3b, done) is the operator-triggered fix; Step 3d (non-destructive truncation) is the structural fix.
 
-No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` before the fresh session starts. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
+No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` files before the fresh session starts. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
+
+### Rotated File Naming Convention
+`rotateFile()` in `src/context-store.ts` inserts `.prev` **before** the last extension, not after:
+- `context.jsonl` → `context.prev.jsonl`
+- `events.jsonl` → `events.prev.jsonl`
+- Files with no extension get `.prev` appended
+
+The exported helper `prevPath(filePath)` encapsulates this logic. The logger follows the same convention: `omega.prev.log`.
 
 ### Manifest Refactor Status
 `manifest.md` describes a major redesign. Current progress:
@@ -86,7 +94,7 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 ### Key Files
 - `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `truncateHistory()` (now also handles short-but-fat history — see Context Poison Prevention), `PRICING` table; history grows **verbatim**; `foldCurrentSessionIntoWorldState()` async generator; `getActiveFoldProvider()`; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `flushLog()` then `writeDiagnostic()`.
 - `src/session-event.ts` — `SessionEvent` discriminated union (12 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`.
-- `src/context-store.ts` — `appendContextMessage()`, `clearContextStore()`, `rotateFile()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` then creates fresh empty file — shared by both context and events stores.
+- `src/context-store.ts` — `appendContextMessage()`, `clearContextStore()`, `rotateFile()`, `prevPath()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` variant (via `prevPath()`) then creates fresh empty file — shared by both context and events stores.
 - `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold on shutdown) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
 - `src/logger.ts` — pino-backed structured logger. Log rotation (`omega.log → omega.prev.log`). **To be retired in Step 4.**
@@ -107,3 +115,7 @@ Two bugs fixed in the same session (2026-02-25):
 
 ### Current Test Count
 470 tests across 27 files. All pass.
+
+### Recent Session Outcomes
+- `rotateFile()` now inserts `.prev` before the last extension (`context.prev.jsonl`, `events.prev.jsonl`) instead of appending it, so editors apply syntax highlighting to rotated files. New `prevPath()` helper exported from `src/context-store.ts`; all tests and docs updated.
+- Added `future.md` item: decouple world-state compaction from Omega's own repo (low priority, strategically opportune after Step 4 — the fold prompt currently assumes Omega is always working on its own repo).
