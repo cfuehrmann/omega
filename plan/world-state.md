@@ -23,16 +23,16 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 
 **Known problem:** History grows verbatim. Proactive truncation (`truncateHistory`) silently drops middle messages before each turn, which also invalidates the prompt cache prefix for the entire history — the session pays full token rate after any truncation event. This makes Omega poorly suited for sustained multi-file work in a single session. Step 3b (`/compact` slash command) is the near-term fix; Step 3d (non-destructive truncation) is the structural fix.
 
-No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session now also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) as a foundation for Step 3b–3d.
+No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) as a foundation for Step 3b–3d. The file is cleared on startup so it always contains exactly the current session's messages.
 
 ### Manifest Refactor Status
 `manifest.md` describes a major redesign. Current progress:
 - **Step 1** (DONE): System prompt decoupled from Omega's own repo. Project-agnostic prompt reads `README.md` at startup.
 - **Step 2** (DONE): Abandoned `compactAfterTurn()`. Removed `compactTurn()` from `src/compaction.ts`. History grows verbatim. Prompt caching handles token efficiency.
 - **Step 3** (IN PROGRESS): Replace `MessageParam[]` history with an event-list data structure; persist by appending events to files. Broken into four sub-steps in `plan/future.md`:
-  - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl` as it is pushed. Foundation only, no behaviour change.
+  - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl` as it is pushed. File cleared on `runApp()` startup. Full test isolation: `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
   - **3b** (TODO — **highest priority**): `/compact` slash command — operator-triggered mid-session compaction. Collapses history head into a summary, preserves tail. Direct fix for the context ceiling problem.
-  - **3c** (TODO): `SessionEvent` type + dual-write to `sessions/events.jsonl`. Additive; establishes the canonical event log.
+  - **3c** (TODO): `SessionEvent` type + dual-write to `sessions/events.jsonl`. Additive; establishes the canonical event log. Design note: content-addressed context index (hash per `MessageParam`, `contextHashes[]` per API call event) deferred to 3c or later — see `plan/future.md`.
   - **3d** (TODO): Flip the dependency — `this.history` derived from the event log; truncation becomes non-destructive (produces an ephemeral API-call view, never mutates the stored history). Fixes cache prefix invalidation on truncation.
 - **Step 4** (FUTURE): Retire pino — event-list becomes the single source of truth.
 
@@ -60,6 +60,9 @@ Old commands `/gpt`, `/openai`, `/anthropic` are removed and yield "Unknown comm
 Three cache breakpoints: system prompt, last tool definition, last history message. Within a turn's agentic loop, each successive API call gets massive cache hits on all previously-sent messages. Cross-turn, the entire accumulated history is sent verbatim (no compaction since manifest Step 2), so cache hits grow with session length — the system+tools prefix (~5-7k tokens) is always cached, and an increasingly large history prefix cache-hits on successive turns.
 
 **Cache/truncation interaction:** Truncation drops messages from the middle of history, shifting all subsequent message positions. This makes the history byte sequence differ from the cached prefix at the first dropped position, causing a full cache miss on all history tokens. The system+tools cache breakpoints (1 and 2) are unaffected. This is a fundamental tension in the current architecture: caching wants a stable append-only prefix; truncation mutates it. Step 3d resolves this by making truncation produce an ephemeral API-call view rather than mutating stored history.
+
+### Test Isolation — Never Pollute Production Files
+Tests must **never** write to `sessions/`, `diagnosis/`, `omega.log`, or any other production file. The mechanism: `Agent` constructor applies a mock-provider heuristic — when a mock `streamProvider` is injected and no explicit path is given, `worldStatePath`, `diagDir`, and `contextFile` all default to `null` (disabled). `appendContextMessage`/`clearContextStore` treat `null` as a no-op. e2e tests use `sessions-test/` not `sessions/`. If a new production side-effect file is added, follow the same pattern: `filePath: string | null` parameter, `null` disables, constructor heuristic sets `null` for mock provider, isolation test added. Violating this contaminates production session data with test noise.
 
 ### Event Taxonomy (coordinate-system model)
 Events are named as messages between three parties: **agent**, **user**, **llm**. Direction is explicit in the name.
@@ -91,16 +94,4 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 - `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput`, and all block renderers. Both tool render functions display the last 6 chars of `id` as a dim bracketed suffix.
 - `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`, `printPrompt`, and the full agent-event loop. Calls `initLogger()` then `clearContextStore()` as its first two statements (log rotation, then fresh session context). Shutdown drains `foldCurrentSessionIntoWorldState()`. Bracketed paste mode enabled at startup. Prints diagnostic warnings at startup and after each turn footer.
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }`; Anthropic format: `new: <non-cached, 1×>  write: <cache-write, 1.25×>  read: <cache-read, 0.1×>  out: <output>  cost: $X  saved: $X`; OpenAI shows `new:` and `out:` only with `cost: <=<ceiling>`
-- `src/tools.ts` — `read_file`, `write_file`, `edit_file`, `list_files`, `run_command`, `run_background`, `kill_process`, `web_search`, `fetch_url`, `grep_files`, `find_files`; `executeWebSearch` dispatches to `executeBraveSearch()` (primary) or `executeDuckDuckGoSearch()` (fallback); `executeGrepFiles` probes for `rg` via `which`, falls back to `grep -rn`, caps at `max_results` (default 200); `executeFindFiles` probes for `fd` via `which`, falls back to `find -name`
-- `src/openai.ts` — OpenAI Codex integration; `callOpenAi()` accepts and forwards `AbortSignal`; `buildOpenAiRequest()` translates Anthropic-format history to OpenAI Responses API flat `input` array
-- `src/config.ts` — model (`claude-sonnet-4-6`), fallbackModel (`gpt-5.2-codex`), system prompt (project-agnostic), token limits
-- `src/session.ts` — kept for independent tests; not imported by production code
-- `scripts/pre-commit` — versioned copy of the pre-commit hook; installed via `just install-hooks`
-- `Justfile` — includes `install-hooks` recipe
-- `plan/future.md` — backlog; Step 3a done; 3b–3d open; ARCH-1 open; REC-2–4 open; WEB-1–6 done; TOOLS-1–3 done, TOOLS-4 open
-
-### Web UI
-The project has a web interface under `src/web/`. Client code lives in `src/web/client/` (`App.tsx`, `main.tsx`, `style.css`). The web server entry point is `src/web/server.ts`. Layout order: `ReconnectBanner → feed (scrollable, flex:1) → StatusDot (status bar) → InputArea`. WEB-1–6 all complete.
-
-### Recent Session
-Fixed test isolation for production session files. Tests were polluting `sessions/context.jsonl` because `appendContextMessage()` defaulted to the production path. Fixed by: (1) `appendContextMessage`/`clearContextStore` now accept `string | null` — `null` is a no-op; (2) `Agent` constructor adds `contextFile: string | null | undefined` with the same mock-provider heuristic already used for `worldStatePath` and `diagDir` — mock provider with no explicit path → `null`; (3) `runApp()` calls `clearContextStore()` on startup so the terminal session always starts with an empty `sessions/context.jsonl`. 3 new isolation tests; 434 total. Also recorded the content-addressed context index design (hash per `MessageParam`, `contextHashes[]` per API call event) in `future.md` under Step 3c, deferred past 3b.
+- `src/tools.ts` — `read_file`, `write_file`, `edit_file`, `list_files`, `run_command`, `run_background`, `kill_process`, `web_search`, `fetch_url`, `grep_files`, `find_files`; `executeWebSearch` dispatches to `executeBraveSearch()` (primary) or
