@@ -142,14 +142,47 @@ Acceptance criteria:
 Scope: ~150 lines changed + tests. Riskiest step — touches agentic loop core invariant.
 Do last among the structural steps.
 
-#### Step 4: Retire pino (manifest item)
-**Status: TODO — after Step 3d**
+#### Step 3e — Review: event completeness and UI reflection
+**Status: TODO — discuss before acting**
 
-Once the event-list (3c/3d) is the single source of truth, pino becomes redundant.
-Remove `src/logger.ts`, all `logger.*` call sites (~30–40), `omega.log`/`omega.prev.log`.
-Replace with event-log appends where the information is worth keeping.
+Two related questions to review together:
+
+1. **Event completeness:** Are all `SessionEvent` variants the right ones? Are there
+   meaningful events that are not yet persisted? Currently missing from persistence:
+   `status` (intentionally — ephemeral UI noise), `metrics` (per-API-call; `turn_end`
+   captures the aggregate), `tool_result_message` (the synthetic user→LLM message
+   listing tool results; individual `tool_result` events are persisted). Decide whether
+   any of these should be added.
+
+2. **UI reflection:** Is everything shown in the terminal UI also persisted, and
+   vice-versa? Currently: the terminal renders `status`, `text` (streaming fragments),
+   `tool_result_message`, and `metrics` which are not persisted. The terminal does NOT
+   render anything that is only in the event log (session-start is log-only). Decide
+   whether the event log and the terminal UI should be brought into closer alignment,
+   and what the guiding principle is (e.g. "anything that could matter for a post-mortem
+   should be persisted; anything that is pure streaming scaffolding need not be").
+
+Act on this after the pino retirement decision is clearer — the two are related since
+dropping pino will require the event log to cover anything currently only in `omega.log`.
+
+#### Step 4: Retire pino (manifest item)
+**Status: TODO — can proceed independently of Step 3d; should happen before or alongside it**
+
+Pino currently provides two things the `SessionEvent` log does not:
+- Debug-level fire-hose (every API call, tool call, token counts) — overlaps heavily
+  with `events.jsonl` now that Step 3c is done.
+- A handful of infra-only events not yet in `SessionEvent`: `oauth_reauthed`,
+  `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`,
+  `world_state_updated`.
+
+The mid-term plan is to add those infra events as `SessionEvent` variants (or a
+separate `InfraEvent` sidecar if we want to keep them separate), then drop pino
+entirely. The `omega.log` file and its rotation logic go away; `events.jsonl` /
+`events.jsonl.prev` become the single persistent record.
 
 Acceptance criteria:
+- All infra-only pino events represented in the event log (as new `SessionEvent`
+  variants or a separate file)
 - `src/logger.ts` deleted
 - No `pino` import anywhere in `src/`
 - `omega.log` / `omega.prev.log` removed from `.gitignore` (no longer produced)

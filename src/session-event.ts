@@ -17,6 +17,7 @@
 
 import { appendFile, writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
+import { rotateFile } from "./context-store.js";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ToolResult } from "./tools.js";
 import type { TurnMetrics, ProviderName } from "./agent.js";
@@ -173,18 +174,14 @@ export async function appendSessionEvent(
 }
 
 /**
- * Truncate the events file to empty.
- * Called at session start so the file always contains only the current session.
- * No-op if the file does not exist or filePath is null.
+ * Rotate events.jsonl → events.jsonl.prev, then start fresh.
+ * Called at session start so the previous session's events are preserved
+ * for diagnostics while the current session starts clean.
+ * No-op if filePath is null (test isolation).
  */
 export async function clearSessionEvents(
   filePath: string | null = DEFAULT_EVENTS_FILE
 ): Promise<void> {
   if (filePath === null) return;
-  try {
-    await writeFile(filePath, "", "utf-8");
-  } catch (err: any) {
-    if (err.code === "ENOENT") return;
-    throw err;
-  }
+  await rotateFile(filePath);
 }

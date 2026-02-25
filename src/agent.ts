@@ -848,7 +848,7 @@ export class Agent {
             this.history = newHistory as Anthropic.MessageParam[];
             // Rewrite context file to match the new shorter history.
             if (this.contextFile !== null) {
-              await clearContextStore(this.contextFile ?? undefined);
+              await clearContextStore(this.contextFile ?? undefined, { rotate: false });
               for (const msg of this.history) {
                 await appendContextMessage(msg, this.contextFile ?? undefined);
               }

@@ -194,22 +194,32 @@ describe("appendSessionEvent", () => {
 });
 
 describe("clearSessionEvents", () => {
+  const PREV_FILE = TEST_FILE + ".prev";
+
   beforeEach(() => {
     mkdirSync("sessions-test", { recursive: true });
     if (existsSync(TEST_FILE)) rmSync(TEST_FILE);
+    if (existsSync(PREV_FILE)) rmSync(PREV_FILE);
   });
   afterEach(() => {
     if (existsSync(TEST_FILE)) rmSync(TEST_FILE);
+    if (existsSync(PREV_FILE)) rmSync(PREV_FILE);
   });
 
-  it("truncates the file to empty", async () => {
+  it("rotates: current file ends up empty, previous content preserved as .prev", async () => {
     await appendSessionEvent({ type: "interrupted", ts: "2025-01-01T00:00:00.000Z" }, TEST_FILE);
     await clearSessionEvents(TEST_FILE);
     expect(readFileSync(TEST_FILE, "utf-8")).toBe("");
+    expect(existsSync(PREV_FILE)).toBe(true);
+    const prev = readFileSync(PREV_FILE, "utf-8");
+    expect(JSON.parse(prev.trim()).type).toBe("interrupted");
   });
 
-  it("is a no-op when file does not exist", async () => {
-    await expect(clearSessionEvents(TEST_FILE)).resolves.toBeUndefined();
+  it("creates fresh empty file when nothing existed before", async () => {
+    await clearSessionEvents(TEST_FILE);
+    expect(existsSync(TEST_FILE)).toBe(true);
+    expect(readFileSync(TEST_FILE, "utf-8")).toBe("");
+    expect(existsSync(PREV_FILE)).toBe(false);
   });
 
   it("null path is a no-op — no file created", async () => {
