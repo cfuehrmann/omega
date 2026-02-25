@@ -46,6 +46,14 @@ pushing tool results. All writes fire-and-forget (errors silently dropped —
 non-critical I/O). `sessions/context.jsonl` is gitignored under `sessions/`.
 5 new tests; 431 total pass.
 
+**Follow-up fix (commit 9cc6634):** Tests were polluting `sessions/context.jsonl`.
+Fixed by adding `contextFile: string | null | undefined` field to `Agent` with the
+same mock-provider heuristic as `worldStatePath`/`diagDir` — when a mock
+`streamProvider` is injected without an explicit path, `contextFile` defaults to
+`null` (disabled). `appendContextMessage` and `clearContextStore` accept `null` as
+a no-op. README and system prompt updated with test-isolation rules. Polluted file
+cleared. 3 new isolation tests; 434 total.
+
 ##### Step 3b — `/compact` slash command (manual mid-session compaction)
 **Status: TODO — highest priority, directly addresses context ceiling**
 
