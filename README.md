@@ -41,7 +41,8 @@ If any files exist at session start, read them before doing anything else.
 | `src/agent.ts` | Agent core — agentic loop, streaming, compaction, tool dispatch |
 | `src/config.ts` | Model selection, system prompt, token limits |
 | `src/tools.ts` | All tool implementations |
-| `src/compaction.ts` | Turn and world-state LLM compaction |
+| `src/compaction.ts` | World-state LLM compaction (`compactWorldState`). Turn compaction removed. |
+| `src/context-store.ts` | Append-only session context file (`sessions/context.jsonl`) |
 | `src/world-state.ts` | Read/write `plan/world-state.md` |
 | `src/terminal/app.ts` | Terminal UI entry point |
 | `src/terminal/input.ts` | Key parsing, line editing |
