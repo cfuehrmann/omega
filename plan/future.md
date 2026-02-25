@@ -27,13 +27,111 @@ world-state). `compactWorldState()` kept in `compaction.ts` for the fold.
 All 426 tests pass. Event taxonomy updated: `agent_to_llm_compact_turn` and
 `agent_to_agent_compact_turn` events removed. world-state.md and future.md updated.
 
-#### Step 3: Event-list session model (manifest item)
+#### Step 3: Event-list session model (manifest item) — IN PROGRESS (sub-steps below)
+
 Replace the current `MessageParam[]` history with an event-list data structure that
 serves operation, diagnostics, and UI visualization. Persist by appending events to
 files. Context messages in a separate file with hash-based cross-referencing.
 
+Sub-steps are ordered so that **earlier ones directly extend Omega's capacity for
+long sessions** — the primary practical constraint right now. History grows verbatim
+(since Step 2), truncation silently drops middle messages and invalidates the prompt
+cache prefix. The fix lands in 3b (manual compaction) and 3d (non-destructive truncation).
+
+##### Step 3a — Append-only context file — DONE
+Commit 551d676. `src/context-store.ts` exports `appendContextMessage()` and
+`clearContextStore()`. Three call sites in `agent.ts` `sendMessage`: after
+pushing the user message, after pushing the assistant response, and after
+pushing tool results. All writes fire-and-forget (errors silently dropped —
+non-critical I/O). `sessions/context.jsonl` is gitignored under `sessions/`.
+5 new tests; 431 total pass.
+
+##### Step 3b — `/compact` slash command (manual mid-session compaction)
+**Status: TODO — highest priority, directly addresses context ceiling**
+
+Add a `/compact` slash command. When invoked it:
+1. Takes `this.history` excluding the last 10 message-pairs (the "tail")
+2. Sends the head to the LLM with a summarisation prompt (reuses `compaction.ts` infra)
+3. Replaces the head with a single synthetic `user` message:
+   `"[Compacted context summary: ...]"`
+4. Keeps the tail verbatim
+5. Writes the new (shorter) history back to `sessions/context.jsonl`
+6. Emits a `status` event so the UI confirms what happened
+
+Effect: a 60k-token history collapses to ~3–5k tokens of summary + the tail.
+Cache prefix is preserved from the summary message forward. Operator controls timing.
+
+Acceptance criteria:
+- `/compact` recognised in `app.ts` slash-command handler (alongside `/sonnet`, `/opus`, etc.)
+- Calls a new `compactHistory(history, model)` function in `src/compaction.ts`
+- `compactHistory` preserves the last `KEEP_RECENT_TURNS` (10) message-pairs verbatim
+- Summary message has a distinguishable marker (e.g. `[Compacted context summary: …]`)
+  so it can be identified in diagnostics and future replay
+- `this.history` is mutated in-place (or replaced) after compaction
+- Context file is rewritten to match the new (shorter) history
+- Terminal UI prints a confirmation: `"Context compacted: N → M messages"`
+- Unit tests: `compactHistory` with a mock LLM call; verify shape of returned history
+
+Scope: ~80 lines. No changes to the agentic loop.
+
+##### Step 3c — SessionEvent type + dual-write event log
+**Status: TODO**
+
+Define a `SessionEvent` discriminated union covering everything that happens in a
+session: user messages, LLM responses, tool calls, tool results, metrics, errors,
+interruptions. Wire dual-write: every `AgentEvent` yielded by `sendMessage` is also
+appended to `sessions/events.jsonl`. Purely additive — `AgentEvent` stream unchanged.
+
+Acceptance criteria:
+- `src/session-event.ts` defines `SessionEvent` union type (mirrors `AgentEvent` but
+  is the canonical persistent form)
+- `src/session-event.ts` exports `appendSessionEvent(e: SessionEvent): Promise<void>`
+  and `clearSessionEvents(): Promise<void>`
+- Append calls wired in `app.ts` (terminal) and `server.ts` (web) — not in `agent.ts`,
+  so the agent core remains UI-agnostic
+- `sessions/events.jsonl` is gitignored
+- Existing web `session-store.ts` (`sessions/current.jsonl`) is left intact for now;
+  unification deferred to a later cleanup step
+- Unit tests: round-trip serialisation of every `SessionEvent` variant
+
+Scope: ~100 lines total, no changes to agent logic.
+
+##### Step 3d — Derive history from event log (non-destructive truncation)
+**Status: TODO**
+
+Flip the dependency. `this.history` becomes a view derived from `sessions/events.jsonl`
+rather than the canonical store. Truncation becomes `buildApiMessages(history, budget)`
+— same algorithm, but result is ephemeral (used only for the API call), never stored
+back into `this.history`. The canonical record is never shortened.
+
+Effect: truncation no longer invalidates the cache prefix. Every API call still sends
+a (possibly truncated) view; but the stored history is always complete and append-only.
+On startup, history is reconstructed by replaying the event log.
+
+Acceptance criteria:
+- `truncateHistory()` renamed to `buildApiMessages()`, return value passed to API call
+  directly rather than assigned to `this.history`
+- `Agent` constructor replays `sessions/events.jsonl` to rebuild `this.history` on
+  startup if the file exists
+- All existing `truncateHistory` unit tests pass against `buildApiMessages`
+- New test: after a "truncation" call, `this.history` is unchanged
+- All existing integration tests pass
+
+Scope: ~150 lines changed + tests. Riskiest step — touches agentic loop core invariant.
+Do last among the structural steps.
+
 #### Step 4: Retire pino (manifest item)
-Once the event-list is the single source of truth, pino becomes redundant. Remove it.
+**Status: TODO — after Step 3d**
+
+Once the event-list (3c/3d) is the single source of truth, pino becomes redundant.
+Remove `src/logger.ts`, all `logger.*` call sites (~30–40), `omega.log`/`omega.prev.log`.
+Replace with event-log appends where the information is worth keeping.
+
+Acceptance criteria:
+- `src/logger.ts` deleted
+- No `pino` import anywhere in `src/`
+- `omega.log` / `omega.prev.log` removed from `.gitignore` (no longer produced)
+- All tests pass
 
 ---
 
