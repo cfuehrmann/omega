@@ -910,6 +910,11 @@ export async function executeTool(
           durationMs: performance.now() - startTime,
         };
     }
+    const MAX_TOOL_OUTPUT_CHARS = 100_000;
+    if (output.length > MAX_TOOL_OUTPUT_CHARS) {
+      output = output.slice(0, MAX_TOOL_OUTPUT_CHARS) +
+        `\n\n[truncated: tool output was ${output.length} chars; showing first ${MAX_TOOL_OUTPUT_CHARS}. Use offset/limit or a more specific query to see other parts.]`;
+    }
     return {
       output,
       isError: false,

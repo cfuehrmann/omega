@@ -176,6 +176,31 @@ describe("executeTool: run_command", () => {
   });
 });
 
+// --- tool output cap ---
+
+describe("executeTool: output cap", () => {
+  it("caps run_command output at MAX_TOOL_OUTPUT_CHARS and appends a note", async () => {
+    const { writeFile, unlink } = await import("fs/promises");
+    const tmpPath = `/tmp/omega-cap-cmd-${Date.now()}.txt`;
+    // Write 200k chars to a file, then cat it — output will exceed the 100k cap
+    await writeFile(tmpPath, "z".repeat(200_000));
+    try {
+      const result = await executeTool("run_command", { command: `cat ${tmpPath}` });
+      expect(result.isError).toBe(false);
+      expect(result.output.length).toBeLessThan(110_000); // well under 200k
+      expect(result.output).toContain("[truncated");
+      expect(result.output).toMatch(/tool output was \d+ chars/);
+    } finally {
+      await unlink(tmpPath).catch(() => {});
+    }
+  });
+
+  it("does not truncate output under the cap", async () => {
+    const result = await executeTool("run_command", { command: "echo hi" });
+    expect(result.output).not.toContain("[truncated");
+  });
+});
+
 // --- executeTool: list_files ---
 
 describe("executeTool: list_files", () => {
