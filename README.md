@@ -83,6 +83,27 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 - Run tests: `bun test`. Run e2e: `just e2e`.
 - A `Justfile` exists — run `just --list` for available recipes.
 
+### Test isolation — never pollute production files
+
+Tests must **never** write to `sessions/`, `diagnosis/`, `omega.log`, or any
+other production file. The rule and the mechanism:
+
+- `Agent` constructor: when a mock `streamProvider` is injected and no explicit
+  path is given, `worldStatePath`, `diagDir`, and `contextFile` all default to
+  `null` (disabled). Tests get isolation automatically — just pass a mock
+  provider and omit the path arguments.
+- `OMEGA_LOG_FILE` env var: redirect the pino log in tests that exercise the
+  logger directly. The test infra sets this to a tmp path automatically for
+  any test that imports `src/logger.ts`.
+- e2e tests: use `sessions-test/` (not `sessions/`) via the fixture server in
+  `e2e/fixtures/test-server.ts`.
+
+**If you add a new production side-effect file** (any append/write that
+`agent.ts` or other core code performs): follow the same pattern — add a
+`filePath: string | null` parameter, disable on `null`, and apply the same
+constructor heuristic (mock provider → null). Add an isolation test like the
+ones in `agent-integration.test.ts` ("does not write to ... when ... is not given").
+
 ## Git hooks
 
 A pre-commit hook runs `bun test --bail` before every commit, making it

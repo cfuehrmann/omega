@@ -123,10 +123,10 @@ function makeTempDir(): string {
 // Pollution guard
 // ---------------------------------------------------------------------------
 
-// Tests that use a mock StreamProvider must never write to the real world-state
-// file. This test proves the contract: when a streamProvider is given without
-// a worldStatePath, Agent must NOT write to any project world-state file.
-describe("Agent — test isolation (no production world-state pollution)", () => {
+// Tests that use a mock StreamProvider must never write to production files.
+// These tests prove the contract: when a streamProvider is given without
+// explicit paths, Agent must NOT write to any production file.
+describe("Agent — test isolation (no production file pollution)", () => {
   it("does not write to any world-state file when worldStatePath is not given", async () => {
     const { homedir } = await import("os");
     const omegaDir = join(homedir(), ".local", "share", "omega");
@@ -146,6 +146,25 @@ describe("Agent — test isolation (no production world-state pollution)", () =>
     // World state files must be unchanged
     const after = existsSync(omegaDir) ? rds(omegaDir).filter(f => f.startsWith("world-")).length : 0;
     expect(after).toBe(before);
+  });
+
+  it("does not write to sessions/context.jsonl when no contextFile is given", async () => {
+    const { existsSync, statSync } = await import("fs");
+    const contextPath = join(process.cwd(), "sessions", "context.jsonl");
+
+    // Record the file size before (it may already exist from a real session)
+    const sizeBefore = existsSync(contextPath) ? statSync(contextPath).size : -1;
+
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+
+    // No contextFile passed — must not append to production context file
+    const agent = new Agent(mockProvider);
+    await collectEvents(agent, "should not write context");
+    await Bun.sleep(100);
+
+    const sizeAfter = existsSync(contextPath) ? statSync(contextPath).size : -1;
+    expect(sizeAfter).toBe(sizeBefore);
   });
 });
 

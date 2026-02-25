@@ -447,6 +447,9 @@ export class Agent {
   /** Diagnostic output directory. null = disabled (tests). undefined = use default ("diagnosis/"). */
   private readonly diagDir: string | null | undefined;
 
+  /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
+  private readonly contextFile: string | null | undefined;
+
   /** Zone 1: world state loaded at session start, injected into system prompt. */
   private worldStateContent: string | null = null;
 
@@ -458,9 +461,11 @@ export class Agent {
 
   /**
    * Production: new Agent()
-   *   — uses real Anthropic client, world state at project-specific path
+   *   — uses real Anthropic client, world state at project-specific path,
+   *     context appended to sessions/context.jsonl
    * Test: new Agent(mockProvider, null, undefined, worldStatePath)
-   *   — uses mock provider, world state disabled unless worldStatePath given
+   *   — uses mock provider; world state, diagnostics, and context file are
+   *     all disabled unless an explicit path is given.
    *
    * The sessionDir parameter is removed. Session persistence no longer exists.
    * The second parameter (formerly sessionDir) is kept as a positional placeholder
@@ -471,7 +476,8 @@ export class Agent {
     _sessionDir?: string | null,
     openAiCaller: typeof callOpenAi = callOpenAi,
     worldStatePath?: string | null,
-    diagDir?: string | null
+    diagDir?: string | null,
+    contextFile?: string | null
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
@@ -489,6 +495,12 @@ export class Agent {
       this.diagDir = null;
     } else {
       this.diagDir = diagDir;
+    }
+    // Context file: if mock provider given and contextFile not specified, disable.
+    if (streamProvider !== undefined && contextFile === undefined) {
+      this.contextFile = null;
+    } else {
+      this.contextFile = contextFile;
     }
   }
 
@@ -820,7 +832,9 @@ export class Agent {
     }
 
     this.history.push({ role: "user", content: userMessage });
-    appendContextMessage({ role: "user", content: userMessage }).catch(() => {}); // fire-and-forget
+    if (this.contextFile !== null) {
+      appendContextMessage({ role: "user", content: userMessage }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
+    }
 
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
@@ -1276,7 +1290,9 @@ export class Agent {
 
       // Add assistant response to history
       this.history.push({ role: "assistant", content: response.content });
-      appendContextMessage({ role: "assistant", content: response.content }).catch(() => {}); // fire-and-forget
+      if (this.contextFile !== null) {
+        appendContextMessage({ role: "assistant", content: response.content }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
+      }
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
@@ -1358,7 +1374,9 @@ export class Agent {
 
         // Add tool results to history and continue the loop
         this.history.push({ role: "user", content: toolResults });
-        appendContextMessage({ role: "user", content: toolResults }).catch(() => {}); // fire-and-forget
+        if (this.contextFile !== null) {
+          appendContextMessage({ role: "user", content: toolResults }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
+        }
         continueLoop = true;
       }
 

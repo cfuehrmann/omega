@@ -71,6 +71,17 @@ describe("appendContextMessage", () => {
   });
 });
 
+describe("appendContextMessage — null path (test-isolation mode)", () => {
+  it("is a no-op and does not create any file", async () => {
+    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
+    // Should not throw and must not create any file
+    await appendContextMessage(msg, null);
+
+    const { existsSync } = await import("fs");
+    expect(existsSync(contextFile)).toBe(false);
+  });
+});
+
 describe("clearContextStore", () => {
   it("truncates the file to empty when it exists", async () => {
     const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
@@ -85,5 +96,10 @@ describe("clearContextStore", () => {
   it("is a no-op when the file does not exist (no error)", async () => {
     // Should not throw
     await clearContextStore(contextFile);
+  });
+
+  it("is a no-op when filePath is null", async () => {
+    // Should not throw
+    await clearContextStore(null);
   });
 });

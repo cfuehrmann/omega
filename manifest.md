@@ -69,3 +69,30 @@ that it becomes possible asap that we have a stable version of Omega which we
 can use do develop the in-progress version of Omega. Currently, we have use Git
 worktree, with a stable but old-fashioned version in `~/omega/main` and the
 in-progress version at `~/omega/dev`.
+
+## Step 3 sub-step breakdown
+
+Step 3 is broken into four ordered sub-steps. The ordering prioritises **extending
+Omega's practical capacity for long sessions** before completing the full architectural
+vision. See `plan/future.md` for detailed acceptance criteria on each.
+
+### 3a — Append-only context file (foundation)
+Add `src/context-store.ts`. Append each `MessageParam` to `sessions/context.jsonl`
+as it is pushed to `this.history`. No behaviour change; pure foundation for 3b–3d.
+
+### 3b — `/compact` slash command (immediate capacity fix)
+Operator-triggered mid-session compaction. Collapses the history head into an LLM
+summary, preserves the last 10 message-pairs verbatim, rewrites the context file.
+Directly addresses the context ceiling: a 60k-token session collapses to ~3–5k tokens
+of summary + recent tail. Cache prefix is preserved from the summary message forward.
+
+### 3c — SessionEvent type + dual-write event log
+Define `SessionEvent` union type in `src/session-event.ts`. Append every agent event
+to `sessions/events.jsonl`. Additive — establishes the canonical persistent event log
+that will replace pino in Step 4.
+
+### 3d — Non-destructive truncation (structural cache fix)
+Flip the dependency: `this.history` is derived from the event log; it is never
+mutated by truncation. `truncateHistory` becomes `buildApiMessages` — produces an
+ephemeral view for a single API call. The canonical record is always complete and
+append-only. Prompt cache prefix is never invalidated by truncation.

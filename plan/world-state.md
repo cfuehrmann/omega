@@ -103,4 +103,4 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 The project has a web interface under `src/web/`. Client code lives in `src/web/client/` (`App.tsx`, `main.tsx`, `style.css`). The web server entry point is `src/web/server.ts`. Layout order: `ReconnectBanner → feed (scrollable, flex:1) → StatusDot (status bar) → InputArea`. WEB-1–6 all complete.
 
 ### Recent Session
-Implemented Step 3a (append-only context store). Added `src/context-store.ts` with `appendContextMessage()` and `clearContextStore()`. Wired three fire-and-forget call sites in `agent.ts` `sendMessage` (after user message push, after assistant response push, after tool results push). Each `MessageParam` is now appended as a JSONL line to `sessions/context.jsonl` as it enters `this.history`. 5 new tests; 431 total pass. Next: Step 3b (`/compact` slash command).
+Implemented Step 3a (append-only

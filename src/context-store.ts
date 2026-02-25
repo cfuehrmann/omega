@@ -15,11 +15,13 @@ export const DEFAULT_CONTEXT_FILE = "sessions/context.jsonl";
 /**
  * Append a single MessageParam to the context JSONL file.
  * Creates the file (and parent directories) if they don't exist.
+ * Pass `null` to disable the write (used when running in test mode).
  */
 export async function appendContextMessage(
   msg: Anthropic.MessageParam,
-  filePath: string = DEFAULT_CONTEXT_FILE
+  filePath: string | null = DEFAULT_CONTEXT_FILE
 ): Promise<void> {
+  if (filePath === null) return; // disabled — no-op
   await mkdir(dirname(filePath), { recursive: true });
   await appendFile(filePath, JSON.stringify(msg) + "\n", "utf-8");
 }
@@ -27,11 +29,12 @@ export async function appendContextMessage(
 /**
  * Truncate the context file to empty.
  * Used before rewriting it (e.g. after /compact collapses history).
- * No-op if the file does not exist.
+ * No-op if the file does not exist or filePath is null.
  */
 export async function clearContextStore(
-  filePath: string = DEFAULT_CONTEXT_FILE
+  filePath: string | null = DEFAULT_CONTEXT_FILE
 ): Promise<void> {
+  if (filePath === null) return; // disabled — no-op
   try {
     await writeFile(filePath, "", "utf-8");
   } catch (err: any) {
