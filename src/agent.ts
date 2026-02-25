@@ -8,6 +8,7 @@ import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactWorldState, compactHistory } from "./compaction.js";
 import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
 import { appendContextMessage, clearContextStore } from "./context-store.js";
+import { appendSessionEvent, clearSessionEvents, DEFAULT_EVENTS_FILE, type SessionEvent } from "./session-event.js";
 
 
 // --- Types ---
@@ -450,6 +451,9 @@ export class Agent {
   /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly contextFile: string | null | undefined;
 
+  /** Events JSONL file path. null = disabled (tests). undefined = use production default. */
+  private readonly eventsFile: string | null | undefined;
+
   /** Zone 1: world state loaded at session start, injected into system prompt. */
   private worldStateContent: string | null = null;
 
@@ -477,7 +481,8 @@ export class Agent {
     openAiCaller: typeof callOpenAi = callOpenAi,
     worldStatePath?: string | null,
     diagDir?: string | null,
-    contextFile?: string | null
+    contextFile?: string | null,
+    eventsFile?: string | null
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
@@ -502,6 +507,24 @@ export class Agent {
     } else {
       this.contextFile = contextFile;
     }
+    // Events file: if mock provider given and eventsFile not specified, disable.
+    if (streamProvider !== undefined && eventsFile === undefined) {
+      this.eventsFile = null;
+    } else {
+      this.eventsFile = eventsFile;
+    }
+  }
+
+  /** Resolve the events file path (null = disabled). */
+  private resolveEventsFile(): string | null {
+    return this.eventsFile === undefined ? DEFAULT_EVENTS_FILE : this.eventsFile;
+  }
+
+  /** Fire-and-forget append of a SessionEvent. Errors silently dropped. */
+  private logEvent(event: SessionEvent): void {
+    const path = this.resolveEventsFile();
+    if (path === null) return;
+    appendSessionEvent(event, path).catch(() => {});
   }
 
   async init(): Promise<string> {
@@ -524,11 +547,13 @@ export class Agent {
       });
       this.authMode = "oauth";
       startup({ authMode: "claude-max", model: config.model });
+      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider });
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";
       startup({ authMode: "api-key", model: config.model });
+      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider });
       return "api-key (pay-per-token ⚠)";
     } else {
       throw new Error(
@@ -741,6 +766,7 @@ export class Agent {
       await writeWorldState(newState, path);
       logger.info("world_state_updated", { path });
 
+      this.logEvent({ type: "world_state_saved", ts: new Date().toISOString(), path, charCount: newState.length });
       yield {
         type: "world_state_saved",
         path,
@@ -827,6 +853,7 @@ export class Agent {
                 await appendContextMessage(msg, this.contextFile ?? undefined);
               }
             }
+            this.logEvent({ type: "session_compacted", ts: new Date().toISOString(), originalCount, newCount });
             yield {
               type: "status",
               message: `Context compacted: ${originalCount} → ${newCount} messages`,
@@ -869,6 +896,7 @@ export class Agent {
     if (this.contextFile !== null) {
       appendContextMessage({ role: "user", content: userMessage }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
     }
+    this.logEvent({ type: "user_message", ts: new Date().toISOString(), content: userMessage });
 
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
@@ -982,6 +1010,7 @@ export class Agent {
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
+        this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: this.history.length });
         logger.debug(makeLogEntry("message", {
           sender: "agent",
           receiver: "llm",
@@ -1006,6 +1035,7 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
+        this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length });
         logger.debug(makeLogEntry("message", {
           sender: "agent",
           receiver: "llm",
@@ -1079,6 +1109,8 @@ export class Agent {
               url: getOpenAiUrl(),
               error: err.message ?? String(err),
             } as AgentEvent;
+            this.logEvent({ type: "api_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
+            this.logEvent({ type: "error", ts: new Date().toISOString(), error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." });
             yield { type: "error", error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
             return;
           }
@@ -1131,6 +1163,7 @@ export class Agent {
           if (aborted) {
             // Don't add the partial assistant turn to history.
             // The user message stays — it was real input.
+            this.logEvent({ type: "interrupted", ts: new Date().toISOString() });
             yield { type: "interrupted" };
             return;
           }
@@ -1160,6 +1193,8 @@ export class Agent {
                 url: "https://api.anthropic.com/v1/messages",
                 error: err.message ?? String(err),
               } as AgentEvent;
+              this.logEvent({ type: "api_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
+              this.logEvent({ type: "error", ts: new Date().toISOString(), error: "OAuth token expired and refresh failed." });
               yield { type: "error", error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
               return;
             }
@@ -1246,9 +1281,12 @@ export class Agent {
               url: "https://api.anthropic.com/v1/messages",
               error: err.message ?? String(err),
             } as AgentEvent;
+            this.logEvent({ type: "api_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
             if (isRetryable(err)) {
+              this.logEvent({ type: "error", ts: new Date().toISOString(), error: "Anthropic rate limit." });
               yield { type: "error", error: "Anthropic rate limit. Try /codex to switch providers." };
             } else {
+              this.logEvent({ type: "error", ts: new Date().toISOString(), error: `API error: ${err.message ?? err}` });
               yield { type: "error", error: `API error: ${err.message ?? err}` };
             }
             return;
@@ -1306,6 +1344,21 @@ export class Agent {
         content: response.content,
         raw: useOpenAi ? (response as any).raw : undefined,
       };
+      this.logEvent({
+        type: "llm_response",
+        ts: new Date().toISOString(),
+        provider: useOpenAi ? "openai" : "anthropic",
+        url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
+        stopReason: response.stop_reason ?? "unknown",
+        model: activeModel,
+        content: response.content,
+        usage: {
+          input_tokens: response.usage.input_tokens ?? 0,
+          output_tokens: response.usage.output_tokens,
+          cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens ?? undefined,
+          cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? undefined,
+        },
+      });
       logger.debug(makeLogEntry("message", {
         sender: "llm",
         receiver: "agent",
@@ -1350,6 +1403,7 @@ export class Agent {
             input: toolUse.input,
             formatted,
           } as AgentEvent;
+          this.logEvent({ type: "tool_call", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, input: toolUse.input });
           logger.debug(makeLogEntry("message", {
             sender: "agent",
             receiver: "agent",
@@ -1378,6 +1432,7 @@ export class Agent {
             formatted,
             result,
           } as AgentEvent;
+          this.logEvent({ type: "tool_result", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, isError: result.isError, durationMs: result.durationMs, outputLength: result.output.length });
           logger.debug(makeLogEntry("message", {
             sender: "agent",
             receiver: "agent",
@@ -1447,18 +1502,20 @@ export class Agent {
       savedUsd: totalSavedUsd,
       toolCalls: allToolCalls,
     }));
+    const turnEndMetrics: TurnMetrics = {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      costUsd: totalCostUsd,
+      savedUsd: totalSavedUsd,
+      ttftMs: totalTtftMs,
+      totalMs: performance.now() - (this._apiCallCount > 0 ? 0 : 0), // wall time not tracked here
+      cacheCreationTokens: totalCacheCreationTokens,
+      cacheReadTokens: totalCacheReadTokens,
+    };
+    this.logEvent({ type: "turn_end", ts: new Date().toISOString(), provider: endProvider, model: endModel, metrics: turnEndMetrics, toolCalls: allToolCalls });
     yield {
       type: "turn_end",
-      metrics: {
-        inputTokens: totalInputTokens,
-        outputTokens: totalOutputTokens,
-        costUsd: totalCostUsd,
-        savedUsd: totalSavedUsd,
-        ttftMs: totalTtftMs,
-        totalMs: performance.now() - (this._apiCallCount > 0 ? 0 : 0), // wall time not tracked here
-        cacheCreationTokens: totalCacheCreationTokens,
-        cacheReadTokens: totalCacheReadTokens,
-      },
+      metrics: turnEndMetrics,
       toolCalls: allToolCalls,
       provider: endProvider,
       model: endModel,

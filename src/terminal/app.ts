@@ -11,6 +11,7 @@ import { formatTurnFooter } from "../turn-footer.js";
 import { checkDiagnostics } from "../diagnosis.js";
 import { initLogger } from "../logger.js";
 import { clearContextStore } from "../context-store.js";
+import { clearSessionEvents } from "../session-event.js";
 import {
   bold, dim, green, red, yellow, magenta,
   TIME_WIDTH, INDENT, INDENT2,
@@ -129,6 +130,7 @@ async function shutdown(agent: Agent, code: number = 0): Promise<never> {
 export async function runApp(): Promise<void> {
   initLogger(); // must be first — rotates omega.log before any writes
   await clearContextStore(); // fresh session — discard previous session's context
+  await clearSessionEvents(); // fresh session — discard previous session's events
   const agent = new Agent();
 
   try {

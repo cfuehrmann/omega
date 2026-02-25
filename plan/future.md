@@ -82,8 +82,10 @@ Acceptance criteria:
   is the canonical persistent form)
 - `src/session-event.ts` exports `appendSessionEvent(e: SessionEvent): Promise<void>`
   and `clearSessionEvents(): Promise<void>`
-- Append calls wired in `app.ts` (terminal) and `server.ts` (web) — not in `agent.ts`,
-  so the agent core remains UI-agnostic
+- Append calls wired in `agent.ts` — same pattern as `appendContextMessage()`. The
+  agent owns its event log and writes it directly; the UI layer renders but does not
+  persist agent state. UI-agnosticism means no ANSI/WebSocket imports in the agent,
+  not that the agent can't write its own files.
 - `sessions/events.jsonl` is gitignored
 - Existing web `session-store.ts` (`sessions/current.jsonl`) is left intact for now;
   unification deferred to a later cleanup step
