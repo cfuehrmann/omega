@@ -174,7 +174,7 @@ export async function appendSessionEvent(
 }
 
 /**
- * Rotate events.jsonl → events.jsonl.prev, then start fresh.
+ * Rotate events.jsonl → events.prev.jsonl, then start fresh.
  * Called at session start so the previous session's events are preserved
  * for diagnostics while the current session starts clean.
  * No-op if filePath is null (test isolation).

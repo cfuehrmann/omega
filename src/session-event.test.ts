@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, readFileSync, mkdirSync, rmSync } from "fs";
+import { prevPath } from "./context-store.js";
 import {
   appendSessionEvent,
   clearSessionEvents,
@@ -194,7 +195,7 @@ describe("appendSessionEvent", () => {
 });
 
 describe("clearSessionEvents", () => {
-  const PREV_FILE = TEST_FILE + ".prev";
+  const PREV_FILE = prevPath(TEST_FILE);
 
   beforeEach(() => {
     mkdirSync("sessions-test", { recursive: true });

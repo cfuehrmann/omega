@@ -3,7 +3,7 @@
 ## Open items
 
 ### [BUG FIX — DONE] Tool output cap — prevent context poisoning from large tool results
-A `grep_files` call on `sessions/events.jsonl.prev` returned 2MB of output (200 JSONL
+A `grep_files` call on `sessions/events.prev.jsonl` returned 2MB of output (200 JSONL
 lines, each a large event object). This was stored verbatim in history and re-sent to
 the API on every subsequent turn, eventually causing a 641k-token prompt-too-long error.
 
@@ -49,6 +49,46 @@ retry, crash, diagnostic write, and raw error message shown to the user.
 - Main agentic loop treats `isContextTooLong()` like 400 "prompt is too long":
   truncates history and retries.
 - 6 new tests; 467 total, all pass.
+
+### [REFACTOR] Decouple world-state compaction from Omega's own repo
+**Priority: LOW — strategically opportune after Step 4 (pino retirement) is done**
+
+`foldCurrentSessionIntoWorldState()` in `src/agent.ts` and `compactWorldState()` in
+`src/compaction.ts` hard-code Omega's own planning convention: they read and write
+`plan/world-state.md` in the project directory, passing `priorWorldState` and
+`sessionHistory` to produce a new Omega-specific world-state summary.
+
+This is a residual coupling: Omega-as-a-general-agent compacts the world state using
+a prompt that assumes it is always working on Omega's own repo. If Omega is pointed at
+a different project, the fold still produces an Omega-flavoured summary rather than a
+project-appropriate one.
+
+**What decoupling would look like:**
+- The system prompt currently loaded from `plan/world-state.md` at startup is
+  Omega-specific. For a foreign project, the project's own `README.md` already
+  provides orientation; the world-state file is Omega's own metadata, not the
+  project's.
+- The fold prompt should either be absent for foreign projects, or configurable via
+  a `plan/world-state-prompt.md` file in the project (optional; fold disabled if
+  missing).
+- Alternatively: fold is always enabled but the prompt is generic ("summarise what
+  happened this session in a way useful for the next session").
+
+**Why defer:**
+- Currently Omega is only used on its own repo in practice; the coupling causes no
+  harm and the generic-fold alternative is untested.
+- Step 4 (pino retirement) changes `agent.ts` significantly; defer to avoid churn.
+- This is a design question (what is the right cross-project fold semantics?) as much
+  as an implementation task — discuss before acting.
+
+**Acceptance criteria (once decided):**
+- `foldCurrentSessionIntoWorldState()` does not assume the project is Omega's own repo
+- Fold prompt is either configurable per-project or generic
+- When pointed at a foreign project with no `plan/world-state.md`, fold either
+  produces a generic summary or is cleanly disabled
+- All existing fold tests pass; new test for foreign-project path
+
+---
 
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
@@ -226,7 +266,7 @@ Pino currently provides two things the `SessionEvent` log does not:
 The mid-term plan is to add those infra events as `SessionEvent` variants (or a
 separate `InfraEvent` sidecar if we want to keep them separate), then drop pino
 entirely. The `omega.log` file and its rotation logic go away; `events.jsonl` /
-`events.jsonl.prev` become the single persistent record.
+`events.prev.jsonl` become the single persistent record.
 
 Acceptance criteria:
 - All infra-only pino events represented in the event log (as new `SessionEvent`

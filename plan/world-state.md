@@ -16,7 +16,7 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
 ### Branch State
-**`dev` is 17 commits ahead of `main`**; Steps 3a–3c are complete and stable in `dev`. The operator confirmed merging `dev → main` is the correct next action before proceeding with Steps 3d or 4. Run `just gate` first, then merge.
+**`dev` is ahead of `main`**; Steps 3a–3c are complete and stable in `dev`. The operator confirmed merging `dev → main` is the correct next action before proceeding with Steps 3d or 4. Run `just gate` first, then merge.
 
 ### Context Management — TRANSITIONAL STATE
 - **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated by `foldCurrentSessionIntoWorldState()` on clean shutdown. Lives under source control.
@@ -103,7 +103,7 @@ Two bugs fixed in the same session (2026-02-25):
 
 1. **`truncateHistory` no-op when history is short but fat** (`src/agent.ts`): When history had ≤ `KEEP_RECENT_TURNS*2` (20) messages, `middle.length === 0` and the function returned history unchanged — every retry sent the same oversized payload, failing identically all 5 times. Fix: when `middle` is empty, drop from the oldest end of the tail itself, keeping at minimum the last message.
 
-2. **Tool output cap** (`src/tools.ts`): `executeTool()` now caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]` — giving the agent actionable guidance without poisoning the context window. Root cause of the bug these fixes address: `grep_files` on `sessions/events.jsonl.prev` (a JSONL file with large per-line event objects) returned 2MB of output that was stored verbatim in history and re-sent on every subsequent turn.
+2. **Tool output cap** (`src/tools.ts`): `executeTool()` now caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]` — giving the agent actionable guidance without poisoning the context window. Root cause of the bug these fixes address: `grep_files` on `sessions/events.prev.jsonl` (a JSONL file with large per-line event objects) returned 2MB of output that was stored verbatim in history and re-sent on every subsequent turn.
 
 ### Current Test Count
 470 tests across 27 files. All pass.

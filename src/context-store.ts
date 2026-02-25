@@ -13,7 +13,24 @@ import type Anthropic from "@anthropic-ai/sdk";
 export const DEFAULT_CONTEXT_FILE = "sessions/context.jsonl";
 
 /**
- * Rotate `filePath` → `filePath.prev` (overwriting any existing .prev),
+ * Derive the "previous" rotation path for a given file path.
+ *
+ * The `.prev` marker is inserted before the last extension so that the
+ * rotated file retains a recognised extension (e.g. for syntax highlighting
+ * in editors):
+ *
+ *   context.jsonl  → context.prev.jsonl
+ *   events.jsonl   → events.prev.jsonl
+ *   noext          → noext.prev
+ */
+export function prevPath(filePath: string): string {
+  const lastDot = filePath.lastIndexOf(".");
+  if (lastDot === -1) return filePath + ".prev";
+  return filePath.slice(0, lastDot) + ".prev" + filePath.slice(lastDot);
+}
+
+/**
+ * Rotate `filePath` → `prevPath(filePath)` (overwriting any existing prev),
  * then create a fresh empty file at `filePath`.
  *
  * If `filePath` does not exist, just ensures the directory exists and
@@ -23,10 +40,10 @@ export const DEFAULT_CONTEXT_FILE = "sessions/context.jsonl";
  * diagnostics while the current session starts clean.
  */
 export async function rotateFile(filePath: string): Promise<void> {
-  const prevPath = filePath + ".prev";
+  const prev = prevPath(filePath);
   await mkdir(dirname(filePath), { recursive: true });
   try {
-    await rename(filePath, prevPath);
+    await rename(filePath, prev);
   } catch (err: any) {
     if (err.code !== "ENOENT") throw err;
     // file didn't exist — no rename needed, just fall through to create it
@@ -49,7 +66,7 @@ export async function appendContextMessage(
 }
 
 /**
- * Rotate context.jsonl → context.jsonl.prev, then start fresh.
+ * Rotate context.jsonl → context.prev.jsonl, then start fresh.
  * Called at session start. Preserves the previous session's context for
  * diagnostics. Pass `null` to disable (test isolation).
  *

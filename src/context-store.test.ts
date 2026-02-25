@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { appendContextMessage, clearContextStore, rotateFile } from "./context-store.js";
+import { appendContextMessage, clearContextStore, rotateFile, prevPath } from "./context-store.js";
 import { mkdtemp, rm, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -92,7 +92,7 @@ describe("rotateFile", () => {
     expect(current).toBe("");
 
     // .prev contains the previous content
-    const prev = await readFile(contextFile + ".prev", "utf-8");
+    const prev = await readFile(prevPath(contextFile), "utf-8");
     expect(prev.trim()).not.toBe("");
     const parsed = JSON.parse(prev.trim());
     expect(parsed).toEqual(msg);
@@ -103,7 +103,7 @@ describe("rotateFile", () => {
     await rotateFile(contextFile);
     const current = await readFile(contextFile, "utf-8");
     expect(current).toBe("");
-    expect(existsSync(contextFile + ".prev")).toBe(false);
+    expect(existsSync(prevPath(contextFile))).toBe(false);
   });
 
   it("overwrites an existing .prev file", async () => {
@@ -116,7 +116,7 @@ describe("rotateFile", () => {
     await rotateFile(contextFile);
 
     // .prev should now contain session 2 (session 1 is gone — only 1 prev retained)
-    const prev = await readFile(contextFile + ".prev", "utf-8");
+    const prev = await readFile(prevPath(contextFile), "utf-8");
     const parsed = JSON.parse(prev.trim());
     expect(parsed.content).toBe("session 2");
   });
@@ -131,7 +131,7 @@ describe("clearContextStore", () => {
 
     const current = await readFile(contextFile, "utf-8");
     expect(current).toBe("");
-    const prev = await readFile(contextFile + ".prev", "utf-8");
+    const prev = await readFile(prevPath(contextFile), "utf-8");
     expect(JSON.parse(prev.trim())).toEqual(msg);
   });
 
@@ -143,7 +143,7 @@ describe("clearContextStore", () => {
 
     const current = await readFile(contextFile, "utf-8");
     expect(current).toBe("");
-    expect(existsSync(contextFile + ".prev")).toBe(false);
+    expect(existsSync(prevPath(contextFile))).toBe(false);
   });
 
   it("is a no-op when the file does not exist (no error)", async () => {
