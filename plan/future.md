@@ -75,15 +75,10 @@ Omega has taken itself down in the past through:
 - stuck-streaming after restart (open turn in session file → UI permanently locked)
 - silent structural breakage (terminal module rename broke exports; only caught by manual run)
 
-#### REC-1 (HIGH): pre-commit test gate
-Add `.git/hooks/pre-commit` that runs `bun test --bail`. Makes it mechanically
-impossible to commit a self-edit that breaks the test suite. Currently the discipline
-is manual; one lapse takes Omega down.
-
-Acceptance criteria:
-- `.git/hooks/pre-commit` exists, is executable, runs `bun test --bail`
-- Committing with a failing test aborts the commit with a clear message
-- The hook is also documented in the Justfile (`just install-hooks` or similar)
+#### ~~REC-1 (HIGH): pre-commit test gate~~ — DONE
+Commit b33ecff. `scripts/pre-commit` runs `bun test --bail`; installed as
+`.git/hooks/pre-commit` (chmod +x). `just install-hooks` recipe added to
+Justfile. Documented in README.md under "Git hooks". All 430 tests pass.
 
 #### REC-2 (HIGH): Structural invariant tests for web server entry point
 `entry.test.ts` guards `ui-raw.ts` and terminal modules. Same pattern needed for
