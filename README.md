@@ -41,7 +41,7 @@ If any files exist at session start, read them before doing anything else.
 | `src/agent.ts` | Agent core — agentic loop, streaming, compaction, tool dispatch |
 | `src/config.ts` | Model selection, system prompt, token limits |
 | `src/tools.ts` | All tool implementations |
-| `src/compaction.ts` | World-state LLM compaction (`compactWorldState`). Turn compaction removed. |
+| `src/compaction.ts` | LLM compaction: `compactWorldState` (world-state fold on shutdown) and `compactHistory` (`/compact` command). |
 | `src/context-store.ts` | Append-only session context file (`sessions/context.jsonl`) |
 | `src/world-state.ts` | Read/write `plan/world-state.md` |
 | `src/terminal/app.ts` | Terminal UI entry point |
@@ -62,6 +62,7 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 | `/sonnet` | Anthropic `claude-sonnet-4-6` (default) |
 | `/opus` | Anthropic `claude-opus-4-6` |
 | `/codex` | OpenAI `gpt-5.2-codex` |
+| `/compact` | Collapse history head into an LLM summary, keep last 10 turns verbatim |
 | `/help` | Command list |
 
 ## Git discipline

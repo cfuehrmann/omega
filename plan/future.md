@@ -54,36 +54,23 @@ same mock-provider heuristic as `worldStatePath`/`diagDir` — when a mock
 a no-op. README and system prompt updated with test-isolation rules. Polluted file
 cleared. 3 new isolation tests; 434 total.
 
-##### Step 3b — `/compact` slash command (manual mid-session compaction)
-**Status: TODO — highest priority, directly addresses context ceiling**
+##### ~~Step 3b — `/compact` slash command (manual mid-session compaction)~~ — DONE
+Commit f2d5631. `compactHistory(history, provider, model)` added to `src/compaction.ts`:
+summarises the head via LLM, keeps the last `KEEP_RECENT_TURNS` (10) message-pairs
+verbatim, returns `{ history, originalCount, newCount }`. New history starts with a
+synthetic `[Compacted context summary: …]` user message. Returns history unchanged
+(same reference) if already short enough.
 
-Add a `/compact` slash command. When invoked it:
-1. Takes `this.history` excluding the last 10 message-pairs (the "tail")
-2. Sends the head to the LLM with a summarisation prompt (reuses `compaction.ts` infra)
-3. Replaces the head with a single synthetic `user` message:
-   `"[Compacted context summary: ...]"`
-4. Keeps the tail verbatim
-5. Writes the new (shorter) history back to `sessions/context.jsonl`
-6. Emits a `status` event so the UI confirms what happened
-
-Effect: a 60k-token history collapses to ~3–5k tokens of summary + the tail.
-Cache prefix is preserved from the summary message forward. Operator controls timing.
-
-Acceptance criteria:
-- `/compact` recognised in `app.ts` slash-command handler (alongside `/sonnet`, `/opus`, etc.)
-- Calls a new `compactHistory(history, model)` function in `src/compaction.ts`
-- `compactHistory` preserves the last `KEEP_RECENT_TURNS` (10) message-pairs verbatim
-- Summary message has a distinguishable marker (e.g. `[Compacted context summary: …]`)
-  so it can be identified in diagnostics and future replay
-- `this.history` is mutated in-place (or replaced) after compaction
-- Context file is rewritten to match the new (shorter) history
-- Terminal UI prints a confirmation: `"Context compacted: N → M messages"`
-- Unit tests: `compactHistory` with a mock LLM call; verify shape of returned history
-
-Scope: ~80 lines. No changes to the agentic loop.
+`/compact` handler added to the slash-command block in `agent.ts` `sendMessage`:
+calls `compactHistory`, replaces `this.history` in-place, rewrites `sessions/context.jsonl`
+(clear + re-append), emits `"Context compacted: N → M messages"` status event or
+`"already short"` if nothing to do. `/help` and the renderer status hint updated.
+`clearContextStore` promoted to static import (was a redundant dynamic import).
+4 new tests (no-op when short, count correct, synthetic message shape, tail verbatim);
+438 total pass.
 
 ##### Step 3c — SessionEvent type + dual-write event log
-**Status: TODO**
+**Status: TODO — next priority**
 
 Define a `SessionEvent` discriminated union covering everything that happens in a
 session: user messages, LLM responses, tool calls, tool results, metrics, errors,
