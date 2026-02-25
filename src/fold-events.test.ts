@@ -209,30 +209,31 @@ describe("foldCurrentSessionIntoWorldState — structured events", () => {
     expect(content).toContain("recovered world state");
   });
 
-  it("compactTurn uses the active model (e.g. opus) not hardcoded sonnet", async () => {
-    // This tests that when /opus is active, turn compaction calls the provider
-    // with model=claude-opus-4-6, not the hardcoded claude-sonnet-4-6.
+  it("fold uses the active model (e.g. opus) not hardcoded sonnet", async () => {
+    // This tests that when /opus is active, foldCurrentSessionIntoWorldState calls
+    // the provider with model=claude-opus-4-6, not the hardcoded claude-sonnet-4-6.
     const modelsUsed: string[] = [];
+    const worldStatePath = join(tempDir, "world-state.md");
     const capturingProvider: StreamProvider = async (params) => {
       modelsUsed.push(params.model);
       return makeMockStream("summary text");
     };
 
-    const agent = new Agent(capturingProvider, null, undefined, null);
+    const agent = new Agent(capturingProvider, null, undefined, worldStatePath);
     // Switch to Opus
     for await (const _ of agent.sendMessage("/opus", async () => true)) { /* drain */ }
-    // Reset captured models (the /opus command doesn't call the provider)
+    modelsUsed.length = 0; // reset — /opus doesn't call provider
+
+    // Send a real message
+    for await (const _ of agent.sendMessage("hello", async () => true)) { /* drain */ }
+    expect(modelsUsed).toHaveLength(1);
+    expect(modelsUsed[0]).toBe("claude-opus-4-6");
     modelsUsed.length = 0;
 
-    // Send a real message — this triggers a turn + compactAfterTurn
-    for await (const _ of agent.sendMessage("hello", async () => true)) { /* drain */ }
-
-    // Give compactAfterTurn (fire-and-forget) a moment to run
-    await new Promise(r => setTimeout(r, 50));
-
-    // The main turn call uses opus; compaction should also use opus
+    // Fold should also use opus
+    for await (const _ of agent.foldCurrentSessionIntoWorldState()) { /* drain */ }
+    expect(modelsUsed.length).toBeGreaterThanOrEqual(1);
     expect(modelsUsed.every(m => m === "claude-opus-4-6")).toBe(true);
-    expect(modelsUsed.length).toBeGreaterThanOrEqual(2); // at least 1 main call + 1 compaction
   });
 
   it("writes a diagnostic snapshot when fold fails fatally (after all retries)", async () => {

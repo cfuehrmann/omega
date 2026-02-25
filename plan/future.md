@@ -18,10 +18,14 @@ source repo being AI-friendly."
 - Structural invariant tests updated (`src/planning-files.test.ts`).
 - All 430 unit + 27 e2e tests pass.
 
-#### Step 2: Abandon automatic compaction (manifest item)
-Replace automatic turn compaction (Zone 2) with verbatim history + prompt caching.
-World-state compaction becomes manual (operator-triggered), producing a "bookmark"
-in the event log rather than shortening context.
+#### ~~Step 2: Abandon automatic compaction (manifest item)~~ — DONE
+Removed `compactAfterTurn()`, `compactionQueue`, `zone2Summary`, `zone3Start`
+tracking from `agent.ts`. Removed `compactTurn()` from `src/compaction.ts`.
+History now grows verbatim; prompt caching provides token efficiency.
+`foldCurrentSessionIntoWorldState()` retained (Zone 1 still useful for cross-session
+world-state). `compactWorldState()` kept in `compaction.ts` for the fold.
+All 426 tests pass. Event taxonomy updated: `agent_to_llm_compact_turn` and
+`agent_to_agent_compact_turn` events removed. world-state.md and future.md updated.
 
 #### Step 3: Event-list session model (manifest item)
 Replace the current `MessageParam[]` history with an event-list data structure that
@@ -80,11 +84,14 @@ Commit b33ecff. `scripts/pre-commit` runs `bun test --bail`; installed as
 `.git/hooks/pre-commit` (chmod +x). `just install-hooks` recipe added to
 Justfile. Documented in README.md under "Git hooks". All 430 tests pass.
 
-#### REC-2 (HIGH): Structural invariant tests for web server entry point
+#### REC-2 (LOW): Structural invariant tests for web server entry point
 `entry.test.ts` guards `ui-raw.ts` and terminal modules. Same pattern needed for
 `src/web/server.ts` exports (`runWebApp`, `performWebShutdown`, `closeOpenTurn`,
 `shouldLogEvent`). If someone renames or restructures `server.ts`, `bun test`
 currently won't catch it.
+
+**Deprioritised**: `server.ts` is not in the hot path for the manifest refactor.
+Can be done anytime; low risk in practice.
 
 Acceptance criteria:
 - `entry.test.ts` (or a new `web-entry.test.ts`) imports and asserts callability
@@ -102,11 +109,14 @@ Acceptance criteria:
 - History is always well-formed (every `tool_use` has a matching `tool_result`)
 - Test: abort signal fires during a tool call; next API call succeeds
 
-#### REC-4 (MEDIUM): History validation before every API call
+#### REC-4 (LOW): History validation before every API call
 Add a cheap sanity check at the top of the agentic loop: every `tool_use` block
 in history must have a matching `tool_result` in the next message. If not, write a
 diagnostic and abort the turn rather than sending malformed history to Anthropic
 and getting a cryptic 400. Circuit-breaker pattern; real fix is REC-3.
+
+**Deprioritised**: Will be superseded by Step 3's event-list model, which
+structurally prevents malformed history. Implement only if REC-3 stalls.
 
 Acceptance criteria:
 - `validateHistory(messages)` function returns a list of violations

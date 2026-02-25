@@ -1,16 +1,12 @@
 /**
- * LLM-based context compaction for Omega.
+ * LLM-based world-state compaction for Omega.
  *
- * Two compaction operations:
+ * compactWorldState(priorWorldState, sessionHistory, provider)
+ *   Folds a completed session into the persistent world state.
+ *   Returns the new world state string (to be written to disk).
  *
- * 1. compactTurn(turn, previousSummary, provider)
- *    Summarises a completed turn (zone 2 entry) into a 2-message synthetic
- *    exchange: { role:"user", content:"[summary] ..." } + { role:"assistant", content:"Understood." }
- *    If previousSummary is given, the new summary folds it in.
- *
- * 2. compactWorldState(priorWorldState, sessionHistory, provider)
- *    Folds a completed session into the persistent world state.
- *    Returns the new world state string (to be written to disk).
+ * Turn compaction (zone 2) has been removed — history now grows verbatim
+ * and relies on prompt caching for token efficiency (manifest Step 2).
  */
 
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
@@ -58,43 +54,6 @@ async function callLlm(
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-/**
- * Compact a completed turn into a 2-message synthetic exchange.
- *
- * @param turn - The raw messages for this turn (user prompt + all tool loops + final answer).
- * @param previousSummary - The current zone 2 summary (null if this is the first turn).
- * @param provider - The stream provider to use for the LLM call.
- * @returns A 2-element array: [synthetic user summary message, assistant ack].
- */
-export async function compactTurn(
-  turn: MessageParam[],
-  previousSummary: string | null,
-  provider: StreamProvider,
-  model = "claude-sonnet-4-6"
-): Promise<MessageParam[]> {
-  const turnText = serialiseMessages(turn);
-
-  const priorSection = previousSummary
-    ? `Here is the existing session summary so far:\n<existing_summary>\n${previousSummary}\n</existing_summary>\n\n`
-    : "";
-
-  const prompt = `${priorSection}Here is the most recent conversation turn to fold in:\n<turn>\n${turnText}\n</turn>\n\nProduce an updated session summary that captures:
-- What the user asked for
-- What tools were called and what they found (briefly)
-- What decisions were made or conclusions reached
-- Any files created, modified, or deleted
-- Any errors encountered and how they were resolved
-
-Write in past tense, be concise. No preamble, just the summary text.`;
-
-  const summary = await callLlm(prompt, provider, model, 2048);
-
-  return [
-    { role: "user", content: `[session summary up to this point]\n${summary}` },
-    { role: "assistant", content: "Understood, I have the session context." },
-  ];
-}
 
 /**
  * Fold a completed session into the persistent world state.

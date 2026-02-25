@@ -953,248 +953,54 @@ describe("Agent — tool_result_message event", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Zone 2 compaction — turn summary
+// History grows verbatim (no zone 2 compaction after manifest Step 2)
 // ---------------------------------------------------------------------------
 
-describe("Agent — zone 2 compaction", () => {
-  it("after a turn, history is replaced with 2-message synthetic exchange", async () => {
-    // Two providers: one for the real turn, one for the compaction call.
-    // The agent re-uses the same streamProvider for compaction.
-    let callCount = 0;
-    const mockProvider: StreamProvider = async () => {
-      callCount++;
-      if (callCount === 1) {
-        // The actual user turn
-        return makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
-      }
-      // Compaction call
-      return makeMockStream(
-        textStreamEvents("User said hi. Assistant responded with Hello!."),
-        textMessage("User said hi. Assistant responded with Hello!.")
-      );
-    };
-    const tempDir = makeTempDir();
-    const agent = new Agent(mockProvider, null, undefined, tempDir + "/world-state.md");
+describe("Agent — verbatim history (no turn compaction)", () => {
+  it("after a turn, history contains the verbatim user+assistant exchange", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
+    const agent = new Agent(mockProvider);
     await collectEvents(agent, "hi");
-    // Wait for async compaction
-    await Bun.sleep(50);
     const history = agent.getHistory();
-    // Should be exactly 2 messages: synthetic user summary + assistant ack
+    // History has 2 messages: user + assistant (verbatim, no compaction)
     expect(history).toHaveLength(2);
     expect(history[0].role).toBe("user");
     expect(history[1].role).toBe("assistant");
-    expect(typeof history[0].content).toBe("string");
-    expect((history[0].content as string)).toContain("[session summary");
+    expect(history[0].content).toBe("hi");
   });
 
-  it("compaction racing with next turn does not corrupt history (tool_use/result orphan bug)", async () => {
-    // Regression test: if compaction of turn N completes after turn N+1 has already
-    // pushed tool_use+tool_result to history, the compaction must NOT overwrite those
-    // messages. Doing so leaves orphaned tool_result blocks with no matching tool_use,
-    // causing Anthropic API 400 "unexpected tool_use_id found in tool_result blocks".
-    //
-    // The race to reproduce:
-    //   1. Turn 1 ends. compactAfterTurn fires (async, fire-and-forget).
-    //   2. User immediately sends turn 2. sendMessage starts.
-    //   3. Turn 2 calls provider → gets tool_use → pushes to history.
-    //   4. Turn 2 calls provider again → gets final text.
-    //   5. Meanwhile compaction of turn 1 finishes and sets this.history = [2-msg summary].
-    //      This WIPES the tool_use+tool_result blocks from turn 2.
-    //   6. Next API call has tool_result with no matching tool_use → 400 error.
-    //
-    // In this test we control the compaction timing with a promise latch.
-
-    let compactionLatch: () => void = () => {};
-    const compactionBlocked = new Promise<void>((resolve) => {
-      compactionLatch = resolve;
-    });
-
-    // Track which call is which by label, not by count, to be robust to ordering.
-    type CallLabel = "turn1" | "compact" | "turn2-tool" | "turn2-final";
-    const callLabels: CallLabel[] = [];
-    let callIndex = 0;
-
-    // Call ordering (JS single-threaded, async interleaving):
-    //   call 0 = turn 1 (plain text)
-    //   call 1 = compact (starts immediately after turn 1; blocked on latch)
-    //   call 2 = turn 2 first call (tool_use)
-    //   call 3 = turn 2 second call (final text, after tool result pushed to history)
-    //
-    // The race: compact is unblocked by the turn2-tool stream's finalMessage().
-    // At that point turn 2 has pushed [tool_use] to history but NOT yet [tool_result].
-    // Compact then finishes, wiping [tool_use] from history.
-    // Turn 2 pushes [tool_result], then makes call 3 — but [tool_use] is gone → 400.
-    //
-    // We simulate this by releasing the latch inside the turn2-tool finalMessage wrapper.
-    const scripts: Array<{ label: CallLabel; fn: () => Promise<any> }> = [
-      {
-        label: "turn1",
-        fn: async () =>
-          makeMockStream(textStreamEvents("turn 1 done"), textMessage("turn 1 done")),
-      },
-      {
-        label: "compact",
-        fn: async () => {
-          // Block until we release the latch (after assistant msg with tool_use is in history
-          // but before tool_result is added — the worst-case race window)
-          await compactionBlocked;
-          return makeMockStream(
-            textStreamEvents("summary of turn 1"),
-            textMessage("summary of turn 1")
-          );
-        },
-      },
-      {
-        label: "turn2-tool",
-        fn: async () => {
-          // Wrap the stream so we can release the latch in finalMessage(),
-          // which is called after the assistant message (with tool_use) is in history
-          // but before tool_results are pushed.
-          const msg = toolUseMessage("tool-turn2-id", "list_files", { path: "." });
-          const inner = makeMockStream(toolUseStreamEvents("list_files"), msg);
-          return {
-            [Symbol.asyncIterator]: () => inner[Symbol.asyncIterator](),
-            finalMessage: async () => {
-              const result = await inner.finalMessage();
-              // Release latch: compaction can now run and overwrite history,
-              // racing with the tool_result push that happens after this call.
-              compactionLatch();
-              return result;
-            },
-          };
-        },
-      },
-      {
-        label: "turn2-final",
-        fn: async () =>
-          makeMockStream(textStreamEvents("turn 2 done"), textMessage("turn 2 done")),
-      },
-    ];
-
+  it("after two turns, history contains all four messages verbatim", async () => {
+    let call = 0;
     const mockProvider: StreamProvider = async () => {
-      const idx = callIndex++;
-      return scripts[idx].fn();
+      call++;
+      return makeMockStream(textStreamEvents(`response ${call}`), textMessage(`response ${call}`));
     };
-
     const agent = new Agent(mockProvider);
-
-    // Turn 1 — triggers async compaction (script[1], blocked on latch)
-    await collectEvents(agent, "hello turn 1");
-
-    // Turn 2 — runs to completion (scripts[2] + [3]); script[3] releases the latch
-    await collectEvents(agent, "hello turn 2");
-
-    // Now wait for compaction (which was unblocked by latch in turn2-final) to complete
-    await Bun.sleep(50);
-
-    // The history must never have orphaned tool_result blocks.
-    // Verify: every tool_result's tool_use_id has a matching tool_use block.
-    const history = agent.getHistory() as any[];
-
-    const allToolUseIds = new Set<string>();
-    for (const msg of history) {
-      if (msg.role === "assistant" && Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === "tool_use") allToolUseIds.add(block.id);
-        }
-      }
-    }
-
-    for (const msg of history) {
-      if (msg.role === "user" && Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === "tool_result") {
-            // This would fail BEFORE the fix: compaction would wipe tool_use blocks
-            expect(allToolUseIds.has(block.tool_use_id)).toBe(true);
-          }
-        }
-      }
-    }
-  });
-
-  it("stale compaction finishing after a newer compaction must not wipe next-turn messages", async () => {
-    // Regression test for a second race variant:
-    //
-    // Turn 2 compaction (SLOW) captures historyLenAtStart_2 = 6.
-    // Turn 3 compaction (FAST) captures historyLenAtStart_3 = 10, finishes quickly,
-    //   and replaces history with [s3_u, s3_a] (2 items).
-    // Turn 4 starts, pushes user4, API returns tool_use T4,
-    //   pushes asst_4_T → history is now 4 items.
-    // Turn 2 compaction finishes LAST:
-    //   tail_2 = this.history.slice(6) = [] (history only has 4 items!)
-    //   this.history = [s2_u, s2_a]   ← WIPES user4 and asst_4_T
-    // Turn 4 then pushes tool_results_4 → [s2_u, s2_a, tool_results_4]
-    // Turn 4 iteration 2: API call with messages[2] = tool_result with no tool_use → 400.
-    //
-    // Fix: serialize compactions so a stale one cannot overwrite a newer one.
-
-    // Latch: compaction for turn 2 blocks until we release it
-    let latch2: () => void = () => {};
-    const blocked2 = new Promise<void>((res) => { latch2 = res; });
-
-    let callIndex = 0;
-    // Script:
-    //   0 = turn1 (plain text, fast)
-    //   1 = compact-turn1 (fast, text)
-    //   2 = turn2 (plain text, fast)
-    //   3 = compact-turn2 (SLOW — blocked on latch2)
-    //   4 = turn3 (plain text, fast)
-    //   5 = compact-turn3 (fast, finishes BEFORE compact-turn2 releases)
-    //   6 = turn4 tool_use call (fast)
-    //   7 = turn4 final call (fast)
-    const scripts: Array<() => Promise<any>> = [
-      // 0: turn1 — simple text
-      async () => makeMockStream(textStreamEvents("t1"), textMessage("t1")),
-      // 1: compact-turn1 — fast
-      async () => makeMockStream(textStreamEvents("sum1"), textMessage("sum1")),
-      // 2: turn2 — simple text
-      async () => makeMockStream(textStreamEvents("t2"), textMessage("t2")),
-      // 3: compact-turn2 — SLOW (blocks)
-      async () => {
-        await blocked2;
-        return makeMockStream(textStreamEvents("sum2"), textMessage("sum2"));
-      },
-      // 4: turn3 — simple text
-      async () => makeMockStream(textStreamEvents("t3"), textMessage("t3")),
-      // 5: compact-turn3 — fast (unblocks immediately, finishes before compact-turn2)
-      async () => makeMockStream(textStreamEvents("sum3"), textMessage("sum3")),
-      // 6: turn4 first call — tool_use
-      async () => {
-        const msg = toolUseMessage("tool-t4-id", "list_files", { path: "." });
-        const inner = makeMockStream(toolUseStreamEvents("list_files"), msg);
-        return {
-          [Symbol.asyncIterator]: () => inner[Symbol.asyncIterator](),
-          finalMessage: async () => {
-            const result = await inner.finalMessage();
-            // Release the blocked compact-turn2 NOW:
-            // at this point turn4 has pushed asst_with_tool_use to history
-            // but NOT yet pushed tool_results. The stale compaction will
-            // capture tail = [] (if bug) or tail with the turn4 messages (if fixed).
-            latch2();
-            return result;
-          },
-        };
-      },
-      // 7: turn4 final call — plain text
-      async () => makeMockStream(textStreamEvents("t4"), textMessage("t4")),
-    ];
-
-    const mockProvider: StreamProvider = async () => scripts[callIndex++]();
-
-    const agent = new Agent(mockProvider);
-
     await collectEvents(agent, "turn 1");
     await collectEvents(agent, "turn 2");
-    await collectEvents(agent, "turn 3");
-    // Turn 4: triggers the race (releases latch2 during tool_use finalMessage)
-    await collectEvents(agent, "turn 4");
+    const history = agent.getHistory();
+    // 4 messages: user1, asst1, user2, asst2
+    expect(history).toHaveLength(4);
+    expect(history[0].role).toBe("user");
+    expect(history[1].role).toBe("assistant");
+    expect(history[2].role).toBe("user");
+    expect(history[3].role).toBe("assistant");
+  });
 
-    // Wait for all compactions to settle
-    await Bun.sleep(100);
-
-    // Validate: no orphaned tool_result blocks in history
+  it("no orphaned tool_result blocks across multiple turns with tool use", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
+      if (call === 2) return makeMockStream(textStreamEvents("done turn 1"), textMessage("done turn 1"));
+      return makeMockStream(textStreamEvents("done turn 2"), textMessage("done turn 2"));
+    };
+    const agent = new Agent(mockProvider);
+    await collectEvents(agent, "turn 1 with tool");
+    await collectEvents(agent, "turn 2");
     const history = agent.getHistory() as any[];
-
+    // Check: every tool_result has a matching tool_use
     const allToolUseIds = new Set<string>();
     for (const msg of history) {
       if (msg.role === "assistant" && Array.isArray(msg.content)) {
@@ -1203,29 +1009,15 @@ describe("Agent — zone 2 compaction", () => {
         }
       }
     }
-
     for (const msg of history) {
       if (msg.role === "user" && Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block.type === "tool_result") {
-            // Without the fix: this fails because compaction wipes the tool_use
             expect(allToolUseIds.has(block.tool_use_id)).toBe(true);
           }
         }
       }
     }
-  });
-
-  it("world state file is written at session start if prior session exists", async () => {
-    // This tests that compactWorldState is called when resumeSession is invoked
-    // Actually this is tested via the world-state integration path
-    // Placeholder: just verify no crash when worldStatePath is given
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("ok"), textMessage("ok"));
-    const tempDir = makeTempDir();
-    const agent = new Agent(mockProvider, null, undefined, tempDir + "/world-state.md");
-    const events = await collectEvents(agent, "test");
-    expect(events.some((e) => e.type === "turn_end")).toBe(true);
   });
 });
 

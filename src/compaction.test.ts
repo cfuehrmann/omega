@@ -1,10 +1,11 @@
 /**
- * Tests for context compaction (zone 2 + zone 1).
+ * Tests for world-state compaction (zone 1).
+ * Turn compaction (zone 2) was removed in manifest Step 2.
  */
 
 import { describe, it, expect } from "bun:test";
 import type { StreamProvider } from "./agent.js";
-import { compactTurn, compactWorldState } from "./compaction.js";
+import { compactWorldState } from "./compaction.js";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
 // ---------------------------------------------------------------------------
@@ -34,55 +35,6 @@ function makeMockProvider(responseText: string): StreamProvider {
     },
   });
 }
-
-// ---------------------------------------------------------------------------
-// compactTurn
-// ---------------------------------------------------------------------------
-
-describe("compactTurn", () => {
-  it("returns a 2-message synthetic exchange", async () => {
-    const provider = makeMockProvider("User asked to read a file. Assistant read foo.ts and found 42 lines.");
-    const turn: MessageParam[] = [
-      { role: "user", content: "read foo.ts" },
-      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "read_file", input: { path: "foo.ts" } }] as any },
-      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "42 lines" }] as any },
-      { role: "assistant", content: [{ type: "text", text: "I read it." }] as any },
-    ];
-    const result = await compactTurn(turn, null, provider);
-    expect(result).toHaveLength(2);
-    expect(result[0].role).toBe("user");
-    expect(result[1].role).toBe("assistant");
-    expect(typeof result[0].content).toBe("string");
-    expect(typeof result[1].content).toBe("string");
-  });
-
-  it("includes previous summary when provided", async () => {
-    let capturedPrompt = "";
-    const provider: StreamProvider = async (params) => {
-      capturedPrompt = params.messages[0].content as string;
-      return makeMockProvider("Updated summary.")(params);
-    };
-    const turn: MessageParam[] = [
-      { role: "user", content: "do something" },
-      { role: "assistant", content: [{ type: "text", text: "done" }] as any },
-    ];
-    await compactTurn(turn, "Previous summary: we read foo.ts.", provider);
-    expect(capturedPrompt).toContain("Previous summary: we read foo.ts.");
-  });
-
-  it("result is shorter than input (in characters)", async () => {
-    const longContent = "x".repeat(2000);
-    const provider = makeMockProvider("Short summary.");
-    const turn: MessageParam[] = [
-      { role: "user", content: longContent },
-      { role: "assistant", content: [{ type: "text", text: longContent }] as any },
-    ];
-    const result = await compactTurn(turn, null, provider);
-    const resultSize = JSON.stringify(result).length;
-    const inputSize = JSON.stringify(turn).length;
-    expect(resultSize).toBeLessThan(inputSize);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // compactWorldState

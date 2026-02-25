@@ -5,7 +5,7 @@ import { getAuthToken, forceRefreshToken } from "./auth.js";
 import { logger, flushLog, startup, makeLogEntry } from "./logger.js";
 import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
-import { compactTurn, compactWorldState } from "./compaction.js";
+import { compactWorldState } from "./compaction.js";
 import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
 
 
@@ -435,16 +435,6 @@ export class Agent {
   private provider: ProviderName = "anthropic";
   private activeModel: string = config.model;
 
-  /**
-   * Chain of compaction promises. Each compaction is enqueued after the
-   * previous one so that stale (slower) compactions can never overwrite
-   * the results of a newer (faster) compaction that already finished.
-   *
-   * Without serialisation: if turn 2's compaction is slower than turn 3's,
-   * turn 2's compaction finishes last with a stale historyLenAtStart, producing
-   * a tail of [] that wipes turn 4's messages from history.
-   */
-  private compactionQueue: Promise<void> = Promise.resolve();
   public readonly sessionId: string;
   private readonly retryBaseMs = Number(process.env.OMEGA_RETRY_BASE_MS ?? 1000);
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
@@ -455,9 +445,6 @@ export class Agent {
 
   /** Diagnostic output directory. null = disabled (tests). undefined = use default ("diagnosis/"). */
   private readonly diagDir: string | null | undefined;
-
-  /** Zone 2 summary: the compacted summary of all prior turns this session. */
-  private zone2Summary: string | null = null;
 
   /** Zone 1: world state loaded at session start, injected into system prompt. */
   private worldStateContent: string | null = null;
@@ -646,45 +633,6 @@ export class Agent {
   }
 
   /**
-   * Compact the just-completed turn into the zone 2 summary.
-   * Replaces this.history with [zone2Summary (2 msgs)] only —
-   * zone 3 (the turn just finished) is folded in.
-   *
-   * Compactions are serialized via compactionQueue: each new compaction is
-   * chained after the previous one. This prevents a slow older compaction from
-   * finishing after a fast newer compaction and wiping the newer summary plus
-   * any next-turn messages that had accumulated in the meantime.
-   */
-  private compactAfterTurn(turnMessages: Anthropic.MessageParam[]): void {
-    // Snapshot history length NOW (synchronously, before anything else). This
-    // captures everything up to and including the just-finished turn. Anything
-    // pushed after this point belongs to the next turn and must be preserved.
-    const historyLenAtStart = this.history.length;
-
-    // Chain this compaction onto the previous one so they run in order.
-    this.compactionQueue = this.compactionQueue.then(async () => {
-      try {
-        const provider = this.getStreamProvider();
-        const newSummaryMsgs = await compactTurn(turnMessages, this.zone2Summary, provider, this.activeModel);
-        this.zone2Summary = (newSummaryMsgs[0].content as string).replace(/^\[session summary[^\]]*\]\n/, "");
-        // Replace the messages that were compacted, preserving any messages that
-        // were pushed to history while compaction was running (next-turn messages).
-        // historyLenAtStart was snapshotted before this compaction's await, so
-        // it correctly points to the first next-turn message.
-        const tail = this.history.slice(historyLenAtStart);
-        this.history = [...(newSummaryMsgs as Anthropic.MessageParam[]), ...tail];
-        logger.debug(makeLogEntry("infra", {
-          event: "session_compacted",
-          turnCount: turnMessages.length,
-          summaryLength: this.zone2Summary.length,
-        }));
-      } catch (err: any) {
-        logger.warn("compaction_failed", { error: err.message });
-      }
-    });
-  }
-
-  /**
    * Fold the current session history into the world state file.
    * Call this on clean shutdown (SIGINT, SIGTERM, normal exit).
    * No-op (yields nothing) if worldStatePath is null or history is empty.
@@ -869,9 +817,6 @@ export class Agent {
       }
       return;
     }
-
-    // Record where zone 3 starts (index of the new user message in history)
-    const zone3Start = this.history.length;
 
     this.history.push({ role: "user", content: userMessage });
 
@@ -1463,8 +1408,5 @@ export class Agent {
       model: endModel,
     };
 
-    // Compact zone 3 (current turn) into zone 2 summary (fire-and-forget)
-    const turnMessages = this.history.slice(zone3Start);
-    this.compactAfterTurn(turnMessages);
   }
 }
