@@ -5,17 +5,41 @@
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 
-#### Step 3e — Review: event completeness and UI reflection
-**Status: TODO — discuss before acting**
+#### Step 3e — Stable persistence contract (event completeness + schema lock)
+**Status: TODO — discuss before acting. Output is a written agreement, not code.**
+
+Review the full persistence layer and reach explicit agreement on every aspect
+before building session-resume on top of it. Covers:
 
 1. **Event completeness:** Currently not persisted: `status` (intentionally — ephemeral
    UI noise), `metrics` (per-API-call; `turn_end` captures aggregate), `tool_result_message`
    (individual `tool_result` events are persisted). Decide whether any should be added.
 
 2. **UI reflection:** Terminal renders `status`, `text`, `tool_result_message`, `metrics`
-   (not persisted). Event log has `session_start` (not rendered). Guiding principle to
-   decide: "anything that could matter for a post-mortem should be persisted; pure
-   streaming scaffolding need not be."
+   (not persisted). Event log has `session_start` (not rendered). Guiding principle:
+   "anything that could matter for a post-mortem should be persisted; pure streaming
+   scaffolding need not be."
+
+3. **Schema lock:** Review and agree on the exact shape of every JSONL record in
+   `sessions/context.jsonl` and `sessions/events.jsonl` — field names, types, required
+   vs. optional fields, all event variant names. The goal is a stable contract that
+   won't need breaking changes when session-resume is built on top.
+
+#### Step 3f — Session resume
+**Status: TODO — depends on Step 3e (contract must be stable first)**
+
+On startup, if a `.prev` session exists, offer to resume it. Load
+`context.prev.jsonl` and `events.prev.jsonl`, restore `llmMessageLog` and the
+event history, and continue as if the session had not ended.
+
+Acceptance criteria (to be refined after 3e):
+- Startup detects a non-empty `context.prev.jsonl`
+- User is prompted: resume previous session or start fresh
+- On resume: `llmMessageLog` is restored from the context file; events file is
+  appended to (not rotated)
+- On fresh start: behaviour unchanged from today
+- Test: round-trip — session writes context, restarts, resumes, next API call
+  sends the restored history
 
 ---
 
