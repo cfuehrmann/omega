@@ -2,6 +2,59 @@
 
 ## Open items
 
+### [INFRA] Structural test-pollution prevention
+**Priority: HIGHEST — act before anything else**
+
+Test pollution keeps recurring despite previous fixes and discussions. The root
+cause is that production file paths are the *default* — tests must actively do
+the right thing to avoid writing them, and new test patterns (e.g. injecting an
+OpenAI caller without a mock `streamProvider`) silently bypass the existing
+heuristic. We need structural guardrails that make pollution a hard error, not
+an accident waiting to happen.
+
+**The goal:** either all tests pollute, or no test pollutes. There must be no
+silent middle ground.
+
+**Agreed implementation order (a → e), each layer depending on the previous:**
+
+- **Layer a — Preload sets the gate for every test automatically (foundation):** ✅ DONE
+  `bunfig.toml` preloads `src/test-setup.ts` which sets `OMEGA_TEST=1`. The gate
+  is on for every `bun test` run without any per-file or per-test action — including
+  tests written in the future by someone who has never read the pollution rules.
+  e2e tests run via `just e2e` (not `bun test`) so they are unaffected.
+  Without this layer, all other layers are just conventions that can be forgotten.
+
+- **Layer b — Hard error on production writes in test env (hard enforcement):** ✅ DONE
+  `src/test-guard.ts` exports `assertNotProductionPath()`. Wired into all three
+  production write functions (`appendContextMessage`, `clearContextStore`,
+  `appendSessionEvent`, `clearSessionEvents`, `writeDiagnostic`). When `OMEGA_TEST=1`,
+  any attempt to write to a `sessions/` or `diagnosis/` path throws immediately with
+  a clear error message. Explicit temp-dir paths are unaffected. 9 tests in
+  `src/test-guard.test.ts`. 451 tests pass.
+
+- **Layer c — Agent constructor coerces undefined paths to null in test env (early interception):**
+  When `OMEGA_TEST=1`, the `Agent` constructor treats all `undefined` file paths
+  as `null` unconditionally, replacing the current fragile mock-provider heuristic.
+  No test can accidentally fall through to production defaults. Catches mistakes
+  *before* they reach the write functions, giving a cleaner failure mode.
+
+- **Layer d — `makeTestAgent` factory (convenience):**
+  Export a `makeTestAgent(...)` helper from a test-utils file that always passes
+  `null` for all path args. Tests import `makeTestAgent` instead of `Agent`
+  directly. With layers a–c in place this is no longer safety-critical, but makes
+  the right thing the easy thing for future test authors.
+
+- **Layer e — Pre-commit grep for dangerous patterns (belt-and-suspenders):**
+  The pre-commit hook greps for `new Agent(undefined,` or similar and fails with
+  an actionable message. With layers a–c in place the test suite already catches
+  these before commit, but this gives an earlier and more specific error message.
+
+**Remaining open questions:**
+- Whether Layer d (`makeTestAgent`) is worth adding given layers a–c
+- Whether Layer e is worth adding given layers a–c already catch pollution at test time
+
+---
+
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 
@@ -135,6 +188,63 @@ Review and explicitly document the full shape of every JSONL record in
 (in `plan/` or inline in source) that serves as the stable contract for
 session resume and any future tooling. No breaking changes after this point
 without a migration plan.
+
+This work is broken into five sub-steps, to be discussed and resolved in order:
+
+**3e-iv — Property names and completeness per event**
+For every event variant, review: (a) are the existing field names clear and
+consistent? (b) are any fields missing that would be needed for post-mortem
+diagnosis or session resume? Known candidates:
+- `LlmCallEvent.messageCount` — redundant with `contextHashes.length`; consider
+  dropping.
+- `TurnEndEvent.toolCalls` — list of tool *names*, not IDs; cannot be correlated
+  back to individual `tool_call` events. Consider replacing with `toolUseIds` or
+  keeping as a summary alongside the IDs.
+- `SessionStartEvent.authMode` — only two live values (`"claude-max"`,
+  `"api-key"`); should be a typed union, not a free string.
+- `ToolResultEvent` — records `outputLength` but not the output content; the full
+  content is in `context.jsonl` via the tool result message, but this means you
+  cannot diagnose a bad tool result from `events.jsonl` alone. Intentional?
+- `LlmCallEvent` / `LlmResponseEvent` — linked only by temporal order in the
+  JSONL; no explicit cross-reference field. Is ordering sufficient, or should
+  `llm_response` carry a reference back to its `llm_call`?
+
+**3e-v — Missing event types**
+Decide whether any important lifecycle events are absent. Known candidates:
+- `session_end` — symmetric with `session_start`; allows distinguishing a clean
+  shutdown from a crash. Needed for session resume to know whether the previous
+  session completed normally.
+- `model_changed` — when the operator uses `/sonnet`, `/opus`, or `/codex`
+  mid-session the active model switches. Currently invisible in the event log;
+  a replay or audit cannot determine when or why the model changed.
+
+**3e-vi — Persistence completeness audit**
+Formally verify and document which events/signals are intentionally *not*
+persisted, and why. Current known intentional omissions:
+- `status` messages — ephemeral UI noise; not meaningful after the fact.
+- Streaming `text` fragments — assembled response is captured in `llm_response`.
+- Per-call `metrics` — aggregate is in `turn_end`; per-call detail is in
+  `llm_call` / `llm_response` usage fields.
+Close the question explicitly so future contributors know these are deliberate,
+not oversights.
+
+**3e-vii — Forward-compatibility policy**
+Document the Postel's Law contract for the persistence schema:
+- **Tolerant readers:** unknown fields on a known event are silently ignored;
+  unknown event types are silently skipped. This rule applies uniformly — both
+  to new event variants and to new fields on existing variants.
+- **Additive writers:** adding a new optional field to an existing event, or
+  adding a new event type, is a non-breaking change and requires no migration.
+- **Breaking changes** (removing or renaming a required field, changing field
+  semantics) require a documented migration plan and must not happen silently.
+This policy should live in the schema reference document produced by 3e-viii.
+
+**3e-viii — Schema reference document**
+After 3e-iv through 3e-vii are resolved, write `plan/schema.md`: the definitive
+reference for every JSONL record in `sessions/context.jsonl` and
+`sessions/events.jsonl`. Covers field names, types, required vs. optional,
+all event variant names, and the forward-compatibility policy from 3e-vii.
+This document is the stable contract that session-resume (Step 3f) builds on.
 
 #### Step 3f — Session resume
 **Status: TODO — depends on schema lock**
