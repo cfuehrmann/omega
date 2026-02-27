@@ -108,7 +108,7 @@ export function renderApiRequest(
       : prevSummary
         ? `messages[${n}]: ${prevSummary} … ${lastSummary}`
         : `messages[${n}]: … ${lastSummary}`;
-    return [bold(cyan("llm request")) + dim(cyan(`  ${msgLine}`))];
+    return [bold(cyan("llm_call")) + dim(cyan(`  ${msgLine}`))];
   } else {
     const input: any[] = request.input ?? [];
     const n = input.length;
@@ -121,7 +121,7 @@ export function renderApiRequest(
       : prevSummary
         ? `input[${n}]: ${prevSummary} … ${lastSummary}`
         : `input[${n}]: … ${lastSummary}`;
-    return [bold(cyan("llm request")) + dim(cyan(`  ${msgLine}`))];
+    return [bold(cyan("llm_call")) + dim(cyan(`  ${msgLine}`))];
   }
 }
 
@@ -147,7 +147,7 @@ export function renderApiResponse(
   raw?: any,
 ): string[] {
   const lines: string[] = [];
-  lines.push(bold(blue("llm response")));
+  lines.push(bold(blue("llm_to_agent")));
   if (provider === "anthropic") {
     lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
     lines.push(blue(`${INDENT}usage:`));
@@ -193,7 +193,7 @@ function shortId(id: string): string {
 /** Render the start of a tool call (name + input only). Shown immediately when the call is issued. */
 export function renderToolStart(name: string, input: any, id: string): string[] {
   const lines: string[] = [];
-  lines.push(bold(yellow(`tool call`)) + dim(yellow(`  [${shortId(id)}]`)));
+  lines.push(bold(yellow(`agent_to_agent_tool_call`)) + dim(yellow(`  [${shortId(id)}]`)));
   lines.push(yellow(`${INDENT}name: "${name}"`));
   lines.push(yellow(`${INDENT}input: ${JSON.stringify(input)}`));
   return lines;
@@ -202,7 +202,7 @@ export function renderToolStart(name: string, input: any, id: string): string[] 
 /** Render the result of a tool call. Shown with a fresh timestamp when the tool completes. */
 export function renderToolResult(result: { output: string; isError: boolean }, id: string): string[] {
   const lines: string[] = [];
-  lines.push(bold(yellow(`tool result`)) + dim(yellow(`  [${shortId(id)}]`)));
+  lines.push(bold(yellow(`agent_to_agent_tool_result`)) + dim(yellow(`  [${shortId(id)}]`)));
   lines.push(dim(yellow(`${INDENT}is_error: ${result.isError}`)));
   lines.push(dim(yellow(`${INDENT}content:`)));
   for (const line of truncateOutput(result.output).split("\n")) {
@@ -215,7 +215,7 @@ export function renderToolResultMessage(
   results: Array<{ tool_use_id: string; content: string; is_error: boolean }>,
 ): string[] {
   const lines: string[] = [];
-  lines.push(bold(magenta("message")));
+  lines.push(bold(magenta("tool_result_message")));
   lines.push(magenta(`${INDENT}role: "user"`));
   lines.push(magenta(`${INDENT}content:`));
   for (const r of results) {
