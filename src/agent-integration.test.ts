@@ -281,7 +281,7 @@ describe("Agent.sendMessage — plain text response", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent.sendMessage — tool call loop", () => {
-  it("emits agent_to_agent_tool_call event for auto-approved tools", async () => {
+  it("emits tool_call event for auto-approved tools", async () => {
     // First response: use read_file (auto-approved). Second: plain text.
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -298,12 +298,12 @@ describe("Agent.sendMessage — tool call loop", () => {
     const agent = new Agent(mockProvider);
     const events = await collectEvents(agent, "read config");
 
-    const toolCallEvents = events.filter((e) => e.type === "agent_to_agent_tool_call");
+    const toolCallEvents = events.filter((e) => e.type === "tool_call");
     expect(toolCallEvents.length).toBe(1);
     expect((toolCallEvents[0] as any).name).toBe("read_file");
   });
 
-  it("emits agent_to_agent_tool_result event after executing the tool", async () => {
+  it("emits tool_result event after executing the tool", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -319,7 +319,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     const agent = new Agent(mockProvider);
     const events = await collectEvents(agent, "read config");
 
-    const resultEvents = events.filter((e) => e.type === "agent_to_agent_tool_result");
+    const resultEvents = events.filter((e) => e.type === "tool_result");
     expect(resultEvents.length).toBe(1);
     const result = resultEvents[0] as any;
     expect(result.name).toBe("read_file");
@@ -382,7 +382,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(history[3].role).toBe("assistant");
   });
 
-  it("executes multiple tools in parallel (both agent_to_agent_tool_call events before any agent_to_agent_tool_result)", async () => {
+  it("executes multiple tools in parallel (both tool_call events before any tool_result)", async () => {
     // Build a response with two tool_use blocks (list_files + list_files)
     const twoToolMessage: Anthropic.Message = {
       id: "msg_two_tools",
@@ -418,16 +418,16 @@ describe("Agent.sendMessage — tool call loop", () => {
     const agent = new Agent(mockProvider);
     const events = await collectEvents(agent, "list dirs");
 
-    const toolCallEvents = events.filter((e) => e.type === "agent_to_agent_tool_call");
-    const toolResultEvents = events.filter((e) => e.type === "agent_to_agent_tool_result");
+    const toolCallEvents = events.filter((e) => e.type === "tool_call");
+    const toolResultEvents = events.filter((e) => e.type === "tool_result");
     expect(toolCallEvents.length).toBe(2);
     expect(toolResultEvents.length).toBe(2);
 
-    // Parallel execution: both agent_to_agent_tool_call events appear before any agent_to_agent_tool_result event.
+    // Parallel execution: both tool_call events appear before any tool_result event.
     // Sequential execution would interleave: call_A, result_A, call_B, result_B.
-    const firstResultIndex = events.findIndex((e) => e.type === "agent_to_agent_tool_result");
+    const firstResultIndex = events.findIndex((e) => e.type === "tool_result");
     const lastCallIndex = events.reduce(
-      (idx, e, i) => (e.type === "agent_to_agent_tool_call" ? i : idx),
+      (idx, e, i) => (e.type === "tool_call" ? i : idx),
       -1
     );
     expect(lastCallIndex).toBeLessThan(firstResultIndex);
@@ -665,7 +665,7 @@ describe("Agent — full auto-approve", () => {
     expect(pending.length).toBe(0);
   });
 
-  it("emits agent_to_agent_tool_call for every tool regardless of name", async () => {
+  it("emits tool_call for every tool regardless of name", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -679,7 +679,7 @@ describe("Agent — full auto-approve", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "do it");
-    const toolCalls = events.filter((e) => e.type === "agent_to_agent_tool_call");
+    const toolCalls = events.filter((e) => e.type === "tool_call");
     expect(toolCalls.length).toBe(1);
     expect((toolCalls[0] as any).name).toBe("run_command");
   });
@@ -802,16 +802,16 @@ describe("Agent — turn_end event", () => {
 });
 
 // ---------------------------------------------------------------------------
-// llm_to_agent event
+// llm_response event
 // ---------------------------------------------------------------------------
 
-describe("Agent — llm_to_agent event", () => {
-  it("emits llm_to_agent after each API call with stop_reason and usage", async () => {
+describe("Agent — llm_response event", () => {
+  it("emits llm_response after each API call with stop_reason and usage", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    const r = events.find((e) => e.type === "llm_to_agent") as any;
+    const r = events.find((e) => e.type === "llm_response") as any;
     expect(r).toBeDefined();
     expect(r.provider).toBe("anthropic");
     expect(r.url).toBe("https://api.anthropic.com/v1/messages");
@@ -820,16 +820,16 @@ describe("Agent — llm_to_agent event", () => {
     expect(r.usage.output_tokens).toBe(5);
   });
 
-  it("api_response content includes text blocks", async () => {
+  it("llm_response content includes text blocks", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    const r = events.find((e) => e.type === "llm_to_agent") as any;
+    const r = events.find((e) => e.type === "llm_response") as any;
     expect(r.content.some((b: any) => b.type === "text")).toBe(true);
   });
 
-  it("llm_to_agent content includes tool_use blocks when model requests tools", async () => {
+  it("llm_response content includes tool_use blocks when model requests tools", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -843,7 +843,7 @@ describe("Agent — llm_to_agent event", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "list");
-    const responses = events.filter((e) => e.type === "llm_to_agent") as any[];
+    const responses = events.filter((e) => e.type === "llm_response") as any[];
     const first = responses[0];
     expect(first.content.some((b: any) => b.type === "tool_use")).toBe(true);
     expect(first.content.find((b: any) => b.type === "tool_use").name).toBe("list_files");
@@ -851,11 +851,11 @@ describe("Agent — llm_to_agent event", () => {
 });
 
 // ---------------------------------------------------------------------------
-// agent_to_agent_tool_result carries formatted string
+// tool_result carries formatted string
 // ---------------------------------------------------------------------------
 
-describe("Agent — agent_to_agent_tool_result formatted field", () => {
-  it("agent_to_agent_tool_result event carries the formatted string from formatToolCall", async () => {
+describe("Agent — tool_result formatted field", () => {
+  it("tool_result event carries the formatted string from formatToolCall", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -869,7 +869,7 @@ describe("Agent — agent_to_agent_tool_result formatted field", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "list files");
-    const result = events.find((e) => e.type === "agent_to_agent_tool_result") as any;
+    const result = events.find((e) => e.type === "tool_result") as any;
     expect(result.formatted).toBe("list_files: src/");
   });
 
@@ -887,7 +887,7 @@ describe("Agent — agent_to_agent_tool_result formatted field", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "test");
-    const result = events.find((e) => e.type === "agent_to_agent_tool_result") as any;
+    const result = events.find((e) => e.type === "tool_result") as any;
     expect(result.formatted).toBe("run_command: echo hi");
   });
 });
@@ -1174,16 +1174,17 @@ describe("slash commands", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — unified event taxonomy (true duals)", () => {
-  it("emits llm_to_agent (not api_response) after LLM call", async () => {
+  it("emits llm_response (not api_response or llm_to_agent) after LLM call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    expect(events.find((e) => e.type === "llm_to_agent")).toBeDefined();
+    expect(events.find((e) => e.type === "llm_response")).toBeDefined();
     expect(events.find((e) => (e as any).type === "api_response")).toBeUndefined();
+    expect(events.find((e) => (e as any).type === "llm_to_agent")).toBeUndefined();
   });
 
-  it("emits agent_to_agent_tool_call (not tool_call) when a tool is invoked", async () => {
+  it("emits tool_call (not agent_to_agent_tool_call) when a tool is invoked", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -1192,11 +1193,11 @@ describe("Agent — unified event taxonomy (true duals)", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "read it");
-    expect(events.find((e) => e.type === "agent_to_agent_tool_call")).toBeDefined();
-    expect(events.find((e) => (e as any).type === "tool_call")).toBeUndefined();
+    expect(events.find((e) => e.type === "tool_call")).toBeDefined();
+    expect(events.find((e) => (e as any).type === "agent_to_agent_tool_call")).toBeUndefined();
   });
 
-  it("emits agent_to_agent_tool_result (not tool_result) after tool execution", async () => {
+  it("emits tool_result (not agent_to_agent_tool_result) after tool execution", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -1205,7 +1206,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "read it");
-    expect(events.find((e) => e.type === "agent_to_agent_tool_result")).toBeDefined();
-    expect(events.find((e) => (e as any).type === "tool_result")).toBeUndefined();
+    expect(events.find((e) => e.type === "tool_result")).toBeDefined();
+    expect(events.find((e) => (e as any).type === "agent_to_agent_tool_result")).toBeUndefined();
   });
 });

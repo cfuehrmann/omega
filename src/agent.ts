@@ -35,10 +35,10 @@ export type AgentEvent =
   | { type: "status"; message: string }
   | { type: "user_message"; content: string }
   | { type: "llm_call"; llmCallNumber: number; provider: "openai" | "anthropic"; url: string; request: any }
-  | { type: "llm_to_agent"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
+  | { type: "llm_response"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
   | { type: "llm_error"; provider: "openai" | "anthropic"; url: string; error: string }
-  | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
-  | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
+  | { type: "tool_call"; id: string; name: string; input: any; formatted: string }
+  | { type: "tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
@@ -1187,7 +1187,7 @@ export class Agent {
 
       // Emit LLM response event for UI display
       yield {
-        type: "llm_to_agent",
+        type: "llm_response",
         provider: useOpenAi ? "openai" : "anthropic",
         url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
         stopReason: response.stop_reason ?? "unknown",
@@ -1231,7 +1231,7 @@ export class Agent {
           const formatted = formatToolCall(toolUse.name, toolUse.input);
           formattedCalls.push({ toolUse, formatted });
           yield {
-            type: "agent_to_agent_tool_call",
+            type: "tool_call",
             id: toolUse.id,
             name: toolUse.name,
             input: toolUse.input,
@@ -1253,7 +1253,7 @@ export class Agent {
           allToolCalls.push(toolUse.name);
 
           yield {
-            type: "agent_to_agent_tool_result",
+            type: "tool_result",
             id: toolUse.id,
             name: toolUse.name,
             formatted,

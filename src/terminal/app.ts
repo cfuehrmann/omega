@@ -159,7 +159,7 @@ export async function runApp(): Promise<void> {
             ));
             break;
 
-          case "llm_to_agent":
+          case "llm_response":
             if (streamingStarted) {
               println("");
               streamingStarted = false;
@@ -200,12 +200,12 @@ export async function runApp(): Promise<void> {
             fullText += event.text;
             break;
 
-          case "agent_to_agent_tool_call":
+          case "tool_call":
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolStart(event.name, event.input, event.id));
             break;
 
-          case "agent_to_agent_tool_result": {
+          case "tool_result": {
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolResult(event.result, event.id));
             break;

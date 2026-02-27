@@ -80,20 +80,20 @@ describe("shouldLogEvent", () => {
     expect(shouldLogEvent({ type: "turn_end" })).toBe(true);
   });
 
-  it("allows agent_to_agent_tool_call events", () => {
-    expect(shouldLogEvent({ type: "agent_to_agent_tool_call", id: "x", name: "read_file", input: {} })).toBe(true);
+  it("allows tool_call events", () => {
+    expect(shouldLogEvent({ type: "tool_call", id: "x", name: "read_file", input: {} })).toBe(true);
   });
 
-  it("allows agent_to_agent_tool_result events", () => {
-    expect(shouldLogEvent({ type: "agent_to_agent_tool_result", id: "x", name: "read_file", result: {} })).toBe(true);
+  it("allows tool_result events", () => {
+    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", result: {} })).toBe(true);
   });
 
   it("allows status events", () => {
     expect(shouldLogEvent({ type: "status", message: "thinking..." })).toBe(true);
   });
 
-  it("allows llm_to_agent events", () => {
-    expect(shouldLogEvent({ type: "llm_to_agent" })).toBe(true);
+  it("allows llm_response events", () => {
+    expect(shouldLogEvent({ type: "llm_response" })).toBe(true);
   });
 
   it("EXCLUDES streaming text events", () => {
