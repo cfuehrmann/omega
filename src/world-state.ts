@@ -28,7 +28,7 @@ export function projectWorldStatePath(cwd: string = process.cwd()): string {
  * @deprecated Use projectWorldStatePath() instead.
  * Kept for backward compatibility in tests that pass explicit paths.
  */
-export function defaultWorldStatePath(): string {
+function defaultWorldStatePath(): string {
   return projectWorldStatePath();
 }
 
@@ -56,7 +56,7 @@ export async function readWorldState(
  */
 export async function writeWorldState(
   content: string,
-  path: string = defaultWorldStatePath()
+  path: string = projectWorldStatePath()
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf-8");

@@ -288,7 +288,7 @@ function getToolResultIds(msg: Anthropic.MessageParam): Set<string> {
 }
 
 /** Rough token estimate: ~1 token per 4 characters (conservative). */
-export function estimateTokens(msg: Anthropic.MessageParam): number {
+function estimateTokens(msg: Anthropic.MessageParam): number {
   const text = typeof msg.content === "string"
     ? msg.content
     : JSON.stringify(msg.content);

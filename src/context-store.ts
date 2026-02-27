@@ -10,7 +10,7 @@ import { dirname } from "path";
 import type Anthropic from "@anthropic-ai/sdk";
 
 /** Default path for the context file, relative to cwd. */
-export const DEFAULT_CONTEXT_FILE = "sessions/context.jsonl";
+const DEFAULT_CONTEXT_FILE = "sessions/context.jsonl";
 
 /**
  * Derive the "previous" rotation path for a given file path.

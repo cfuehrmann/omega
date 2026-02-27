@@ -39,18 +39,18 @@ export function displayWidth(ch: string): number {
 // ---------------------------------------------------------------------------
 
 /** Get effective cursor position, defaulting to end of buffer. */
-export function getCursor(buf: { value: string; cursor?: number }): number {
+function getCursor(buf: { value: string; cursor?: number }): number {
   return buf.cursor ?? [...buf.value].length;
 }
 
 /** Set cursor, clamping to valid range. */
-export function setCursor(buf: { value: string; cursor?: number }, pos: number): void {
+function setCursor(buf: { value: string; cursor?: number }, pos: number): void {
   const chars = [...buf.value];
   buf.cursor = Math.max(0, Math.min(pos, chars.length));
 }
 
 /** Display width of a substring (array of chars). */
-export function charsDisplayWidth(chars: string[]): number {
+function charsDisplayWidth(chars: string[]): number {
   let w = 0;
   for (const ch of chars) w += displayWidth(ch) || 1;
   return w;
@@ -65,7 +65,7 @@ export function charsDisplayWidth(chars: string[]): number {
  * visual column to another.  Works correctly across row boundaries when
  * `terminalWidth` is known.
  */
-export function moveVisualCol(fromCol: number, toCol: number, tw: number): void {
+function moveVisualCol(fromCol: number, toCol: number, tw: number): void {
   if (fromCol === toCol) return;
   const fromRow = Math.floor(fromCol / tw);
   const toRow   = Math.floor(toCol   / tw);
@@ -88,7 +88,7 @@ export function moveVisualCol(fromCol: number, toCol: number, tw: number): void 
 // ---------------------------------------------------------------------------
 
 /** Find word boundary backward from cursor (skips spaces, then non-spaces). */
-export function wordBoundaryBack(chars: string[], cursor: number): number {
+function wordBoundaryBack(chars: string[], cursor: number): number {
   let pos = cursor;
   while (pos > 0 && chars[pos - 1] === " ") pos--;
   while (pos > 0 && chars[pos - 1] !== " ") pos--;
@@ -96,7 +96,7 @@ export function wordBoundaryBack(chars: string[], cursor: number): number {
 }
 
 /** Find word boundary forward from cursor (skips non-spaces, then spaces). */
-export function wordBoundaryForward(chars: string[], cursor: number): number {
+function wordBoundaryForward(chars: string[], cursor: number): number {
   let pos = cursor;
   while (pos < chars.length && chars[pos] === " ") pos++;
   while (pos < chars.length && chars[pos] !== " ") pos++;
@@ -121,7 +121,7 @@ export function wordBoundaryForward(chars: string[], cursor: number): number {
  * (write tail, erase to EOL, move back).  Caller must have already moved
  * the terminal cursor to logicalCursor before calling in legacy mode.
  */
-export function redrawLine(
+function redrawLine(
   chars: string[],
   logicalCursor: number,
   terminalVisualCol: number,

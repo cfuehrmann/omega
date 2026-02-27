@@ -20,7 +20,7 @@ import { join } from "path";
 // DiagnosticData
 // ---------------------------------------------------------------------------
 
-export interface DiagnosticData {
+interface DiagnosticData {
   /** One-line human-readable summary of what went wrong. */
   summary: string;
   /** The error message / body from the API (verbatim). */

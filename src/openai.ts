@@ -2,7 +2,7 @@ import { config } from "./config.js";
 import { toolDefinitions } from "./tools.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
-export interface OpenAiResult {
+interface OpenAiResult {
   response: {
     content: Anthropic.ContentBlock[];
     stop_reason: string;
@@ -12,7 +12,7 @@ export interface OpenAiResult {
   raw: any;
 }
 
-export interface OpenAiRequest {
+interface OpenAiRequest {
   model: string;
   input: any[];
   tools: any[];

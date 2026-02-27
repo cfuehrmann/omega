@@ -15,21 +15,21 @@ function sgr(...codes: number[]) {
   return `${CSI}${codes.join(";")}m`;
 }
 
-export const RESET  = sgr(0);
-export const BOLD   = sgr(1);
-export const DIM_ON = sgr(2);
+const RESET  = sgr(0);
+const BOLD   = sgr(1);
+const DIM_ON = sgr(2);
 
-export function styled(s: string, ...codes: number[]): string {
+function styled(s: string, ...codes: number[]): string {
   return sgr(...codes) + s + RESET;
 }
 
 export function bold   (s: string) { return styled(s, 1); }
 export function dim    (s: string) { return styled(s, 2); }
 export function green  (s: string) { return styled(s, 32); }
-export function cyan   (s: string) { return styled(s, 36); }
-export function blue   (s: string) { return styled(s, 34); }
+function cyan   (s: string) { return styled(s, 36); }
+function blue   (s: string) { return styled(s, 34); }
 export function yellow (s: string) { return styled(s, 33); }
-export function magenta(s: string) { return styled(s, 35); }
+function magenta(s: string) { return styled(s, 35); }
 export function red    (s: string) { return styled(s, 31); }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ export function red    (s: string) { return styled(s, 31); }
 export const TIME_WIDTH = 10;
 export const INDENT  = "  ";
 export const INDENT2 = "    ";
-export const INDENT3 = "      ";
+const INDENT3 = "      ";
 
 // ---------------------------------------------------------------------------
 // Output helpers
@@ -49,7 +49,7 @@ export function now(): string {
   return new Date().toLocaleTimeString("en-GB");
 }
 
-export function truncateOutput(text: string, maxLines = 10): string {
+function truncateOutput(text: string, maxLines = 10): string {
   const lines = text.split("\n");
   if (lines.length <= maxLines) return text;
   return lines.slice(0, maxLines).join("\n") + `\n… [${lines.length - maxLines} more lines]`;

@@ -47,7 +47,7 @@ function formatMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export interface TurnMetrics {
+interface TurnMetrics {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -57,7 +57,7 @@ export interface TurnMetrics {
   cacheReadTokens?: number;
 }
 
-export interface SessionTotals {
+interface SessionTotals {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -66,7 +66,7 @@ export interface SessionTotals {
   cacheReadTokens?: number;
 }
 
-export interface TurnFooter {
+interface TurnFooter {
   /** Dimmed line: "turn:    new: … write: … read: … out: … cost: … [saved: …]  ttft: … [provider/model]" */
   turnLine: string;
   /** Dimmed line: "session: new: … write: … read: … out: … cost: … [saved: …]" */

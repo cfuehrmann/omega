@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/web/client/main.tsx",
+    "src/**/*.test.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": ["src/web/vite.config.ts"],
+  "ignoreDependencies": ["vite-plugin-solid"]
+}
