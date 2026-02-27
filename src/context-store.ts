@@ -15,6 +15,7 @@
 
 import { appendFile, writeFile, mkdir, rename, unlink } from "fs/promises";
 import { dirname } from "path";
+import { assertNotProductionPath } from "./test-guard.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // ---------------------------------------------------------------------------
@@ -129,6 +130,7 @@ export async function appendContextMessage(
   const record = await buildContextRecord(msg);
 
   if (filePath !== null) {
+    assertNotProductionPath(filePath, "appendContextMessage");
     await mkdir(dirname(filePath), { recursive: true });
     await appendFile(filePath, JSON.stringify(record) + "\n", "utf-8");
   }
@@ -149,6 +151,7 @@ export async function clearContextStore(
   { rotate = true }: { rotate?: boolean } = {}
 ): Promise<void> {
   if (filePath === null) return; // disabled — no-op
+  assertNotProductionPath(filePath, "clearContextStore");
   if (rotate) {
     await rotateFile(filePath);
   } else {

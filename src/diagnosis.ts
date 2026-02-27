@@ -15,6 +15,7 @@
 
 import { writeFile, mkdir, readdir } from "fs/promises";
 import { join } from "path";
+import { assertNotProductionPath } from "./test-guard.js";
 
 // ---------------------------------------------------------------------------
 // DiagnosticData
@@ -63,6 +64,7 @@ export async function writeDiagnostic(
   diagDir: string | null | undefined = DEFAULT_DIAGNOSIS_DIR,
 ): Promise<string | null> {
   if (diagDir === null) return null;
+  assertNotProductionPath(diagDir, "writeDiagnostic");
   try {
     await mkdir(diagDir, { recursive: true });
 

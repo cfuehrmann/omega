@@ -18,6 +18,7 @@
 import { appendFile, writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { rotateFile } from "./context-store.js";
+import { assertNotProductionPath } from "./test-guard.js";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ToolResult } from "./tools.js";
 import type { TurnMetrics, ProviderName } from "./agent.js";
@@ -221,6 +222,7 @@ export async function appendSessionEvent(
   filePath: string | null = DEFAULT_EVENTS_FILE
 ): Promise<void> {
   if (filePath === null) return;
+  assertNotProductionPath(filePath, "appendSessionEvent");
   await mkdir(dirname(filePath), { recursive: true });
   await appendFile(filePath, JSON.stringify(event) + "\n", "utf-8");
 }
@@ -235,5 +237,6 @@ export async function clearSessionEvents(
   filePath: string | null = DEFAULT_EVENTS_FILE
 ): Promise<void> {
   if (filePath === null) return;
+  assertNotProductionPath(filePath, "clearSessionEvents");
   await rotateFile(filePath);
 }
