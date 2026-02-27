@@ -59,7 +59,7 @@ aspects.
   in the event file the compaction occurred.
 - It must become possible to point Omega to point to any project to work on.
   - Concretely: world-state injection must be opt-in via the project's `README.md`,
-    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/future.md` §
+    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/backlog.md` §
     "Decouple Omega startup from Omega's own repo" for the detailed plan.
 
 > Pino has been retired (Step 4, complete). The canonical event log is
@@ -77,7 +77,7 @@ in-progress version at `~/omega/dev`.
 
 Step 3 is broken into four ordered sub-steps. The ordering prioritises **extending
 Omega's practical capacity for long sessions** before completing the full architectural
-vision. See `plan/future.md` for detailed acceptance criteria on each.
+vision. See `plan/backlog.md` for detailed acceptance criteria on each.
 
 ### 3a — Append-only context file (foundation)
 Add `src/context-store.ts`. Append each `MessageParam` to `sessions/context.jsonl`

@@ -23,7 +23,7 @@ export const config = {
     "",
     "## Planning documents",
     "",
-    "If the project has planning documents (e.g. `plan/world-state.md`, `plan/future.md`),",
+    "If the project has planning documents (e.g. `plan/world-state.md`, `plan/backlog.md`),",
     "the README will point you to them. Read them at session start.",
     "After completing work that changes the codebase or makes a decision worth",
     "recording: update the issue tracker if one exists. Pure conversation turns",

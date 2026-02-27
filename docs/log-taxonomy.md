@@ -105,7 +105,7 @@ The taxonomy above is the **design target**. Existing code does not yet fully
 conform:
 
 - Current pino calls use legacy names (`api_request`, `api_response`,
-  `tool_exec`, `api_call`) — see future.md LOG-2 for the rename backlog.
+  `tool_exec`, `api_call`) — see backlog.md LOG-2 for the rename backlog.
 - `kind` and `sender`/`receiver`/`message` fields are not yet present on log
   entries; they are emitted as flat objects with event-name strings.
 - TypeScript enforcement (discriminated union) is not yet implemented.

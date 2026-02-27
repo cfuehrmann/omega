@@ -50,7 +50,7 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
 
 ### Planning Files
 - `plan/world-state.md` — Zone 1 world state; manually maintained; under source control.
-- `plan/future.md` — discrete actionable backlog items; manually maintained.
+- `plan/backlog.md` — discrete actionable backlog items; manually maintained.
 - `manifest.md` — high-level design manifest for ongoing refactoring. Strategic direction.
 - `README.md` — project orientation for any agent (including Omega itself). References all planning files.
 

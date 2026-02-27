@@ -24,7 +24,7 @@ WebSocket. Config is code (`src/config.ts`).
 | File | Purpose |
 |------|---------|
 | `plan/world-state.md` | LLM-compacted summary of all prior sessions. Loaded into the system prompt automatically. Updated as part of the shutdown ritual (see below). |
-| `plan/future.md` | Issue tracker. Discrete, prioritised, actionable items. Update after completing work or making decisions worth recording. |
+| `plan/backlog.md` | Issue tracker. Discrete, prioritised, actionable items. Update after completing work or making decisions worth recording. |
 | `manifest.md` | High-level design manifest for Omega's ongoing refactoring. Consult for strategic direction. |
 | `docs/lessons-learned.md` | Hard-won lessons about external APIs and protocols. Read before integrating with anything new. |
 
@@ -124,7 +124,7 @@ When the operator asks to wrap up or end the session, do the following — in or
 1. **Update `plan/world-state.md`** — use `compactWorldState()` from `src/compaction.ts`
    (or just rewrite the file directly) to fold this session's work into a concise,
    accurate summary of the current state of the project.
-2. **Update `plan/future.md`** — mark completed items done, add newly discovered work,
+2. **Update `plan/backlog.md`** — mark completed items done, add newly discovered work,
    remove anything that is no longer relevant.
 
 Ctrl-C exits immediately without doing any of this. The shutdown ritual only happens
