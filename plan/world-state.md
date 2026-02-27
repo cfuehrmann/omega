@@ -47,14 +47,14 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
   - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; produces a trimmed view for each API call without ever mutating `llmMessageLog`. `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Prompt-too-long retries reduce `apiBudget` (halved per attempt); the next iteration's `buildApiMessages()` picks up the tighter budget automatically. Cache prefix is never invalidated by truncation.
   - **3e-i** (DONE): Rename `SessionEvent` and `AgentEvent` discriminant strings. 7 renames: `api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`.
   - **3e-ii** (DONE): Rename `WsEvent` variants to match. Same renames applied to `store.ts`, `App.tsx`, `server.ts` (`closeOpenTurn`), `session-resilience.test.ts`, `e2e/web-ui.spec.ts`. `agent_error` added as proper `WsEvent` variant. Server-own protocol errors (`invalid JSON`, `turn already in progress`) stay as `{ type: "error" }`.
-  - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent. 441 tests pass.
+  - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent.
   - **3e-iv** (TODO): Property names and completeness per event — review all field names; check for missing fields on each variant.
   - **3e-v** (TODO): Missing event types — decide on `session_end`, `model_changed`.
   - **3e-vi** (TODO): Persistence completeness audit — formally document intentional omissions (`status`, streaming `text`, per-call `metrics`).
   - **3e-vii** (TODO): Forward-compatibility policy — tolerant readers, additive writers, breaking-change migration plan; applies uniformly to new fields and new event types.
   - **3e-viii** (TODO): Write `plan/schema.md` — definitive reference for every JSONL record; stable contract for session resume.
   - **3f** (TODO): Session resume, depends on schema lock (3e-viii).
-- **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed. All infra-only events are `SessionEvent` variants. `omega.log`/`omega.prev.log` removed from `.gitignore`. 422 tests pass.
+- **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed. All infra-only events are `SessionEvent` variants. `omega.log`/`omega.prev.log` removed from `.gitignore`.
 
 ### Planning Files
 - `plan/world-state.md` — Zone 1 world state; manually maintained; under source control.
@@ -81,11 +81,12 @@ Three cache breakpoints: system prompt, last tool definition, last history messa
 ### Test Isolation — Never Pollute Production Files
 Tests must **never** write to `sessions/`, `diagnosis/`, or any other production file.
 
-**Structural guardrails (layers a–b implemented; c–e pending):**
+**Structural guardrails (all five layers implemented):**
 - **Layer a:** `bunfig.toml` preloads `src/test-setup.ts`, which sets `OMEGA_TEST=1` before any test runs — unconditionally, for every `bun test` invocation.
 - **Layer b:** `src/test-guard.ts` exports `assertNotProductionPath()`, wired into all production write functions (`appendContextMessage`, `clearContextStore`, `appendSessionEvent`, `clearSessionEvents`, `writeDiagnostic`). When `OMEGA_TEST=1`, writing to `sessions/` or `diagnosis/` throws immediately — a loud test failure rather than silent pollution. Temp-dir paths used by file-writing tests are unaffected.
-- **Layer c (TODO):** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`, replacing the fragile mock-provider heuristic.
-- **Layers d–e (TODO):** `makeTestAgent` convenience factory; pre-commit grep guard.
+- **Layer c:** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`, unconditionally — no longer depends on mock `streamProvider` being injected.
+- **Layer d:** `makeTestAgent(streamProvider?, openAiCaller?)` factory in `src/test-utils.ts` — always passes explicit `null` for all path args. Right thing is easy thing.
+- **Layer e:** `scripts/pre-commit` greps for bare `new Agent()` in `*.test.ts` files before running tests. Fails with an actionable message pointing at `makeTestAgent`.
 
 The `null`-is-no-op pattern still applies to all write functions. e2e tests use `sessions-test/` not `sessions/` and run via `just e2e` (not `bun test`), so they are unaffected by the preload. If a new production side-effect file is added, wire `assertNotProductionPath()` into its write function.
 
@@ -162,14 +163,12 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 ### Key Files (additional)
 - `src/test-guard.ts` — `assertNotProductionPath(filePath, fnName)`. Throws when `OMEGA_TEST=1` and `filePath` is under `sessions/` or `diagnosis/`. No-op in production. Wired into all five production write functions.
 - `src/test-setup.ts` — Bun test preload (wired via `bunfig.toml`). Sets `OMEGA_TEST=1` before any test file loads.
-- `src/test-guard.test.ts` — 9 tests covering throw/no-throw behaviour of `assertNotProductionPath`.
-
-### Current Test Count
-451 tests across 25 files. All pass.
+- `src/test-guard.test.ts` — tests covering throw/no-throw behaviour of `assertNotProductionPath`.
+- `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
-Completed **Step 3e-iii** (FK/PK content-addressed context log): `context.jsonl` entries now carry `hash` and `ts`; `LlmCallEvent` carries `contextHashes: string[]`. New helpers `buildContextRecord`, `sha256hex8`, `ContextRecord` in `context-store.ts`. Agent gains `llmMessageHashes[]`, `appendToHistory()`, `contextHashesForView()`. `/compact` handler rebuilt to also rebuild `llmMessageHashes`. 12 new tests in `src/context-hash.test.ts`. 441 tests pass, pushed to `origin/develop`.
+Completed **Step 3e-iii** (FK/PK content-addressed context log): `context.jsonl` entries now carry `hash` and `ts`; `LlmCallEvent` carries `contextHashes: string[]`. New helpers `buildContextRecord`, `sha256hex8`, `ContextRecord` in `context-store.ts`. Agent gains `llmMessageHashes[]`, `appendToHistory()`, `contextHashesForView()`. `/compact` handler rebuilt to also rebuild `llmMessageHashes`. Pushed to `origin/develop`.
 
 Discussed and structured **schema lock** work (previously a single TODO): expanded into five discrete sub-steps (3e-iv through 3e-viii) covering property names/completeness, missing event types, persistence completeness audit, forward-compatibility policy, and the final schema reference document. Key agreed principle: tolerance applies uniformly — unknown fields on known events and unknown event types are both silently ignored by readers; writers may add new optional fields or new event variants freely without a migration.
 
-Implemented **test-pollution guardrails layers a and b**: `src/test-setup.ts` now sets `OMEGA_TEST=1` via `bunfig.toml` preload (layer a); `src/test-guard.ts` `assertNotProductionPath()` wired into all production write functions throws when `OMEGA_TEST=1` and a `sessions/` or `diagnosis/` path is used (layer b). 9 new tests. 451 tests pass. Layer c (Agent constructor coercion) and layers d–e remain TODO.
+Completed **test-pollution guardrails (all five layers)**: preload gate (a), hard-error write guard (b), Agent constructor coercion (c), `makeTestAgent` factory (d), pre-commit grep (e). Test counts removed from all planning docs — they go stale immediately and `bun test` is always authoritative.

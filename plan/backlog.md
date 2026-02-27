@@ -321,17 +321,16 @@ Acceptance criteria:
   hard-errors on production writes in tests (layer b); Agent constructor coerces
   `undefined` paths to `null` when `OMEGA_TEST=1` (layer c); `makeTestAgent()` factory
   in `src/test-utils.ts` (layer d); pre-commit grep for bare `new Agent()` in test
-  files (layer e). 456 tests pass.
+  files (layer e).
 - **Shutdown decoupling** — Done. All fold-on-exit code removed from `app.ts` and
   `web/server.ts` (`foldCurrentSessionIntoWorldState`, `performWebShutdown`). Ctrl-C
   exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
 - **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed,
   `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events were
-  already in `SessionEvent`. 422 tests pass.
+  already in `SessionEvent`.
 - **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied.
-  422 tests pass.
-- **Step 3e-iii: FK/PK content-addressed context log** — Done (commit b6ef87c). 441 tests pass.
-- **Step 3e-ii: Rename WsEvent variants** — Done. 422 tests pass, pushed to `origin/develop`.
+- **Step 3e-iii: FK/PK content-addressed context log** — Done (commit b6ef87c).
+- **Step 3e-ii: Rename WsEvent variants** — Done. Pushed to `origin/develop`.
 - **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
 - **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23).
