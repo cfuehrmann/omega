@@ -16,15 +16,15 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
 ### Branch State
-**`dev` is ahead of `main`**; Steps 3a–3c are complete and stable in `dev`. The operator confirmed merging `dev → main` is the correct next action before proceeding with Steps 3d or 4. Run `just gate` first, then merge.
+**`dev` is ahead of `main`**; Steps 3a–3d are complete and stable in `dev`. Merging `dev → main` is the correct next action before proceeding with Steps 3e or 4. Run `just gate` first, then merge.
 
-### Context Management — TRANSITIONAL STATE
+### Context Management
 - **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated by `foldCurrentSessionIntoWorldState()` on clean shutdown. Lives under source control.
 - **Zone 2** — turn summaries: **REMOVED** (manifest Step 2 complete).
 - **Zone 3** — current turn: always verbatim, never compacted.
 - Hard message cap: 100 messages. Token budget: 100k.
 
-**Known problem:** History grows verbatim. Proactive truncation (`truncateHistory`) silently drops middle messages before each turn, which also invalidates the prompt cache prefix — the session pays full token rate after any truncation event. `/compact` (Step 3b, done) is the operator-triggered fix; Step 3d (non-destructive truncation) is the structural fix.
+History grows verbatim. `buildApiMessages()` produces an ephemeral trimmed view for each API call without mutating `llmMessageLog` — the cache prefix is never invalidated by truncation. `/compact` (Step 3b) is the operator-triggered fix for sessions that grow too long.
 
 No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` files before the fresh session starts. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
 
@@ -42,11 +42,11 @@ The exported helper `prevPath(filePath)` encapsulates this logic. The logger fol
 - **Step 2** (DONE): Abandoned `compactAfterTurn()`. History grows verbatim.
 - **Step 3** (IN PROGRESS): Replace `MessageParam[]` history with an event-list data structure.
   - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl`. `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
-  - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.history` in-place and rewrites `sessions/context.jsonl`.
+  - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.llmMessageLog` in-place and rewrites `sessions/context.jsonl`.
   - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. 12-variant discriminated union; all events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
-  - **3d** (TODO — **highest priority**): Flip the dependency — `this.history` derived from the event log; truncation becomes non-destructive. Fixes cache prefix invalidation on truncation.
+  - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; produces a trimmed view for each API call without ever mutating `llmMessageLog`. `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Prompt-too-long retries reduce `apiBudget` (halved per attempt); the next iteration's `buildApiMessages()` picks up the tighter budget automatically. Cache prefix is never invalidated by truncation.
 - **Step 3e** (TODO — discuss before acting): Review event completeness and UI reflection alignment. Currently not persisted: `status` (intentional — ephemeral UI noise), per-API-call `metrics` (aggregate captured in `turn_end`), `tool_result_message`. Decide guiding principle before acting.
-- **Step 4** (TODO — can proceed independently of 3d): Retire pino. Pino still provides uniquely: ~6 infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`, `world_state_updated`). Migration: add those as `SessionEvent` variants, then delete `src/logger.ts` and all call sites. `omega.log`/`omega.prev.log` removed from `.gitignore`.
+- **Step 4** (TODO — can proceed independently of 3e): Retire pino. Pino still provides uniquely: ~6 infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`, `world_state_updated`). Migration: add those as `SessionEvent` variants, then delete `src/logger.ts` and all call sites. `omega.log`/`omega.prev.log` removed from `.gitignore`.
 
 ### Planning Files
 - `plan/world-state.md` — Zone 1 world state; auto-maintained; under source control.
@@ -68,7 +68,7 @@ Old commands `/gpt`, `/openai`, `/anthropic` are removed and yield "Unknown comm
 ### Prompt Caching Architecture
 Three cache breakpoints: system prompt, last tool definition, last history message. Within a turn's agentic loop, each successive API call gets massive cache hits on all previously-sent messages. Cross-turn, the entire accumulated history is sent verbatim, so cache hits grow with session length.
 
-**Cache/truncation interaction:** Truncation drops messages from the middle of history, shifting all subsequent message positions, causing a full cache miss on all history tokens. Step 3d resolves this by making truncation produce an ephemeral API-call view rather than mutating stored history.
+**Cache/truncation interaction (resolved):** `buildApiMessages()` produces an ephemeral API-call view from `llmMessageLog` without mutating it. The cache-control breakpoint on the last message always refers to the same stored message, so the prompt cache prefix is never invalidated by a truncation event.
 
 ### Test Isolation — Never Pollute Production Files
 Tests must **never** write to `sessions/`, `diagnosis/`, `omega.log`, or any other production file. The mechanism: `Agent` constructor applies a mock-provider heuristic — when a mock `streamProvider` is injected and no explicit path is given, `worldStatePath`, `diagDir`, `contextFile`, and `eventsFile` all default to `null` (disabled). All file-writing functions treat `null` as a no-op. e2e tests use `sessions-test/` not `sessions/`. If a new production side-effect file is added, follow the same pattern.
@@ -92,7 +92,7 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 `session_start`, `user_message`, `api_call_start`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `api_error`, `error`, `interrupted`, `world_state_saved`, `session_compacted`. All carry ISO `ts` timestamp.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `truncateHistory()` (now also handles short-but-fat history — see Context Poison Prevention), `PRICING` table; history grows **verbatim**; `foldCurrentSessionIntoWorldState()` async generator; `getActiveFoldProvider()`; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `flushLog()` then `writeDiagnostic()`.
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; `foldCurrentSessionIntoWorldState()` async generator; `getActiveFoldProvider()`; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `flushLog()` then `writeDiagnostic()`.
 - `src/session-event.ts` — `SessionEvent` discriminated union (12 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`.
 - `src/context-store.ts` — `appendContextMessage()`, `clearContextStore()`, `rotateFile()`, `prevPath()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` variant (via `prevPath()`) then creates fresh empty file — shared by both context and events stores.
 - `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold on shutdown) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
@@ -107,14 +107,22 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }`.
 
 ### Context Poison Prevention
-Two bugs fixed in the same session (2026-02-25):
+Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
 
-1. **`truncateHistory` no-op when history is short but fat** (`src/agent.ts`): When history had ≤ `KEEP_RECENT_TURNS*2` (20) messages, `middle.length === 0` and the function returned history unchanged — every retry sent the same oversized payload, failing identically all 5 times. Fix: when `middle` is empty, drop from the oldest end of the tail itself, keeping at minimum the last message.
+1. **`buildApiMessages` short-but-fat handling** (`src/agent.ts`): When all messages fall within the "always keep" tail (≤ `KEEP_RECENT_TURNS*2` messages), instead of returning unchanged, the function drops from the oldest end of the tail, keeping at minimum the last message. This prevented all 5 retries sending the same oversized payload.
 
-2. **Tool output cap** (`src/tools.ts`): `executeTool()` now caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]` — giving the agent actionable guidance without poisoning the context window.
+2. **Tool output cap** (`src/tools.ts`): `executeTool()` caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]`
+
+### Non-Destructive Truncation (Step 3d — DONE, commit 997d7f7)
+- `buildApiMessages(history, budget)` — exported from `agent.ts`. Produces an ephemeral trimmed view; the source array is never mutated.
+- `Agent.llmMessageLog` — the canonical, append-only record of all LLM messages. Never shortened by truncation.
+- `Agent.getLlmMessageLog()` — public read-only accessor.
+- Agentic loop: `apiView = buildApiMessages(llmMessageLog, apiBudget)` at top of each iteration. `apiBudget` starts at `config.maxContextTokens`; halved on each prompt-too-long retry. `llmMessageLog` is never touched.
+- Anthropic retry sub-loop: `attemptApiView` / `attemptCachedMessages` recomputed per attempt to pick up the tighter budget — also fixes a pre-existing stale-`cachedMessages` bug.
+- Diagnostic snapshots include both `requestMessages` (the view sent) and `history` (the full `llmMessageLog`).
 
 ### Current Test Count
-470 tests across 27 files. All pass.
+471 tests across 27 files. All pass.
 
 ### Recent Session Outcomes
-No meaningful work was done this session — the operator sent a single connectivity check ("are you listening?") and received confirmation.
+Completed **Step 3d** (non-destructive context truncation). `truncateHistory` renamed to `buildApiMessages`; `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` renamed to `getLlmMessageLog()`. The function is now purely ephemeral — the source log is never mutated. Agentic loop uses `apiBudget` (halved per prompt-too-long retry) to drive increasingly aggressive trimming without touching `llmMessageLog`. 1 new test (non-mutation invariant); 471 total. Committed 997d7f7 + d2616f2, pushed to `develop`.

@@ -91,8 +91,9 @@ Define `SessionEvent` union type in `src/session-event.ts`. Append every agent e
 to `sessions/events.jsonl`. Additive — establishes the canonical persistent event log
 that will replace pino in Step 4.
 
-### 3d — Non-destructive truncation (structural cache fix)
-Flip the dependency: `this.history` is derived from the event log; it is never
-mutated by truncation. `truncateHistory` becomes `buildApiMessages` — produces an
-ephemeral view for a single API call. The canonical record is always complete and
-append-only. Prompt cache prefix is never invalidated by truncation.
+### ~~3d — Non-destructive truncation (structural cache fix)~~ — DONE (commit 997d7f7)
+`truncateHistory` renamed to `buildApiMessages` — produces an ephemeral view for a
+single API call; the source `llmMessageLog` is never mutated. `Agent.history` →
+`Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Agentic loop uses
+`apiBudget` (halved per prompt-too-long retry); no mutation of the canonical record.
+Prompt cache prefix is never invalidated by truncation.
