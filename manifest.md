@@ -58,6 +58,9 @@ aspects.
 - It should not result in context shortening, but in a "bookmark" at which point
   in the event file the compaction occurred.
 - It must become possible to point Omega to point to any project to work on.
+  - Concretely: world-state injection must be opt-in via the project's `README.md`,
+    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/future.md` §
+    "Decouple Omega startup from Omega's own repo" for the detailed plan.
 
 > Obviously, we should be able to abandon pino, since we will roll our own file
 > format as a single source of truth.

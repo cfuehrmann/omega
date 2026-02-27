@@ -158,6 +158,40 @@ more providers are added.
 
 ---
 
+### [REFACTOR] Decouple Omega startup from Omega's own repo (world-state)
+**Priority: LOW — do after Steps 3e and 4**
+
+Currently `projectWorldStatePath()` always resolves to `<cwd>/plan/world-state.md`.
+This means Omega's self-knowledge (Zone 1 context) is injected into *every* session
+regardless of which project Omega is pointed at — coupling the agent to its own repo.
+
+**Goal:** When Omega is started on an arbitrary project, it should receive no
+Omega-specific world state. When started on itself (`~/omega/dev`), it should still
+load its own world state as today.
+
+**Proposed approach:**
+
+1. **World-state opt-in via README** — `loadWorldState()` should only read the file if
+   the project's `README.md` (already read at startup) explicitly references a world
+   state path (e.g. `plan/world-state.md`). If the README doesn't mention it, no world
+   state is injected. This requires no new config format — the README is already the
+   project orientation document.
+
+2. **Remove hardcoded startup coupling** — `terminal/app.ts` and `web/server.ts` both
+   call `agent.loadWorldState()` unconditionally. These calls should be conditioned on
+   the README check above, or delegated entirely to the agent after README parsing.
+
+3. **Omega's own README stays as-is** — it already references `plan/world-state.md`,
+   so Omega pointed at itself continues to work exactly as today.
+
+Acceptance criteria:
+- Starting Omega in an arbitrary project directory injects no Omega-specific world state
+- Starting Omega in `~/omega/dev` still loads `plan/world-state.md` as Zone 1 context
+- No new config files or command-line flags required
+- All existing tests pass; add a test for the "no README world-state reference → null" path
+
+---
+
 ## Closed items
 
 - **Shutdown decoupling** — Done. All fold-on-exit code removed from `app.ts` and
