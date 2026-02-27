@@ -457,3 +457,63 @@ describe("no placeholder hashes", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// [SCHEMA] llm_call has no messageCount — redundant with contextHashes.length
+// ---------------------------------------------------------------------------
+
+describe("[SCHEMA] llm_call has no messageCount field", () => {
+  it("llm_call events written to events.jsonl do not carry messageCount", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "hello");
+    await Bun.sleep(50);
+
+    const allEvents = readEventLines(eventsFile);
+    const llmCalls = allEvents.filter(e => e.type === "llm_call");
+    expect(llmCalls.length).toBeGreaterThan(0);
+
+    for (const llmCall of llmCalls) {
+      expect("messageCount" in llmCall).toBe(false);
+      // contextHashes.length is the correct way to get message count
+      expect(Array.isArray(llmCall.contextHashes)).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [SCHEMA] llm_response has no content — authoritative record is context.jsonl
+// ---------------------------------------------------------------------------
+
+describe("[SCHEMA] llm_response has no content field", () => {
+  it("llm_response events written to events.jsonl do not carry content", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "hi");
+    await Bun.sleep(50);
+
+    const allEvents = readEventLines(eventsFile);
+    const llmResponses = allEvents.filter(e => e.type === "llm_response");
+    expect(llmResponses.length).toBeGreaterThan(0);
+
+    for (const llmResponse of llmResponses) {
+      expect("content" in llmResponse).toBe(false);
+      // metadata fields must still be present
+      expect(typeof llmResponse.stopReason).toBe("string");
+      expect(typeof llmResponse.model).toBe("string");
+      expect(typeof llmResponse.usage).toBe("object");
+    }
+  });
+});

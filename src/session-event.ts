@@ -19,7 +19,6 @@ import { appendFile, writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { rotateFile } from "./context-store.js";
 import { assertNotProductionPath } from "./test-guard.js";
-import type Anthropic from "@anthropic-ai/sdk";
 import type { ToolResult } from "./tools.js";
 import type { TurnMetrics, ProviderName } from "./agent.js";
 
@@ -44,7 +43,6 @@ export interface LlmCallEvent {
   provider: ProviderName;
   url: string;
   model: string;
-  messageCount: number;
   /**
    * Step 3e-iii: ordered SHA-256 hashes (8 hex chars each) of every
    * MessageParam in the `buildApiMessages()` view actually sent with this
@@ -53,6 +51,8 @@ export interface LlmCallEvent {
    *
    * Note: this reflects the truncated view sent to the LLM, NOT the full
    * `llmMessageLog`. Messages dropped by truncation will be absent.
+   * Use `contextHashes.length` to get the message count — `messageCount`
+   * was removed as a redundant field.
    */
   contextHashes: string[];
 }
@@ -65,13 +65,18 @@ export interface LlmResponseEvent {
   url: string;
   stopReason: string;
   model: string;
-  content: Anthropic.ContentBlock[];
   usage: {
     input_tokens: number;
     output_tokens: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
+  /**
+   * Content is intentionally omitted — the assembled assistant message is
+   * the authoritative record in `context.jsonl`. To look up the content,
+   * join on the `contextHashes` of the *next* `llm_call` event, which will
+   * include the assistant message hash.
+   */
 }
 
 /** A tool invocation by the agent. */

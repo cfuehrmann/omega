@@ -899,7 +899,7 @@ export class Agent {
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length, contextHashes });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, contextHashes });
 
       } else {
         const request = {
@@ -916,7 +916,7 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length, contextHashes });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, contextHashes });
       }
 
       // Call API with retry
@@ -1205,7 +1205,6 @@ export class Agent {
         url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
         stopReason: response.stop_reason ?? "unknown",
         model: activeModel,
-        content: response.content,
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,
