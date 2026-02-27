@@ -207,7 +207,7 @@ test("llm_call event shows a collapsible api-call block", async ({ page, server 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
     type: "llm_call",
-    callNumber: 1,
+    llmCallNumber: 1,
     provider: "anthropic",
     url: "https://api.anthropic.com/v1/messages",
     request: { model: "claude-sonnet-4-6", max_tokens: 8192 },
@@ -215,7 +215,7 @@ test("llm_call event shows a collapsible api-call block", async ({ page, server 
 
   const block = page.locator(".block.api-call");
   await expect(block).toBeVisible({ timeout: 3000 });
-  await expect(block.locator(".block-label")).toContainText("api call");
+  await expect(block.locator(".block-label")).toContainText("llm call");
 });
 
 test("llm_to_agent event shows an api-response block", async ({ page, server }) => {
