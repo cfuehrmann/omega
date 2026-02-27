@@ -71,7 +71,7 @@ describe("SessionEvent round-trip serialisation", () => {
   });
 
   it("llm_call", async () => {
-    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", llmCallNumber: 1, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"] };
+    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"] };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);

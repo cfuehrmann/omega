@@ -33,7 +33,7 @@ interface DiagnosticData {
   /** Model that was active when the error occurred. */
   model: string;
   /** API call number within the turn (1-based). */
-  llmCallNumber?: number;
+
   /** The exact `messages` array that was sent to the API. */
   requestMessages: unknown;
   /** System prompt blocks (without cache_control for readability). */
@@ -79,7 +79,6 @@ export async function writeDiagnostic(
       provider: data.provider,
       model: data.model,
       httpStatus: data.httpStatus ?? null,
-      llmCallNumber: data.llmCallNumber ?? null,
       errorMessage: data.errorMessage,
 
       // The exact messages array sent to the API — the most important artifact.

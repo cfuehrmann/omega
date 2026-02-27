@@ -39,7 +39,6 @@ export interface UserMessageEvent {
 export interface LlmCallEvent {
   type: "llm_call";
   ts: string;
-  llmCallNumber: number;
   provider: ProviderName;
   url: string;
   model: string;

@@ -99,14 +99,13 @@ function summariseContent(content: any): string {
 }
 
 export function renderApiRequest(
-  llmCallNumber: number,
   provider: "anthropic" | "openai",
   url: string,
   request: any,
 ): string[] {
   const shortUrl = url.replace(/^https?:\/\//, "");
   const lines: string[] = [];
-  lines.push(bold(cyan(`${shortUrl}  #${llmCallNumber}`)));
+  lines.push(bold(cyan(shortUrl)));
   if (provider === "anthropic") {
     const last = request.messages?.[request.messages.length - 1];
     lines.push(cyan(`${INDENT}model: "${request.model}"`));

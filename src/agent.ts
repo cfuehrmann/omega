@@ -34,7 +34,7 @@ export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "status"; message: string }
   | { type: "user_message"; content: string }
-  | { type: "llm_call"; llmCallNumber: number; provider: "openai" | "anthropic"; url: string; request: any }
+  | { type: "llm_call"; provider: "openai" | "anthropic"; url: string; request: any }
   | { type: "llm_to_agent"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
   | { type: "llm_error"; provider: "openai" | "anthropic"; url: string; error: string }
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
@@ -448,7 +448,7 @@ export class Agent {
   public sessionCacheCreationTokens = 0;
   public sessionCacheReadTokens = 0;
   public sessionSavedUsd = 0;
-  private _llmCallCount = 0;
+
 
   private authMode: "api-key" | "oauth" = "api-key";
   private provider: ProviderName = "anthropic";
@@ -781,9 +781,6 @@ export class Agent {
 
 
 
-    // Reset API call counter — numbered per user prompt, not per session
-    this._llmCallCount = 0;
-
     // Budget for the current agentic loop iteration's API view.
     // Reduced on prompt-too-long retries; llmMessageLog itself is never trimmed.
     let apiBudget = config.maxContextTokens;
@@ -884,7 +881,6 @@ export class Agent {
       const contextHashes = this.contextHashesForView(apiView);
 
       // Emit llm_call with a snapshot of the params before each call
-      this._llmCallCount += 1;
       if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
           apiView,
@@ -894,12 +890,11 @@ export class Agent {
         );
         yield {
           type: "llm_call",
-          llmCallNumber: this._llmCallCount,
           provider: "openai",
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, contextHashes });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), model: activeModel, contextHashes });
 
       } else {
         const request = {
@@ -911,12 +906,11 @@ export class Agent {
         };
         yield {
           type: "llm_call",
-          llmCallNumber: this._llmCallCount,
           provider: "anthropic",
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, contextHashes });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, contextHashes });
       }
 
       // Call API with retry
@@ -956,7 +950,6 @@ export class Agent {
                 httpStatus: err.status ?? err.statusCode,
                 provider: "openai",
                 model: activeModel,
-                llmCallNumber: this._llmCallCount,
                 requestMessages: buildOpenAiRequest(apiView, systemPrompt, activeModel, config.maxOutputTokens),
                 history: this.llmMessageLog,
                 extra: { attempts: attempt + 1 },
@@ -1090,7 +1083,6 @@ export class Agent {
                 httpStatus: err.status ?? err.statusCode,
                 provider: "anthropic",
                 model: activeModel,
-                llmCallNumber: this._llmCallCount,
                 requestMessages: attemptCachedMessages,
                 systemBlocks,
                 history: this.llmMessageLog,
@@ -1118,7 +1110,6 @@ export class Agent {
                 httpStatus: err.status ?? err.statusCode,
                 provider: "anthropic",
                 model: activeModel,
-                llmCallNumber: this._llmCallCount,
                 requestMessages: attemptCachedMessages,
                 systemBlocks,
                 history: this.llmMessageLog,

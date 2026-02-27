@@ -585,7 +585,7 @@ describe("llm_call event", () => {
     expect(startEvents.length).toBe(1);
   });
 
-  it("llm_call carries provider, url, request, and llmCallNumber", async () => {
+  it("llm_call carries provider, url, and request", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
@@ -595,8 +595,7 @@ describe("llm_call event", () => {
     expect(e.provider).toBe("anthropic");
     expect(typeof e.url).toBe("string");
     expect(typeof e.request).toBe("object");
-    expect(typeof e.llmCallNumber).toBe("number");
-    expect(e.llmCallNumber).toBe(1);
+    expect(e.llmCallNumber).toBeUndefined();
   });
 
   it("llm_call exposes request messages", async () => {
@@ -626,8 +625,6 @@ describe("llm_call event", () => {
     const events = await collectEvents(agent, "list files");
     const startEvents = events.filter((e) => e.type === "llm_call");
     expect(startEvents.length).toBe(2);
-    expect((startEvents[0] as any).llmCallNumber).toBe(1);
-    expect((startEvents[1] as any).llmCallNumber).toBe(2);
   });
 
   it("llm_call request snapshot is correct (not a live reference)", async () => {
