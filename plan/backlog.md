@@ -71,7 +71,7 @@ Acceptance criteria:
 - `bun test` and `just e2e` pass
 
 ##### Step 3e-iii — FK/PK contract: content-addressed context log
-**Status: TODO — depends on Step 3e-ii**
+**Status: DONE — commit b6ef87c**
 
 Each `MessageParam` written to `context.jsonl` gets a content hash as its
 primary key. Each `llm_call` event in `events.jsonl` carries a `contextHashes`
@@ -317,6 +317,7 @@ Acceptance criteria:
   exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
 - **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed, `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`) were already in `SessionEvent`. 422 tests pass.
 - **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied (`api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`). 422 tests pass.
+- **Step 3e-iii: FK/PK content-addressed context log** — Done (commit b6ef87c). `context.jsonl` entries now carry `hash` (SHA-256 8 hex chars, includes `ts` in input) and `ts` (ISO timestamp). `LlmCallEvent` gains `contextHashes: string[]`. New helpers: `buildContextRecord()`, `sha256hex8()`, `ContextRecord` interface. `appendContextMessage()` returns hash. Agent gains `llmMessageHashes[]` parallel array, `appendToHistory()`, `contextHashesForView()`. 12 new tests in `src/context-hash.test.ts`. 441 tests pass.
 - **Step 3e-ii: Rename WsEvent variants** — Done. `api_call_start`→`llm_call`, `api_error`→`llm_error`, `interrupted`→`turn_interrupted` in `store.ts`, `App.tsx`, `server.ts` (`closeOpenTurn`), `session-resilience.test.ts`, e2e. `agent_error` added as proper `WsEvent` variant. Server-own protocol errors stay as `{ type: "error" }`. 422 tests pass, pushed to `origin/develop`.
 - **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
