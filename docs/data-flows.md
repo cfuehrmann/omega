@@ -44,14 +44,15 @@ Every event has a `type` discriminant. Full union:
 type AgentEvent =
   | { type: "status";        message: string }
   | { type: "text";          text: string }          // streamed chunk
-  | { type: "user_message";  message: string }       // echo of submitted prompt
-  | { type: "api_call_start";
-      callNumber: number;
-      model: string;
-      system: string;
-      tools: Anthropic.Tool[];
-      messages: Anthropic.MessageParam[] }            // snapshot before call
+  | { type: "user_message";  content: string }       // echo of submitted prompt
+  | { type: "llm_call";
+      llmCallNumber: number;
+      provider: "anthropic" | "openai";
+      url: string;
+      request: any }                                  // snapshot before call
   | { type: "llm_to_agent";
+      provider: "anthropic" | "openai";
+      url: string;
       stopReason: string;                             // "end_turn" | "tool_use" | ...
       usage: { input_tokens: number; output_tokens: number };
       content: Anthropic.ContentBlock[] }             // text + tool_use blocks
@@ -71,10 +72,12 @@ type AgentEvent =
       startedAt: string }                             // HH:MM:SS, per API call
   | { type: "turn_end";
       metrics: TurnMetrics;                           // aggregated across all calls
-      toolCalls: string[] }                           // all tool names this turn
-  | { type: "error";         error: string }
-  | { type: "api_error";     error: string; attempt: number; willRetry: boolean }
-  | { type: "interrupted" }
+      toolCalls: string[];                            // all tool names this turn
+      provider: "anthropic" | "openai";
+      model: string }
+  | { type: "agent_error";   error: string }
+  | { type: "llm_error";     error: string; attempt: number; willRetry: boolean }
+  | { type: "turn_interrupted" }
 
 type TurnMetrics = {
   inputTokens: number;
@@ -249,7 +252,10 @@ while true:
 
 Every event is also appended to `sessions/events.jsonl` (via `src/session-event.ts`).
 Every `MessageParam` sent to the LLM is appended to `sessions/context.jsonl`
-(via `src/context-store.ts`). Both files are rotated to `.prev` variants on startup.
+(via `src/context-store.ts`) as a `ContextRecord` with `hash`, `ts`, `role`, `content`.
+Both files are rotated to `.prev` variants on startup. Each `llm_call` event carries
+`contextHashes: string[]` — the ordered hashes of every message in the view actually
+sent, cross-referencing `context.jsonl` entries by their `hash` field.
 
 ---
 
@@ -260,8 +266,8 @@ The terminal UI renders each `AgentEvent` as a block in the log:
 | Event | Colour | What you see |
 |---|---|---|
 | user prompt | green | separator + text |
-| `api_call_start` | cyan | pseudo-JSON of request params |
+| `llm_call` | cyan | pseudo-JSON of request params |
 | `llm_to_agent` | blue | pseudo-JSON of response |
 | `agent_to_agent_tool_result` | yellow | formatted call + result preview |
 | `turn_end` | dim | aggregated metrics |
-| `error` / `api_error` | red | error message |
+| `agent_error` / `llm_error` | red | error message |

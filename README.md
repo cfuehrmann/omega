@@ -88,22 +88,27 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 ### Test isolation — never pollute production files
 
 Tests must **never** write to `sessions/`, `diagnosis/`, or any other
-production file. The rule and the mechanism:
+production file. Five structural layers enforce this:
 
-- `Agent` constructor: when a mock `streamProvider` is injected and no explicit
-  path is given, `diagDir`, `contextFile`, and `eventsFile` all default to
-  `null` (disabled). Tests get isolation automatically — just pass a mock
-  provider and omit the path arguments.
-- All file-writing functions (`appendContextMessage`, `appendSessionEvent`,
-  `writeDiagnostic`) treat `null` path as a no-op.
-- e2e tests: use `sessions-test/` (not `sessions/`) via the fixture server in
+- **Layer a:** `bunfig.toml` preloads `src/test-setup.ts`, which sets `OMEGA_TEST=1`
+  unconditionally for every `bun test` run.
+- **Layer b:** `src/test-guard.ts` `assertNotProductionPath()` is wired into all
+  production write functions. When `OMEGA_TEST=1`, writing to `sessions/` or
+  `diagnosis/` throws immediately — loud failure, not silent pollution.
+- **Layer c:** `Agent` constructor coerces all `undefined` file paths to `null`
+  when `OMEGA_TEST=1`, unconditionally (not just when a mock provider is injected).
+- **Layer d:** Use `makeTestAgent(streamProvider?, openAiCaller?)` from
+  `src/test-utils.ts` instead of `new Agent(...)` directly. Always passes explicit
+  `null` for all path args.
+- **Layer e:** Pre-commit hook greps for bare `new Agent()` in `*.test.ts` files
+  and fails with an actionable message.
+- All file-writing functions treat `null` path as a no-op.
+- e2e tests use `sessions-test/` (not `sessions/`) via the fixture server in
   `e2e/fixtures/test-server.ts`.
 
-**If you add a new production side-effect file** (any append/write that
-`agent.ts` or other core code performs): follow the same pattern — add a
-`filePath: string | null` parameter, disable on `null`, and apply the same
-constructor heuristic (mock provider → null). Add an isolation test like the
-ones in `agent-integration.test.ts` ("does not write to ... when ... is not given").
+**If you add a new production side-effect file:** add a `filePath: string | null`
+parameter, disable on `null`, wire `assertNotProductionPath()` into the write
+function, and add an isolation test.
 
 ## Git hooks
 
