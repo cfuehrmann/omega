@@ -1191,6 +1191,11 @@ export class Agent {
         content: response.content,
         raw: useOpenAi ? (response as any).raw : undefined,
       };
+      // Add assistant response to history; capture hash for llm_response + tool_call events.
+      // logEvent(llm_response) is moved to after appendToHistory so that:
+      //   1. the context.jsonl record is on disk before the event references it, and
+      //   2. llm_response can carry contextHash as a direct FK into context.jsonl.
+      const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
       this.logEvent({
         type: "llm_response",
         ts: new Date().toISOString(),
@@ -1204,9 +1209,8 @@ export class Agent {
           cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens ?? undefined,
           cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? undefined,
         },
+        contextHash: assistantHash,
       });
-      // Add assistant response to history; capture hash for tool_call events
-      const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(

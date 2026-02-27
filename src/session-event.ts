@@ -70,11 +70,12 @@ export interface LlmResponseEvent {
     cache_read_input_tokens?: number;
   };
   /**
-   * Content is intentionally omitted — the assembled assistant message is
-   * the authoritative record in `context.jsonl`. To look up the content,
-   * join on the `contextHashes` of the *next* `llm_call` event, which will
-   * include the assistant message hash.
+   * FK into `context.jsonl` — the hash of the assistant record written for
+   * this response. Always present (1:1 relationship: every `llm_response`
+   * event corresponds to exactly one assistant context record). Content is
+   * intentionally omitted from the event itself; look it up via this hash.
    */
+  contextHash: string;
 }
 
 /** A tool invocation by the agent. */

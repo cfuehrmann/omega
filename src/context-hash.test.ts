@@ -489,6 +489,7 @@ describe("[SCHEMA] llm_call has no messageCount field", () => {
 
 // ---------------------------------------------------------------------------
 // [SCHEMA] llm_response has no content — authoritative record is context.jsonl
+// [SCHEMA] llm_response carries contextHash — direct FK to the assistant context record
 // ---------------------------------------------------------------------------
 
 describe("[SCHEMA] llm_response has no content field", () => {
@@ -514,6 +515,59 @@ describe("[SCHEMA] llm_response has no content field", () => {
       expect(typeof llmResponse.stopReason).toBe("string");
       expect(typeof llmResponse.model).toBe("string");
       expect(typeof llmResponse.usage).toBe("object");
+    }
+  });
+
+  it("llm_response carries contextHash that matches the assistant context.jsonl record", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "hi");
+    await Bun.sleep(50);
+
+    const contextRecords = readContextRecords(contextFile);
+    const allEvents = readEventLines(eventsFile);
+    const llmResponses = allEvents.filter(e => e.type === "llm_response");
+    expect(llmResponses.length).toBeGreaterThan(0);
+
+    for (const llmResponse of llmResponses) {
+      // contextHash must be an 8-char hex string
+      expect(typeof llmResponse.contextHash).toBe("string");
+      expect(/^[0-9a-f]{8}$/.test(llmResponse.contextHash)).toBe(true);
+      // it must match an assistant record in context.jsonl
+      const match = contextRecords.find(r => r.hash === llmResponse.contextHash);
+      expect(match).toBeDefined();
+      expect(match!.role).toBe("assistant");
+    }
+  });
+
+  it("llm_response contextHash points to a record that exists in context.jsonl before the event", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "hi");
+    await Bun.sleep(50);
+
+    // Every llm_response.contextHash must resolve to a context record —
+    // ordering on disk is guaranteed by the await chain (appendToHistory
+    // fully flushes context.jsonl before logEvent(llm_response) fires).
+    const contextRecords = readContextRecords(contextFile);
+    const allEvents = readEventLines(eventsFile);
+    const llmResponses = allEvents.filter(e => e.type === "llm_response");
+
+    for (const llmResponse of llmResponses) {
+      const match = contextRecords.find(r => r.hash === llmResponse.contextHash);
+      expect(match).toBeDefined();
     }
   });
 });

@@ -86,6 +86,7 @@ describe("SessionEvent round-trip serialisation", () => {
       stopReason: "end_turn",
       model: "claude-sonnet-4-6",
       usage: { input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 50 },
+      contextHash: "ab12cd34",
     };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
