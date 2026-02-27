@@ -2,8 +2,10 @@
  * Bun test preload — runs before any test module is imported.
  *
  * Wired via bunfig.toml: [test] preload = ["./src/test-setup.ts"]
+ *
+ * Sets OMEGA_TEST=1 so that production write functions (appendContextMessage,
+ * appendSessionEvent, writeDiagnostic) can detect they are running under the
+ * test suite and enforce isolation. See plan/backlog.md § "Structural
+ * test-pollution prevention" for the full layer-a through layer-e plan.
  */
-
-// No global setup needed at this time.
-// Test isolation for session files (sessions/, diagnosis/) is handled by the
-// Agent constructor heuristic: mock streamProvider → all file paths default to null.
+process.env.OMEGA_TEST = "1";
