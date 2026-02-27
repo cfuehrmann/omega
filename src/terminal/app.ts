@@ -175,12 +175,14 @@ export async function runApp(): Promise<void> {
             break;
 
           case "llm_error": {
+            if (streamingStarted) { println(""); streamingStarted = false; }
             const shortUrl = event.url ? event.url.replace(/^https?:\/\//, "") : "unknown";
             printBlock(now(), [red(`api error (${event.provider} ${shortUrl}): ${event.error}`)]);
             break;
           }
 
           case "status":
+            if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), event.message.split("\n"));
             break;
 
@@ -199,15 +201,18 @@ export async function runApp(): Promise<void> {
             break;
 
           case "agent_to_agent_tool_call":
+            if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolStart(event.name, event.input, event.id));
             break;
 
           case "agent_to_agent_tool_result": {
+            if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolResult(event.result, event.id));
             break;
           }
 
           case "tool_result_message":
+            if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolResultMessage(event.results));
             break;
 
