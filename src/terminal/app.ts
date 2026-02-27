@@ -150,7 +150,7 @@ export async function runApp(): Promise<void> {
             printBlock(now(), renderUserMessage(event.content));
             break;
 
-          case "api_call_start":
+          case "llm_call":
             printBlock(now(), renderApiRequest(
               event.callNumber,
               event.provider,
@@ -174,7 +174,7 @@ export async function runApp(): Promise<void> {
             ));
             break;
 
-          case "api_error": {
+          case "llm_error": {
             const shortUrl = event.url ? event.url.replace(/^https?:\/\//, "") : "unknown";
             printBlock(now(), [red(`api error (${event.provider} ${shortUrl}): ${event.error}`)]);
             break;
@@ -239,12 +239,12 @@ export async function runApp(): Promise<void> {
             break;
           }
 
-          case "error":
+          case "agent_error":
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), [red(`⚠ ${event.error}`)]);
             break;
 
-          case "interrupted":
+          case "turn_interrupted":
             if (streamingStarted) { println(""); streamingStarted = false; }
             if (fullText) {
               printBlock(now(), renderAssistantMessage(fullText));

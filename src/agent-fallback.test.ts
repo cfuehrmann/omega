@@ -28,7 +28,7 @@ describe("Agent fallback", () => {
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hello");
 
-    const apiError = events.find((e) => e.type === "api_error") as any;
+    const apiError = events.find((e) => e.type === "llm_error") as any;
     expect(apiError).toBeTruthy();
     expect(apiError.provider).toBe("anthropic");
     expect(apiError.url).toBe("https://api.anthropic.com/v1/messages");

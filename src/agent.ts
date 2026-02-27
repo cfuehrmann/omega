@@ -34,16 +34,16 @@ export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "status"; message: string }
   | { type: "user_message"; content: string }
-  | { type: "api_call_start"; callNumber: number; provider: "openai" | "anthropic"; url: string; request: any }
+  | { type: "llm_call"; callNumber: number; provider: "openai" | "anthropic"; url: string; request: any }
   | { type: "llm_to_agent"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
-  | { type: "api_error"; provider: "openai" | "anthropic"; url: string; error: string }
+  | { type: "llm_error"; provider: "openai" | "anthropic"; url: string; error: string }
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
-  | { type: "error"; error: string }
-  | { type: "interrupted" };
+  | { type: "agent_error"; error: string }
+  | { type: "turn_interrupted" };
 
 export type ProviderName = "anthropic" | "openai";
 
@@ -600,7 +600,7 @@ export class Agent {
         "x-app": "cli",
       },
     });
-    this.logEvent({ type: "oauth_reauthed", ts: new Date().toISOString() });
+    this.logEvent({ type: "oauth_refreshed", ts: new Date().toISOString() });
     return true;
   }
 
@@ -681,7 +681,7 @@ export class Agent {
             };
           }
         } catch (err: any) {
-          yield { type: "error", error: `Compaction failed: ${err.message}` };
+          yield { type: "agent_error", error: `Compaction failed: ${err.message}` };
         }
         return;
       } else if (cmd === "/help") {
@@ -708,7 +708,7 @@ export class Agent {
           ].join("\n"),
         };
       } else {
-        yield { type: "error", error: `Unknown command: ${userMessage}` };
+        yield { type: "agent_error", error: `Unknown command: ${userMessage}` };
       }
       return;
     }
@@ -769,7 +769,7 @@ export class Agent {
         : basePrompt;
 
       if (this.provider === "openai" && !fallbackEnabled) {
-        yield { type: "error", error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
+        yield { type: "agent_error", error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
         return;
       }
 
@@ -810,7 +810,7 @@ export class Agent {
       const apiView = buildApiMessages(this.llmMessageLog, apiBudget);
       if (apiView.length < this.llmMessageLog.length) {
         this.logEvent({
-          type: "context_truncated",
+          type: "context_view_trimmed",
           ts: new Date().toISOString(),
           originalMessages: this.llmMessageLog.length,
           keptMessages: apiView.length,
@@ -822,7 +822,7 @@ export class Agent {
       }
       const cachedMessages = addCacheControlToLastMessage(apiView);
 
-      // Emit api_call_start with a snapshot of the params before each call
+      // Emit llm_call with a snapshot of the params before each call
       this._apiCallCount += 1;
       if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
@@ -832,13 +832,13 @@ export class Agent {
           config.maxOutputTokens
         );
         yield {
-          type: "api_call_start",
+          type: "llm_call",
           callNumber: this._apiCallCount,
           provider: "openai",
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length });
 
       } else {
         const request = {
@@ -849,13 +849,13 @@ export class Agent {
           messages: [...cachedMessages],
         };
         yield {
-          type: "api_call_start",
+          type: "llm_call",
           callNumber: this._apiCallCount,
           provider: "anthropic",
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
-        this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length });
       }
 
       // Call API with retry
@@ -880,9 +880,9 @@ export class Agent {
             lastError = err;
             if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
               const waitMs = getOpenAiRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-              this.logEvent({ type: "api_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "openai", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
+              this.logEvent({ type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "openai", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
               yield {
-                type: "error",
+                type: "agent_error",
                 error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
               };
               await sleep(waitMs, signal);
@@ -906,14 +906,14 @@ export class Agent {
               this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
             }
             yield {
-              type: "api_error",
+              type: "llm_error",
               provider: "openai",
               url: getOpenAiUrl(),
               error: err.message ?? String(err),
             } as AgentEvent;
-            this.logEvent({ type: "api_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
-            this.logEvent({ type: "error", ts: new Date().toISOString(), error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." });
-            yield { type: "error", error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
+            this.logEvent({ type: "llm_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
+            this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." });
+            yield { type: "agent_error", error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
             return;
           }
         }
@@ -969,8 +969,8 @@ export class Agent {
           if (aborted) {
             // Don't add the partial assistant turn to history.
             // The user message stays — it was real input.
-            this.logEvent({ type: "interrupted", ts: new Date().toISOString() });
-            yield { type: "interrupted" };
+            this.logEvent({ type: "turn_interrupted", ts: new Date().toISOString() });
+            yield { type: "turn_interrupted" };
             return;
           }
 
@@ -993,21 +993,21 @@ export class Agent {
               // Loop continues — the next iteration will use the fresh client
             } else {
               yield {
-                type: "api_error",
+                type: "llm_error",
                 provider: "anthropic",
                 url: "https://api.anthropic.com/v1/messages",
                 error: err.message ?? String(err),
               } as AgentEvent;
-              this.logEvent({ type: "api_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
-              this.logEvent({ type: "error", ts: new Date().toISOString(), error: "OAuth token expired and refresh failed." });
-              yield { type: "error", error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
+              this.logEvent({ type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
+              this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: "OAuth token expired and refresh failed." });
+              yield { type: "agent_error", error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
               return;
             }
           } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-            this.logEvent({ type: "api_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "anthropic", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
+            this.logEvent({ type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "anthropic", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
             yield {
-              type: "error",
+              type: "agent_error",
               error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
             };
             await sleep(waitMs, signal);
@@ -1044,7 +1044,7 @@ export class Agent {
             // llmMessageLog is never mutated — apiBudget controls the next apiView.
             apiBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
             yield {
-              type: "error",
+              type: "agent_error",
               error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})`,
             };
           } else {
@@ -1069,18 +1069,18 @@ export class Agent {
               this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
             }
             yield {
-              type: "api_error",
+              type: "llm_error",
               provider: "anthropic",
               url: "https://api.anthropic.com/v1/messages",
               error: err.message ?? String(err),
             } as AgentEvent;
-            this.logEvent({ type: "api_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
+            this.logEvent({ type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
             if (isRetryable(err)) {
-              this.logEvent({ type: "error", ts: new Date().toISOString(), error: "Anthropic rate limit." });
-              yield { type: "error", error: "Anthropic rate limit. Try /codex to switch providers." };
+              this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit." });
+              yield { type: "agent_error", error: "Anthropic rate limit. Try /codex to switch providers." };
             } else {
-              this.logEvent({ type: "error", ts: new Date().toISOString(), error: `API error: ${err.message ?? err}` });
-              yield { type: "error", error: `API error: ${err.message ?? err}` };
+              this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: `API error: ${err.message ?? err}` });
+              yield { type: "agent_error", error: `API error: ${err.message ?? err}` };
             }
             return;
           }
@@ -1089,7 +1089,7 @@ export class Agent {
       }
 
       if (!response) {
-        yield { type: "error", error: `API error after 5 retries: ${lastError?.message ?? lastError}` };
+        yield { type: "agent_error", error: `API error after 5 retries: ${lastError?.message ?? lastError}` };
         return;
       }
 

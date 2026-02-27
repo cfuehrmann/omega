@@ -51,7 +51,7 @@ describe("rate limit backoff", () => {
     const events = await collectEvents(agent, "hello");
 
     expect(openAiCalls).toBe(3);
-    const errors = events.filter((e) => e.type === "error") as any[];
+    const errors = events.filter((e) => e.type === "agent_error") as any[];
     if (errors.length > 0) {
       expect(errors[errors.length - 1].error).not.toContain("/sonnet");
     }
@@ -74,7 +74,7 @@ describe("rate limit backoff", () => {
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 
-    const errors = events.filter((e) => e.type === "error") as any[];
+    const errors = events.filter((e) => e.type === "agent_error") as any[];
     const error = errors[errors.length - 1];
     expect(error).toBeTruthy();
     expect(error.error).toContain("/sonnet");
@@ -97,7 +97,7 @@ describe("rate limit backoff", () => {
     agent.setProvider("anthropic");
     const events = await collectEvents(agent, "hello");
 
-    const errors = events.filter((e) => e.type === "error") as any[];
+    const errors = events.filter((e) => e.type === "agent_error") as any[];
     const error = errors[errors.length - 1];
     expect(error).toBeTruthy();
     expect(error.error).toContain("/codex");
@@ -156,7 +156,7 @@ describe("OAuth token expiry reauth", () => {
     const texts = events.filter(e => e.type === "text").map((e: any) => e.text);
     expect(texts.join("")).toContain("ok");
     // No hard error event (only status events are ok)
-    const errors = events.filter(e => e.type === "error") as any[];
+    const errors = events.filter(e => e.type === "agent_error") as any[];
     expect(errors).toHaveLength(0);
   });
 
@@ -170,7 +170,7 @@ describe("OAuth token expiry reauth", () => {
     (agent as any).reinitAuth = async () => false;
 
     const events = await collectEvents(agent, "hello");
-    const errors = events.filter(e => e.type === "error") as any[];
+    const errors = events.filter(e => e.type === "agent_error") as any[];
     expect(errors.length).toBeGreaterThan(0);
     const lastError = errors[errors.length - 1];
     expect(lastError.error).toContain("login");
@@ -236,7 +236,7 @@ describe("prompt-too-long diagnostic", () => {
     const events = await collectEvents(agent, "hello");
 
     // Should have yielded a "prompt too long" error event before recovering
-    const errorEvents = events.filter(e => e.type === "error") as any[];
+    const errorEvents = events.filter(e => e.type === "agent_error") as any[];
     expect(errorEvents.some(e => e.error.includes("Prompt too long"))).toBe(true);
 
     // Diagnostic file should have been written

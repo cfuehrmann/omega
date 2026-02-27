@@ -6,7 +6,7 @@
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 
 #### Step 3e — Stable persistence contract (event completeness + schema lock)
-**Status: TODO — discuss before acting. Output is a written agreement, not code.**
+**Status: IN PROGRESS**
 
 Review the full persistence layer and reach explicit agreement on every aspect
 before building session-resume on top of it. Covers:
@@ -25,21 +25,132 @@ before building session-resume on top of it. Covers:
    vs. optional fields, all event variant names. The goal is a stable contract that
    won't need breaking changes when session-resume is built on top.
 
+##### Step 3e-i — Rename SessionEvent and AgentEvent variants
+**Status: DONE**
+
+Rename the following `SessionEvent` discriminant strings (and the matching
+`AgentEvent` yield sites in `agent.ts`) to their agreed names:
+
+| Old name | New name |
+|---|---|
+| `api_call_start` | `llm_call` |
+| `api_error` | `llm_error` |
+| `error` | `agent_error` |
+| `interrupted` | `turn_interrupted` |
+| `oauth_reauthed` | `oauth_refreshed` |
+| `api_retry` | `llm_retry` |
+| `context_truncated` | `context_view_trimmed` |
+
+Scope: `src/session-event.ts`, `src/agent.ts`, `src/terminal/app.ts`,
+and all test files. Does **not** touch the `WsEvent` union in
+`src/web/client/store.ts` or the server's own `{ type: "error" }` sends —
+those are a separate WebSocket protocol layer (see Step 3e-ii).
+
+Acceptance criteria:
+- All 7 renames applied consistently across every call site
+- `bun test` passes
+- No `api_call_start`, `api_error`, `"error"` (as SessionEvent), `"interrupted"`,
+  `oauth_reauthed`, `api_retry`, or `context_truncated` strings remain in
+  `src/session-event.ts` or `src/agent.ts`
+
+##### Step 3e-ii — Rename WsEvent variants to match (web protocol)
+**Status: TODO — depends on Step 3e-i**
+
+After 3e-i is done, apply the same renames to the WebSocket protocol layer:
+the `WsEvent` union in `src/web/client/store.ts`, the switch cases that
+consume it, the e2e tests in `e2e/web-ui.spec.ts`, and the server sends in
+`src/web/server.ts` that originate from `agent.sendMessage()`.
+
+The server's *own* protocol error sends (invalid JSON, turn-already-in-progress,
+catch blocks) use `{ type: "error" }` as a server→client signal — decide
+whether those should also become `agent_error` or stay as `error`.
+
+Acceptance criteria:
+- `WsEvent` union uses the new names
+- All switch cases and e2e assertions updated
+- `bun test` and `just e2e` pass
+
+##### Step 3e-iii — FK/PK contract: content-addressed context log
+**Status: TODO — depends on Step 3e-ii**
+
+Each `MessageParam` written to `context.jsonl` gets a content hash as its
+primary key. Each `llm_call` event in `events.jsonl` carries a `contextHashes`
+array — the ordered list of hashes of every message actually sent with that
+API call. This makes the exact prompt sent to the LLM auditable and recoverable
+for any call, including calls where `buildApiMessages()` produced a truncated
+view that dropped older messages from `llmMessageLog`.
+
+**Design decisions (agreed):**
+
+- **Hash input:** the full JSON-serialised `MessageParam` record *plus* its `ts`
+  timestamp (written at append time). Including `ts` prevents hash collisions
+  between identical messages sent at different times (e.g. "ok" twice in one
+  session). The `ts` is written first; the hash is computed from the stored
+  record — no flakiness from re-computing timestamps.
+- **Hash algorithm:** SHA-256 truncated to 8 hex chars. Collision risk is
+  negligible for a session log.
+- **Hash computed from the view, not `llmMessageLog`:** `contextHashes` must
+  reflect the messages as passed to `buildApiMessages()` output (the truncated
+  view actually sent), not the full canonical history. This is the critical
+  correctness constraint.
+- **Natural IDs elsewhere:** `tool_call`/`tool_result` already have `tool_use_id`
+  (Anthropic UUID — reliable natural key). `session_start` has `sessionId`.
+  `callNumber` on `llm_call` is NOT a reliable unique key — retries within the
+  same outer loop iteration reuse the same `callNumber` and emit duplicate
+  `llm_call` events. `contextHashes` is the correct cross-reference mechanism.
+- **Tool result content:** hashed *after* the 100k truncation cap applied by
+  `executeTool()` — the hash reflects what was actually in the `MessageParam`
+  sent to the API.
+
+**Changes required:**
+- `context.jsonl` entries: add `hash: string` and `ts: string` fields alongside
+  the existing `MessageParam` fields
+- `llm_call` SessionEvent: add `contextHashes: string[]` field
+- `appendContextMessage()` in `context-store.ts`: compute and store hash at
+  write time
+- Agentic loop: after `buildApiMessages()` produces the view, compute
+  `contextHashes` from that view and include in the `llm_call` event/logEvent
+- `LlmCallEvent` type in `session-event.ts`: add `contextHashes` field
+
+**Testing discipline — chaotic scenarios required:**
+- Truncation fires on retry 2 but not retry 1: verify `contextHashes` arrays differ
+- Tool loop where the view shrinks mid-loop: verify each `llm_call` hashes match
+  its actual view
+- Identical message content sent twice: verify different hashes (due to `ts`)
+- Retry within outer loop iteration: verify duplicate `llm_call` events have
+  identical `contextHashes` (same view was sent)
+
+Acceptance criteria:
+- `context.jsonl` entries have `hash` and `ts` fields
+- `llm_call` events have `contextHashes: string[]`
+- Hashes computed from the view sent, not from `llmMessageLog`
+- All chaotic test scenarios pass
+- `bun test` passes
+
+##### Schema lock
+**Status: TODO — follows Step 3e-iii**
+
+Review and explicitly document the full shape of every JSONL record in
+`sessions/context.jsonl` and `sessions/events.jsonl`. Write a schema reference
+(in `plan/` or inline in source) that serves as the stable contract for
+session resume and any future tooling. No breaking changes after this point
+without a migration plan.
+
 #### Step 3f — Session resume
-**Status: TODO — depends on Step 3e (contract must be stable first)**
+**Status: TODO — depends on schema lock**
 
 On startup, if a `.prev` session exists, offer to resume it. Load
 `context.prev.jsonl` and `events.prev.jsonl`, restore `llmMessageLog` and the
 event history, and continue as if the session had not ended.
 
-Acceptance criteria (to be refined after 3e):
+Acceptance criteria (to be refined after schema lock):
 - Startup detects a non-empty `context.prev.jsonl`
 - User is prompted: resume previous session or start fresh
 - On resume: `llmMessageLog` is restored from the context file; events file is
   appended to (not rotated)
 - On fresh start: behaviour unchanged from today
 - Test: round-trip — session writes context, restarts, resumes, next API call
-  sends the restored history
+  sends the restored history with correct `contextHashes`
 
 ---
 
@@ -205,6 +316,7 @@ Acceptance criteria:
   `web/server.ts` (`foldCurrentSessionIntoWorldState`, `performWebShutdown`). Ctrl-C
   exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
 - **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed, `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`) were already in `SessionEvent`. 422 tests pass.
+- **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied (`api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`). 422 tests pass.
 - **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
   `buildApiMessages()` is purely ephemeral; `llmMessageLog` never mutated.

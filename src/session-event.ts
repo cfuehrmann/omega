@@ -36,8 +36,8 @@ export interface UserMessageEvent {
 }
 
 /** An outgoing API call to an LLM. */
-export interface ApiCallStartEvent {
-  type: "api_call_start";
+export interface LlmCallEvent {
+  type: "llm_call";
   ts: string;
   callNumber: number;
   provider: ProviderName;
@@ -93,9 +93,9 @@ export interface TurnEndEvent {
   toolCalls: string[];
 }
 
-/** A non-retryable API error. */
-export interface ApiErrorEvent {
-  type: "api_error";
+/** A non-retryable LLM provider call error. */
+export interface LlmErrorEvent {
+  type: "llm_error";
   ts: string;
   provider: ProviderName;
   url: string;
@@ -104,15 +104,15 @@ export interface ApiErrorEvent {
 }
 
 /** A generic agent-level error (slash-command failures, etc.). */
-export interface ErrorEvent {
-  type: "error";
+export interface AgentErrorEvent {
+  type: "agent_error";
   ts: string;
   error: string;
 }
 
 /** The user interrupted an in-flight turn. */
-export interface InterruptedEvent {
-  type: "interrupted";
+export interface TurnInterruptedEvent {
+  type: "turn_interrupted";
   ts: string;
 }
 
@@ -134,9 +134,9 @@ export interface SessionStartEvent {
   authMode: string;
 }
 
-/** OAuth token was refreshed mid-session. */
-export interface OauthReauthedEvent {
-  type: "oauth_reauthed";
+/** OAuth token was successfully refreshed mid-session. */
+export interface OauthRefreshedEvent {
+  type: "oauth_refreshed";
   ts: string;
 }
 
@@ -148,9 +148,9 @@ export interface OauthTokenExpiredEvent {
   httpStatus?: number;
 }
 
-/** API call retried after a transient error. */
-export interface ApiRetryEvent {
-  type: "api_retry";
+/** LLM provider call retried after a transient error. */
+export interface LlmRetryEvent {
+  type: "llm_retry";
   ts: string;
   attempt: number;
   provider: ProviderName;
@@ -166,9 +166,10 @@ export interface DiagnosticWrittenEvent {
   path: string;
 }
 
-/** The context was truncated to fit within the token budget. */
-export interface ContextTruncatedEvent {
-  type: "context_truncated";
+/** The context view sent to the LLM was trimmed to fit within the token budget.
+ *  The canonical history (llmMessageLog) is never modified. */
+export interface ContextViewTrimmedEvent {
+  type: "context_view_trimmed";
   ts: string;
   originalMessages: number;
   keptMessages: number;
@@ -181,20 +182,20 @@ export interface ContextTruncatedEvent {
 export type SessionEvent =
   | SessionStartEvent
   | UserMessageEvent
-  | ApiCallStartEvent
+  | LlmCallEvent
   | LlmResponseEvent
   | ToolCallEvent
   | ToolResultEvent
   | TurnEndEvent
-  | ApiErrorEvent
-  | ErrorEvent
-  | InterruptedEvent
+  | LlmErrorEvent
+  | AgentErrorEvent
+  | TurnInterruptedEvent
   | SessionCompactedEvent
-  | OauthReauthedEvent
+  | OauthRefreshedEvent
   | OauthTokenExpiredEvent
-  | ApiRetryEvent
+  | LlmRetryEvent
   | DiagnosticWrittenEvent
-  | ContextTruncatedEvent;
+  | ContextViewTrimmedEvent;
 
 // ---------------------------------------------------------------------------
 // Persistence helpers

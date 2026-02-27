@@ -21,11 +21,12 @@ import {
   type ToolCallEvent,
   type ToolResultEvent,
   type TurnEndEvent,
-  type ApiErrorEvent,
-  type ErrorEvent,
-  type InterruptedEvent,
+  type LlmErrorEvent,
+  type AgentErrorEvent,
+  type TurnInterruptedEvent,
   type SessionCompactedEvent,
   type SessionStartEvent,
+  type LlmCallEvent,
 } from "./session-event.js";
 import { Agent } from "./agent.js";
 
@@ -70,8 +71,8 @@ describe("SessionEvent round-trip serialisation", () => {
     expect(read).toEqual(e);
   });
 
-  it("api_call_start", async () => {
-    const e: ApiCallStartEvent = { type: "api_call_start", ts: "2025-01-01T00:00:00.000Z", callNumber: 1, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", messageCount: 3 };
+  it("llm_call", async () => {
+    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", callNumber: 1, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", messageCount: 3 };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);
@@ -121,22 +122,22 @@ describe("SessionEvent round-trip serialisation", () => {
     expect(read).toEqual(e);
   });
 
-  it("api_error", async () => {
-    const e: ApiErrorEvent = { type: "api_error", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: "rate limited", httpStatus: 429 };
+  it("llm_error", async () => {
+    const e: LlmErrorEvent = { type: "llm_error", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: "rate limited", httpStatus: 429 };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);
   });
 
-  it("error", async () => {
-    const e: ErrorEvent = { type: "error", ts: "2025-01-01T00:00:00.000Z", error: "something went wrong" };
+  it("agent_error", async () => {
+    const e: AgentErrorEvent = { type: "agent_error", ts: "2025-01-01T00:00:00.000Z", error: "something went wrong" };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);
   });
 
-  it("interrupted", async () => {
-    const e: InterruptedEvent = { type: "interrupted", ts: "2025-01-01T00:00:00.000Z" };
+  it("turn_interrupted", async () => {
+    const e: TurnInterruptedEvent = { type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z" };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);
@@ -165,7 +166,7 @@ describe("appendSessionEvent", () => {
 
   it("creates the file if it does not exist", async () => {
     expect(existsSync(TEST_FILE)).toBe(false);
-    await appendSessionEvent({ type: "interrupted", ts: "2025-01-01T00:00:00.000Z" }, TEST_FILE);
+    await appendSessionEvent({ type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z" }, TEST_FILE);
     expect(existsSync(TEST_FILE)).toBe(true);
   });
 
@@ -181,7 +182,7 @@ describe("appendSessionEvent", () => {
   });
 
   it("null path is a no-op — no file created", async () => {
-    await appendSessionEvent({ type: "interrupted", ts: "2025-01-01T00:00:00.000Z" }, null);
+    await appendSessionEvent({ type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z" }, null);
     expect(existsSync(TEST_FILE)).toBe(false);
   });
 });
@@ -200,12 +201,12 @@ describe("clearSessionEvents", () => {
   });
 
   it("rotates: current file ends up empty, previous content preserved as .prev", async () => {
-    await appendSessionEvent({ type: "interrupted", ts: "2025-01-01T00:00:00.000Z" }, TEST_FILE);
+    await appendSessionEvent({ type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z" }, TEST_FILE);
     await clearSessionEvents(TEST_FILE);
     expect(readFileSync(TEST_FILE, "utf-8")).toBe("");
     expect(existsSync(PREV_FILE)).toBe(true);
     const prev = readFileSync(PREV_FILE, "utf-8");
-    expect(JSON.parse(prev.trim()).type).toBe("interrupted");
+    expect(JSON.parse(prev.trim()).type).toBe("turn_interrupted");
   });
 
   it("creates fresh empty file when nothing existed before", async () => {

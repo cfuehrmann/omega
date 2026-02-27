@@ -200,13 +200,13 @@ test("world_state_saved event shows a status pill", async ({ page, server }) => 
   await expect(pill).toContainText("world state saved");
 });
 
-test("api_call_start event shows a collapsible api-call block", async ({ page, server }) => {
+test("llm_call event shows a collapsible api-call block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
-    type: "api_call_start",
+    type: "llm_call",
     callNumber: 1,
     provider: "anthropic",
     url: "https://api.anthropic.com/v1/messages",
@@ -237,12 +237,12 @@ test("llm_to_agent event shows an api-response block", async ({ page, server }) 
   await expect(block.locator(".block-label")).toContainText("api response");
 });
 
-test("interrupted event shows interrupt block", async ({ page, server }) => {
+test("turn_interrupted event shows interrupt block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await server.sendEvent({ type: "interrupted" });
+  await server.sendEvent({ type: "turn_interrupted" });
 
   const block = page.locator(".block.interrupt");
   await expect(block).toBeVisible({ timeout: 3000 });

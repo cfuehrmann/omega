@@ -422,7 +422,7 @@ describe("Agent.sendMessage — error handling", () => {
     const agent = new Agent(mockProvider);
     const events = await collectEvents(agent, "test");
 
-    const errorEvents = events.filter((e) => e.type === "error");
+    const errorEvents = events.filter((e) => e.type === "agent_error");
     expect(errorEvents.length).toBeGreaterThan(0);
     expect((errorEvents[0] as any).error).toContain("Bad request");
   });
@@ -452,7 +452,7 @@ describe("Agent.sendMessage — error handling", () => {
 
     // Should have retried and eventually succeeded (compaction may add extra calls)
     expect(attempts).toBeGreaterThanOrEqual(3);
-    const errorEvents = events.filter((e) => e.type === "error");
+    const errorEvents = events.filter((e) => e.type === "agent_error");
     // Two retry error messages emitted before success
     expect(errorEvents.length).toBe(2);
     // Final event should be turn_end (success)
@@ -505,8 +505,8 @@ describe("Agent.sendMessage — abort", () => {
     expect(textEvents.length).toBe(1);
     expect((textEvents[0] as any).text).toContain("chunk1");
 
-    // Should emit an "interrupted" event so the UI can show feedback
-    const interrupted = events.find((e) => e.type === "interrupted");
+    // Should emit a "turn_interrupted" event so the UI can show feedback
+    const interrupted = events.find((e) => e.type === "turn_interrupted");
     expect(interrupted).toBeDefined();
   });
 
@@ -543,25 +543,25 @@ describe("Agent.sendMessage — abort", () => {
 });
 
 // ---------------------------------------------------------------------------
-// api_call_start event
+// llm_call event
 // ---------------------------------------------------------------------------
 
-describe("api_call_start event", () => {
-  it("emits api_call_start before the first API call", async () => {
+describe("llm_call event", () => {
+  it("emits llm_call before the first API call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    const startEvents = events.filter((e) => e.type === "api_call_start");
+    const startEvents = events.filter((e) => e.type === "llm_call");
     expect(startEvents.length).toBe(1);
   });
 
-  it("api_call_start carries provider, url, request, and callNumber", async () => {
+  it("llm_call carries provider, url, request, and callNumber", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    const e = events.find((e) => e.type === "api_call_start") as any;
+    const e = events.find((e) => e.type === "llm_call") as any;
     expect(e).toBeDefined();
     expect(e.provider).toBe("anthropic");
     expect(typeof e.url).toBe("string");
@@ -570,17 +570,17 @@ describe("api_call_start event", () => {
     expect(e.callNumber).toBe(1);
   });
 
-  it("api_call_start exposes request messages", async () => {
+  it("llm_call exposes request messages", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    const e = events.find((e) => e.type === "api_call_start") as any;
+    const e = events.find((e) => e.type === "llm_call") as any;
     expect(Array.isArray(e.request.messages)).toBe(true);
     expect(e.request.messages[0].role).toBe("user");
   });
 
-  it("emits api_call_start once per round-trip in a tool loop", async () => {
+  it("emits llm_call once per round-trip in a tool loop", async () => {
     // First call: tool_use; second call: text response
     let callCount = 0;
     const mockProvider: StreamProvider = async () => {
@@ -595,18 +595,18 @@ describe("api_call_start event", () => {
     };
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "list files");
-    const startEvents = events.filter((e) => e.type === "api_call_start");
+    const startEvents = events.filter((e) => e.type === "llm_call");
     expect(startEvents.length).toBe(2);
     expect((startEvents[0] as any).callNumber).toBe(1);
     expect((startEvents[1] as any).callNumber).toBe(2);
   });
 
-  it("api_call_start request snapshot is correct (not a live reference)", async () => {
+  it("llm_call request snapshot is correct (not a live reference)", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hello");
-    const e = events.find((ev) => ev.type === "api_call_start") as any;
+    const e = events.find((ev) => ev.type === "llm_call") as any;
     expect(e.request.messages.length).toBe(1);
     expect(e.request.messages[0].role).toBe("user");
   });
@@ -912,7 +912,7 @@ describe("Agent — user_message event", () => {
     const events = await collectEvents(agent, "hi");
     const types = events.map((e) => e.type);
     const umIdx = types.indexOf("user_message");
-    const apiIdx = types.indexOf("api_call_start");
+    const apiIdx = types.indexOf("llm_call");
     expect(umIdx).toBeGreaterThanOrEqual(0);
     expect(umIdx).toBeLessThan(apiIdx);
   });
@@ -962,7 +962,7 @@ describe("Agent — tool_result_message event", () => {
     const events = await collectEvents(agent, "list");
     const types = events.map((e) => e.type);
     const trmIdx = types.lastIndexOf("tool_result_message");
-    const lastApiIdx = types.lastIndexOf("api_call_start");
+    const lastApiIdx = types.lastIndexOf("llm_call");
     expect(trmIdx).toBeGreaterThan(0);
     expect(trmIdx).toBeLessThan(lastApiIdx);
   });
@@ -1113,21 +1113,21 @@ describe("slash commands", () => {
   it("old /gpt command is rejected as unknown", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/gpt");
-    const err = events.find((e) => e.type === "error") as any;
+    const err = events.find((e) => e.type === "agent_error") as any;
     expect(err).toBeDefined();
   });
 
   it("old /openai command is rejected as unknown", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/openai");
-    const err = events.find((e) => e.type === "error") as any;
+    const err = events.find((e) => e.type === "agent_error") as any;
     expect(err).toBeDefined();
   });
 
   it("old /anthropic command is rejected as unknown", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/anthropic");
-    const err = events.find((e) => e.type === "error") as any;
+    const err = events.find((e) => e.type === "agent_error") as any;
     expect(err).toBeDefined();
   });
 

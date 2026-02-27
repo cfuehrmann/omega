@@ -118,7 +118,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "api_call_start") {
+  if (e.type === "llm_call") {
     const reqStr = truncate(JSON.stringify(e.request, null, 2), 1000);
     return (
       <details class="block api-call">
@@ -150,7 +150,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "api_error") {
+  if (e.type === "llm_error") {
     return (
       <div class="block error-b">
         <div class="block-label">api error ({e.provider})</div>
@@ -159,7 +159,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "error") {
+  if (e.type === "agent_error" || e.type === "error") {
     return (
       <div class="block error-b">
         <div class="block-label">error</div>
@@ -168,7 +168,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "interrupted") {
+  if (e.type === "turn_interrupted") {
     return <div class="block interrupt">⊘ Interrupted</div>;
   }
 

@@ -103,10 +103,10 @@ export function closeOpenTurn(log: object[]): object[] {
   // Walk backwards to find the last turn boundary
   for (let i = log.length - 1; i >= 0; i--) {
     const t = (log[i] as any).type as string;
-    if (t === "turn_end" || t === "interrupted") return log; // already closed
+    if (t === "turn_end" || t === "turn_interrupted") return log; // already closed
     if (t === "user_message") {
-      // Found an open turn — append an interrupted marker
-      return [...log, { type: "interrupted" }];
+      // Found an open turn — append a turn_interrupted marker
+      return [...log, { type: "turn_interrupted" }];
     }
   }
   return log; // no turns at all

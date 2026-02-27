@@ -28,15 +28,15 @@ describe("closeOpenTurn", () => {
     expect(closeOpenTurn(log)).toEqual(log);
   });
 
-  it("returns the log unchanged when the last turn is already closed by interrupted", () => {
+  it("returns the log unchanged when the last turn is already closed by turn_interrupted", () => {
     const log = [
       { type: "user_message", content: "hi" },
-      { type: "interrupted" },
+      { type: "turn_interrupted" },
     ];
     expect(closeOpenTurn(log)).toEqual(log);
   });
 
-  it("appends interrupted when the last user_message has no closing event", () => {
+  it("appends turn_interrupted when the last user_message has no closing event", () => {
     const log = [
       { type: "user_message", content: "hi" },
       { type: "status", message: "thinking..." },
@@ -44,7 +44,7 @@ describe("closeOpenTurn", () => {
     ];
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
-    expect(result[result.length - 1]).toEqual({ type: "interrupted" });
+    expect(result[result.length - 1]).toEqual({ type: "turn_interrupted" });
   });
 
   it("handles multiple turns: only patches the open last turn", () => {
@@ -56,7 +56,7 @@ describe("closeOpenTurn", () => {
     ];
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
-    expect(result[result.length - 1]).toEqual({ type: "interrupted" });
+    expect(result[result.length - 1]).toEqual({ type: "turn_interrupted" });
   });
 
   it("does not mutate the original array", () => {
@@ -126,12 +126,12 @@ describe("store history replay — open turn recovery", () => {
     expect(state.streaming).toBe(false);
   });
 
-  it("clears streaming flag when replaying a turn closed by interrupted", () => {
+  it("clears streaming flag when replaying a turn closed by turn_interrupted", () => {
     dispatch({
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "interrupted" },
+        { type: "turn_interrupted" },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -161,6 +161,6 @@ describe("store history replay — open turn recovery", () => {
     const lastTurn = state.turns[state.turns.length - 1];
     expect(lastTurn).toBeDefined();
     const lastEvent = lastTurn.events[lastTurn.events.length - 1];
-    expect(lastEvent.type).toBe("interrupted");
+    expect(lastEvent.type).toBe("turn_interrupted");
   });
 });

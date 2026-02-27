@@ -24,13 +24,14 @@ type WsEvent =
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: unknown }
   | { type: "agent_to_agent_tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
   | { type: "status"; message: string }
-  | { type: "api_call_start"; callNumber: number; provider: string; url: string; request: unknown }
+  | { type: "llm_call"; callNumber: number; provider: string; url: string; request: unknown }
   | { type: "llm_to_agent"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
-  | { type: "api_error"; provider: string; error: string }
+  | { type: "llm_error"; provider: string; error: string }
+  | { type: "agent_error"; error: string }
   | { type: "error"; error: string }
-  | { type: "interrupted" };
+  | { type: "turn_interrupted" };
 
 interface Turn {
   id: number;
@@ -104,7 +105,7 @@ export function dispatch(event: WsEvent): void {
       // mid-turn before emitting turn_end/interrupted), close it now so the UI
       // doesn't get stuck in streaming=true with no way to recover.
       if (state.streaming) {
-        dispatch({ type: "interrupted" });
+        dispatch({ type: "turn_interrupted" });
       }
       // After replay we are still connected (history arrived over an open socket)
       setState("connected", true);
@@ -164,7 +165,7 @@ export function dispatch(event: WsEvent): void {
       setState("streaming", false);
       break;
 
-    case "interrupted":
+    case "turn_interrupted":
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
         if (turn) {
@@ -182,10 +183,11 @@ export function dispatch(event: WsEvent): void {
     case "agent_to_agent_tool_call":
     case "agent_to_agent_tool_result":
     case "status":
-    case "api_call_start":
+    case "llm_call":
     case "llm_to_agent":
     case "world_state_saved":
-    case "api_error":
+    case "llm_error":
+    case "agent_error":
     case "error":
       appendEvent(event);
       break;
