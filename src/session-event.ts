@@ -19,7 +19,6 @@ import { appendFile, writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { rotateFile } from "./context-store.js";
 import { assertNotProductionPath } from "./test-guard.js";
-import type { ToolResult } from "./tools.js";
 import type { TurnMetrics, ProviderName } from "./agent.js";
 
 export const DEFAULT_EVENTS_FILE = "sessions/events.jsonl";
@@ -84,7 +83,8 @@ export interface ToolCallEvent {
   ts: string;
   id: string;
   name: string;
-  input: unknown;
+  /** Hash of the assistant context.jsonl record containing this tool_use block. */
+  contextHash: string;
 }
 
 /** The result of a tool invocation. */
@@ -95,7 +95,8 @@ export interface ToolResultEvent {
   name: string;
   isError: boolean;
   durationMs?: number;
-  outputLength: number;
+  /** Hash of the user context.jsonl record containing this tool_result block. */
+  contextHash: string;
 }
 
 /** End of a user turn — aggregate metrics. */

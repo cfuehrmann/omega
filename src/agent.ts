@@ -1203,8 +1203,8 @@ export class Agent {
           cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? undefined,
         },
       });
-      // Add assistant response to history
-      await this.appendToHistory({ role: "assistant", content: response.content });
+      // Add assistant response to history; capture hash for tool_call events
+      const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
@@ -1228,7 +1228,7 @@ export class Agent {
             input: toolUse.input,
             formatted,
           } as AgentEvent;
-          this.logEvent({ type: "tool_call", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, input: toolUse.input });
+          this.logEvent({ type: "tool_call", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, contextHash: assistantHash });
         }
 
         // Execute all tools concurrently
@@ -1250,7 +1250,6 @@ export class Agent {
             formatted,
             result,
           } as AgentEvent;
-          this.logEvent({ type: "tool_result", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, isError: result.isError, durationMs: result.durationMs, outputLength: result.output.length });
 
           toolResults.push({
             type: "tool_result",
@@ -1270,8 +1269,13 @@ export class Agent {
           })),
         };
 
-        // Add tool results to history and continue the loop
-        await this.appendToHistory({ role: "user", content: toolResults });
+        // Add tool results to history; capture hash for tool_result events
+        const toolResultHash = await this.appendToHistory({ role: "user", content: toolResults });
+        for (let i = 0; i < formattedCalls.length; i++) {
+          const { toolUse } = formattedCalls[i];
+          const result = results[i];
+          this.logEvent({ type: "tool_result", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, isError: result.isError, durationMs: result.durationMs, contextHash: toolResultHash });
+        }
         continueLoop = true;
       }
 

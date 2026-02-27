@@ -93,14 +93,14 @@ describe("SessionEvent round-trip serialisation", () => {
   });
 
   it("tool_call", async () => {
-    const e: ToolCallEvent = { type: "tool_call", ts: "2025-01-01T00:00:00.000Z", id: "tool_abc", name: "read_file", input: { path: "README.md" } };
+    const e: ToolCallEvent = { type: "tool_call", ts: "2025-01-01T00:00:00.000Z", id: "tool_abc", name: "read_file", contextHash: "ab12cd34" };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);
   });
 
   it("tool_result", async () => {
-    const e: ToolResultEvent = { type: "tool_result", ts: "2025-01-01T00:00:00.000Z", id: "tool_abc", name: "read_file", isError: false, durationMs: 12, outputLength: 4200 };
+    const e: ToolResultEvent = { type: "tool_result", ts: "2025-01-01T00:00:00.000Z", id: "tool_abc", name: "read_file", isError: false, durationMs: 12, contextHash: "ef56ab78" };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);

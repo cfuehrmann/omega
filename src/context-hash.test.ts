@@ -21,7 +21,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 
 import { Agent, type AgentEvent, type StreamProvider, buildApiMessages } from "./agent.js";
 import type { ContextRecord } from "./context-store.js";
-import type { LlmCallEvent } from "./session-event.js";
+import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./session-event.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -514,6 +514,132 @@ describe("[SCHEMA] llm_response has no content field", () => {
       expect(typeof llmResponse.stopReason).toBe("string");
       expect(typeof llmResponse.model).toBe("string");
       expect(typeof llmResponse.usage).toBe("object");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [SCHEMA] tool_call carries contextHash pointing to the assistant context record
+// [SCHEMA] tool_result carries contextHash pointing to the user context record
+// [SCHEMA] tool_call has no input field — content is in context.jsonl
+// [SCHEMA] tool_result has no outputLength field — derivable from context.jsonl
+// ---------------------------------------------------------------------------
+
+describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
+  it("tool_call event carries contextHash matching the assistant context.jsonl record", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "list it");
+    await Bun.sleep(50);
+
+    const contextRecords = readContextRecords(contextFile);
+    const allEvents = readEventLines(eventsFile);
+    const toolCalls = allEvents.filter(e => e.type === "tool_call") as ToolCallEvent[];
+
+    expect(toolCalls.length).toBe(1);
+    const tc = toolCalls[0];
+
+    // contextHash must be an 8-char hex string
+    expect(typeof tc.contextHash).toBe("string");
+    expect(/^[0-9a-f]{8}$/.test(tc.contextHash)).toBe(true);
+
+    // Must point to the assistant message (index 1: user, assistant, user(tool_result))
+    const assistantRecord = contextRecords.find(r => r.role === "assistant");
+    expect(assistantRecord).toBeDefined();
+    expect(tc.contextHash).toBe(assistantRecord!.hash);
+  });
+
+  it("tool_result event carries contextHash matching the user tool_result context.jsonl record", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "list it");
+    await Bun.sleep(50);
+
+    const contextRecords = readContextRecords(contextFile);
+    const allEvents = readEventLines(eventsFile);
+    const toolResults = allEvents.filter(e => e.type === "tool_result") as ToolResultEvent[];
+
+    expect(toolResults.length).toBe(1);
+    const tr = toolResults[0];
+
+    // contextHash must be an 8-char hex string
+    expect(typeof tr.contextHash).toBe("string");
+    expect(/^[0-9a-f]{8}$/.test(tr.contextHash)).toBe(true);
+
+    // Must point to the user message containing the tool_result block
+    // That's the third context record: user(original), assistant(tool_use), user(tool_result)
+    const toolResultRecord = contextRecords.find(
+      r => r.role === "user" && Array.isArray(r.content) && (r.content as any[]).some((b: any) => b.type === "tool_result")
+    );
+    expect(toolResultRecord).toBeDefined();
+    expect(tr.contextHash).toBe(toolResultRecord!.hash);
+  });
+
+  it("tool_call event has no input field", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "list it");
+    await Bun.sleep(50);
+
+    const allEvents = readEventLines(eventsFile);
+    const toolCalls = allEvents.filter(e => e.type === "tool_call");
+    expect(toolCalls.length).toBeGreaterThan(0);
+    for (const tc of toolCalls) {
+      expect("input" in tc).toBe(false);
+    }
+  });
+
+  it("tool_result event has no outputLength field", async () => {
+    const dir = makeTempDir();
+    const contextFile = join(dir, "context.jsonl");
+    const eventsFile = join(dir, "events.jsonl");
+
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+
+    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    await collectEvents(agent, "list it");
+    await Bun.sleep(50);
+
+    const allEvents = readEventLines(eventsFile);
+    const toolResults = allEvents.filter(e => e.type === "tool_result");
+    expect(toolResults.length).toBeGreaterThan(0);
+    for (const tr of toolResults) {
+      expect("outputLength" in tr).toBe(false);
     }
   });
 });
