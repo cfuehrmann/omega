@@ -163,6 +163,35 @@ describe("Agent — test isolation (no production file pollution)", () => {
     const sizeAfter = existsSync(contextPath) ? statSync(contextPath).size : -1;
     expect(sizeAfter).toBe(sizeBefore);
   });
+
+  it("does not write to sessions/events.jsonl when OpenAI caller used without explicit eventsFile=null", async () => {
+    // Regression test: agent-rate-limit tests previously passed streamProvider=undefined
+    // with a custom openAiCaller, bypassing the mock-provider heuristic and writing to
+    // the production events file. Explicit null, null must be passed in that pattern.
+    const { existsSync, statSync } = await import("fs");
+    const eventsPath = join(process.cwd(), "sessions", "events.jsonl");
+
+    const sizeBefore = existsSync(eventsPath) ? statSync(eventsPath).size : -1;
+
+    const openAiCaller = async () => ({
+      response: {
+        content: [{ type: "text", text: "ok" } as any],
+        stop_reason: "stop",
+        usage: { input_tokens: 1, output_tokens: 2 },
+      },
+      text: "ok",
+      raw: { usage: { input_tokens: 1, output_tokens: 2 } },
+    });
+
+    // Must pass null, null explicitly to disable production file writes
+    const agent = new Agent(undefined, null, openAiCaller as any, null, null, null);
+    agent.setProvider("openai");
+    await collectEvents(agent, "hello");
+    await Bun.sleep(100);
+
+    const sizeAfter = existsSync(eventsPath) ? statSync(eventsPath).size : -1;
+    expect(sizeAfter).toBe(sizeBefore);
+  });
 });
 
 // ---------------------------------------------------------------------------
