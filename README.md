@@ -69,7 +69,9 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 
 - Two branches: `main` (stable) and `develop` (working). Omega commits to
   `develop` only. The operator merges `develop → main` when satisfied.
-- `just gate` is the operator-run test gate — never invoke it automatically.
+- **Run `just gate` before every commit.** Gate = unit tests + type check + e2e.
+  Never commit without a green gate. `just gate` is not automatic — it must be
+  run explicitly.
 - Push to origin at least every 3 commits.
 - If tests go red: stop, do not commit, fix before proceeding.
 - Never commit or push red code.
