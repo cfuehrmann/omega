@@ -32,26 +32,21 @@ silent middle ground.
   a clear error message. Explicit temp-dir paths are unaffected. 9 tests in
   `src/test-guard.test.ts`. 451 tests pass.
 
-- **Layer c — Agent constructor coerces undefined paths to null in test env (early interception):**
+- **Layer c — Agent constructor coerces undefined paths to null in test env (early interception):** ✅ DONE
   When `OMEGA_TEST=1`, the `Agent` constructor treats all `undefined` file paths
   as `null` unconditionally, replacing the current fragile mock-provider heuristic.
   No test can accidentally fall through to production defaults. Catches mistakes
   *before* they reach the write functions, giving a cleaner failure mode.
 
-- **Layer d — `makeTestAgent` factory (convenience):**
-  Export a `makeTestAgent(...)` helper from a test-utils file that always passes
-  `null` for all path args. Tests import `makeTestAgent` instead of `Agent`
-  directly. With layers a–c in place this is no longer safety-critical, but makes
-  the right thing the easy thing for future test authors.
+- **Layer d — `makeTestAgent` factory (convenience):** ✅ DONE
+  `src/test-utils.ts` exports `makeTestAgent(streamProvider?, openAiCaller?)`.
+  Always passes `null` for all path args explicitly. 5 tests in `src/test-utils.test.ts`.
+  Tests import `makeTestAgent` instead of `Agent` directly — right thing is easy thing.
 
-- **Layer e — Pre-commit grep for dangerous patterns (belt-and-suspenders):**
-  The pre-commit hook greps for `new Agent(undefined,` or similar and fails with
-  an actionable message. With layers a–c in place the test suite already catches
-  these before commit, but this gives an earlier and more specific error message.
-
-**Remaining open questions:**
-- Whether Layer d (`makeTestAgent`) is worth adding given layers a–c
-- Whether Layer e is worth adding given layers a–c already catch pollution at test time
+- **Layer e — Pre-commit grep for dangerous patterns (belt-and-suspenders):** ✅ DONE
+  `scripts/pre-commit` greps for bare `new Agent()` (no args) in `*.test.ts` files
+  and fails with an actionable message before running tests. Gives earlier, more
+  specific signal than waiting for layer b to throw at test time.
 
 ---
 

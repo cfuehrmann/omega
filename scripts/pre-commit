@@ -5,6 +5,26 @@
 # Aborts the commit if any test fails.
 # Does NOT run e2e tests (use `just gate` for the full suite).
 
+# ---------------------------------------------------------------------------
+# Guard: catch bare `new Agent()` with no arguments in test files.
+# A no-arg Agent() in a test could write to production paths.
+# Use makeTestAgent() from src/test-utils.ts instead.
+# ---------------------------------------------------------------------------
+echo "Checking for unsafe Agent construction in tests..."
+if grep -rn --include="*.test.ts" "new Agent()" src/ 2>/dev/null | grep -qv "makeTestAgent"; then
+  echo ""
+  echo "❌  Unsafe Agent construction found in test files:"
+  grep -rn --include="*.test.ts" "new Agent()" src/ | grep -v "makeTestAgent"
+  echo ""
+  echo "    Use makeTestAgent() from src/test-utils.ts instead of new Agent()."
+  echo "    To skip this check (emergency only): git commit --no-verify"
+  exit 1
+fi
+echo "✅  No unsafe Agent construction."
+
+# ---------------------------------------------------------------------------
+# Run unit tests.
+# ---------------------------------------------------------------------------
 echo "Running bun test --bail (pre-commit gate)..."
 bun test --bail
 status=$?

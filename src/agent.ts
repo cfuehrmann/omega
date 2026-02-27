@@ -501,20 +501,28 @@ export class Agent {
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
     this.openAiCaller = openAiCaller;
-    // Diagnostics: if mock provider given and diagDir not specified, disable.
-    if (streamProvider !== undefined && diagDir === undefined) {
+
+    // Layer c: in test env, any unspecified file path defaults to null (disabled).
+    // This is a structural guardrail — it fires regardless of whether a mock
+    // streamProvider was injected, closing the gap where tests that inject an
+    // OpenAI caller (or no provider at all) would silently fall through to
+    // production defaults.
+    const inTestEnv = process.env.OMEGA_TEST === "1";
+
+    // Diagnostics: disable in test env unless explicitly set; or if mock provider given.
+    if ((inTestEnv || streamProvider !== undefined) && diagDir === undefined) {
       this.diagDir = null;
     } else {
       this.diagDir = diagDir;
     }
-    // Context file: if mock provider given and contextFile not specified, disable.
-    if (streamProvider !== undefined && contextFile === undefined) {
+    // Context file: disable in test env unless explicitly set; or if mock provider given.
+    if ((inTestEnv || streamProvider !== undefined) && contextFile === undefined) {
       this.contextFile = null;
     } else {
       this.contextFile = contextFile;
     }
-    // Events file: if mock provider given and eventsFile not specified, disable.
-    if (streamProvider !== undefined && eventsFile === undefined) {
+    // Events file: disable in test env unless explicitly set; or if mock provider given.
+    if ((inTestEnv || streamProvider !== undefined) && eventsFile === undefined) {
       this.eventsFile = null;
     } else {
       this.eventsFile = eventsFile;
