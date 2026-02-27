@@ -2,341 +2,55 @@
 
 ## Open items
 
-### [BUG FIX — DONE] Tool output cap — prevent context poisoning from large tool results
-A `grep_files` call on `sessions/events.prev.jsonl` returned 2MB of output (200 JSONL
-lines, each a large event object). This was stored verbatim in history and re-sent to
-the API on every subsequent turn, eventually causing a 641k-token prompt-too-long error.
-
-**Fixed (2026-02-25):**
-- `executeTool()` in `src/tools.ts` now applies `MAX_TOOL_OUTPUT_CHARS = 100_000` to
-  all tool results after execution, before the result enters history.
-- Oversized output is sliced and a note appended: `[truncated: tool output was N chars;
-  showing first 100000. Use offset/limit or a more specific query to see other parts.]`
-- Applies uniformly to all tools: `grep_files`, `run_command`, `read_file` (when
-  offset/limit bypass its internal cap), `fetch_url`, etc.
-- 2 new tests; 470 total, all pass.
-
-**Navigation note:** For paging through large JSONL or other files, `read_file` with
-`offset`/`limit` is the right tool — it lets you retrieve specific line ranges without
-pulling the entire file into context.
-
-### [BUG FIX — DONE] `truncateHistory` no-op on short-but-fat history
-When history had ≤ `KEEP_RECENT_TURNS*2` (20) messages, `middle.length === 0` and
-`truncateHistory` returned history unchanged — making all 5 "prompt too long" retries
-futile (identical 641k-token payload each time).
-
-**Fixed (2026-02-25):**
-- When `middle` is empty (all messages within the "always keep" tail), drop from the
-  oldest end of the tail, keeping at minimum the last message.
-- Updated the test that was encoding the buggy behaviour (`"returns all messages if
-  fewer than KEEP_RECENT_TURNS*2"`) — it now only fires when history is under budget.
-- New test: 11 huge messages (~250k estimated tokens) → result is under the 100k budget.
-- 1 test updated + 1 added; 470 total, all pass.
-
-### [BUG FIX — DONE] Graceful handling of 'context too long' 429 on shutdown fold
-Claude Max OAuth returns 429 "Extra usage is required for long context requests"
-when the session history is too large for the account tier's context window.
-Previously this was misclassified as a retryable rate limit, causing a futile
-retry, crash, diagnostic write, and raw error message shown to the user.
-
-**Fixed (2026-02-25):**
-- Added `isContextTooLong()` helper that detects this specific 429.
-- Excluded it from `isRetryable()` (retrying with the same payload is futile).
-- `foldCurrentSessionIntoWorldState()` now yields a clear, actionable message:
-  *"World state fold skipped: context too long for this account tier. Use /compact
-  to reduce history before quitting."* — no diagnostic written (it's a known
-  limitation, not a bug).
-- Main agentic loop treats `isContextTooLong()` like 400 "prompt is too long":
-  truncates history and retries.
-- 6 new tests; 467 total, all pass.
-
-### [REFACTOR] Decouple world-state compaction from Omega's own repo
-**Priority: LOW — strategically opportune after Step 4 (pino retirement) is done**
-
-`foldCurrentSessionIntoWorldState()` in `src/agent.ts` and `compactWorldState()` in
-`src/compaction.ts` hard-code Omega's own planning convention: they read and write
-`plan/world-state.md` in the project directory, passing `priorWorldState` and
-`sessionHistory` to produce a new Omega-specific world-state summary.
-
-This is a residual coupling: Omega-as-a-general-agent compacts the world state using
-a prompt that assumes it is always working on Omega's own repo. If Omega is pointed at
-a different project, the fold still produces an Omega-flavoured summary rather than a
-project-appropriate one.
-
-**What decoupling would look like:**
-- The system prompt currently loaded from `plan/world-state.md` at startup is
-  Omega-specific. For a foreign project, the project's own `README.md` already
-  provides orientation; the world-state file is Omega's own metadata, not the
-  project's.
-- The fold prompt should either be absent for foreign projects, or configurable via
-  a `plan/world-state-prompt.md` file in the project (optional; fold disabled if
-  missing).
-- Alternatively: fold is always enabled but the prompt is generic ("summarise what
-  happened this session in a way useful for the next session").
-
-**Why defer:**
-- Currently Omega is only used on its own repo in practice; the coupling causes no
-  harm and the generic-fold alternative is untested.
-- Step 4 (pino retirement) changes `agent.ts` significantly; defer to avoid churn.
-- This is a design question (what is the right cross-project fold semantics?) as much
-  as an implementation task — discuss before acting.
-
-**Acceptance criteria (once decided):**
-- `foldCurrentSessionIntoWorldState()` does not assume the project is Omega's own repo
-- Fold prompt is either configurable per-project or generic
-- When pointed at a foreign project with no `plan/world-state.md`, fold either
-  produces a generic summary or is cleanly disabled
-- All existing fold tests pass; new test for foreign-project path
-
----
-
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
-
-Omega's codebase was tightly coupled to itself: system prompt, world-state
-compaction, and planning files all assumed Omega was always working on Omega.
-The manifest calls for separating "Omega as a coding agent" from "Omega's own
-source repo being AI-friendly."
-
-#### Step 1: System prompt decoupling + README — DONE
-- System prompt (`src/config.ts`) is now project-agnostic. It tells the agent to
-  read `README.md` in the working directory for orientation.
-- `README.md` created at project root with all omega-specific context (planning
-  files, stack, auth, git/testing discipline, key source files, diagnosis).
-- Structural invariant tests updated (`src/planning-files.test.ts`).
-- All 430 unit + 27 e2e tests pass.
-
-#### ~~Step 2: Abandon automatic compaction (manifest item)~~ — DONE
-Removed `compactAfterTurn()`, `compactionQueue`, `zone2Summary`, `zone3Start`
-tracking from `agent.ts`. Removed `compactTurn()` from `src/compaction.ts`.
-History now grows verbatim; prompt caching provides token efficiency.
-`foldCurrentSessionIntoWorldState()` retained (Zone 1 still useful for cross-session
-world-state). `compactWorldState()` kept in `compaction.ts` for the fold.
-All 426 tests pass. Event taxonomy updated: `agent_to_llm_compact_turn` and
-`agent_to_agent_compact_turn` events removed. world-state.md and future.md updated.
-
-#### Step 3: Event-list session model (manifest item) — IN PROGRESS (sub-steps below)
-
-Replace the current `MessageParam[]` history with an event-list data structure that
-serves operation, diagnostics, and UI visualization. Persist by appending events to
-files. Context messages in a separate file with hash-based cross-referencing.
-
-Sub-steps are ordered so that **earlier ones directly extend Omega's capacity for
-long sessions** — the primary practical constraint right now. History grows verbatim
-(since Step 2), truncation silently drops middle messages and invalidates the prompt
-cache prefix. The fix lands in 3b (manual compaction) and 3d (non-destructive truncation).
-
-##### Step 3a — Append-only context file — DONE
-Commit 551d676. `src/context-store.ts` exports `appendContextMessage()` and
-`clearContextStore()`. Three call sites in `agent.ts` `sendMessage`: after
-pushing the user message, after pushing the assistant response, and after
-pushing tool results. All writes fire-and-forget (errors silently dropped —
-non-critical I/O). `sessions/context.jsonl` is gitignored under `sessions/`.
-5 new tests; 431 total pass.
-
-**Follow-up fix (commit 9cc6634):** Tests were polluting `sessions/context.jsonl`.
-Fixed by adding `contextFile: string | null | undefined` field to `Agent` with the
-same mock-provider heuristic as `worldStatePath`/`diagDir` — when a mock
-`streamProvider` is injected without an explicit path, `contextFile` defaults to
-`null` (disabled). `appendContextMessage` and `clearContextStore` accept `null` as
-a no-op. README and system prompt updated with test-isolation rules. Polluted file
-cleared. 3 new isolation tests; 434 total.
-
-##### ~~Step 3b — `/compact` slash command (manual mid-session compaction)~~ — DONE
-Commit f2d5631. `compactHistory(history, provider, model)` added to `src/compaction.ts`:
-summarises the head via LLM, keeps the last `KEEP_RECENT_TURNS` (10) message-pairs
-verbatim, returns `{ history, originalCount, newCount }`. New history starts with a
-synthetic `[Compacted context summary: …]` user message. Returns history unchanged
-(same reference) if already short enough.
-
-`/compact` handler added to the slash-command block in `agent.ts` `sendMessage`:
-calls `compactHistory`, replaces `this.history` in-place, rewrites `sessions/context.jsonl`
-(clear + re-append), emits `"Context compacted: N → M messages"` status event or
-`"already short"` if nothing to do. `/help` and the renderer status hint updated.
-`clearContextStore` promoted to static import (was a redundant dynamic import).
-4 new tests (no-op when short, count correct, synthetic message shape, tail verbatim);
-438 total pass.
-
-##### ~~Step 3c — SessionEvent type + dual-write event log~~ — DONE
-Commit 357ec23. `src/session-event.ts` defines 12-variant `SessionEvent` discriminated
-union (session_start, user_message, api_call_start, llm_response, tool_call,
-tool_result, turn_end, api_error, error, interrupted, world_state_saved,
-session_compacted). All events carry ISO `ts` timestamp. `appendSessionEvent()` and
-`clearSessionEvents()` follow the same `null`-is-no-op pattern as `context-store.ts`.
-
-`agent.ts` wires `logEvent()` (private, fire-and-forget) at every significant site:
-`init()` session_start, user message push, api_call_start (both providers), llm_response,
-tool_call, tool_result, interrupted, turn_end, api_error (all error paths),
-world_state_saved, session_compacted. `eventsFile` field with mock-provider heuristic
-(null when mock injected — automatic test isolation).
-
-`terminal/app.ts` calls `clearSessionEvents()` at startup alongside `clearContextStore()`.
-`sessions/events.jsonl` is gitignored (covered by `sessions/` entry).
-
-**Key design decision recorded:** The agent writes its own event log directly — same
-pattern as `context.jsonl`. UI-agnosticism means no ANSI/WebSocket imports, not that
-the agent can't write its own files.
-
-19 new tests (round-trip for all 12 variants, I/O helpers, null no-op, isolation).
-457 total tests pass.
-
-**Design note — content-addressed context index (defer to 3c or later):**
-The operator's long-term vision: each `MessageParam` in `context.jsonl` carries a
-short content hash (its stable identity). Each API call event in the event log records
-`contextHashes: string[]` — the exact ordered slice of context hashes that was sent
-in that call. This gives:
-- **Exact replay**: reconstruct precisely what the LLM saw for any call in history
-- **Diff between calls**: compare hash arrays to see what was added or dropped
-  (truncation events become visible as hash deletions)
-- **Compaction audit**: after `/compact` the hash array shrinks; before/after recorded
-- **Referential integrity**: a hash in an event log entry with no matching entry in
-  `context.jsonl` is a detectable invariant violation
-
-**Why defer past 3b:** the hash scheme requires the agentic loop to compute and record
-the hash array at every API call. `agent.ts` currently has no knowledge of `current.jsonl`
-or the event log — wiring this before 3b would be a significant cross-cutting change
-with no immediate payoff. 3b establishes `context.jsonl` as the authoritative message
-store; 3c is then the natural place to add message identity (hashes) and start recording
-hash arrays on API call events; 3d completes the picture by making `this.history`
-derived from the event log rather than maintained in parallel.
-
-**Referential integrity and session scope:** `clearContextStore()` on startup wipes
-`context.jsonl`, which would orphan any prior-session hash references. This is safe
-because `current.jsonl` (web) and `context.jsonl` are both session-scoped after the
-startup-clear fix (commit 65fa12a). Hash references only need to be valid within a
-single session.
-
-##### ~~Step 3d — Non-destructive context truncation~~ — DONE
-Commit 997d7f7.
-
-- `truncateHistory()` renamed to `buildApiMessages()` (exported from `agent.ts`)
-- `Agent.history` renamed to `Agent.llmMessageLog` (private field)
-- `Agent.getHistory()` renamed to `Agent.getLlmMessageLog()`
-- `buildApiMessages` is purely ephemeral: produces a trimmed view for the API
-  call and returns it; the source `llmMessageLog` is never mutated
-- Agentic loop: `apiView = buildApiMessages(llmMessageLog, apiBudget)` at top
-  of each iteration; Anthropic retry recomputes `attemptApiView` per attempt
-  so prompt-too-long retries pick up the tightened budget automatically
-- `apiBudget` (halved per retry) replaces the former `this.llmMessageLog = truncate(...)` mutation
-- All diagnostic snapshots include both `requestMessages` (the view sent) and
-  `history` (the full `llmMessageLog`) for complete post-mortem data
-- New test: `buildApiMessages` does not mutate the input array
-- 471 tests pass (1 new)
 
 #### Step 3e — Review: event completeness and UI reflection
 **Status: TODO — discuss before acting**
 
-Two related questions to review together:
+1. **Event completeness:** Currently not persisted: `status` (intentionally — ephemeral
+   UI noise), `metrics` (per-API-call; `turn_end` captures aggregate), `tool_result_message`
+   (individual `tool_result` events are persisted). Decide whether any should be added.
 
-1. **Event completeness:** Are all `SessionEvent` variants the right ones? Are there
-   meaningful events that are not yet persisted? Currently missing from persistence:
-   `status` (intentionally — ephemeral UI noise), `metrics` (per-API-call; `turn_end`
-   captures the aggregate), `tool_result_message` (the synthetic user→LLM message
-   listing tool results; individual `tool_result` events are persisted). Decide whether
-   any of these should be added.
+2. **UI reflection:** Terminal renders `status`, `text`, `tool_result_message`, `metrics`
+   (not persisted). Event log has `session_start` (not rendered). Guiding principle to
+   decide: "anything that could matter for a post-mortem should be persisted; pure
+   streaming scaffolding need not be."
 
-2. **UI reflection:** Is everything shown in the terminal UI also persisted, and
-   vice-versa? Currently: the terminal renders `status`, `text` (streaming fragments),
-   `tool_result_message`, and `metrics` which are not persisted. The terminal does NOT
-   render anything that is only in the event log (session-start is log-only). Decide
-   whether the event log and the terminal UI should be brought into closer alignment,
-   and what the guiding principle is (e.g. "anything that could matter for a post-mortem
-   should be persisted; anything that is pure streaming scaffolding need not be").
+Act on this after Step 4 — pino retirement will clarify what the event log must cover.
 
-Act on this after the pino retirement decision is clearer — the two are related since
-dropping pino will require the event log to cover anything currently only in `omega.log`.
+#### Step 4: Retire pino
+**Status: TODO**
 
-#### Step 4: Retire pino (manifest item)
-**Status: TODO — can proceed independently of Step 3d; should happen before or alongside it**
+Pino still provides infra-only events not yet in `SessionEvent`: `oauth_reauthed`,
+`oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`.
 
-Pino currently provides two things the `SessionEvent` log does not:
-- Debug-level fire-hose (every API call, tool call, token counts) — overlaps heavily
-  with `events.jsonl` now that Step 3c is done.
-- A handful of infra-only events not yet in `SessionEvent`: `oauth_reauthed`,
-  `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`,
-  `world_state_updated`.
-
-The mid-term plan is to add those infra events as `SessionEvent` variants (or a
-separate `InfraEvent` sidecar if we want to keep them separate), then drop pino
-entirely. The `omega.log` file and its rotation logic go away; `events.jsonl` /
-`events.prev.jsonl` become the single persistent record.
+Plan: add those as `SessionEvent` variants, delete `src/logger.ts` and all call sites.
+`omega.log`/`omega.prev.log` removed from `.gitignore`.
 
 Acceptance criteria:
-- All infra-only pino events represented in the event log (as new `SessionEvent`
-  variants or a separate file)
-- `src/logger.ts` deleted
-- No `pino` import anywhere in `src/`
-- `omega.log` / `omega.prev.log` removed from `.gitignore` (no longer produced)
+- All infra-only pino events represented in the event log
+- `src/logger.ts` deleted, no `pino` import anywhere in `src/`
+- `omega.log` / `omega.prev.log` removed from `.gitignore`
 - All tests pass
 
 ---
 
-### ~~[INFRA] LOG-1: Redesign diagnostic/logging subsystem~~ — DONE
-Commit 71e7dfc. Implemented **Approach 2: Pino + simplified snapshots**.
-
-**What changed:**
-- **pino** installed; `src/logger.ts` rewired: writes structured JSON-lines to
-  `omega.log` at repo root. On startup rotates `omega.log → omega.prev.log` so
-  exactly two sessions are retained. Async buffered writes (no hot-path latency).
-  `flushLog()` exported for synchronous flush before snapshot writes.
-  Call-site API preserved: `logger.info("event_name", { fields })`.
-- `src/diagnosis.ts` simplified: `RollingEventBuffer`, `BufferedEvent`, and
-  `writeDiagnosticWithBuffer` all removed. Single `writeDiagnostic(data, diagDir?)`
-  function. Snapshots now contain `logFile: "omega.log"` pointer instead of inline
-  `eventBuffer` blob — the log file IS the event timeline.
-- `src/agent.ts`: all `eventBuffer.push()` calls replaced with `logger.debug/info`
-  calls; all `writeDiagnosticWithBuffer` calls replaced with `flushLog()` +
-  `writeDiagnostic()`. Four write sites: OpenAI error, prompt-too-long, generic
-  Anthropic error, fold shutdown failure.
-- `omega.log` and `omega.prev.log` added to `.gitignore`.
-- Tests updated; 403 pass.
-
----
-
-### [INFRA] REC-0: Git-based known-good anchor — DONE
-**Two-branch model:**
-- `main` = stable. Operator merges `develop → main` after gate + manual tests.
-- `develop` = working branch. Omega commits here only.
-- `just gate` = operator-run full test suite. Never invoked automatically.
-- If tests go red: do not commit. Fix first.
-
-`just gate` recipe in Justfile runs `bun test` + `npx playwright test`.
-Branch discipline is documented in `README.md` (moved out of system prompt as part of the manifest refactoring).
-
----
-
 ### [INFRA] Self-protection — preventing Omega from taking itself down
-**Priority: HIGH — do before any large agentic self-edit**
-
-Omega has taken itself down in the past through:
-- compaction race (two concurrent compactions; older one wiped newer history → 400 error)
-- stuck-streaming after restart (open turn in session file → UI permanently locked)
-- silent structural breakage (terminal module rename broke exports; only caught by manual run)
-
-#### ~~REC-1 (HIGH): pre-commit test gate~~ — DONE
-Commit b33ecff. `scripts/pre-commit` runs `bun test --bail`; installed as
-`.git/hooks/pre-commit` (chmod +x). `just install-hooks` recipe added to
-Justfile. Documented in README.md under "Git hooks". All 430 tests pass.
 
 #### REC-2 (LOW): Structural invariant tests for web server entry point
 `entry.test.ts` guards `ui-raw.ts` and terminal modules. Same pattern needed for
-`src/web/server.ts` exports (`runWebApp`, `performWebShutdown`, `closeOpenTurn`,
-`shouldLogEvent`). If someone renames or restructures `server.ts`, `bun test`
-currently won't catch it.
-
-**Deprioritised**: `server.ts` is not in the hot path for the manifest refactor.
-Can be done anytime; low risk in practice.
+`src/web/server.ts` exports (`runWebApp`, `closeOpenTurn`, `shouldLogEvent`). If
+someone renames or restructures `server.ts`, `bun test` currently won't catch it.
 
 Acceptance criteria:
-- `entry.test.ts` (or a new `web-entry.test.ts`) imports and asserts callability
-  of the four exports above
+- `entry.test.ts` or a new `web-entry.test.ts` imports and asserts callability of
+  those exports
 - `bun test` catches a rename/deletion of `server.ts`
 
 #### REC-3 (MEDIUM): Abort-safe agentic loop — soft interrupt at tool boundary
 `AbortSignal` can fire mid-tool-execution. The tool result is lost, leaving a
 `tool_use` block in history with no matching `tool_result` → 400 on next turn.
-Fix: catch the abort *after* the current tool call finishes (soft abort), not
-mid-call. This is also the UX-Q1 "soft interrupt" design question.
 
 Acceptance criteria:
 - Esc mid-tool waits for the in-flight tool to complete, then stops
@@ -344,424 +58,152 @@ Acceptance criteria:
 - Test: abort signal fires during a tool call; next API call succeeds
 
 #### REC-4 (LOW): History validation before every API call
-Add a cheap sanity check at the top of the agentic loop: every `tool_use` block
-in history must have a matching `tool_result` in the next message. If not, write a
-diagnostic and abort the turn rather than sending malformed history to Anthropic
-and getting a cryptic 400. Circuit-breaker pattern; real fix is REC-3.
+Cheap sanity check at top of agentic loop: every `tool_use` block must have a
+matching `tool_result`. If not, write a diagnostic and abort the turn rather than
+sending malformed history. Circuit-breaker; real fix is REC-3.
 
-**Deprioritised**: Will be superseded by Step 3's event-list model, which
-structurally prevents malformed history. Implement only if REC-3 stalls.
-
-Acceptance criteria:
-- `validateHistory(messages)` function returns a list of violations
-- Called before every `callAnthropic`/`callOpenAi` invocation
-- On violation: diagnostic snapshot written, `api_error` event emitted, turn aborted
-
----
-
-### [INFRA] Diagnostic snapshots on fatal API errors — DONE
-`src/diagnosis.ts` — `writeDiagnostic()` writes `plan/diagnosis/<timestamp>.json`
-on any non-retryable API error (Anthropic or OpenAI). Snapshot contains: verbatim
-error message, HTTP status, exact `requestMessages` array sent to the API, full
-`this.history` at moment of failure, model, provider, call number, system blocks.
-`checkDiagnostics()` checked at startup; `app.ts` prints a yellow warning block
-if any files exist, anchoring the next session in hard data rather than speculation.
-Files live under source control in `plan/diagnosis/`; delete after resolving.
-Commit 61c4ebd.
-
-
-
-### [BUG] ~~Line editor cursor stuck on wrapped input~~ — FIXED
-Closed. `redrawFromCursor` used `\x1b[nD`/`\x1b[K` which cannot cross
-terminal row boundaries. Fix: `redrawLine()` with full-line rewrite
-(CUU + CR + CUF + write + `\x1b[J` + reposition), and `moveVisualCol()`
-for wrap-aware arrow navigation. `terminalWidth` read from
-`process.stdout.columns`; `promptWidth` set by `printPrompt`.
-6 new regression tests added. Committed 892cbce.
-
-### [BUG] ~~Bracketed paste garbled display + O(n) append latency~~ — FIXED
-Closed. Two problems fixed (commit 7344295):
-1. At `[201~` the old code wrote `buf.value` from the current terminal cursor
-   position, which garbled the display when the buffer was non-empty before the
-   paste point. Fix: record `startVisualCol` + `startCursor` at `[200~`;
-   at `[201~` call `redrawLine` (wrap-safe) or emit the pasted slice + tail +
-   cursor-back (legacy path).
-2. Each printable-char event did `[...buf.value]` (O(n)) even for plain
-   end-of-buffer append. Fix: fast path for BMP chars appended at end —
-   string concat + increment cursor + one `stdout.write`, no spread.
-   This keeps latency O(1) for the dominant typing/wtype-injection path.
-6 new tests added (paste correctness + latency guard). 358 tests total.
-
-### ~~[INFRA] LOG-2: Complete event taxonomy renaming (pino side)~~ — DONE
-Commit f137610. Spec: `docs/log-taxonomy.md`.
-
-**What changed:**
-- `src/logger.ts`: `MessageEntry`, `InfraEntry`, `LogEntry` discriminated union types;
-  `makeLogEntry()` factory with overloads; logger wrapper accepts `LogEntry | string`;
-  removed `toolExec()` and `apiCall()` wrappers; `startup()` now emits infra shape.
-- `src/agent.ts`: all call sites migrated — `api_request→message call (debug)`,
-  `user_prompt→message call (debug)`, `llm_to_agent→message response (debug)` with
-  full token/cost fields (replaces apiCall per-iteration), `tool_call/tool_result→message (debug)`
-  (toolExec removed), `api_retry/diagnostic_written/context_truncated→infra (warn/info)`,
-  new `kind:infra event:turn_end` at info — per-turn aggregate true dual with AgentEvent.
-- `src/logger.test.ts`: 14 tests verifying shape and discriminated union narrowing.
-- All 420 tests pass.
-
----
-
-### [INFRA] SHUT-1: Verify shutdown completeness — world-state and future.md updates
-**Priority: medium — data-loss risk on unclean exit**
-
-On clean shutdown, Omega should:
-1. Drain `foldCurrentSessionIntoWorldState()` — compacts the current session into `plan/world-state.md`
-2. The operator manually updates `plan/future.md` (add/close items) based on what was done
-
-Open questions that need investigation and testing:
-- Does the terminal app (`src/terminal/app.ts`) always reach the fold drain, even on SIGTERM / SIGINT?
-- Does the web server (`src/web/server.ts`) fold before exiting? (WEB-6 added `performWebShutdown`; verify it is actually invoked on both SIGINT and SIGTERM)
-- Is `foldCurrentSessionIntoWorldState()` a no-op if the session had no turns? If so, does the world file stay unchanged, or could it be blanked?
-- What happens if the fold LLM call fails mid-write — is the world file left corrupted?
-- Are there any paths where `process.exit()` is called before the fold completes?
-
-Acceptance criteria:
-- All signal handlers in both `app.ts` and `server.ts` are traced through to confirm the fold runs
-- At least one test per entry point (terminal + web) that exercises the shutdown path and asserts `world-state.md` was written (or mock-asserted)
-- If any gaps are found, fix them before closing this item
+Deprioritised: will be superseded by Step 3's event-list model.
 
 ---
 
 ### [TOPIC] Prompt queuing — interruption, injection, and turn sequencing
 **Priority: HIGH — next major design area**
 
-*See "Prompt Queuing" section in world-state.md for context and design notes.*
-
-The core question: how should the user interact with Omega *while a turn is
-already in flight*? Today, Esc aborts the turn unconditionally. But there is a
-richer space of intents:
-
-1. **Soft interrupt** — "stop what you're doing, here is a correction/redirect"
-2. **Hard stop** — "abort unconditionally, don't continue"
-3. **Append** — "when you're done with this turn, also do X"
-4. **Inject mid-turn** — "before the next tool call, consider this"
-5. **Replace** — "discard this turn, start fresh with the following prompt"
-
-There is a "mathematics" to this: each interaction is a sequence of context
-states `C₀ → C₁ → … → Cₙ`, where each tool call or agent response advances
-the context. A queued prompt is a function `f` that transforms some future
-state `Cₖ` rather than the current one. The key questions are:
-
-- At what *granularity* can `f` be injected? (after current tool call, after
-  current agentic loop, after full turn compaction)
-- How does the *content* of the injected prompt change depending on the
-  observed context at injection time?
-- Can multiple queued prompts be ordered/merged, and under what algebra?
-
-**Simple use cases to resolve first (design anchors):**
+The core question: how should the user interact with Omega *while a turn is in
+flight*? Today, Esc aborts unconditionally.
 
 #### UX-Q1: Ideal hard stop
-**How should the user cleanly stop an ongoing turn?**
-
-Current: Esc sends an `AbortSignal`. The turn dies mid-stream. But what
-happens to half-written files? Partial tool calls? The context is left dirty.
-
-Candidates:
-- Esc = abort signal + prompt user "turn aborted — what next?" (current minus
-  the "what next" part)
-- Esc = queue a synthetic `[STOP]` marker; agent finishes current tool call
-  then exits loop cleanly
-- Two-key chord: single Esc = soft abort (finish tool, stop); double Esc =
-  hard kill
-
-Acceptance criteria: define and implement one semantics; document the choice.
+Candidates: single Esc = soft abort (finish current tool, stop); double Esc = hard
+kill. Acceptance criteria: define and implement one semantics; document the choice.
 
 #### UX-Q2: Modifying an ongoing turn
-**How should the user redirect a turn that's going in the wrong direction?**
+Candidates: a "prompt queue" buffer delivered at the next clean break (after current
+tool call, before next API call); a visible "pending" line in the UI.
 
-Current: no mechanism other than Esc (destructive) or waiting.
-
-Candidates:
-- A "prompt queue" buffer the user types into while a turn runs; delivered as
-  a new user message at the *next clean break* (after current tool call
-  finishes, before the next API call)
-- A visible "pending" line in the UI showing the queued prompt
-- Allow the queued prompt to arrive mid-agentic-loop (before the next tool
-  use) so the model can course-correct without starting over
-
-**Design questions that need answers before implementation:**
-- Where is the queue buffer stored? (in `ui-raw.ts` state? in `agent.ts`?)
-- How does the agent loop poll or receive the queued message?
-  (shared `AsyncIterable`? a callback? a `Promise` that resolves when enqueued?)
-- Does a queued prompt inject into the *current* turn's history (same context
-  window) or start the *next* turn (after compaction)?
-- What is the UI affordance? (second input line? a mode toggle? a key chord?)
-
-Sub-tasks (to be refined once design is settled):
-1. Design doc / decision record — resolve the questions above
-2. Queue buffer in `ui-raw.ts` — accept input while turn runs, display pending
-3. Agent loop polling — check for queued message between tool calls
-4. Soft-abort semantics — finish current tool, then surface the queued prompt
-5. Tests: verify queue delivery timing, UI state transitions
+Design questions before implementation:
+- Where is the queue buffer stored? (in `app.ts` state? in `agent.ts`?)
+- How does the agent loop receive it? (callback? `Promise`? shared `AsyncIterable`?)
+- Does it inject into the *current* turn's history or start the *next* turn?
+- What is the UI affordance?
 
 ---
 
 ### [TOPIC] Provider feature parity & architecture
-*See "Provider Feature Gaps" section in world-state.md for full analysis.*
-
-The gap between what we send to providers and what they support falls into two
-categories: architecture (how the code is structured) and features (what we
-use). Work in priority order below.
-
----
 
 #### ARCH-1: Clean provider boundary in agent.ts
 **Priority: do first — unblocks everything below**
 
-`agent.ts` currently has large `if (useOpenAi) { ... } else { ... }` blocks
-inside the agentic loop: two separate retry blocks, two separate
-`api_call_start` builders, etc. This makes it hard to add provider-specific
-features (e.g. Anthropic extended thinking, OpenAI `previous_response_id`)
-without touching unrelated code.
-
-Goal: extract a clean `callAnthropicTurn()` and `callOpenAiTurn()` helper
-(or similar boundary), so each provider's agentic-loop slice is fully
-self-contained. Common plumbing (retry, abort, token accounting) stays shared.
+`agent.ts` has large `if (useOpenAi) { ... } else { ... }` blocks inside the agentic
+loop. Goal: extract `callAnthropicTurn()` and `callOpenAiTurn()` helpers so each
+provider's slice is self-contained.
 
 Acceptance criteria:
-- `agent.ts` agentic loop body has no large `if (useOpenAi)` branch
+- Agentic loop body has no large `if (useOpenAi)` branch
 - Each provider helper is independently testable
 - All existing tests still pass
 
----
-
 #### FEAT-2: Anthropic extended thinking
-**Priority: medium — quality gain on complex tasks, Opus/Sonnet only**
+**Priority: medium**
 
-We never pass `thinking: { type: "enabled", budget_tokens: N }` to Anthropic.
-Extended thinking would improve reasoning quality on multi-step problems.
+Pass `thinking: { type: "enabled", budget_tokens: N }` to Anthropic calls. Requires
+`anthropic-beta: interleaved-thinking-2025-05-14` header (see FEAT-4).
 
-Goal: enable thinking on Anthropic calls. Thinking tokens are output tokens
-for billing; budget should be a fraction of `max_tokens`.
-
-Sub-tasks:
-1. Add `thinking` param to Anthropic stream call (Sonnet: budget ~8k, Opus: ~16k)
-2. Handle `thinking` content blocks in the event stream (don't yield as text;
-   optionally emit as a separate `thinking` event type for debug logging)
-3. Add thinking tokens to turn footer / cost accounting if billed separately
-4. Tests: mock stream includes thinking blocks; verify they don't corrupt history
-
-Note: requires `anthropic-beta: interleaved-thinking-2025-05-14` header.
-The OAuth client already sets beta headers; the API-key client does not — this
-must be fixed as part of this task (add the header to the API-key client path
-or unify the client initialisation).
-
----
+Sub-tasks: add `thinking` param; handle `thinking` content blocks (don't yield as
+text); cost accounting; tests.
 
 #### FEAT-3: OpenAI `previous_response_id`
-**Priority: high — cuts OpenAI input token cost by ~80% on long sessions; do soon**
+**Priority: high — cuts OpenAI input token cost by ~80% on long sessions**
 
-`callOpenAi()` currently resends the full `this.history` on every call inside
-the agentic loop. The Responses API supports `previous_response_id` to let the
-server maintain history, so we only send the new user message each time.
+`callOpenAi()` resends full history on every call. Responses API supports
+`previous_response_id` to let the server maintain history.
 
-Goal: store the last response ID and pass it on successive calls within a turn.
-History management across turns (compaction) still happens client-side.
-
-Sub-tasks:
-1. `callOpenAi()` accepts and returns `previousResponseId`
-2. Inside the agentic loop, thread the ID through successive calls
-3. On turn boundary (compaction), reset the ID (start fresh next turn)
-4. Tests: mock verifies the ID is forwarded on call 2+
-
----
+Sub-tasks: accept/return `previousResponseId` in `callOpenAi()`; thread ID through
+agentic loop; reset on turn boundary; tests.
 
 #### FEAT-4: Anthropic beta headers on API-key path
 **Priority: low-medium — prerequisite for FEAT-2 on API-key auth**
 
-The OAuth client sets `anthropic-beta: claude-code-20250219,oauth-2025-04-20`.
-The API-key client (`new Anthropic()`) sends no beta headers, which blocks
-extended thinking (`interleaved-thinking-2025-05-14`) and other betas.
-
-Goal: unify beta header injection so both auth paths get the same betas
-(minus the oauth-specific one on the API-key path).
-
-Acceptance criteria:
-- API-key client includes `interleaved-thinking-2025-05-14` (and others as needed)
-- Existing auth tests still pass
+OAuth client sets `anthropic-beta: claude-code-20250219,oauth-2025-04-20`. API-key
+client sends no beta headers. Goal: unify so both paths get the same betas.
 
 ---
 
 ### [TOPIC] Tool set expansion
-*Current tools: `read_file`, `write_file`, `edit_file`, `list_files`, `run_command`, `web_search`, `fetch_url`.*
-
----
 
 #### TOOLS-4: `run_command_async` + `await_command`
-**Priority: medium — enables parallelism during waits (e.g. read docs while tests run)**
+**Priority: medium**
 
-`run_command` is blocking. Adding an async variant lets the agent kick off a
-long-running command (e.g. `bun test`, a build, a download) and do useful
-preparatory work while it runs — reading files, searching docs, writing a
-plan — before awaiting the result.
-
-Goal: two new tools that together replace `run_command` for cases where the
-agent can make progress independently of the result.
-
-Sub-tasks:
-1. `run_command_async(command, cwd?)` — starts the command, returns a `jobId`
-   immediately (similar to `run_background` but waits to be collected, not
-   fire-and-forget).
-2. `await_command(jobId, timeout_ms?)` — blocks until the command finishes (or
-   times out), returns `{ stdout, stderr, exitCode }`.
-3. Tests: spawn a real process, do work between the two calls, verify output.
-4. Update system prompt tools list.
-
-Note: distinct from `run_background`/`kill_process` which are fire-and-forget
-process management. This is about *awaitable* async commands.
-
----
-
-
-
-
-
-### [BUG] ~~Stale compaction wipes next-turn tool_use blocks (second race variant)~~ — FIXED
-Closed. Commit 8c3d9a3. Root cause: multiple concurrent compactions. When turn N-1's
-compaction was slower than turn N's, the older compaction finished last with a stale
-`historyLenAtStart` larger than the current history length (which was already shrunk by
-the newer compaction). This produced an empty tail, replacing history with just
-`[sum_u, sum_a]` and wiping any next-turn messages. Subsequent tool_results push landed
-at position 2 with no matching tool_use at position 1 → Anthropic API 400 error.
-
-Fix: `compactionQueue` chain — each compaction is `.then()`-chained onto the previous
-one, ensuring they run in turn-order regardless of LLM latency. `historyLenAtStart`
-still captured synchronously before queueing. New regression test (4-turn scenario with
-latch-controlled slow compaction). 366+1 tests pass.
-
----
-
-### ~~[TOPIC] WEB-6: World-state fold on web server shutdown~~ — DONE
-Commit 737a17d. `performWebShutdown(agent)` exported from `src/web/server.ts`;
-drains `foldCurrentSessionIntoWorldState()` to completion (no-op on null/undefined
-agent). Hooked into SIGINT/SIGTERM in `runWebApp()` after session-log save.
-5 tests in `server-shutdown.test.ts` all pass.
-
----
-
-### ~~[BUG] Web UI stuck streaming after interrupted session~~ — FIXED
-Commit 87bca6d. Three-part fix:
-1. `closeOpenTurn()` exported from `server.ts` — appends `{type:"interrupted"}` to the
-   event log when a turn has no closing `turn_end`/`interrupted`. Called on SIGINT/SIGTERM
-   so the persisted session is always well-formed for replay.
-2. `shouldLogEvent()` exported from `server.ts` — excludes streaming `text` fragment
-   events from the log (partial chunks are display-only; frozen text is committed by
-   `turn_end` in the store). Shrinks session file significantly.
-3. `store.ts` history dispatch — belt-and-suspenders: if replay ends with
-   `streaming=true` (server crashed mid-turn), dispatches a synthetic `interrupted` to
-   clear the flag and mark the turn visually. 19 new tests in `session-resilience.test.ts`.
-
-### ~~[BUG] Terminal UI breakage not caught by tests~~ — FIXED
-Commit 467cdb8. `entry.test.ts` now imports `parseKeys`, `displayWidth`,
-`renderToolStart`, `renderToolResult`, `renderAssistantMessage`, `runApp` directly and
-asserts they are callable. Any agent.ts/terminal module change that silently breaks
-the terminal's exports now fails `bun test` immediately.
+`run_command` is blocking. Two new tools: `run_command_async(command, cwd?)` returns
+a `jobId` immediately; `await_command(jobId, timeout_ms?)` returns stdout/stderr/exitCode.
+Distinct from `run_background`/`kill_process` (fire-and-forget). This is awaitable.
 
 ---
 
 ### [TOPIC] Web interface e2e tests — expand coverage
-**Priority: medium — foundation in place**
+**Priority: medium**
 
-Playwright e2e test infrastructure is working (24 tests after WEB-4).
-Run with `just e2e`. Uses a lightweight test server (port 3001 + control API
-on 3002) so no real Anthropic auth needed.
-
-**Gaps to fill with more tests:**
+Playwright infrastructure works (24 tests). Gaps:
 - Reconnection flow: `.reconnect-banner` appears after 2 failed retries
 - Abort button click sends `{type:"abort"}` to server
 - Input clears after send
 - Auto-scroll: feed scrolls to bottom on new content
 
-Always go RED first: write the failing test, then implement the feature.
-
----
-
-### [TOPIC] Web interface
-**Priority: medium — COMPLETE** (WEB-1 through WEB-6 all done)
-
-Replace or supplement the raw terminal UI with a browser-based interface.
-
-**Architecture seam is in place (commit 4183922):**
-- `src/terminal/input.ts` — key parsing, line editing (terminal-only)
-- `src/terminal/renderer.ts` — all block renderers; the model for a future web renderer that emits JSON/SSE instead of ANSI sequences
-- `src/terminal/app.ts` — agent-event loop wired to the terminal renderer; will fork into `terminal/app.ts` vs `web/server.ts`
-
-**Decided direction:** WebSocket bidirectional channel (user input + agent events), static HTML/JS served by Bun's built-in HTTP server, Solid.js frontend. SSH tunnel for deployment (no public port needed).
-
-**State model:** `Turn[]` in `src/web/client/store.ts`; each turn holds an ordered list of `WsEvent`s; streaming text accumulated separately; UI derives all display from this store.
-
-**Stack:** Vite + `vite-plugin-solid` in `src/web/client/`; built output served from `src/web/public/` (gitignored). Usage: `bun run web:build && bun run web`. Dev: `bun run web` in one terminal, `npx vite` in `src/web/` in another (WS proxy to :3000).
-
-**Done:**
-- ~~WEB-1~~: `src/web/server.ts` — Bun HTTP + WebSocket; streams `AgentEvent` JSON; accepts `{type:message}` / `{type:abort}`; serves static build output (commit 99a9826)
-- ~~WEB-2~~: Solid.js client — `App.tsx`, `main.tsx`, `style.css`, `index.html`; EventBlock/TurnView/InputArea/StatusDot components; auto-scroll; Send/Abort (commit 99a9826)
-- ~~WEB-3~~: `store.ts` — `Turn[]` reactive store; `dispatch()` handles all `WsEvent` types (commit 99a9826)
-
-**Remaining:**
-4. ~~WEB-4: Parity pass~~ — DONE (see below)
-5. ~~WEB-5: Session persistence~~ — DONE (see below)
-6. ~~WEB-6: World-state fold on web server shutdown~~ — DONE (see below)
+Always go RED first.
 
 ---
 
 ### [OTHER] Provider/model architecture
-Old item: current design has `provider` (binary: anthropic/openai) + `activeModel`
-(string). Works for now. Future: consider a unified `{ provider, model }` pair
-or registry to make adding new providers/models cleaner. Low priority until
+`provider` (binary: anthropic/openai) + `activeModel` (string). Low priority until
 more providers are added.
 
 ---
 
-Discrete, prioritised, actionable. Keep in priority order.
+## Closed items
 
----
-
-## Closed / dismissed items (for reference)
-
-- **WEB-4: Renderer parity** — Done (commit 538b717). Added `api_call_start` (collapsible `<details>` block), `api_response` (dim summary: stop reason + token counts), `world_state_saved` (green pill with char count) to `WsEvent` type, `dispatch()`, and `EventBlock` renderer. Matching CSS classes added. 5 new e2e tests (red→green). All 24 e2e + 383 unit tests pass.
-
-- **WEB-5: Session persistence** — Done. `src/web/session-store.ts` serialises the in-memory event log to `sessions/current.jsonl` (JSONL, one event per line, atomic rename). `server.ts` loads it on startup (so history replay works after crashes/restarts), saves after every `turn_end` (incremental, fire-and-forget), and saves on SIGINT/SIGTERM. Test server (`e2e/fixtures/test-server.ts`) mirrors the same logic in `sessions-test/`. 4 new Playwright tests in `e2e/persistence.spec.ts` (incremental save, ordering, save+load restart cycle, reset clears disk). Both dirs gitignored. 19 Playwright tests, 365 Bun tests pass.
-
-- **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit 99a9826). `src/web/server.ts` streams `AgentEvent` JSON over WebSocket; `src/web/client/` is a Vite + Solid.js app with `App.tsx`, `store.ts`, `style.css`; `Turn[]` state model with reactive dispatch; structural invariant tests added.
-
-- **WEB-0: Split `ui-raw.ts` into `src/terminal/` modules** — Done (commit 4183922). `input.ts` (key parsing, line editing, shared buffer/paste state), `renderer.ts` (ANSI helpers, all block renderers), `app.ts` (agent-event loop, shutdown, raw-mode setup). `src/ui-raw.ts` is now a 26-line thin re-export shim. Two structural invariant tests added to `src/entry.test.ts`. 360 tests pass.
-
-- **TOOLS-INV: Tool set survey** — Done. Decision table:
-  | Candidate | Decision | Reason |
-  |-----------|----------|--------|
-  | `grep_files` | ✅ Added (TOOLS-1) | High value, no good CLI substitute |
-  | `find_files` | ✅ Added (TOOLS-2) | High value, `list_files` too blunt |
-  | Background processes | ✅ Add (TOOLS-3) | Enables server/watcher workflows |
-  | `move_file`/`delete_file`/`copy_file` | ⏭ Skip | `run_command mv/cp/rm` is sufficient |
-  | Git structured tools | ⏭ Skip | `run_command git …` already rich |
-  | `fetch_url` POST/headers | 🔜 Low priority | Useful for REST; low effort; defer |
-  | Diff/patch tools | ⏭ Skip | `edit_file` + `run_command diff` covers it |
-  | Clipboard/stdin injection | ⏭ Skip | No clear agentic use case for Omega |
-  | Structured data (`jq`) | ⏭ Skip | `run_command jq` is sufficient |
-  | Symbol navigation (LSP) | ⏭ Skip | Heavy; `grep_files` covers most needs |
-
-- **TOOLS-3: Background process management** — Done. `run_background(command, cwd?)` spawns detached, returns `{ pid, logFile }` immediately. `kill_process(pid, signal?)` sends signal (default SIGTERM), handles already-dead processes gracefully. 10 tests. Commit 9023c5a. Primary use case: serving a web interface while Omega continues working (web UI planned for foreseeable future).
-- **FEAT-1: Parallel tool execution** — Done. `Promise.all` in agentic loop; all `tool_call` events emitted before any `tool_result`; results in original order. Test in `agent-integration.test.ts`.
-
-- **TOOLS-1: `grep_files`** — Done. `executeGrepFiles` in `src/tools.ts` wraps `rg` (ripgrep) with `grep -rn` fallback. Accepts `pattern`, `path`, `file_glob`, `context_lines`, `case_sensitive`, `max_results` (default 200). Case-insensitive by default. Returns structured `file:line:text` output, capped with truncation note. 13 tests.
-- **TOOLS-2: `find_files`** — Done. `executeFindFiles` in `src/tools.ts` wraps `fd` with `find` fallback. Accepts `pattern` (glob), `path`, `type` (f/d/l), `hidden` (default false), `max_results` (default 200). Ignores hidden/.gitignored by default. Returns one path per line, capped with truncation note. 11 tests.
-- **Cache savings display** — Done. Turn footer shows `cost:` (actual paid) and `saved:` (cache read savings = 0.9× input rate × read tokens) when savings > 0. Both fields column-aligned between turn/session lines via `padEnd`. `savedUsd` added to `TurnMetrics`/`SessionTotals` in both `turn-footer.ts` and `agent.ts`. `estimateCacheSavings()` exported from `agent.ts`. `sessionSavedUsd` accumulates across turns. 7 new tests.
-- **Anthropic prompt caching** — Done. `cache_control: { type: "ephemeral" }` on system message block, last tool definition, and last message in conversation. Three breakpoints ensure Opus 4.6 (≥4096 token minimum) benefits from caching once conversation grows past first turn. Cache tokens extracted from usage, routed through `estimateCostWithCache()`. `TurnMetrics` and session totals track cache tokens. Turn footer shows `cache_write`/`cache_read` when non-zero. 17 tests.
-- **UI tests** — Done. 231+ tests in `ui-raw.test.ts` and `tool-renderers.test.ts`.
-- **Rate-limit retry** — Done. Provider-aware retry with `getOpenAiRetryDelayMs` (parses "try again in Ns") and `getAnthropicRetryDelayMs` (exponential backoff). Already at ms precision.
-- **OAuth auto-relogin** — Done. `forceRefreshToken()` in auth.ts, `isAuthExpired()` + `reinitAuth()` in agent.ts. 401 in Anthropic stream loop triggers one reauth+retry. 401 in `foldCurrentSessionIntoWorldState` triggers reauth and retries compaction. Clear "run login.ts" error if reauth fails.
-- **Tool call batching** — Already works. All `tool_use` blocks from a single response are executed and results collected before the next API call.
-- **`run_command` truncation** — 100KB cap per stream is already generous. Truncation is flagged explicitly in output. Not a real pain point.
-- **Context health visibility** — Turn footer already shows `in:/out:` token counts. No gap.
-- **`sudo` handling** — Wait for a real pain point.
-- **Multi-file edit atomicity** — The test-revert discipline (run `bun test`, revert on red) provides the safety net. No code change needed.
-- **Interrupt/cancel** — Esc already sends abort signal. No gap.
-- **Line editing** — Done. Cursor-aware editing in `parseKeys`: Left/Right arrows (char), Ctrl+Left/Right (word), Ctrl+Backspace / Ctrl+Delete (delete word backward/forward). Insert and backspace work at any cursor position with correct ANSI redraw. 14 new tests.
+- **Shutdown decoupling** — Done. `foldCurrentSessionIntoWorldState()` and all
+  fold-on-exit code removed from `app.ts` and `web/server.ts`. Ctrl-C now exits
+  immediately. Shutdown ritual (world-state + future.md) documented in `README.md ##
+  Shutdown` as an operator-triggered action.
+- **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
+  `buildApiMessages()` is purely ephemeral; `llmMessageLog` never mutated.
+- **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23). 12-variant
+  discriminated union; `sessions/events.jsonl`.
+- **Step 3b: `/compact` slash command** — Done (commit f2d5631). `compactHistory()` in
+  `src/compaction.ts`; handler in `agent.ts`.
+- **Step 3a: Append-only context file** — Done (commit 551d676). `sessions/context.jsonl`.
+- **Step 2: Abandon automatic compaction** — Done. `compactAfterTurn()` removed.
+- **Step 1: System prompt decoupling + README** — Done. Project-agnostic system prompt;
+  `README.md` created.
+- **REC-1: Pre-commit test gate** — Done (commit b33ecff). `scripts/pre-commit` + `just
+  install-hooks`.
+- **REC-0: Git-based known-good anchor** — Done. Two-branch model (`main`/`develop`).
+- **WEB-6: World-state fold on web server shutdown** — Superseded by shutdown
+  decoupling; `performWebShutdown()` removed.
+- **WEB-5: Session persistence** — Done. `sessions/current.jsonl`.
+- **WEB-4: Renderer parity** — Done (commit 538b717).
+- **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit
+  99a9826).
+- **WEB-0: Split `ui-raw.ts` into `src/terminal/` modules** — Done (commit 4183922).
+- **SHUT-1: Verify shutdown completeness** — Superseded by shutdown decoupling.
+- **TOOLS-3: Background process management** — Done (commit 9023c5a).
+- **TOOLS-2: `find_files`** — Done.
+- **TOOLS-1: `grep_files`** — Done.
+- **FEAT-1: Parallel tool execution** — Done.
+- **LOG-1: Redesign diagnostic/logging subsystem** — Done (commit 71e7dfc). Pino +
+  simplified snapshots.
+- **LOG-2: Complete event taxonomy renaming** — Done (commit f137610).
+- **Diagnostic snapshots on fatal API errors** — Done (commit 61c4ebd).
+- **Anthropic prompt caching** — Done. Three cache breakpoints; `estimateCostWithCache()`.
+- **Cache savings display** — Done. Turn footer shows `cost:` and `saved:`.
+- **Rate-limit retry** — Done. Provider-aware exponential backoff.
+- **OAuth auto-relogin** — Done.
+- **Line editor cursor stuck on wrapped input** — Fixed (commit 892cbce).
+- **Bracketed paste garbled display + O(n) append latency** — Fixed (commit 7344295).
+- **Web UI stuck streaming after interrupted session** — Fixed (commit 87bca6d).
+- **Terminal UI breakage not caught by tests** — Fixed (commit 467cdb8).
+- **Stale compaction race** — Fixed (commit 8c3d9a3). `compactionQueue` chain.
+- **Tool output cap** — Fixed. `MAX_TOOL_OUTPUT_CHARS = 100_000` in `executeTool()`.
+- **`truncateHistory` no-op on short-but-fat history** — Fixed. `buildApiMessages`
+  drops from oldest end when all messages fall within the "always keep" tail.
+- **Graceful handling of context-too-long 429** — Fixed. `isContextTooLong()` helper;
+  excluded from retry; clear actionable message shown.

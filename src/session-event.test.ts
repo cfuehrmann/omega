@@ -24,7 +24,6 @@ import {
   type ApiErrorEvent,
   type ErrorEvent,
   type InterruptedEvent,
-  type WorldStateSavedEvent,
   type SessionCompactedEvent,
   type SessionStartEvent,
 } from "./session-event.js";
@@ -138,13 +137,6 @@ describe("SessionEvent round-trip serialisation", () => {
 
   it("interrupted", async () => {
     const e: InterruptedEvent = { type: "interrupted", ts: "2025-01-01T00:00:00.000Z" };
-    await appendSessionEvent(e, TEST_FILE);
-    const [read] = readEvents(TEST_FILE);
-    expect(read).toEqual(e);
-  });
-
-  it("world_state_saved", async () => {
-    const e: WorldStateSavedEvent = { type: "world_state_saved", ts: "2025-01-01T00:00:00.000Z", path: "plan/world-state.md", charCount: 1234 };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);

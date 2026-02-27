@@ -116,14 +116,6 @@ export interface InterruptedEvent {
   ts: string;
 }
 
-/** The world-state file was written on shutdown. */
-export interface WorldStateSavedEvent {
-  type: "world_state_saved";
-  ts: string;
-  path: string;
-  charCount: number;
-}
-
 /** History was compacted via /compact. */
 export interface SessionCompactedEvent {
   type: "session_compacted";
@@ -152,7 +144,6 @@ export type SessionEvent =
   | ApiErrorEvent
   | ErrorEvent
   | InterruptedEvent
-  | WorldStateSavedEvent
   | SessionCompactedEvent;
 
 // ---------------------------------------------------------------------------

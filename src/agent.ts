@@ -5,8 +5,8 @@ import { getAuthToken, forceRefreshToken } from "./auth.js";
 import { logger, flushLog, startup, makeLogEntry } from "./logger.js";
 import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
-import { compactWorldState, compactHistory } from "./compaction.js";
-import { readWorldState, writeWorldState, projectWorldStatePath } from "./world-state.js";
+import { compactHistory } from "./compaction.js";
+import { readWorldState, projectWorldStatePath } from "./world-state.js";
 import { appendContextMessage, clearContextStore } from "./context-store.js";
 import { appendSessionEvent, clearSessionEvents, DEFAULT_EVENTS_FILE, type SessionEvent } from "./session-event.js";
 
@@ -40,7 +40,6 @@ export type AgentEvent =
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
-  | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
   | { type: "error"; error: string }
@@ -468,9 +467,6 @@ export class Agent {
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
   private readonly retryMaxAttempts = Number(process.env.OMEGA_RETRY_ATTEMPTS ?? 5);
 
-  /** World state file path. null = disabled. undefined = use project default. */
-  private readonly worldStatePath: string | null | undefined;
-
   /** Diagnostic output directory. null = disabled (tests). undefined = use default ("diagnosis/"). */
   private readonly diagDir: string | null | undefined;
 
@@ -491,11 +487,10 @@ export class Agent {
 
   /**
    * Production: new Agent()
-   *   — uses real Anthropic client, world state at project-specific path,
-   *     context appended to sessions/context.jsonl
-   * Test: new Agent(mockProvider, null, undefined, worldStatePath)
-   *   — uses mock provider; world state, diagnostics, and context file are
-   *     all disabled unless an explicit path is given.
+   *   — uses real Anthropic client, context appended to sessions/context.jsonl
+   * Test: new Agent(mockProvider, null)
+   *   — uses mock provider; diagnostics, context file, and events file are
+   *     all disabled unless explicit paths are given.
    *
    * The sessionDir parameter is removed. Session persistence no longer exists.
    * The second parameter (formerly sessionDir) is kept as a positional placeholder
@@ -505,7 +500,6 @@ export class Agent {
     streamProvider?: StreamProvider,
     _sessionDir?: string | null,
     openAiCaller: typeof callOpenAi = callOpenAi,
-    worldStatePath?: string | null,
     diagDir?: string | null,
     contextFile?: string | null,
     eventsFile?: string | null
@@ -515,12 +509,6 @@ export class Agent {
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
     this.openAiCaller = openAiCaller;
-    // World state: if mock provider given and worldStatePath not specified, disable.
-    if (streamProvider !== undefined && worldStatePath === undefined) {
-      this.worldStatePath = null;
-    } else {
-      this.worldStatePath = worldStatePath;
-    }
     // Diagnostics: if mock provider given and diagDir not specified, disable.
     if (streamProvider !== undefined && diagDir === undefined) {
       this.diagDir = null;
@@ -643,203 +631,11 @@ export class Agent {
   }
 
   /**
-   * Get a StreamProvider for the currently active provider.
-   * If OpenAI is active, wraps `callOpenAi` to match the StreamProvider interface.
-   * If Anthropic is active, returns the standard Anthropic stream provider.
-   */
-  private getActiveFoldProvider(): { provider: StreamProvider; providerName: ProviderName; url: string } {
-    if (this.provider === "openai") {
-      const openAiCaller = this.openAiCaller;
-      const model = config.fallbackModel as string;
-      const url = getOpenAiUrl();
-      const openAiProvider: StreamProvider = async (_params) => {
-        // compactWorldState always sends a single user message — extract it
-        const messages = _params.messages as any[];
-        const lastUserMsg = messages[messages.length - 1];
-        const prompt = typeof lastUserMsg?.content === "string"
-          ? lastUserMsg.content
-          : JSON.stringify(lastUserMsg?.content ?? "");
-        const result = await openAiCaller(
-          [{ role: "user", content: prompt }],
-          _params.system,
-          model,
-          _params.max_tokens,
-          undefined
-        );
-        const responseText = result.text;
-        const usage = result.response.usage;
-        // Return a StreamProvider-compatible object
-        return {
-          async *[Symbol.asyncIterator]() {
-            yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: responseText } };
-          },
-          async finalMessage() {
-            return {
-              id: "openai-fold",
-              type: "message",
-              role: "assistant",
-              content: [{ type: "text", text: responseText }],
-              model,
-              stop_reason: "end_turn",
-              stop_sequence: null,
-              usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens },
-            } as any;
-          },
-        };
-      };
-      return { provider: openAiProvider, providerName: "openai", url };
-    }
-    return {
-      provider: this.getStreamProvider(),
-      providerName: "anthropic",
-      url: "https://api.anthropic.com/v1/messages",
-    };
-  }
-
-  /**
-   * Fold the current session history into the world state file.
-   * Call this on clean shutdown (SIGINT, SIGTERM, normal exit).
-   * No-op (yields nothing) if worldStatePath is null or history is empty.
-   *
-   * Yields structured AgentEvents so the UI can render the LLM call and
-   * file write the same way it renders regular turns.
-   */
-  async *foldCurrentSessionIntoWorldState(): AsyncGenerator<AgentEvent> {
-    const path = this.worldStatePath === undefined ? projectWorldStatePath() : this.worldStatePath;
-    if (path === null) return;
-    if (this.llmMessageLog.length === 0) return;
-    try {
-      const prior = await readWorldState(path);
-      const { provider, providerName, url: compactionUrl } = this.getActiveFoldProvider();
-
-      // Build the request params so we can show them in api_call_start
-      const compactionRequest = {
-        model: providerName === "openai" ? (config.fallbackModel as string) : this.activeModel,
-        max_tokens: 4096,
-        system: "You are a context compactor. Respond only with the requested summary, no preamble.",
-        tools: [],
-        messages: [{ role: "user", content: "<world-state compaction prompt>" }],
-      };
-
-      yield {
-        type: "api_call_start",
-        callNumber: 1,
-        provider: providerName,
-        url: compactionUrl,
-        request: compactionRequest,
-      } as AgentEvent;
-
-      // Call compactWorldState — it makes the real LLM call internally.
-      // We capture usage by wrapping the provider to intercept finalMessage.
-      let capturedUsage: { input_tokens: number; output_tokens: number } | null = null;
-      let capturedContent: any[] = [];
-      const wrapProvider = (p: StreamProvider): StreamProvider => async (params) => {
-        const stream = await p(params);
-        return {
-          [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
-          async finalMessage() {
-            const msg = await stream.finalMessage();
-            capturedUsage = msg.usage;
-            capturedContent = msg.content;
-            return msg;
-          },
-        };
-      };
-      const wrappedProvider = wrapProvider(provider);
-
-      // Attempt compaction with retries for transient errors and one re-auth retry on 401/403 auth errors (Anthropic only)
-      let newState: string;
-      try {
-        newState = await compactWorldState(prior, this.llmMessageLog, wrappedProvider, this.activeModel);
-      } catch (compactErr: any) {
-        if (isContextTooLong(compactErr)) {
-          // Claude Max OAuth returns 429 "Extra usage is required for long context requests"
-          // when the session history is too large for the account tier. Retrying is futile.
-          // Yield a clear, actionable message and return without writing a diagnostic
-          // (this is a known limitation, not a bug).
-          logger.warn("world_state_fold_context_too_long", { hint: "session history too large; use /compact to reduce" });
-          yield {
-            type: "error",
-            error: "World state fold skipped: context too long for this account tier. Use /compact to reduce history before quitting.",
-          } as AgentEvent;
-          return;
-        } else if (isAuthExpired(compactErr) && providerName === "anthropic") {
-          logger.warn("oauth_token_expired_at_fold", { hint: "attempting refresh", status: compactErr.status ?? compactErr.statusCode });
-          const reauthed = await this.reinitAuth();
-          if (!reauthed) {
-            logger.warn("world_state_update_failed", { error: compactErr.message });
-            yield { type: "error", error: `World state save failed (auth refresh failed): ${compactErr.message}` } as AgentEvent;
-            return;
-          }
-          // Rebuild wrappedProvider with the fresh client
-          const { provider: freshProvider } = this.getActiveFoldProvider();
-          capturedUsage = null;
-          capturedContent = [];
-          const retryWrapped = wrapProvider(freshProvider);
-          newState = await compactWorldState(prior, this.llmMessageLog, retryWrapped, this.activeModel);
-        } else if (isRetryable(compactErr)) {
-          // Transient stream error (e.g. "Unexpected event order" from the Anthropic SDK
-          // when the server restarts a stream mid-flight) — retry once with a fresh provider.
-          logger.warn("world_state_fold_transient_error", { error: compactErr.message, hint: "retrying once" });
-          const { provider: freshProvider } = this.getActiveFoldProvider();
-          capturedUsage = null;
-          capturedContent = [];
-          const retryWrapped = wrapProvider(freshProvider);
-          newState = await compactWorldState(prior, this.llmMessageLog, retryWrapped, this.activeModel);
-        } else {
-          throw compactErr;
-        }
-      }
-
-      yield {
-        type: "llm_to_agent",
-        provider: providerName,
-        url: compactionUrl,
-        stopReason: "end_turn",
-        usage: capturedUsage ?? { input_tokens: 0, output_tokens: 0 },
-        content: capturedContent,
-      } as AgentEvent;
-
-      await writeWorldState(newState, path);
-      logger.info("world_state_updated", { path });
-
-      this.logEvent({ type: "world_state_saved", ts: new Date().toISOString(), path, charCount: newState.length });
-      yield {
-        type: "world_state_saved",
-        path,
-        charCount: newState.length,
-      } as AgentEvent;
-
-    } catch (err: any) {
-      logger.warn("world_state_update_failed", { error: err.message });
-      // Flush log first so the snapshot's logFile pointer is current on disk.
-      flushLog();
-      // Write a diagnostic snapshot so the next session has full context about
-      // what went wrong during shutdown.
-      await writeDiagnostic(
-        {
-          summary: `World-state fold failed on shutdown: ${err.message}`,
-          errorMessage: err.message ?? String(err),
-          httpStatus: err.status ?? err.statusCode,
-          provider: this.provider,
-          model: this.activeModel,
-          requestMessages: [],
-          history: this.llmMessageLog,
-          extra: { phase: "fold_shutdown" },
-        },
-        this.diagDir,
-      );
-      yield { type: "error", error: err.message } as AgentEvent;
-    }
-  }
-
-  /**
    * Load world state from disk into memory so it can be injected into the
    * system prompt. Call once at session start, after init().
    */
   async loadWorldState(): Promise<void> {
-    const path = this.worldStatePath === undefined ? projectWorldStatePath() : this.worldStatePath;
-    if (path === null) return;
+    const path = projectWorldStatePath();
     try {
       this.worldStateContent = await readWorldState(path);
     } catch {

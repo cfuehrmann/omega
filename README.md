@@ -23,7 +23,7 @@ WebSocket. Config is code (`src/config.ts`).
 
 | File | Purpose |
 |------|---------|
-| `plan/world-state.md` | LLM-compacted summary of all prior sessions. Loaded into the system prompt automatically. **Do not edit manually** — it is updated on clean shutdown. |
+| `plan/world-state.md` | LLM-compacted summary of all prior sessions. Loaded into the system prompt automatically. Updated as part of the shutdown ritual (see below). |
 | `plan/future.md` | Issue tracker. Discrete, prioritised, actionable items. Update after completing work or making decisions worth recording. |
 | `manifest.md` | High-level design manifest for Omega's ongoing refactoring. Consult for strategic direction. |
 | `docs/lessons-learned.md` | Hard-won lessons about external APIs and protocols. Read before integrating with anything new. |
@@ -41,7 +41,7 @@ If any files exist at session start, read them before doing anything else.
 | `src/agent.ts` | Agent core — agentic loop, streaming, compaction, tool dispatch |
 | `src/config.ts` | Model selection, system prompt, token limits |
 | `src/tools.ts` | All tool implementations; `MAX_TOOL_OUTPUT_CHARS = 100_000` cap applied to every result |
-| `src/compaction.ts` | LLM compaction: `compactWorldState` (world-state fold on shutdown) and `compactHistory` (`/compact` command). |
+| `src/compaction.ts` | LLM compaction: `compactWorldState` (world-state fold) and `compactHistory` (`/compact` command). |
 | `src/context-store.ts` | Append-only session context file (`sessions/context.jsonl`) |
 | `src/world-state.ts` | Read/write `plan/world-state.md` |
 | `src/terminal/app.ts` | Terminal UI entry point |
@@ -91,9 +91,9 @@ Tests must **never** write to `sessions/`, `diagnosis/`, `omega.log`, or any
 other production file. The rule and the mechanism:
 
 - `Agent` constructor: when a mock `streamProvider` is injected and no explicit
-  path is given, `worldStatePath`, `diagDir`, and `contextFile` all default to
-  `null` (disabled). Tests get isolation automatically — just pass a mock
-  provider and omit the path arguments.
+  path is given, `diagDir` and `contextFile` all default to `null` (disabled).
+  Tests get isolation automatically — just pass a mock provider and omit the
+  path arguments.
 - `OMEGA_LOG_FILE` env var: redirect the pino log in tests that exercise the
   logger directly. The test infra sets this to a tmp path automatically for
   any test that imports `src/logger.ts`.
@@ -119,6 +119,19 @@ just install-hooks
 
 The hook source lives in `scripts/pre-commit` under version control.
 To bypass in a genuine emergency: `git commit --no-verify`.
+
+## Shutdown
+
+When the operator asks to wrap up or end the session, do the following — in order:
+
+1. **Update `plan/world-state.md`** — use `compactWorldState()` from `src/compaction.ts`
+   (or just rewrite the file directly) to fold this session's work into a concise,
+   accurate summary of the current state of the project.
+2. **Update `plan/future.md`** — mark completed items done, add newly discovered work,
+   remove anything that is no longer relevant.
+
+Ctrl-C exits immediately without doing any of this. The shutdown ritual only happens
+when the operator explicitly asks for it.
 
 ## Testing infrastructure
 

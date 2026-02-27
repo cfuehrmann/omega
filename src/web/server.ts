@@ -28,22 +28,6 @@ const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_DIR = join(import.meta.dir, "public");
 
 // ---------------------------------------------------------------------------
-// Graceful shutdown — mirrors terminal/app.ts shutdown()
-// ---------------------------------------------------------------------------
-
-/**
- * Drain foldCurrentSessionIntoWorldState() on the active agent so that the
- * world-state file is updated before the process exits.  Safe to call with a
- * null/undefined agent (no-op).
- */
-export async function performWebShutdown(agent: Agent | null | undefined): Promise<void> {
-  if (!agent) return;
-  for await (const _event of agent.foldCurrentSessionIntoWorldState()) {
-    // Drain all events; the side-effect (writing world-state.md) is what matters.
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Static file helpers
 // ---------------------------------------------------------------------------
 
@@ -271,11 +255,9 @@ export async function runWebApp(): Promise<void> {
   // Load persisted session log — enables history replay after crashes/restarts
   eventLog = await loadSession();
 
-  // Graceful shutdown: persist on SIGINT (Ctrl+C) and SIGTERM
+  // Graceful shutdown: persist session log on SIGINT (Ctrl+C) and SIGTERM
   const handleShutdown = () => {
     saveSession(closeOpenTurn(eventLog))
-      .catch(() => {})
-      .then(() => performWebShutdown(persistentAgent))
       .catch(() => {})
       .finally(() => process.exit(0));
   };

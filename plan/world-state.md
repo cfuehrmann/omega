@@ -125,4 +125,4 @@ Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
 471 tests across 27 files. All pass.
 
 ### Recent Session Outcomes
-Completed **Step 3d** (non-destructive context truncation). `truncateHistory` renamed to `buildApiMessages`; `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` renamed to `getLlmMessageLog()`. The function is now purely ephemeral — the source log is never mutated. Agentic loop uses `apiBudget` (halved per prompt-too-long retry) to drive increasingly aggressive trimming without touching `llmMessageLog`. 1 new test (non-mutation invariant); 471 total. Committed 997d7f7 + d2616f2, pushed to `develop`.
+Completed **Step 3d** (non-destructive context truncation) and updated all planning documents (`plan/world-state.md`, `plan/future.md`, `manifest.md`) to reflect the completed step. All changes pushed to `develop`; `dev` is now ahead of `main` by Steps 3a–3d. The immediate next action is merging `develop → main` (run `just gate` first).

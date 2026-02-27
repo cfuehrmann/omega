@@ -127,25 +127,22 @@ function makeTempDir(): string {
 // These tests prove the contract: when a streamProvider is given without
 // explicit paths, Agent must NOT write to any production file.
 describe("Agent — test isolation (no production file pollution)", () => {
-  it("does not write to any world-state file when worldStatePath is not given", async () => {
-    const { homedir } = await import("os");
-    const omegaDir = join(homedir(), ".local", "share", "omega");
+  it("does not write to sessions/ or diagnosis/ during a turn (mock provider isolation)", async () => {
     const { existsSync, readdirSync: rds } = await import("fs");
 
-    // Snapshot omega dir before
-    const before = existsSync(omegaDir) ? rds(omegaDir).filter(f => f.startsWith("world-")).length : 0;
+    const countFiles = (dir: string) => existsSync(dir) ? rds(dir).length : 0;
+    const beforeSessions = countFiles("sessions");
+    const beforeDiag = countFiles("diagnosis");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    // No worldStatePath passed — must not write to real world-state
     const agent = new Agent(mockProvider);
-    await collectEvents(agent, "should not persist world state");
+    await collectEvents(agent, "should not write to production files");
     await Bun.sleep(100);
 
-    // World state files must be unchanged
-    const after = existsSync(omegaDir) ? rds(omegaDir).filter(f => f.startsWith("world-")).length : 0;
-    expect(after).toBe(before);
+    expect(countFiles("sessions")).toBe(beforeSessions);
+    expect(countFiles("diagnosis")).toBe(beforeDiag);
   });
 
   it("does not write to sessions/context.jsonl when no contextFile is given", async () => {

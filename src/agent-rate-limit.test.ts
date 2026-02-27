@@ -46,7 +46,7 @@ describe("rate limit backoff", () => {
       };
     };
 
-    const agent = new Agent(undefined, null, openAiCaller as any, undefined, null);
+    const agent = new Agent(undefined, null, openAiCaller as any, null);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 
@@ -70,7 +70,7 @@ describe("rate limit backoff", () => {
       throw rateLimitError("Please try again in 0.01s");
     };
 
-    const agent = new Agent(undefined, null, openAiCaller as any, undefined, null);
+    const agent = new Agent(undefined, null, openAiCaller as any, null);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 
@@ -231,7 +231,7 @@ describe("prompt-too-long diagnostic", () => {
     };
 
     // Pass diagDir explicitly so diagnostics are written to tempDir, not repo root
-    const agent = new Agent(mockProvider, null, undefined, undefined, diagDir);
+    const agent = new Agent(mockProvider, null, undefined, diagDir);
 
     const events = await collectEvents(agent, "hello");
 

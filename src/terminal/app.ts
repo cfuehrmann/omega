@@ -9,11 +9,11 @@ import { Agent } from "../agent.js";
 import { config } from "../config.js";
 import { formatTurnFooter } from "../turn-footer.js";
 import { checkDiagnostics } from "../diagnosis.js";
-import { initLogger } from "../logger.js";
+import { initLogger, flushLog } from "../logger.js";
 import { clearContextStore } from "../context-store.js";
 import { clearSessionEvents } from "../session-event.js";
 import {
-  bold, dim, green, red, yellow, magenta,
+  bold, dim, green, red, yellow,
   TIME_WIDTH, INDENT, INDENT2,
   now, printBlock, println,
   renderUserMessage, renderApiRequest, renderApiResponse,
@@ -78,48 +78,11 @@ function setupRawInput(
 // Shutdown
 // ---------------------------------------------------------------------------
 
-/** Fold session into world state and exit. Used for all clean-shutdown paths. */
-async function shutdown(agent: Agent, code: number = 0): Promise<never> {
+/** Clean exit. Flushes the log and exits immediately — no LLM calls. */
+function shutdown(code: number = 0): never {
   process.stdout.write("\r\x1b[2K");
-
-  let hadEvents = false;
-  for await (const event of agent.foldCurrentSessionIntoWorldState()) {
-    if (!hadEvents) {
-      printBlock(now(), [magenta("Ctrl+C — compacting to world file and shutting down")]);
-      hadEvents = true;
-    }
-    switch (event.type) {
-      case "api_call_start":
-        printBlock(now(), renderApiRequest(
-          event.callNumber,
-          event.provider,
-          event.url,
-          event.request,
-        ));
-        break;
-
-      case "llm_to_agent":
-        printBlock(now(), renderApiResponse(
-          event.provider,
-          event.url,
-          event.stopReason,
-          event.usage,
-          event.content,
-          event.raw,
-        ));
-        break;
-
-      case "world_state_saved":
-        printBlock(now(), [dim(`✓ world state saved  Written ${event.charCount} chars to ${event.path}`)]);
-        break;
-
-      case "error":
-        printBlock(now(), [red(`⚠ World state save failed: ${event.error}`)]);
-        break;
-    }
-  }
-
   process.stdout.write("\x1b[?2004l");
+  flushLog();
   process.exit(code);
 }
 
@@ -310,7 +273,7 @@ export async function runApp(): Promise<void> {
     process.stdin.setRawMode?.(false);
     process.stdin.pause();
     if (abortController) { abortController.abort(); abortController = null; }
-    shutdown(agent, 0);
+    shutdown(0);
   }
 
   process.once("SIGINT",  initiateShutdown);
