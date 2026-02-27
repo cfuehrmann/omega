@@ -206,29 +206,22 @@ because `current.jsonl` (web) and `context.jsonl` are both session-scoped after 
 startup-clear fix (commit 65fa12a). Hash references only need to be valid within a
 single session.
 
-##### Step 3d — Derive history from event log (non-destructive truncation)
-**Status: TODO**
+##### ~~Step 3d — Non-destructive context truncation~~ — DONE
+Commit 997d7f7.
 
-Flip the dependency. `this.history` becomes a view derived from `sessions/events.jsonl`
-rather than the canonical store. Truncation becomes `buildApiMessages(history, budget)`
-— same algorithm, but result is ephemeral (used only for the API call), never stored
-back into `this.history`. The canonical record is never shortened.
-
-Effect: truncation no longer invalidates the cache prefix. Every API call still sends
-a (possibly truncated) view; but the stored history is always complete and append-only.
-On startup, history is reconstructed by replaying the event log.
-
-Acceptance criteria:
-- `truncateHistory()` renamed to `buildApiMessages()`, return value passed to API call
-  directly rather than assigned to `this.history`
-- `Agent` constructor replays `sessions/events.jsonl` to rebuild `this.history` on
-  startup if the file exists
-- All existing `truncateHistory` unit tests pass against `buildApiMessages`
-- New test: after a "truncation" call, `this.history` is unchanged
-- All existing integration tests pass
-
-Scope: ~150 lines changed + tests. Riskiest step — touches agentic loop core invariant.
-Do last among the structural steps.
+- `truncateHistory()` renamed to `buildApiMessages()` (exported from `agent.ts`)
+- `Agent.history` renamed to `Agent.llmMessageLog` (private field)
+- `Agent.getHistory()` renamed to `Agent.getLlmMessageLog()`
+- `buildApiMessages` is purely ephemeral: produces a trimmed view for the API
+  call and returns it; the source `llmMessageLog` is never mutated
+- Agentic loop: `apiView = buildApiMessages(llmMessageLog, apiBudget)` at top
+  of each iteration; Anthropic retry recomputes `attemptApiView` per attempt
+  so prompt-too-long retries pick up the tightened budget automatically
+- `apiBudget` (halved per retry) replaces the former `this.llmMessageLog = truncate(...)` mutation
+- All diagnostic snapshots include both `requestMessages` (the view sent) and
+  `history` (the full `llmMessageLog`) for complete post-mortem data
+- New test: `buildApiMessages` does not mutate the input array
+- 471 tests pass (1 new)
 
 #### Step 3e — Review: event completeness and UI reflection
 **Status: TODO — discuss before acting**
