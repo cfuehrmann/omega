@@ -288,7 +288,7 @@ function getToolResultIds(msg: Anthropic.MessageParam): Set<string> {
   return ids;
 }
 
-export function truncateHistory(
+export function buildApiMessages(
   history: Anthropic.MessageParam[],
   budget: number = config.maxContextTokens
 ): Anthropic.MessageParam[] {
@@ -450,7 +450,7 @@ export type StreamProvider = (params: {
 
 export class Agent {
   private client: Anthropic;
-  private history: Anthropic.MessageParam[] = [];
+  private llmMessageLog: Anthropic.MessageParam[] = [];
   public sessionInputTokens = 0;
   public sessionOutputTokens = 0;
   public sessionCostUsd = 0;
@@ -628,8 +628,8 @@ export class Agent {
     return true;
   }
 
-  getHistory(): readonly Anthropic.MessageParam[] {
-    return this.history;
+  getLlmMessageLog(): readonly Anthropic.MessageParam[] {
+    return this.llmMessageLog;
   }
 
   /**
@@ -707,7 +707,7 @@ export class Agent {
   async *foldCurrentSessionIntoWorldState(): AsyncGenerator<AgentEvent> {
     const path = this.worldStatePath === undefined ? projectWorldStatePath() : this.worldStatePath;
     if (path === null) return;
-    if (this.history.length === 0) return;
+    if (this.llmMessageLog.length === 0) return;
     try {
       const prior = await readWorldState(path);
       const { provider, providerName, url: compactionUrl } = this.getActiveFoldProvider();
@@ -750,7 +750,7 @@ export class Agent {
       // Attempt compaction with retries for transient errors and one re-auth retry on 401/403 auth errors (Anthropic only)
       let newState: string;
       try {
-        newState = await compactWorldState(prior, this.history, wrappedProvider, this.activeModel);
+        newState = await compactWorldState(prior, this.llmMessageLog, wrappedProvider, this.activeModel);
       } catch (compactErr: any) {
         if (isContextTooLong(compactErr)) {
           // Claude Max OAuth returns 429 "Extra usage is required for long context requests"
@@ -776,7 +776,7 @@ export class Agent {
           capturedUsage = null;
           capturedContent = [];
           const retryWrapped = wrapProvider(freshProvider);
-          newState = await compactWorldState(prior, this.history, retryWrapped, this.activeModel);
+          newState = await compactWorldState(prior, this.llmMessageLog, retryWrapped, this.activeModel);
         } else if (isRetryable(compactErr)) {
           // Transient stream error (e.g. "Unexpected event order" from the Anthropic SDK
           // when the server restarts a stream mid-flight) — retry once with a fresh provider.
@@ -785,7 +785,7 @@ export class Agent {
           capturedUsage = null;
           capturedContent = [];
           const retryWrapped = wrapProvider(freshProvider);
-          newState = await compactWorldState(prior, this.history, retryWrapped, this.activeModel);
+          newState = await compactWorldState(prior, this.llmMessageLog, retryWrapped, this.activeModel);
         } else {
           throw compactErr;
         }
@@ -824,7 +824,7 @@ export class Agent {
           provider: this.provider,
           model: this.activeModel,
           requestMessages: [],
-          history: this.history,
+          history: this.llmMessageLog,
           extra: { phase: "fold_shutdown" },
         },
         this.diagDir,
@@ -867,7 +867,7 @@ export class Agent {
         this.activeModel = config.fallbackModel as string;
         yield { type: "status", message: `Switched to OpenAI codex (${this.activeModel})` };
       } else if (cmd === "/compact") {
-        if (this.history.length === 0) {
+        if (this.llmMessageLog.length === 0) {
           yield { type: "status", message: "Nothing to compact — history is empty." };
           return;
         }
@@ -875,18 +875,18 @@ export class Agent {
         try {
           const provider = this.getStreamProvider();
           const { history: newHistory, originalCount, newCount } = await compactHistory(
-            this.history,
+            this.llmMessageLog,
             provider,
             this.activeModel,
           );
           if (newCount === originalCount) {
             yield { type: "status", message: `Context is already short (${originalCount} messages) — nothing compacted.` };
           } else {
-            this.history = newHistory as Anthropic.MessageParam[];
+            this.llmMessageLog = newHistory as Anthropic.MessageParam[];
             // Rewrite context file to match the new shorter history.
             if (this.contextFile !== null) {
               await clearContextStore(this.contextFile ?? undefined, { rotate: false });
-              for (const msg of this.history) {
+              for (const msg of this.llmMessageLog) {
                 await appendContextMessage(msg, this.contextFile ?? undefined);
               }
             }
@@ -929,7 +929,7 @@ export class Agent {
       return;
     }
 
-    this.history.push({ role: "user", content: userMessage });
+    this.llmMessageLog.push({ role: "user", content: userMessage });
     if (this.contextFile !== null) {
       appendContextMessage({ role: "user", content: userMessage }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
     }
@@ -948,8 +948,9 @@ export class Agent {
     // Reset API call counter — numbered per user prompt, not per session
     this._apiCallCount = 0;
 
-    // Apply context window truncation before each API call
-    this.history = truncateHistory(this.history) as Anthropic.MessageParam[];
+    // Budget for the current agentic loop iteration's API view.
+    // Reduced on prompt-too-long retries; llmMessageLog itself is never trimmed.
+    let apiBudget = config.maxContextTokens;
 
     // Cumulative totals across all API calls in this user turn
     let totalInputTokens = 0;
@@ -1024,18 +1025,17 @@ export class Agent {
           ]
         : toolDefinitions;
 
-      // Build cached messages: add cache_control to the last content block of
-      // the last message so the entire conversation prefix is cached. This is the
-      // third breakpoint (after system and tools). Opus 4.6 requires ≥4096 prefix
-      // tokens for caching to activate; the extra breakpoint on messages ensures
-      // the growing conversation eventually crosses that threshold.
-      const cachedMessages = addCacheControlToLastMessage(this.history);
+      // Build the API view: a (possibly trimmed) snapshot of llmMessageLog that
+      // fits within apiBudget. This is ephemeral — llmMessageLog is never mutated.
+      // cachedMessages adds cache_control to the last message for Anthropic caching.
+      const apiView = buildApiMessages(this.llmMessageLog, apiBudget);
+      const cachedMessages = addCacheControlToLastMessage(apiView);
 
       // Emit api_call_start with a snapshot of the params before each call
       this._apiCallCount += 1;
       if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
-          this.history,
+          apiView,
           systemPrompt,
           activeModel,
           config.maxOutputTokens
@@ -1047,7 +1047,7 @@ export class Agent {
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: this.history.length });
+        this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length });
         logger.debug(makeLogEntry("message", {
           sender: "agent",
           receiver: "llm",
@@ -1055,7 +1055,7 @@ export class Agent {
           callNumber: this._apiCallCount,
           provider: "openai",
           model: activeModel,
-          messageCount: this.history.length,
+          messageCount: apiView.length,
         }));
       } else {
         const request = {
@@ -1091,7 +1091,7 @@ export class Agent {
       if (useOpenAi) {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
           try {
-            const openai = await this.openAiCaller(this.history, systemPrompt, activeModel, config.maxOutputTokens, signal);
+            const openai = await this.openAiCaller(apiView, systemPrompt, activeModel, config.maxOutputTokens, signal);
             if (ttftMs === null) {
               ttftMs = performance.now() - startTime;
             }
@@ -1131,8 +1131,8 @@ export class Agent {
                 provider: "openai",
                 model: activeModel,
                 callNumber: this._apiCallCount,
-                requestMessages: buildOpenAiRequest(this.history, systemPrompt, activeModel, config.maxOutputTokens),
-                history: this.history,
+                requestMessages: buildOpenAiRequest(apiView, systemPrompt, activeModel, config.maxOutputTokens),
+                history: this.llmMessageLog,
                 extra: { attempts: attempt + 1 },
               },
               this.diagDir,
@@ -1154,6 +1154,10 @@ export class Agent {
         }
       } else {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
+          // Recompute apiView and cachedMessages each attempt so prompt-too-long
+          // retries pick up the tightened apiBudget set in the catch block below.
+          const attemptApiView = buildApiMessages(this.llmMessageLog, apiBudget);
+          const attemptCachedMessages = addCacheControlToLastMessage(attemptApiView);
           try {
             let fullText = "";
 
@@ -1162,7 +1166,7 @@ export class Agent {
             max_tokens: config.maxOutputTokens,
             system: systemBlocks,
             tools: cachedTools,
-            messages: cachedMessages,
+            messages: attemptCachedMessages,
           };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
@@ -1264,7 +1268,7 @@ export class Agent {
             logger.warn("prompt_too_long", {
               attempt: attempt + 1,
               error: err.message,
-              historyLength: this.history.length,
+              historyLength: this.llmMessageLog.length,
             });
             // Write a diagnostic so the next session has hard data on what
             // caused the overflow (exact history length, cached messages, etc.)
@@ -1277,9 +1281,9 @@ export class Agent {
                 provider: "anthropic",
                 model: activeModel,
                 callNumber: this._apiCallCount,
-                requestMessages: cachedMessages,
+                requestMessages: attemptCachedMessages,
                 systemBlocks,
-                history: this.history,
+                history: this.llmMessageLog,
                 extra: { attempts: attempt + 1, stopReason: "prompt_too_long" },
               },
               this.diagDir,
@@ -1287,9 +1291,9 @@ export class Agent {
             if (diagPath) {
               logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
             }
-            // Halve the budget each retry to force more aggressive truncation
-            const aggressiveBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
-            this.history = truncateHistory(this.history, aggressiveBudget) as Anthropic.MessageParam[];
+            // Halve the budget each retry to force more aggressive truncation.
+            // llmMessageLog is never mutated — apiBudget controls the next apiView.
+            apiBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
             yield {
               type: "error",
               error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})`,
@@ -1307,9 +1311,9 @@ export class Agent {
                 provider: "anthropic",
                 model: activeModel,
                 callNumber: this._apiCallCount,
-                requestMessages: cachedMessages,
+                requestMessages: attemptCachedMessages,
                 systemBlocks,
-                history: this.history,
+                history: this.llmMessageLog,
                 extra: { attempts: attempt + 1, stopReason: "api_error" },
               },
               this.diagDir,
@@ -1418,7 +1422,7 @@ export class Agent {
       }));
 
       // Add assistant response to history
-      this.history.push({ role: "assistant", content: response.content });
+      this.llmMessageLog.push({ role: "assistant", content: response.content });
       if (this.contextFile !== null) {
         appendContextMessage({ role: "assistant", content: response.content }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
       }
@@ -1504,7 +1508,7 @@ export class Agent {
         };
 
         // Add tool results to history and continue the loop
-        this.history.push({ role: "user", content: toolResults });
+        this.llmMessageLog.push({ role: "user", content: toolResults });
         if (this.contextFile !== null) {
           appendContextMessage({ role: "user", content: toolResults }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
         }

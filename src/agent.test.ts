@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { estimateCost, estimateCostWithCache, isAutoApproved, isRetryable, isAuthExpired, isContextTooLong, truncateHistory, PRICING } from "./agent.js";
+import { estimateCost, estimateCostWithCache, isAutoApproved, isRetryable, isAuthExpired, isContextTooLong, buildApiMessages, PRICING } from "./agent.js";
 // isAutoApproved is kept exported for logging purposes; it always returns true.
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -228,30 +228,29 @@ function makeMsg(role: "user" | "assistant", content: string): Anthropic.Message
 const SHORT = "a".repeat(400);   // ~100 tokens
 const LONG  = "a".repeat(4000);  // ~1000 tokens
 
-describe("truncateHistory", () => {
-  it("returns history unchanged if under budget", () => {
-    const history = [makeMsg("user", SHORT), makeMsg("assistant", SHORT)];
-    const result = truncateHistory(history, 100_000);
-    expect(result).toEqual(history);
+describe("buildApiMessages", () => {
+  it("returns messages unchanged if under budget", () => {
+    const msgs = [makeMsg("user", SHORT), makeMsg("assistant", SHORT)];
+    const result = buildApiMessages(msgs, 100_000);
+    expect(result).toEqual(msgs);
   });
 
-  it("caps history length at 100 messages", () => {
+  it("caps message count at 100", () => {
     const msgs: Anthropic.MessageParam[] = [];
     for (let i = 0; i < 160; i++) {
       msgs.push(makeMsg(i % 2 === 0 ? "user" : "assistant", SHORT));
     }
-    const result = truncateHistory(msgs, 100_000);
+    const result = buildApiMessages(msgs, 100_000);
     expect(result.length).toBeLessThanOrEqual(100);
     expect(result[0]).toEqual(msgs[0]);
   });
 
   it("preserves the first message", () => {
-    // Create a history that's well over budget
     const msgs: Anthropic.MessageParam[] = [];
     for (let i = 0; i < 30; i++) {
       msgs.push(makeMsg(i % 2 === 0 ? "user" : "assistant", LONG));
     }
-    const result = truncateHistory(msgs, 5000);
+    const result = buildApiMessages(msgs, 5000);
     expect(result[0]).toEqual(msgs[0]);
   });
 
@@ -260,7 +259,7 @@ describe("truncateHistory", () => {
     for (let i = 0; i < 30; i++) {
       msgs.push(makeMsg(i % 2 === 0 ? "user" : "assistant", LONG));
     }
-    const result = truncateHistory(msgs, 5000);
+    const result = buildApiMessages(msgs, 5000);
     const lastOriginal = msgs[msgs.length - 1];
     const lastResult = result[result.length - 1];
     expect(lastResult).toEqual(lastOriginal);
@@ -271,7 +270,7 @@ describe("truncateHistory", () => {
     for (let i = 0; i < 30; i++) {
       msgs.push(makeMsg(i % 2 === 0 ? "user" : "assistant", LONG));
     }
-    const result = truncateHistory(msgs, 5000);
+    const result = buildApiMessages(msgs, 5000);
     expect(result.length).toBeLessThan(msgs.length);
   });
 
@@ -280,8 +279,23 @@ describe("truncateHistory", () => {
       makeMsg("user", SHORT),
       makeMsg("assistant", SHORT),
     ];
-    const result = truncateHistory(msgs, 100_000); // comfortably under budget
+    const result = buildApiMessages(msgs, 100_000); // comfortably under budget
     expect(result.length).toBe(2);
+  });
+
+  it("does not mutate the input array", () => {
+    // Core 3d invariant: buildApiMessages is ephemeral — the source array is never modified.
+    const msgs: Anthropic.MessageParam[] = [];
+    for (let i = 0; i < 30; i++) {
+      msgs.push(makeMsg(i % 2 === 0 ? "user" : "assistant", LONG));
+    }
+    const originalLength = msgs.length;
+    const originalFirst = msgs[0];
+    const originalLast = msgs[msgs.length - 1];
+    buildApiMessages(msgs, 5000); // over budget — will trim the view
+    expect(msgs.length).toBe(originalLength);
+    expect(msgs[0]).toBe(originalFirst);
+    expect(msgs[msgs.length - 1]).toBe(originalLast);
   });
 
   it("reduces token count even when history has fewer than KEEP_RECENT_TURNS*2 messages but each is huge", () => {
@@ -304,7 +318,7 @@ describe("truncateHistory", () => {
     // 11 messages, < KEEP_RECENT_TURNS*2=20, but ~250k estimated tokens > 100k budget
 
     const budget = 100_000;
-    const result = truncateHistory(msgs, budget);
+    const result = buildApiMessages(msgs, budget);
 
     const resultTokens = result.reduce((sum, m) => {
       const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
@@ -353,7 +367,7 @@ describe("truncateHistory", () => {
       msgs.push(makeMsg(i % 2 === 0 ? "assistant" : "user", LONG));
     }
 
-    const result = truncateHistory(msgs, 8000);
+    const result = buildApiMessages(msgs, 8000);
 
     // Check: every tool_result must have a preceding tool_use with matching ID
     for (let i = 0; i < result.length; i++) {
@@ -406,7 +420,7 @@ describe("truncateHistory", () => {
     msgs.push({ role: "assistant", content: "Here's the summary." });
 
     // Total is ~50 * 20000 / 4 = 250K estimated tokens, way over 100K budget
-    const result = truncateHistory(msgs, 100_000);
+    const result = buildApiMessages(msgs, 100_000);
 
     // Result must be significantly smaller
     const resultSize = result.reduce((sum, m) => {
