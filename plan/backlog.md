@@ -43,7 +43,22 @@ The two [SCHEMA] items (`llm_response.content` duplication and redundant
 **3e-iv — Property names and completeness per event**
 For every event variant, review: (a) are the existing field names clear and
 consistent? (b) are any fields missing that would be needed for post-mortem
-diagnosis or session resume? Known candidates:
+diagnosis or session resume?
+
+**Priority: error events first.** `llm_error` and `agent_error` are the events
+most likely to be consulted in a post-mortem — if their fields are incomplete or
+missing cross-references, the diagnostic value is zero exactly when it matters
+most. Address these before other variants.
+
+Known candidates, in priority order:
+- `LlmErrorEvent` / `AgentErrorEvent` — no cross-reference to the `llm_call`
+  that triggered the error. Currently linked only by temporal order, same weakness
+  as `llm_call`/`llm_response`. Should carry a reference (e.g. the `contextHashes`
+  of the failed call, or a call ID) so a post-mortem can reconstruct exactly what
+  was sent when the error occurred.
+- `LlmCallEvent` / `LlmResponseEvent` — linked only by temporal order in the
+  JSONL; no explicit cross-reference field. Is ordering sufficient, or should
+  `llm_response` carry a reference back to its `llm_call`?
 - `TurnEndEvent.toolCalls` — list of tool *names*, not IDs; cannot be correlated
   back to individual `tool_call` events. Consider replacing with `toolUseIds` or
   keeping as a summary alongside the IDs.
@@ -52,18 +67,40 @@ diagnosis or session resume? Known candidates:
 - `ToolCallEvent` / `ToolResultEvent` — both now carry `contextHash: string` (FK to
   the relevant `context.jsonl` record). `ToolCallEvent.input` and `ToolResultEvent.outputLength`
   removed (both derivable from `context.jsonl`). ✅ Done (commit 34f7708).
-- `LlmCallEvent` / `LlmResponseEvent` — linked only by temporal order in the
-  JSONL; no explicit cross-reference field. Is ordering sufficient, or should
-  `llm_response` carry a reference back to its `llm_call`?
 
 **3e-v — Missing event types**
-Decide whether any important lifecycle events are absent. Known candidates:
+Decide whether any important lifecycle events are absent.
+
+**Priority: `session_end` first.** Without it there is no way to distinguish a
+clean shutdown from a crash in the event log — the same gap that makes error
+events incomplete also makes the overall session record ambiguous. Session resume
+(Step 3f) cannot reliably detect a previously-crashed session without this.
+
+Known candidates, in priority order:
 - `session_end` — symmetric with `session_start`; allows distinguishing a clean
   shutdown from a crash. Needed for session resume to know whether the previous
   session completed normally.
 - `model_changed` — when the operator uses `/sonnet`, `/opus`, or `/codex`
   mid-session the active model switches. Currently invisible in the event log;
   a replay or audit cannot determine when or why the model changed.
+
+**3e-v-bug-A — `user_message` event appears after `llm_call` in events.jsonl** ✅ FIXED (commit 25078f3)
+
+Observed in a live session: the `llm_call` event was written to `events.jsonl`
+*before* the `user_message` event that triggered it. Root cause: `logEvent()` was
+fire-and-forget everywhere; the `user_message` async write lost the race to the
+`llm_call` write. Fix: `logEvent()` now returns `Promise<void>`; the `user_message`
+site awaits it before entering the agentic loop. All other `logEvent` sites remain
+fire-and-forget — only `user_message` needs the ordering guarantee.
+
+**3e-v-bug-B — `llm_call.contextHashes` FKs not yet flushed to context.jsonl** ✅ NOT A REAL BUG (investigated commit 25078f3)
+
+Same session, same apparent symptom. Investigated: `appendToHistory()` fully awaits
+`appendContextMessage()` which awaits the file write; all `appendToHistory()` calls
+in each loop iteration are awaited before `continueLoop` is set; so `context.jsonl`
+is always fully flushed before the next `llm_call` fires. The apparent out-of-order
+appearance in `events.jsonl` was entirely caused by bug-A (the `user_message` event
+race). No further fix needed.
 
 **3e-vi — Persistence completeness audit**
 Formally verify and document which events/signals are intentionally *not*
