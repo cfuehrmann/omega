@@ -108,7 +108,7 @@ export function renderApiRequest(
       : prevSummary
         ? `messages[${n}]: ${prevSummary} … ${lastSummary}`
         : `messages[${n}]: … ${lastSummary}`;
-    return [cyan(msgLine)];
+    return [bold(cyan("llm request")) + dim(cyan(`  ${msgLine}`))];
   } else {
     const input: any[] = request.input ?? [];
     const n = input.length;
@@ -121,7 +121,7 @@ export function renderApiRequest(
       : prevSummary
         ? `input[${n}]: ${prevSummary} … ${lastSummary}`
         : `input[${n}]: … ${lastSummary}`;
-    return [cyan(msgLine)];
+    return [bold(cyan("llm request")) + dim(cyan(`  ${msgLine}`))];
   }
 }
 
@@ -146,9 +146,8 @@ export function renderApiResponse(
   content: any[],
   raw?: any,
 ): string[] {
-  const shortUrl = url.replace(/^https?:\/\//, "");
   const lines: string[] = [];
-  lines.push(bold(blue(`${shortUrl} response`)));
+  lines.push(bold(blue("llm response")));
   if (provider === "anthropic") {
     lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
     lines.push(blue(`${INDENT}usage:`));
