@@ -534,11 +534,11 @@ export class Agent {
     return this.eventsFile === undefined ? DEFAULT_EVENTS_FILE : this.eventsFile;
   }
 
-  /** Fire-and-forget append of a SessionEvent. Errors silently dropped. */
-  private logEvent(event: SessionEvent): void {
+  /** Append a SessionEvent. Returns the promise; caller may await for ordering guarantees. Errors silently dropped. */
+  private logEvent(event: SessionEvent): Promise<void> {
     const path = this.resolveEventsFile();
-    if (path === null) return;
-    appendSessionEvent(event, path).catch(() => {});
+    if (path === null) return Promise.resolve();
+    return appendSessionEvent(event, path).catch(() => {});
   }
 
   /**
@@ -774,7 +774,9 @@ export class Agent {
     }
 
     await this.appendToHistory({ role: "user", content: userMessage });
-    this.logEvent({ type: "user_message", ts: new Date().toISOString(), content: userMessage });
+    // Await the event write so user_message is guaranteed to appear in events.jsonl
+    // before the llm_call event that follows. logEvent is otherwise fire-and-forget.
+    await this.logEvent({ type: "user_message", ts: new Date().toISOString(), content: userMessage });
 
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
