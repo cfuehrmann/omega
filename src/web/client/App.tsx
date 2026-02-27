@@ -122,7 +122,7 @@ function EventBlock(props: { event: WsEvent }) {
     const reqStr = truncate(JSON.stringify(e.request, null, 2), 1000);
     return (
       <details class="block api-call">
-        <summary class="block-label">api call #{e.callNumber} › {e.provider}</summary>
+        <summary class="block-label">llm call #{e.llmCallNumber} › {e.provider}</summary>
         <div class="block-body">{reqStr}</div>
       </details>
     );

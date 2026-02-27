@@ -24,7 +24,7 @@ type WsEvent =
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: unknown }
   | { type: "agent_to_agent_tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
   | { type: "status"; message: string }
-  | { type: "llm_call"; callNumber: number; provider: string; url: string; request: unknown }
+  | { type: "llm_call"; llmCallNumber: number; provider: string; url: string; request: unknown }
   | { type: "llm_to_agent"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }

@@ -152,7 +152,7 @@ export async function runApp(): Promise<void> {
 
           case "llm_call":
             printBlock(now(), renderApiRequest(
-              event.callNumber,
+              event.llmCallNumber,
               event.provider,
               event.url,
               event.request,

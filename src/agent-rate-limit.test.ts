@@ -113,13 +113,13 @@ describe("OAuth token expiry reauth", () => {
     // First call throws 401; second call (after mock reauth) succeeds.
     // Note: the provider may also be called for post-turn compaction — we track
     // only whether the API call sequence had exactly one 401 before success.
-    let apiCallCount = 0;
+    let llmCallCount = 0;
     let hadAuthError = false;
     let hadSuccess = false;
 
     const mockProvider: StreamProvider = async () => {
-      apiCallCount += 1;
-      if (apiCallCount === 1) {
+      llmCallCount += 1;
+      if (llmCallCount === 1) {
         hadAuthError = true;
         throw authExpiredError();
       }
