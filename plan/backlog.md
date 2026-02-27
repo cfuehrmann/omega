@@ -2,50 +2,6 @@
 
 ## Open items
 
-### [SCHEMA] Drop `llm_response` content duplication
-**Priority: HIGH — fix before schema lock**
-
-`llm_response` events currently store the full `content` array — the complete
-assembled assistant response verbatim. This duplicates what is already in
-`context.jsonl` (the assistant `MessageParam`). For a long turn this can be
-thousands of tokens of JSON in the events file.
-
-The assistant message is already the authoritative record in `context.jsonl`.
-`llm_response` only needs the metadata needed for post-mortem and auditing:
-`stopReason`, `usage`, `model`, `provider`, `url`. The content can be looked up
-by joining on the `contextHashes` of the *next* `llm_call` (which includes the
-assistant message hash).
-
-**Change:** Remove the `content` field from `LlmResponseEvent` and from the
-`logEvent` call site in `agent.ts`. Update the `llm_response` variant in
-`session-event.ts`.
-
-Acceptance criteria:
-- `llm_response` events no longer carry `content`
-- `sessions/events.jsonl` no longer contains duplicated assistant response text
-- All existing tests pass; add a test asserting `llm_response` events have no
-  `content` field
-
----
-
-### [SCHEMA] Drop `LlmCallEvent.messageCount` — redundant with `contextHashes.length`
-**Priority: HIGH — fix before schema lock**
-
-`llm_call` events carry both `contextHashes: string[]` and `messageCount: number`.
-`messageCount` is always exactly `contextHashes.length` — it conveys no
-additional information and creates a consistency hazard (two fields that must
-always agree).
-
-**Change:** Remove `messageCount` from `LlmCallEvent` in `session-event.ts` and
-from the `logEvent` call site in `agent.ts`.
-
-Acceptance criteria:
-- `llm_call` events no longer carry `messageCount`
-- `bun test` passes; add a test asserting `llm_call` events have no `messageCount`
-  field
-
----
-
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 
@@ -79,12 +35,10 @@ before building session-resume on top of it. Covers:
 **Status: DONE — commit b6ef87c**
 
 ##### Schema lock
-**Status: TODO — fix [SCHEMA] items above first, then proceed in order**
+**Status: TODO — [SCHEMA] items resolved (commit b59ba48), proceed in order**
 
-The two [SCHEMA] items above (`llm_response` content duplication and redundant
-`messageCount`) must be resolved before the schema lock sub-steps below, since
-they are breaking field-level changes that would require a migration if done
-after the lock.
+The two [SCHEMA] items (`llm_response.content` duplication and redundant
+`messageCount`) have been removed (commit b59ba48). Proceed with the sub-steps below.
 
 **3e-iv — Property names and completeness per event**
 For every event variant, review: (a) are the existing field names clear and
@@ -116,7 +70,7 @@ Formally verify and document which events/signals are intentionally *not*
 persisted, and why. Current known intentional omissions:
 - `status` messages — ephemeral UI noise; not meaningful after the fact.
 - Streaming `text` fragments — assembled response is captured in `context.jsonl`
-  assistant message (not in `llm_response` — see [SCHEMA] item above).
+  assistant message (`llm_response` intentionally carries no `content` — resolved in commit b59ba48).
 - Per-call `metrics` — aggregate is in `turn_end`; per-call detail is in
   `llm_call` / `llm_response` usage fields.
 Close the question explicitly so future contributors know these are deliberate,

@@ -108,13 +108,19 @@ etc.). `context.jsonl` entries now carry `hash` (SHA-256 8 hex chars of
 `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]`
 — the ordered hashes of every message in the `buildApiMessages()` view sent.
 Agent maintains a parallel `llmMessageHashes[]` array; `contextHashesForView()`
-maps by object-reference identity. 441 tests pass.
+maps by object-reference identity.
+
+### Pre-lock field removals — DONE (commit b59ba48)
+Two breaking changes landed before the schema lock to avoid a post-lock migration:
+- `LlmResponseEvent.content` removed — full assistant response was duplicating `context.jsonl`; join via next `llm_call`'s `contextHashes` instead.
+- `LlmCallEvent.messageCount` removed — always equalled `contextHashes.length`; use `.length` directly.
 
 ### Schema lock — TODO (next)
 Review and explicitly document the full shape of every JSONL record in
 `sessions/context.jsonl` and `sessions/events.jsonl`. Write a schema reference
 that serves as the stable contract for session resume and any future tooling.
 No breaking changes after this point without a migration plan.
+See `plan/backlog.md` § "Schema lock" for the ordered sub-steps (3e-iv through 3e-viii).
 
 ### 3f — Session resume — TODO (depends on schema lock)
 On startup, if a `.prev` session exists, offer to resume it.
