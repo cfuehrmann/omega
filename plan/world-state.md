@@ -16,10 +16,10 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
 ### Branch State
-**`dev` is ahead of `main`**; Steps 3a–3d are complete and stable in `dev`. Merging `dev → main` is the correct next action before proceeding with Steps 3e or 4. Run `just gate` first, then merge.
+`develop` is the active branch. Steps 3a–3d and Step 4 (pino retirement) are all complete. `main` was previously synced at Steps 3a–3d; it needs one more merge to pick up Step 4.
 
 ### Context Management
-- **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated by `foldCurrentSessionIntoWorldState()` on clean shutdown. Lives under source control.
+- **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated manually at session end. Lives under source control.
 - **Zone 2** — turn summaries: **REMOVED** (manifest Step 2 complete).
 - **Zone 3** — current turn: always verbatim, never compacted.
 - Hard message cap: 100 messages. Token budget: 100k.
@@ -34,22 +34,22 @@ No raw session persistence. No "resume session?" prompt. The world file is the o
 - `events.jsonl` → `events.prev.jsonl`
 - Files with no extension get `.prev` appended
 
-The exported helper `prevPath(filePath)` encapsulates this logic. The logger follows the same convention: `omega.prev.log`.
+The exported helper `prevPath(filePath)` encapsulates this logic.
 
 ### Manifest Refactor Status
 `manifest.md` describes a major redesign. Current progress:
 - **Step 1** (DONE): System prompt decoupled from Omega's own repo. Project-agnostic prompt reads `README.md` at startup.
 - **Step 2** (DONE): Abandoned `compactAfterTurn()`. History grows verbatim.
-- **Step 3** (IN PROGRESS): Replace `MessageParam[]` history with an event-list data structure.
+- **Step 3** (DONE through 3d): Replace `MessageParam[]` history with an event-list data structure.
   - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl`. `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
   - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.llmMessageLog` in-place and rewrites `sessions/context.jsonl`.
-  - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. 12-variant discriminated union; all events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
+  - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. 16-variant discriminated union; all events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
   - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; produces a trimmed view for each API call without ever mutating `llmMessageLog`. `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Prompt-too-long retries reduce `apiBudget` (halved per attempt); the next iteration's `buildApiMessages()` picks up the tighter budget automatically. Cache prefix is never invalidated by truncation.
-- **Step 3e** (TODO — discuss before acting): Review event completeness and UI reflection alignment. Currently not persisted: `status` (intentional — ephemeral UI noise), per-API-call `metrics` (aggregate captured in `turn_end`), `tool_result_message`. Decide guiding principle before acting.
-- **Step 4** (TODO — can proceed independently of 3e): Retire pino. Pino still provides uniquely: ~6 infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`, `world_state_updated`). Migration: add those as `SessionEvent` variants, then delete `src/logger.ts` and all call sites. `omega.log`/`omega.prev.log` removed from `.gitignore`.
+  - **3e** (TODO — discuss before acting): Review event completeness and UI reflection alignment.
+- **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed. All infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`) are `SessionEvent` variants. `omega.log`/`omega.prev.log` removed from `.gitignore`. 422 tests pass.
 
 ### Planning Files
-- `plan/world-state.md` — Zone 1 world state; auto-maintained; under source control.
+- `plan/world-state.md` — Zone 1 world state; manually maintained; under source control.
 - `plan/future.md` — discrete actionable backlog items; manually maintained.
 - `manifest.md` — high-level design manifest for ongoing refactoring. Strategic direction.
 - `README.md` — project orientation for any agent (including Omega itself). References all planning files.
@@ -71,7 +71,7 @@ Three cache breakpoints: system prompt, last tool definition, last history messa
 **Cache/truncation interaction (resolved):** `buildApiMessages()` produces an ephemeral API-call view from `llmMessageLog` without mutating it. The cache-control breakpoint on the last message always refers to the same stored message, so the prompt cache prefix is never invalidated by a truncation event.
 
 ### Test Isolation — Never Pollute Production Files
-Tests must **never** write to `sessions/`, `diagnosis/`, `omega.log`, or any other production file. The mechanism: `Agent` constructor applies a mock-provider heuristic — when a mock `streamProvider` is injected and no explicit path is given, `worldStatePath`, `diagDir`, `contextFile`, and `eventsFile` all default to `null` (disabled). All file-writing functions treat `null` as a no-op. e2e tests use `sessions-test/` not `sessions/`. If a new production side-effect file is added, follow the same pattern.
+Tests must **never** write to `sessions/`, `diagnosis/`, or any other production file. The mechanism: `Agent` constructor applies a mock-provider heuristic — when a mock `streamProvider` is injected and no explicit path is given, `worldStatePath`, `diagDir`, `contextFile`, and `eventsFile` all default to `null` (disabled). All file-writing functions treat `null` as a no-op. e2e tests use `sessions-test/` not `sessions/`. If a new production side-effect file is added, follow the same pattern.
 
 ### Event Taxonomy (coordinate-system model)
 Events are named as messages between three parties: **agent**, **user**, **llm**. Direction is explicit in the name.
@@ -89,20 +89,19 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 **One-sided only** (UI-only or infra-only): `text`, `status`, `interrupted`, `metrics`, `turn_end`, `api_call_start`; `startup`, `oauth_*`, `context_truncated`, `session_compacted`, `api_retry`, `diagnostic_written`.
 
 ### SessionEvent Variants (sessions/events.jsonl)
-`session_start`, `user_message`, `api_call_start`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `api_error`, `error`, `interrupted`, `world_state_saved`, `session_compacted`. All carry ISO `ts` timestamp.
+`session_start`, `user_message`, `api_call_start`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `api_error`, `error`, `interrupted`, `session_compacted`, `oauth_reauthed`, `oauth_token_expired`, `api_retry`, `diagnostic_written`, `context_truncated`. All carry ISO `ts` timestamp.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; `foldCurrentSessionIntoWorldState()` async generator; `getActiveFoldProvider()`; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `flushLog()` then `writeDiagnostic()`.
-- `src/session-event.ts` — `SessionEvent` discriminated union (12 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`.
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `writeDiagnostic()`.
+- `src/session-event.ts` — `SessionEvent` discriminated union (16 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`.
 - `src/context-store.ts` — `appendContextMessage()`, `clearContextStore()`, `rotateFile()`, `prevPath()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` variant (via `prevPath()`) then creates fresh empty file — shared by both context and events stores.
-- `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold on shutdown) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
+- `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
-- `src/logger.ts` — pino-backed structured logger. Log rotation (`omega.log → omega.prev.log`). **To be retired in Step 4.**
 - `src/diagnosis.ts` — `writeDiagnostic(data, diagDir?)` writes a JSON snapshot to `diagnosis/<ISO-timestamp>.json`; `null` disables; `checkDiagnostics()` returns existing snapshot paths sorted oldest-first.
 - `src/ui-raw.ts` — **thin re-export shim** (26 lines). CLI entry point.
 - `src/terminal/input.ts` — `parseKeys`, `displayWidth`, all line-editing helpers.
 - `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput`, and all block renderers.
-- `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Calls `initLogger()` then `clearContextStore()` then `clearSessionEvents()` as first three statements (log rotation, then rotate both session files). Shutdown drains `foldCurrentSessionIntoWorldState()`.
+- `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Calls `clearContextStore()` then `clearSessionEvents()` at startup (rotates both session files). Shutdown ritual documented in `README.md ## Shutdown`.
 - `src/tools.ts` — All tool implementations. `executeTool()` applies `MAX_TOOL_OUTPUT_CHARS = 100_000` cap to all tool results before they enter history; oversized output is truncated with an actionable note.
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }`.
 
@@ -122,7 +121,7 @@ Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
 - Diagnostic snapshots include both `requestMessages` (the view sent) and `history` (the full `llmMessageLog`).
 
 ### Current Test Count
-471 tests across 27 files. All pass.
+422 tests across 23 files. All pass.
 
 ### Recent Session Outcomes
-Completed **Step 3d** (non-destructive context truncation) and updated all planning documents (`plan/world-state.md`, `plan/future.md`, `manifest.md`) to reflect the completed step. All changes pushed to `develop`; `dev` is now ahead of `main` by Steps 3a–3d. The immediate next action is merging `develop → main` (run `just gate` first).
+Completed **Step 4** (pino retirement): deleted `src/logger.ts`, removed `pino` package, cleaned up all references across tests, docs, and config. `omega.log`/`omega.prev.log` no longer written or gitignored. All infra-only event types were already present in `SessionEvent`. 422 tests pass, pushed to `origin/develop`.

@@ -12,7 +12,7 @@ This document makes that explicit for Omega.
 You
  │  string (your prompt)
  ▼
-UI (Ink)
+Terminal UI (src/terminal/)
  │  AgentEvent stream (async generator)
  ▼
 Agent Core
@@ -44,26 +44,28 @@ Every event has a `type` discriminant. Full union:
 type AgentEvent =
   | { type: "status";        message: string }
   | { type: "text";          text: string }          // streamed chunk
+  | { type: "user_message";  message: string }       // echo of submitted prompt
   | { type: "api_call_start";
       callNumber: number;
       model: string;
       system: string;
       tools: Anthropic.Tool[];
       messages: Anthropic.MessageParam[] }            // snapshot before call
-  | { type: "api_response";
+  | { type: "llm_to_agent";
       stopReason: string;                             // "end_turn" | "tool_use" | ...
       usage: { input_tokens: number; output_tokens: number };
       content: Anthropic.ContentBlock[] }             // text + tool_use blocks
-  | { type: "tool_call";
+  | { type: "agent_to_agent_tool_call";
       id: string;
       name: string;
       input: any;                                     // tool-specific, see below
       formatted: string }                             // human-readable summary
-  | { type: "tool_result";
+  | { type: "agent_to_agent_tool_result";
       id: string;
       name: string;
       formatted: string;
       result: ToolResult }
+  | { type: "tool_result_message" }                  // signals tool results assembled
   | { type: "metrics";
       metrics: TurnMetrics;
       startedAt: string }                             // HH:MM:SS, per API call
@@ -71,6 +73,7 @@ type AgentEvent =
       metrics: TurnMetrics;                           // aggregated across all calls
       toolCalls: string[] }                           // all tool names this turn
   | { type: "error";         error: string }
+  | { type: "api_error";     error: string; attempt: number; willRetry: boolean }
   | { type: "interrupted" }
 
 type TurnMetrics = {
@@ -79,6 +82,9 @@ type TurnMetrics = {
   costUsd: number;
   ttftMs: number | null;
   totalMs: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  savedUsd?: number;
 }
 
 type ToolResult = {
@@ -123,6 +129,10 @@ type ContentBlockParam =
 - user turn: the tool results (tool_result blocks)
 
 This is why `~N tokens` grows across API calls within one user prompt.
+
+**Non-destructive truncation:** `buildApiMessages(history, budget)` in `agent.ts`
+produces an ephemeral, token-budget-capped view of `llmMessageLog` for each API
+call. The canonical `llmMessageLog` is never mutated.
 
 ---
 
@@ -189,10 +199,27 @@ output: string   // abstract + top results with URLs and snippets
 // fetch_url
 input:  { url: string }
 output: string   // HTML stripped to plain text, truncated at 8000 chars
+
+// grep_files
+input:  { pattern: string; path: string; file_glob?: string; case_sensitive?: boolean; max_results?: number; context_lines?: number }
+output: string   // file:line:text matches, capped at max_results
+
+// find_files
+input:  { pattern: string; path: string; type?: string; hidden?: boolean; max_results?: number }
+output: string   // matching paths
+
+// run_background
+input:  { command: string; cwd?: string }
+output: string   // { pid, logFile } as JSON-like string
+
+// kill_process
+input:  { pid: number; signal?: string }
+output: string   // status message
 ```
 
 Tool results feed back into `messages` as `tool_result` blocks, which the
-model receives on the next API call.
+model receives on the next API call. All tool output is capped at
+`MAX_TOOL_OUTPUT_CHARS = 100_000` before entering history.
 
 ---
 
@@ -200,16 +227,17 @@ model receives on the next API call.
 
 ```
 while true:
+  apiView = buildApiMessages(llmMessageLog, apiBudget)  // ephemeral, never mutates log
   request:  MessageCreateParams  →  Anthropic API
   response: Message              ←  Anthropic API
 
   if response.stop_reason == "end_turn":
     yield turn_end; break
 
-  for each tool_use block in response.content:
-    yield tool_call
-    result = executeTool(name, input)   // string
-    yield tool_result
+  for each tool_use block in response.content (in parallel):
+    yield agent_to_agent_tool_call
+    result = executeTool(name, input)   // string, capped at 100KB
+    yield agent_to_agent_tool_result
     append tool_result to messages
 
   // messages now larger — next request carries more context
@@ -217,15 +245,23 @@ while true:
 
 ---
 
+## Session persistence
+
+Every event is also appended to `sessions/events.jsonl` (via `src/session-event.ts`).
+Every `MessageParam` sent to the LLM is appended to `sessions/context.jsonl`
+(via `src/context-store.ts`). Both files are rotated to `.prev` variants on startup.
+
+---
+
 ## What the UI shows
 
-The UI renders each `AgentEvent` as a block in the log:
+The terminal UI renders each `AgentEvent` as a block in the log:
 
 | Event | Colour | What you see |
 |---|---|---|
 | user prompt | green | separator + text |
 | `api_call_start` | cyan | pseudo-JSON of request params |
-| `api_response` | blue | pseudo-JSON of response |
-| `tool_result` | yellow | formatted call + result preview |
+| `llm_to_agent` | blue | pseudo-JSON of response |
+| `agent_to_agent_tool_result` | yellow | formatted call + result preview |
 | `turn_end` | dim | aggregated metrics |
-| `error` | red | error message |
+| `error` / `api_error` | red | error message |

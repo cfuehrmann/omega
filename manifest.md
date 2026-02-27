@@ -62,8 +62,8 @@ aspects.
     not hardcoded to `<cwd>/plan/world-state.md`. See `plan/future.md` §
     "Decouple Omega startup from Omega's own repo" for the detailed plan.
 
-> Obviously, we should be able to abandon pino, since we will roll our own file
-> format as a single source of truth.
+> Pino has been retired (Step 4, complete). The canonical event log is
+> `sessions/events.jsonl` via `src/session-event.ts` — the single source of truth.
 
 ## Bootstrapping considerations
 
@@ -94,7 +94,7 @@ Define `SessionEvent` union type in `src/session-event.ts`. Append every agent e
 to `sessions/events.jsonl`. Additive — establishes the canonical persistent event log
 that will replace pino in Step 4.
 
-### ~~3d — Non-destructive truncation (structural cache fix)~~ — DONE (commit 997d7f7)
+### 3d — Non-destructive truncation (structural cache fix) — DONE (commit 997d7f7)
 `truncateHistory` renamed to `buildApiMessages` — produces an ephemeral view for a
 single API call; the source `llmMessageLog` is never mutated. `Agent.history` →
 `Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Agentic loop uses
