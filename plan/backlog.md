@@ -54,7 +54,7 @@ Acceptance criteria:
   `src/session-event.ts` or `src/agent.ts`
 
 ##### Step 3e-ii — Rename WsEvent variants to match (web protocol)
-**Status: TODO — depends on Step 3e-i**
+**Status: DONE**
 
 After 3e-i is done, apply the same renames to the WebSocket protocol layer:
 the `WsEvent` union in `src/web/client/store.ts`, the switch cases that
@@ -317,6 +317,7 @@ Acceptance criteria:
   exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
 - **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed, `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`) were already in `SessionEvent`. 422 tests pass.
 - **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied (`api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`). 422 tests pass.
+- **Step 3e-ii: Rename WsEvent variants** — Done. `api_call_start`→`llm_call`, `api_error`→`llm_error`, `interrupted`→`turn_interrupted` in `store.ts`, `App.tsx`, `server.ts` (`closeOpenTurn`), `session-resilience.test.ts`, e2e. `agent_error` added as proper `WsEvent` variant. Server-own protocol errors stay as `{ type: "error" }`. 422 tests pass, pushed to `origin/develop`.
 - **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
   `buildApiMessages()` is purely ephemeral; `llmMessageLog` never mutated.
