@@ -17,23 +17,6 @@
    decide: "anything that could matter for a post-mortem should be persisted; pure
    streaming scaffolding need not be."
 
-Act on this after Step 4 — pino retirement will clarify what the event log must cover.
-
-#### Step 4: Retire pino
-**Status: TODO**
-
-Pino still provides infra-only events not yet in `SessionEvent`: `oauth_reauthed`,
-`oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`.
-
-Plan: add those as `SessionEvent` variants, delete `src/logger.ts` and all call sites.
-`omega.log`/`omega.prev.log` removed from `.gitignore`.
-
-Acceptance criteria:
-- All infra-only pino events represented in the event log
-- `src/logger.ts` deleted, no `pino` import anywhere in `src/`
-- `omega.log` / `omega.prev.log` removed from `.gitignore`
-- All tests pass
-
 ---
 
 ### [INFRA] Self-protection — preventing Omega from taking itself down
@@ -197,6 +180,8 @@ Acceptance criteria:
 - **Shutdown decoupling** — Done. All fold-on-exit code removed from `app.ts` and
   `web/server.ts` (`foldCurrentSessionIntoWorldState`, `performWebShutdown`). Ctrl-C
   exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
+- **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed, `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`) were already in `SessionEvent`. 422 tests pass.
+- **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
   `buildApiMessages()` is purely ephemeral; `llmMessageLog` never mutated.
 - **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23). 12-variant

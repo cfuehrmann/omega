@@ -50,7 +50,7 @@ describe("writeDiagnostic", () => {
     expect(contents.requestMessages).toEqual([{ role: "user", content: "hello" }]);
   });
 
-  it("includes a logFile pointer", async () => {
+  it("does NOT include a logFile field (pino retired)", async () => {
     const path = await writeDiagnostic(
       {
         summary: "some error",
@@ -64,7 +64,7 @@ describe("writeDiagnostic", () => {
     );
 
     const contents = JSON.parse(readFileSync(path!, "utf-8"));
-    expect(contents.logFile).toBe("omega.log");
+    expect(contents.logFile).toBeUndefined();
   });
 
   it("does NOT include an eventBuffer field", async () => {

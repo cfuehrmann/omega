@@ -131,6 +131,51 @@ export interface SessionStartEvent {
   sessionId: string;
   model: string;
   provider: ProviderName;
+  authMode: string;
+}
+
+/** OAuth token was refreshed mid-session. */
+export interface OauthReauthedEvent {
+  type: "oauth_reauthed";
+  ts: string;
+}
+
+/** OAuth token expired, triggering a refresh attempt. */
+export interface OauthTokenExpiredEvent {
+  type: "oauth_token_expired";
+  ts: string;
+  attempt: number;
+  httpStatus?: number;
+}
+
+/** API call retried after a transient error. */
+export interface ApiRetryEvent {
+  type: "api_retry";
+  ts: string;
+  attempt: number;
+  provider: ProviderName;
+  httpStatus?: number;
+  waitMs: number;
+  error: string;
+}
+
+/** A diagnostic snapshot was written to disk. */
+export interface DiagnosticWrittenEvent {
+  type: "diagnostic_written";
+  ts: string;
+  path: string;
+}
+
+/** The context was truncated to fit within the token budget. */
+export interface ContextTruncatedEvent {
+  type: "context_truncated";
+  ts: string;
+  originalMessages: number;
+  keptMessages: number;
+  droppedMessages: number;
+  estimatedTokensBefore: number;
+  estimatedTokensAfter: number;
+  reason: string;
 }
 
 export type SessionEvent =
@@ -144,7 +189,12 @@ export type SessionEvent =
   | ApiErrorEvent
   | ErrorEvent
   | InterruptedEvent
-  | SessionCompactedEvent;
+  | SessionCompactedEvent
+  | OauthReauthedEvent
+  | OauthTokenExpiredEvent
+  | ApiRetryEvent
+  | DiagnosticWrittenEvent
+  | ContextTruncatedEvent;
 
 // ---------------------------------------------------------------------------
 // Persistence helpers

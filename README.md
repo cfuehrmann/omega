@@ -87,16 +87,13 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 
 ### Test isolation — never pollute production files
 
-Tests must **never** write to `sessions/`, `diagnosis/`, `omega.log`, or any
-other production file. The rule and the mechanism:
+Tests must **never** write to `sessions/`, `diagnosis/`, or any other
+production file. The rule and the mechanism:
 
 - `Agent` constructor: when a mock `streamProvider` is injected and no explicit
   path is given, `diagDir` and `contextFile` all default to `null` (disabled).
   Tests get isolation automatically — just pass a mock provider and omit the
   path arguments.
-- `OMEGA_LOG_FILE` env var: redirect the pino log in tests that exercise the
-  logger directly. The test infra sets this to a tmp path automatically for
-  any test that imports `src/logger.ts`.
 - e2e tests: use `sessions-test/` (not `sessions/`) via the fixture server in
   `e2e/fixtures/test-server.ts`.
 
@@ -136,4 +133,4 @@ when the operator explicitly asks for it.
 ## Testing infrastructure
 
 `StreamProvider` interface in `src/agent.ts` allows mock injection — real API is
-never called in tests. `OMEGA_LOG_FILE` env var redirects logs in test mode.
+never called in tests.

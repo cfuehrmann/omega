@@ -9,7 +9,7 @@ import { Agent } from "../agent.js";
 import { config } from "../config.js";
 import { formatTurnFooter } from "../turn-footer.js";
 import { checkDiagnostics } from "../diagnosis.js";
-import { initLogger, flushLog } from "../logger.js";
+
 import { clearContextStore } from "../context-store.js";
 import { clearSessionEvents } from "../session-event.js";
 import {
@@ -78,11 +78,10 @@ function setupRawInput(
 // Shutdown
 // ---------------------------------------------------------------------------
 
-/** Clean exit. Flushes the log and exits immediately — no LLM calls. */
+/** Clean exit — exits immediately, no LLM calls. */
 function shutdown(code: number = 0): never {
   process.stdout.write("\r\x1b[2K");
   process.stdout.write("\x1b[?2004l");
-  flushLog();
   process.exit(code);
 }
 
@@ -91,7 +90,6 @@ function shutdown(code: number = 0): never {
 // ---------------------------------------------------------------------------
 
 export async function runApp(): Promise<void> {
-  initLogger(); // must be first — rotates omega.log before any writes
   await clearContextStore(); // fresh session — discard previous session's context
   await clearSessionEvents(); // fresh session — discard previous session's events
   const agent = new Agent();

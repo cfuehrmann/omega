@@ -1141,7 +1141,7 @@ describe("slash commands", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unified event taxonomy — true duals (AgentEvent ↔ pino share same name)
+// Unified event taxonomy — SessionEvent variants
 // ---------------------------------------------------------------------------
 
 describe("Agent — unified event taxonomy (true duals)", () => {

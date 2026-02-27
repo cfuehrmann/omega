@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
-import { logger, flushLog, startup, makeLogEntry } from "./logger.js";
+
 import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory } from "./compaction.js";
@@ -287,18 +287,18 @@ function getToolResultIds(msg: Anthropic.MessageParam): Set<string> {
   return ids;
 }
 
+/** Rough token estimate: ~1 token per 4 characters (conservative). */
+export function estimateTokens(msg: Anthropic.MessageParam): number {
+  const text = typeof msg.content === "string"
+    ? msg.content
+    : JSON.stringify(msg.content);
+  return Math.ceil(text.length / 4);
+}
+
 export function buildApiMessages(
   history: Anthropic.MessageParam[],
   budget: number = config.maxContextTokens
 ): Anthropic.MessageParam[] {
-  // Rough token estimate: ~1 token per 4 characters (conservative)
-  const estimateTokens = (msg: Anthropic.MessageParam): number => {
-    const text = typeof msg.content === "string"
-      ? msg.content
-      : JSON.stringify(msg.content);
-    return Math.ceil(text.length / 4);
-  };
-
   const MAX_MESSAGES = 100;
 
   let working = history;
@@ -354,16 +354,6 @@ export function buildApiMessages(
   // Fix orphaned tool_result blocks: if a tool_result references a tool_use
   // that was dropped, remove the orphaned tool_result (and its partner if needed)
   result = sanitizeToolPairs(result);
-
-  logger.info(makeLogEntry("infra", {
-    event: "context_truncated",
-    originalMessages: history.length,
-    keptMessages: result.length,
-    droppedMessages: history.length - result.length,
-    estimatedTokensBefore: history.reduce((sum, m) => sum + estimateTokens(m), 0),
-    estimatedTokensAfter: result.reduce((sum, m) => sum + estimateTokens(m), 0),
-    reason: reasons.length ? reasons.join("+") : "token_budget",
-  }));
 
   return result;
 }
@@ -560,14 +550,12 @@ export class Agent {
         },
       });
       this.authMode = "oauth";
-      startup({ authMode: "claude-max", model: config.model });
-      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider });
+      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "claude-max" });
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";
-      startup({ authMode: "api-key", model: config.model });
-      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider });
+      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "api-key" });
       return "api-key (pay-per-token ⚠)";
     } else {
       throw new Error(
@@ -612,7 +600,7 @@ export class Agent {
         "x-app": "cli",
       },
     });
-    logger.info("oauth_reauthed", { hint: "token refreshed after 401" });
+    this.logEvent({ type: "oauth_reauthed", ts: new Date().toISOString() });
     return true;
   }
 
@@ -734,12 +722,7 @@ export class Agent {
     // Emit user message event for UI display
     yield { type: "user_message", content: userMessage };
 
-    logger.debug(makeLogEntry("message", {
-      sender: "user",
-      receiver: "agent",
-      message: "call",
-      contentLength: userMessage.length,
-    }));
+
 
     // Reset API call counter — numbered per user prompt, not per session
     this._apiCallCount = 0;
@@ -825,6 +808,18 @@ export class Agent {
       // fits within apiBudget. This is ephemeral — llmMessageLog is never mutated.
       // cachedMessages adds cache_control to the last message for Anthropic caching.
       const apiView = buildApiMessages(this.llmMessageLog, apiBudget);
+      if (apiView.length < this.llmMessageLog.length) {
+        this.logEvent({
+          type: "context_truncated",
+          ts: new Date().toISOString(),
+          originalMessages: this.llmMessageLog.length,
+          keptMessages: apiView.length,
+          droppedMessages: this.llmMessageLog.length - apiView.length,
+          estimatedTokensBefore: this.llmMessageLog.reduce((s, m) => s + estimateTokens(m), 0),
+          estimatedTokensAfter: apiView.reduce((s, m) => s + estimateTokens(m), 0),
+          reason: "token_budget",
+        });
+      }
       const cachedMessages = addCacheControlToLastMessage(apiView);
 
       // Emit api_call_start with a snapshot of the params before each call
@@ -844,15 +839,7 @@ export class Agent {
           request: openAiRequest,
         } as AgentEvent;
         this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length });
-        logger.debug(makeLogEntry("message", {
-          sender: "agent",
-          receiver: "llm",
-          message: "call",
-          callNumber: this._apiCallCount,
-          provider: "openai",
-          model: activeModel,
-          messageCount: apiView.length,
-        }));
+
       } else {
         const request = {
           model: activeModel,
@@ -869,15 +856,6 @@ export class Agent {
           request,
         } as AgentEvent;
         this.logEvent({ type: "api_call_start", ts: new Date().toISOString(), callNumber: this._apiCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length });
-        logger.debug(makeLogEntry("message", {
-          sender: "agent",
-          receiver: "llm",
-          message: "call",
-          callNumber: this._apiCallCount,
-          provider: "anthropic",
-          model: activeModel,
-          messageCount: cachedMessages.length,
-        }));
       }
 
       // Call API with retry
@@ -902,14 +880,7 @@ export class Agent {
             lastError = err;
             if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
               const waitMs = getOpenAiRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-              logger.warn(makeLogEntry("infra", {
-                event: "api_retry",
-                attempt: attempt + 1,
-                provider: "openai",
-                status: err.status ?? err.statusCode,
-                waitMs,
-                error: err.message,
-              }));
+              this.logEvent({ type: "api_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "openai", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
               yield {
                 type: "error",
                 error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
@@ -917,8 +888,6 @@ export class Agent {
               await sleep(waitMs, signal);
               continue;
             }
-            logger.error("api_openai_error", { error: err.message });
-            flushLog();
             const diagPath = await writeDiagnostic(
               {
                 summary: `OpenAI API error (status ${err.status ?? "unknown"}): ${err.message}`,
@@ -934,7 +903,7 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
+              this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
             }
             yield {
               type: "api_error",
@@ -1013,7 +982,7 @@ export class Agent {
 
           if (isAuthExpired(err) && attempt === 0) {
             // OAuth token expired or revoked mid-session — try to refresh and retry once
-            logger.warn("oauth_token_expired", { attempt: attempt + 1, status: err.status ?? err.statusCode });
+            this.logEvent({ type: "oauth_token_expired", ts: new Date().toISOString(), attempt: attempt + 1, httpStatus: err.status ?? err.statusCode });
             yield {
               type: "status",
               message: "OAuth token expired/revoked — refreshing...",
@@ -1023,7 +992,6 @@ export class Agent {
               yield { type: "status", message: "Token refreshed, retrying..." } as AgentEvent;
               // Loop continues — the next iteration will use the fresh client
             } else {
-              logger.error("oauth_reauth_failed", { error: err.message });
               yield {
                 type: "api_error",
                 provider: "anthropic",
@@ -1037,14 +1005,7 @@ export class Agent {
             }
           } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-            logger.warn(makeLogEntry("infra", {
-              event: "api_retry",
-              attempt: attempt + 1,
-              provider: "anthropic",
-              status: err.status ?? err.statusCode,
-              waitMs,
-              error: err.message,
-            }));
+            this.logEvent({ type: "api_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "anthropic", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
             yield {
               type: "error",
               error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
@@ -1061,14 +1022,6 @@ export class Agent {
             //   - 400 "prompt is too long" (standard Anthropic API key endpoint)
             //   - 429 "Extra usage is required for long context requests"
             //     (Claude Max OAuth endpoint — same root cause, different HTTP status)
-            logger.warn("prompt_too_long", {
-              attempt: attempt + 1,
-              error: err.message,
-              historyLength: this.llmMessageLog.length,
-            });
-            // Write a diagnostic so the next session has hard data on what
-            // caused the overflow (exact history length, cached messages, etc.)
-            flushLog();
             const diagPath = await writeDiagnostic(
               {
                 summary: `Prompt too long (attempt ${attempt + 1}): ${err.message}`,
@@ -1085,7 +1038,7 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
+              this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
             }
             // Halve the budget each retry to force more aggressive truncation.
             // llmMessageLog is never mutated — apiBudget controls the next apiView.
@@ -1095,10 +1048,8 @@ export class Agent {
               error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})`,
             };
           } else {
-            logger.error("api_error", { error: err.message, attempts: attempt + 1 });
             // Write a diagnostic snapshot for non-retryable errors so the next
             // session has hard data (exact request + history) to anchor debugging.
-            flushLog();
             const diagPath = await writeDiagnostic(
               {
                 summary: `Anthropic API error (status ${err.status ?? "unknown"}): ${err.message}`,
@@ -1115,7 +1066,7 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              logger.warn(makeLogEntry("infra", { event: "diagnostic_written", path: diagPath }));
+              this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
             }
             yield {
               type: "api_error",
@@ -1201,22 +1152,6 @@ export class Agent {
           cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? undefined,
         },
       });
-      logger.debug(makeLogEntry("message", {
-        sender: "llm",
-        receiver: "agent",
-        message: "response",
-        provider: useOpenAi ? "openai" : "anthropic",
-        model: activeModel,
-        stopReason: response.stop_reason ?? "unknown",
-        inputTokens: response.usage.input_tokens ?? 0,
-        outputTokens: response.usage.output_tokens,
-        cacheCreationTokens: (response.usage as any).cache_creation_input_tokens ?? 0,
-        cacheReadTokens: (response.usage as any).cache_read_input_tokens ?? 0,
-        costUsd,
-        ttftMs,
-        totalMs: performance.now() - startTime,
-      }));
-
       // Add assistant response to history
       this.llmMessageLog.push({ role: "assistant", content: response.content });
       if (this.contextFile !== null) {
@@ -1246,13 +1181,6 @@ export class Agent {
             formatted,
           } as AgentEvent;
           this.logEvent({ type: "tool_call", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, input: toolUse.input });
-          logger.debug(makeLogEntry("message", {
-            sender: "agent",
-            receiver: "agent",
-            message: "tool_call",
-            id: toolUse.id,
-            name: toolUse.name,
-          }));
         }
 
         // Execute all tools concurrently
@@ -1275,15 +1203,6 @@ export class Agent {
             result,
           } as AgentEvent;
           this.logEvent({ type: "tool_result", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, isError: result.isError, durationMs: result.durationMs, outputLength: result.output.length });
-          logger.debug(makeLogEntry("message", {
-            sender: "agent",
-            receiver: "agent",
-            message: "tool_result",
-            id: toolUse.id,
-            name: toolUse.name,
-            isError: result.isError,
-            durationMs: result.durationMs,
-          }));
 
           toolResults.push({
             type: "tool_result",
@@ -1331,19 +1250,6 @@ export class Agent {
     // Emit one turn_end after all API calls complete
     const endProvider: ProviderName = this.provider === "openai" ? "openai" : "anthropic";
     const endModel = activeModel;
-    // Log per-turn aggregate as infra turn_end (info level per taxonomy)
-    logger.info(makeLogEntry("infra", {
-      event: "turn_end",
-      provider: endProvider,
-      model: endModel,
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      cacheCreationTokens: totalCacheCreationTokens,
-      cacheReadTokens: totalCacheReadTokens,
-      costUsd: totalCostUsd,
-      savedUsd: totalSavedUsd,
-      toolCalls: allToolCalls,
-    }));
     const turnEndMetrics: TurnMetrics = {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,

@@ -1,7 +1,11 @@
 # Log Taxonomy
 
-Authoritative reference for all structured log entries written to `omega.log`
-(via pino in `src/logger.ts`). Every entry has a `kind` field. There are
+> **Deprecated (Step 4 complete):** `src/logger.ts` and pino have been retired.
+> This document is kept for historical reference only.
+> The canonical event log is now `sessions/events.jsonl` — see `src/session-event.ts`.
+
+Authoritative reference for all structured log entries that were written to `omega.log`
+(via pino in `src/logger.ts`). Every entry had a `kind` field. There were
 exactly two top-level kinds: **`message`** and **`infra`**.
 
 ---

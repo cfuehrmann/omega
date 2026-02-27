@@ -57,7 +57,7 @@ describe("SessionEvent round-trip serialisation", () => {
   });
 
   it("session_start", async () => {
-    const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", provider: "anthropic" };
+    const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", provider: "anthropic", authMode: "api-key" };
     await appendSessionEvent(e, TEST_FILE);
     const [read] = readEvents(TEST_FILE);
     expect(read).toEqual(e);

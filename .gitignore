@@ -19,10 +19,6 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
-# omega session logs (current + previous session; runtime artifacts)
-omega.log
-omega.prev.log
-
 # session persistence (web server event log — runtime artifact)
 sessions/
 

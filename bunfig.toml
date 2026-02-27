@@ -2,5 +2,4 @@
 # Only scan for unit/integration tests in src/.
 # End-to-end tests in e2e/ are run by Playwright (npx playwright test).
 root = "src"
-# Redirect test logging to /dev/null so tests never touch omega.log.
 preload = ["./src/test-setup.ts"]

@@ -3,8 +3,7 @@
  *
  * When a hard API error occurs (non-retryable, session-breaking), call
  * `writeDiagnostic()` to capture the exact context at the moment of failure:
- * error body, request payload, conversation history, and a pointer to the
- * current omega.log file so post-mortem analysis has full event history.
+ * error body, request payload, and conversation history.
  *
  * The file is written to `diagnosis/` at the repo root and persists across
  * sessions so the next Omega instance can read it with hard data rather than
@@ -12,9 +11,6 @@
  *
  * At session start, `checkDiagnostics()` returns any existing diagnosis files
  * so the UI can warn the operator immediately.
- *
- * Call `flushLog()` from logger.ts BEFORE calling writeDiagnostic() so that
- * the log file referenced by the snapshot is already up to date on disk.
  */
 
 import { writeFile, mkdir, readdir } from "fs/promises";
@@ -56,9 +52,6 @@ const DEFAULT_DIAGNOSIS_DIR = "diagnosis";
 /**
  * Write a diagnostic snapshot file.
  *
- * Flush the log BEFORE calling this (call flushLog() from logger.ts) so
- * the omega.log referenced by this snapshot is already complete on disk.
- *
  * @param data      Diagnostic fields (error, request, history…)
  * @param diagDir   Override the output directory (null = disabled, used in tests)
  *
@@ -87,10 +80,6 @@ export async function writeDiagnostic(
       callNumber: data.callNumber ?? null,
       errorMessage: data.errorMessage,
 
-      // Pointer to the current session log — read this for the full event
-      // timeline leading up to the error.
-      logFile: "omega.log",
-
       // The exact messages array sent to the API — the most important artifact.
       // This is an ephemeral, per-call value never stored anywhere else.
       requestMessages: data.requestMessages,
@@ -101,11 +90,11 @@ export async function writeDiagnostic(
       extra: data.extra ?? null,
       _instructions: [
         "Read this file at the start of a debugging session.",
-        "logFile points to omega.log — read it for the full event timeline.",
         "requestMessages is what was literally sent to the API (ephemeral — only here).",
         "history is the agent's in-memory conversation history at time of failure.",
         "Compare requestMessages vs history: are there orphaned tool_result blocks?",
         "Are tool_use IDs in assistant messages matched by tool_result IDs?",
+        "sessions/events.jsonl contains the full event timeline for this session.",
         "Delete this file once the bug is diagnosed and fixed.",
       ],
     };
