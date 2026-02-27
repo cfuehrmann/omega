@@ -74,7 +74,10 @@ export function println(s: string): void {
 // ---------------------------------------------------------------------------
 
 export function renderUserMessage(content: string): string[] {
-  return content.split("\n").map(line => green(line));
+  return [
+    bold(green("user_message")),
+    ...content.split("\n").map(line => green(`${INDENT}${line}`)),
+  ];
 }
 
 function summariseContent(content: any): string {
@@ -108,7 +111,7 @@ export function renderApiRequest(
       : prevSummary
         ? `messages[${n}]: ${prevSummary} … ${lastSummary}`
         : `messages[${n}]: … ${lastSummary}`;
-    return [bold(cyan("llm_call")) + dim(cyan(`  ${msgLine}`))];
+    return [bold(cyan("llm_call")), dim(cyan(`${INDENT}${msgLine}`))];
   } else {
     const input: any[] = request.input ?? [];
     const n = input.length;
@@ -121,7 +124,7 @@ export function renderApiRequest(
       : prevSummary
         ? `input[${n}]: ${prevSummary} … ${lastSummary}`
         : `input[${n}]: … ${lastSummary}`;
-    return [bold(cyan("llm_call")) + dim(cyan(`  ${msgLine}`))];
+    return [bold(cyan("llm_call")), dim(cyan(`${INDENT}${msgLine}`))];
   }
 }
 
@@ -147,7 +150,7 @@ export function renderApiResponse(
   raw?: any,
 ): string[] {
   const lines: string[] = [];
-  lines.push(bold(blue("llm_to_agent")));
+  lines.push(bold(blue("llm_response")));
   if (provider === "anthropic") {
     lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
     lines.push(blue(`${INDENT}usage:`));

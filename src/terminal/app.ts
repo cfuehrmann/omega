@@ -187,12 +187,8 @@ export async function runApp(): Promise<void> {
 
           case "text":
             if (!streamingStarted) {
-              printBlock(now(), [
-                bold("message"),
-                `${INDENT}role: "assistant"`,
-                `${INDENT}content:`,
-              ]);
-              process.stdout.write(" ".repeat(TIME_WIDTH) + INDENT2);
+              process.stdout.write(dim(now().padEnd(TIME_WIDTH)) + bold("text") + "\n");
+              process.stdout.write(" ".repeat(TIME_WIDTH) + INDENT);
               streamingStarted = true;
             }
             process.stdout.write(event.text);
