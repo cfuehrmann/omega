@@ -16,7 +16,7 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
 ### Branch State
-`develop` is the active branch. Steps 3a–3d, Step 4, and Steps 3e-i and 3e-ii are all complete. `main` was previously synced at Steps 3a–3d; it needs merges to pick up Step 4 and Steps 3e-i/ii.
+`develop` is the active branch. Steps 3a–3d, Step 4, Steps 3e-i, 3e-ii, and 3e-iii are all complete. `main` was previously synced at Steps 3a–3d; it needs merges to pick up Step 4 and Steps 3e-i/ii/iii.
 
 ### Context Management
 - **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated manually at session end. Lives under source control.
@@ -26,7 +26,7 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 
 History grows verbatim. `buildApiMessages()` produces an ephemeral trimmed view for each API call without mutating `llmMessageLog` — the cache prefix is never invalidated by truncation. `/compact` (Step 3b) is the operator-triggered fix for sessions that grow too long.
 
-No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` files before the fresh session starts. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
+No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam` as a `ContextRecord`) and `sessions/events.jsonl` (append-only JSONL of every `SessionEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` files before the fresh session starts. The `/compact` rewrite truncates `context.jsonl` in-place (no rotation).
 
 ### Rotated File Naming Convention
 `rotateFile()` in `src/context-store.ts` inserts `.prev` **before** the last extension, not after:
@@ -40,14 +40,14 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
 `manifest.md` describes a major redesign. Current progress:
 - **Step 1** (DONE): System prompt decoupled from Omega's own repo. Project-agnostic prompt reads `README.md` at startup.
 - **Step 2** (DONE): Abandoned `compactAfterTurn()`. History grows verbatim.
-- **Step 3** (DONE through 3e-ii): Replace `MessageParam[]` history with an event-list data structure.
+- **Step 3** (DONE through 3e-iii): Replace `MessageParam[]` history with an event-list data structure.
   - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl`. `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
   - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.llmMessageLog` in-place and rewrites `sessions/context.jsonl`.
   - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. 16-variant discriminated union; all events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
   - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; produces a trimmed view for each API call without ever mutating `llmMessageLog`. `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Prompt-too-long retries reduce `apiBudget` (halved per attempt); the next iteration's `buildApiMessages()` picks up the tighter budget automatically. Cache prefix is never invalidated by truncation.
   - **3e-i** (DONE): Rename `SessionEvent` and `AgentEvent` discriminant strings. 7 renames: `api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`.
   - **3e-ii** (DONE): Rename `WsEvent` variants to match. Same renames applied to `store.ts`, `App.tsx`, `server.ts` (`closeOpenTurn`), `session-resilience.test.ts`, `e2e/web-ui.spec.ts`. `agent_error` added as proper `WsEvent` variant. Server-own protocol errors (`invalid JSON`, `turn already in progress`) stay as `{ type: "error" }`.
-  - **3e-iii** (TODO): FK/PK contract — content-addressed context log. See backlog.
+  - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent. 441 tests pass.
   - **Schema lock** (TODO): follows 3e-iii.
   - **3f** (TODO): Session resume, depends on schema lock.
 - **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed. All infra-only events are `SessionEvent` variants. `omega.log`/`omega.prev.log` removed from `.gitignore`. 422 tests pass.
@@ -93,13 +93,22 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 ### SessionEvent Variants (sessions/events.jsonl)
 `session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `session_compacted`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`. All carry ISO `ts` timestamp.
 
+`llm_call` additionally carries `contextHashes: string[]` — the ordered 8-char SHA-256 hashes of every `ContextRecord` in the `buildApiMessages()` view sent with that call. Cross-references `context.jsonl` entries by their `hash` field.
+
 ### WsEvent Variants (WebSocket protocol, src/web/client/store.ts)
 `connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`, `user_message`, `text`, `agent_to_agent_tool_call`, `agent_to_agent_tool_result`, `status`, `llm_call`, `llm_to_agent`, `world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error` (server-own protocol errors only), `turn_interrupted`.
 
+### context.jsonl Record Shape (ContextRecord)
+Each line is a JSON object with fields:
+- `hash` — 8-char lowercase hex SHA-256, computed from `JSON({ ts, role, content })`. Including `ts` prevents collisions between identical messages sent at different times.
+- `ts` — ISO 8601 timestamp of when the message was appended.
+- `role` — `"user"` or `"assistant"`.
+- `content` — string or content-block array (same as `Anthropic.MessageParam.content`).
+
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore`; on fatal errors calls `writeDiagnostic()`.
-- `src/session-event.ts` — `SessionEvent` discriminated union (16 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`.
-- `src/context-store.ts` — `appendContextMessage()`, `clearContextStore()`, `rotateFile()`, `prevPath()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` variant (via `prevPath()`) then creates fresh empty file — shared by both context and events stores.
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; `llmMessageHashes[]` parallel array stores the content hash of each stored message; `appendToHistory()` awaits hash computation then fire-and-forgets the file write; `contextHashesForView()` maps an `apiView` back to its hashes via object-reference identity; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore` and rebuilds `llmMessageHashes`; on fatal errors calls `writeDiagnostic()`.
+- `src/session-event.ts` — `SessionEvent` discriminated union (16 variants). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`. `LlmCallEvent` carries `contextHashes: string[]`.
+- `src/context-store.ts` — `ContextRecord` interface; `sha256hex8()`; `buildContextRecord(msg)` (computes hash without writing); `appendContextMessage()` (writes record, returns hash); `clearContextStore()`; `rotateFile()`; `prevPath()`. `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` variant (via `prevPath()`) then creates fresh empty file — shared by both context and events stores.
 - `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
 - `src/diagnosis.ts` — `writeDiagnostic(data, diagDir?)` writes a JSON snapshot to `diagnosis/<ISO-timestamp>.json`; `null` disables; `checkDiagnostics()` returns existing snapshot paths sorted oldest-first.
@@ -112,6 +121,7 @@ Events are named as messages between three parties: **agent**, **user**, **llm**
 - `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`, reactive `AppState`. `turn_interrupted` closes an open turn; server-own protocol errors use `{ type: "error" }`.
 - `src/web/client/App.tsx` — SolidJS UI renderer. `EventBlock` switch on `WsEvent` type.
 - `src/web/server.ts` — `runWebApp()`, `closeOpenTurn()`, `shouldLogEvent()`. `closeOpenTurn` detects open turns on crash and appends `{ type: "turn_interrupted" }`.
+- `src/context-hash.test.ts` — 12 integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth, object-reference preservation.
 
 ### Context Poison Prevention
 Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
@@ -128,15 +138,17 @@ Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
 - Anthropic retry sub-loop: `attemptApiView` / `attemptCachedMessages` recomputed per attempt to pick up the tighter budget — also fixes a pre-existing stale-`cachedMessages` bug.
 - Diagnostic snapshots include both `requestMessages` (the view sent) and `history` (the full `llmMessageLog`).
 
-### FK/PK Contract — Agreed Design (Step 3e-iii, TODO)
-Each `MessageParam` written to `context.jsonl` will gain a `hash` field (SHA-256 of the full JSON record including its `ts`, truncated to 8 hex chars). Each `llm_call` event will carry `contextHashes: string[]` — the ordered hashes of every message in the `buildApiMessages()` view actually sent. This makes every LLM call's exact prompt auditable. Key constraints:
-- Hash computed from the view sent, not from `llmMessageLog` (critical — truncation must be reflected)
-- `ts` included in hash input to prevent collisions between identical messages
-- Tool result content hashed *after* the 100k truncation cap
-- `callNumber` on `llm_call` is NOT a reliable unique key (retries reuse the same number); `contextHashes` is the correct cross-reference
+### FK/PK Contract (Step 3e-iii — DONE, commit b6ef87c)
+Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 of `JSON({ ts, role, content })`, truncated to 8 hex chars) and a `ts` field. Each `llm_call` event carries `contextHashes: string[]` — the ordered hashes of every message in the `buildApiMessages()` view actually sent. Key design decisions:
+- Hash computed from `{ ts, role, content }` (not including `hash` itself); `ts` prevents collisions between identical messages.
+- `contextHashes` reflects the truncated view sent, not `llmMessageLog` — truncated messages are absent.
+- `callNumber` on `llm_call` is NOT a reliable unique key (retries reuse the same number); `contextHashes` is the correct cross-reference.
+- SHA-256 via Web Crypto (`crypto.subtle.digest`) benchmarks at ~11 µs per hash — negligible vs. API/tool latency.
+- `appendContextMessage()` returns the hash; `buildContextRecord()` computes hash without writing.
+- Agent maintains `llmMessageHashes[]` parallel to `llmMessageLog`; `appendToHistory()` awaits hash then fire-and-forgets file I/O; `contextHashesForView()` maps by object-reference identity (O(n) scan).
 
 ### Current Test Count
-422 tests across 23 files. All pass.
+441 tests across 24 files. All pass.
 
 ### Recent Session Outcomes
-Completed **Steps 3e-i and 3e-ii** (event rename sweep): all 7 `SessionEvent`/`AgentEvent` discriminant strings renamed, then same renames propagated to `WsEvent` layer. `agent_error` added as proper `WsEvent` variant. Server-own protocol errors stay as `{ type: "error" }`. Agreed design for Step 3e-iii (FK/PK content-hash contract) recorded in backlog and world-state. 422 tests pass, pushed to `origin/develop`.
+Completed **Step 3e-iii** (FK/PK content-addressed context log): `context.jsonl` entries now carry `hash` and `ts`; `LlmCallEvent` carries `contextHashes: string[]`. New helpers `buildContextRecord`, `sha256hex8`, `ContextRecord` in `context-store.ts`. Agent gains `llmMessageHashes[]`, `appendToHistory()`, `contextHashesForView()`. `/compact` handler rebuilt to also rebuild `llmMessageHashes`. 12 new tests in `src/context-hash.test.ts`. 441 tests pass, pushed to `origin/develop`.
