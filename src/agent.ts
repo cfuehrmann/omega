@@ -7,7 +7,7 @@ import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory } from "./compaction.js";
 import { readWorldState, projectWorldStatePath } from "./world-state.js";
-import { appendContextMessage, clearContextStore } from "./context-store.js";
+import { appendContextMessage, buildContextRecord, clearContextStore } from "./context-store.js";
 import { appendSessionEvent, clearSessionEvents, DEFAULT_EVENTS_FILE, type SessionEvent } from "./session-event.js";
 
 
@@ -440,6 +440,8 @@ export type StreamProvider = (params: {
 export class Agent {
   private client: Anthropic;
   private llmMessageLog: Anthropic.MessageParam[] = [];
+  /** Parallel to llmMessageLog — stores the 8-char content hash of each stored record. */
+  private llmMessageHashes: string[] = [];
   public sessionInputTokens = 0;
   public sessionOutputTokens = 0;
   public sessionCostUsd = 0;
@@ -529,6 +531,53 @@ export class Agent {
     const path = this.resolveEventsFile();
     if (path === null) return;
     appendSessionEvent(event, path).catch(() => {});
+  }
+
+  /**
+   * Compute `contextHashes` for a given API view (the trimmed message array
+   * produced by `buildApiMessages()`).  Each hash in the result corresponds
+   * to the on-disk `context.jsonl` entry for that message.
+   *
+   * Mapping strategy: scan `apiView` against `llmMessageLog` in order.
+   * `buildApiMessages()` always returns a strict subsequence (same object
+   * references, same order) so a single forward-scan is O(n).
+   */
+  private contextHashesForView(apiView: Anthropic.MessageParam[]): string[] {
+    const hashes: string[] = [];
+    let logIdx = 0;
+    for (const msg of apiView) {
+      // Advance logIdx until we find this message by reference
+      while (logIdx < this.llmMessageLog.length && this.llmMessageLog[logIdx] !== msg) {
+        logIdx++;
+      }
+      if (logIdx < this.llmMessageLog.length) {
+        hashes.push(this.llmMessageHashes[logIdx] ?? "????????");
+        logIdx++;
+      } else {
+        // Message not found in log (shouldn't happen) — use a placeholder
+        hashes.push("????????");
+      }
+    }
+    return hashes;
+  }
+
+  /**
+   * Append a message to llmMessageLog, compute and store its content hash,
+   * and fire-and-forget the context file write. Returns the hash.
+   */
+  private async appendToHistory(msg: Anthropic.MessageParam): Promise<string> {
+    this.llmMessageLog.push(msg);
+    // Compute hash (needed for contextHashes) — file write is fire-and-forget
+    if (this.contextFile !== null) {
+      const hash = await appendContextMessage(msg, this.contextFile ?? undefined);
+      this.llmMessageHashes.push(hash);
+      return hash;
+    } else {
+      // No file write, but still need a hash for contextHashes cross-referencing
+      const record = await buildContextRecord(msg);
+      this.llmMessageHashes.push(record.hash);
+      return record.hash;
+    }
   }
 
   async init(): Promise<string> {
@@ -668,11 +717,14 @@ export class Agent {
           } else {
             this.llmMessageLog = newHistory as Anthropic.MessageParam[];
             // Rewrite context file to match the new shorter history.
+            // Also rebuild llmMessageHashes in parallel with the new log.
+            this.llmMessageHashes = [];
             if (this.contextFile !== null) {
               await clearContextStore(this.contextFile ?? undefined, { rotate: false });
-              for (const msg of this.llmMessageLog) {
-                await appendContextMessage(msg, this.contextFile ?? undefined);
-              }
+            }
+            for (const msg of this.llmMessageLog) {
+              const hash = await appendContextMessage(msg, this.contextFile ?? undefined);
+              this.llmMessageHashes.push(hash);
             }
             this.logEvent({ type: "session_compacted", ts: new Date().toISOString(), originalCount, newCount });
             yield {
@@ -713,10 +765,7 @@ export class Agent {
       return;
     }
 
-    this.llmMessageLog.push({ role: "user", content: userMessage });
-    if (this.contextFile !== null) {
-      appendContextMessage({ role: "user", content: userMessage }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
-    }
+    await this.appendToHistory({ role: "user", content: userMessage });
     this.logEvent({ type: "user_message", ts: new Date().toISOString(), content: userMessage });
 
     // Emit user message event for UI display
@@ -822,6 +871,10 @@ export class Agent {
       }
       const cachedMessages = addCacheControlToLastMessage(apiView);
 
+      // Compute contextHashes from the view (Step 3e-iii): maps each message in
+      // apiView back to its stored content hash via object-reference identity.
+      const contextHashes = this.contextHashesForView(apiView);
+
       // Emit llm_call with a snapshot of the params before each call
       this._llmCallCount += 1;
       if (useOpenAi) {
@@ -838,7 +891,7 @@ export class Agent {
           url: getOpenAiUrl(),
           request: openAiRequest,
         } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "openai", url: getOpenAiUrl(), model: activeModel, messageCount: apiView.length, contextHashes });
 
       } else {
         const request = {
@@ -855,7 +908,7 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           request,
         } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length });
+        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), llmCallNumber: this._llmCallCount, provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, messageCount: cachedMessages.length, contextHashes });
       }
 
       // Call API with retry
@@ -1153,10 +1206,7 @@ export class Agent {
         },
       });
       // Add assistant response to history
-      this.llmMessageLog.push({ role: "assistant", content: response.content });
-      if (this.contextFile !== null) {
-        appendContextMessage({ role: "assistant", content: response.content }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
-      }
+      await this.appendToHistory({ role: "assistant", content: response.content });
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
@@ -1223,10 +1273,7 @@ export class Agent {
         };
 
         // Add tool results to history and continue the loop
-        this.llmMessageLog.push({ role: "user", content: toolResults });
-        if (this.contextFile !== null) {
-          appendContextMessage({ role: "user", content: toolResults }, this.contextFile ?? undefined).catch(() => {}); // fire-and-forget
-        }
+        await this.appendToHistory({ role: "user", content: toolResults });
         continueLoop = true;
       }
 

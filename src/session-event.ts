@@ -44,6 +44,16 @@ export interface LlmCallEvent {
   url: string;
   model: string;
   messageCount: number;
+  /**
+   * Step 3e-iii: ordered SHA-256 hashes (8 hex chars each) of every
+   * MessageParam in the `buildApiMessages()` view actually sent with this
+   * call. Hashes are computed from the stored ContextRecord (including `ts`),
+   * so they cross-reference entries in `context.jsonl` exactly.
+   *
+   * Note: this reflects the truncated view sent to the LLM, NOT the full
+   * `llmMessageLog`. Messages dropped by truncation will be absent.
+   */
+  contextHashes: string[];
 }
 
 /** An LLM response received by the agent. */
