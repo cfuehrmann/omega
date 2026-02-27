@@ -160,10 +160,9 @@ more providers are added.
 
 ## Closed items
 
-- **Shutdown decoupling** — Done. `foldCurrentSessionIntoWorldState()` and all
-  fold-on-exit code removed from `app.ts` and `web/server.ts`. Ctrl-C now exits
-  immediately. Shutdown ritual (world-state + future.md) documented in `README.md ##
-  Shutdown` as an operator-triggered action.
+- **Shutdown decoupling** — Done. All fold-on-exit code removed from `app.ts` and
+  `web/server.ts` (`foldCurrentSessionIntoWorldState`, `performWebShutdown`). Ctrl-C
+  exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
   `buildApiMessages()` is purely ephemeral; `llmMessageLog` never mutated.
 - **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23). 12-variant
@@ -177,14 +176,11 @@ more providers are added.
 - **REC-1: Pre-commit test gate** — Done (commit b33ecff). `scripts/pre-commit` + `just
   install-hooks`.
 - **REC-0: Git-based known-good anchor** — Done. Two-branch model (`main`/`develop`).
-- **WEB-6: World-state fold on web server shutdown** — Superseded by shutdown
-  decoupling; `performWebShutdown()` removed.
 - **WEB-5: Session persistence** — Done. `sessions/current.jsonl`.
 - **WEB-4: Renderer parity** — Done (commit 538b717).
 - **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit
   99a9826).
 - **WEB-0: Split `ui-raw.ts` into `src/terminal/` modules** — Done (commit 4183922).
-- **SHUT-1: Verify shutdown completeness** — Superseded by shutdown decoupling.
 - **TOOLS-3: Background process management** — Done (commit 9023c5a).
 - **TOOLS-2: `find_files`** — Done.
 - **TOOLS-1: `grep_files`** — Done.
