@@ -2,51 +2,47 @@
 
 ## Open items
 
-### [INFRA] Structural test-pollution prevention
-**Priority: HIGHEST — act before anything else**
+### [SCHEMA] Drop `llm_response` content duplication
+**Priority: HIGH — fix before schema lock**
 
-Test pollution keeps recurring despite previous fixes and discussions. The root
-cause is that production file paths are the *default* — tests must actively do
-the right thing to avoid writing them, and new test patterns (e.g. injecting an
-OpenAI caller without a mock `streamProvider`) silently bypass the existing
-heuristic. We need structural guardrails that make pollution a hard error, not
-an accident waiting to happen.
+`llm_response` events currently store the full `content` array — the complete
+assembled assistant response verbatim. This duplicates what is already in
+`context.jsonl` (the assistant `MessageParam`). For a long turn this can be
+thousands of tokens of JSON in the events file.
 
-**The goal:** either all tests pollute, or no test pollutes. There must be no
-silent middle ground.
+The assistant message is already the authoritative record in `context.jsonl`.
+`llm_response` only needs the metadata needed for post-mortem and auditing:
+`stopReason`, `usage`, `model`, `provider`, `url`. The content can be looked up
+by joining on the `contextHashes` of the *next* `llm_call` (which includes the
+assistant message hash).
 
-**Agreed implementation order (a → e), each layer depending on the previous:**
+**Change:** Remove the `content` field from `LlmResponseEvent` and from the
+`logEvent` call site in `agent.ts`. Update the `llm_response` variant in
+`session-event.ts`.
 
-- **Layer a — Preload sets the gate for every test automatically (foundation):** ✅ DONE
-  `bunfig.toml` preloads `src/test-setup.ts` which sets `OMEGA_TEST=1`. The gate
-  is on for every `bun test` run without any per-file or per-test action — including
-  tests written in the future by someone who has never read the pollution rules.
-  e2e tests run via `just e2e` (not `bun test`) so they are unaffected.
-  Without this layer, all other layers are just conventions that can be forgotten.
+Acceptance criteria:
+- `llm_response` events no longer carry `content`
+- `sessions/events.jsonl` no longer contains duplicated assistant response text
+- All existing tests pass; add a test asserting `llm_response` events have no
+  `content` field
 
-- **Layer b — Hard error on production writes in test env (hard enforcement):** ✅ DONE
-  `src/test-guard.ts` exports `assertNotProductionPath()`. Wired into all three
-  production write functions (`appendContextMessage`, `clearContextStore`,
-  `appendSessionEvent`, `clearSessionEvents`, `writeDiagnostic`). When `OMEGA_TEST=1`,
-  any attempt to write to a `sessions/` or `diagnosis/` path throws immediately with
-  a clear error message. Explicit temp-dir paths are unaffected. 9 tests in
-  `src/test-guard.test.ts`. 451 tests pass.
+---
 
-- **Layer c — Agent constructor coerces undefined paths to null in test env (early interception):** ✅ DONE
-  When `OMEGA_TEST=1`, the `Agent` constructor treats all `undefined` file paths
-  as `null` unconditionally, replacing the current fragile mock-provider heuristic.
-  No test can accidentally fall through to production defaults. Catches mistakes
-  *before* they reach the write functions, giving a cleaner failure mode.
+### [SCHEMA] Drop `LlmCallEvent.messageCount` — redundant with `contextHashes.length`
+**Priority: HIGH — fix before schema lock**
 
-- **Layer d — `makeTestAgent` factory (convenience):** ✅ DONE
-  `src/test-utils.ts` exports `makeTestAgent(streamProvider?, openAiCaller?)`.
-  Always passes `null` for all path args explicitly. 5 tests in `src/test-utils.test.ts`.
-  Tests import `makeTestAgent` instead of `Agent` directly — right thing is easy thing.
+`llm_call` events carry both `contextHashes: string[]` and `messageCount: number`.
+`messageCount` is always exactly `contextHashes.length` — it conveys no
+additional information and creates a consistency hazard (two fields that must
+always agree).
 
-- **Layer e — Pre-commit grep for dangerous patterns (belt-and-suspenders):** ✅ DONE
-  `scripts/pre-commit` greps for bare `new Agent()` (no args) in `*.test.ts` files
-  and fails with an actionable message before running tests. Gives earlier, more
-  specific signal than waiting for layer b to throw at test time.
+**Change:** Remove `messageCount` from `LlmCallEvent` in `session-event.ts` and
+from the `logEvent` call site in `agent.ts`.
+
+Acceptance criteria:
+- `llm_call` events no longer carry `messageCount`
+- `bun test` passes; add a test asserting `llm_call` events have no `messageCount`
+  field
 
 ---
 
@@ -76,122 +72,24 @@ before building session-resume on top of it. Covers:
 ##### Step 3e-i — Rename SessionEvent and AgentEvent variants
 **Status: DONE**
 
-Rename the following `SessionEvent` discriminant strings (and the matching
-`AgentEvent` yield sites in `agent.ts`) to their agreed names:
-
-| Old name | New name |
-|---|---|
-| `api_call_start` | `llm_call` |
-| `api_error` | `llm_error` |
-| `error` | `agent_error` |
-| `interrupted` | `turn_interrupted` |
-| `oauth_reauthed` | `oauth_refreshed` |
-| `api_retry` | `llm_retry` |
-| `context_truncated` | `context_view_trimmed` |
-
-Scope: `src/session-event.ts`, `src/agent.ts`, `src/terminal/app.ts`,
-and all test files. Does **not** touch the `WsEvent` union in
-`src/web/client/store.ts` or the server's own `{ type: "error" }` sends —
-those are a separate WebSocket protocol layer (see Step 3e-ii).
-
-Acceptance criteria:
-- All 7 renames applied consistently across every call site
-- `bun test` passes
-- No `api_call_start`, `api_error`, `"error"` (as SessionEvent), `"interrupted"`,
-  `oauth_reauthed`, `api_retry`, or `context_truncated` strings remain in
-  `src/session-event.ts` or `src/agent.ts`
-
 ##### Step 3e-ii — Rename WsEvent variants to match (web protocol)
 **Status: DONE**
-
-After 3e-i is done, apply the same renames to the WebSocket protocol layer:
-the `WsEvent` union in `src/web/client/store.ts`, the switch cases that
-consume it, the e2e tests in `e2e/web-ui.spec.ts`, and the server sends in
-`src/web/server.ts` that originate from `agent.sendMessage()`.
-
-The server's *own* protocol error sends (invalid JSON, turn-already-in-progress,
-catch blocks) use `{ type: "error" }` as a server→client signal — decide
-whether those should also become `agent_error` or stay as `error`.
-
-Acceptance criteria:
-- `WsEvent` union uses the new names
-- All switch cases and e2e assertions updated
-- `bun test` and `just e2e` pass
 
 ##### Step 3e-iii — FK/PK contract: content-addressed context log
 **Status: DONE — commit b6ef87c**
 
-Each `MessageParam` written to `context.jsonl` gets a content hash as its
-primary key. Each `llm_call` event in `events.jsonl` carries a `contextHashes`
-array — the ordered list of hashes of every message actually sent with that
-API call. This makes the exact prompt sent to the LLM auditable and recoverable
-for any call, including calls where `buildApiMessages()` produced a truncated
-view that dropped older messages from `llmMessageLog`.
-
-**Design decisions (agreed):**
-
-- **Hash input:** the full JSON-serialised `MessageParam` record *plus* its `ts`
-  timestamp (written at append time). Including `ts` prevents hash collisions
-  between identical messages sent at different times (e.g. "ok" twice in one
-  session). The `ts` is written first; the hash is computed from the stored
-  record — no flakiness from re-computing timestamps.
-- **Hash algorithm:** SHA-256 truncated to 8 hex chars. Collision risk is
-  negligible for a session log.
-- **Hash computed from the view, not `llmMessageLog`:** `contextHashes` must
-  reflect the messages as passed to `buildApiMessages()` output (the truncated
-  view actually sent), not the full canonical history. This is the critical
-  correctness constraint.
-- **Natural IDs elsewhere:** `tool_call`/`tool_result` already have `tool_use_id`
-  (Anthropic UUID — reliable natural key). `session_start` has `sessionId`.
-  `callNumber` on `llm_call` is NOT a reliable unique key — retries within the
-  same outer loop iteration reuse the same `callNumber` and emit duplicate
-  `llm_call` events. `contextHashes` is the correct cross-reference mechanism.
-- **Tool result content:** hashed *after* the 100k truncation cap applied by
-  `executeTool()` — the hash reflects what was actually in the `MessageParam`
-  sent to the API.
-
-**Changes required:**
-- `context.jsonl` entries: add `hash: string` and `ts: string` fields alongside
-  the existing `MessageParam` fields
-- `llm_call` SessionEvent: add `contextHashes: string[]` field
-- `appendContextMessage()` in `context-store.ts`: compute and store hash at
-  write time
-- Agentic loop: after `buildApiMessages()` produces the view, compute
-  `contextHashes` from that view and include in the `llm_call` event/logEvent
-- `LlmCallEvent` type in `session-event.ts`: add `contextHashes` field
-
-**Testing discipline — chaotic scenarios required:**
-- Truncation fires on retry 2 but not retry 1: verify `contextHashes` arrays differ
-- Tool loop where the view shrinks mid-loop: verify each `llm_call` hashes match
-  its actual view
-- Identical message content sent twice: verify different hashes (due to `ts`)
-- Retry within outer loop iteration: verify duplicate `llm_call` events have
-  identical `contextHashes` (same view was sent)
-
-Acceptance criteria:
-- `context.jsonl` entries have `hash` and `ts` fields
-- `llm_call` events have `contextHashes: string[]`
-- Hashes computed from the view sent, not from `llmMessageLog`
-- All chaotic test scenarios pass
-- `bun test` passes
-
 ##### Schema lock
-**Status: TODO — follows Step 3e-iii**
+**Status: TODO — fix [SCHEMA] items above first, then proceed in order**
 
-Review and explicitly document the full shape of every JSONL record in
-`sessions/context.jsonl` and `sessions/events.jsonl`. Write a schema reference
-(in `plan/` or inline in source) that serves as the stable contract for
-session resume and any future tooling. No breaking changes after this point
-without a migration plan.
-
-This work is broken into five sub-steps, to be discussed and resolved in order:
+The two [SCHEMA] items above (`llm_response` content duplication and redundant
+`messageCount`) must be resolved before the schema lock sub-steps below, since
+they are breaking field-level changes that would require a migration if done
+after the lock.
 
 **3e-iv — Property names and completeness per event**
 For every event variant, review: (a) are the existing field names clear and
 consistent? (b) are any fields missing that would be needed for post-mortem
 diagnosis or session resume? Known candidates:
-- `LlmCallEvent.messageCount` — redundant with `contextHashes.length`; consider
-  dropping.
 - `TurnEndEvent.toolCalls` — list of tool *names*, not IDs; cannot be correlated
   back to individual `tool_call` events. Consider replacing with `toolUseIds` or
   keeping as a summary alongside the IDs.
@@ -217,7 +115,8 @@ Decide whether any important lifecycle events are absent. Known candidates:
 Formally verify and document which events/signals are intentionally *not*
 persisted, and why. Current known intentional omissions:
 - `status` messages — ephemeral UI noise; not meaningful after the fact.
-- Streaming `text` fragments — assembled response is captured in `llm_response`.
+- Streaming `text` fragments — assembled response is captured in `context.jsonl`
+  assistant message (not in `llm_response` — see [SCHEMA] item above).
 - Per-call `metrics` — aggregate is in `turn_end`; per-call detail is in
   `llm_call` / `llm_response` usage fields.
 Close the question explicitly so future contributors know these are deliberate,
@@ -417,51 +316,51 @@ Acceptance criteria:
 
 ## Closed items
 
+- **Test-pollution prevention (layers a–e)** — Done. All five structural layers
+  implemented: `bunfig.toml` preload sets `OMEGA_TEST=1` (layer a); `assertNotProductionPath()`
+  hard-errors on production writes in tests (layer b); Agent constructor coerces
+  `undefined` paths to `null` when `OMEGA_TEST=1` (layer c); `makeTestAgent()` factory
+  in `src/test-utils.ts` (layer d); pre-commit grep for bare `new Agent()` in test
+  files (layer e). 456 tests pass.
 - **Shutdown decoupling** — Done. All fold-on-exit code removed from `app.ts` and
   `web/server.ts` (`foldCurrentSessionIntoWorldState`, `performWebShutdown`). Ctrl-C
   exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
-- **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed, `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events (`oauth_reauthed`, `oauth_token_expired`, `context_truncated`, `api_retry`, `diagnostic_written`) were already in `SessionEvent`. 422 tests pass.
-- **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied (`api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`). 422 tests pass.
-- **Step 3e-iii: FK/PK content-addressed context log** — Done (commit b6ef87c). `context.jsonl` entries now carry `hash` (SHA-256 8 hex chars, includes `ts` in input) and `ts` (ISO timestamp). `LlmCallEvent` gains `contextHashes: string[]`. New helpers: `buildContextRecord()`, `sha256hex8()`, `ContextRecord` interface. `appendContextMessage()` returns hash. Agent gains `llmMessageHashes[]` parallel array, `appendToHistory()`, `contextHashesForView()`. 12 new tests in `src/context-hash.test.ts`. 441 tests pass.
-- **Step 3e-ii: Rename WsEvent variants** — Done. `api_call_start`→`llm_call`, `api_error`→`llm_error`, `interrupted`→`turn_interrupted` in `store.ts`, `App.tsx`, `server.ts` (`closeOpenTurn`), `session-resilience.test.ts`, e2e. `agent_error` added as proper `WsEvent` variant. Server-own protocol errors stay as `{ type: "error" }`. 422 tests pass, pushed to `origin/develop`.
+- **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed,
+  `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events were
+  already in `SessionEvent`. 422 tests pass.
+- **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied.
+  422 tests pass.
+- **Step 3e-iii: FK/PK content-addressed context log** — Done (commit b6ef87c). 441 tests pass.
+- **Step 3e-ii: Rename WsEvent variants** — Done. 422 tests pass, pushed to `origin/develop`.
 - **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
-  `buildApiMessages()` is purely ephemeral; `llmMessageLog` never mutated.
-- **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23). 12-variant
-  discriminated union; `sessions/events.jsonl`.
-- **Step 3b: `/compact` slash command** — Done (commit f2d5631). `compactHistory()` in
-  `src/compaction.ts`; handler in `agent.ts`.
-- **Step 3a: Append-only context file** — Done (commit 551d676). `sessions/context.jsonl`.
+- **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23).
+- **Step 3b: `/compact` slash command** — Done (commit f2d5631).
+- **Step 3a: Append-only context file** — Done (commit 551d676).
 - **Step 2: Abandon automatic compaction** — Done. `compactAfterTurn()` removed.
-- **Step 1: System prompt decoupling + README** — Done. Project-agnostic system prompt;
-  `README.md` created.
-- **REC-1: Pre-commit test gate** — Done (commit b33ecff). `scripts/pre-commit` + `just
-  install-hooks`.
+- **Step 1: System prompt decoupling + README** — Done.
+- **REC-1: Pre-commit test gate** — Done (commit b33ecff).
 - **REC-0: Git-based known-good anchor** — Done. Two-branch model (`main`/`develop`).
 - **WEB-5: Session persistence** — Done. `sessions/current.jsonl`.
 - **WEB-4: Renderer parity** — Done (commit 538b717).
-- **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit
-  99a9826).
+- **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit 99a9826).
 - **WEB-0: Split `ui-raw.ts` into `src/terminal/` modules** — Done (commit 4183922).
 - **TOOLS-3: Background process management** — Done (commit 9023c5a).
 - **TOOLS-2: `find_files`** — Done.
 - **TOOLS-1: `grep_files`** — Done.
 - **FEAT-1: Parallel tool execution** — Done.
-- **LOG-1: Redesign diagnostic/logging subsystem** — Done (commit 71e7dfc). Pino +
-  simplified snapshots.
+- **LOG-1: Redesign diagnostic/logging subsystem** — Done (commit 71e7dfc).
 - **LOG-2: Complete event taxonomy renaming** — Done (commit f137610).
 - **Diagnostic snapshots on fatal API errors** — Done (commit 61c4ebd).
-- **Anthropic prompt caching** — Done. Three cache breakpoints; `estimateCostWithCache()`.
-- **Cache savings display** — Done. Turn footer shows `cost:` and `saved:`.
-- **Rate-limit retry** — Done. Provider-aware exponential backoff.
+- **Anthropic prompt caching** — Done.
+- **Cache savings display** — Done.
+- **Rate-limit retry** — Done.
 - **OAuth auto-relogin** — Done.
 - **Line editor cursor stuck on wrapped input** — Fixed (commit 892cbce).
 - **Bracketed paste garbled display + O(n) append latency** — Fixed (commit 7344295).
 - **Web UI stuck streaming after interrupted session** — Fixed (commit 87bca6d).
 - **Terminal UI breakage not caught by tests** — Fixed (commit 467cdb8).
-- **Stale compaction race** — Fixed (commit 8c3d9a3). `compactionQueue` chain.
+- **Stale compaction race** — Fixed (commit 8c3d9a3).
 - **Tool output cap** — Fixed. `MAX_TOOL_OUTPUT_CHARS = 100_000` in `executeTool()`.
-- **`truncateHistory` no-op on short-but-fat history** — Fixed. `buildApiMessages`
-  drops from oldest end when all messages fall within the "always keep" tail.
-- **Graceful handling of context-too-long 429** — Fixed. `isContextTooLong()` helper;
-  excluded from retry; clear actionable message shown.
+- **`truncateHistory` no-op on short-but-fat history** — Fixed.
+- **Graceful handling of context-too-long 429** — Fixed.
