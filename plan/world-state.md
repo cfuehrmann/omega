@@ -111,11 +111,10 @@ Two bugs fixed in the same session (2026-02-25):
 
 1. **`truncateHistory` no-op when history is short but fat** (`src/agent.ts`): When history had ≤ `KEEP_RECENT_TURNS*2` (20) messages, `middle.length === 0` and the function returned history unchanged — every retry sent the same oversized payload, failing identically all 5 times. Fix: when `middle` is empty, drop from the oldest end of the tail itself, keeping at minimum the last message.
 
-2. **Tool output cap** (`src/tools.ts`): `executeTool()` now caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]` — giving the agent actionable guidance without poisoning the context window. Root cause of the bug these fixes address: `grep_files` on `sessions/events.prev.jsonl` (a JSONL file with large per-line event objects) returned 2MB of output that was stored verbatim in history and re-sent on every subsequent turn.
+2. **Tool output cap** (`src/tools.ts`): `executeTool()` now caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]` — giving the agent actionable guidance without poisoning the context window.
 
 ### Current Test Count
 470 tests across 27 files. All pass.
 
 ### Recent Session Outcomes
-- `rotateFile()` now inserts `.prev` before the last extension (`context.prev.jsonl`, `events.prev.jsonl`) instead of appending it, so editors apply syntax highlighting to rotated files. New `prevPath()` helper exported from `src/context-store.ts`; all tests and docs updated.
-- Added `future.md` item: decouple world-state compaction from Omega's own repo (low priority, strategically opportune after Step 4 — the fold prompt currently assumes Omega is always working on its own repo).
+No meaningful work was done this session — the operator sent a single connectivity check ("are you listening?") and received confirmation.
