@@ -72,7 +72,8 @@ persisted, and why. Current known intentional omissions:
 - Streaming `text` fragments — assembled response is captured in `context.jsonl`
   assistant message (`llm_response` intentionally carries no `content` — resolved in commit b59ba48).
 - Per-call `metrics` — aggregate is in `turn_end`; per-call detail is in
-  `llm_call` / `llm_response` usage fields.
+  `llm_response` `usage` field (all four token counts: `input_tokens`, `output_tokens`,
+  `cache_creation_input_tokens?`, `cache_read_input_tokens?`).
 Close the question explicitly so future contributors know these are deliberate,
 not oversights.
 
