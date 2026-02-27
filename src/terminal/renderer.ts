@@ -74,14 +74,7 @@ export function println(s: string): void {
 // ---------------------------------------------------------------------------
 
 export function renderUserMessage(content: string): string[] {
-  const lines: string[] = [];
-  lines.push(bold(green("message")));
-  lines.push(green(`${INDENT}role: "user"`));
-  lines.push(green(`${INDENT}content:`));
-  for (const line of content.split("\n")) {
-    lines.push(bold(green(`${INDENT2}${line}`)));
-  }
-  return lines;
+  return content.split("\n").map(line => green(line));
 }
 
 function summariseContent(content: any): string {
@@ -103,31 +96,33 @@ export function renderApiRequest(
   url: string,
   request: any,
 ): string[] {
-  const shortUrl = url.replace(/^https?:\/\//, "");
-  const lines: string[] = [];
-  lines.push(bold(cyan(shortUrl)));
   if (provider === "anthropic") {
-    const last = request.messages?.[request.messages.length - 1];
-    lines.push(cyan(`${INDENT}model: "${request.model}"`));
-    lines.push(cyan(`${INDENT}system: <${request.system.length} chars>`));
-    lines.push(cyan(`${INDENT}tools: [${request.tools.map((t: any) => `"${t.name}"`).join(", ")}]`));
-    lines.push(cyan(`${INDENT}max_tokens: ${request.max_tokens}`));
-    lines.push(cyan(`${INDENT}messages: <${request.messages.length}> …`));
-    if (last) {
-      lines.push(dim(cyan(`${INDENT2}{ role: "${last.role}", content: ${summariseContent(last.content)} }`)));
-    }
+    const messages: any[] = request.messages ?? [];
+    const n = messages.length;
+    const last = messages[n - 1];
+    const prev = n >= 2 ? messages[n - 2] : null;
+    const prevSummary = prev ? `{ role: "${prev.role}", content: ${summariseContent(prev.content)} }` : null;
+    const lastSummary = last ? `{ role: "${last.role}", content: ${summariseContent(last.content)} }` : null;
+    const msgLine = n === 0
+      ? "messages: []"
+      : prevSummary
+        ? `messages[${n}]: ${prevSummary} … ${lastSummary}`
+        : `messages[${n}]: … ${lastSummary}`;
+    return [cyan(msgLine)];
   } else {
-    const last = request.input?.[request.input.length - 1];
-    lines.push(cyan(`${INDENT}model: "${request.model}"`));
-    lines.push(cyan(`${INDENT}instructions: <${(request.instructions ?? "").length} chars>`));
-    lines.push(cyan(`${INDENT}tools: <${request.tools?.length ?? 0}>`));
-    lines.push(cyan(`${INDENT}max_output_tokens: ${request.max_output_tokens}`));
-    lines.push(cyan(`${INDENT}input: <${request.input?.length ?? 0}> …`));
-    if (last) {
-      lines.push(dim(cyan(`${INDENT2}${summariseOpenAiInput(last)}`)));
-    }
+    const input: any[] = request.input ?? [];
+    const n = input.length;
+    const last = input[n - 1];
+    const prev = n >= 2 ? input[n - 2] : null;
+    const prevSummary = prev ? summariseOpenAiInput(prev) : null;
+    const lastSummary = last ? summariseOpenAiInput(last) : null;
+    const msgLine = n === 0
+      ? "input: []"
+      : prevSummary
+        ? `input[${n}]: ${prevSummary} … ${lastSummary}`
+        : `input[${n}]: … ${lastSummary}`;
+    return [cyan(msgLine)];
   }
-  return lines;
 }
 
 function summariseOpenAiInput(item: any): string {
@@ -234,15 +229,9 @@ export function renderToolResultMessage(
 }
 
 export function renderAssistantMessage(text: string, dimText?: string): string[] {
-  const lines: string[] = [];
-  lines.push(bold("message"));
-  lines.push(`${INDENT}role: "assistant"`);
-  lines.push(`${INDENT}content:`);
-  for (const line of text.split("\n")) {
-    lines.push(`${INDENT2}${line}`);
-  }
+  const lines: string[] = text.split("\n");
   if (dimText) {
-    lines.push(dim(`${INDENT}${dimText}`));
+    lines.push(dim(dimText));
   }
   return lines;
 }
