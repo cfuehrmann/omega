@@ -49,9 +49,9 @@ diagnosis or session resume? Known candidates:
   keeping as a summary alongside the IDs.
 - `SessionStartEvent.authMode` — only two live values (`"claude-max"`,
   `"api-key"`); should be a typed union, not a free string.
-- `ToolResultEvent` — records `outputLength` but not the output content; the full
-  content is in `context.jsonl` via the tool result message, but this means you
-  cannot diagnose a bad tool result from `events.jsonl` alone. Intentional?
+- `ToolCallEvent` / `ToolResultEvent` — both now carry `contextHash: string` (FK to
+  the relevant `context.jsonl` record). `ToolCallEvent.input` and `ToolResultEvent.outputLength`
+  removed (both derivable from `context.jsonl`). ✅ Done (commit 34f7708).
 - `LlmCallEvent` / `LlmResponseEvent` — linked only by temporal order in the
   JSONL; no explicit cross-reference field. Is ordering sufficient, or should
   `llm_response` carry a reference back to its `llm_call`?
