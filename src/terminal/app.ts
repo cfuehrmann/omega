@@ -17,7 +17,7 @@ import {
   TIME_WIDTH, INDENT, INDENT2,
   now, printBlock, println,
   renderUserMessage, renderApiRequest, renderApiResponse,
-  renderToolStart, renderToolResult, renderToolResultMessage,
+  renderToolStart, renderToolResult,
   renderAssistantMessage, renderStatus,
 } from "./renderer.js";
 import {
@@ -207,8 +207,7 @@ export async function runApp(): Promise<void> {
           }
 
           case "tool_result_message":
-            if (streamingStarted) { println(""); streamingStarted = false; }
-            printBlock(now(), renderToolResultMessage(event.results));
+            // Suppressed — individual tool_result blocks already shown above.
             break;
 
           case "metrics":
