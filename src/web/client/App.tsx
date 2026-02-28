@@ -91,8 +91,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "user_message":
       return (
         <div class="block user">
-          <div class="block-label">you</div>
-          <div class="block-body">{e.content}</div>
+          <div class="block-label">user_message</div>
         </div>
       );
 

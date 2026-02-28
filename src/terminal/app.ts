@@ -148,7 +148,7 @@ export async function runApp(): Promise<void> {
         switch (event.type) {
 
           case "user_message":
-            printBlock(now(), renderUserMessage(event.content));
+            printBlock(now(), renderUserMessage());
             break;
 
           case "llm_call":

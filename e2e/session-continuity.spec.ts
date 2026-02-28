@@ -47,7 +47,7 @@ test("reconnecting does not create a new agent — browser sees existing history
   expect(agentIdAfter).toBe(agentIdBefore);
 
   // History should still be visible (replayed from event log)
-  await expect(page.locator(".block.user .block-body")).toHaveText("initial message", { timeout: 3000 });
+  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------

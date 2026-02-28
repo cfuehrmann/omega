@@ -86,7 +86,7 @@ test("user_message event shows user block in feed", async ({ page, server }) => 
 
   await server.sendEvent({ type: "user_message", content: "hello world" });
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".block.user .block-body")).toHaveText("hello world");
+  await expect(page.locator(".block.user .block-label")).toHaveText("user_message");
 });
 
 test("abort button appears when streaming", async ({ page, server }) => {
@@ -276,5 +276,4 @@ test("history is replayed after page reload", async ({ page, server }) => {
 
   // User block should still be visible (replayed from server event log)
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".block.user .block-body")).toHaveText("replay test");
 });

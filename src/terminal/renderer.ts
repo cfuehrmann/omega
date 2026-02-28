@@ -85,11 +85,8 @@ export function println(s: string): void {
 // Block renderers
 // ---------------------------------------------------------------------------
 
-export function renderUserMessage(content: string): string[] {
-  return [
-    bold(green("user_message")),
-    ...content.split("\n").map(line => green(`${INDENT}${line}`)),
-  ];
+export function renderUserMessage(): string[] {
+  return [bold(green("user_message"))];
 }
 
 function summariseContent(content: any): string {
