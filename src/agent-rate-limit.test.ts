@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, readdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { Agent, type AgentEvent } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal } from "./agent.js";
 import type { StreamProvider } from "./agent.js";
 
 function authExpiredError() {
@@ -17,8 +17,8 @@ function rateLimitError(message = "rate limit: try again in 0.01s") {
   return err;
 }
 
-async function collectEvents(agent: Agent, message: string, signal?: AbortSignal): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = [];
+async function collectEvents(agent: Agent, message: string, signal?: AbortSignal): Promise<(OmegaEvent | StreamSignal)[]> {
+  const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(message, async () => true, signal)) {
     events.push(event);
   }

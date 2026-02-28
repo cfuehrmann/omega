@@ -11,7 +11,7 @@ import { formatTurnFooter } from "../turn-footer.js";
 import { checkDiagnostics } from "../diagnosis.js";
 
 import { clearContextStore } from "../context-store.js";
-import { clearSessionEvents } from "../session-event.js";
+import { clearEvents } from "../event-store.js";
 import { exhaustiveCheck } from "../events.js";
 import {
   bold, dim, green, red, yellow,
@@ -75,7 +75,7 @@ function shutdown(code: number = 0): never {
 
 export async function runApp(): Promise<void> {
   await clearContextStore(); // fresh session — discard previous session's context
-  await clearSessionEvents(); // fresh session — discard previous session's events
+  await clearEvents(); // fresh session — discard previous session's events
   const agent = new Agent();
 
   try {
@@ -194,13 +194,23 @@ export async function runApp(): Promise<void> {
             printBlock(now(), [dim("Token refreshed, retrying...")]);
             break;
 
-          case "session_compacted":
+          case "compact_user_start":
             if (streamingStarted) { println(""); streamingStarted = false; }
-            if (event.newCount === event.originalCount) {
-              printBlock(now(), [dim(`Context is already short (${event.originalCount} messages) — nothing compacted.`)]);
+            printBlock(now(), [dim("Compacting context…")]);
+            break;
+
+          case "compact_user_done":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            if (event.messagesAfter === event.messagesBefore) {
+              printBlock(now(), [dim(`Context compacted: ${event.messagesBefore} → ${event.messagesAfter} messages (no change)`)]);
             } else {
-              printBlock(now(), [dim(`Context compacted: ${event.originalCount} → ${event.newCount} messages`)]);
+              printBlock(now(), [dim(`Context compacted: ${event.messagesBefore} → ${event.messagesAfter} messages`)]);
             }
+            break;
+
+          case "compact_user_error":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [red(`⚠ Compaction failed: ${event.error}`)]);
             break;
 
           case "text":
@@ -317,8 +327,9 @@ export async function runApp(): Promise<void> {
     (line) => { handleSubmit(line).catch(console.error); },
     // onEscape: buffer was already empty — abort turn if one is running
     () => { if (abortController) { abortController.abort(); abortController = null; } },
-    // onBufferCleared: Esc cleared a non-empty buffer — just reprint the prompt
-    () => { printPrompt(bold(green("❯ "))); },
+    // onBufferCleared: Esc cleared a non-empty buffer — cursor stays on the same
+    // line; the ❯ glyph is already visible, nothing to reprint
+    () => {},
     initiateShutdown,
   );
 

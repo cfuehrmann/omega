@@ -159,12 +159,25 @@ export interface TurnInterruptedEvent {
   ts: string;
 }
 
-/** History was compacted via /compact. */
-export interface SessionCompactedEvent {
-  type: "session_compacted";
+/** Operator triggered /compact — compaction LLM call about to start. */
+export interface CompactUserStartEvent {
+  type: "compact_user_start";
   ts: string;
-  originalCount: number;
-  newCount: number;
+}
+
+/** Compaction completed successfully. */
+export interface CompactUserDoneEvent {
+  type: "compact_user_done";
+  ts: string;
+  messagesBefore: number;
+  messagesAfter: number;
+}
+
+/** Compaction failed. */
+export interface CompactUserErrorEvent {
+  type: "compact_user_error";
+  ts: string;
+  error: string;
 }
 
 /** OAuth token was successfully refreshed mid-session. */
@@ -254,7 +267,9 @@ export type OmegaEvent =
   | LlmErrorEvent
   | AgentErrorEvent
   | TurnInterruptedEvent
-  | SessionCompactedEvent
+  | CompactUserStartEvent
+  | CompactUserDoneEvent
+  | CompactUserErrorEvent
   | OauthRefreshedEvent
   | OauthTokenExpiredEvent
   | LlmRetryEvent

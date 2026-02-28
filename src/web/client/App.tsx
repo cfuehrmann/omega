@@ -148,16 +148,30 @@ function EventBlock(props: { event: WsEvent }) {
         </div>
       );
 
-    case "session_compacted": {
-      const msg = e.newCount === e.originalCount
-        ? `Context is already short (${e.originalCount} messages) — nothing compacted.`
-        : `Context compacted: ${e.originalCount} → ${e.newCount} messages`;
+    case "compact_user_start":
+      return (
+        <div class="block status">
+          <div class="block-body">Compacting context…</div>
+        </div>
+      );
+
+    case "compact_user_done": {
+      const msg = e.messagesAfter === e.messagesBefore
+        ? `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages (no change)`
+        : `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
           <div class="block-body">{msg}</div>
         </div>
       );
     }
+
+    case "compact_user_error":
+      return (
+        <div class="block error">
+          <div class="block-body">⚠ Compaction failed: {e.error}</div>
+        </div>
+      );
 
     case "world_state_saved":
       return (

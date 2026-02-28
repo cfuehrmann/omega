@@ -52,7 +52,13 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
   - **3e-ii** (DONE): Rename `WsEvent` / `AgentEvent` variants to match coordinate-system model. `SessionEvent` variants (`events.jsonl`) remain `tool_call`/`tool_result`/`llm_response` — separate namespace.
   - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent.
   - **[SCHEMA] pre-lock fixes** (DONE): `LlmResponseEvent.content` removed (duplication); `LlmCallEvent.messageCount` and `llmCallNumber` removed (derivable). `ToolCallEvent.input` removed; `ToolResultEvent.outputLength` removed. All FK pointers use hash-based pattern consistently. `LlmResponseEvent.usage` records all four Anthropic token counts plus `service_tier`.
-  - **3e-iv through 3e-viii** (TODO): Property completeness, missing event types, persistence audit, forward-compatibility policy, schema reference doc. See backlog.
+  - **3e-iv** (TODO): Property names and completeness per event — cross-references on error events, `TurnEndEvent.toolCalls`, `SessionStartEvent.authMode`. See backlog.
+  - **3e-v** (TODO): Missing event types — four prioritised sub-items identified by audit:
+    - **3e-v-1**: `/compact` failure `agent_error` not persisted (one missing `logEvent()` call — start here).
+    - **3e-v-2**: "All retries exhausted" path emits bare `agent_error` with no `llm_error` and no diagnostic.
+    - **3e-v-3**: `session_end` event missing — clean shutdown indistinguishable from crash; blocks session resume.
+    - **3e-v-4**: Web server protocol errors (`{ type: "error" }`) not in `events.jsonl` — design decision needed.
+  - **3e-vi through 3e-viii** (TODO): Persistence audit, forward-compatibility policy, schema reference doc. See backlog.
   - **3f** (TODO): Session resume, depends on schema lock (3e-viii).
 - **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed.
 - **EU-1** (DONE): Delete dead weight — `metrics` and `tool_result_message` removed from `AgentEvent`. In-loop `status` yields removed. `/help` slash command removed.
@@ -97,7 +103,7 @@ The `null`-is-no-op pattern still applies to all write functions. e2e tests use 
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `sessions/events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
 
 ### OmegaEvent Variants (streamed from agent.ts AND persisted to events.jsonl)
-`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `session_compacted`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed.
+`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `session_compacted`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
 
 Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`) not an `OmegaEvent` — explicitly outside the persistence boundary by design.
 
@@ -172,13 +178,15 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
+Completed **error event audit**: Enumerated all error conditions handled in the app and cross-referenced against `OmegaEvent` persistence. Four gaps identified and prioritised as backlog items 3e-v-1 through 3e-v-4 (in impact order):
+1. `/compact` failure `agent_error` not persisted — missing `logEvent()` call.
+2. "All retries exhausted" path has no `llm_error` and no diagnostic write.
+3. No `session_end` event — clean shutdown vs. crash indistinguishable in `events.jsonl`.
+4. Web server protocol errors (`{ type: "error" }`) not in `events.jsonl` — design decision needed.
+Backlog and world-state updated to reflect revised plan. No code changed this session.
+
 Completed **prompt editor simplification** (commit 2a9416e): Gutted `src/terminal/input.ts` from ~430 lines to ~190. Removed all cursor tracking, arrow key navigation, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace. Removed `cursor`, `columns`, `terminalWidth`, `promptWidth` from shared buffer. Removed `redrawLine`, `moveVisualCol`, `wordBoundaryBack/Forward`, `charsDisplayWidth` helpers. Removed `sharedPasteState.startVisualCol/startCursor`. Esc is now context-sensitive: non-empty buffer → clears buffer + calls `onBufferCleared` (no abort); empty buffer → `onEscape` (abort turn or no-op). `setupRawInput` gains `onBufferCleared` callback; `app.ts` reprints prompt on buffer-cleared. `promptVisualWidth` helper and `sharedBuffer.promptWidth` assignment removed from `app.ts`. Tests rewritten to match; old cursor/navigation tests removed.
 
 Completed **truncation tightening** (commit f99d233): Both `tool_call` input and `tool_result` output now truncated at **5 lines / 500 chars** in both terminal and web UIs (was 20 lines / 2000 chars for results, untruncated / 3000 chars for inputs). Terminal `renderToolStart` now uses `truncateOutput` (multi-line) instead of bare `JSON.stringify`. Web `tool_call` block uses `truncateOutput` (compact JSON) instead of the separate `truncate()` helper.
-
-Completed **UI redundancy cleanup**: Three improvements from prior session:
-1. **`llm_response` content removed from terminal UI** (commit 538eac8).
-2. **Full Anthropic usage in `llm_response` event** (commit a85f69e).
-3. **Dual-limit tool result truncation** (commit b29fde5) — superseded by f99d233 above.
 
 Completed **EU-4** (DONE), **EU-3** (DONE), **EU-1/2** (DONE), **test-pollution guardrails**, **pre-schema-lock field removals**, **Step 3e-iii FK/PK contract**. See prior session notes for detail.

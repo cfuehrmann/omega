@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import type { AgentEvent } from "./agent.js";
+import type { OmegaEvent, StreamSignal } from "./agent.js";
 
 /**
  * This test reproduces the "stuck updating plan" bug.

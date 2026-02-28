@@ -28,8 +28,8 @@ describe("assertNotProductionPath", () => {
   });
 
   it("includes the function name in the error message", () => {
-    expect(() => assertNotProductionPath("sessions/events.jsonl", "appendSessionEvent")).toThrow(
-      "appendSessionEvent"
+    expect(() => assertNotProductionPath("sessions/events.jsonl", "appendEvent")).toThrow(
+      "appendEvent"
     );
   });
 

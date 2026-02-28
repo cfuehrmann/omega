@@ -33,7 +33,9 @@ export type WsEvent =
   | { type: "model_changed"; provider: string; model: string }
   | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed" }
-  | { type: "session_compacted"; originalCount: number; newCount: number }
+  | { type: "compact_user_start" }
+  | { type: "compact_user_done"; messagesBefore: number; messagesAfter: number }
+  | { type: "compact_user_error"; error: string }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
   | { type: "llm_error"; provider: string; error: string }
@@ -199,7 +201,9 @@ export function dispatch(event: WsEvent): void {
     case "model_changed":
     case "oauth_token_expired":
     case "oauth_refreshed":
-    case "session_compacted":
+    case "compact_user_start":
+    case "compact_user_done":
+    case "compact_user_error":
     case "world_state_saved":
     case "llm_error":
     case "agent_error":

@@ -101,17 +101,132 @@ Known candidates, in priority order:
   removed (both derivable from `context.jsonl`). ✅ Done (commit 34f7708).
 
 **3e-v — Missing event types**
-Decide whether any important lifecycle events are absent.
+Decide whether any important lifecycle events are absent. Full audit conducted
+(session 2026-xx-xx); five gaps identified, prioritised by impact below.
 
-**Priority: `session_end` first.** Without it there is no way to distinguish a
-clean shutdown from a crash in the event log — the same gap that makes error
-events incomplete also makes the overall session record ambiguous. Session resume
-(Step 3f) cannot reliably detect a previously-crashed session without this.
+**3e-v-1 — Compaction event overhaul** ← START HERE
+Several problems with the current `/compact` implementation, addressed together:
 
-Known candidates, in priority order:
-- `session_end` — symmetric with `session_start`; allows distinguishing a clean
-  shutdown from a crash. Needed for session resume to know whether the previous
-  session completed normally.
+**Bug: `context.jsonl` is destructively mutated on compaction.**
+The handler calls `clearContextStore()` (blanks the file) then re-appends the
+compacted history. This violates the append-only design. Fix: remove the file
+rewrite entirely. Only `llmMessageLog` and `llmMessageHashes` are replaced in
+memory. `context.jsonl` retains every record ever written — the compacted view
+is what the LLM sees going forward, exactly as `buildApiMessages()` already
+handles truncation non-destructively.
+
+**Bug: compaction failure is not persisted.**
+The `catch` block yields an `agent_error` to the UI but never calls `logEvent()`.
+Fix: replace with a new dedicated `compact_user_error` event that is both yielded
+and persisted.
+
+**Bug: success event is conditional on counts differing.**
+`logEvent(session_compacted)` is only called when `newCount !== originalCount`.
+A no-op compaction leaves no trace in `events.jsonl`. Fix: emit unconditionally.
+
+**Design: replace `session_compacted` with three typed events.**
+- `compact_user_start` — `{ ts }` — emitted and awaited immediately on `/compact`
+  entry, before any LLM call. Every `/compact` invocation starts with this.
+- `compact_user_done` — `{ ts, messagesBefore: number, messagesAfter: number }` —
+  emitted on success, unconditionally. `messagesBefore`/`messagesAfter` are total
+  `llmMessageLog` counts before and after. Equal counts = no-op compaction.
+- `compact_user_error` — `{ ts, error: string }` — emitted in the catch block.
+  Replaces the current unlogged `agent_error` yield.
+
+`session_compacted` is retired from `OmegaEvent`, `events.ts`, both UIs, `WsEvent`,
+and all tests.
+
+**Design: empty-history case no longer special.**
+The current early-return with `agent_error` is removed. Instead, empty history
+flows through the normal path: `compact_user_start` then `compact_user_done` with
+`messagesBefore: 0, messagesAfter: 0`, without calling `compactHistory()`. No
+error emitted — the operator sees "0 → 0" in the UI, which is informative enough.
+
+**Naming convention:**
+Event type strings use `compact_user_*` prefix — `compact_` groups all compaction
+events, `_user` distinguishes manual operator-triggered compaction from any future
+automatic compaction (`compact_auto_*`). Property names are camelCase per existing
+style (`messagesBefore`, `messagesAfter`).
+
+Acceptance criteria:
+- `context.jsonl` is never truncated or rewritten during compaction
+- Every `/compact` invocation produces exactly `compact_user_start` + `compact_user_done`
+  or `compact_user_start` + `compact_user_error` in `events.jsonl` — no exceptions
+- `compact_user_start` is awaited before the LLM call (ordering guarantee)
+- `compact_user_done` carries correct `messagesBefore`/`messagesAfter` counts
+- `compact_user_error` carries the error message string
+- `session_compacted` fully retired — no references remain
+- Both UIs render all three new event types (exhaustive switch enforces this)
+- Gate green
+
+**3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic**
+When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
+fallback at line ~1080 yields a bare `agent_error` with no `llm_error` event and
+no `writeDiagnostic()` call. This is the worst crash path and has the least
+diagnostic coverage — exactly backwards from what we want.
+
+The prompt-too-long exhaustion path has the same gap: after `retryMaxAttempts`
+halvings it falls through to this same bare `agent_error`.
+
+Acceptance criteria:
+- "All retries exhausted" path emits `llm_error` (with `lastError` details) before
+  `agent_error`
+- `writeDiagnostic()` is called with the full request context, same as individual
+  retry paths
+- Both Anthropic and OpenAI paths covered
+- Test: mock stream that always throws a retryable error; assert `llm_error` and
+  `diagnostic_written` events are present after exhaustion
+
+**3e-v-3 — `session_end` — clean shutdown vs. crash indistinguishable**
+`session_start` is emitted on startup but there is no symmetric `session_end` on
+clean shutdown. A post-mortem cannot tell whether the session ended normally or
+crashed. Session resume (Step 3f) needs this to know whether to offer resumption.
+
+`session_end` must be emitted (and awaited, not fire-and-forget) in the shutdown
+path of both the terminal app (`shutdown()` in `terminal/app.ts`) and the web
+server (graceful close in `web/server.ts`). It must be emitted *before* the
+process exits and *before* the events file is closed.
+
+Acceptance criteria:
+- `OmegaEvent` gains a `session_end` variant; both UIs render it (exhaustive
+  switch guard will enforce this at compile time)
+- Terminal `shutdown()` awaits `logEvent({ type: "session_end", ... })` before
+  `process.exit()`
+- Web server graceful close does the same
+- Crash / SIGKILL leaves no `session_end` — that absence is the crash signal
+- Test: normal shutdown path; assert `session_end` is the last event in the file
+
+**3e-v-4 — Web server protocol errors not in `events.jsonl`**
+Three conditions in `web/server.ts` emit `{ type: "error" }` over WebSocket but
+write nothing to `events.jsonl`: invalid JSON from client, "turn already in
+progress", and uncaught throws in the turn loop. These are intentionally outside
+the `OmegaEvent` type (WebSocket-protocol-level errors), but whether they should
+be persisted is an open design question.
+
+Decision needed: are these server-internal errors that belong in `events.jsonl`
+(perhaps as `agent_error`), or are they purely transport-layer and deliberately
+excluded from the session record?
+
+Acceptance criteria:
+- Explicit decision recorded in backlog and in the schema doc (3e-viii)
+- If persisted: wired via `logEvent()` with an appropriate `OmegaEvent` variant
+- If excluded: documented as intentional omission in 3e-vi
+
+**3e-v-5 — No event when `writeDiagnostic()` itself fails (LOW)**
+`writeDiagnostic()` is a fallible I/O operation. When it throws, the failure is
+currently silent — the caller's `catch` is either absent or swallows the error.
+The absence of a `diagnostic_written` event after an error that should have
+produced one is an implicit signal, but not an explicit one.
+
+A `diagnostic_error` event would make the failure observable in `events.jsonl`.
+Low priority: diagnostic write failures are rare, and the existing
+`diagnostic_written` / absence pattern is already somewhat informative.
+
+Decision needed: add `diagnostic_error` variant to `OmegaEvent`, or document the
+silent-failure as an intentional omission in 3e-vi?
+
+**3e-v — Previously known candidates (resolved):**
+- `session_end` — addressed by 3e-v-3 above.
 - `model_changed` — **RESOLVED by EU-2** (commit b2ebc02). Added to both `AgentEvent`
   and `SessionEvent`; emitted and persisted whenever `/sonnet`, `/opus`, or `/codex`
   switches the active model.

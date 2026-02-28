@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from "bun:test";
 import { Agent } from "./agent.js";
-import type { AgentEvent, TurnMetrics, StreamProvider } from "./agent.js";
+import type { OmegaEvent, StreamSignal, TurnMetrics, StreamProvider } from "./agent.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,8 +53,8 @@ function makeStreamProvider(overrides: {
   };
 }
 
-async function runTurn(agent: Agent): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = [];
+async function runTurn(agent: Agent): Promise<(OmegaEvent | StreamSignal)[]> {
+  const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(
     "hello",
     async () => true

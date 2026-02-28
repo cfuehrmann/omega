@@ -1,5 +1,5 @@
 /**
- * SessionEvent persistence — append-only JSONL writer for sessions/events.jsonl.
+ * Event persistence — append-only JSONL writer for sessions/events.jsonl.
  *
  * Types are re-exported from src/events.ts (OmegaEvent). Only the persistence
  * helpers live here.
@@ -17,8 +17,7 @@ import type { OmegaEvent } from "./events.js";
 
 export const DEFAULT_EVENTS_FILE = "sessions/events.jsonl";
 
-// Re-export everything from events.ts so existing imports of named types from
-// session-event.ts continue to work during the transition.
+// Re-export all event types from events.ts for convenience.
 export type {
   OmegaEvent,
   StreamSignal,
@@ -41,9 +40,6 @@ export type {
   ContextViewTrimmedEvent,
   ModelChangedEvent,
 } from "./events.js";
-
-// SessionEvent is now an alias for OmegaEvent — kept for backward compat.
-export type { OmegaEvent as SessionEvent } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Persistence helpers
@@ -81,12 +77,12 @@ function toPersistedEvent(event: OmegaEvent): object {
  * UI-only fields are stripped before writing.
  * Pass `null` to disable the write (test isolation).
  */
-export async function appendSessionEvent(
+export async function appendEvent(
   event: OmegaEvent,
   filePath: string | null = DEFAULT_EVENTS_FILE
 ): Promise<void> {
   if (filePath === null) return;
-  assertNotProductionPath(filePath, "appendSessionEvent");
+  assertNotProductionPath(filePath, "appendEvent");
   await mkdir(dirname(filePath), { recursive: true });
   await appendFile(filePath, JSON.stringify(toPersistedEvent(event)) + "\n", "utf-8");
 }
@@ -97,10 +93,10 @@ export async function appendSessionEvent(
  * for diagnostics while the current session starts clean.
  * No-op if filePath is null (test isolation).
  */
-export async function clearSessionEvents(
+export async function clearEvents(
   filePath: string | null = DEFAULT_EVENTS_FILE
 ): Promise<void> {
   if (filePath === null) return;
-  assertNotProductionPath(filePath, "clearSessionEvents");
+  assertNotProductionPath(filePath, "clearEvents");
   await rotateFile(filePath);
 }

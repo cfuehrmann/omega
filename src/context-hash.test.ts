@@ -19,9 +19,9 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
-import { Agent, type AgentEvent, type StreamProvider, buildApiMessages } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider, buildApiMessages } from "./agent.js";
 import type { ContextRecord } from "./context-store.js";
-import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./session-event.js";
+import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./event-store.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,8 +85,8 @@ function toolUseStreamEvents(toolName: string, toolId = "t1"): any[] {
 async function collectEvents(
   agent: Agent,
   message: string
-): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = [];
+): Promise<(OmegaEvent | StreamSignal)[]> {
+  const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(message, async () => true)) {
     events.push(event);
   }

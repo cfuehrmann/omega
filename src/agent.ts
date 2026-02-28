@@ -7,7 +7,7 @@ import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory } from "./compaction.js";
 import { readWorldState, projectWorldStatePath } from "./world-state.js";
-import { appendContextMessage, buildContextRecord, clearContextStore } from "./context-store.js";
+import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal } from "./events.js";
 
@@ -689,35 +689,46 @@ export class Agent {
         const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "openai", model: this.activeModel };
         this.logEvent(ev); yield ev;
       } else if (cmd === "/compact") {
-        if (this.llmMessageLog.length === 0) {
-          yield { type: "agent_error", ts: new Date().toISOString(), error: "Nothing to compact — history is empty." };
+        const startEv: OmegaEvent = { type: "compact_user_start", ts: new Date().toISOString() };
+        await this.logEvent(startEv);
+        yield startEv;
+
+        const messagesBefore = this.llmMessageLog.length;
+
+        if (messagesBefore === 0) {
+          // Nothing to compact — still emit done with 0 → 0, no LLM call needed.
+          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore: 0, messagesAfter: 0 };
+          this.logEvent(doneEv);
+          yield doneEv;
           return;
         }
+
         try {
           const provider = this.getStreamProvider();
-          const { history: newHistory, originalCount, newCount } = await compactHistory(
+          const { history: newHistory } = await compactHistory(
             this.llmMessageLog,
             provider,
             this.activeModel,
           );
-          const ev: OmegaEvent = { type: "session_compacted", ts: new Date().toISOString(), originalCount, newCount };
-          if (newCount !== originalCount) {
-            this.llmMessageLog = newHistory as Anthropic.MessageParam[];
-            // Rewrite context file to match the new shorter history.
-            // Also rebuild llmMessageHashes in parallel with the new log.
-            this.llmMessageHashes = [];
-            if (this.contextFile !== null) {
-              await clearContextStore(this.contextFile ?? undefined, { rotate: false });
-            }
-            for (const msg of this.llmMessageLog) {
-              const hash = await appendContextMessage(msg, this.contextFile ?? undefined);
-              this.llmMessageHashes.push(hash);
-            }
-            this.logEvent(ev);
-          }
-          yield ev;
+          // Replace in-memory history only. context.jsonl is append-only and
+          // is never truncated — the compacted view is what the LLM sees going
+          // forward, exactly as buildApiMessages() handles truncation.
+          this.llmMessageLog = newHistory as Anthropic.MessageParam[];
+          // Rebuild the parallel hash array to match the new log.
+          // The hashes already exist in context.jsonl — we just need to
+          // re-derive them from the retained messages using buildContextRecord.
+          this.llmMessageHashes = await Promise.all(
+            this.llmMessageLog.map(msg =>
+              buildContextRecord(msg).then(r => r.hash)
+            )
+          );
+          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.llmMessageLog.length };
+          this.logEvent(doneEv);
+          yield doneEv;
         } catch (err: any) {
-          yield { type: "agent_error", ts: new Date().toISOString(), error: `Compaction failed: ${err.message}` };
+          const errEv: OmegaEvent = { type: "compact_user_error", ts: new Date().toISOString(), error: err.message ?? String(err) };
+          this.logEvent(errEv);
+          yield errEv;
         }
         return;
       } else {

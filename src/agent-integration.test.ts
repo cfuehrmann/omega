@@ -14,7 +14,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
-import { Agent, type AgentEvent, type StreamProvider } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
 
 // ---------------------------------------------------------------------------
 // Mock provider helpers
@@ -96,8 +96,8 @@ async function collectEvents(
   agent: Agent,
   message: string,
   confirmFn?: (name: string, input: any, formatted: string) => Promise<boolean>
-): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = [];
+): Promise<(OmegaEvent | StreamSignal)[]> {
+  const events: (OmegaEvent | StreamSignal)[] = [];
   const confirm = confirmFn ?? (async () => true);
   for await (const event of agent.sendMessage(message, confirm)) {
     events.push(event);
@@ -516,7 +516,7 @@ describe("Agent.sendMessage — abort", () => {
     };
 
     const agent = new Agent(mockProvider);
-    const events: AgentEvent[] = [];
+    const events: (OmegaEvent | StreamSignal)[] = [];
     const controller = new AbortController();
 
     const gen = agent.sendMessage("test", async () => true, controller.signal);

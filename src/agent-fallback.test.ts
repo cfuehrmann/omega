@@ -1,12 +1,12 @@
 import { describe, it, expect } from "bun:test";
-import { Agent, type StreamProvider, type AgentEvent } from "./agent.js";
+import { Agent, type StreamProvider, type OmegaEvent, type StreamSignal } from "./agent.js";
 
 function makeRateLimitError() {
   return { status: 429, message: "rate limit" } as any;
 }
 
-async function collectEvents(agent: Agent, message: string): Promise<AgentEvent[]> {
-  const events: AgentEvent[] = [];
+async function collectEvents(agent: Agent, message: string): Promise<(OmegaEvent | StreamSignal)[]> {
+  const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(message, async () => true)) {
     events.push(event);
   }
