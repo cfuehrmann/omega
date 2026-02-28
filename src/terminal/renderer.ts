@@ -39,7 +39,6 @@ export function red    (s: string) { return styled(s, 31); }
 export const TIME_WIDTH = 10;
 export const INDENT  = "  ";
 export const INDENT2 = "    ";
-const INDENT3 = "      ";
 
 // ---------------------------------------------------------------------------
 // Output helpers
@@ -146,45 +145,13 @@ export function renderApiResponse(
   url: string,
   stopReason: string,
   usage: { input_tokens: number; output_tokens: number },
-  content: any[],
-  raw?: any,
 ): string[] {
   const lines: string[] = [];
   lines.push(bold(blue("llm_response")));
-  if (provider === "anthropic") {
-    lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
-    lines.push(blue(`${INDENT}usage:`));
-    lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
-    lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
-    lines.push(blue(`${INDENT}content:`));
-  } else {
-    lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
-    lines.push(blue(`${INDENT}usage:`));
-    lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
-    lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
-    if (raw?.usage?.cached_input_tokens !== undefined) {
-      lines.push(dim(blue(`${INDENT2}cached_input_tokens: ${raw.usage.cached_input_tokens}`)));
-    }
-    if (raw?.usage?.cache_creation_input_tokens !== undefined) {
-      lines.push(dim(blue(`${INDENT2}cache_creation_input_tokens: ${raw.usage.cache_creation_input_tokens}`)));
-    }
-    lines.push(blue(`${INDENT}content:`));
-  }
-  for (const block of content) {
-    if (block.type === "text") {
-      lines.push(blue(`${INDENT2}text:`));
-      const preview = block.text.length <= 120 ? block.text : `<${block.text.length} chars>`;
-      for (const line of preview.split("\n")) {
-        lines.push(dim(blue(`${INDENT3}${line}`)));
-      }
-    } else if (block.type === "tool_use") {
-      lines.push(blue(`${INDENT2}tool_use:`));
-      lines.push(dim(blue(`${INDENT3}name: "${block.name}"`)));
-      lines.push(dim(blue(`${INDENT3}input: ${JSON.stringify(block.input)}`)));
-    } else {
-      lines.push(dim(blue(`${INDENT2}${block.type}`)));
-    }
-  }
+  lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
+  lines.push(blue(`${INDENT}usage:`));
+  lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
+  lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
   return lines;
 }
 

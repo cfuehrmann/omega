@@ -186,8 +186,6 @@ export async function runApp(): Promise<void> {
               event.url,
               event.stopReason,
               event.usage,
-              event.content,
-              event.raw,
             ));
             break;
 
