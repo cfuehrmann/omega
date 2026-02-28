@@ -1,6 +1,12 @@
 import { For, Show, createEffect, onCleanup, createSignal, onMount } from "solid-js";
 import { state, dispatch, type Turn, type WsEvent } from "./store";
 
+/** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
+function exhaustiveCheck(x: never): null {
+  console.warn("Unhandled WsEvent type:", (x as any).type);
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket (module-level state, initialised inside App via startWs())
 // ---------------------------------------------------------------------------
@@ -61,181 +67,194 @@ function truncate(s: string, max = 3000): string {
 function EventBlock(props: { event: WsEvent }) {
   const e = props.event;
 
-  if (e.type === "user_message") {
-    return (
-      <div class="block user">
-        <div class="block-label">you</div>
-        <div class="block-body">{e.content}</div>
-      </div>
-    );
-  }
+  // Exhaustive switch over WsEvent — every variant must have a case.
+  // Compile-time guard: if a new WsEvent variant is added without a render
+  // case, TypeScript will error on the exhaustiveCheck(e) call in default.
+  switch (e.type) {
+    case "user_message":
+      return (
+        <div class="block user">
+          <div class="block-label">you</div>
+          <div class="block-body">{e.content}</div>
+        </div>
+      );
 
-  if (e.type === "text") {
-    return (
-      <div class="block assist">
-        <div class="block-label">assistant</div>
-        <div class="block-body">{e.text}</div>
-      </div>
-    );
-  }
+    case "text":
+      return (
+        <div class="block assist">
+          <div class="block-label">assistant</div>
+          <div class="block-body">{e.text}</div>
+        </div>
+      );
 
-  if (e.type === "tool_call") {
-    const inputStr = typeof e.input === "object"
-      ? JSON.stringify(e.input, null, 2)
-      : String(e.input);
-    return (
-      <div class="block tool">
-        <div class="block-label">tool › {e.name}</div>
-        <div class="block-body">{truncate(inputStr)}</div>
-      </div>
-    );
-  }
+    case "tool_call": {
+      const inputStr = typeof e.input === "object"
+        ? JSON.stringify(e.input, null, 2)
+        : String(e.input);
+      return (
+        <div class="block tool">
+          <div class="block-label">tool › {e.name}</div>
+          <div class="block-body">{truncate(inputStr)}</div>
+        </div>
+      );
+    }
 
-  if (e.type === "tool_result") {
-    const r = e.result;
-    const content = r.type === "text" ? truncate(r.text ?? "") : `[${r.type}]`;
-    return (
-      <div class={`block result${r.is_error ? " result-error" : ""}`}>
-        <div class="block-label">result › {e.name}</div>
-        <div class="block-body">{content}</div>
-      </div>
-    );
-  }
+    case "tool_result": {
+      const r = e.result;
+      const content = r ? (r.type === "text" ? truncate(r.text ?? "") : `[${r.type}]`) : "";
+      return (
+        <div class={`block result${r?.is_error ? " result-error" : ""}`}>
+          <div class="block-label">result › {e.name}</div>
+          <div class="block-body">{content}</div>
+        </div>
+      );
+    }
 
-  if (e.type === "model_changed") {
-    return (
-      <div class="block status">
-        <div class="block-body">Switched to {e.provider} {e.model}</div>
-      </div>
-    );
-  }
+    case "model_changed":
+      return (
+        <div class="block status">
+          <div class="block-body">Switched to {e.provider} {e.model}</div>
+        </div>
+      );
 
-  if (e.type === "oauth_token_expired") {
-    return (
-      <div class="block status">
-        <div class="block-body">OAuth token expired/revoked — refreshing…</div>
-      </div>
-    );
-  }
+    case "oauth_token_expired":
+      return (
+        <div class="block status">
+          <div class="block-body">OAuth token expired/revoked — refreshing…</div>
+        </div>
+      );
 
-  if (e.type === "oauth_refreshed") {
-    return (
-      <div class="block status">
-        <div class="block-body">Token refreshed, retrying…</div>
-      </div>
-    );
-  }
+    case "oauth_refreshed":
+      return (
+        <div class="block status">
+          <div class="block-body">Token refreshed, retrying…</div>
+        </div>
+      );
 
-  if (e.type === "session_compacted") {
-    const msg = e.newCount === e.originalCount
-      ? `Context is already short (${e.originalCount} messages) — nothing compacted.`
-      : `Context compacted: ${e.originalCount} → ${e.newCount} messages`;
-    return (
-      <div class="block status">
-        <div class="block-body">{msg}</div>
-      </div>
-    );
-  }
+    case "session_compacted": {
+      const msg = e.newCount === e.originalCount
+        ? `Context is already short (${e.originalCount} messages) — nothing compacted.`
+        : `Context compacted: ${e.originalCount} → ${e.newCount} messages`;
+      return (
+        <div class="block status">
+          <div class="block-body">{msg}</div>
+        </div>
+      );
+    }
 
-  if (e.type === "world_state_saved") {
-    return (
-      <div class="block world-state-saved">
-        <div class="block-body">✓ world state saved ({e.charCount} chars)</div>
-      </div>
-    );
-  }
+    case "world_state_saved":
+      return (
+        <div class="block world-state-saved">
+          <div class="block-body">✓ world state saved ({e.charCount} chars)</div>
+        </div>
+      );
 
-  if (e.type === "llm_call") {
-    const reqStr = truncate(JSON.stringify(e.request, null, 2), 1000);
-    return (
-      <details class="block api-call">
-        <summary class="block-label">llm call › {e.provider}</summary>
-        <div class="block-body">{reqStr}</div>
-      </details>
-    );
-  }
+    case "llm_call": {
+      const reqStr = truncate(JSON.stringify(e.request, null, 2), 1000);
+      return (
+        <details class="block api-call">
+          <summary class="block-label">llm call › {e.provider}</summary>
+          <div class="block-body">{reqStr}</div>
+        </details>
+      );
+    }
 
-  if (e.type === "llm_response") {
-    const line = `stop: ${e.stopReason}  in: ${e.usage.input_tokens}  out: ${e.usage.output_tokens}`;
-    return (
-      <div class="block api-response">
-        <div class="block-label">api response › {e.provider}</div>
-        <div class="block-body">{line}</div>
-      </div>
-    );
-  }
+    case "llm_response": {
+      const line = `stop: ${e.stopReason}  in: ${e.usage.input_tokens}  out: ${e.usage.output_tokens}`;
+      return (
+        <div class="block api-response">
+          <div class="block-label">api response › {e.provider}</div>
+          <div class="block-body">{line}</div>
+        </div>
+      );
+    }
 
-  if (e.type === "turn_end") {
-    const m = e.metrics;
-    const cost = m.costUsd != null ? `  cost: $${m.costUsd.toFixed(4)}` : "";
-    const saved = m.savedUsd ? `  saved: $${m.savedUsd.toFixed(4)}` : "";
-    const line = `in: ${m.inputTokens}  out: ${m.outputTokens}${cost}${saved}  model: ${e.model}`;
-    return (
-      <div class="block footer">
-        <div class="block-body">{line}</div>
-      </div>
-    );
-  }
+    case "turn_end": {
+      const m = e.metrics;
+      const cost = m.costUsd != null ? `  cost: ${m.costUsd.toFixed(4)}` : "";
+      const saved = m.savedUsd ? `  saved: ${m.savedUsd.toFixed(4)}` : "";
+      const line = `in: ${m.inputTokens}  out: ${m.outputTokens}${cost}${saved}  model: ${e.model}`;
+      return (
+        <div class="block footer">
+          <div class="block-body">{line}</div>
+        </div>
+      );
+    }
 
-  if (e.type === "llm_error") {
-    return (
-      <div class="block error-b">
-        <div class="block-label">api error ({e.provider})</div>
-        <div class="block-body">{e.error}</div>
-      </div>
-    );
-  }
+    case "llm_error":
+      return (
+        <div class="block error-b">
+          <div class="block-label">api error ({e.provider})</div>
+          <div class="block-body">{e.error}</div>
+        </div>
+      );
 
-  if (e.type === "agent_error" || e.type === "error") {
-    return (
-      <div class="block error-b">
-        <div class="block-label">error</div>
-        <div class="block-body">{e.error}</div>
-      </div>
-    );
-  }
+    case "agent_error":
+      return (
+        <div class="block error-b">
+          <div class="block-label">error</div>
+          <div class="block-body">{e.error}</div>
+        </div>
+      );
 
-  if (e.type === "turn_interrupted") {
-    return <div class="block interrupt">⊘ Interrupted</div>;
-  }
+    case "error":
+      return (
+        <div class="block error-b">
+          <div class="block-label">error</div>
+          <div class="block-body">{e.error}</div>
+        </div>
+      );
 
-  if (e.type === "llm_retry") {
-    return (
-      <div class="block info">
-        <div class="block-label">llm retry (attempt {e.attempt})</div>
-        <div class="block-body">{e.error}</div>
-      </div>
-    );
-  }
+    case "turn_interrupted":
+      return <div class="block interrupt">⊘ Interrupted</div>;
 
-  if (e.type === "diagnostic_written") {
-    return (
-      <div class="block info">
-        <div class="block-label">diagnostic written</div>
-        <div class="block-body">{e.path}</div>
-      </div>
-    );
-  }
+    case "llm_retry":
+      return (
+        <div class="block info">
+          <div class="block-label">llm retry (attempt {e.attempt})</div>
+          <div class="block-body">{e.error}</div>
+        </div>
+      );
 
-  if (e.type === "context_view_trimmed") {
-    return (
-      <div class="block info">
-        <div class="block-label">context trimmed</div>
-        <div class="block-body">{e.originalMessages} → {e.keptMessages} messages</div>
-      </div>
-    );
-  }
+    case "diagnostic_written":
+      return (
+        <div class="block info">
+          <div class="block-label">diagnostic written</div>
+          <div class="block-body">{e.path}</div>
+        </div>
+      );
 
-  if (e.type === "session_start") {
-    return (
-      <div class="block info">
-        <div class="block-label">session start</div>
-        <div class="block-body">{e.authMode} · {e.provider} · {e.model}</div>
-      </div>
-    );
-  }
+    case "context_view_trimmed":
+      return (
+        <div class="block info">
+          <div class="block-label">context trimmed</div>
+          <div class="block-body">{e.originalMessages} → {e.keptMessages} messages</div>
+        </div>
+      );
 
-  return null;
+    case "session_start":
+      return (
+        <div class="block info">
+          <div class="block-label">session start</div>
+          <div class="block-body">{e.authMode} · {e.provider} · {e.model}</div>
+        </div>
+      );
+
+    // Web-protocol-only events — handled by dispatch(), never appear in turn.events.
+    // Listed here to satisfy the exhaustive check.
+    case "connected":
+    case "disconnected":
+    case "history":
+    case "auth":
+    case "turn_ready":
+    case "reset_done":
+      return null;
+
+    default:
+      // Compile-time exhaustiveness guard: TypeScript errors here if any
+      // WsEvent variant is missing from the cases above.
+      return exhaustiveCheck(e);
+  }
 }
 
 function TurnView(props: { turn: Turn }) {

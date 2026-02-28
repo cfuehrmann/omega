@@ -38,10 +38,15 @@ awareness is required. The event log (`sessions/events.jsonl`) is the complete
 representation; the UI is its user-friendly projection. Any event that exists
 in the log but is invisible in the UI is a gap in that projection.
 
-Enforcement: exhaustive switch statements (TypeScript `never` check) in
-`src/terminal/renderer.ts` and `src/web/client/App.tsx`. A new `OmegaEvent`
-variant without a render case must be a compile-time error, not a silent
-omission.
+Enforcement: exhaustive switch statements (TypeScript `never` check) are in
+place in `src/terminal/app.ts` (switch on `OmegaEvent | StreamSignal`) and
+`src/web/client/App.tsx` (switch on `WsEvent`). The `exhaustiveCheck(x: never)`
+helper is exported from `src/events.ts` for server-side code and defined
+locally in `App.tsx` for client-side code. A new `OmegaEvent` variant without
+a render case is a compile-time error, not a silent omission.
+
+Status: **ENFORCED** as of EU-4. Verified: `bun test` (458 pass), `vite build`
+(no errors).
 
 Applies from: completion of EU-3 (event system unification).
 Review at: completion of Step 3f (session resume) — decide whether to

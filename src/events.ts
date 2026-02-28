@@ -216,6 +216,26 @@ export interface ModelChangedEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Exhaustiveness helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Call this in the `default` branch of an exhaustive switch over `OmegaEvent`
+ * (or any other discriminated union) to get a compile-time error if any
+ * variant is not handled.
+ *
+ * Usage:
+ *   switch (event.type) {
+ *     case "foo": ...; break;
+ *     // ...all cases...
+ *     default: exhaustiveCheck(event);
+ *   }
+ */
+export function exhaustiveCheck(x: never): never {
+  throw new Error(`Unhandled event type: ${(x as any).type}`);
+}
+
+// ---------------------------------------------------------------------------
 // OmegaEvent — the unified discriminated union
 // ---------------------------------------------------------------------------
 

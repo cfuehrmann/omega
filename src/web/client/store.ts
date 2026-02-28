@@ -12,7 +12,7 @@ import { createStore, produce } from "solid-js/store";
 // Types mirroring src/agent.ts AgentEvent (subset we care about for display)
 // ---------------------------------------------------------------------------
 
-type WsEvent =
+export type WsEvent =
   | { type: "connected" }
   | { type: "disconnected" }
   | { type: "history"; events: WsEvent[] }
@@ -41,7 +41,7 @@ type WsEvent =
   | { type: "error"; error: string }
   | { type: "turn_interrupted" };
 
-interface Turn {
+export interface Turn {
   id: number;
   events: WsEvent[];
   /** Accumulated streaming text for the current assistant message */

@@ -12,6 +12,7 @@ import { checkDiagnostics } from "../diagnosis.js";
 
 import { clearContextStore } from "../context-store.js";
 import { clearSessionEvents } from "../session-event.js";
+import { exhaustiveCheck } from "../events.js";
 import {
   bold, dim, green, red, yellow,
   TIME_WIDTH, INDENT, INDENT2,
@@ -301,6 +302,11 @@ export async function runApp(): Promise<void> {
             }
             printBlock(now(), [red("⊘ Interrupted")]);
             break;
+
+          default:
+            // Compile-time exhaustiveness check: TypeScript will error here if
+            // any OmegaEvent or StreamSignal variant is not handled above.
+            exhaustiveCheck(event);
         }
       }
     } catch (err: any) {

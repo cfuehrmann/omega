@@ -36,24 +36,14 @@ Newly-yielded events (`llm_retry`, `diagnostic_written`, `context_view_trimmed`,
 `session_start`) added to all consumers. `WsEvent` in `store.ts` updated to
 match. Terminal renderer and `App.tsx` updated. Gate green; e2e green.
 
-#### EU-4 — UI sync invariant: every OmegaEvent is rendered
-After EU-3, enforce as a development-phase invariant: every variant in
-`OmegaEvent` must have a render case in the terminal renderer and the web UI.
-Minimum rendering: event name + timestamp on one line (compact). Some events
-warrant more detail (tool calls, errors, turn_end). No event is silently
-dropped.
-
-Document this invariant in `plan/dev-policy.md` (ephemeral policy, not
-manifest). Add a compile-time guard if feasible (exhaustive switch or lint
-rule) so a new event variant without a render case is a build error, not a
-silent omission.
-
-Acceptance criteria:
-- All `OmegaEvent` variants have a render case in terminal renderer
-- All `OmegaEvent` variants have a render case in web UI (`App.tsx`)
-- `plan/dev-policy.md` documents the invariant
-- Exhaustive switch (TypeScript `never` check) or equivalent guard in place
-- Gate green
+#### EU-4 — UI sync invariant: every OmegaEvent is rendered — DONE
+All 17 `OmegaEvent` variants (plus `StreamSignal`/`text`) have render cases in
+both UIs. Exhaustive switch + `exhaustiveCheck(x: never)` guard enforced in:
+- `src/terminal/app.ts` — switch on `OmegaEvent | StreamSignal`; `default` calls `exhaustiveCheck`
+- `src/web/client/App.tsx` — switch on `WsEvent`; `default` calls `exhaustiveCheck`
+`exhaustiveCheck()` exported from `src/events.ts`. `WsEvent`/`Turn` now exported
+from `src/web/client/store.ts` (were local-only). `plan/dev-policy.md` updated.
+Gate green (458 tests pass, Vite build clean).
 
 ---
 
@@ -349,6 +339,7 @@ Acceptance criteria:
 
 ## Closed items
 
+- **EU-4: UI sync invariant — every OmegaEvent rendered** — Done. All 17 variants rendered; exhaustive switch guards in `terminal/app.ts` and `App.tsx`; `exhaustiveCheck()` in `events.ts`; `WsEvent`/`Turn` exported from `store.ts`; `dev-policy.md` updated. Gate green.
 - **EU-3: Unify AgentEvent and SessionEvent into OmegaEvent** — Done. `tool_call`, `tool_result`, `llm_response` are now the canonical event names everywhere. All consumers updated; gate + e2e green.
 - **Test-pollution prevention (layers a–e)** — Done. All five structural layers
   implemented: `bunfig.toml` preload sets `OMEGA_TEST=1` (layer a); `assertNotProductionPath()`
