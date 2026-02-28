@@ -2,6 +2,32 @@
 
 ## Open items
 
+### [REFACTOR] Auto-compact trigger: message count → prompt token count
+**Priority: HIGH — message count is an inaccurate proxy for context pressure**
+
+**Decision (session 2026-xx-xx):** Replace `compactedContextHistory.length > AUTO_COMPACT_THRESHOLD` with a token-based check. Message count is uniform — it treats a one-word reply identically to a 10,000-token tool result dump.
+
+**What to measure:** Total prompt tokens on the last LLM call:
+```
+lastPromptTokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+```
+All three categories occupy the context window; the model sees them all. Output tokens are irrelevant — they don't consume the context window on the next call. Cache vs. non-cache distinction is irrelevant for the trigger — cached tokens still take up space.
+
+**Source:** API-reported tokens from `response.usage` after each LLM call. Exact, already available, no new API calls needed. One turn of lag (check last turn's tokens before this turn's LLM call) — acceptable, since we want to compact well before overflow.
+
+**OpenAI path:** Use `prompt_tokens` from the OpenAI usage object directly.
+
+**Threshold:** `AUTO_COMPACT_THRESHOLD = 100_000` tokens (50% of Claude's 200k window). Constant in `src/compaction.ts`; replaces the old message-count constant of the same name.
+
+**Implementation:**
+- Add `lastPromptTokens: number = 0` field to `Agent`
+- After every LLM response (both Anthropic and OpenAI paths), update it:
+  `this.lastPromptTokens = input_tokens + (cache_read ?? 0) + (cache_creation ?? 0)`
+- `performAutoCompact()` checks `this.lastPromptTokens > AUTO_COMPACT_THRESHOLD`
+- Message count removed entirely — no belt-and-suspenders fallback needed
+
+**Status: ✅ DONE** — implemented and gate green.
+
 
 
 ### [REFACTOR] Event system unification
@@ -168,6 +194,16 @@ Tests: 9 BUG-1 scenarios in `src/compact-auto.test.ts`.
 26 tests covering `AUTO_COMPACT_THRESHOLD` constant, auto-compact firing above/below
 threshold, error path (fallback continues), all BUG-1 scenarios, and a combined
 auto-compact + max_tokens integration scenario. Gate green.
+
+**BUG-3 — `compact-auto.test.ts` broken by token-threshold refactor** ✅ FIXED (commit 1b560ac)
+The session that implemented token-based auto-compact (`lastPromptTokens` check,
+`AUTO_COMPACT_THRESHOLD = 100_000`) got stuck at `max_tokens` twice while rewriting
+the tests, leaving `compact-auto.test.ts` still using message-count semantics
+(`seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1)` → 100,001 messages). All
+"fires above threshold" and "does not fire below threshold" tests were failing.
+Fix: added `setAboveThreshold()` helper (sets `agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD + 1`,
+seeds minimal history for compactHistory() to work) and `setBelowThreshold()` helper.
+All 27 tests pass; gate green.
 
 **3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic**
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
