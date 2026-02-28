@@ -291,6 +291,15 @@ export class Agent {
   public sessionCacheReadTokens = 0;
   public sessionSavedUsd = 0;
 
+  /**
+   * Total prompt tokens observed on the most recent LLM call:
+   *   input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+   * Updated after every LLM response. Used by performAutoCompact() to decide
+   * whether the context is large enough to warrant compaction.
+   * Starts at 0 (no LLM call yet → no compaction on first turn).
+   */
+  public lastPromptTokens = 0;
+
 
   private authMode: "api-key" | "oauth" = "api-key";
   private provider: ProviderName = "anthropic";
@@ -413,7 +422,7 @@ export class Agent {
    * agentic loop starts.
    */
   private async *performAutoCompact(): AsyncGenerator<OmegaEvent> {
-    if (this.compactedContextHistory.length <= AUTO_COMPACT_THRESHOLD) return;
+    if (this.lastPromptTokens <= AUTO_COMPACT_THRESHOLD) return;
 
     const messagesBefore = this.compactedContextHistory.length;
     const startEv: OmegaEvent = { type: "compact_auto_start", ts: new Date().toISOString(), messagesBefore };
@@ -959,6 +968,11 @@ export class Agent {
       this.sessionCostUsd += costUsd;
       this.sessionSavedUsd += savedUsd;
 
+      // Update lastPromptTokens — used by performAutoCompact() on the *next* user turn
+      // to decide whether the context has grown large enough to warrant compaction.
+      // All three categories occupy the context window; output tokens are excluded.
+      this.lastPromptTokens = turnInputTokens + turnCacheRead + turnCacheCreation;
+
       // Accumulate turn-level totals
       totalInputTokens += turnInputTokens;
       totalOutputTokens += turnOutputTokens;
@@ -1020,7 +1034,7 @@ export class Agent {
         const syntheticResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map(b => ({
           type: "tool_result" as const,
           tool_use_id: b.id,
-          content: "[interrupted: response was cut off at max_tokens before tool input was complete — tool was not executed]",
+          content: `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
           is_error: true,
         }));
         const syntheticResultHash = await this.appendToHistory({ role: "user", content: syntheticResults });
@@ -1040,7 +1054,13 @@ export class Agent {
           this.logEvent(syntheticResultEvent);
           yield syntheticResultEvent;
         }
-        const truncErr = `Turn truncated: LLM hit max_tokens while generating tool call input for [${toolUseBlocks.map(b => b.name).join(", ")}]; synthetic error tool_result(s) appended to preserve history integrity.`;
+        const toolNames = toolUseBlocks.map(b => b.name).join(", ");
+        const truncErr =
+          `Output budget exhausted (max_tokens) while generating tool call input for [${toolNames}] — the tool was not executed. ` +
+          `This means the tool call arguments alone exceeded the ${config.maxOutputTokens}-token output budget. ` +
+          `To avoid this: break large write_file calls into a skeleton + edit_file extensions; ` +
+          `never attempt to write a file longer than ~500 lines in a single write_file call. ` +
+          `The session context is intact — retry with a smaller approach.`;
         const truncErrEvent: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: truncErr };
         await this.logEvent(truncErrEvent);
         yield truncErrEvent;
