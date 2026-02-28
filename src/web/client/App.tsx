@@ -79,7 +79,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "agent_to_agent_tool_call") {
+  if (e.type === "tool_call") {
     const inputStr = typeof e.input === "object"
       ? JSON.stringify(e.input, null, 2)
       : String(e.input);
@@ -91,7 +91,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "agent_to_agent_tool_result") {
+  if (e.type === "tool_result") {
     const r = e.result;
     const content = r.type === "text" ? truncate(r.text ?? "") : `[${r.type}]`;
     return (
@@ -155,7 +155,7 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "llm_to_agent") {
+  if (e.type === "llm_response") {
     const line = `stop: ${e.stopReason}  in: ${e.usage.input_tokens}  out: ${e.usage.output_tokens}`;
     return (
       <div class="block api-response">
@@ -197,6 +197,42 @@ function EventBlock(props: { event: WsEvent }) {
 
   if (e.type === "turn_interrupted") {
     return <div class="block interrupt">⊘ Interrupted</div>;
+  }
+
+  if (e.type === "llm_retry") {
+    return (
+      <div class="block info">
+        <div class="block-label">llm retry (attempt {e.attempt})</div>
+        <div class="block-body">{e.error}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "diagnostic_written") {
+    return (
+      <div class="block info">
+        <div class="block-label">diagnostic written</div>
+        <div class="block-body">{e.path}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "context_view_trimmed") {
+    return (
+      <div class="block info">
+        <div class="block-label">context trimmed</div>
+        <div class="block-body">{e.originalMessages} → {e.keptMessages} messages</div>
+      </div>
+    );
+  }
+
+  if (e.type === "session_start") {
+    return (
+      <div class="block info">
+        <div class="block-label">session start</div>
+        <div class="block-body">{e.authMode} · {e.provider} · {e.model}</div>
+      </div>
+    );
   }
 
   return null;

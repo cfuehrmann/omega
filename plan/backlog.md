@@ -25,35 +25,16 @@ Every remaining `status` yield has been replaced with a typed event:
 
 All consumers updated: terminal app, web store, web App.tsx. All tests updated. Gate green.
 
-#### EU-3 — Unify AgentEvent and SessionEvent into one event type
-One discriminated union — call it `OmegaEvent` — replaces both `AgentEvent`
-and `SessionEvent`. Persistence is the default for all variants. A small
-separate `StreamSignal` union covers the two genuinely ephemeral rendering
-primitives: `text` (streaming token fragments) and nothing else (status is
-gone by EU-2).
-
-Design rules agreed:
-- **Events** (`OmegaEvent`): discrete things that happened; always persisted;
-  always rendered (at minimum: event name + timestamp on one line).
-- **Stream signals** (`StreamSignal`): ephemeral rendering primitives; never
-  persisted; the UI consumes them for live streaming display.
-- Name mismatches disappear: one name per concept, used everywhere.
-- The persistence layer writes every `OmegaEvent` to `events.jsonl`. For
-  `llm_response`, content is omitted from the event (it's in `context.jsonl`
-  via FK) — but the UI rendering uses the FK to display it. This is the only
-  field that diverges between in-memory and persisted form, and it is
-  principled: streaming is where persistence and UI legitimately diverge.
-- `session_start` is rendered by the terminal app from `init()` return value
-  (already done today in a different form); make it a proper `OmegaEvent`
-  yielded from `init()` or the startup path.
-
-Acceptance criteria:
-- `src/session-event.ts` and the `AgentEvent` type in `src/agent.ts` merged
-  into a single type (location TBD — probably `src/events.ts`)
-- One switch statement per consumer (terminal renderer, web server)
-- No name mismatches between persisted and streamed events
-- `WsEvent` (web protocol) updated to match
-- Gate green; e2e green
+#### EU-3 — Unify AgentEvent and SessionEvent into one event type — DONE
+`OmegaEvent` (in `src/events.ts`) is now the single unified type. `AgentEvent`
+in `src/agent.ts` is kept as a backward-compat alias. All stream-facing names
+now match the persisted names (authority: `events.jsonl`):
+- `agent_to_agent_tool_call` → `tool_call`
+- `agent_to_agent_tool_result` → `tool_result`
+- `llm_to_agent` → `llm_response`
+Newly-yielded events (`llm_retry`, `diagnostic_written`, `context_view_trimmed`,
+`session_start`) added to all consumers. `WsEvent` in `store.ts` updated to
+match. Terminal renderer and `App.tsx` updated. Gate green; e2e green.
 
 #### EU-4 — UI sync invariant: every OmegaEvent is rendered
 After EU-3, enforce as a development-phase invariant: every variant in
@@ -368,6 +349,7 @@ Acceptance criteria:
 
 ## Closed items
 
+- **EU-3: Unify AgentEvent and SessionEvent into OmegaEvent** — Done. `tool_call`, `tool_result`, `llm_response` are now the canonical event names everywhere. All consumers updated; gate + e2e green.
 - **Test-pollution prevention (layers a–e)** — Done. All five structural layers
   implemented: `bunfig.toml` preload sets `OMEGA_TEST=1` (layer a); `assertNotProductionPath()`
   hard-errors on production writes in tests (layer b); Agent constructor coerces

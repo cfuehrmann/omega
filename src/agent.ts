@@ -8,8 +8,8 @@ import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory } from "./compaction.js";
 import { readWorldState, projectWorldStatePath } from "./world-state.js";
 import { appendContextMessage, buildContextRecord, clearContextStore } from "./context-store.js";
-import { appendSessionEvent, clearSessionEvents, DEFAULT_EVENTS_FILE, type SessionEvent } from "./session-event.js";
-
+import { appendSessionEvent, clearSessionEvents, DEFAULT_EVENTS_FILE } from "./session-event.js";
+import type { OmegaEvent, StreamSignal } from "./events.js";
 
 // --- Types ---
 
@@ -30,23 +30,13 @@ interface ModelResponse {
   usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
 }
 
-export type AgentEvent =
-  | { type: "text"; text: string }
-  | { type: "user_message"; content: string }
-  | { type: "llm_call"; provider: "openai" | "anthropic"; url: string; request: any }
-  | { type: "llm_to_agent"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
-  | { type: "llm_error"; provider: "openai" | "anthropic"; url: string; error: string }
-  | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
-  | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
-  | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
-  | { type: "agent_error"; error: string }
-  | { type: "turn_interrupted" }
-  | { type: "model_changed"; provider: ProviderName; model: string }
-  | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
-  | { type: "oauth_refreshed" }
-  | { type: "session_compacted"; originalCount: number; newCount: number };
+// AgentEvent is now an alias for OmegaEvent | StreamSignal — the unified type.
+// Kept for backward compat with test imports; prefer OmegaEvent | StreamSignal directly.
+export type AgentEvent = OmegaEvent | StreamSignal;
 
 export type ProviderName = "anthropic" | "openai";
+
+export type { OmegaEvent, StreamSignal } from "./events.js";
 
 // --- Auto-approve logic ---
 
@@ -526,8 +516,8 @@ export class Agent {
     return this.eventsFile === undefined ? DEFAULT_EVENTS_FILE : this.eventsFile;
   }
 
-  /** Append a SessionEvent. Returns the promise; caller may await for ordering guarantees. Errors silently dropped. */
-  private logEvent(event: SessionEvent): Promise<void> {
+  /** Append an OmegaEvent to the events file. Returns the promise; caller may await for ordering guarantees. Errors silently dropped. */
+  private logEvent(event: OmegaEvent): Promise<void> {
     const path = this.resolveEventsFile();
     if (path === null) return Promise.resolve();
     return appendSessionEvent(event, path).catch(() => {});
@@ -684,27 +674,27 @@ export class Agent {
     userMessage: string,
     _confirmTool: (name: string, input: any, formatted: string) => Promise<boolean>,
     signal?: AbortSignal
-  ): AsyncGenerator<AgentEvent> {
+  ): AsyncGenerator<OmegaEvent | StreamSignal> {
     if (userMessage.startsWith("/")) {
       const cmd = userMessage.trim().toLowerCase();
       if (cmd === "/sonnet") {
         this.provider = "anthropic";
         this.activeModel = "claude-sonnet-4-6";
-        this.logEvent({ type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-sonnet-4-6" });
-        yield { type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" };
+        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-sonnet-4-6" };
+        this.logEvent(ev); yield ev;
       } else if (cmd === "/opus") {
         this.provider = "anthropic";
         this.activeModel = "claude-opus-4-6";
-        this.logEvent({ type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-opus-4-6" });
-        yield { type: "model_changed", provider: "anthropic", model: "claude-opus-4-6" };
+        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-opus-4-6" };
+        this.logEvent(ev); yield ev;
       } else if (cmd === "/codex") {
         this.provider = "openai";
         this.activeModel = config.fallbackModel as string;
-        this.logEvent({ type: "model_changed", ts: new Date().toISOString(), provider: "openai", model: this.activeModel });
-        yield { type: "model_changed", provider: "openai", model: this.activeModel };
+        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "openai", model: this.activeModel };
+        this.logEvent(ev); yield ev;
       } else if (cmd === "/compact") {
         if (this.llmMessageLog.length === 0) {
-          yield { type: "agent_error", error: "Nothing to compact — history is empty." };
+          yield { type: "agent_error", ts: new Date().toISOString(), error: "Nothing to compact — history is empty." };
           return;
         }
         try {
@@ -714,9 +704,8 @@ export class Agent {
             provider,
             this.activeModel,
           );
-          if (newCount === originalCount) {
-            yield { type: "session_compacted", originalCount, newCount };
-          } else {
+          const ev: OmegaEvent = { type: "session_compacted", ts: new Date().toISOString(), originalCount, newCount };
+          if (newCount !== originalCount) {
             this.llmMessageLog = newHistory as Anthropic.MessageParam[];
             // Rewrite context file to match the new shorter history.
             // Also rebuild llmMessageHashes in parallel with the new log.
@@ -728,15 +717,15 @@ export class Agent {
               const hash = await appendContextMessage(msg, this.contextFile ?? undefined);
               this.llmMessageHashes.push(hash);
             }
-            this.logEvent({ type: "session_compacted", ts: new Date().toISOString(), originalCount, newCount });
-            yield { type: "session_compacted", originalCount, newCount };
+            this.logEvent(ev);
           }
+          yield ev;
         } catch (err: any) {
-          yield { type: "agent_error", error: `Compaction failed: ${err.message}` };
+          yield { type: "agent_error", ts: new Date().toISOString(), error: `Compaction failed: ${err.message}` };
         }
         return;
       } else {
-        yield { type: "agent_error", error: `Unknown command: ${userMessage}` };
+        yield { type: "agent_error", ts: new Date().toISOString(), error: `Unknown command: ${userMessage}` };
       }
       return;
     }
@@ -744,10 +733,9 @@ export class Agent {
     await this.appendToHistory({ role: "user", content: userMessage });
     // Await the event write so user_message is guaranteed to appear in events.jsonl
     // before the llm_call event that follows. logEvent is otherwise fire-and-forget.
-    await this.logEvent({ type: "user_message", ts: new Date().toISOString(), content: userMessage });
-
-    // Emit user message event for UI display
-    yield { type: "user_message", content: userMessage };
+    const userMessageEvent: OmegaEvent = { type: "user_message", ts: new Date().toISOString(), content: userMessage };
+    await this.logEvent(userMessageEvent);
+    yield userMessageEvent;
 
 
 
@@ -789,7 +777,7 @@ export class Agent {
         : basePrompt;
 
       if (this.provider === "openai" && !fallbackEnabled) {
-        yield { type: "agent_error", error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
+        yield { type: "agent_error", ts: new Date().toISOString(), error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
         return;
       }
 
@@ -822,7 +810,7 @@ export class Agent {
       // cachedMessages adds cache_control to the last message for Anthropic caching.
       const apiView = buildApiMessages(this.llmMessageLog, apiBudget);
       if (apiView.length < this.llmMessageLog.length) {
-        this.logEvent({
+        const trimmedEv: OmegaEvent = {
           type: "context_view_trimmed",
           ts: new Date().toISOString(),
           originalMessages: this.llmMessageLog.length,
@@ -831,7 +819,9 @@ export class Agent {
           estimatedTokensBefore: this.llmMessageLog.reduce((s, m) => s + estimateTokens(m), 0),
           estimatedTokensAfter: apiView.reduce((s, m) => s + estimateTokens(m), 0),
           reason: "token_budget",
-        });
+        };
+        this.logEvent(trimmedEv);
+        yield trimmedEv;
       }
       const cachedMessages = addCacheControlToLastMessage(apiView);
 
@@ -839,7 +829,8 @@ export class Agent {
       // apiView back to its stored content hash via object-reference identity.
       const contextHashes = this.contextHashesForView(apiView);
 
-      // Emit llm_call with a snapshot of the params before each call
+      // Emit llm_call with a snapshot of the params before each call.
+      // `request` is a UI-only field (stripped by toPersistedEvent before disk write).
       if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
           apiView,
@@ -847,14 +838,17 @@ export class Agent {
           activeModel,
           config.maxOutputTokens
         );
-        yield {
+        const llmCallEv: OmegaEvent = {
           type: "llm_call",
+          ts: new Date().toISOString(),
           provider: "openai",
           url: getOpenAiUrl(),
+          model: activeModel,
+          contextHashes,
           request: openAiRequest,
-        } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), model: activeModel, contextHashes });
-
+        };
+        this.logEvent(llmCallEv);
+        yield llmCallEv;
       } else {
         const request = {
           model: activeModel,
@@ -863,13 +857,17 @@ export class Agent {
           tools: cachedTools,
           messages: [...cachedMessages],
         };
-        yield {
+        const llmCallEv: OmegaEvent = {
           type: "llm_call",
+          ts: new Date().toISOString(),
           provider: "anthropic",
           url: "https://api.anthropic.com/v1/messages",
+          model: activeModel,
+          contextHashes,
           request,
-        } as AgentEvent;
-        this.logEvent({ type: "llm_call", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: activeModel, contextHashes });
+        };
+        this.logEvent(llmCallEv);
+        yield llmCallEv;
       }
 
       // Call API with retry
@@ -894,11 +892,10 @@ export class Agent {
             lastError = err;
             if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
               const waitMs = getOpenAiRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-              this.logEvent({ type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "openai", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
-              yield {
-                type: "agent_error",
-                error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
-              };
+              const retryEv: OmegaEvent = { type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "openai", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message };
+              this.logEvent(retryEv);
+              yield retryEv;
+              yield { type: "agent_error", ts: new Date().toISOString(), error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})` };
               await sleep(waitMs, signal);
               continue;
             }
@@ -916,17 +913,16 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
+              const diagEv: OmegaEvent = { type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath };
+              this.logEvent(diagEv);
+              yield diagEv;
             }
-            yield {
-              type: "llm_error",
-              provider: "openai",
-              url: getOpenAiUrl(),
-              error: err.message ?? String(err),
-            } as AgentEvent;
-            this.logEvent({ type: "llm_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
-            this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." });
-            yield { type: "agent_error", error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
+            const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
+            this.logEvent(llmErrEv);
+            yield llmErrEv;
+            const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
+            this.logEvent(rateLimitEv);
+            yield rateLimitEv;
             return;
           }
         }
@@ -972,8 +968,9 @@ export class Agent {
           if (aborted) {
             // Don't add the partial assistant turn to history.
             // The user message stays — it was real input.
-            this.logEvent({ type: "turn_interrupted", ts: new Date().toISOString() });
-            yield { type: "turn_interrupted" };
+            const interruptEv: OmegaEvent = { type: "turn_interrupted", ts: new Date().toISOString() };
+            this.logEvent(interruptEv);
+            yield interruptEv;
             return;
           }
 
@@ -985,32 +982,29 @@ export class Agent {
 
           if (isAuthExpired(err) && attempt === 0) {
             // OAuth token expired or revoked mid-session — try to refresh and retry once
-            this.logEvent({ type: "oauth_token_expired", ts: new Date().toISOString(), attempt: attempt + 1, httpStatus: err.status ?? err.statusCode });
-            yield { type: "oauth_token_expired", attempt: attempt + 1, httpStatus: err.status ?? err.statusCode };
+            const expiredEv: OmegaEvent = { type: "oauth_token_expired", ts: new Date().toISOString(), attempt: attempt + 1, httpStatus: err.status ?? err.statusCode };
+            this.logEvent(expiredEv);
+            yield expiredEv;
             const reauthed = await this.reinitAuth();
             if (reauthed) {
               // reinitAuth already logs oauth_refreshed; yield it for the UI too
-              yield { type: "oauth_refreshed" };
+              yield { type: "oauth_refreshed", ts: new Date().toISOString() };
               // Loop continues — the next iteration will use the fresh client
             } else {
-              yield {
-                type: "llm_error",
-                provider: "anthropic",
-                url: "https://api.anthropic.com/v1/messages",
-                error: err.message ?? String(err),
-              } as AgentEvent;
-              this.logEvent({ type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
-              this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: "OAuth token expired and refresh failed." });
-              yield { type: "agent_error", error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
+              const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
+              this.logEvent(llmErrEv);
+              yield llmErrEv;
+              const authFailEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
+              this.logEvent(authFailEv);
+              yield authFailEv;
               return;
             }
           } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-            this.logEvent({ type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "anthropic", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message });
-            yield {
-              type: "agent_error",
-              error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
-            };
+            const retryEv: OmegaEvent = { type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "anthropic", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message };
+            this.logEvent(retryEv);
+            yield retryEv;
+            yield { type: "agent_error", ts: new Date().toISOString(), error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})` };
             await sleep(waitMs, signal);
           } else if (
             (err.status === 400 &&
@@ -1038,15 +1032,14 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
+              const diagEv: OmegaEvent = { type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath };
+              this.logEvent(diagEv);
+              yield diagEv;
             }
             // Halve the budget each retry to force more aggressive truncation.
             // llmMessageLog is never mutated — apiBudget controls the next apiView.
             apiBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
-            yield {
-              type: "agent_error",
-              error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})`,
-            };
+            yield { type: "agent_error", ts: new Date().toISOString(), error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})` };
           } else {
             // Write a diagnostic snapshot for non-retryable errors so the next
             // session has hard data (exact request + history) to anchor debugging.
@@ -1065,21 +1058,21 @@ export class Agent {
               this.diagDir,
             );
             if (diagPath) {
-              this.logEvent({ type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath });
+              const diagEv: OmegaEvent = { type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath };
+              this.logEvent(diagEv);
+              yield diagEv;
             }
-            yield {
-              type: "llm_error",
-              provider: "anthropic",
-              url: "https://api.anthropic.com/v1/messages",
-              error: err.message ?? String(err),
-            } as AgentEvent;
-            this.logEvent({ type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode });
+            const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
+            this.logEvent(llmErrEv);
+            yield llmErrEv;
             if (isRetryable(err)) {
-              this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit." });
-              yield { type: "agent_error", error: "Anthropic rate limit. Try /codex to switch providers." };
+              const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Try /codex to switch providers." };
+              this.logEvent(rateLimitEv);
+              yield rateLimitEv;
             } else {
-              this.logEvent({ type: "agent_error", ts: new Date().toISOString(), error: `API error: ${err.message ?? err}` });
-              yield { type: "agent_error", error: `API error: ${err.message ?? err}` };
+              const apiErrEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: `API error: ${err.message ?? err}` };
+              this.logEvent(apiErrEv);
+              yield apiErrEv;
             }
             return;
           }
@@ -1088,7 +1081,7 @@ export class Agent {
       }
 
       if (!response) {
-        yield { type: "agent_error", error: `API error after 5 retries: ${lastError?.message ?? lastError}` };
+        yield { type: "agent_error", ts: new Date().toISOString(), error: `API error after 5 retries: ${lastError?.message ?? lastError}` };
         return;
       }
 
@@ -1123,25 +1116,12 @@ export class Agent {
 
       const totalMs = performance.now() - startTime;
 
-      // Emit LLM response event for UI display
-      yield {
-        type: "llm_to_agent",
-        provider: useOpenAi ? "openai" : "anthropic",
-        url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
-        stopReason: response.stop_reason ?? "unknown",
-        usage: {
-          input_tokens: response.usage.input_tokens ?? 0,
-          output_tokens: response.usage.output_tokens,
-        },
-        content: response.content,
-        raw: useOpenAi ? (response as any).raw : undefined,
-      };
       // Add assistant response to history; capture hash for llm_response + tool_call events.
-      // logEvent(llm_response) is moved to after appendToHistory so that:
-      //   1. the context.jsonl record is on disk before the event references it, and
-      //   2. llm_response can carry contextHash as a direct FK into context.jsonl.
+      // appendToHistory is awaited so the context.jsonl record is on disk before
+      // logEvent(llm_response) fires (which carries contextHash as a FK).
       const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
-      this.logEvent({
+      // Unified llm_response event: logged (without UI-only fields) and yielded (with them).
+      const llmResponseEvent: OmegaEvent = {
         type: "llm_response",
         ts: new Date().toISOString(),
         provider: useOpenAi ? "openai" : "anthropic",
@@ -1155,7 +1135,12 @@ export class Agent {
           cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? undefined,
         },
         contextHash: assistantHash,
-      });
+        // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):
+        content: response.content,
+        raw: useOpenAi ? (response as any).raw : undefined,
+      };
+      this.logEvent(llmResponseEvent);
+      yield llmResponseEvent;
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
@@ -1172,14 +1157,19 @@ export class Agent {
         for (const toolUse of toolUseBlocks) {
           const formatted = formatToolCall(toolUse.name, toolUse.input);
           formattedCalls.push({ toolUse, formatted });
-          yield {
-            type: "agent_to_agent_tool_call",
+          // Unified tool_call event: logged (without UI-only fields) and yielded (with them).
+          const toolCallEvent: OmegaEvent = {
+            type: "tool_call",
+            ts: new Date().toISOString(),
             id: toolUse.id,
             name: toolUse.name,
+            contextHash: assistantHash,
+            // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):
             input: toolUse.input,
             formatted,
-          } as AgentEvent;
-          this.logEvent({ type: "tool_call", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, contextHash: assistantHash });
+          };
+          this.logEvent(toolCallEvent);
+          yield toolCallEvent;
         }
 
         // Execute all tools concurrently
@@ -1194,14 +1184,6 @@ export class Agent {
           toolCallsThisTurn.push(toolUse.name);
           allToolCalls.push(toolUse.name);
 
-          yield {
-            type: "agent_to_agent_tool_result",
-            id: toolUse.id,
-            name: toolUse.name,
-            formatted,
-            result,
-          } as AgentEvent;
-
           toolResults.push({
             type: "tool_result",
             tool_use_id: toolUse.id,
@@ -1213,9 +1195,23 @@ export class Agent {
         // Add tool results to history; capture hash for tool_result events
         const toolResultHash = await this.appendToHistory({ role: "user", content: toolResults });
         for (let i = 0; i < formattedCalls.length; i++) {
-          const { toolUse } = formattedCalls[i];
+          const { toolUse, formatted } = formattedCalls[i];
           const result = results[i];
-          this.logEvent({ type: "tool_result", ts: new Date().toISOString(), id: toolUse.id, name: toolUse.name, isError: result.isError, durationMs: result.durationMs, contextHash: toolResultHash });
+          // Unified tool_result event: logged (without UI-only fields) and yielded (with them).
+          const toolResultEvent: OmegaEvent = {
+            type: "tool_result",
+            ts: new Date().toISOString(),
+            id: toolUse.id,
+            name: toolUse.name,
+            isError: result.isError,
+            durationMs: result.durationMs,
+            contextHash: toolResultHash,
+            // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):
+            result,
+            formatted,
+          };
+          this.logEvent(toolResultEvent);
+          yield toolResultEvent;
         }
         continueLoop = true;
       }
@@ -1235,14 +1231,16 @@ export class Agent {
       cacheCreationTokens: totalCacheCreationTokens,
       cacheReadTokens: totalCacheReadTokens,
     };
-    this.logEvent({ type: "turn_end", ts: new Date().toISOString(), provider: endProvider, model: endModel, metrics: turnEndMetrics, toolCalls: allToolCalls });
-    yield {
+    const turnEndEvent: OmegaEvent = {
       type: "turn_end",
-      metrics: turnEndMetrics,
-      toolCalls: allToolCalls,
+      ts: new Date().toISOString(),
       provider: endProvider,
       model: endModel,
+      metrics: turnEndMetrics,
+      toolCalls: allToolCalls,
     };
+    this.logEvent(turnEndEvent);
+    yield turnEndEvent;
 
   }
 }

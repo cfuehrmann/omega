@@ -6,6 +6,24 @@ relevant work stabilises.
 
 ---
 
+## Event naming — persisted names are authoritative
+
+`events.jsonl` is the single source of truth for event type names. When
+`AgentEvent` stream names and `SessionEvent` persisted names conflict, the
+**persisted name wins**. Stream-facing consumers (terminal, web UI, WebSocket
+protocol) must be updated to match — never the other way around.
+
+Rationale: renaming persisted event types breaks existing `events.jsonl` files
+and any reader tooling. The stream is ephemeral; the log is the contract.
+
+Concretely (as of EU-3): the `AgentEvent` variants that previously used
+coordinate-system names (`agent_to_agent_tool_call`, `agent_to_agent_tool_result`,
+`llm_to_agent`) are renamed to match the persisted names (`tool_call`,
+`tool_result`, `llm_response`) in the unified `OmegaEvent`. The `WsEvent` web
+protocol follows the same names.
+
+---
+
 ## UI sync invariant
 
 **Every variant of `OmegaEvent` must be rendered in the terminal UI and the

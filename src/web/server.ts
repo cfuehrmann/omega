@@ -1,7 +1,7 @@
 /**
  * Web application server — Bun HTTP + WebSocket.
  *
- * Serves the static web UI from src/web/public/ and streams AgentEvent
+ * Serves the static web UI from src/web/public/ and streams OmegaEvent
  * objects as JSON over a WebSocket connection. Accepts user messages back
  * over the same socket.
  *
@@ -10,7 +10,7 @@
  *   { type: "abort" }                       — abort the current turn
  *
  * Protocol (server → client):
- *   All AgentEvent shapes from agent.ts, JSON-serialised.
+ *   All OmegaEvent shapes from events.ts, JSON-serialised.
  *   Extra: { type: "connected" }            — sent on WebSocket open
  *          { type: "auth", mode: string }   — auth result
  *          { type: "turn_ready" }           — server ready for next message
@@ -21,7 +21,7 @@ import { readFileSync, existsSync } from "fs";
 import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
 
-import type { AgentEvent } from "../agent.js";
+import type { OmegaEvent } from "../events.js";
 import { loadSession, saveSession, clearSession } from "./session-store.js";
 
 const PORT = Number(process.env.PORT ?? 3000);

@@ -21,14 +21,19 @@ type WsEvent =
   | { type: "reset_done" }
   | { type: "user_message"; content: string }
   | { type: "text"; text: string }
-  | { type: "agent_to_agent_tool_call"; id: string; name: string; input: unknown }
-  | { type: "agent_to_agent_tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
+  // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
+  | { type: "session_start"; authMode: string; model: string; provider: string }
+  | { type: "tool_call"; id: string; name: string; input: unknown; formatted?: string }
+  | { type: "tool_result"; id: string; name: string; result?: { type: string; text?: string; is_error?: boolean }; formatted?: string; isError: boolean }
+  | { type: "llm_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content?: unknown[]; raw?: unknown }
+  | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; request?: unknown }
+  | { type: "llm_retry"; attempt: number; provider: string; waitMs: number; error: string }
+  | { type: "diagnostic_written"; path: string }
+  | { type: "context_view_trimmed"; originalMessages: number; keptMessages: number; droppedMessages: number }
   | { type: "model_changed"; provider: string; model: string }
   | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed" }
   | { type: "session_compacted"; originalCount: number; newCount: number }
-  | { type: "llm_call"; provider: string; url: string; request: unknown }
-  | { type: "llm_to_agent"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
   | { type: "llm_error"; provider: string; error: string }
@@ -183,14 +188,18 @@ export function dispatch(event: WsEvent): void {
       setState("streaming", false);
       break;
 
-    case "agent_to_agent_tool_call":
-    case "agent_to_agent_tool_result":
+    case "session_start":
+    case "tool_call":
+    case "tool_result":
+    case "llm_response":
+    case "llm_call":
+    case "llm_retry":
+    case "diagnostic_written":
+    case "context_view_trimmed":
     case "model_changed":
     case "oauth_token_expired":
     case "oauth_refreshed":
     case "session_compacted":
-    case "llm_call":
-    case "llm_to_agent":
     case "world_state_saved":
     case "llm_error":
     case "agent_error":

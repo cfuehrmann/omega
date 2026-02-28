@@ -175,7 +175,7 @@ export async function runApp(): Promise<void> {
             ));
             break;
 
-          case "llm_to_agent":
+          case "llm_response":
             if (streamingStarted) {
               println("");
               streamingStarted = false;
@@ -231,16 +231,37 @@ export async function runApp(): Promise<void> {
             fullText += event.text;
             break;
 
-          case "agent_to_agent_tool_call":
+          case "tool_call":
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolStart(event.name, event.input, event.id));
             break;
 
-          case "agent_to_agent_tool_result": {
+          case "tool_result": {
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolResult(event.result, event.id));
             break;
           }
+
+          case "llm_retry":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Retrying (attempt ${event.attempt})… ${event.error}`)]);
+            break;
+
+          case "diagnostic_written":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Diagnostic written: ${event.path}`)]);
+            break;
+
+          case "context_view_trimmed":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Context trimmed: ${event.originalMessages} → ${event.keptMessages} messages`)]);
+            break;
+
+          case "session_start":
+            // session_start is logged at init() time; if streamed, show it compactly
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Session started (${event.authMode})`)]);
+            break;
 
           case "turn_end": {
             if (streamingStarted) {
