@@ -122,14 +122,31 @@ export async function runApp(): Promise<void> {
   let isStreaming = false;
   let shuttingDown = false;
 
+  async function readClipboard(): Promise<string> {
+    try {
+      const proc = Bun.spawnSync(["wl-paste", "--no-newline"], { stderr: "ignore" });
+      if (proc.exitCode !== 0) return "";
+      return proc.stdout.toString();
+    } catch {
+      return "";
+    }
+  }
+
   async function handleSubmit(line: string): Promise<void> {
     println("");
 
-    const trimmed = line.trim();
+    let trimmed = line.trim();
     if (!trimmed) {
-      printBlock(now(), [dim("(empty input — type a message)")]);
-      printPrompt(bold(green("❯ ")));
-      return;
+      const clipboard = (await readClipboard()).trim();
+      if (!clipboard) {
+        printBlock(now(), [dim("(empty input and clipboard — type a message or copy something)")]);
+        printPrompt(bold(green("❯ ")));
+        return;
+      }
+      // Echo the clipboard content as if typed, then submit it
+      process.stdout.write(clipboard);
+      println("");
+      trimmed = clipboard;
     }
     if (isStreaming) {
       printPrompt(bold(green("❯ ")));

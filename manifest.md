@@ -124,3 +124,39 @@ See `plan/backlog.md` § "Schema lock" for the ordered sub-steps (3e-iv through 
 
 ### 3f — Session resume — TODO (depends on schema lock)
 On startup, if a `.prev` session exists, offer to resume it.
+
+## Input decoupling
+
+### Immediate feature: Enter-on-empty pastes clipboard
+When the user presses Enter with an empty input buffer, Omega reads the system
+clipboard (via `wl-paste` on Wayland/Linux) and submits that text instead.
+If the clipboard is also empty or whitespace, print a warning. The pasted text
+is echoed to the terminal exactly as if the user had typed it. No hint is shown
+at the prompt — the behaviour is silent but documented here.
+
+Rationale: the operator prefers composing messages in a dedicated editor. The
+workflow is: write in editor → copy → press Enter in Omega. This removes all
+friction from that loop.
+
+Platform: Wayland/Linux (`wl-paste`). WSL2 and macOS not supported yet; will
+iterate if needed.
+
+### Long-term goal: remove the built-in line editor
+`src/terminal/input.ts` is ~400 lines of complex Unicode/ANSI line-editing code
+(wide characters, wrapped-line redraws, bracketed paste, word-boundary movement).
+Once the clipboard workflow is the primary input path, almost none of this is
+exercised for real messages. Only slash commands (≤10 chars) need inline editing.
+
+The long-term direction is to replace the full line editor with a minimal
+raw-mode loop — or even Node's built-in `readline` — that handles only:
+single-line input, backspace, Enter. ~50 lines instead of ~400.
+
+This is a separate refactor, not part of the immediate feature. Prerequisites:
+- Enter-on-empty clipboard paste is in place and working.
+- The operator is satisfied that the clipboard workflow fully replaces inline
+  editing for real messages.
+- A deliberate decision is made to drop multi-line bracketed paste into the
+  prompt (currently supported, would be removed).
+
+Until then, `input.ts` remains unchanged. The immediate feature adds only a
+clipboard-read code path in `app.ts`, touching nothing in `input.ts`.
