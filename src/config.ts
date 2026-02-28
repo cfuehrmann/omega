@@ -1,7 +1,9 @@
+const MAX_OUTPUT_TOKENS = 32768;
+
 export const config = {
   model: "claude-sonnet-4-6",
   fallbackModel: "gpt-5.2-codex", // no auto-fallback; used for /codex
-  maxOutputTokens: 8192,
+  maxOutputTokens: MAX_OUTPUT_TOKENS,
   maxContextTokens: 100_000,
 
   // All tool calls are auto-approved — no allowlist needed.
@@ -50,6 +52,14 @@ export const config = {
     "process that must stay alive while you do other work.",
     "Chain independent tool calls in parallel when results don't depend on each other.",
     "If a `Justfile` exists at the repo root, run `just --list` to discover available recipes.",
+    "",
+    "## Output token budget",
+    "",
+    `The output token budget is ${MAX_OUTPUT_TOKENS} tokens per response. Tool call arguments count`,
+    "against this budget. Very large write_file calls (files longer than ~500 lines or",
+    "~20 000 characters) risk hitting the limit and being cut off mid-generation, which",
+    "leaves a broken turn. For large new files: write a skeleton first, then extend with",
+    "edit_file. For large existing files: always prefer edit_file over a full rewrite.",
     "",
     "## Design discipline",
     "",
