@@ -8,10 +8,10 @@
 import { Agent } from "../agent.js";
 import { config } from "../config.js";
 import { formatTurnFooter } from "../turn-footer.js";
-import { checkDiagnostics } from "../diagnosis.js";
-
+import { readFile } from "fs/promises";
+import { prevPath } from "../context-store.js";
 import { clearContextStore } from "../context-store.js";
-import { clearEvents } from "../event-store.js";
+import { clearEvents, DEFAULT_EVENTS_FILE } from "../event-store.js";
 import { exhaustiveCheck } from "../events.js";
 import {
   bold, dim, green, red, yellow,
@@ -62,10 +62,11 @@ function setupRawInput(
 // Shutdown
 // ---------------------------------------------------------------------------
 
-/** Clean exit — exits immediately, no LLM calls. */
-function shutdown(code: number = 0): never {
+/** Clean exit — flushes session_end event, then exits. */
+async function shutdown(agent: Agent | null, code: number = 0): Promise<never> {
   process.stdout.write("\r\x1b[2K");
   process.stdout.write("\x1b[?2004l");
+  if (agent) await agent.emitSessionEnd("clean").catch(() => {});
   process.exit(code);
 }
 
@@ -89,15 +90,27 @@ export async function runApp(): Promise<void> {
     printBlock(now(), [red(`⚠ Auth error: ${err.message}`)]);
   }
 
-  // Warn if any diagnostic snapshots exist from prior crashed sessions
-  const diagFiles = await checkDiagnostics();
-  if (diagFiles.length > 0) {
-    printBlock(now(), [
-      yellow(`⚠ Diagnostic snapshot(s) from a previous crash:`),
-      ...diagFiles.map(f => yellow(`  ${f}`)),
-      yellow(`  Read these files before debugging the error.`),
-      yellow(`  Delete them once the issue is resolved.`),
-    ]);
+  // Warn if the previous session ended abnormally (no session_end, or outcome = "error").
+  const prevEventsPath = prevPath(DEFAULT_EVENTS_FILE);
+  try {
+    const raw = await readFile(prevEventsPath, "utf-8");
+    const lines = raw.trim().split("\n").filter(Boolean);
+    if (lines.length > 0) {
+      const last = JSON.parse(lines[lines.length - 1]);
+      if (last.type !== "session_end") {
+        printBlock(now(), [
+          yellow(`⚠ Previous session has no session_end — it may have crashed.`),
+          yellow(`  Inspect ${prevEventsPath} and ${prevPath("sessions/context.jsonl")} for details.`),
+        ]);
+      } else if (last.outcome === "error") {
+        printBlock(now(), [
+          yellow(`⚠ Previous session ended with an error: ${last.reason ?? "(no reason)"}`),
+          yellow(`  Inspect ${prevEventsPath} for details.`),
+        ]);
+      }
+    }
+  } catch {
+    // No previous session file — nothing to warn about.
   }
 
   await agent.loadWorldState().catch(() => {});
@@ -254,15 +267,16 @@ export async function runApp(): Promise<void> {
             printBlock(now(), [dim(`Retrying (attempt ${event.attempt})… ${event.error}`)]);
             break;
 
-          case "diagnostic_written":
-            if (streamingStarted) { println(""); streamingStarted = false; }
-            printBlock(now(), [dim(`Diagnostic written: ${event.path}`)]);
-            break;
-
           case "session_start":
             // session_start is logged at init() time; if streamed, show it compactly
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), [dim(`Session started (${event.authMode})`)]);
+            break;
+
+          case "session_end":
+            // session_end is emitted at shutdown; normally not visible in the stream
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Session ended (${event.outcome})`)]);
             break;
 
           case "turn_end": {
@@ -281,12 +295,6 @@ export async function runApp(): Promise<void> {
             );
             printBlock(now(), [turnLine]);
             printBlock(now(), [sessionLine]);
-            // If diagnostic snapshots exist, remind the operator after every turn
-            const diagFiles = await checkDiagnostics();
-            if (diagFiles.length > 0) {
-              const names = diagFiles.map(f => f.replace(/^diagnosis\//, "").replace(/\.json$/, ""));
-              printBlock(now(), [red(`⚠ ${diagFiles.length} diagnostic snapshot(s): ${names.join(", ")}`)]);
-            }
             break;
           }
 
@@ -327,7 +335,7 @@ export async function runApp(): Promise<void> {
     process.stdin.setRawMode?.(false);
     process.stdin.pause();
     if (abortController) { abortController.abort(); abortController = null; }
-    shutdown(0);
+    shutdown(agent, 0);
   }
 
   process.once("SIGINT",  initiateShutdown);

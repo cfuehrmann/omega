@@ -40,6 +40,18 @@ export interface SessionStartEvent {
   model: string;
   provider: ProviderName;
   authMode: string;
+  /** The full system prompt text at session start. */
+  systemPrompt: string;
+}
+
+/** The session ended cleanly. Absence of this event means the session crashed. */
+export interface SessionEndEvent {
+  type: "session_end";
+  ts: string;
+  /** "clean" = normal shutdown; "error" = session ended due to a hard error. */
+  outcome: "clean" | "error";
+  /** Human-readable reason, e.g. the error message on "error" outcome. */
+  reason?: string;
 }
 
 /** A user message submitted to the agent. */
@@ -62,6 +74,13 @@ export interface LlmCallEvent {
    * entries in `context.jsonl`. Reflects the truncated view, not the full log.
    */
   contextHashes: string[];
+  /**
+   * Index (0-based) of the message in the sent context that received the
+   * `cache_control: { type: "ephemeral" }` breakpoint for Anthropic prompt
+   * caching. Always the last message index (contextHashes.length - 1) when
+   * provider is "anthropic". Null for OpenAI (no prompt caching).
+   */
+  cacheBreakpointIndex: number | null;
   /** Snapshot of the full request object (Anthropic or OpenAI). UI only — not persisted. */
   request?: any;
 }
@@ -227,12 +246,7 @@ export interface LlmRetryEvent {
   error: string;
 }
 
-/** A diagnostic snapshot was written to disk. */
-export interface DiagnosticWrittenEvent {
-  type: "diagnostic_written";
-  ts: string;
-  path: string;
-}
+
 
 /** The operator switched the active model/provider via a slash command. */
 export interface ModelChangedEvent {
@@ -268,6 +282,7 @@ export function exhaustiveCheck(x: never): never {
 
 export type OmegaEvent =
   | SessionStartEvent
+  | SessionEndEvent
   | UserMessageEvent
   | LlmCallEvent
   | LlmResponseEvent
@@ -286,5 +301,4 @@ export type OmegaEvent =
   | OauthRefreshedEvent
   | OauthTokenExpiredEvent
   | LlmRetryEvent
-  | DiagnosticWrittenEvent
   | ModelChangedEvent;

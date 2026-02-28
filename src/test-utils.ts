@@ -16,7 +16,7 @@ import { callOpenAi } from "./openai.js";
 /**
  * Create an Agent suitable for unit tests.
  *
- * All production file paths (diagDir, contextFile, eventsFile) are set to
+ * All production file paths (contextFile, eventsFile) are set to
  * null — no files will be written regardless of OMEGA_TEST.
  *
  * @param streamProvider  Optional mock stream provider. If omitted, any API
@@ -33,7 +33,6 @@ export function makeTestAgent(
     streamProvider,
     null,          // _sessionDir (unused legacy positional)
     openAiCaller,  // undefined → real callOpenAi, but paths are null so no writes
-    null,          // diagDir
     null,          // contextFile
     null,          // eventsFile
   );

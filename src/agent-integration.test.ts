@@ -127,12 +127,11 @@ function makeTempDir(): string {
 // These tests prove the contract: when a streamProvider is given without
 // explicit paths, Agent must NOT write to any production file.
 describe("Agent — test isolation (no production file pollution)", () => {
-  it("does not write to sessions/ or diagnosis/ during a turn (mock provider isolation)", async () => {
+  it("does not write to sessions/ during a turn (mock provider isolation)", async () => {
     const { existsSync, readdirSync: rds } = await import("fs");
 
     const countFiles = (dir: string) => existsSync(dir) ? rds(dir).length : 0;
     const beforeSessions = countFiles("sessions");
-    const beforeDiag = countFiles("diagnosis");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
@@ -142,7 +141,6 @@ describe("Agent — test isolation (no production file pollution)", () => {
     await Bun.sleep(100);
 
     expect(countFiles("sessions")).toBe(beforeSessions);
-    expect(countFiles("diagnosis")).toBe(beforeDiag);
   });
 
   it("does not write to sessions/context.jsonl when no contextFile is given", async () => {
@@ -184,7 +182,7 @@ describe("Agent — test isolation (no production file pollution)", () => {
     });
 
     // Must pass null, null explicitly to disable production file writes
-    const agent = new Agent(undefined, null, openAiCaller as any, null, null, null);
+    const agent = new Agent(undefined, null, openAiCaller as any, null, null);
     agent.setProvider("openai");
     await collectEvents(agent, "hello");
     await Bun.sleep(100);

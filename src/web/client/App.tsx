@@ -277,19 +277,19 @@ function EventBlock(props: { event: WsEvent }) {
         </div>
       );
 
-    case "diagnostic_written":
-      return (
-        <div class="block info">
-          <div class="block-label">diagnostic written</div>
-          <div class="block-body">{e.path}</div>
-        </div>
-      );
-
     case "session_start":
       return (
         <div class="block info">
           <div class="block-label">session start</div>
           <div class="block-body">{e.authMode} · {e.provider} · {e.model}</div>
+        </div>
+      );
+
+    case "session_end":
+      return (
+        <div class="block info">
+          <div class="block-label">session end</div>
+          <div class="block-body">{e.outcome}{e.reason ? ` — ${e.reason}` : ""}</div>
         </div>
       );
 

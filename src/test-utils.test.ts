@@ -57,10 +57,10 @@ describe("makeTestAgent", () => {
     expect(events).toContain("turn_end");
   });
 
-  it("does not write to sessions/ or diagnosis/ during a turn", async () => {
+  it("does not write to sessions/ during a turn", async () => {
     // Layer b (assertNotProductionPath) would throw synchronously if any write
-    // to sessions/ or diagnosis/ were attempted. The turn completing without
-    // error is sufficient proof.
+    // to sessions/ were attempted. The turn completing without error is
+    // sufficient proof.
     const agent = makeTestAgent(makeMinimalProvider("safe"));
     const events = [];
     for await (const event of agent.sendMessage("test")) {

@@ -3,7 +3,6 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
 
-import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory, AUTO_COMPACT_THRESHOLD } from "./compaction.js";
 import { readWorldState, projectWorldStatePath } from "./world-state.js";
@@ -310,9 +309,6 @@ export class Agent {
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
   private readonly retryMaxAttempts = Number(process.env.OMEGA_RETRY_ATTEMPTS ?? 5);
 
-  /** Diagnostic output directory. null = disabled (tests). undefined = use default ("diagnosis/"). */
-  private readonly diagDir: string | null | undefined;
-
   /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly contextFile: string | null | undefined;
 
@@ -343,7 +339,6 @@ export class Agent {
     streamProvider?: StreamProvider,
     _sessionDir?: string | null,
     openAiCaller: typeof callOpenAi = callOpenAi,
-    diagDir?: string | null,
     contextFile?: string | null,
     eventsFile?: string | null
   ) {
@@ -360,12 +355,6 @@ export class Agent {
     // production defaults.
     const inTestEnv = process.env.OMEGA_TEST === "1";
 
-    // Diagnostics: disable in test env unless explicitly set; or if mock provider given.
-    if ((inTestEnv || streamProvider !== undefined) && diagDir === undefined) {
-      this.diagDir = null;
-    } else {
-      this.diagDir = diagDir;
-    }
     // Context file: disable in test env unless explicitly set; or if mock provider given.
     if ((inTestEnv || streamProvider !== undefined) && contextFile === undefined) {
       this.contextFile = null;
@@ -390,6 +379,15 @@ export class Agent {
     const path = this.resolveEventsFile();
     if (path === null) return Promise.resolve();
     return appendEvent(event, path).catch(() => {});
+  }
+
+  /**
+   * Write a session_end event and await the flush.
+   * Call this at clean shutdown before process.exit().
+   * A crash/SIGKILL will leave no session_end — that absence is the crash signal.
+   */
+  async emitSessionEnd(outcome: "clean" | "error", reason?: string): Promise<void> {
+    await this.logEvent({ type: "session_end", ts: new Date().toISOString(), outcome, ...(reason ? { reason } : {}) });
   }
 
   /**
@@ -482,18 +480,28 @@ export class Agent {
         },
       });
       this.authMode = "oauth";
-      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "claude-max" });
+      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "claude-max", systemPrompt: this.buildSystemPrompt() });
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";
-      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "api-key" });
+      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "api-key", systemPrompt: this.buildSystemPrompt() });
       return "api-key (pay-per-token ⚠)";
     } else {
       throw new Error(
         "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY."
       );
     }
+  }
+
+  /** Build the system prompt from config + optional world state. */
+  buildSystemPrompt(): string {
+    const base = this.authMode === "oauth"
+      ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
+      : config.systemPrompt;
+    return this.worldStateContent
+      ? base + "\n\n## World State (from previous sessions)\n\n" + this.worldStateContent
+      : base;
   }
 
   setProvider(provider: ProviderName): void {
@@ -678,14 +686,8 @@ export class Agent {
       let turnOutputTokens = 0;
       const toolCallsThisTurn: string[] = [];
 
-      // For OAuth, system prompt must start with Claude Code identity
-      const basePrompt = this.authMode === "oauth"
-        ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
-        : config.systemPrompt;
-      // Inject zone 1 world state if available
-      const systemPrompt = this.worldStateContent
-        ? basePrompt + "\n\n## World State (from previous sessions)\n\n" + this.worldStateContent
-        : basePrompt;
+      // Build system prompt (OAuth identity prefix + world state if loaded).
+      const systemPrompt = this.buildSystemPrompt();
 
       if (this.provider === "openai" && !fallbackEnabled) {
         yield { type: "agent_error", ts: new Date().toISOString(), error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
@@ -740,6 +742,7 @@ export class Agent {
           url: getOpenAiUrl(),
           model: activeModel,
           contextHashes,
+          cacheBreakpointIndex: null,
           request: openAiRequest,
         };
         this.logEvent(llmCallEv);
@@ -759,6 +762,7 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           model: activeModel,
           contextHashes,
+          cacheBreakpointIndex: contextHashes.length > 0 ? contextHashes.length - 1 : null,
           request,
         };
         this.logEvent(llmCallEv);
@@ -793,24 +797,6 @@ export class Agent {
               yield { type: "agent_error", ts: new Date().toISOString(), error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})` };
               await sleep(waitMs, signal);
               continue;
-            }
-            const diagPath = await writeDiagnostic(
-              {
-                summary: `OpenAI API error (status ${err.status ?? "unknown"}): ${err.message}`,
-                errorMessage: err.message ?? String(err),
-                httpStatus: err.status ?? err.statusCode,
-                provider: "openai",
-                model: activeModel,
-                requestMessages: buildOpenAiRequest(sentContext, systemPrompt, activeModel, config.maxOutputTokens),
-                history: this.compactedContextHistory,
-                extra: { attempts: attempt + 1 },
-              },
-              this.diagDir,
-            );
-            if (diagPath) {
-              const diagEv: OmegaEvent = { type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath };
-              this.logEvent(diagEv);
-              yield diagEv;
             }
             const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
             this.logEvent(llmErrEv);
@@ -905,27 +891,6 @@ export class Agent {
                 typeof err.message === "string" &&
                 err.message.includes("prompt is too long")) ||
               isContextTooLong(err);
-            const diagPath = await writeDiagnostic(
-              {
-                summary: isContextOverflow
-                  ? `Context overflow: ${err.message}`
-                  : `Anthropic API error (status ${err.status ?? "unknown"}): ${err.message}`,
-                errorMessage: err.message ?? String(err),
-                httpStatus: err.status ?? err.statusCode,
-                provider: "anthropic",
-                model: activeModel,
-                requestMessages: cachedMessages,
-                systemBlocks,
-                history: this.compactedContextHistory,
-                extra: { attempts: attempt + 1, stopReason: isContextOverflow ? "context_overflow" : "api_error" },
-              },
-              this.diagDir,
-            );
-            if (diagPath) {
-              const diagEv: OmegaEvent = { type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath };
-              this.logEvent(diagEv);
-              yield diagEv;
-            }
             const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
             this.logEvent(llmErrEv);
             yield llmErrEv;

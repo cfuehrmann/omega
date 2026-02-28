@@ -23,6 +23,7 @@ export type {
   StreamSignal,
   TextSignal,
   SessionStartEvent,
+  SessionEndEvent,
   UserMessageEvent,
   LlmCallEvent,
   LlmResponseEvent,
@@ -41,8 +42,6 @@ export type {
   OauthRefreshedEvent,
   OauthTokenExpiredEvent,
   LlmRetryEvent,
-  DiagnosticWrittenEvent,
-  ContextViewTrimmedEvent,
   ModelChangedEvent,
 } from "./events.js";
 

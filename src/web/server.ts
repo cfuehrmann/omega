@@ -254,11 +254,15 @@ export async function runWebApp(): Promise<void> {
   // Load persisted session log — enables history replay after crashes/restarts
   eventLog = await loadSession();
 
-  // Graceful shutdown: persist session log on SIGINT (Ctrl+C) and SIGTERM
+  // Graceful shutdown: emit session_end, persist session log on SIGINT (Ctrl+C) and SIGTERM
   const handleShutdown = () => {
-    saveSession(closeOpenTurn(eventLog))
+    persistentAgent.emitSessionEnd("clean")
       .catch(() => {})
-      .finally(() => process.exit(0));
+      .finally(() => {
+        saveSession(closeOpenTurn(eventLog))
+          .catch(() => {})
+          .finally(() => process.exit(0));
+      });
   };
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);

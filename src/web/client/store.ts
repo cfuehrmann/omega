@@ -22,13 +22,13 @@ export type WsEvent =
   | { type: "user_message"; content: string }
   | { type: "text"; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
-  | { type: "session_start"; authMode: string; model: string; provider: string }
+  | { type: "session_start"; authMode: string; model: string; provider: string; systemPrompt: string }
+  | { type: "session_end"; outcome: "clean" | "error"; reason?: string }
   | { type: "tool_call"; id: string; name: string; input: unknown; formatted?: string }
   | { type: "tool_result"; id: string; name: string; result?: { type: string; text?: string; is_error?: boolean }; formatted?: string; isError: boolean }
   | { type: "llm_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
-  | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; request?: unknown }
+  | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; request?: unknown }
   | { type: "llm_retry"; attempt: number; provider: string; waitMs: number; error: string }
-  | { type: "diagnostic_written"; path: string }
   | { type: "model_changed"; provider: string; model: string }
   | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed" }
@@ -193,12 +193,12 @@ export function dispatch(event: WsEvent): void {
       break;
 
     case "session_start":
+    case "session_end":
     case "tool_call":
     case "tool_result":
     case "llm_response":
     case "llm_call":
     case "llm_retry":
-    case "diagnostic_written":
     case "model_changed":
     case "oauth_token_expired":
     case "oauth_refreshed":

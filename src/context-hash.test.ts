@@ -127,7 +127,7 @@ describe("context.jsonl record shape", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hi");
     await Bun.sleep(50); // let fire-and-forget writes settle
 
@@ -153,7 +153,7 @@ describe("context.jsonl record shape", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("world"), textMessage("world"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -180,7 +180,7 @@ describe("hash uniqueness — identical content, different times", () => {
       return makeMockStream(textStreamEvents(`response ${call}`), textMessage(`response ${call}`));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     // Send the same message twice
     await collectEvents(agent, "ok");
     await new Promise(r => setTimeout(r, 10)); // ensure ts differs
@@ -208,7 +208,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -232,7 +232,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -257,7 +257,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -289,7 +289,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
       return makeMockStream(textStreamEvents(`resp${call}`), textMessage(`resp${call}`));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "turn1");
     await collectEvents(agent, "turn2");
     await Bun.sleep(50);
@@ -329,7 +329,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
       return makeMockStream(textStreamEvents(`resp${call}`), textMessage(`resp${call}`));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
 
     // Build up 6 messages (3 turns: user+assistant each)
     for (let i = 0; i < 3; i++) {
@@ -362,7 +362,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
       return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -398,7 +398,7 @@ describe("no placeholder hashes", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "go");
     await Bun.sleep(50);
 
@@ -427,7 +427,7 @@ describe("[SCHEMA] llm_call has no messageCount field", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -457,7 +457,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hi");
     await Bun.sleep(50);
 
@@ -482,7 +482,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hi");
     await Bun.sleep(50);
 
@@ -510,7 +510,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "hi");
     await Bun.sleep(50);
 
@@ -548,7 +548,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -581,7 +581,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -617,7 +617,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -641,7 +641,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, null, contextFile, eventsFile);
+    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
