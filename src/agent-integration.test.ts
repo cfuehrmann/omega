@@ -199,7 +199,7 @@ describe("Agent — test isolation (no production file pollution)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent.sendMessage — plain text response", () => {
-  it("emits a status event, then text events, then metrics", async () => {
+  it("emits user_message, then text events, then turn_end", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
 
@@ -208,10 +208,10 @@ describe("Agent.sendMessage — plain text response", () => {
 
     const types = events.map((e) => e.type);
     expect(types[0]).toBe("user_message");
-    expect(types).toContain("status");
     expect(types).toContain("text");
-    expect(types).toContain("metrics");
     expect(types[types.length - 1]).toBe("turn_end");
+    expect(types).not.toContain("status");
+    expect(types).not.toContain("metrics");
   });
 
   it("accumulates text from chunks", async () => {
@@ -261,18 +261,18 @@ describe("Agent.sendMessage — plain text response", () => {
     expect(agent.sessionOutputTokens).toBe(10);
   });
 
-  it("emits metrics with correct token counts", async () => {
+  it("turn_end carries correct token counts", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
     const agent = new Agent(mockProvider);
     const events = await collectEvents(agent, "test");
 
-    const metricsEvent = events.find((e) => e.type === "metrics") as any;
-    expect(metricsEvent).toBeDefined();
-    expect(metricsEvent.metrics.inputTokens).toBe(10);
-    expect(metricsEvent.metrics.outputTokens).toBe(5);
-    expect(metricsEvent.metrics.costUsd).toBeGreaterThan(0);
+    const turnEnd = events.find((e) => e.type === "turn_end") as any;
+    expect(turnEnd).toBeDefined();
+    expect(turnEnd.metrics.inputTokens).toBe(10);
+    expect(turnEnd.metrics.outputTokens).toBe(5);
+    expect(turnEnd.metrics.costUsd).toBeGreaterThan(0);
   });
 });
 
@@ -890,29 +890,18 @@ describe("Agent — tool_result formatted field", () => {
 });
 
 // ---------------------------------------------------------------------------
-// metrics carries durationMs and startedAt
+// turn_end carries timing fields
 // ---------------------------------------------------------------------------
 
-describe("Agent — metrics timing fields", () => {
-  it("metrics event carries durationMs", async () => {
+describe("Agent — turn_end timing fields", () => {
+  it("turn_end carries totalMs", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const agent = new Agent(mockProvider, null);
     const events = await collectEvents(agent, "hi");
-    const m = events.find((e) => e.type === "metrics") as any;
+    const m = events.find((e) => e.type === "turn_end") as any;
     expect(typeof m.metrics.totalMs).toBe("number");
     expect(m.metrics.totalMs).toBeGreaterThanOrEqual(0);
-  });
-
-  it("metrics event carries startedAt timestamp string", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const agent = new Agent(mockProvider, null);
-    const events = await collectEvents(agent, "hi");
-    const m = events.find((e) => e.type === "metrics") as any;
-    expect(typeof m.startedAt).toBe("string");
-    // Should be a valid time string HH:MM:SS
-    expect(m.startedAt).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 });
 
@@ -944,55 +933,7 @@ describe("Agent — user_message event", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// tool_result_message event
-// ---------------------------------------------------------------------------
 
-describe("Agent — tool_result_message event", () => {
-  it("emits tool_result_message after tool results are collected", async () => {
-    let call = 0;
-    const mockProvider: StreamProvider = async () => {
-      call++;
-      if (call === 1) {
-        return makeMockStream(
-          toolUseStreamEvents("list_files"),
-          toolUseMessage("t1", "list_files", { path: "." })
-        );
-      }
-      return makeMockStream(textStreamEvents("done"), textMessage("done"));
-    };
-    const agent = new Agent(mockProvider, null);
-    const events = await collectEvents(agent, "list");
-    const trm = events.find((e) => e.type === "tool_result_message") as any;
-    expect(trm).toBeDefined();
-    expect(Array.isArray(trm.results)).toBe(true);
-    expect(trm.results.length).toBe(1);
-    expect(trm.results[0].tool_use_id).toBe("t1");
-    expect(typeof trm.results[0].content).toBe("string");
-    expect(typeof trm.results[0].is_error).toBe("boolean");
-  });
-
-  it("tool_result_message is emitted after tool_result and before next llm_call", async () => {
-    let call = 0;
-    const mockProvider: StreamProvider = async () => {
-      call++;
-      if (call === 1) {
-        return makeMockStream(
-          toolUseStreamEvents("list_files"),
-          toolUseMessage("t1", "list_files", { path: "." })
-        );
-      }
-      return makeMockStream(textStreamEvents("done"), textMessage("done"));
-    };
-    const agent = new Agent(mockProvider, null);
-    const events = await collectEvents(agent, "list");
-    const types = events.map((e) => e.type);
-    const trmIdx = types.lastIndexOf("tool_result_message");
-    const lastApiIdx = types.lastIndexOf("llm_call");
-    expect(trmIdx).toBeGreaterThan(0);
-    expect(trmIdx).toBeLessThan(lastApiIdx);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // History grows verbatim (no zone 2 compaction after manifest Step 2)
@@ -1097,43 +1038,11 @@ describe("slash commands", () => {
     expect(agent.getProvider()).toBe("openai");
   });
 
-  it("/help emits a status event with command list", async () => {
+  it("/help is rejected as unknown (operator asks the LLM instead)", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/help");
-    const status = events.find((e) => e.type === "status") as any;
-    expect(status).toBeDefined();
-    expect(status.message).toContain("/sonnet");
-    expect(status.message).toContain("/opus");
-    expect(status.message).toContain("/codex");
-    expect(status.message).toContain("/help");
-  });
-
-  it("/help (Anthropic) includes footer legend with all three input buckets, saved, and cost multipliers", async () => {
-    const agent = new Agent(null as any, null); // default = anthropic
-    const events = await collectEvents(agent, "/help");
-    const status = events.find((e) => e.type === "status") as any;
-    expect(status.message).toContain("new:");
-    expect(status.message).toContain("write:");
-    expect(status.message).toContain("read:");
-    expect(status.message).toContain("out:");
-    expect(status.message).toContain("saved:");
-    // cost multipliers
-    expect(status.message).toContain("1×");
-    expect(status.message).toContain("1.25×");
-    expect(status.message).toContain("0.1×");
-  });
-
-  it("/help (OpenAI after /codex) shows shorter legend — no write:/read:/saved:", async () => {
-    const agent = new Agent(null as any, null);
-    await collectEvents(agent, "/codex"); // switch to openai
-    const events = await collectEvents(agent, "/help");
-    const status = events.find((e) => e.type === "status") as any;
-    expect(status.message).toContain("new:");
-    expect(status.message).toContain("out:");
-    // OpenAI footer has no cache breakdown or saved
-    expect(status.message).not.toContain("write:");
-    expect(status.message).not.toContain("read:");
-    expect(status.message).not.toContain("saved:");
+    const err = events.find((e) => e.type === "agent_error") as any;
+    expect(err).toBeDefined();
   });
 
   it("old /gpt command is rejected as unknown", async () => {

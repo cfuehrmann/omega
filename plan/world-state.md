@@ -175,6 +175,8 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
+**Crash-recovery gate fix**: A laptop crash mid-refactor left `src/agent.ts` with the Anthropic `yield { type: "status", message: "thinking..." }` removed, breaking one unit test. Fixed by restoring it as an `else` branch to the OpenAI status yield. Gate green (464 unit + 27 e2e). No commit made this session — operator did not request one.
+
 Completed **Step 3e-iii** (FK/PK content-addressed context log): `context.jsonl` entries now carry `hash` and `ts`; `LlmCallEvent` carries `contextHashes: string[]`. New helpers `buildContextRecord`, `sha256hex8`, `ContextRecord` in `context-store.ts`. Agent gains `llmMessageHashes[]`, `appendToHistory()`, `contextHashesForView()`. `/compact` handler rebuilt to also rebuild `llmMessageHashes`. Pushed to `origin/develop`.
 
 Discussed and structured **schema lock** work (previously a single TODO): expanded into five discrete sub-steps (3e-iv through 3e-viii) covering property names/completeness, missing event types, persistence completeness audit, forward-compatibility policy, and the final schema reference document. Key agreed principle: tolerance applies uniformly — unknown fields on known events and unknown event types are both silently ignored by readers; writers may add new optional fields or new event variants freely without a migration.

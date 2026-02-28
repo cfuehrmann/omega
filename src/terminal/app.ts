@@ -223,13 +223,6 @@ export async function runApp(): Promise<void> {
             break;
           }
 
-          case "tool_result_message":
-            // Suppressed — individual tool_result blocks already shown above.
-            break;
-
-          case "metrics":
-            break;
-
           case "turn_end": {
             if (streamingStarted) {
               println("");

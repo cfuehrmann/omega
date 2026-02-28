@@ -7,10 +7,10 @@ to develop it further with agentic AI.
 
 A great way of achieving this is providing:
 
-- A folder with with diagnostics.
+- A folder with diagnostics.
   - Logs spanning considerable time periods. AI-friendly format!
-  - Crash dumps, which cover ony the time near the crash, but with more Provide
-    ainformation than the corresponding log entries. AI-friendly format!
+  - Crash dumps, which cover only the time near the crash, but with more
+    information than the corresponding log entries. AI-friendly format!
 - AI-friendly instructions how to interpret that folder.
 
 > In the particular case of the omega agent, we are aiming for a complete
@@ -48,9 +48,9 @@ aspects.
   into every call to Anthropic should be in a separate file, as a time-ordered
   list. Each message to Anthrhopic should get as unique short hash, which acts
   as a "primary key" that can be referenced from the main event file.
-- Even the in-memory structure might be build in this way: A main "log" of
+- Even the in-memory structure might be built in this way: A main "log" of
   events, referencing context messages via a hash table.
-- Omege should provide instructions to external agents (and its former stable
+- Omega should provide instructions to external agents (and its former stable
   self) like: "If you are pointed at this, I (Omega) have probably crashed. A
   high-level of my current state is in this markdown file: ... My future plans
   are in this markdown file: ... The diagnostics files are here: ..."
@@ -79,20 +79,20 @@ Step 3 is broken into four ordered sub-steps. The ordering prioritises **extendi
 Omega's practical capacity for long sessions** before completing the full architectural
 vision. See `plan/backlog.md` for detailed acceptance criteria on each.
 
-### 3a — Append-only context file (foundation)
-Add `src/context-store.ts`. Append each `MessageParam` to `sessions/context.jsonl`
-as it is pushed to `this.history`. No behaviour change; pure foundation for 3b–3d.
+### 3a — Append-only context file (foundation) — DONE (commit 551d676)
+Added `src/context-store.ts`. Appends each `MessageParam` to `sessions/context.jsonl`
+as it is pushed to history. No behaviour change; pure foundation for 3b–3d.
 
-### 3b — `/compact` slash command (immediate capacity fix)
+### 3b — `/compact` slash command (immediate capacity fix) — DONE (commit f2d5631)
 Operator-triggered mid-session compaction. Collapses the history head into an LLM
 summary, preserves the last 10 message-pairs verbatim, rewrites the context file.
 Directly addresses the context ceiling: a 60k-token session collapses to ~3–5k tokens
 of summary + recent tail. Cache prefix is preserved from the summary message forward.
 
-### 3c — SessionEvent type + dual-write event log
-Define `SessionEvent` union type in `src/session-event.ts`. Append every agent event
-to `sessions/events.jsonl`. Additive — establishes the canonical persistent event log
-that will replace pino in Step 4.
+### 3c — SessionEvent type + dual-write event log — DONE (commit 357ec23)
+Defined `SessionEvent` union type in `src/session-event.ts`. Appends every agent
+event to `sessions/events.jsonl`. Additive — established the canonical persistent
+event log that replaced pino in Step 4.
 
 ### 3d — Non-destructive truncation (structural cache fix) — DONE (commit 997d7f7)
 `truncateHistory` renamed to `buildApiMessages` — produces an ephemeral view for a
@@ -111,15 +111,25 @@ Agent maintains a parallel `llmMessageHashes[]` array; `contextHashesForView()`
 maps by object-reference identity.
 
 ### Pre-lock field removals — DONE (commit b59ba48)
-Two breaking changes landed before the schema lock to avoid a post-lock migration:
-- `LlmResponseEvent.content` removed — full assistant response was duplicating `context.jsonl`; join via next `llm_call`'s `contextHashes` instead.
+Breaking changes landed before the schema lock to avoid a post-lock migration:
+- `LlmResponseEvent.content` removed — full assistant response was duplicating `context.jsonl`; join via the `contextHash` FK instead.
 - `LlmCallEvent.messageCount` removed — always equalled `contextHashes.length`; use `.length` directly.
+- `ToolCallEvent.input` and `ToolResultEvent.outputLength` removed — both derivable from `context.jsonl` via `contextHash` FK (commit 34f7708).
 
-### Schema lock — TODO (next)
+### Event system unification — TODO (EU-1 through EU-4, see `plan/backlog.md`)
+`AgentEvent` (streaming, UI-only) and `SessionEvent` (persistence) are two parallel
+type hierarchies. Agreed direction: merge into a single `OmegaEvent` union. A small
+separate `StreamSignal` union covers the only genuinely ephemeral rendering
+primitives: `text` streaming fragments. Everything else is an `OmegaEvent` — persisted
+and rendered. `status` and `metrics` AgentEvent variants are deleted or replaced by
+typed events. See `plan/backlog.md` § "Event system unification" for the ordered steps.
+Active development-phase policies are in `plan/dev-policy.md`.
+
+### Schema lock — TODO (after EU-1 through EU-4)
 Review and explicitly document the full shape of every JSONL record in
-`sessions/context.jsonl` and `sessions/events.jsonl`. Write a schema reference
-that serves as the stable contract for session resume and any future tooling.
-No breaking changes after this point without a migration plan.
+`sessions/context.jsonl` and `sessions/events.jsonl`. Write `plan/schema.md` as the
+stable contract for session resume and any future tooling. No breaking changes after
+this point without a migration plan. Schema stability policy is in `plan/dev-policy.md`.
 See `plan/backlog.md` § "Schema lock" for the ordered sub-steps (3e-iv through 3e-viii).
 
 ### 3f — Session resume — TODO (depends on schema lock)

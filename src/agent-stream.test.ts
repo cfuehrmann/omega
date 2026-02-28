@@ -48,8 +48,8 @@ function* fakeStreamEvents(): Generator<any> {
  */
 import { processStreamEvents } from "./agent.js";
 
-describe("stream event handling (stuck-on-plan-update bug)", () => {
-  test("emits a status event when tool_use block starts in stream", () => {
+describe("stream event handling", () => {
+  test("emits text events for text_delta; no status events emitted", () => {
     const events = processStreamEvents([...fakeStreamEvents()]);
 
     // Text events should be present
@@ -58,27 +58,12 @@ describe("stream event handling (stuck-on-plan-update bug)", () => {
     expect(textEvents[0]).toEqual({ type: "text", text: "I'll update " });
     expect(textEvents[1]).toEqual({ type: "text", text: "the plan now." });
 
-    // A status event MUST appear when the tool_use block starts.
-    // Without this, the UI is "stuck" for the entire duration of tool input generation.
+    // No status events — EU-1 removes the "generating tool input" feedback
     const statusEvents = events.filter((e) => e.type === "status");
-    expect(statusEvents.length).toBeGreaterThanOrEqual(1);
-
-    const toolStatus = statusEvents.find(
-      (e) => e.type === "status" && e.message.includes("write_file")
-    );
-    expect(toolStatus).toBeDefined();
+    expect(statusEvents).toHaveLength(0);
   });
 
-  test("status event comes after all text events", () => {
-    const events = processStreamEvents([...fakeStreamEvents()]);
-
-    const lastTextIndex = events.findLastIndex((e) => e.type === "text");
-    const statusIndex = events.findIndex((e) => e.type === "status");
-
-    expect(statusIndex).toBeGreaterThan(lastTextIndex);
-  });
-
-  test("no status event when response is text-only (no tool_use)", () => {
+  test("text-only stream emits only text events", () => {
     function* textOnlyStream(): Generator<any> {
       yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
       yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello!" } };
@@ -88,7 +73,7 @@ describe("stream event handling (stuck-on-plan-update bug)", () => {
     }
 
     const events = processStreamEvents([...textOnlyStream()]);
-    const statusEvents = events.filter((e) => e.type === "status");
-    expect(statusEvents).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ type: "text", text: "Hello!" });
   });
 });

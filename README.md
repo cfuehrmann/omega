@@ -25,6 +25,7 @@ WebSocket. Config is code (`src/config.ts`).
 |------|---------|
 | `plan/world-state.md` | LLM-compacted summary of all prior sessions. Loaded into the system prompt automatically. Updated as part of the shutdown ritual (see below). |
 | `plan/backlog.md` | Issue tracker. Discrete, prioritised, actionable items. Update after completing work or making decisions worth recording. |
+| `plan/dev-policy.md` | Active development-phase policies (temporary invariants and conventions). Read before implementing anything in the event/persistence layer. |
 | `manifest.md` | High-level design manifest for Omega's ongoing refactoring. Consult for strategic direction. |
 | `docs/lessons-learned.md` | Hard-won lessons about external APIs and protocols. Read before integrating with anything new. |
 
@@ -63,7 +64,6 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 | `/opus` | Anthropic `claude-opus-4-6` |
 | `/codex` | OpenAI `gpt-5.2-codex` |
 | `/compact` | Collapse history head into an LLM summary, keep last 10 turns verbatim |
-| `/help` | Command list |
 
 ## Git discipline
 

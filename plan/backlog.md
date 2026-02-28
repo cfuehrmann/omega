@@ -2,28 +2,102 @@
 
 ## Open items
 
+### [REFACTOR] Event system unification
+**Priority: HIGHEST — prerequisite for schema lock and session resume**
+
+Agreed design from session discussion. Four ordered steps:
+
+#### EU-1 — Delete dead weight
+Remove `metrics` AgentEvent (already suppressed in renderer; covered by
+`llm_to_agent` usage fields and `turn_end` aggregate). Remove
+`tool_result_message` AgentEvent (already suppressed). Remove the two
+"thinking…" / "OpenAI provider active" `status` yields at the top of the
+agentic loop (superseded within milliseconds by `llm_call`). Remove `/help`
+slash-command output (operator will ask the LLM instead).
+
+Acceptance criteria:
+- `AgentEvent` union has no `metrics` or `tool_result_message` variants
+- No `status` yield fires at agentic loop start
+- `/help` command removed or replaced by a one-liner pointing at the LLM
+- All existing tests pass; gate green
+
+#### EU-2 — Replace remaining `status` yields with typed events
+Every remaining `status` yield corresponds to a real event that should be
+persisted. Replace each:
+- `oauth_token_expired` status yields → yield typed `oauth_token_expired` AgentEvent
+- `oauth_refreshed` status yields → yield typed `oauth_refreshed` AgentEvent
+- `/sonnet`, `/opus`, `/codex` acknowledgements → yield typed `model_changed` AgentEvent (new variant); persist as `SessionEvent`
+- `/compact` lifecycle messages → yield typed `session_compacted` AgentEvent (already a `SessionEvent`); drop the intermediate "Compacting…" status
+- "generating `<name>` input…" → **delete**; `llm_call` is sufficient signal that a call is in flight; silence until `agent_to_agent_tool_call` is acceptable
+
+After this step, `status` as an AgentEvent variant can be deleted entirely.
+
+Acceptance criteria:
+- `AgentEvent` has no `status` variant
+- `model_changed` is a new `SessionEvent` variant, persisted and rendered
+- All oauth and compaction events are typed, rendered, and persisted
+- Gate green
+
+#### EU-3 — Unify AgentEvent and SessionEvent into one event type
+One discriminated union — call it `OmegaEvent` — replaces both `AgentEvent`
+and `SessionEvent`. Persistence is the default for all variants. A small
+separate `StreamSignal` union covers the two genuinely ephemeral rendering
+primitives: `text` (streaming token fragments) and nothing else (status is
+gone by EU-2).
+
+Design rules agreed:
+- **Events** (`OmegaEvent`): discrete things that happened; always persisted;
+  always rendered (at minimum: event name + timestamp on one line).
+- **Stream signals** (`StreamSignal`): ephemeral rendering primitives; never
+  persisted; the UI consumes them for live streaming display.
+- Name mismatches disappear: one name per concept, used everywhere.
+- The persistence layer writes every `OmegaEvent` to `events.jsonl`. For
+  `llm_response`, content is omitted from the event (it's in `context.jsonl`
+  via FK) — but the UI rendering uses the FK to display it. This is the only
+  field that diverges between in-memory and persisted form, and it is
+  principled: streaming is where persistence and UI legitimately diverge.
+- `session_start` is rendered by the terminal app from `init()` return value
+  (already done today in a different form); make it a proper `OmegaEvent`
+  yielded from `init()` or the startup path.
+
+Acceptance criteria:
+- `src/session-event.ts` and the `AgentEvent` type in `src/agent.ts` merged
+  into a single type (location TBD — probably `src/events.ts`)
+- One switch statement per consumer (terminal renderer, web server)
+- No name mismatches between persisted and streamed events
+- `WsEvent` (web protocol) updated to match
+- Gate green; e2e green
+
+#### EU-4 — UI sync invariant: every OmegaEvent is rendered
+After EU-3, enforce as a development-phase invariant: every variant in
+`OmegaEvent` must have a render case in the terminal renderer and the web UI.
+Minimum rendering: event name + timestamp on one line (compact). Some events
+warrant more detail (tool calls, errors, turn_end). No event is silently
+dropped.
+
+Document this invariant in `plan/dev-policy.md` (ephemeral policy, not
+manifest). Add a compile-time guard if feasible (exhaustive switch or lint
+rule) so a new event variant without a render case is a build error, not a
+silent omission.
+
+Acceptance criteria:
+- All `OmegaEvent` variants have a render case in terminal renderer
+- All `OmegaEvent` variants have a render case in web UI (`App.tsx`)
+- `plan/dev-policy.md` documents the invariant
+- Exhaustive switch (TypeScript `never` check) or equivalent guard in place
+- Gate green
+
+---
+
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 
-#### Step 3e — Stable persistence contract (event completeness + schema lock)
-**Status: IN PROGRESS**
+#### Step 3e — Stable persistence contract (schema lock)
+**Status: IN PROGRESS — event completeness being addressed in EU-1 through EU-4**
 
-Review the full persistence layer and reach explicit agreement on every aspect
-before building session-resume on top of it. Covers:
-
-1. **Event completeness:** Currently not persisted: `status` (intentionally — ephemeral
-   UI noise), `metrics` (per-API-call; `turn_end` captures aggregate), `tool_result_message`
-   (individual `tool_result` events are persisted). Decide whether any should be added.
-
-2. **UI reflection:** Terminal renders `status`, `text`, `tool_result_message`, `metrics`
-   (not persisted). Event log has `session_start` (not rendered). Guiding principle:
-   "anything that could matter for a post-mortem should be persisted; pure streaming
-   scaffolding need not be."
-
-3. **Schema lock:** Review and agree on the exact shape of every JSONL record in
-   `sessions/context.jsonl` and `sessions/events.jsonl` — field names, types, required
-   vs. optional fields, all event variant names. The goal is a stable contract that
-   won't need breaking changes when session-resume is built on top.
+Review and lock the exact shape of every JSONL record in `sessions/context.jsonl`
+and `sessions/events.jsonl`. The EU steps above address event completeness and
+unification first; schema lock (3e-viii) follows once the unified type is stable.
 
 ##### Step 3e-i — Rename SessionEvent and AgentEvent variants
 **Status: DONE**
@@ -83,6 +157,7 @@ Known candidates, in priority order:
 - `model_changed` — when the operator uses `/sonnet`, `/opus`, or `/codex`
   mid-session the active model switches. Currently invisible in the event log;
   a replay or audit cannot determine when or why the model changed.
+  Note: `model_changed` is also scheduled in EU-2 above — these two items converge.
 
 **3e-v-bug-A — `user_message` event appears after `llm_call` in events.jsonl** ✅ FIXED (commit 25078f3)
 
@@ -104,13 +179,12 @@ race). No further fix needed.
 
 **3e-vi — Persistence completeness audit**
 Formally verify and document which events/signals are intentionally *not*
-persisted, and why. Current known intentional omissions:
-- `status` messages — ephemeral UI noise; not meaningful after the fact.
+persisted, and why. Current known intentional omissions (to be updated after EU-1/EU-2):
+- `status` messages — being removed entirely by EU-2; each real signal becomes a typed event.
+- `metrics` AgentEvent — being removed by EU-1; superseded by `llm_response` usage fields and `turn_end` aggregate.
 - Streaming `text` fragments — assembled response is captured in `context.jsonl`
   assistant message (`llm_response` intentionally carries no `content` — resolved in commit b59ba48).
-- Per-call `metrics` — aggregate is in `turn_end`; per-call detail is in
-  `llm_response` `usage` field (all four token counts: `input_tokens`, `output_tokens`,
-  `cache_creation_input_tokens?`, `cache_read_input_tokens?`).
+  `text` becomes a `StreamSignal`, not an event — explicitly outside the persistence boundary by design.
 Close the question explicitly so future contributors know these are deliberate,
 not oversights.
 

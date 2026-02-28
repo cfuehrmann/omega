@@ -39,8 +39,6 @@ export type AgentEvent =
   | { type: "llm_error"; provider: "openai" | "anthropic"; url: string; error: string }
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: any; formatted: string }
   | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
-  | { type: "tool_result_message"; results: Array<{ tool_use_id: string; content: string; is_error: boolean }> }
-  | { type: "metrics"; metrics: TurnMetrics; startedAt: string }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
   | { type: "agent_error"; error: string }
   | { type: "turn_interrupted" };
@@ -403,15 +401,6 @@ export function processStreamEvents(streamEvents: Iterable<any>): AgentEvent[] {
     ) {
       events.push({ type: "text", text: event.delta.text });
     }
-    if (
-      event.type === "content_block_start" &&
-      event.content_block?.type === "tool_use"
-    ) {
-      events.push({
-        type: "status",
-        message: `generating ${event.content_block.name} input...`,
-      });
-    }
   }
   return events;
 }
@@ -744,29 +733,6 @@ export class Agent {
           yield { type: "agent_error", error: `Compaction failed: ${err.message}` };
         }
         return;
-      } else if (cmd === "/help") {
-        const isOpenAi = this.provider === "openai";
-        const footerLegend = isOpenAi
-          ? [
-              "",
-              "Footer:  new: <non-cached input tokens>  out: <output tokens>  cost: <=<ceiling>",
-            ]
-          : [
-              "",
-              "Footer:  new: <non-cached input, 1×>  write: <cache-write, 1.25×>  read: <cache-read, 0.1×>  out: <output>",
-              "         cost: <actual>  saved: <cache savings>",
-            ];
-        yield {
-          type: "status",
-          message: [
-            "/sonnet  — Anthropic claude-sonnet-4-6 (default)",
-            "/opus    — Anthropic claude-opus-4-6",
-            "/codex   — OpenAI Codex (gpt-5.2-codex)",
-            "/compact — collapse history head into a summary (frees context)",
-            "/help    — show this help",
-            ...footerLegend,
-          ].join("\n"),
-        };
       } else {
         yield { type: "agent_error", error: `Unknown command: ${userMessage}` };
       }
@@ -806,14 +772,10 @@ export class Agent {
       continueLoop = false;
 
       const startTime = performance.now();
-      const startedAt = new Date().toLocaleTimeString("en-GB"); // HH:MM:SS
       let ttftMs: number | null = null;
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
       const toolCallsThisTurn: string[] = [];
-
-      // Signal the UI that we're about to call the API
-      yield { type: "status", message: "thinking..." } as AgentEvent;
 
       // For OAuth, system prompt must start with Claude Code identity
       const basePrompt = this.authMode === "oauth"
@@ -831,13 +793,6 @@ export class Agent {
 
       const useOpenAi = this.provider === "openai";
       activeModel = this.activeModel;
-
-      if (useOpenAi) {
-        yield {
-          type: "status",
-          message: `OpenAI provider active — using ${activeModel}`,
-        } as AgentEvent;
-      }
 
       // Build cached system blocks and cached tools for Anthropic prompt caching.
       // The system prompt is split into blocks with cache_control on the last block,
@@ -1009,17 +964,7 @@ export class Agent {
               fullText += event.delta.text;
               yield { type: "text", text: event.delta.text };
             }
-            // Emit status when a tool_use block starts generating,
-            // so the UI shows feedback instead of appearing stuck
-            if (
-              event.type === "content_block_start" &&
-              event.content_block?.type === "tool_use"
-            ) {
-              yield {
-                type: "status",
-                message: `generating ${event.content_block.name} input...`,
-              } as AgentEvent;
-            }
+
           }
 
           if (aborted) {
@@ -1265,16 +1210,6 @@ export class Agent {
           });
         }
 
-        // Emit tool_result_message for UI display (the user message going back to API)
-        yield {
-          type: "tool_result_message",
-          results: toolResults.map(r => ({
-            tool_use_id: r.tool_use_id,
-            content: r.content as string,
-            is_error: r.is_error ?? false,
-          })),
-        };
-
         // Add tool results to history; capture hash for tool_result events
         const toolResultHash = await this.appendToHistory({ role: "user", content: toolResults });
         for (let i = 0; i < formattedCalls.length; i++) {
@@ -1285,21 +1220,6 @@ export class Agent {
         continueLoop = true;
       }
 
-      // Emit metrics for this turn
-      yield {
-        type: "metrics",
-        startedAt,
-        metrics: {
-          inputTokens: turnInputTokens,
-          outputTokens: turnOutputTokens,
-          costUsd,
-          savedUsd,
-          ttftMs,
-          totalMs,
-          cacheCreationTokens: turnCacheCreation,
-          cacheReadTokens: turnCacheRead,
-        },
-      };
     }
 
     // Emit one turn_end after all API calls complete
