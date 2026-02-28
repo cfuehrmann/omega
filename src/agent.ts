@@ -5,7 +5,7 @@ import { getAuthToken, forceRefreshToken } from "./auth.js";
 
 import { writeDiagnostic } from "./diagnosis.js";
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
-import { compactHistory } from "./compaction.js";
+import { compactHistory, AUTO_COMPACT_THRESHOLD } from "./compaction.js";
 import { readWorldState, projectWorldStatePath } from "./world-state.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
@@ -566,6 +566,58 @@ export class Agent {
     }
   }
 
+  /**
+   * Automatically compact llmContextView if it has grown beyond AUTO_COMPACT_THRESHOLD.
+   *
+   * Yields compact_auto_start, then compact_auto_done on success or
+   * compact_auto_error on failure (in which case the session continues
+   * with rolling truncation as a fallback — llmContextView is unchanged).
+   *
+   * Called once per user turn, after the user message is appended, before the
+   * agentic loop starts.
+   */
+  private async *performAutoCompact(): AsyncGenerator<OmegaEvent> {
+    if (this.llmContextView.length <= AUTO_COMPACT_THRESHOLD) return;
+
+    const messagesBefore = this.llmContextView.length;
+    const startEv: OmegaEvent = { type: "compact_auto_start", ts: new Date().toISOString(), messagesBefore };
+    await this.logEvent(startEv);
+    yield startEv;
+
+    try {
+      const provider = this.getStreamProvider();
+      const { history: newHistory, syntheticMessage, tailStartIndex } = await compactHistory(
+        this.llmContextView,
+        provider,
+        this.activeModel,
+      );
+      // Same pattern as /compact: append only the new synthetic message to
+      // context.jsonl; tail messages are already there with their correct hashes.
+      const syntheticHash = await appendContextMessage(syntheticMessage, this.contextFile);
+      const tailHashes = this.llmContextHashes.slice(tailStartIndex);
+      this.llmContextView = newHistory as Anthropic.MessageParam[];
+      this.llmContextHashes = [syntheticHash, ...tailHashes];
+
+      const doneEv: OmegaEvent = {
+        type: "compact_auto_done",
+        ts: new Date().toISOString(),
+        messagesBefore,
+        messagesAfter: this.llmContextView.length,
+      };
+      this.logEvent(doneEv);
+      yield doneEv;
+    } catch (err: any) {
+      const errEv: OmegaEvent = {
+        type: "compact_auto_error",
+        ts: new Date().toISOString(),
+        error: err.message ?? String(err),
+      };
+      this.logEvent(errEv);
+      yield errEv;
+      // Do NOT rethrow — session continues with rolling truncation as fallback.
+    }
+  }
+
   async init(): Promise<string> {
     // Auth flow (matching pi-ai's anthropic.js):
     // OAuth via claude.ai → access_token (sk-ant-oat-...)
@@ -747,7 +799,10 @@ export class Agent {
     await this.logEvent(userMessageEvent);
     yield userMessageEvent;
 
-
+    // Auto-compact if context has grown beyond the threshold. Fires at most once
+    // per user turn, before the agentic loop, so the LLM always sees a compact view.
+    // On error, yields compact_auto_error and continues (rolling truncation fallback).
+    yield* this.performAutoCompact();
 
     // Budget for the current agentic loop iteration's API view.
     // Reduced on prompt-too-long retries; llmContextView itself is never trimmed.
@@ -1160,6 +1215,48 @@ export class Agent {
       const toolUseBlocks = response.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
       );
+
+      // --- BUG-1 guard: max_tokens mid-tool-call ---
+      // If the LLM was cut off by max_tokens while emitting tool_use blocks, the
+      // assistant message (already appended to llmContextView above) contains
+      // dangling tool_use blocks with no matching tool_result. Anthropic rejects
+      // this with a 400 on the very next API call, permanently bricking the session.
+      //
+      // Fix: synthesise error tool_result entries for every dangling tool_use,
+      // append them to history immediately, emit tool_result events, and then
+      // emit an agent_error explaining what happened. The turn ends here (no
+      // continueLoop = true), but the context is well-formed and the next user
+      // message will succeed.
+      if (toolUseBlocks.length > 0 && response.stop_reason === "max_tokens") {
+        const syntheticResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map(b => ({
+          type: "tool_result" as const,
+          tool_use_id: b.id,
+          content: "[interrupted: response was cut off at max_tokens before tool input was complete — tool was not executed]",
+          is_error: true,
+        }));
+        const syntheticResultHash = await this.appendToHistory({ role: "user", content: syntheticResults });
+        for (const toolUse of toolUseBlocks) {
+          const syntheticResultEvent: OmegaEvent = {
+            type: "tool_result",
+            ts: new Date().toISOString(),
+            id: toolUse.id,
+            name: toolUse.name,
+            isError: true,
+            durationMs: 0,
+            contextHash: syntheticResultHash,
+            // UI-only fields:
+            result: { output: "[interrupted: max_tokens cut off tool input — not executed]", isError: true, durationMs: 0 },
+            formatted: `[synthetic error result for ${toolUse.name}]`,
+          };
+          this.logEvent(syntheticResultEvent);
+          yield syntheticResultEvent;
+        }
+        const truncErr = `Turn truncated: LLM hit max_tokens while generating tool call input for [${toolUseBlocks.map(b => b.name).join(", ")}]; synthetic error tool_result(s) appended to preserve history integrity.`;
+        const truncErrEvent: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: truncErr };
+        await this.logEvent(truncErrEvent);
+        yield truncErrEvent;
+        // Do NOT set continueLoop = true — turn ends here.
+      }
 
       if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];

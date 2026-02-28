@@ -173,6 +173,29 @@ function EventBlock(props: { event: WsEvent }) {
         </div>
       );
 
+    case "compact_auto_start":
+      return (
+        <div class="block status">
+          <div class="block-body">Auto-compacting context ({e.messagesBefore} messages)…</div>
+        </div>
+      );
+
+    case "compact_auto_done": {
+      const msg = `Context auto-compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
+      return (
+        <div class="block status">
+          <div class="block-body">{msg}</div>
+        </div>
+      );
+    }
+
+    case "compact_auto_error":
+      return (
+        <div class="block error">
+          <div class="block-body">⚠ Auto-compaction failed (rolling truncation fallback): {e.error}</div>
+        </div>
+      );
+
     case "world_state_saved":
       return (
         <div class="block world-state-saved">

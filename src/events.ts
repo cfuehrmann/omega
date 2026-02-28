@@ -180,6 +180,28 @@ export interface CompactUserErrorEvent {
   error: string;
 }
 
+/** Automatic compaction triggered (context grew beyond threshold). */
+export interface CompactAutoStartEvent {
+  type: "compact_auto_start";
+  ts: string;
+  messagesBefore: number;
+}
+
+/** Automatic compaction completed successfully. */
+export interface CompactAutoDoneEvent {
+  type: "compact_auto_done";
+  ts: string;
+  messagesBefore: number;
+  messagesAfter: number;
+}
+
+/** Automatic compaction failed — session continues with rolling truncation as fallback. */
+export interface CompactAutoErrorEvent {
+  type: "compact_auto_error";
+  ts: string;
+  error: string;
+}
+
 /** OAuth token was successfully refreshed mid-session. */
 export interface OauthRefreshedEvent {
   type: "oauth_refreshed";
@@ -270,6 +292,9 @@ export type OmegaEvent =
   | CompactUserStartEvent
   | CompactUserDoneEvent
   | CompactUserErrorEvent
+  | CompactAutoStartEvent
+  | CompactAutoDoneEvent
+  | CompactAutoErrorEvent
   | OauthRefreshedEvent
   | OauthTokenExpiredEvent
   | LlmRetryEvent

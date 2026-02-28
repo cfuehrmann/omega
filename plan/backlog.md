@@ -146,7 +146,112 @@ breaking the FK/PK contract. The synthetic summary was also never appended to
 new synthetic message. `compactHistory()` now returns `syntheticMessage` and
 `tailStartIndex` to enable correct hash bookkeeping in the caller.
 
-**3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic** ← START HERE
+**BUG-1 — `max_tokens` mid-tool-call poisons context → permanent 400 on all future turns** ← START HERE
+**Priority: CRITICAL — can brick a session completely**
+
+**Root cause (confirmed by calamity 2026-02-28):**
+When the LLM hits `max_tokens` while generating a response that contains one or
+more `tool_use` blocks, the response is cut off mid-stream. The partial response
+lands with `stop_reason === "max_tokens"` and `content` that includes one or more
+`tool_use` blocks. The current code at line 1219:
+
+```typescript
+if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {
+```
+
+…correctly guards on `stop_reason === "tool_use"` — so the tool execution branch
+is NOT entered. However, the assistant message (containing the dangling `tool_use`
+blocks) has ALREADY been appended to `llmContextView` at line 1187:
+
+```typescript
+const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
+```
+
+This happens unconditionally, before the `stop_reason` check. The `tool_use` blocks
+are now in `llmContextView` with no matching `tool_result`. The loop exits (`continueLoop`
+stays false). `turn_end` is emitted. The session is now permanently poisoned: every
+subsequent user message triggers a 400 `invalid_request_error` from Anthropic because
+`tool_use` IDs in the context have no corresponding `tool_result` blocks.
+
+**Confirmed timeline from events.prev.jsonl:**
+1. `llm_response` at 19:05:54 with `stopReason: "max_tokens"` — the `write_file`
+   tool_use was truncated mid-generation of its `content` argument.
+2. `turn_end` emitted — the turn ended with poisoned context.
+3. Operator typed "ping" at 19:06:08 → immediate 400: "messages.58: `tool_use` ids
+   were found without `tool_result` blocks immediately after: toolu_01TUfcKK3i8GHt4fTWTosYcY".
+4. Operator typed "pin" at 19:06:26 → same 400, same message index. Session bricked.
+
+**Fix design (agreed):**
+In the agentic loop, after `appendToHistory` and before `turn_end` logic, detect the
+"dangling tool_use on max_tokens" condition:
+
+```typescript
+if (toolUseBlocks.length > 0 && response.stop_reason === "max_tokens") {
+  // Synthesise error tool_results for every dangling tool_use block.
+  // This keeps the message pair contract intact and lets the session continue.
+  const errorResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map(b => ({
+    type: "tool_result",
+    tool_use_id: b.id,
+    content: "[interrupted: response was cut off at max_tokens before tool input was complete — tool was not executed]",
+    is_error: true,
+  }));
+  await this.appendToHistory({ role: "user", content: errorResults });
+  // Emit a tool_result event for each synthetic result so the UI shows what happened.
+  for (const toolUse of toolUseBlocks) {
+    const syntheticResultEvent: OmegaEvent = { ... };
+    this.logEvent(syntheticResultEvent);
+    yield syntheticResultEvent;
+  }
+  // Do NOT set continueLoop = true — the turn ends here with an error note.
+  // Emit an agent_error so the operator knows the turn was truncated.
+  const truncatedEvent: OmegaEvent = { type: "agent_error", ts: ..., error: "Turn truncated: LLM hit max_tokens while generating tool call input; synthetic tool_result(s) appended to preserve history integrity." };
+  this.logEvent(truncatedEvent);
+  yield truncatedEvent;
+}
+```
+
+**Also fix `sanitizeToolPairs` to be a hard safety net:**
+The existing `sanitizeToolPairs()` function in `buildApiMessages()` already strips
+orphaned tool pairs from the *ephemeral API view* — but this runs on `llmContextView`
+too late, only at the next call. Adding a pre-flight invariant check at the top of the
+agentic loop (before `buildApiMessages`) would catch any future sources of context
+corruption early, write a diagnostic, and abort the turn cleanly instead of sending
+a malformed request and getting a 400.
+
+**Acceptance criteria:**
+- When LLM returns `stop_reason === "max_tokens"` with any `tool_use` blocks in
+  content, synthetic `tool_result` error messages are appended to `llmContextView`
+  immediately (before `turn_end`).
+- The synthetic results carry `is_error: true` and a clear human-readable message.
+- `agent_error` event is emitted (and persisted) explaining the truncation.
+- The UI shows the synthetic tool_results (via `tool_result` events).
+- Next user message succeeds — context is well-formed and Anthropic accepts it.
+- Test: mock stream provider returns `stop_reason: "max_tokens"` with a `tool_use`
+  block; assert (a) `llmContextView` ends with a valid `tool_result` user message,
+  (b) `agent_error` event is yielded, (c) next `sendMessage` call succeeds without 400.
+
+**BUG-2 — `compact-auto.test.ts` never written (incomplete session 2026-02-28)**
+The previous session was writing `src/compact-auto.test.ts` — a comprehensive test
+file for auto-compact functionality — when it hit the `max_tokens` bug above and was
+cut off mid-`write_file` input generation. The file was never created. Resume after
+BUG-1 is fixed.
+
+Context from the previous session's last assistant message: Omega had just run `bun tsc`
+and confirmed pre-existing type errors were not caused by its changes. It was about to
+write a "comprehensive test file" for `src/compact-auto.test.ts`. The exact contents
+were not visible (the write was cut off before the content argument was complete).
+
+To resume: check what auto-compact functionality exists in `src/compaction.ts`
+(the `AUTO_COMPACT_THRESHOLD` export and associated logic), review any partial or
+existing tests for it, then write the full test file.
+
+Acceptance criteria for BUG-2:
+- `src/compact-auto.test.ts` exists and passes `bun test`
+- Tests cover `AUTO_COMPACT_THRESHOLD` threshold logic and any auto-compact trigger
+  path in `agent.ts`
+- Gate green after writing
+
+**3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic**
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
 fallback at line ~1080 yields a bare `agent_error` with no `llm_error` event and
 no `writeDiagnostic()` call. This is the worst crash path and has the least

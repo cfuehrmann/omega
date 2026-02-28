@@ -59,6 +59,14 @@ async function callLlm(
 export const KEEP_RECENT_TURNS = 10;
 
 /**
+ * Automatic compaction threshold: trigger compaction when llmContextView
+ * exceeds this many messages. Chosen to fire well before the 100-message cap
+ * in buildApiMessages() so the agent compacts proactively rather than silently
+ * dropping messages. After compaction: 1 + KEEP_RECENT_TURNS*2 = 21 messages.
+ */
+export const AUTO_COMPACT_THRESHOLD = 60;
+
+/**
  * Compact the in-memory history by summarising the head and keeping the tail.
  *
  * Returns a new (shorter) history array:

@@ -213,6 +213,21 @@ export async function runApp(): Promise<void> {
             printBlock(now(), [red(`⚠ Compaction failed: ${event.error}`)]);
             break;
 
+          case "compact_auto_start":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Auto-compacting context (${event.messagesBefore} messages)…`)]);
+            break;
+
+          case "compact_auto_done":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim(`Context auto-compacted: ${event.messagesBefore} → ${event.messagesAfter} messages`)]);
+            break;
+
+          case "compact_auto_error":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [yellow(`⚠ Auto-compaction failed (rolling truncation fallback): ${event.error}`)]);
+            break;
+
           case "text":
             if (!streamingStarted) {
               process.stdout.write(dim(now().padEnd(TIME_WIDTH)) + bold("text") + "\n");

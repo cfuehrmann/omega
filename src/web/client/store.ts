@@ -36,6 +36,9 @@ export type WsEvent =
   | { type: "compact_user_start" }
   | { type: "compact_user_done"; messagesBefore: number; messagesAfter: number }
   | { type: "compact_user_error"; error: string }
+  | { type: "compact_auto_start"; messagesBefore: number }
+  | { type: "compact_auto_done"; messagesBefore: number; messagesAfter: number }
+  | { type: "compact_auto_error"; error: string }
   | { type: "world_state_saved"; path: string; charCount: number }
   | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
   | { type: "llm_error"; provider: string; error: string }
@@ -204,6 +207,9 @@ export function dispatch(event: WsEvent): void {
     case "compact_user_start":
     case "compact_user_done":
     case "compact_user_error":
+    case "compact_auto_start":
+    case "compact_auto_done":
+    case "compact_auto_error":
     case "world_state_saved":
     case "llm_error":
     case "agent_error":
