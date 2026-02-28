@@ -160,11 +160,19 @@ function EventBlock(props: { event: WsEvent }) {
     }
 
     case "llm_response": {
-      const line = `stop: ${e.stopReason}  in: ${e.usage.input_tokens}  out: ${e.usage.output_tokens}`;
+      const u = e.usage;
+      const parts = [
+        `stop: ${e.stopReason}`,
+        `in: ${u.input_tokens}`,
+        `out: ${u.output_tokens}`,
+        ...(u.cache_creation_input_tokens ? [`write: ${u.cache_creation_input_tokens}`] : []),
+        ...(u.cache_read_input_tokens     ? [`read: ${u.cache_read_input_tokens}`]      : []),
+        ...(u.service_tier && u.service_tier !== "standard" ? [`tier: ${u.service_tier}`] : []),
+      ];
       return (
         <div class="block api-response">
           <div class="block-label">api response › {e.provider}</div>
-          <div class="block-body">{line}</div>
+          <div class="block-body">{parts.join("  ")}</div>
         </div>
       );
     }

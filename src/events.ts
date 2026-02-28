@@ -77,8 +77,12 @@ export interface LlmResponseEvent {
   usage: {
     input_tokens: number;
     output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
+    /** Tokens written to the prompt cache this call (billed at 1.25× base). */
+    cache_creation_input_tokens?: number | null;
+    /** Tokens served from the prompt cache this call (billed at 0.1× base). */
+    cache_read_input_tokens?: number | null;
+    /** Service tier used for this request; absent or "standard" is the baseline. */
+    service_tier?: string | null;
   };
   /**
    * FK into `context.jsonl` — the hash of the assistant record written for

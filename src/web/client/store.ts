@@ -25,7 +25,7 @@ export type WsEvent =
   | { type: "session_start"; authMode: string; model: string; provider: string }
   | { type: "tool_call"; id: string; name: string; input: unknown; formatted?: string }
   | { type: "tool_result"; id: string; name: string; result?: { type: string; text?: string; is_error?: boolean }; formatted?: string; isError: boolean }
-  | { type: "llm_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content?: unknown[]; raw?: unknown }
+  | { type: "llm_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
   | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; request?: unknown }
   | { type: "llm_retry"; attempt: number; provider: string; waitMs: number; error: string }
   | { type: "diagnostic_written"; path: string }

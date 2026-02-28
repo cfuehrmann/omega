@@ -1088,8 +1088,8 @@ export class Agent {
       // Track tokens
       turnInputTokens = response.usage.input_tokens;
       turnOutputTokens = response.usage.output_tokens;
-      const turnCacheCreation = (response.usage as any).cache_creation_input_tokens ?? 0;
-      const turnCacheRead = (response.usage as any).cache_read_input_tokens ?? 0;
+      const turnCacheCreation = response.usage.cache_creation_input_tokens ?? 0;
+      const turnCacheRead = response.usage.cache_read_input_tokens ?? 0;
       this.sessionInputTokens += turnInputTokens;
       this.sessionOutputTokens += turnOutputTokens;
       this.sessionCacheCreationTokens += turnCacheCreation;
@@ -1131,8 +1131,9 @@ export class Agent {
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,
-          cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens ?? undefined,
-          cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? undefined,
+          cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? undefined,
+          cache_read_input_tokens: response.usage.cache_read_input_tokens ?? undefined,
+          service_tier: response.usage.service_tier ?? undefined,
         },
         contextHash: assistantHash,
         // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):

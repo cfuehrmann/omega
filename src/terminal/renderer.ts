@@ -144,7 +144,13 @@ export function renderApiResponse(
   provider: "anthropic" | "openai",
   url: string,
   stopReason: string,
-  usage: { input_tokens: number; output_tokens: number },
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number | null;
+    cache_read_input_tokens?: number | null;
+    service_tier?: string | null;
+  },
 ): string[] {
   const lines: string[] = [];
   lines.push(bold(blue("llm_response")));
@@ -152,6 +158,9 @@ export function renderApiResponse(
   lines.push(blue(`${INDENT}usage:`));
   lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
   lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
+  if (usage.cache_creation_input_tokens) lines.push(dim(blue(`${INDENT2}cache_write: ${usage.cache_creation_input_tokens}`)));
+  if (usage.cache_read_input_tokens)     lines.push(dim(blue(`${INDENT2}cache_read: ${usage.cache_read_input_tokens}`)));
+  if (usage.service_tier && usage.service_tier !== "standard") lines.push(dim(blue(`${INDENT2}service_tier: ${usage.service_tier}`)));
   return lines;
 }
 
