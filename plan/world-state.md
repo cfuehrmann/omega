@@ -54,7 +54,7 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
   - **[SCHEMA] pre-lock fixes** (DONE): `LlmResponseEvent.content` removed (duplication); `LlmCallEvent.messageCount` and `llmCallNumber` removed (derivable). `ToolCallEvent.input` removed; `ToolResultEvent.outputLength` removed. All FK pointers use hash-based pattern consistently. `LlmResponseEvent.usage` records all four Anthropic token counts plus `service_tier`.
   - **3e-iv** (TODO): Property names and completeness per event — cross-references on error events, `TurnEndEvent.toolCalls`, `SessionStartEvent.authMode`. See backlog.
   - **3e-v** (TODO): Missing event types — four prioritised sub-items identified by audit:
-    - **3e-v-1**: `/compact` failure `agent_error` not persisted (one missing `logEvent()` call — start here).
+    - **3e-v-1**: ✅ DONE (commit 0d77102) — compaction event overhaul: three typed events replace `session_compacted`; `context.jsonl` mutation bug fixed.
     - **3e-v-2**: "All retries exhausted" path emits bare `agent_error` with no `llm_error` and no diagnostic.
     - **3e-v-3**: `session_end` event missing — clean shutdown indistinguishable from crash; blocks session resume.
     - **3e-v-4**: Web server protocol errors (`{ type: "error" }`) not in `events.jsonl` — design decision needed.
@@ -103,7 +103,7 @@ The `null`-is-no-op pattern still applies to all write functions. e2e tests use 
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `sessions/events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
 
 ### OmegaEvent Variants (streamed from agent.ts AND persisted to events.jsonl)
-`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `session_compacted`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
+`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
 
 Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`) not an `OmegaEvent` — explicitly outside the persistence boundary by design.
 
@@ -178,12 +178,14 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
-Completed **error event audit**: Enumerated all error conditions handled in the app and cross-referenced against `OmegaEvent` persistence. Four gaps identified and prioritised as backlog items 3e-v-1 through 3e-v-4 (in impact order):
-1. `/compact` failure `agent_error` not persisted — missing `logEvent()` call.
-2. "All retries exhausted" path has no `llm_error` and no diagnostic write.
-3. No `session_end` event — clean shutdown vs. crash indistinguishable in `events.jsonl`.
-4. Web server protocol errors (`{ type: "error" }`) not in `events.jsonl` — design decision needed.
-Backlog and world-state updated to reflect revised plan. No code changed this session.
+Completed **compaction event overhaul** (commit 0d77102):
+- `session_compacted` retired; replaced by `compact_user_start`, `compact_user_done`, `compact_user_error`.
+- `compact_user_start` awaited before LLM call; `compact_user_done` unconditional (even no-op 0→0); `compact_user_error` persisted (was silently dropped).
+- Fixed grave bug: `/compact` was calling `clearContextStore()` + rewriting `context.jsonl` from scratch. Now only `llmMessageLog` and `llmMessageHashes` are replaced in memory; `context.jsonl` remains append-only.
+- Empty-history case flows through normally: `start` + `done(0→0)`, no `agent_error`.
+- Both UIs updated; exhaustive switch guard enforces coverage.
+
+Completed **error event audit** (previous session): four gaps identified as 3e-v-1 through 3e-v-4; 3e-v-1 now done.
 
 Completed **prompt editor simplification** (commit 2a9416e): Gutted `src/terminal/input.ts` from ~430 lines to ~190. Removed all cursor tracking, arrow key navigation, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace. Removed `cursor`, `columns`, `terminalWidth`, `promptWidth` from shared buffer. Removed `redrawLine`, `moveVisualCol`, `wordBoundaryBack/Forward`, `charsDisplayWidth` helpers. Removed `sharedPasteState.startVisualCol/startCursor`. Esc is now context-sensitive: non-empty buffer → clears buffer + calls `onBufferCleared` (no abort); empty buffer → `onEscape` (abort turn or no-op). `setupRawInput` gains `onBufferCleared` callback; `app.ts` reprints prompt on buffer-cleared. `promptVisualWidth` helper and `sharedBuffer.promptWidth` assignment removed from `app.ts`. Tests rewritten to match; old cursor/navigation tests removed.
 

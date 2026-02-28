@@ -104,7 +104,7 @@ Known candidates, in priority order:
 Decide whether any important lifecycle events are absent. Full audit conducted
 (session 2026-xx-xx); five gaps identified, prioritised by impact below.
 
-**3e-v-1 — Compaction event overhaul** ← START HERE
+**3e-v-1 — Compaction event overhaul** ✅ DONE (commit 0d77102)
 Several problems with the current `/compact` implementation, addressed together:
 
 **Bug: `context.jsonl` is destructively mutated on compaction.**
@@ -159,7 +159,7 @@ Acceptance criteria:
 - Both UIs render all three new event types (exhaustive switch enforces this)
 - Gate green
 
-**3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic**
+**3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic** ← START HERE
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
 fallback at line ~1080 yields a bare `agent_error` with no `llm_error` event and
 no `writeDiagnostic()` call. This is the worst crash path and has the least

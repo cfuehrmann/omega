@@ -242,7 +242,7 @@ describe("Agent.sendMessage — plain text response", () => {
     const agent = new Agent(mockProvider);
     await collectEvents(agent, "how are you?");
 
-    const history = agent.getLlmMessageLog();
+    const history = agent.getLlmContextView();
     expect(history.length).toBe(2);
     expect(history[0]).toEqual({ role: "user", content: "how are you?" });
     expect(history[1].role).toBe("assistant");
@@ -374,7 +374,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     await collectEvents(agent, "read config");
 
     // Expected: user, assistant(tool_use), user(tool_result), assistant(text)
-    const history = agent.getLlmMessageLog();
+    const history = agent.getLlmContextView();
     expect(history.length).toBe(4);
     expect(history[0].role).toBe("user");
     expect(history[1].role).toBe("assistant");
@@ -565,7 +565,7 @@ describe("Agent.sendMessage — abort", () => {
     }
 
     // History should only have the user message — no partial assistant turn
-    const history = agent.getLlmMessageLog();
+    const history = agent.getLlmContextView();
     expect(history.length).toBe(1);
     expect(history[0].role).toBe("user");
   });
@@ -945,7 +945,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
     const agent = new Agent(mockProvider);
     await collectEvents(agent, "hi");
-    const history = agent.getLlmMessageLog();
+    const history = agent.getLlmContextView();
     // History has 2 messages: user + assistant (verbatim, no compaction)
     expect(history).toHaveLength(2);
     expect(history[0].role).toBe("user");
@@ -962,7 +962,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
     const agent = new Agent(mockProvider);
     await collectEvents(agent, "turn 1");
     await collectEvents(agent, "turn 2");
-    const history = agent.getLlmMessageLog();
+    const history = agent.getLlmContextView();
     // 4 messages: user1, asst1, user2, asst2
     expect(history).toHaveLength(4);
     expect(history[0].role).toBe("user");
@@ -982,7 +982,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
     const agent = new Agent(mockProvider);
     await collectEvents(agent, "turn 1 with tool");
     await collectEvents(agent, "turn 2");
-    const history = agent.getLlmMessageLog() as any[];
+    const history = agent.getLlmContextView() as any[];
     // Check: every tool_result has a matching tool_use
     const allToolUseIds = new Set<string>();
     for (const msg of history) {

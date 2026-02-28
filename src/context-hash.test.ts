@@ -4,7 +4,7 @@
  * Covers:
  * - context.jsonl entries carry `hash` and `ts` fields
  * - llm_call events carry `contextHashes: string[]`
- * - Hashes are derived from the buildApiMessages() view, NOT from llmMessageLog
+ * - Hashes are derived from the buildApiMessages() view, NOT from llmContextView
  * - Chaotic scenarios:
  *   - Identical message content → different hashes (ts prevents collision)
  *   - Tool loop: each llm_call's contextHashes grows correctly
@@ -220,7 +220,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
     const llmCall = llmCallEvents[0];
     expect(Array.isArray(llmCall.contextHashes)).toBe(true);
-    // Only the user message was in llmMessageLog when the first call was made
+    // Only the user message was in llmContextView when the first call was made
     expect(llmCall.contextHashes).toHaveLength(1);
     expect(llmCall.contextHashes[0]).toHaveLength(8);
     expect(/^[0-9a-f]{8}$/.test(llmCall.contextHashes[0])).toBe(true);
@@ -316,11 +316,11 @@ describe("llm_call contextHashes in events.jsonl", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Truncation scenario: contextHashes reflects the VIEW, not llmMessageLog
+// Truncation scenario: contextHashes reflects the VIEW, not llmContextView
 // ---------------------------------------------------------------------------
 
-describe("contextHashes reflects truncated view, not full llmMessageLog", () => {
-  it("after truncation, contextHashes length < llmMessageLog length", async () => {
+describe("contextHashes reflects truncated view, not full llmContextView", () => {
+  it("after truncation, contextHashes length < llmContextView length", async () => {
     // Build a large history that will be truncated.
     // We'll override buildApiMessages via a thin wrapper to force truncation
     // by using a very tight budget.
@@ -342,7 +342,7 @@ describe("contextHashes reflects truncated view, not full llmMessageLog", () => 
     }
     await Bun.sleep(50);
 
-    // At this point llmMessageLog has 6 messages.
+    // At this point llmContextView has 6 messages.
     // The last llm_call (for turn3) should have had 5 messages in its view
     // (turns 1-2 = 4 messages + turn3 user = 5)
     const allEvents = readEventLines(eventsFile);
