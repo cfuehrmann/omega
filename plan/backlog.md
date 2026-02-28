@@ -2,103 +2,15 @@
 
 ## Open items
 
-### [REFACTOR] Auto-compact trigger: message count → prompt token count
-**Priority: HIGH — message count is an inaccurate proxy for context pressure**
-
-**Decision (session 2026-xx-xx):** Replace `compactedContextHistory.length > AUTO_COMPACT_THRESHOLD` with a token-based check. Message count is uniform — it treats a one-word reply identically to a 10,000-token tool result dump.
-
-**What to measure:** Total prompt tokens on the last LLM call:
-```
-lastPromptTokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
-```
-All three categories occupy the context window; the model sees them all. Output tokens are irrelevant — they don't consume the context window on the next call. Cache vs. non-cache distinction is irrelevant for the trigger — cached tokens still take up space.
-
-**Source:** API-reported tokens from `response.usage` after each LLM call. Exact, already available, no new API calls needed. One turn of lag (check last turn's tokens before this turn's LLM call) — acceptable, since we want to compact well before overflow.
-
-**OpenAI path:** Use `prompt_tokens` from the OpenAI usage object directly.
-
-**Threshold:** `AUTO_COMPACT_THRESHOLD = 100_000` tokens (50% of Claude's 200k window). Constant in `src/compaction.ts`; replaces the old message-count constant of the same name.
-
-**Implementation:**
-- Add `lastPromptTokens: number = 0` field to `Agent`
-- After every LLM response (both Anthropic and OpenAI paths), update it:
-  `this.lastPromptTokens = input_tokens + (cache_read ?? 0) + (cache_creation ?? 0)`
-- `performAutoCompact()` checks `this.lastPromptTokens > AUTO_COMPACT_THRESHOLD`
-- Message count removed entirely — no belt-and-suspenders fallback needed
-
-**Status: ✅ DONE** — implemented and gate green.
-
-
-
-### [REFACTOR] Event system unification
-**Priority: HIGHEST — prerequisite for schema lock and session resume**
-
-Agreed design from session discussion. Four ordered steps:
-
-#### EU-1 — Delete dead weight — DONE (commit 00a8078)
-Removed `metrics` and `tool_result_message` from `AgentEvent`. Removed the two
-in-loop `status` yields ("thinking…" / "OpenAI provider active"). Removed the
-`/help` slash command (now yields `agent_error` like any unknown command — operator
-asks the LLM). Removed "generating `<tool>` input…" `status` yield from both
-`processStreamEvents()` and the inline streaming loop. Gate green.
-
-#### EU-2 — Replace remaining `status` yields with typed events — DONE (commit b2ebc02)
-Every remaining `status` yield has been replaced with a typed event:
-- `oauth_token_expired` and `oauth_refreshed` AgentEvent variants added
-- `model_changed` AgentEvent variant added; persisted as `SessionEvent`
-- `/compact` temporarily yielded `session_compacted`; later replaced by three
-  typed events in 3e-v-1 (`compact_user_start`, `compact_user_done`, `compact_user_error`)
-- `status` variant deleted from `AgentEvent` entirely
-- Pre-existing `sha256hex8` unused export also fixed
-
-All consumers updated: terminal app, web store, web App.tsx. All tests updated. Gate green.
-
-#### EU-3 — Unify AgentEvent and SessionEvent into one event type — DONE
-`OmegaEvent` (in `src/events.ts`) is now the single unified type. `AgentEvent`
-in `src/agent.ts` is kept as a backward-compat alias. All stream-facing names
-now match the persisted names (authority: `events.jsonl`):
-- `agent_to_agent_tool_call` → `tool_call`
-- `agent_to_agent_tool_result` → `tool_result`
-- `llm_to_agent` → `llm_response`
-Newly-yielded events (`llm_retry`, `diagnostic_written`, `context_view_trimmed`,
-`session_start`) added to all consumers. `WsEvent` in `store.ts` updated to
-match. Terminal renderer and `App.tsx` updated. Gate green; e2e green.
-
-#### EU-4 — UI sync invariant: every OmegaEvent is rendered — DONE
-All 17 `OmegaEvent` variants (plus `StreamSignal`/`text`) have render cases in
-both UIs. Exhaustive switch + `exhaustiveCheck(x: never)` guard enforced in:
-- `src/terminal/app.ts` — switch on `OmegaEvent | StreamSignal`; `default` calls `exhaustiveCheck`
-- `src/web/client/App.tsx` — switch on `WsEvent`; `default` calls `exhaustiveCheck`
-`exhaustiveCheck()` exported from `src/events.ts`. `WsEvent`/`Turn` now exported
-from `src/web/client/store.ts` (were local-only). `plan/dev-policy.md` updated.
-Gate green (458 tests pass, Vite build clean).
-
----
-
 ### [REFACTOR] Manifest-driven redesign — making Omega project-agnostic
 **Priority: HIGHEST — ongoing, guided by `manifest.md`**
 
 #### Step 3e — Stable persistence contract (schema lock)
-**Status: IN PROGRESS — event completeness being addressed in EU-1 through EU-4**
+**Status: IN PROGRESS**
 
 Review and lock the exact shape of every JSONL record in `sessions/context.jsonl`
-and `sessions/events.jsonl`. The EU steps above address event completeness and
-unification first; schema lock (3e-viii) follows once the unified type is stable.
-
-##### Step 3e-i — Rename SessionEvent and AgentEvent variants
-**Status: DONE**
-
-##### Step 3e-ii — Rename WsEvent variants to match (web protocol)
-**Status: DONE**
-
-##### Step 3e-iii — FK/PK contract: content-addressed context log
-**Status: DONE — commit b6ef87c**
-
-##### Schema lock
-**Status: TODO — [SCHEMA] items resolved (commit b59ba48), proceed in order**
-
-The two [SCHEMA] items (`llm_response.content` duplication and redundant
-`messageCount`) have been removed (commit b59ba48). Proceed with the sub-steps below.
+and `sessions/events.jsonl`. EU-1 through EU-4 are complete; proceed with the
+sub-steps below.
 
 **3e-iv — Property names and completeness per event**
 For every event variant, review: (a) are the existing field names clear and
@@ -107,15 +19,13 @@ diagnosis or session resume?
 
 **Priority: error events first.** `llm_error` and `agent_error` are the events
 most likely to be consulted in a post-mortem — if their fields are incomplete or
-missing cross-references, the diagnostic value is zero exactly when it matters
-most. Address these before other variants.
+missing cross-references, the diagnostic value is zero exactly when it matters most.
 
 Known candidates, in priority order:
 - `LlmErrorEvent` / `AgentErrorEvent` — no cross-reference to the `llm_call`
-  that triggered the error. Currently linked only by temporal order, same weakness
-  as `llm_call`/`llm_response`. Should carry a reference (e.g. the `contextHashes`
-  of the failed call, or a call ID) so a post-mortem can reconstruct exactly what
-  was sent when the error occurred.
+  that triggered the error. Currently linked only by temporal order. Should carry
+  a reference (e.g. the `contextHashes` of the failed call, or a call ID) so a
+  post-mortem can reconstruct exactly what was sent when the error occurred.
 - `LlmCallEvent` / `LlmResponseEvent` — linked only by temporal order in the
   JSONL; no explicit cross-reference field. Is ordering sufficient, or should
   `llm_response` carry a reference back to its `llm_call`?
@@ -124,93 +34,8 @@ Known candidates, in priority order:
   keeping as a summary alongside the IDs.
 - `SessionStartEvent.authMode` — only two live values (`"claude-max"`,
   `"api-key"`); should be a typed union, not a free string.
-- `ToolCallEvent` / `ToolResultEvent` — both now carry `contextHash: string` (FK to
-  the relevant `context.jsonl` record). `ToolCallEvent.input` and `ToolResultEvent.outputLength`
-  removed (both derivable from `context.jsonl`). ✅ Done (commit 34f7708).
 
 **3e-v — Missing event types**
-Decide whether any important lifecycle events are absent. Full audit conducted
-(session 2026-xx-xx); five gaps identified, prioritised by impact below.
-
-**3e-v-1 — Compaction event overhaul** ✅ DONE (commits 0d77102, bf07337, fba00b9)
-
-Three bugs fixed and design overhauled across multiple commits:
-
-**Bug: `context.jsonl` was destructively mutated on compaction** (fixed commit 0d77102).
-The handler previously called `clearContextStore()` then re-appended the compacted
-history. Fix: remove the file rewrite entirely. `context.jsonl` is append-only;
-only `llmContextView` and `llmContextHashes` are replaced in memory.
-
-**Bug: compaction failure was not persisted** (fixed commit 0d77102).
-The `catch` block yielded `agent_error` to the UI but never called `logEvent()`.
-Fix: dedicated `compact_user_error` event, both yielded and persisted.
-
-**Bug: success event was conditional on counts differing** (fixed commit 0d77102).
-`logEvent(session_compacted)` was only called when counts changed. Fix: emit
-`compact_user_done` unconditionally.
-
-**Design: replaced `session_compacted` with three typed events** (commit 0d77102).
-- `compact_user_start` — `{ ts }` — emitted and awaited before any LLM call.
-- `compact_user_done` — `{ ts, messagesBefore, messagesAfter }` — emitted on success.
-- `compact_user_error` — `{ ts, error: string }` — emitted in the catch block.
-`session_compacted` fully retired from `OmegaEvent`, both UIs, `WsEvent`, all tests.
-
-**Design: empty-history no longer special** (commit 0d77102).
-Flows through the normal path: `compact_user_start` → `compact_user_done` with
-`messagesBefore: 0, messagesAfter: 0`, without calling `compactHistory()`.
-
-**Rename: `llmMessageLog` → `llmContextView`, `llmMessageHashes` → `llmContextHashes`**
-(commit bf07337). Pure mechanical rename; no behaviour change. The old name implied
-an append-only historical log; the new name reflects that this is the mutable
-context view forwarded to future LLM calls (distinct from the append-only
-`context.jsonl`). `getLlmMessageLog()` → `getLlmContextView()`.
-
-**Bug: compaction hash rebuild was wrong** (fixed commit fba00b9).
-After compaction the old code called `buildContextRecord()` on every tail message,
-generating fresh timestamps → different hashes than those already in `context.jsonl`,
-breaking the FK/PK contract. The synthetic summary was also never appended to
-`context.jsonl`. Fix: reuse the existing `llmContextHashes` slice for tail messages
-(same objects, no re-hash, no re-write); call `appendContextMessage()` only for the
-new synthetic message. `compactHistory()` now returns `syntheticMessage` and
-`tailStartIndex` to enable correct hash bookkeeping in the caller.
-
-**BUG-1 — `max_tokens` mid-tool-call poisons context → permanent 400 on all future turns** ✅ FIXED (commit 9682be6)
-**Priority: CRITICAL — can brick a session completely**
-
-**Root cause:** When the LLM hits `max_tokens` while generating a `tool_use` block,
-the assistant message (with dangling `tool_use`) was unconditionally appended to
-`llmContextView` before the `stop_reason` check. The loop exited with no matching
-`tool_result`, permanently poisoning the context. Every subsequent call returned 400.
-Confirmed from `events.prev.jsonl` (2026-02-28): `write_file` call truncated, session
-immediately bricked on next user input.
-
-**Fix:** Detect `toolUseBlocks.length > 0 && stop_reason === "max_tokens"` after
-`appendToHistory`. Synthesise `tool_result` blocks with `is_error: true` for every
-dangling `tool_use` id, append them via `appendToHistory`, emit `tool_result` events
-per tool, emit `agent_error`. Turn ends cleanly; next turn succeeds.
-Tests: 9 BUG-1 scenarios in `src/compact-auto.test.ts`.
-
-**BUG-2 — `compact-auto.test.ts` never written (incomplete session 2026-02-28)** ✅ FIXED (commit 9682be6)
-Initial 26 tests covering `AUTO_COMPACT_THRESHOLD` constant, auto-compact firing above/below
-threshold, error path (fallback continues), all BUG-1 scenarios, and a combined
-auto-compact + max_tokens integration scenario. Gate green. (Later grown to 27 tests by BUG-3 fix.)
-
-**BUG-3 — `compact-auto.test.ts` broken by token-threshold refactor** ✅ FIXED (commit 1b560ac)
-The session that implemented token-based auto-compact (`lastPromptTokens` check,
-`AUTO_COMPACT_THRESHOLD = 100_000`) got stuck at `max_tokens` twice while rewriting
-the tests, leaving `compact-auto.test.ts` still using message-count semantics
-(`seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1)` → 100,001 messages). All
-"fires above threshold" and "does not fire below threshold" tests were failing.
-Fix: added `setAboveThreshold()` helper (sets `agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD + 1`,
-seeds minimal history for compactHistory() to work) and `setBelowThreshold()` helper.
-All 27 tests pass; gate green.
-
-**BUG-4 — synthetic `tool_result` content string missing `"max_tokens"` literal** ✅ FIXED (commit fe3c2a9)
-The BUG-1 synthetic error content injected into history on `max_tokens` mid-tool-call
-said `"output budget … was exhausted"` but did not contain the literal string `"max_tokens"`.
-One test (`"synthetic tool_result content mentions max_tokens and non-execution"`) was
-failing. Fix: added `"max_tokens stop — "` prefix to the content string in `agent.ts`.
-487 tests pass; gate green.
 
 **3e-v-2 — "All retries exhausted" missing `llm_error`**
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
@@ -223,29 +48,6 @@ Acceptance criteria:
 - Both Anthropic and OpenAI paths covered
 - Test: mock stream that always throws a retryable error; assert `llm_error` event
   is present after exhaustion
-
-**3e-v-3 — `session_end` — clean shutdown vs. crash indistinguishable** ✅ DONE (commit bfd5d0d)
-`session_end` event added to `OmegaEvent` with `outcome: "clean" | "error"` and optional
-`reason`. `Agent.emitSessionEnd()` public method awaits the flush. Terminal `shutdown()`
-now async, awaits `emitSessionEnd("clean")` before `process.exit()`. Web server
-`handleShutdown` does the same. Both UIs have a render case. Crash / SIGKILL leaves no
-`session_end` — that absence is the crash signal. At next startup, terminal app reads
-`events.prev.jsonl` and warns if no `session_end` or if `outcome === "error"`.
-
-Also done in the same commit:
-- Diagnostics (`src/diagnosis.ts`, `diagnosis/` dir) **removed entirely** — replaced by
-  the principled session-end / `.prev` file approach. All diagnostic assertions in
-  `agent-rate-limit.test.ts` removed.
-- `SessionStartEvent` gains a `systemPrompt` field (the system prompt at session start,
-  captured via `buildSystemPrompt()` which also replaces the inline prompt build in
-  `sendMessage`). Closes the last unique data gap that diagnostics covered.
-- `LlmCallEvent` gains `cacheBreakpointIndex: number | null` — the 0-based index of the
-  message that received `cache_control: { type: "ephemeral" }` (always `contextHashes.length - 1`
-  for Anthropic; `null` for OpenAI). Documents the ephemeral cache annotation in the
-  persistent record.
-- `DiagnosticWrittenEvent` removed from `OmegaEvent`.
-- `Agent` constructor drops `diagDir` parameter. `makeTestAgent` updated.
-- 488 tests pass, gate green.
 
 **3e-v-4 — Web server protocol errors not in `events.jsonl`**
 Three conditions in `web/server.ts` emit `{ type: "error" }` over WebSocket but
@@ -263,54 +65,25 @@ Acceptance criteria:
 - If persisted: wired via `logEvent()` with an appropriate `OmegaEvent` variant
 - If excluded: documented as intentional omission in 3e-vi
 
-**3e-v-5 — No event when `writeDiagnostic()` itself fails** ✅ RESOLVED (commit bfd5d0d)
-Diagnostics removed entirely. `writeDiagnostic`, `DiagnosticWrittenEvent`, and
-`diagnosis/` dir are gone. No longer applicable.
-
-**3e-v — Previously known candidates (resolved):**
-- `session_end` — addressed by 3e-v-3 above.
-- `model_changed` — **RESOLVED by EU-2** (commit b2ebc02). Added to both `AgentEvent`
-  and `SessionEvent`; emitted and persisted whenever `/sonnet`, `/opus`, or `/codex`
-  switches the active model.
-
-**3e-v-bug-A — `user_message` event appears after `llm_call` in events.jsonl** ✅ FIXED (commit 25078f3)
-
-Observed in a live session: the `llm_call` event was written to `events.jsonl`
-*before* the `user_message` event that triggered it. Root cause: `logEvent()` was
-fire-and-forget everywhere; the `user_message` async write lost the race to the
-`llm_call` write. Fix: `logEvent()` now returns `Promise<void>`; the `user_message`
-site awaits it before entering the agentic loop. All other `logEvent` sites remain
-fire-and-forget — only `user_message` needs the ordering guarantee.
-
-**3e-v-bug-B — `llm_call.contextHashes` FKs not yet flushed to context.jsonl** ✅ NOT A REAL BUG (investigated commit 25078f3)
-
-Same session, same apparent symptom. Investigated: `appendToHistory()` fully awaits
-`appendContextMessage()` which awaits the file write; all `appendToHistory()` calls
-in each loop iteration are awaited before `continueLoop` is set; so `context.jsonl`
-is always fully flushed before the next `llm_call` fires. The apparent out-of-order
-appearance in `events.jsonl` was entirely caused by bug-A (the `user_message` event
-race). No further fix needed.
-
 **3e-vi — Persistence completeness audit**
 Formally verify and document which events/signals are intentionally *not*
-persisted, and why. Current known intentional omissions (updated after EU-1 and EU-2):
-- `status` messages — **gone** (EU-2, commit b2ebc02); each real signal is now a typed event.
-- `metrics` AgentEvent — **gone** (EU-1, commit 00a8078); superseded by `llm_response` usage fields and `turn_end` aggregate.
-- Streaming `text` fragments — assembled response is captured in `context.jsonl`
-  assistant message (`llm_response` intentionally carries no `content` — resolved in commit b59ba48).
-  `text` becomes a `StreamSignal`, not an event — explicitly outside the persistence boundary by design.
+persisted, and why. Current known intentional omissions:
+- `status` messages — gone (EU-2); each real signal is now a typed event.
+- `metrics` AgentEvent — gone (EU-1); superseded by `llm_response` usage fields and `turn_end` aggregate.
+- Streaming `text` fragments — assembled response is in `context.jsonl`; `text` is a `StreamSignal`, explicitly outside the persistence boundary by design.
+
 Close the question explicitly so future contributors know these are deliberate,
 not oversights.
 
 **3e-vii — Forward-compatibility policy**
 Document the Postel's Law contract for the persistence schema:
 - **Tolerant readers:** unknown fields on a known event are silently ignored;
-  unknown event types are silently skipped. This rule applies uniformly — both
-  to new event variants and to new fields on existing variants.
-- **Additive writers:** adding a new optional field to an existing event, or
-  adding a new event type, is a non-breaking change and requires no migration.
+  unknown event types are silently skipped.
+- **Additive writers:** adding a new optional field or a new event type is a
+  non-breaking change and requires no migration.
 - **Breaking changes** (removing or renaming a required field, changing field
   semantics) require a documented migration plan and must not happen silently.
+
 This policy should live in the schema reference document produced by 3e-viii.
 
 **3e-viii — Schema reference document**
@@ -361,10 +134,8 @@ Acceptance criteria:
 
 #### REC-4 (LOW): History validation before every API call
 Cheap sanity check at top of agentic loop: every `tool_use` block must have a
-matching `tool_result`. If not, write a diagnostic and abort the turn rather than
-sending malformed history. Circuit-breaker; real fix is REC-3.
-
-Deprioritised: will be superseded by Step 3's event-list model.
+matching `tool_result`. If not, abort the turn rather than sending malformed
+history. Circuit-breaker; real fix is REC-3.
 
 ---
 
@@ -454,12 +225,6 @@ Always go RED first.
 
 ---
 
-### [OTHER] Provider/model architecture
-`provider` (binary: anthropic/openai) + `activeModel` (string). Low priority until
-more providers are added.
-
----
-
 ### [REFACTOR] Decouple Omega startup from Omega's own repo (world-state)
 **Priority: LOW — do after Steps 3e and 4**
 
@@ -474,10 +239,8 @@ load its own world state as today.
 **Proposed approach:**
 
 1. **World-state opt-in via README** — `loadWorldState()` should only read the file if
-   the project's `README.md` (already read at startup) explicitly references a world
-   state path (e.g. `plan/world-state.md`). If the README doesn't mention it, no world
-   state is injected. This requires no new config format — the README is already the
-   project orientation document.
+   the project's `README.md` explicitly references a world state path. If the README
+   doesn't mention it, no world state is injected.
 
 2. **Remove hardcoded startup coupling** — `terminal/app.ts` and `web/server.ts` both
    call `agent.loadWorldState()` unconditionally. These calls should be conditioned on
@@ -496,61 +259,27 @@ Acceptance criteria:
 
 ## Closed items
 
-- **[ARCH] Mid-turn context overflow: error-out path** — Done (commit 13c1f9e). `buildSentContext`, `apiBudget`, `contextHashesForView`, and `context_view_trimmed` deleted. Agent sends `compactedContextHistory` verbatim. Context overflow (400 prompt-too-long / 429 extra-usage-required) is non-retryable: emits `llm_error` + actionable `agent_error` ("Use /compact …"). 486 tests, gate green. (Diagnostic write previously included; removed in commit bfd5d0d.)
-- **Diagnostic snapshots / diagnosis/ dir** — Removed (commit bfd5d0d). Replaced by `session_end` event + `.prev` file approach. `writeDiagnostic`, `DiagnosticWrittenEvent`, `diagDir` constructor param, and `checkDiagnostics` all gone. `systemPrompt` added to `session_start`; `cacheBreakpointIndex` added to `llm_call` to close the last data gaps. Terminal startup now reads `events.prev.jsonl` to detect prior session errors.
-- **`/compact` command tests** — Done (commit 8fcf594). 27 tests in `src/compact-command.test.ts` covering all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations (view length before/after), error path, and post-compact continuity. Fixed bug: `/compact` handler passed `this.contextFile ?? undefined` to `appendContextMessage`, coercing `null` (disabled/test) to `undefined` (use production default), causing `compact_user_error` in all tests under `OMEGA_TEST=1`. Fixed to pass `this.contextFile` directly.
-- **UI: tighten tool_call and tool_result display truncation** — Done (commit f99d233). Both blocks now cut at 5 lines / 500 chars in terminal and web. Terminal `renderToolStart` uses `truncateOutput` (was bare `JSON.stringify`). Web `tool_call` uses `truncateOutput` (compact JSON, was `truncate(prettyJSON, 3000)`).
-- **Terminal: minimal append-only prompt editor** — Done (commit 2a9416e). Removed cursor tracking, arrow keys, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace, `redrawLine`, `wordBoundaryBack/Forward`. Esc now context-sensitive: non-empty → clear buffer; empty → abort turn. ~240 lines deleted from `input.ts`. Tests rewritten.
-- **UI: dual-limit tool result truncation** — Done (commit b29fde5). Terminal and web now cut at 20 lines OR 2000 chars (superseded by f99d233 above).
-- **UI/event: full Anthropic usage in llm_response** — Done (commit a85f69e). `cache_creation_input_tokens`, `cache_read_input_tokens` typed as `number | null` (removed two `as any` casts); `service_tier` added. Terminal/web show cache tokens when non-zero, service_tier when not "standard". `WsEvent` widened.
-- **UI: remove redundant content from llm_response terminal block** — Done (commit 538eac8). Content blocks (text + tool_use) were echoed by stream and tool_call block; removed. `stop_reason` and `usage` retained.
-- **EU-4: UI sync invariant — every OmegaEvent rendered** — Done. All 17 variants rendered; exhaustive switch guards in `terminal/app.ts` and `App.tsx`; `exhaustiveCheck()` in `events.ts`; `WsEvent`/`Turn` exported from `store.ts`; `dev-policy.md` updated. Gate green.
-- **EU-3: Unify AgentEvent and SessionEvent into OmegaEvent** — Done. `tool_call`, `tool_result`, `llm_response` are now the canonical event names everywhere. All consumers updated; gate + e2e green.
-- **Test-pollution prevention (layers a–e)** — Done. All five structural layers
-  implemented: `bunfig.toml` preload sets `OMEGA_TEST=1` (layer a); `assertNotProductionPath()`
-  hard-errors on production writes in tests (layer b); Agent constructor coerces
-  `undefined` paths to `null` when `OMEGA_TEST=1` (layer c); `makeTestAgent()` factory
-  in `src/test-utils.ts` (layer d); pre-commit grep for bare `new Agent()` in test
-  files (layer e).
-- **Shutdown decoupling** — Done. All fold-on-exit code removed from `app.ts` and
-  `web/server.ts` (`foldCurrentSessionIntoWorldState`, `performWebShutdown`). Ctrl-C
-  exits immediately. Shutdown ritual documented in `README.md ## Shutdown`.
-- **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` package removed,
-  `omega.log`/`omega.prev.log` removed from `.gitignore`. All infra-only events were
-  already in `SessionEvent`.
-- **Step 3e-i: Rename SessionEvent/AgentEvent variants** — Done. All 7 renames applied.
-- **Step 3e-iii: FK/PK content-addressed context log** — Done (commit b6ef87c).
-- **Step 3e-ii: Rename WsEvent variants** — Done. Pushed to `origin/develop`.
-- **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
-- **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
-- **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23).
-- **3e-v-1: Compaction event overhaul** — Done (commits 0d77102, bf07337, fba00b9). See open items for full detail.
-- **Step 3b: `/compact` slash command** — Done (commit f2d5631).
-- **Step 3a: Append-only context file** — Done (commit 551d676).
-- **Step 2: Abandon automatic compaction** — Done. `compactAfterTurn()` removed.
-- **Step 1: System prompt decoupling + README** — Done.
-- **REC-1: Pre-commit test gate** — Done (commit b33ecff).
-- **REC-0: Git-based known-good anchor** — Done. Two-branch model (`main`/`develop`).
-- **WEB-5: Session persistence** — Done. `sessions/current.jsonl`.
-- **WEB-4: Renderer parity** — Done (commit 538b717).
-- **WEB-1/2/3: Bun WebSocket server + Solid.js client + Turn store** — Done (commit 99a9826).
-- **WEB-0: Split `ui-raw.ts` into `src/terminal/` modules** — Done (commit 4183922).
-- **TOOLS-3: Background process management** — Done (commit 9023c5a).
-- **TOOLS-2: `find_files`** — Done.
-- **TOOLS-1: `grep_files`** — Done.
-- **FEAT-1: Parallel tool execution** — Done.
-- **LOG-1: Redesign diagnostic/logging subsystem** — Done (commit 71e7dfc).
-- **LOG-2: Complete event taxonomy renaming** — Done (commit f137610).
-- **Diagnostic snapshots on fatal API errors** — Done (commit 61c4ebd).
-- **Anthropic prompt caching** — Done.
-- **Cache savings display** — Done.
-- **Rate-limit retry** — Done.
-- **OAuth auto-relogin** — Done.
-- **Line editor cursor stuck on wrapped input** — Fixed (commit 892cbce).
-- **Bracketed paste garbled display + O(n) append latency** — Fixed (commit 7344295).
-- **Web UI stuck streaming after interrupted session** — Fixed (commit 87bca6d).
-- **Terminal UI breakage not caught by tests** — Fixed (commit 467cdb8).
-- **Stale compaction race** — Fixed (commit 8c3d9a3).
-- **Tool output cap** — Fixed. `MAX_TOOL_OUTPUT_CHARS = 100_000` in `executeTool()`.
-- **`truncateHistory` no-op on short-but-fat history** — Fixed.
-- **Graceful handling of context-too-long 429** — Fixed.
+- **Diagnostics / diagnosis/ dir** — Removed (commit bfd5d0d). Replaced by `session_end` event + `.prev` file crash detection. `writeDiagnostic`, `DiagnosticWrittenEvent`, `diagDir` param, `checkDiagnostics` all gone. `systemPrompt` added to `session_start`; `cacheBreakpointIndex` added to `llm_call`.
+- **Mid-turn context overflow: error-out** — Done (commit 13c1f9e). `buildSentContext`, `apiBudget`, `contextHashesForView`, `context_view_trimmed` deleted. Context overflow is non-retryable: `llm_error` + actionable `agent_error`.
+- **Event system unification (EU-1–EU-4)** — Done. `AgentEvent`/`SessionEvent` merged into `OmegaEvent`; `status` variant deleted; all stream/wire/UI names match persistence; exhaustive switch guards in both UIs.
+- **3e-v-1: Compaction event overhaul** — Done. `session_compacted` replaced by `compact_user_start/done/error`. Three bugs fixed: `context.jsonl` destructive mutation, missing error persistence, conditional success event. Hash rebuild bug fixed (tail hashes reused, not re-computed).
+- **BUG-1: `max_tokens` mid-tool-call context poison** — Fixed (commit 9682be6). Dangling `tool_use` on `max_tokens` now gets synthetic `tool_result(is_error=true)` entries; turn ends cleanly; next turn succeeds.
+- **3e-v-3: `session_end` event** — Done (commit bfd5d0d). `outcome: "clean" | "error"`; terminal startup warns on missing/error outcome in `.prev` file.
+- **FK/PK contract (3e-iii)** — Done (commit b6ef87c). `context.jsonl` records carry `hash` + `ts`; `llm_call` carries `contextHashes[]`; `tool_call`/`tool_result`/`llm_response` carry `contextHash` FK.
+- **Pre-lock field removals** — Done. `LlmResponseEvent.content`, `LlmCallEvent.messageCount`, `ToolCallEvent.input`, `ToolResultEvent.outputLength` all removed.
+- **Auto-compact trigger: token-based** — Done. `lastPromptTokens` check replaces message-count. `AUTO_COMPACT_THRESHOLD = 100_000` tokens.
+- **Test-pollution prevention (layers a–e)** — Done. `OMEGA_TEST=1` preload; `assertNotProductionPath()` guard; Agent coercion; `makeTestAgent()` factory; pre-commit grep.
+- **`/compact` command + tests** — Done. 27 tests in `compact-command.test.ts`.
+- **Tool display truncation** — Done. Both UIs cut at 5 lines / 500 chars.
+- **Minimal append-only line editor** — Done. Cursor tracking, arrow keys, word-jump, forward-delete all removed (~240 lines).
+- **Step 4: Retire pino** — Done. `src/logger.ts` deleted, `pino` removed.
+- **Steps 3a–3d** — Done. Append-only context file, `/compact` command, event log dual-write, non-destructive truncation.
+- **Step 3e-i/ii: Event/WsEvent renames** — Done.
+- **Parallel tool execution** — Done.
+- **Anthropic prompt caching + cache savings display** — Done.
+- **Rate-limit retry + OAuth auto-relogin** — Done.
+- **Background process tools (`run_background`, `kill_process`)** — Done.
+- **`grep_files`, `find_files`** — Done.
+- **Bun WebSocket server + Solid.js web client** — Done.
+- **Pre-commit test gate (REC-1)** — Done.
+- **Two-branch model `main`/`develop` (REC-0)** — Done.
