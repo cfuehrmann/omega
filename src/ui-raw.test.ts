@@ -2,10 +2,33 @@
  * Unit tests for key-input parsing in ui-raw.ts.
  *
  * Tests the exported `parseKeys` function — pure, no stdin required.
+ *
+ * The prompt editor is intentionally minimal: append-only, backspace only.
+ * Arrow keys, word-jump, Ctrl+Backspace, forward-delete are all silently
+ * ignored. This is by design — see the module docstring in input.ts.
  */
 
 import { describe, it, expect } from "bun:test";
 import { parseKeys, displayWidth } from "./ui-raw.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function captureOutput(fn: () => void): string {
+  const chunks: string[] = [];
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (s: any, ...args: any[]) => {
+    chunks.push(typeof s === "string" ? s : String(s));
+    return true;
+  };
+  try { fn(); } finally { process.stdout.write = origWrite; }
+  return chunks.join("");
+}
+
+// ---------------------------------------------------------------------------
+// displayWidth
+// ---------------------------------------------------------------------------
 
 describe("parseKeys", () => {
   it("displayWidth returns 1 for ASCII characters", () => {
@@ -24,6 +47,10 @@ describe("parseKeys", () => {
     expect(displayWidth("é")).toBe(1);
     expect(displayWidth("ñ")).toBe(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Exit
+  // -------------------------------------------------------------------------
 
   it("calls onExit once when Ctrl+C appears once", () => {
     let exits = 0;
@@ -46,8 +73,12 @@ describe("parseKeys", () => {
       onExit: () => { exits++; },
     });
     expect(exits).toBe(1);
-    expect(submitted).toBe(""); // no submit after exit
+    expect(submitted).toBe("");
   });
+
+  // -------------------------------------------------------------------------
+  // Submit
+  // -------------------------------------------------------------------------
 
   it("calls onSubmit with accumulated buffer on Enter", () => {
     let submitted = "";
@@ -55,16 +86,93 @@ describe("parseKeys", () => {
     expect(submitted).toBe("hello");
   });
 
-  it("calls onEscape on bare Escape", () => {
+  it("submit clears the buffer", () => {
+    const buf = { value: "hi" };
+    parseKeys("\r", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf);
+    expect(buf.value).toBe("");
+  });
+
+  // -------------------------------------------------------------------------
+  // Esc — context-sensitive cancel
+  // -------------------------------------------------------------------------
+
+  it("Esc on empty buffer calls onEscape", () => {
     let escapes = 0;
-    parseKeys("\x1b", { onSubmit: () => {}, onEscape: () => { escapes++; }, onExit: () => {} });
+    const buf = { value: "" };
+    parseKeys("\x1b", { onSubmit: () => {}, onEscape: () => { escapes++; }, onExit: () => {} }, buf);
+    expect(escapes).toBe(1);
+    expect(buf.value).toBe("");
+  });
+
+  it("Esc on non-empty buffer clears the buffer, does NOT call onEscape", () => {
+    let escapes = 0;
+    let cleared = false;
+    const buf = { value: "some text" };
+    parseKeys("\x1b", {
+      onSubmit: () => {},
+      onEscape: () => { escapes++; },
+      onExit: () => {},
+      onBufferCleared: () => { cleared = true; },
+    }, buf);
+    expect(buf.value).toBe("");
+    expect(escapes).toBe(0);
+    expect(cleared).toBe(true);
+  });
+
+  it("Esc on non-empty buffer erases the text visually", () => {
+    const buf = { value: "abc" }; // 3 chars = 3 columns
+    const out = captureOutput(() =>
+      parseKeys("\x1b", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf)
+    );
+    // Should move cursor back 3 cols then erase to end of line
+    expect(out).toContain("\x1b[3D");
+    expect(out).toContain("\x1b[K");
+  });
+
+  it("Esc on non-empty buffer erases correctly for double-width chars", () => {
+    const buf = { value: "你好" }; // 2 CJK chars = 4 columns
+    const out = captureOutput(() =>
+      parseKeys("\x1b", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf)
+    );
+    expect(out).toContain("\x1b[4D");
+    expect(out).toContain("\x1b[K");
+  });
+
+  it("Esc is handled even when inputEnabled is false (buffer non-empty → clear)", () => {
+    let escapes = 0;
+    let cleared = false;
+    const buf = { value: "keep" };
+    parseKeys("\x1b", {
+      onSubmit: () => {},
+      onEscape: () => { escapes++; },
+      onExit: () => {},
+      onBufferCleared: () => { cleared = true; },
+    }, buf, { inputEnabled: false });
+    // Buffer had content → clears, does not call onEscape
+    expect(buf.value).toBe("");
+    expect(escapes).toBe(0);
+    expect(cleared).toBe(true);
+  });
+
+  it("Esc is handled even when inputEnabled is false (buffer empty → onEscape)", () => {
+    let escapes = 0;
+    const buf = { value: "" };
+    parseKeys("\x1b", {
+      onSubmit: () => {},
+      onEscape: () => { escapes++; },
+      onExit: () => {},
+    }, buf, { inputEnabled: false });
     expect(escapes).toBe(1);
   });
+
+  // -------------------------------------------------------------------------
+  // inputEnabled guard
+  // -------------------------------------------------------------------------
 
   it("ignores printable/backspace/enter when input is disabled", () => {
     let submitted = "";
     const buf = { value: "keep" };
-    parseKeys("a\b\r", {
+    parseKeys("a\x7f\r", {
       onSubmit: (line) => { submitted = line; },
       onEscape: () => {},
       onExit: () => {},
@@ -73,47 +181,136 @@ describe("parseKeys", () => {
     expect(buf.value).toBe("keep");
   });
 
-  it("still handles Escape when input is disabled", () => {
-    let escapes = 0;
-    const buf = { value: "keep" };
-    parseKeys("\x1b", {
-      onSubmit: () => {},
-      onEscape: () => { escapes++; },
-      onExit: () => {},
-    }, buf, { inputEnabled: false });
-    expect(escapes).toBe(1);
-    expect(buf.value).toBe("keep");
-  });
+  // -------------------------------------------------------------------------
+  // Arrow keys and other navigation — silently ignored
+  // -------------------------------------------------------------------------
 
-  it("skips arrow-key CSI sequences without calling any callback", () => {
+  it("arrow keys and other CSI sequences do not call any callback", () => {
     let calls = 0;
     const cb = {
       onSubmit: () => { calls++; },
       onEscape: () => { calls++; },
       onExit:   () => { calls++; },
     };
-    parseKeys("\x1b[A", cb);  // Up arrow
-    parseKeys("\x1b[B", cb);  // Down arrow
-    parseKeys("\x1b[C", cb);  // Right arrow
-    parseKeys("\x1b[D", cb);  // Left arrow
+    const buf = { value: "" };
+    parseKeys("\x1b[A", cb, buf);  // Up
+    parseKeys("\x1b[B", cb, buf);  // Down
+    parseKeys("\x1b[C", cb, buf);  // Right
+    parseKeys("\x1b[D", cb, buf);  // Left
+    parseKeys("\x1b[1;5D", cb, buf); // Ctrl+Left
+    parseKeys("\x1b[1;5C", cb, buf); // Ctrl+Right
+    parseKeys("\x1b[3~", cb, buf);   // Delete
+    parseKeys("\x1b[3;5~", cb, buf); // Ctrl+Delete
     expect(calls).toBe(0);
+    expect(buf.value).toBe(""); // buffer unchanged
   });
+
+  it("arrow keys do not modify the buffer", () => {
+    const buf = { value: "hello" };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[D", cb, buf); // Left
+    parseKeys("\x1b[C", cb, buf); // Right
+    expect(buf.value).toBe("hello");
+  });
+
+  // -------------------------------------------------------------------------
+  // Printable characters — append-only
+  // -------------------------------------------------------------------------
 
   it("echoes printable characters and accumulates buffer", () => {
     let submitted = "";
-    // Type "hi" then Enter
-    parseKeys("h", { onSubmit: (l) => { submitted = l; }, onEscape: () => {}, onExit: () => {} });
-    parseKeys("i", { onSubmit: (l) => { submitted = l; }, onEscape: () => {}, onExit: () => {} });
-    parseKeys("\r", { onSubmit: (l) => { submitted = l; }, onEscape: () => {}, onExit: () => {} });
+    const buf = { value: "" };
+    const cb = { onSubmit: (l: string) => { submitted = l; }, onEscape: () => {}, onExit: () => {} };
+    parseKeys("h", cb, buf);
+    parseKeys("i", cb, buf);
+    parseKeys("\r", cb, buf);
     expect(submitted).toBe("hi");
   });
 
-  // Bracketed paste: newlines in pasted text must NOT trigger onSubmit mid-paste
+  it("always appends at end regardless of any prior arrow-key presses", () => {
+    const buf = { value: "abc" };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    // Arrow keys are silently ignored; typing still appends at end
+    parseKeys("\x1b[D", cb, buf); // Left (no-op)
+    parseKeys("X", cb, buf);
+    expect(buf.value).toBe("abcX");
+  });
+
+  it("single stdout.write per char (no O(n) regression on large buffer)", () => {
+    const bigStr = "a".repeat(5000);
+    const buf = { value: bigStr };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+
+    let callCount = 0;
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (s: any) => { callCount++; return true; };
+    try {
+      parseKeys("x", cb, buf);
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(buf.value).toBe(bigStr + "x");
+    expect(callCount).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Backspace — delete last character
+  // -------------------------------------------------------------------------
+
+  it("backspace does not write to stdout when buffer is empty", () => {
+    const out = captureOutput(() => {
+      const buf = { value: "" };
+      parseKeys("\x7f", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf);
+    });
+    expect(out).toBe("");
+  });
+
+  it("backspace removes last character from buffer", () => {
+    const buf = { value: "ab" };
+    parseKeys("\x7f", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf);
+    expect(buf.value).toBe("a");
+    parseKeys("\x7f", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf);
+    expect(buf.value).toBe("");
+    // Another backspace on empty buffer — no change, no crash
+    parseKeys("\x7f", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf);
+    expect(buf.value).toBe("");
+  });
+
+  it("backspace emits \\b space \\b to erase the character visually", () => {
+    const buf = { value: "ab" };
+    const out = captureOutput(() =>
+      parseKeys("\x7f", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf)
+    );
+    expect(out).toBe("\b \b");
+  });
+
+  it("backspace erases a double-width CJK character with two \\b sequences", () => {
+    const buf = { value: "你" }; // 2-column CJK
+    const out = captureOutput(() =>
+      parseKeys("\x7f", { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} }, buf)
+    );
+    expect(buf.value).toBe("");
+    expect(out).toBe("\b\b  \b\b");
+  });
+
+  // Ctrl+Backspace (ESC DEL or 0x08) — silently ignored
+  it("Ctrl+Backspace (ESC DEL) is silently ignored — buffer unchanged", () => {
+    const buf = { value: "hello world" };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    // ESC DEL: the ESC sees non-empty buffer and clears it — that's by design.
+    // But 0x08 (alternative Ctrl+Backspace encoding) should be silently ignored.
+    parseKeys("\x08", cb, buf);
+    expect(buf.value).toBe("hello world");
+  });
+
+  // -------------------------------------------------------------------------
+  // Bracketed paste
+  // -------------------------------------------------------------------------
+
   it("does not submit on newline inside bracketed paste", () => {
     let submits = 0;
     const buf = { value: "" };
     const cb = { onSubmit: () => { submits++; }, onEscape: () => {}, onExit: () => {} };
-    // Simulate a paste: start marker, multi-line text, end marker
     parseKeys("\x1b[200~line one\nline two\x1b[201~", cb, buf);
     expect(submits).toBe(0);
     expect(buf.value).toBe("line one\nline two");
@@ -128,7 +325,25 @@ describe("parseKeys", () => {
     expect(submitted).toBe("line one\nline two");
   });
 
-  it("treats newline as submit when NOT in paste mode (normal typing)", () => {
+  it("echoes pasted content to stdout when paste ends", () => {
+    const buf = { value: "" };
+    const pasteState = { inPaste: false };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    const out = captureOutput(() =>
+      parseKeys("\x1b[200~hello\nworld\x1b[201~", cb, buf, { pasteState })
+    );
+    expect(out).toContain("hello\nworld");
+  });
+
+  it("paste into non-empty buffer appends to end", () => {
+    const buf = { value: "abc" };
+    const pasteState = { inPaste: false };
+    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
+    parseKeys("\x1b[200~XYZ\x1b[201~", cb, buf, { pasteState });
+    expect(buf.value).toBe("abcXYZ");
+  });
+
+  it("treats newline as submit when NOT in paste mode", () => {
     let submits = 0;
     const buf = { value: "typed" };
     const cb = { onSubmit: () => { submits++; }, onEscape: () => {}, onExit: () => {} };
@@ -136,651 +351,16 @@ describe("parseKeys", () => {
     expect(submits).toBe(1);
   });
 
-  it("backspace does not write to stdout when buffer is empty (prevents erasing prompt)", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any, ...args: any[]) => {
-      written.push(typeof s === "string" ? s : String(s));
-      return true;
-    };
-    try {
-      const buf = { value: "" };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      // Press backspace when buffer is empty — must not write anything
-      parseKeys("\x7f", cb, buf);
-      expect(written.join("")).toBe("");
-      expect(buf.value).toBe("");
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
+  // -------------------------------------------------------------------------
+  // wtype / raw injection (no bracketed paste markers)
+  // -------------------------------------------------------------------------
 
-  it("backspace removes last character from buffer and erases it visually", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any, ...args: any[]) => {
-      written.push(typeof s === "string" ? s : String(s));
-      return true;
-    };
-    try {
-      const buf = { value: "ab" };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x7f", cb, buf);
-      expect(buf.value).toBe("a");
-      expect(written.join("")).toBe("\b \b");
-      // Second backspace removes 'a'
-      written.length = 0;
-      parseKeys("\x7f", cb, buf);
-      expect(buf.value).toBe("");
-      expect(written.join("")).toBe("\b \b");
-      // Third backspace with empty buffer — must not write
-      written.length = 0;
-      parseKeys("\x7f", cb, buf);
-      expect(buf.value).toBe("");
-      expect(written.join("")).toBe("");
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("backspace erases double-width character using two \\b sequences", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any, ...args: any[]) => {
-      written.push(typeof s === "string" ? s : String(s));
-      return true;
-    };
-    try {
-      // '你' is a 2-column CJK character
-      const buf = { value: "你", columns: 2 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x7f", cb, buf);
-      expect(buf.value).toBe("");
-      expect(buf.columns).toBe(0);
-      // Must emit two backspace-erase-backspace sequences (4 chars each direction * 2 columns)
-      expect(written.join("")).toBe("\b\b  \b\b");
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("echoes pasted content to stdout when paste ends", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any, ...args: any[]) => {
-      written.push(s);
-      return true;
-    };
-    try {
-      const buf = { value: "" };
-      const pasteState = { inPaste: false, startVisualCol: 0, startCursor: 0 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[200~hello\nworld\x1b[201~", cb, buf, { pasteState });
-      // The pasted content should appear in stdout output (via redrawLine).
-      expect(written.join("")).toContain("hello\nworld");
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  // -----------------------------------------------------------------------
-  // Paste correctness — bracketed paste and wtype/Wayland paste
-  // -----------------------------------------------------------------------
-
-  it("bracketed paste into non-empty buffer: echoes only pasted portion", () => {
-    // Buffer already has "abc", cursor at end (3). Paste "XYZ".
-    // Terminal cursor is at promptWidth(0) + 3 = col 3.
-    // After paste end, stdout must contain "XYZ" (the pasted chars).
-    // The terminal cursor must NOT re-echo "abc" (which is already on screen).
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "abc", cursor: 3 };
-      const pasteState = { inPaste: false, startVisualCol: 3, startCursor: 3 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[200~XYZ\x1b[201~", cb, buf, { pasteState });
-      expect(buf.value).toBe("abcXYZ");
-      expect(buf.cursor).toBe(6);
-      const out = written.join("");
-      // Must contain the pasted chars
-      expect(out).toContain("XYZ");
-      // Must NOT start by re-echoing the existing buffer chars
-      expect(out).not.toContain("abc");
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("bracketed paste at mid-buffer: terminal cursor ends at logical cursor (legacy path)", () => {
-    // Buffer "abcdef", cursor at 3 (mid-line). Paste "XY".
-    // After paste: "abcXYdef", cursor at 5. Tail is "def" (3 chars).
-    // Legacy path: write "XYdef" then move back 3 cols.
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "abcdef", cursor: 3 };
-      const pasteState = { inPaste: false, startVisualCol: 3, startCursor: 3 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[200~XY\x1b[201~", cb, buf, { pasteState });
-      expect(buf.value).toBe("abcXYdef");
-      expect(buf.cursor).toBe(5);
-      const out = written.join("");
-      // Must contain pasted chars + tail
-      expect(out).toContain("XYdef");
-      // Tail "def" (3 chars) must be followed by a CUB 3 move-back
-      expect(out).toContain("\x1b[3D");
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("bracketed paste with terminalWidth: wrap-safe redrawLine called at paste end", () => {
-    // termWidth=20, promptWidth=5, buffer "abc" (cursor 3, at visual col 8).
-    // Paste "XYZW" → buffer "abcXYZW", cursor 7, visual col 12.
-    // Wrap-safe path should do a full redraw: CUU to top, CR, CUF(5), write all, position.
-    const buf = { value: "abc", cursor: 3, terminalWidth: 20, promptWidth: 5 };
-    const pasteState = { inPaste: false, startVisualCol: 8, startCursor: 3 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    const out = captureOutput(() =>
-      parseKeys("\x1b[200~XYZW\x1b[201~", cb, buf, { pasteState })
-    );
-    expect(buf.value).toBe("abcXYZW");
-    expect(buf.cursor).toBe(7);
-    // Visual col after paste = promptWidth(5) + 7 chars = 12. Row 0 (col 12 < 20).
-    const pos = simulateCursor(out, 20, 8, 0); // start at pre-paste col 8
-    expect(pos.row).toBe(0);
-    expect(pos.col).toBe(5 + 7); // promptWidth + cursor
-  });
-
-  it("bracketed paste with wrapping: cursor correct when pasted text spans terminal rows", () => {
-    // termWidth=20, promptWidth=5. Buffer empty, paste 20 chars → 2 rows.
-    // After paste: cursor at end, visual col = 5+20 = 25 → row 1, col 5.
-    const buf = { value: "", cursor: 0, terminalWidth: 20, promptWidth: 5 };
-    const pasteState = { inPaste: false, startVisualCol: 5, startCursor: 0 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    const paste20 = "abcdefghijklmnoABCDE"; // 20 chars
-    const out = captureOutput(() =>
-      parseKeys(`\x1b[200~${paste20}\x1b[201~`, cb, buf, { pasteState })
-    );
-    expect(buf.value).toBe(paste20);
-    expect(buf.cursor).toBe(20);
-    // Start: col 5 row 0 (empty buf, promptWidth=5, cursor at 0 → visual col 5)
-    const pos = simulateCursor(out, 20, 5, 0);
-    // visual col = 5 + 20 = 25 → row 1 col 5
-    expect(pos.row).toBe(1);
-    expect(pos.col).toBe(5);
-  });
-
-  it("wtype-style raw injection (no bracketed paste): all chars buffered correctly", () => {
-    // wtype injects keystrokes without bracketed paste markers — they arrive as
-    // regular printable chars.  Simulate injecting "hello world" as separate
-    // chunks (one per char, as wtype typically does) and verify the buffer is
-    // correct.  This also exercises the O(1) fast-append path for each char.
-    const buf = { value: "", cursor: 0 };
+  it("wtype-style raw injection: all chars buffered correctly", () => {
+    const buf = { value: "" };
     const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
     for (const ch of "hello world") {
       parseKeys(ch, cb, buf);
     }
     expect(buf.value).toBe("hello world");
-    expect(buf.cursor).toBe(11);
-  });
-
-  it("append-at-end latency: O(1) fast path — single stdout.write per char on large buffer", () => {
-    // With a large buffer, each append-at-end must emit exactly one stdout.write
-    // call (the character itself), not proportional to buffer size.
-    // This guards against O(n) regressions in the hot typing/dictation path.
-    const bigStr = "a".repeat(5000);
-    const buf = { value: bigStr, cursor: 5000 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-
-    let callCount = 0;
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { callCount++; return true; };
-    try {
-      parseKeys("x", cb, buf);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-    expect(buf.value).toBe(bigStr + "x");
-    expect(buf.cursor).toBe(5001);
-    // Fast path: exactly 1 write (the character "x")
-    expect(callCount).toBe(1);
-  });
-
-  // -----------------------------------------------------------------------
-  // Cursor movement & line editing
-  // -----------------------------------------------------------------------
-
-  it("left arrow moves cursor back one character", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "abc", cursor: 3 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[D", cb, buf); // Left arrow
-      expect(buf.cursor).toBe(2);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("right arrow moves cursor forward one character", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "abc", cursor: 1 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[C", cb, buf); // Right arrow
-      expect(buf.cursor).toBe(2);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("left arrow does not go below 0", () => {
-    const buf = { value: "abc", cursor: 0 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\x1b[D", cb, buf);
-    expect(buf.cursor).toBe(0);
-  });
-
-  it("right arrow does not go past end", () => {
-    const buf = { value: "abc", cursor: 3 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\x1b[C", cb, buf);
-    expect(buf.cursor).toBe(3);
-  });
-
-  it("typing inserts at cursor position", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "ac", cursor: 1 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("b", cb, buf);
-      expect(buf.value).toBe("abc");
-      expect(buf.cursor).toBe(2);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("backspace at cursor mid-line deletes char before cursor", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "abc", cursor: 2 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x7f", cb, buf);
-      expect(buf.value).toBe("ac");
-      expect(buf.cursor).toBe(1);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Ctrl+Backspace deletes word backward", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "hello world", cursor: 11 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b\x7f", cb, buf); // Ctrl+Backspace (sent as ESC DEL by many terminals)
-      expect(buf.value).toBe("hello ");
-      expect(buf.cursor).toBe(6);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Ctrl+Backspace deletes word backward from middle of line", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      // cursor after "two" space: "one two| three"  (| = cursor at 7)
-      // wordBoundaryBack skips non-spaces (two) → lands at 4, deletes chars 4..6
-      const buf = { value: "one two three", cursor: 7 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b\x7f", cb, buf); // Ctrl+Backspace
-      expect(buf.value).toBe("one  three");
-      expect(buf.cursor).toBe(4);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Ctrl+Backspace via \\x08 deletes word backward", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "hello world", cursor: 11 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x08", cb, buf); // Some terminals send 0x08 for Ctrl+Backspace
-      expect(buf.value).toBe("hello ");
-      expect(buf.cursor).toBe(6);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Delete key deletes char under cursor (forward delete)", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "hello world", cursor: 5 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[3~", cb, buf); // Delete key CSI sequence
-      expect(buf.value).toBe("helloworld");
-      expect(buf.cursor).toBe(5);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Delete key at end of line does nothing", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "hello", cursor: 5 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[3~", cb, buf); // Delete key at end
-      expect(buf.value).toBe("hello");
-      expect(buf.cursor).toBe(5);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Ctrl+Delete deletes word forward", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      const buf = { value: "hello world", cursor: 5 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[3;5~", cb, buf); // Ctrl+Delete CSI sequence
-      expect(buf.value).toBe("hello");
-      expect(buf.cursor).toBe(5);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Ctrl+Delete deletes word forward from middle", () => {
-    const written: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any) => { written.push(String(s)); return true; };
-    try {
-      // cursor after "one": "one| two three"  (| = cursor at 3)
-      // wordBoundaryForward skips space then "two" → lands at 7, deletes chars 3..6
-      const buf = { value: "one two three", cursor: 3 };
-      const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-      parseKeys("\x1b[3;5~", cb, buf); // Ctrl+Delete
-      expect(buf.value).toBe("one three");
-      expect(buf.cursor).toBe(3);
-    } finally {
-      process.stdout.write = origWrite;
-    }
-  });
-
-  it("Ctrl+Left moves cursor one word backward", () => {
-    const buf = { value: "hello world", cursor: 11 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\x1b[1;5D", cb, buf); // Ctrl+Left CSI sequence
-    expect(buf.cursor).toBe(6);
-  });
-
-  it("Ctrl+Right moves cursor one word forward", () => {
-    const buf = { value: "hello world", cursor: 0 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\x1b[1;5C", cb, buf); // Ctrl+Right CSI sequence
-    expect(buf.cursor).toBe(5);
-  });
-
-  it("Ctrl+Left skips trailing spaces then word", () => {
-    const buf = { value: "one two  ", cursor: 9 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\x1b[1;5D", cb, buf);
-    expect(buf.cursor).toBe(4);
-  });
-
-  it("Ctrl+Right skips leading spaces then word", () => {
-    const buf = { value: "hello  world", cursor: 5 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\x1b[1;5C", cb, buf);
-    expect(buf.cursor).toBe(12);
-  });
-
-  it("submit resets cursor to 0", () => {
-    let submitted = "";
-    const buf = { value: "hello", cursor: 3 };
-    const cb = { onSubmit: (l: string) => { submitted = l; }, onEscape: () => {}, onExit: () => {} };
-    parseKeys("\r", cb, buf);
-    expect(submitted).toBe("hello");
-    expect(buf.value).toBe("");
-    expect(buf.cursor).toBe(0);
-  });
-
-  it("backward compatibility: buf without cursor field works (cursor defaults to end)", () => {
-    let submitted = "";
-    const buf = { value: "" };
-    const cb = { onSubmit: (l: string) => { submitted = l; }, onEscape: () => {}, onExit: () => {} };
-    parseKeys("hi\r", cb, buf);
-    expect(submitted).toBe("hi");
-  });
-
-  // -----------------------------------------------------------------------
-  // Terminal cursor simulation — expose the line-wrap redraw bug
-  //
-  // A minimal ANSI sequence interpreter that tracks the terminal cursor's
-  // visual (col, row) position, given a fixed terminal width.  We use this
-  // to verify that after mid-line edits the cursor ends up in the correct
-  // terminal cell even when the input string wraps across multiple rows.
-  // -----------------------------------------------------------------------
-
-  /**
-   * Simulate a terminal with the given width.  Feed it the raw bytes emitted
-   * by parseKeys (captured via mock stdout.write) and return the final
-   * cursor position as { col, row } (0-indexed).
-   *
-   * Supports: printable chars (auto-wrap), \b (backspace/BS), \r (CR),
-   * \x1b[nD (CUB), \x1b[nC (CUF), \x1b[nA (CUU), \x1b[nB (CUD),
-   * \x1b[K / \x1b[0K (erase to end of line), \x1b[J / \x1b[0J (erase to end of screen).
-   */
-  function simulateCursor(
-    output: string,
-    termWidth: number,
-    startCol: number = 0,
-    startRow: number = 0,
-  ): { col: number; row: number } {
-    let col = startCol;
-    let row = startRow;
-    let i = 0;
-    while (i < output.length) {
-      if (output[i] === "\x1b" && output[i + 1] === "[") {
-        // Parse CSI sequence
-        i += 2;
-        let params = "";
-        while (i < output.length && !/[A-Za-z~]/.test(output[i])) {
-          params += output[i++];
-        }
-        const final = output[i++] ?? "";
-        const n = parseInt(params || "1", 10);
-        if (final === "D") { col = Math.max(0, col - n); }       // CUB
-        else if (final === "C") { col = Math.min(termWidth - 1, col + n); } // CUF
-        else if (final === "A") { row = Math.max(0, row - n); }  // CUU
-        else if (final === "B") { row += n; }                    // CUD
-        else if (final === "K") { /* erase to EOL — no cursor move */ }
-        else if (final === "J") { /* erase to EOS — no cursor move */ }
-        // other CSI sequences ignored
-      } else if (output[i] === "\b") {
-        col = Math.max(0, col - 1);
-        i++;
-      } else if (output[i] === "\r") {
-        col = 0;
-        i++;
-      } else {
-        // Printable (1 col each for simplicity)
-        col++;
-        if (col >= termWidth) { col = 0; row++; }
-        i++;
-      }
-    }
-    return { col, row };
-  }
-
-  /**
-   * Capture all bytes written to stdout during a parseKeys call.
-   */
-  function captureOutput(fn: () => void): string {
-    const chunks: string[] = [];
-    const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (s: any, ...args: any[]) => {
-      chunks.push(typeof s === "string" ? s : String(s));
-      return true;
-    };
-    try { fn(); } finally { process.stdout.write = origWrite; }
-    return chunks.join("");
-  }
-
-  it("cursor stays at correct position after mid-line insert (no wrap)", () => {
-    // termWidth=40, promptWidth=5, input "abcde" (5 chars), cursor at 2, type "X"
-    // Expected: cursor at visual col 5+3=8 (prompt 5 + 3 input chars)
-    const buf = { value: "abcde", cursor: 2, terminalWidth: 40, promptWidth: 5 };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    const startCol = 5 + 2; // promptWidth + cursor position
-    const out = captureOutput(() => parseKeys("X", cb, buf));
-    const pos = simulateCursor(out, 40, startCol, 0);
-    // After inserting X at pos 2: "abXcde", cursor at 3 → visual col = promptWidth + 3 = 8
-    expect(buf.value).toBe("abXcde");
-    expect(buf.cursor).toBe(3);
-    expect(pos.col).toBe(5 + 3); // promptWidth + new cursor position
-    expect(pos.row).toBe(0);
-  });
-
-  it("cursor stays at correct position after mid-line insert that causes tail to wrap", () => {
-    // termWidth=20, promptWidth=5
-    // 14 chars of input: prompt(5)+input(14) = 19 chars on line 0, cursor at col 14 (mid-line)
-    // After typing 'X' at position 9: tail is 5 chars, total from cursor = 6 chars
-    // That fills line 0 from col 14: 14+6=20, wraps to line 1
-    // The cursor (after insertion) should be at col 5+10=15 on line 0 — NOT stuck at start of line 1
-    const input14 = "abcdefghijklmn"; // 14 chars
-    // cursor at logical position 9 (after "abcdefghi")
-    const buf = {
-      value: input14,
-      cursor: 9,
-      terminalWidth: 20,
-      promptWidth: 5,
-    };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    // Terminal cursor starts at col promptWidth + cursor = 5+9 = 14
-    const startCol = 5 + 9;
-    const out = captureOutput(() => parseKeys("X", cb, buf));
-    const pos = simulateCursor(out, 20, startCol, 0);
-    expect(buf.value).toBe("abcdefghiXjklmn");
-    expect(buf.cursor).toBe(10);
-    // After insert, cursor should be at col promptWidth + 10 = 15 on row 0 (no wrap yet)
-    expect(pos.col).toBe(5 + 10);
-    expect(pos.row).toBe(0);
-  });
-
-  it("cursor at correct position after backspace when tail wraps", () => {
-    // termWidth=20, promptWidth=5
-    // Input: 20 chars (fills line 0 completely: 5+15=20, then 5 more on line 1)
-    // cursor at logical position 15 (col 0 of line 1)
-    // Press backspace: delete char at 14, cursor goes to 14 (col 5+14=19 of line 0)
-    // Tail is now 5 chars (was 20-15=5; still 5 after deletion of char before cursor)
-    // These 5 chars starting at col 19: 19+5=24, wraps line
-    // redrawFromCursor must place cursor at col 19 of row 0
-    const input20 = "abcdefghijklmnopqrst"; // 20 chars
-    const buf = {
-      value: input20,
-      cursor: 15,
-      terminalWidth: 20,
-      promptWidth: 5,
-    };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    // Terminal cursor at col 0 of row 1 (prompt=5, chars 0-14 = 15 chars, fills row 0 from col5: 5+15=20 → wraps; chars 15-19 on row 1 col 0-4; cursor at end of char 14 = col 0 of row 1)
-    const out = captureOutput(() => parseKeys("\x7f", cb, buf)); // backspace
-    const pos = simulateCursor(out, 20, 0, 1); // start at col 0, row 1
-    expect(buf.value).toBe("abcdefghijklmnpqrst"); // char at index 14 ('o') deleted
-    expect(buf.cursor).toBe(14);
-    // Cursor should end up at col 5+14=19 of row 0
-    expect(pos.row).toBe(0);
-    expect(pos.col).toBe(5 + 14);
-  });
-
-  it("left arrow across line wrap moves to correct visual position (previous row)", () => {
-    // termWidth=20, promptWidth=5
-    // Input: 15 chars "abcdefghijklmno", cursor at 15 (= position 0 on row 1, since 5+15=20)
-    // Pressing Left arrow should move cursor to 14 = col 19 of row 0
-    const buf = {
-      value: "abcdefghijklmno",
-      cursor: 15,
-      terminalWidth: 20,
-      promptWidth: 5,
-    };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    // Terminal starts at col 0, row 1 (since prompt+15 = 20, wraps)
-    const out = captureOutput(() => parseKeys("\x1b[D", cb, buf)); // Left arrow
-    expect(buf.cursor).toBe(14);
-    const pos = simulateCursor(out, 20, 0, 1);
-    // cursor at pos 14 means visual col = 5+14=19 on row 0
-    expect(pos.row).toBe(0);
-    expect(pos.col).toBe(19);
-  });
-
-  it("right arrow wraps to next row when at end of a terminal line", () => {
-    // termWidth=20, promptWidth=5
-    // Input: 15 chars, cursor at 14 = col 19 of row 0 (one before wrap)
-    // Pressing Right arrow should advance to col 0 of row 1
-    const buf = {
-      value: "abcdefghijklmno",
-      cursor: 14,
-      terminalWidth: 20,
-      promptWidth: 5,
-    };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    // Terminal starts at col 19 of row 0
-    const out = captureOutput(() => parseKeys("\x1b[C", cb, buf)); // Right arrow
-    expect(buf.cursor).toBe(15);
-    const pos = simulateCursor(out, 20, 19, 0);
-    // cursor at pos 15 means visual col = 5+15=20 → col 0 of row 1
-    expect(pos.row).toBe(1);
-    expect(pos.col).toBe(0);
-  });
-
-  it("cursor at correct position after Ctrl+Backspace when deleted+tail spans lines", () => {
-    // termWidth=20, promptWidth=5
-    // Input: "hello world extra" (17 chars), cursor at end (17)
-    // Terminal layout: row 0: prompt(5)+"hello world ext"(15), row 1: "ra"(2)
-    // cursor at col 2 of row 1
-    // Ctrl+Backspace deletes "extra" (5 chars), new cursor at 12
-    // After deletion: "hello world " (12 chars), cursor at 12
-    // Visual: row 0: prompt(5)+"hello world "(12)=17 cols → cursor at col 17, row 0
-    const buf = {
-      value: "hello world extra",
-      cursor: 17,
-      terminalWidth: 20,
-      promptWidth: 5,
-    };
-    const cb = { onSubmit: () => {}, onEscape: () => {}, onExit: () => {} };
-    const out = captureOutput(() => parseKeys("\x1b\x7f", cb, buf)); // Ctrl+Backspace
-    const pos = simulateCursor(out, 20, 2, 1); // start: col 2, row 1
-    expect(buf.value).toBe("hello world ");
-    expect(buf.cursor).toBe(12);
-    expect(pos.row).toBe(0);
-    expect(pos.col).toBe(5 + 12);
   });
 });

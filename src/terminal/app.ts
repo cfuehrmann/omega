@@ -21,27 +21,15 @@ import {
   renderToolStart, renderToolResult,
   renderAssistantMessage, renderStatus,
 } from "./renderer.js";
-import {
-  parseKeys, sharedBuffer, sharedPasteState,
-  type KeyCallbacks,
-} from "./input.js";
+import { parseKeys } from "./input.js";
 
 // ---------------------------------------------------------------------------
 // Input prompt
 // ---------------------------------------------------------------------------
 
-/** The visible width (columns) of the prompt prefix string, excluding ANSI codes. */
-function promptVisualWidth(prefix: string): number {
-  const stripped = prefix.replace(/\x1b\[[0-9;]*m/g, "");
-  let w = 0;
-  for (const ch of [...stripped]) w += (ch.codePointAt(0)! < 0x7f ? 1 : 1); // ASCII safe
-  return stripped.length; // simple for prompt (all ASCII)
-}
-
 function printPrompt(prefix: string): void {
   const timeStr = dim(now().padEnd(TIME_WIDTH));
   process.stdout.write(timeStr + prefix);
-  sharedBuffer.promptWidth = TIME_WIDTH + prefix.replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +39,7 @@ function printPrompt(prefix: string): void {
 function setupRawInput(
   onSubmit: (line: string) => void,
   onEscape: () => void,
+  onBufferCleared: () => void,
   onExit: () => void,
 ): void {
   if (!process.stdin.setRawMode) {
@@ -64,14 +53,8 @@ function setupRawInput(
   // Enable bracketed paste mode so pasted newlines don't trigger submit
   process.stdout.write("\x1b[?2004h");
 
-  sharedBuffer.terminalWidth = process.stdout.columns || undefined;
-
-  process.stdout.on("resize", () => {
-    sharedBuffer.terminalWidth = process.stdout.columns || undefined;
-  });
-
   process.stdin.on("data", (chunk: string) => {
-    parseKeys(chunk, { onSubmit, onEscape, onExit });
+    parseKeys(chunk, { onSubmit, onEscape, onExit, onBufferCleared });
   });
 }
 
@@ -332,7 +315,10 @@ export async function runApp(): Promise<void> {
 
   setupRawInput(
     (line) => { handleSubmit(line).catch(console.error); },
+    // onEscape: buffer was already empty — abort turn if one is running
     () => { if (abortController) { abortController.abort(); abortController = null; } },
+    // onBufferCleared: Esc cleared a non-empty buffer — just reprint the prompt
+    () => { printPrompt(bold(green("❯ "))); },
     initiateShutdown,
   );
 
