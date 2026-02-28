@@ -102,10 +102,37 @@ function EventBlock(props: { event: WsEvent }) {
     );
   }
 
-  if (e.type === "status") {
+  if (e.type === "model_changed") {
     return (
       <div class="block status">
-        <div class="block-body">{e.message}</div>
+        <div class="block-body">Switched to {e.provider} {e.model}</div>
+      </div>
+    );
+  }
+
+  if (e.type === "oauth_token_expired") {
+    return (
+      <div class="block status">
+        <div class="block-body">OAuth token expired/revoked — refreshing…</div>
+      </div>
+    );
+  }
+
+  if (e.type === "oauth_refreshed") {
+    return (
+      <div class="block status">
+        <div class="block-body">Token refreshed, retrying…</div>
+      </div>
+    );
+  }
+
+  if (e.type === "session_compacted") {
+    const msg = e.newCount === e.originalCount
+      ? `Context is already short (${e.originalCount} messages) — nothing compacted.`
+      : `Context compacted: ${e.originalCount} → ${e.newCount} messages`;
+    return (
+      <div class="block status">
+        <div class="block-body">{msg}</div>
       </div>
     );
   }

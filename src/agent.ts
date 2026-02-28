@@ -32,7 +32,6 @@ interface ModelResponse {
 
 export type AgentEvent =
   | { type: "text"; text: string }
-  | { type: "status"; message: string }
   | { type: "user_message"; content: string }
   | { type: "llm_call"; provider: "openai" | "anthropic"; url: string; request: any }
   | { type: "llm_to_agent"; provider: "openai" | "anthropic"; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: Anthropic.ContentBlock[]; raw?: any }
@@ -41,7 +40,11 @@ export type AgentEvent =
   | { type: "agent_to_agent_tool_result"; id: string; name: string; formatted: string; result: ToolResult }
   | { type: "turn_end"; metrics: TurnMetrics; toolCalls: string[]; provider: ProviderName; model: string }
   | { type: "agent_error"; error: string }
-  | { type: "turn_interrupted" };
+  | { type: "turn_interrupted" }
+  | { type: "model_changed"; provider: ProviderName; model: string }
+  | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
+  | { type: "oauth_refreshed" }
+  | { type: "session_compacted"; originalCount: number; newCount: number };
 
 export type ProviderName = "anthropic" | "openai";
 
@@ -687,21 +690,23 @@ export class Agent {
       if (cmd === "/sonnet") {
         this.provider = "anthropic";
         this.activeModel = "claude-sonnet-4-6";
-        yield { type: "status", message: "Switched to Anthropic claude-sonnet-4-6" };
+        this.logEvent({ type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-sonnet-4-6" });
+        yield { type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" };
       } else if (cmd === "/opus") {
         this.provider = "anthropic";
         this.activeModel = "claude-opus-4-6";
-        yield { type: "status", message: "Switched to Anthropic claude-opus-4-6" };
+        this.logEvent({ type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-opus-4-6" });
+        yield { type: "model_changed", provider: "anthropic", model: "claude-opus-4-6" };
       } else if (cmd === "/codex") {
         this.provider = "openai";
         this.activeModel = config.fallbackModel as string;
-        yield { type: "status", message: `Switched to OpenAI codex (${this.activeModel})` };
+        this.logEvent({ type: "model_changed", ts: new Date().toISOString(), provider: "openai", model: this.activeModel });
+        yield { type: "model_changed", provider: "openai", model: this.activeModel };
       } else if (cmd === "/compact") {
         if (this.llmMessageLog.length === 0) {
-          yield { type: "status", message: "Nothing to compact — history is empty." };
+          yield { type: "agent_error", error: "Nothing to compact — history is empty." };
           return;
         }
-        yield { type: "status", message: "Compacting context…" };
         try {
           const provider = this.getStreamProvider();
           const { history: newHistory, originalCount, newCount } = await compactHistory(
@@ -710,7 +715,7 @@ export class Agent {
             this.activeModel,
           );
           if (newCount === originalCount) {
-            yield { type: "status", message: `Context is already short (${originalCount} messages) — nothing compacted.` };
+            yield { type: "session_compacted", originalCount, newCount };
           } else {
             this.llmMessageLog = newHistory as Anthropic.MessageParam[];
             // Rewrite context file to match the new shorter history.
@@ -724,10 +729,7 @@ export class Agent {
               this.llmMessageHashes.push(hash);
             }
             this.logEvent({ type: "session_compacted", ts: new Date().toISOString(), originalCount, newCount });
-            yield {
-              type: "status",
-              message: `Context compacted: ${originalCount} → ${newCount} messages`,
-            };
+            yield { type: "session_compacted", originalCount, newCount };
           }
         } catch (err: any) {
           yield { type: "agent_error", error: `Compaction failed: ${err.message}` };
@@ -984,13 +986,11 @@ export class Agent {
           if (isAuthExpired(err) && attempt === 0) {
             // OAuth token expired or revoked mid-session — try to refresh and retry once
             this.logEvent({ type: "oauth_token_expired", ts: new Date().toISOString(), attempt: attempt + 1, httpStatus: err.status ?? err.statusCode });
-            yield {
-              type: "status",
-              message: "OAuth token expired/revoked — refreshing...",
-            } as AgentEvent;
+            yield { type: "oauth_token_expired", attempt: attempt + 1, httpStatus: err.status ?? err.statusCode };
             const reauthed = await this.reinitAuth();
             if (reauthed) {
-              yield { type: "status", message: "Token refreshed, retrying..." } as AgentEvent;
+              // reinitAuth already logs oauth_refreshed; yield it for the UI too
+              yield { type: "oauth_refreshed" };
               // Loop continues — the next iteration will use the fresh client
             } else {
               yield {

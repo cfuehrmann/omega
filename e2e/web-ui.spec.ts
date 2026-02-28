@@ -176,16 +176,16 @@ test("error event shows error block", async ({ page, server }) => {
 // Renderer parity — WEB-4
 // ---------------------------------------------------------------------------
 
-test("status event shows status block", async ({ page, server }) => {
+test("model_changed event shows status block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await server.sendEvent({ type: "status", message: "thinking..." });
+  await server.sendEvent({ type: "model_changed", provider: "anthropic", model: "claude-opus-4-6" });
 
   const statusBlock = page.locator(".block.status");
   await expect(statusBlock).toBeVisible({ timeout: 3000 });
-  await expect(statusBlock.locator(".block-body")).toHaveText("thinking...");
+  await expect(statusBlock.locator(".block-body")).toHaveText("Switched to anthropic claude-opus-4-6");
 });
 
 test("world_state_saved event shows a status pill", async ({ page, server }) => {

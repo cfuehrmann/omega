@@ -155,7 +155,7 @@ describe("OAuth token expiry reauth", () => {
     expect(hadSuccess).toBe(true);
     const texts = events.filter(e => e.type === "text").map((e: any) => e.text);
     expect(texts.join("")).toContain("ok");
-    // No hard error event (only status events are ok)
+    // No agent_error event — oauth_token_expired and oauth_refreshed typed events are ok
     const errors = events.filter(e => e.type === "agent_error") as any[];
     expect(errors).toHaveLength(0);
   });

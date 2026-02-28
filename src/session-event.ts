@@ -196,6 +196,14 @@ export interface ContextViewTrimmedEvent {
   reason: string;
 }
 
+/** The operator switched the active model/provider via a slash command. */
+export interface ModelChangedEvent {
+  type: "model_changed";
+  ts: string;
+  provider: ProviderName;
+  model: string;
+}
+
 export type SessionEvent =
   | SessionStartEvent
   | UserMessageEvent
@@ -212,7 +220,8 @@ export type SessionEvent =
   | OauthTokenExpiredEvent
   | LlmRetryEvent
   | DiagnosticWrittenEvent
-  | ContextViewTrimmedEvent;
+  | ContextViewTrimmedEvent
+  | ModelChangedEvent;
 
 // ---------------------------------------------------------------------------
 // Persistence helpers

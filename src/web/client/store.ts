@@ -23,7 +23,10 @@ type WsEvent =
   | { type: "text"; text: string }
   | { type: "agent_to_agent_tool_call"; id: string; name: string; input: unknown }
   | { type: "agent_to_agent_tool_result"; id: string; name: string; result: { type: string; text?: string; is_error?: boolean } }
-  | { type: "status"; message: string }
+  | { type: "model_changed"; provider: string; model: string }
+  | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
+  | { type: "oauth_refreshed" }
+  | { type: "session_compacted"; originalCount: number; newCount: number }
   | { type: "llm_call"; provider: string; url: string; request: unknown }
   | { type: "llm_to_agent"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number }; content: unknown[] }
   | { type: "world_state_saved"; path: string; charCount: number }
@@ -182,7 +185,10 @@ export function dispatch(event: WsEvent): void {
 
     case "agent_to_agent_tool_call":
     case "agent_to_agent_tool_result":
-    case "status":
+    case "model_changed":
+    case "oauth_token_expired":
+    case "oauth_refreshed":
+    case "session_compacted":
     case "llm_call":
     case "llm_to_agent":
     case "world_state_saved":

@@ -39,7 +39,7 @@ describe("closeOpenTurn", () => {
   it("appends turn_interrupted when the last user_message has no closing event", () => {
     const log = [
       { type: "user_message", content: "hi" },
-      { type: "status", message: "thinking..." },
+      { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", request: {} },
       { type: "text", text: "Partial" },
     ];
     const result = closeOpenTurn(log);
@@ -52,7 +52,7 @@ describe("closeOpenTurn", () => {
       { type: "user_message", content: "first" },
       { type: "turn_end", metrics: {}, model: "sonnet", provider: "anthropic" },
       { type: "user_message", content: "second" },
-      { type: "status", message: "thinking..." },
+      { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", request: {} },
     ];
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
@@ -88,8 +88,8 @@ describe("shouldLogEvent", () => {
     expect(shouldLogEvent({ type: "agent_to_agent_tool_result", id: "x", name: "read_file", result: {} })).toBe(true);
   });
 
-  it("allows status events", () => {
-    expect(shouldLogEvent({ type: "status", message: "thinking..." })).toBe(true);
+  it("allows model_changed events", () => {
+    expect(shouldLogEvent({ type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" })).toBe(true);
   });
 
   it("allows llm_to_agent events", () => {
@@ -143,7 +143,7 @@ describe("store history replay — open turn recovery", () => {
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "status", message: "thinking..." },
+        { type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" } as any,
         // NO turn_end — simulates a crash mid-turn
       ],
     });
@@ -155,7 +155,7 @@ describe("store history replay — open turn recovery", () => {
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "status", message: "thinking..." },
+        { type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" } as any,
       ],
     });
     const lastTurn = state.turns[state.turns.length - 1];

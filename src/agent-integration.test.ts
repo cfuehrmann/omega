@@ -1012,9 +1012,10 @@ describe("slash commands", () => {
   it("/sonnet switches to Anthropic provider with sonnet model", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/sonnet");
-    const status = events.find((e) => e.type === "status") as any;
-    expect(status).toBeDefined();
-    expect(status.message).toContain("sonnet");
+    const mc = events.find((e) => e.type === "model_changed") as any;
+    expect(mc).toBeDefined();
+    expect(mc.model).toBe("claude-sonnet-4-6");
+    expect(mc.provider).toBe("anthropic");
     expect(agent.getProvider()).toBe("anthropic");
     expect(agent.getActiveModel()).toBe("claude-sonnet-4-6");
   });
@@ -1022,9 +1023,10 @@ describe("slash commands", () => {
   it("/opus switches to Anthropic provider with opus model", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/opus");
-    const status = events.find((e) => e.type === "status") as any;
-    expect(status).toBeDefined();
-    expect(status.message).toContain("opus");
+    const mc = events.find((e) => e.type === "model_changed") as any;
+    expect(mc).toBeDefined();
+    expect(mc.model).toBe("claude-opus-4-6");
+    expect(mc.provider).toBe("anthropic");
     expect(agent.getProvider()).toBe("anthropic");
     expect(agent.getActiveModel()).toBe("claude-opus-4-6");
   });
@@ -1032,9 +1034,9 @@ describe("slash commands", () => {
   it("/codex switches to OpenAI provider", async () => {
     const agent = new Agent(null as any, null);
     const events = await collectEvents(agent, "/codex");
-    const status = events.find((e) => e.type === "status") as any;
-    expect(status).toBeDefined();
-    expect(status.message).toContain("codex");
+    const mc = events.find((e) => e.type === "model_changed") as any;
+    expect(mc).toBeDefined();
+    expect(mc.provider).toBe("openai");
     expect(agent.getProvider()).toBe("openai");
   });
 

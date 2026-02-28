@@ -29,7 +29,7 @@ import type Anthropic from "@anthropic-ai/sdk";
  *
  * Uses the Web Crypto API (available in Bun and modern Node).
  */
-export async function sha256hex8(input: string): Promise<string> {
+async function sha256hex8(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const buf = await crypto.subtle.digest("SHA-256", data);
   const hex = Array.from(new Uint8Array(buf))

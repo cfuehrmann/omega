@@ -197,9 +197,28 @@ export async function runApp(): Promise<void> {
             break;
           }
 
-          case "status":
+          case "model_changed":
             if (streamingStarted) { println(""); streamingStarted = false; }
-            printBlock(now(), event.message.split("\n"));
+            printBlock(now(), [`Switched to ${event.provider} ${event.model}`]);
+            break;
+
+          case "oauth_token_expired":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim("OAuth token expired/revoked — refreshing...")]);
+            break;
+
+          case "oauth_refreshed":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            printBlock(now(), [dim("Token refreshed, retrying...")]);
+            break;
+
+          case "session_compacted":
+            if (streamingStarted) { println(""); streamingStarted = false; }
+            if (event.newCount === event.originalCount) {
+              printBlock(now(), [dim(`Context is already short (${event.originalCount} messages) — nothing compacted.`)]);
+            } else {
+              printBlock(now(), [dim(`Context compacted: ${event.originalCount} → ${event.newCount} messages`)]);
+            }
             break;
 
           case "text":
