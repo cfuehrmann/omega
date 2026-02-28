@@ -59,12 +59,17 @@ async function callLlm(
 export const KEEP_RECENT_TURNS = 10;
 
 /**
- * Automatic compaction threshold: trigger compaction when compactedContextHistory
- * exceeds this many messages. Chosen to fire well before the 100-message cap
- * in buildSentContext() so the agent compacts proactively rather than silently
- * dropping messages. After compaction: 1 + KEEP_RECENT_TURNS*2 = 21 messages.
+ * Automatic compaction threshold: trigger compaction when the last observed
+ * prompt token count exceeds this value. Prompt tokens = input_tokens +
+ * cache_read_input_tokens + cache_creation_input_tokens — all three categories
+ * occupy the context window regardless of cache status.
+ *
+ * Set to 100,000 tokens (≈50% of Claude's 200k window), giving a large safety
+ * margin before overflow while still compacting proactively.
+ *
+ * After compaction: 1 synthetic message + KEEP_RECENT_TURNS*2 = 21 messages.
  */
-export const AUTO_COMPACT_THRESHOLD = 60;
+export const AUTO_COMPACT_THRESHOLD = 100_000;
 
 /**
  * Compact the in-memory history by summarising the head and keeping the tail.

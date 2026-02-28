@@ -3,6 +3,7 @@ import { join, relative } from "path";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
+import { config } from "./config";
 
 // ---------------------------------------------------------------------------
 // Web search (DuckDuckGo) + URL fetch helpers
@@ -236,7 +237,11 @@ export const toolDefinitions: Anthropic.Tool[] = [
     name: "write_file",
     description:
       "Write content to a file. Creates the file if it doesn't exist, " +
-      "overwrites if it does. Creates parent directories as needed.",
+      "overwrites if it does. Creates parent directories as needed. " +
+      `WARNING: file content is generated inside the output token budget (${config.maxOutputTokens} tokens). ` +
+      "Files longer than ~500 lines or ~20 000 characters risk being cut off mid-write. " +
+      "For large new files write a skeleton first, then extend with edit_file. " +
+      "For large existing files always prefer edit_file over a full rewrite.",
     input_schema: {
       type: "object" as const,
       properties: {

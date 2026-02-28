@@ -228,12 +228,35 @@ than silent trimming. The prompt-too-long retry loop is therefore also rejected 
 will be removed.
 
 **Error out — honest, simple, and actionable.**
-When the context window is exhausted mid-turn, surface an explicit `agent_error`
-and stop the turn cleanly. The operator sees a clear message and can start a new
-turn with a more focused query (narrower grep pattern, smaller file slice, fewer
-parallel tools). This works because the aborted turn's partial history is already
-in `compactedContextHistory` and will be summarised by auto-compact at the start
-of the next turn — so the session's memory of what was attempted is preserved.
+There are two distinct `max_tokens` failure modes that must be handled differently:
+
+**Mode A — Context overflow** (`stop_reason` comes back as a 400/429 "prompt too long"):
+The accumulated history sent to the API exceeds the input context window.
+Surface an explicit `agent_error` and stop the turn cleanly. The operator sees a
+clear message ("Use /compact or start a focused turn"). The aborted turn's partial
+history is already in `compactedContextHistory` and will be summarised by
+auto-compact at the start of the next turn — so the session's memory of what was
+attempted is preserved. A "more focused" follow-up turn is the correct recovery.
+**This is the chosen approach for Mode A.**
+
+**Mode B — Output budget exhaustion** (`stop_reason === "max_tokens"` during tool generation):
+The model ran out of output tokens while generating a tool call's arguments —
+most commonly a very large `write_file` content block. The context is *not* too
+large; the *output* is. This is a task decomposition failure, not a context failure.
+Recovery is not "start a more focused turn" — the context fits fine. Recovery is
+"use a different strategy": write a skeleton with `write_file` then extend with
+`edit_file`, never write a file longer than ~500 lines in one tool call.
+
+Two defences against Mode B:
+1. **Prevention** — `maxOutputTokens` is set to 32 768 (Sonnet 4.6 supports up to
+   64K) to give generous headroom. The system prompt and `write_file` tool description
+   both warn about the budget and recommend incremental strategies for large files.
+2. **Recovery** — The BUG-1 guard (commit 9682be6) detects the dangling `tool_use`
+   blocks, synthesises `tool_result` entries with `is_error: true` to keep the context
+   well-formed, and emits an `agent_error` that explicitly names the budget limit and
+   prescribes the incremental approach. The error message references `config.maxOutputTokens`
+   so it is always accurate.
+
 **This is the chosen approach.**
 
 ### Consequences (implemented — commit 13c1f9e)
