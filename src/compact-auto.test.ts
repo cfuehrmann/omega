@@ -3,7 +3,7 @@
  * max_tokens mid-tool-call bug fix (BUG-1).
  *
  * Auto-compact:
- *   - Fires when compactedContextHistory.length > AUTO_COMPACT_THRESHOLD
+ *   - Fires when lastPromptTokens > AUTO_COMPACT_THRESHOLD (100k tokens)
  *   - Emits compact_auto_start → compact_auto_done on success
  *   - Emits compact_auto_start → compact_auto_error on LLM failure,
  *     then continues the turn normally (rolling truncation fallback)
@@ -160,6 +160,25 @@ function seedHistory(agent: ReturnType<typeof makeTestAgent>, count: number): vo
   }
 }
 
+/**
+ * Set the agent's lastPromptTokens above AUTO_COMPACT_THRESHOLD so that
+ * performAutoCompact() will fire on the next sendMessage call.
+ * Also seeds enough history for compactHistory() to have something to compact.
+ */
+function setAboveThreshold(agent: ReturnType<typeof makeTestAgent>): void {
+  agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD + 1;
+  // Need enough messages for compactHistory() to operate (head + tail)
+  seedHistory(agent, KEEP_RECENT_TURNS * 2 + 3);
+}
+
+/**
+ * Set the agent's lastPromptTokens to a value at or below AUTO_COMPACT_THRESHOLD
+ * so that performAutoCompact() will NOT fire.
+ */
+function setBelowThreshold(agent: ReturnType<typeof makeTestAgent>): void {
+  agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD - 1;
+}
+
 // ---------------------------------------------------------------------------
 // AUTO_COMPACT_THRESHOLD constant sanity check
 // ---------------------------------------------------------------------------
@@ -184,8 +203,7 @@ describe("auto-compact: fires above threshold", () => {
   it("emits compact_auto_start and compact_auto_done when context exceeds threshold", async () => {
     const provider = makeSummaryThenTextProvider("summary of head");
     const agent = makeTestAgent(provider);
-    // Seed to threshold + 1
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -198,23 +216,23 @@ describe("auto-compact: fires above threshold", () => {
   it("compact_auto_start carries messagesBefore equal to history length before compaction", async () => {
     const provider = makeSummaryThenTextProvider("summary");
     const agent = makeTestAgent(provider);
-    const n = AUTO_COMPACT_THRESHOLD + 5;
-    seedHistory(agent, n);
+    setAboveThreshold(agent);
+    const seeded = agent.getCompactedContextHistory().length;
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
     const start = events.find(e => e.type === "compact_auto_start");
     expect(start).toBeDefined();
     if (start?.type === "compact_auto_start") {
-      // n messages + 1 user message appended before performAutoCompact fires
-      expect(start.messagesBefore).toBe(n + 1);
+      // seeded messages + 1 user message appended before performAutoCompact fires
+      expect(start.messagesBefore).toBe(seeded + 1);
     }
   });
 
   it("compact_auto_done.messagesBefore matches compact_auto_start.messagesBefore", async () => {
     const provider = makeSummaryThenTextProvider("summary");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 3);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -228,7 +246,7 @@ describe("auto-compact: fires above threshold", () => {
   it("compact_auto_done.messagesAfter is less than messagesBefore", async () => {
     const provider = makeSummaryThenTextProvider("long session summary");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 20);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -242,8 +260,7 @@ describe("auto-compact: fires above threshold", () => {
   it("compactedContextHistory is shorter after auto-compaction", async () => {
     const provider = makeSummaryThenTextProvider("summary");
     const agent = makeTestAgent(provider);
-    const n = AUTO_COMPACT_THRESHOLD + 10;
-    seedHistory(agent, n);
+    setAboveThreshold(agent);
     const before = agent.getCompactedContextHistory().length;
 
     await collectEvents(agent, "hello");
@@ -255,7 +272,7 @@ describe("auto-compact: fires above threshold", () => {
   it("compact_auto_start appears before compact_auto_done in event stream", async () => {
     const provider = makeSummaryThenTextProvider("summary");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -268,7 +285,7 @@ describe("auto-compact: fires above threshold", () => {
   it("compact_auto events appear before llm_call in the stream", async () => {
     const provider = makeSummaryThenTextProvider("summary");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -285,11 +302,11 @@ describe("auto-compact: fires above threshold", () => {
 // ---------------------------------------------------------------------------
 
 describe("auto-compact: does not fire below threshold", () => {
-  it("emits no compact_auto events when context is below threshold", async () => {
+  it("emits no compact_auto events when lastPromptTokens is below threshold", async () => {
     const provider = makeTextProvider("ok");
     const agent = makeTestAgent(provider);
-    // Seed to threshold - 2 (well below)
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD - 2);
+    // lastPromptTokens defaults to 0, well below threshold
+    setBelowThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -301,15 +318,26 @@ describe("auto-compact: does not fire below threshold", () => {
     expect(autoEvents).toHaveLength(0);
   });
 
-  it("emits no compact_auto events when context is exactly at threshold", async () => {
+  it("emits no compact_auto events when lastPromptTokens is exactly at threshold", async () => {
     const provider = makeTextProvider("ok");
     const agent = makeTestAgent(provider);
-    // Seed to threshold exactly; after user message it will be threshold + 1
-    // BUT the check is: compactedContextHistory.length <= AUTO_COMPACT_THRESHOLD before
-    // the user message is appended. Actually the user message is appended first,
-    // then performAutoCompact checks. Seed to threshold - 1 so after user append
-    // we hit exactly threshold (not above it).
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD - 1);
+    // Check is: lastPromptTokens <= AUTO_COMPACT_THRESHOLD → no compact
+    agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD;
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    const autoEvents = events.filter(e =>
+      e.type === "compact_auto_start" ||
+      e.type === "compact_auto_done" ||
+      e.type === "compact_auto_error"
+    );
+    expect(autoEvents).toHaveLength(0);
+  });
+
+  it("emits no compact_auto events on first turn (lastPromptTokens starts at 0)", async () => {
+    const provider = makeTextProvider("ok");
+    const agent = makeTestAgent(provider);
+    // lastPromptTokens is 0 by default — no LLM call has been made yet
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -330,7 +358,7 @@ describe("auto-compact: error path", () => {
   it("emits compact_auto_error when LLM throws during compaction", async () => {
     const provider = makeFailThenTextProvider("LLM failed for compaction");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -344,7 +372,7 @@ describe("auto-compact: error path", () => {
   it("emits compact_auto_start before compact_auto_error", async () => {
     const provider = makeFailThenTextProvider("boom");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -357,7 +385,7 @@ describe("auto-compact: error path", () => {
   it("turn still completes after auto-compact error (rolling truncation fallback)", async () => {
     const provider = makeFailThenTextProvider("boom");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -369,8 +397,7 @@ describe("auto-compact: error path", () => {
   it("compactedContextHistory is unchanged after auto-compact error", async () => {
     const provider = makeFailThenTextProvider("boom");
     const agent = makeTestAgent(provider);
-    const n = AUTO_COMPACT_THRESHOLD + 3;
-    seedHistory(agent, n);
+    setAboveThreshold(agent);
     const viewBefore = agent.getCompactedContextHistory().length; // before sendMessage
 
     await collectEvents(agent, "hello");
@@ -384,7 +411,7 @@ describe("auto-compact: error path", () => {
   it("no compact_auto_done event on error path", async () => {
     const provider = makeFailThenTextProvider("boom");
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
 
@@ -624,7 +651,7 @@ describe("auto-compact + max_tokens (combined)", () => {
       return makeMockStream(textStreamEvents("all good"), textMessage("all good"));
     };
     const agent = makeTestAgent(provider);
-    seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1);
+    setAboveThreshold(agent);
 
     // Turn 1: auto-compact fires, then max_tokens hits
     const events1 = omegaEvents(await collectEvents(agent, "do something"));
