@@ -14,22 +14,16 @@ in-loop `status` yields ("thinking…" / "OpenAI provider active"). Removed the
 asks the LLM). Removed "generating `<tool>` input…" `status` yield from both
 `processStreamEvents()` and the inline streaming loop. Gate green.
 
-#### EU-2 — Replace remaining `status` yields with typed events
-Every remaining `status` yield corresponds to a real event that should be
-persisted. Replace each:
-- `oauth_token_expired` status yields → yield typed `oauth_token_expired` AgentEvent
-- `oauth_refreshed` status yields → yield typed `oauth_refreshed` AgentEvent
-- `/sonnet`, `/opus`, `/codex` acknowledgements → yield typed `model_changed` AgentEvent (new variant); persist as `SessionEvent`
-- `/compact` lifecycle messages → yield typed `session_compacted` AgentEvent (already a `SessionEvent`); drop the intermediate "Compacting…" status
-- "generating `<name>` input…" → **delete**; `llm_call` is sufficient signal that a call is in flight; silence until `agent_to_agent_tool_call` is acceptable
+#### EU-2 — Replace remaining `status` yields with typed events — DONE (commit b2ebc02)
+Every remaining `status` yield has been replaced with a typed event:
+- `oauth_token_expired` and `oauth_refreshed` AgentEvent variants added
+- `model_changed` AgentEvent variant added; persisted as `SessionEvent`
+- `/compact` yields `session_compacted` AgentEvent; intermediate "Compacting…" dropped
+- Empty-history `/compact` case yields `agent_error`
+- `status` variant deleted from `AgentEvent` entirely
+- Pre-existing `sha256hex8` unused export also fixed
 
-After this step, `status` as an AgentEvent variant can be deleted entirely.
-
-Acceptance criteria:
-- `AgentEvent` has no `status` variant
-- `model_changed` is a new `SessionEvent` variant, persisted and rendered
-- All oauth and compaction events are typed, rendered, and persisted
-- Gate green
+All consumers updated: terminal app, web store, web App.tsx. All tests updated. Gate green.
 
 #### EU-3 — Unify AgentEvent and SessionEvent into one event type
 One discriminated union — call it `OmegaEvent` — replaces both `AgentEvent`
@@ -147,10 +141,9 @@ Known candidates, in priority order:
 - `session_end` — symmetric with `session_start`; allows distinguishing a clean
   shutdown from a crash. Needed for session resume to know whether the previous
   session completed normally.
-- `model_changed` — when the operator uses `/sonnet`, `/opus`, or `/codex`
-  mid-session the active model switches. Currently invisible in the event log;
-  a replay or audit cannot determine when or why the model changed.
-  Note: `model_changed` is also scheduled in EU-2 above — these two items converge.
+- `model_changed` — **RESOLVED by EU-2** (commit b2ebc02). Added to both `AgentEvent`
+  and `SessionEvent`; emitted and persisted whenever `/sonnet`, `/opus`, or `/codex`
+  switches the active model.
 
 **3e-v-bug-A — `user_message` event appears after `llm_call` in events.jsonl** ✅ FIXED (commit 25078f3)
 
@@ -172,9 +165,9 @@ race). No further fix needed.
 
 **3e-vi — Persistence completeness audit**
 Formally verify and document which events/signals are intentionally *not*
-persisted, and why. Current known intentional omissions (to be updated after EU-1/EU-2):
-- `status` messages — being removed entirely by EU-2; each real signal becomes a typed event.
-- `metrics` AgentEvent — being removed by EU-1; superseded by `llm_response` usage fields and `turn_end` aggregate.
+persisted, and why. Current known intentional omissions (updated after EU-1 and EU-2):
+- `status` messages — **gone** (EU-2, commit b2ebc02); each real signal is now a typed event.
+- `metrics` AgentEvent — **gone** (EU-1, commit 00a8078); superseded by `llm_response` usage fields and `turn_end` aggregate.
 - Streaming `text` fragments — assembled response is captured in `context.jsonl`
   assistant message (`llm_response` intentionally carries no `content` — resolved in commit b59ba48).
   `text` becomes a `StreamSignal`, not an event — explicitly outside the persistence boundary by design.
