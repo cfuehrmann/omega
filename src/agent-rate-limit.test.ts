@@ -178,10 +178,10 @@ describe("OAuth token expiry reauth", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Prompt-too-long diagnostic
+// Context overflow: errors out immediately, no retry, writes diagnostic
 // ---------------------------------------------------------------------------
 
-describe("prompt-too-long diagnostic", () => {
+describe("context overflow (prompt too long)", () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -198,62 +198,70 @@ describe("prompt-too-long diagnostic", () => {
     return err;
   }
 
-  function makeMockStream(text: string) {
-    return {
-      async *[Symbol.asyncIterator]() {
-        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
-      },
-      async finalMessage() {
-        return {
-          id: "msg_ok",
-          type: "message",
-          role: "assistant",
-          content: [{ type: "text", text }],
-          model: "claude-sonnet-4-6",
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          usage: { input_tokens: 5, output_tokens: 2 },
-        } as any;
-      },
-    };
-  }
-
-  it("writes a diagnostic snapshot when 'prompt is too long' is received", async () => {
-    process.env.OMEGA_RETRY_ATTEMPTS = "3";
-
+  it("emits llm_error + actionable agent_error and writes diagnostic — no retry", async () => {
     const diagDir = join(tempDir, "diagnosis");
     let callCount = 0;
 
     const mockProvider: StreamProvider = async () => {
       callCount++;
-      if (callCount === 1) throw promptTooLongError();
-      return makeMockStream("ok after truncation");
+      throw promptTooLongError();
     };
 
-    // Pass diagDir explicitly so diagnostics are written to tempDir, not repo root
     const agent = new Agent(mockProvider, null, undefined, diagDir);
-
     const events = await collectEvents(agent, "hello");
 
-    // Should have yielded a "prompt too long" error event before recovering
-    const errorEvents = events.filter(e => e.type === "agent_error") as any[];
-    expect(errorEvents.some(e => e.error.includes("Prompt too long"))).toBe(true);
+    // Must NOT retry — only one API call
+    expect(callCount).toBe(1);
 
-    // Diagnostic file should have been written
-    let diagFiles: string[] = [];
-    try { diagFiles = await readdir(diagDir); } catch { /* dir may not exist on success with no diag */ }
+    // Must yield llm_error
+    const llmErrors = events.filter(e => e.type === "llm_error");
+    expect(llmErrors.length).toBe(1);
+
+    // Must yield actionable agent_error mentioning /compact
+    const errorEvents = events.filter(e => e.type === "agent_error") as any[];
+    expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+    expect(errorEvents.some(e => e.error.includes("compact"))).toBe(true);
+
+    // Diagnostic file must have been written
+    const diagFiles = await readdir(diagDir);
     const jsonFiles = diagFiles.filter(f => f.endsWith(".json"));
     expect(jsonFiles.length).toBe(1);
 
     const diagContent = await Bun.file(join(diagDir, jsonFiles[0]!)).json();
-    expect(diagContent.summary).toContain("Prompt too long");
+    expect(diagContent.summary).toContain("Context overflow");
     expect(diagContent.errorMessage).toContain("prompt is too long");
     expect(diagContent.httpStatus).toBe(400);
-    expect((diagContent.extra as any).stopReason).toBe("prompt_too_long");
-    // pino retired — no logFile or eventBuffer fields
+    expect((diagContent.extra as any).stopReason).toBe("context_overflow");
     expect(diagContent.logFile).toBeUndefined();
     expect(diagContent.eventBuffer).toBeUndefined();
+  });
 
-    delete process.env.OMEGA_RETRY_ATTEMPTS;
+  it("also errors out cleanly for isContextTooLong (429 extra usage required)", async () => {
+    function contextTooLongError() {
+      const err: any = new Error("429 Extra usage is required for long context requests");
+      err.status = 429;
+      return err;
+    }
+
+    const diagDir = join(tempDir, "diagnosis2");
+    let callCount = 0;
+    const mockProvider: StreamProvider = async () => {
+      callCount++;
+      throw contextTooLongError();
+    };
+
+    const agent = new Agent(mockProvider, null, undefined, diagDir);
+    const events = await collectEvents(agent, "hello");
+
+    // No retry — but note: 429 is also retryable, so the retry loop fires first.
+    // isContextTooLong check comes after the retryable check exhausts attempts.
+    // We just verify the error path produces a diagnostic and agent_error.
+    const errorEvents = events.filter(e => e.type === "agent_error") as any[];
+    expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+
+    let diagFiles: string[] = [];
+    try { diagFiles = await readdir(diagDir); } catch { /* ok */ }
+    const jsonFiles = diagFiles.filter(f => f.endsWith(".json"));
+    expect(jsonFiles.length).toBeGreaterThanOrEqual(1);
   });
 });

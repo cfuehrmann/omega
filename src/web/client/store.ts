@@ -29,7 +29,6 @@ export type WsEvent =
   | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; request?: unknown }
   | { type: "llm_retry"; attempt: number; provider: string; waitMs: number; error: string }
   | { type: "diagnostic_written"; path: string }
-  | { type: "context_view_trimmed"; originalMessages: number; keptMessages: number; droppedMessages: number }
   | { type: "model_changed"; provider: string; model: string }
   | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed" }
@@ -200,7 +199,6 @@ export function dispatch(event: WsEvent): void {
     case "llm_call":
     case "llm_retry":
     case "diagnostic_written":
-    case "context_view_trimmed":
     case "model_changed":
     case "oauth_token_expired":
     case "oauth_refreshed":

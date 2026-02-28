@@ -259,11 +259,6 @@ export async function runApp(): Promise<void> {
             printBlock(now(), [dim(`Diagnostic written: ${event.path}`)]);
             break;
 
-          case "context_view_trimmed":
-            if (streamingStarted) { println(""); streamingStarted = false; }
-            printBlock(now(), [dim(`Context trimmed: ${event.originalMessages} → ${event.keptMessages} messages`)]);
-            break;
-
           case "session_start":
             // session_start is logged at init() time; if streamed, show it compactly
             if (streamingStarted) { println(""); streamingStarted = false; }

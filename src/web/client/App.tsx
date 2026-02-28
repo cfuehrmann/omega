@@ -286,14 +286,6 @@ function EventBlock(props: { event: WsEvent }) {
         </div>
       );
 
-    case "context_view_trimmed":
-      return (
-        <div class="block info">
-          <div class="block-label">context trimmed</div>
-          <div class="block-body">{e.originalMessages} → {e.keptMessages} messages</div>
-        </div>
-      );
-
     case "session_start":
       return (
         <div class="block info">

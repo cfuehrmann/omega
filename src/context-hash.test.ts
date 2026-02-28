@@ -4,13 +4,11 @@
  * Covers:
  * - context.jsonl entries carry `hash` and `ts` fields
  * - llm_call events carry `contextHashes: string[]`
- * - Hashes are derived from the buildSentContext() view, NOT from compactedContextHistory
+ * - Hashes match every message in compactedContextHistory (no trimming)
  * - Chaotic scenarios:
  *   - Identical message content → different hashes (ts prevents collision)
  *   - Tool loop: each llm_call's contextHashes grows correctly
- *   - Truncation fires on retry 2 but not retry 1 (hashes differ)
- *   - Retry within same iteration reuses same contextHashes
- * - contextHashesForView maps by object identity (no false matches)
+ * - All hashes are 8-char hex (no placeholders)
  */
 
 import { describe, it, expect } from "bun:test";
@@ -19,7 +17,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
-import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider, buildSentContext } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
 import type { ContextRecord } from "./context-store.js";
 import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./event-store.js";
 
@@ -316,14 +314,11 @@ describe("llm_call contextHashes in events.jsonl", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Truncation scenario: contextHashes reflects the VIEW, not compactedContextHistory
+// contextHashes always matches full compactedContextHistory (no trimming)
 // ---------------------------------------------------------------------------
 
-describe("contextHashes reflects truncated view, not full compactedContextHistory", () => {
-  it("after truncation, contextHashes length < compactedContextHistory length", async () => {
-    // Build a large history that will be truncated.
-    // We'll override buildSentContext via a thin wrapper to force truncation
-    // by using a very tight budget.
+describe("contextHashes matches full compactedContextHistory", () => {
+  it("after 3 turns, contextHashes length equals compactedContextHistory length sent", async () => {
     const dir = makeTempDir();
     const contextFile = join(dir, "context.jsonl");
     const eventsFile = join(dir, "events.jsonl");
@@ -342,13 +337,10 @@ describe("contextHashes reflects truncated view, not full compactedContextHistor
     }
     await Bun.sleep(50);
 
-    // At this point compactedContextHistory has 6 messages.
-    // The last llm_call (for turn3) should have had 5 messages in its view
-    // (turns 1-2 = 4 messages + turn3 user = 5)
     const allEvents = readEventLines(eventsFile);
     const llmCalls = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
 
-    // Third call: 5 messages in view
+    // Third call: 5 messages (turns 1-2 = 4 + turn3 user = 5) — all sent, none trimmed
     expect(llmCalls[2].contextHashes).toHaveLength(5);
 
     // Each hash must appear as a hash in context.jsonl
@@ -387,43 +379,7 @@ describe("contextHashes reflects truncated view, not full compactedContextHistor
   });
 });
 
-// ---------------------------------------------------------------------------
-// buildSentContext integration: returned subset has same object references
-// ---------------------------------------------------------------------------
 
-describe("buildSentContext preserves object references (needed for contextHashesForView)", () => {
-  it("messages in the returned view are the same objects as in the source array", () => {
-    const msg1: Anthropic.MessageParam = { role: "user", content: "hello" };
-    const msg2: Anthropic.MessageParam = { role: "assistant", content: [{ type: "text", text: "hi" }] };
-    const history = [msg1, msg2];
-
-    const view = buildSentContext(history, 1_000_000);
-    // All messages in view should be the exact same object references
-    for (const viewMsg of view) {
-      const found = history.some(h => h === viewMsg);
-      expect(found).toBe(true);
-    }
-  });
-
-  it("when truncation drops messages, remaining view messages are still the same references", () => {
-    // Create a large history that requires truncation (very small budget)
-    const history: Anthropic.MessageParam[] = [];
-    for (let i = 0; i < 10; i++) {
-      history.push({ role: "user", content: "x".repeat(1000) });
-      history.push({ role: "assistant", content: [{ type: "text", text: "y".repeat(1000) }] });
-    }
-
-    // Very tight budget — forces truncation
-    const view = buildSentContext(history, 500);
-    expect(view.length).toBeLessThan(history.length);
-
-    // Every message in the view must be an exact reference from history
-    for (const viewMsg of view) {
-      const found = history.some(h => h === viewMsg);
-      expect(found).toBe(true);
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // No placeholder hashes — every message in view has a real hash

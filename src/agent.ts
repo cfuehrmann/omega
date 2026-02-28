@@ -218,15 +218,6 @@ export function isAuthExpired(err: any): boolean {
 // Always preserves the first user message (the original task) and the most
 // recent N turns.
 
-const KEEP_RECENT_TURNS = 10; // always keep the last 10 message pairs
-
-// Check if a message contains tool_result blocks
-function hasToolResult(msg: Anthropic.MessageParam): boolean {
-  if (typeof msg.content === "string") return false;
-  if (!Array.isArray(msg.content)) return false;
-  return msg.content.some((b: any) => b.type === "tool_result");
-}
-
 function getOpenAiRetryDelayMs(err: any, attempt: number, baseMs: number, maxMs: number): number {
   const msg = typeof err?.message === "string" ? err.message : "";
   const match = msg.match(/try again in\s*(\d+(?:\.\d+)?)\s*s/i);
@@ -247,134 +238,7 @@ function getAnthropicRetryDelayMs(_err: any, attempt: number, baseMs: number, ma
   return Math.min(Math.round(delay), maxMs);
 }
 
-// Check if a message contains tool_use blocks
-function hasToolUse(msg: Anthropic.MessageParam): boolean {
-  if (typeof msg.content === "string") return false;
-  if (!Array.isArray(msg.content)) return false;
-  return msg.content.some((b: any) => b.type === "tool_use");
-}
 
-// Get tool_use IDs from a message
-function getToolUseIds(msg: Anthropic.MessageParam): Set<string> {
-  const ids = new Set<string>();
-  if (typeof msg.content === "string" || !Array.isArray(msg.content)) return ids;
-  for (const b of msg.content) {
-    if ((b as any).type === "tool_use") ids.add((b as any).id);
-  }
-  return ids;
-}
-
-// Get tool_result tool_use_ids from a message
-function getToolResultIds(msg: Anthropic.MessageParam): Set<string> {
-  const ids = new Set<string>();
-  if (typeof msg.content === "string" || !Array.isArray(msg.content)) return ids;
-  for (const b of msg.content) {
-    if ((b as any).type === "tool_result") ids.add((b as any).tool_use_id);
-  }
-  return ids;
-}
-
-/** Rough token estimate: ~1 token per 4 characters (conservative). */
-function estimateTokens(msg: Anthropic.MessageParam): number {
-  const text = typeof msg.content === "string"
-    ? msg.content
-    : JSON.stringify(msg.content);
-  return Math.ceil(text.length / 4);
-}
-
-export function buildSentContext(
-  history: Anthropic.MessageParam[],
-  budget: number = config.maxContextTokens
-): Anthropic.MessageParam[] {
-  const MAX_MESSAGES = 100;
-
-  let working = history;
-  const reasons: string[] = [];
-
-  // Enforce message cap first (drop from middle)
-  if (working.length > MAX_MESSAGES) {
-    const minKeep = Math.min(working.length, KEEP_RECENT_TURNS * 2);
-    const alwaysKeepHead = working.slice(0, 1);
-    const alwaysKeepTail = working.slice(-minKeep);
-    const middle = working.slice(1, working.length - minKeep);
-    const excess = working.length - MAX_MESSAGES;
-    const trimmedMiddle = middle.slice(excess);
-    working = sanitizeToolPairs([...alwaysKeepHead, ...trimmedMiddle, ...alwaysKeepTail]);
-    reasons.push("message_cap");
-  }
-
-  // Count total estimated tokens
-  const totalTokens = working.reduce((sum, m) => sum + estimateTokens(m), 0);
-  if (totalTokens <= budget) return working;
-
-  // Always keep first message + last KEEP_RECENT_TURNS*2 messages
-  const minKeep = Math.min(working.length, KEEP_RECENT_TURNS * 2);
-  const alwaysKeepHead = working.slice(0, 1);
-  let alwaysKeepTail = working.slice(-minKeep);
-
-  // Middle portion eligible for dropping
-  const middle = working.slice(1, working.length - minKeep);
-  if (middle.length === 0) {
-    // All messages are within the "always keep" tail — history is short but each
-    // message is enormous. We must still reduce: drop from the oldest end of the
-    // tail, keeping at minimum the very last message (the current user turn).
-    // This handles the real-world case of 11 huge messages > 641k tokens.
-    let kept = [...alwaysKeepTail];
-    let currentTokens = kept.reduce((sum, m) => sum + estimateTokens(m), 0);
-    while (currentTokens > budget && kept.length > 1) {
-      const dropped = kept.shift()!;
-      currentTokens -= estimateTokens(dropped);
-    }
-    return sanitizeToolPairs(kept);
-  }
-
-  // Drop from oldest middle messages first
-  let kept = [...middle];
-  let currentTokens = totalTokens;
-  while (currentTokens > budget && kept.length > 0) {
-    const dropped = kept.shift()!;
-    currentTokens -= estimateTokens(dropped);
-  }
-
-  let result = [...alwaysKeepHead, ...kept, ...alwaysKeepTail];
-
-  // Fix orphaned tool_result blocks: if a tool_result references a tool_use
-  // that was dropped, remove the orphaned tool_result (and its partner if needed)
-  result = sanitizeToolPairs(result);
-
-  return result;
-}
-
-// Remove orphaned tool_result messages (where the matching tool_use was dropped).
-// Also remove orphaned tool_use messages (where the matching tool_result was dropped).
-function sanitizeToolPairs(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
-  // Collect all tool_use IDs present in the messages
-  const allToolUseIds = new Set<string>();
-  const allToolResultIds = new Set<string>();
-  for (const msg of messages) {
-    for (const id of getToolUseIds(msg)) allToolUseIds.add(id);
-    for (const id of getToolResultIds(msg)) allToolResultIds.add(id);
-  }
-
-  // Filter out messages that are purely orphaned tool_results or tool_uses
-  return messages.filter((msg) => {
-    if (hasToolResult(msg)) {
-      const resultIds = getToolResultIds(msg);
-      // Keep only if ALL tool_result IDs have matching tool_use
-      for (const id of resultIds) {
-        if (!allToolUseIds.has(id)) return false;
-      }
-    }
-    if (hasToolUse(msg)) {
-      const useIds = getToolUseIds(msg);
-      // Keep only if ALL tool_use IDs have matching tool_result
-      for (const id of useIds) {
-        if (!allToolResultIds.has(id)) return false;
-      }
-    }
-    return true;
-  });
-}
 
 // --- Stream event processing (extracted for testability) ---
 
@@ -517,34 +381,6 @@ export class Agent {
     const path = this.resolveEventsFile();
     if (path === null) return Promise.resolve();
     return appendEvent(event, path).catch(() => {});
-  }
-
-  /**
-   * Compute `contextHashes` for a given API view (the trimmed message array
-   * produced by `buildSentContext()`).  Each hash in the result corresponds
-   * to the on-disk `context.jsonl` entry for that message.
-   *
-   * Mapping strategy: scan `sentContext` against `compactedContextHistory` in order.
-   * `buildSentContext()` always returns a strict subsequence (same object
-   * references, same order) so a single forward-scan is O(n).
-   */
-  private contextHashesForView(sentContext: Anthropic.MessageParam[]): string[] {
-    const hashes: string[] = [];
-    let logIdx = 0;
-    for (const msg of sentContext) {
-      // Advance logIdx until we find this message by reference
-      while (logIdx < this.compactedContextHistory.length && this.compactedContextHistory[logIdx] !== msg) {
-        logIdx++;
-      }
-      if (logIdx < this.compactedContextHistory.length) {
-        hashes.push(this.compactedContextHashes[logIdx] ?? "????????");
-        logIdx++;
-      } else {
-        // Message not found in log (shouldn't happen) — use a placeholder
-        hashes.push("????????");
-      }
-    }
-    return hashes;
   }
 
   /**
@@ -804,10 +640,6 @@ export class Agent {
     // On error, yields compact_auto_error and continues (rolling truncation fallback).
     yield* this.performAutoCompact();
 
-    // Budget for the current agentic loop iteration's API view.
-    // Reduced on prompt-too-long retries; compactedContextHistory itself is never trimmed.
-    let apiBudget = config.maxContextTokens;
-
     // Cumulative totals across all API calls in this user turn
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -870,29 +702,13 @@ export class Agent {
           ]
         : toolDefinitions;
 
-      // Build the API view: a (possibly trimmed) snapshot of compactedContextHistory that
-      // fits within apiBudget. This is ephemeral — compactedContextHistory is never mutated.
-      // cachedMessages adds cache_control to the last message for Anthropic caching.
-      const sentContext = buildSentContext(this.compactedContextHistory, apiBudget);
-      if (sentContext.length < this.compactedContextHistory.length) {
-        const trimmedEv: OmegaEvent = {
-          type: "context_view_trimmed",
-          ts: new Date().toISOString(),
-          originalMessages: this.compactedContextHistory.length,
-          keptMessages: sentContext.length,
-          droppedMessages: this.compactedContextHistory.length - sentContext.length,
-          estimatedTokensBefore: this.compactedContextHistory.reduce((s, m) => s + estimateTokens(m), 0),
-          estimatedTokensAfter: sentContext.reduce((s, m) => s + estimateTokens(m), 0),
-          reason: "token_budget",
-        };
-        this.logEvent(trimmedEv);
-        yield trimmedEv;
-      }
+      // All messages are sent verbatim — no in-turn trimming.
+      // addCacheControlToLastMessage adds cache_control to the last message for Anthropic caching.
+      const sentContext = this.compactedContextHistory;
       const cachedMessages = addCacheControlToLastMessage(sentContext);
 
-      // Compute contextHashes from the view (Step 3e-iii): maps each message in
-      // sentContext back to its stored content hash via object-reference identity.
-      const contextHashes = this.contextHashesForView(sentContext);
+      // contextHashes: all hashes in order, one per message in compactedContextHistory.
+      const contextHashes = [...this.compactedContextHashes];
 
       // Emit llm_call with a snapshot of the params before each call.
       // `request` is a UI-only field (stripped by toPersistedEvent before disk write).
@@ -993,10 +809,6 @@ export class Agent {
         }
       } else {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
-          // Recompute sentContext and cachedMessages each attempt so prompt-too-long
-          // retries pick up the tightened apiBudget set in the catch block below.
-          const sentContext = buildSentContext(this.compactedContextHistory, apiBudget);
-          const attemptCachedMessages = addCacheControlToLastMessage(sentContext);
           try {
             let fullText = "";
 
@@ -1005,7 +817,7 @@ export class Agent {
             max_tokens: config.maxOutputTokens,
             system: systemBlocks,
             tools: cachedTools,
-            messages: attemptCachedMessages,
+            messages: cachedMessages,
           };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
@@ -1071,54 +883,27 @@ export class Agent {
             yield retryEv;
             yield { type: "agent_error", ts: new Date().toISOString(), error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})` };
             await sleep(waitMs, signal);
-          } else if (
-            (err.status === 400 &&
-              typeof err.message === "string" &&
-              err.message.includes("prompt is too long")) ||
-            isContextTooLong(err)
-          ) {
-            // Prompt too long — aggressively truncate and retry.
-            // Two cases:
-            //   - 400 "prompt is too long" (standard Anthropic API key endpoint)
-            //   - 429 "Extra usage is required for long context requests"
-            //     (Claude Max OAuth endpoint — same root cause, different HTTP status)
-            const diagPath = await writeDiagnostic(
-              {
-                summary: `Prompt too long (attempt ${attempt + 1}): ${err.message}`,
-                errorMessage: err.message ?? String(err),
-                httpStatus: err.status ?? err.statusCode,
-                provider: "anthropic",
-                model: activeModel,
-                requestMessages: attemptCachedMessages,
-                systemBlocks,
-                history: this.compactedContextHistory,
-                extra: { attempts: attempt + 1, stopReason: "prompt_too_long" },
-              },
-              this.diagDir,
-            );
-            if (diagPath) {
-              const diagEv: OmegaEvent = { type: "diagnostic_written", ts: new Date().toISOString(), path: diagPath };
-              this.logEvent(diagEv);
-              yield diagEv;
-            }
-            // Halve the budget each retry to force more aggressive truncation.
-            // compactedContextHistory is never mutated — apiBudget controls the next sentContext.
-            apiBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
-            yield { type: "agent_error", ts: new Date().toISOString(), error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})` };
           } else {
-            // Write a diagnostic snapshot for non-retryable errors so the next
-            // session has hard data (exact request + history) to anchor debugging.
+            // Non-retryable error (includes prompt-too-long — no retry, no trimming).
+            // Write a diagnostic snapshot so the next session has hard data.
+            const isContextOverflow =
+              (err.status === 400 &&
+                typeof err.message === "string" &&
+                err.message.includes("prompt is too long")) ||
+              isContextTooLong(err);
             const diagPath = await writeDiagnostic(
               {
-                summary: `Anthropic API error (status ${err.status ?? "unknown"}): ${err.message}`,
+                summary: isContextOverflow
+                  ? `Context overflow: ${err.message}`
+                  : `Anthropic API error (status ${err.status ?? "unknown"}): ${err.message}`,
                 errorMessage: err.message ?? String(err),
                 httpStatus: err.status ?? err.statusCode,
                 provider: "anthropic",
                 model: activeModel,
-                requestMessages: attemptCachedMessages,
+                requestMessages: cachedMessages,
                 systemBlocks,
                 history: this.compactedContextHistory,
-                extra: { attempts: attempt + 1, stopReason: "api_error" },
+                extra: { attempts: attempt + 1, stopReason: isContextOverflow ? "context_overflow" : "api_error" },
               },
               this.diagDir,
             );
@@ -1130,7 +915,11 @@ export class Agent {
             const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
             this.logEvent(llmErrEv);
             yield llmErrEv;
-            if (isRetryable(err)) {
+            if (isContextOverflow) {
+              const overflowEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Context too large to send. Use /compact to summarise history, or start a fresh focused turn." };
+              this.logEvent(overflowEv);
+              yield overflowEv;
+            } else if (isRetryable(err)) {
               const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Try /codex to switch providers." };
               this.logEvent(rateLimitEv);
               yield rateLimitEv;

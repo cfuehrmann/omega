@@ -234,18 +234,6 @@ export interface DiagnosticWrittenEvent {
   path: string;
 }
 
-/** The context view sent to the LLM was trimmed to fit within the token budget. */
-export interface ContextViewTrimmedEvent {
-  type: "context_view_trimmed";
-  ts: string;
-  originalMessages: number;
-  keptMessages: number;
-  droppedMessages: number;
-  estimatedTokensBefore: number;
-  estimatedTokensAfter: number;
-  reason: string;
-}
-
 /** The operator switched the active model/provider via a slash command. */
 export interface ModelChangedEvent {
   type: "model_changed";
@@ -299,5 +287,4 @@ export type OmegaEvent =
   | OauthTokenExpiredEvent
   | LlmRetryEvent
   | DiagnosticWrittenEvent
-  | ContextViewTrimmedEvent
   | ModelChangedEvent;
