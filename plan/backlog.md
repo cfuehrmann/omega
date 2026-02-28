@@ -212,42 +212,40 @@ One test (`"synthetic tool_result content mentions max_tokens and non-execution"
 failing. Fix: added `"max_tokens stop — "` prefix to the content string in `agent.ts`.
 487 tests pass; gate green.
 
-**3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic**
+**3e-v-2 — "All retries exhausted" missing `llm_error`**
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
-fallback at line ~1080 yields a bare `agent_error` with no `llm_error` event and
-no `writeDiagnostic()` call. This is the worst crash path and has the least
-diagnostic coverage — exactly backwards from what we want.
-
-The prompt-too-long exhaustion path has the same gap: after `retryMaxAttempts`
-halvings it falls through to this same bare `agent_error`.
+fallback yields a bare `agent_error` with no `llm_error` event. This is the worst
+crash path and has the least diagnostic coverage — exactly backwards from what we want.
 
 Acceptance criteria:
 - "All retries exhausted" path emits `llm_error` (with `lastError` details) before
   `agent_error`
-- `writeDiagnostic()` is called with the full request context, same as individual
-  retry paths
 - Both Anthropic and OpenAI paths covered
-- Test: mock stream that always throws a retryable error; assert `llm_error` and
-  `diagnostic_written` events are present after exhaustion
+- Test: mock stream that always throws a retryable error; assert `llm_error` event
+  is present after exhaustion
 
-**3e-v-3 — `session_end` — clean shutdown vs. crash indistinguishable**
-`session_start` is emitted on startup but there is no symmetric `session_end` on
-clean shutdown. A post-mortem cannot tell whether the session ended normally or
-crashed. Session resume (Step 3f) needs this to know whether to offer resumption.
+**3e-v-3 — `session_end` — clean shutdown vs. crash indistinguishable** ✅ DONE (commit bfd5d0d)
+`session_end` event added to `OmegaEvent` with `outcome: "clean" | "error"` and optional
+`reason`. `Agent.emitSessionEnd()` public method awaits the flush. Terminal `shutdown()`
+now async, awaits `emitSessionEnd("clean")` before `process.exit()`. Web server
+`handleShutdown` does the same. Both UIs have a render case. Crash / SIGKILL leaves no
+`session_end` — that absence is the crash signal. At next startup, terminal app reads
+`events.prev.jsonl` and warns if no `session_end` or if `outcome === "error"`.
 
-`session_end` must be emitted (and awaited, not fire-and-forget) in the shutdown
-path of both the terminal app (`shutdown()` in `terminal/app.ts`) and the web
-server (graceful close in `web/server.ts`). It must be emitted *before* the
-process exits and *before* the events file is closed.
-
-Acceptance criteria:
-- `OmegaEvent` gains a `session_end` variant; both UIs render it (exhaustive
-  switch guard will enforce this at compile time)
-- Terminal `shutdown()` awaits `logEvent({ type: "session_end", ... })` before
-  `process.exit()`
-- Web server graceful close does the same
-- Crash / SIGKILL leaves no `session_end` — that absence is the crash signal
-- Test: normal shutdown path; assert `session_end` is the last event in the file
+Also done in the same commit:
+- Diagnostics (`src/diagnosis.ts`, `diagnosis/` dir) **removed entirely** — replaced by
+  the principled session-end / `.prev` file approach. All diagnostic assertions in
+  `agent-rate-limit.test.ts` removed.
+- `SessionStartEvent` gains a `systemPrompt` field (the system prompt at session start,
+  captured via `buildSystemPrompt()` which also replaces the inline prompt build in
+  `sendMessage`). Closes the last unique data gap that diagnostics covered.
+- `LlmCallEvent` gains `cacheBreakpointIndex: number | null` — the 0-based index of the
+  message that received `cache_control: { type: "ephemeral" }` (always `contextHashes.length - 1`
+  for Anthropic; `null` for OpenAI). Documents the ephemeral cache annotation in the
+  persistent record.
+- `DiagnosticWrittenEvent` removed from `OmegaEvent`.
+- `Agent` constructor drops `diagDir` parameter. `makeTestAgent` updated.
+- 488 tests pass, gate green.
 
 **3e-v-4 — Web server protocol errors not in `events.jsonl`**
 Three conditions in `web/server.ts` emit `{ type: "error" }` over WebSocket but
@@ -265,18 +263,9 @@ Acceptance criteria:
 - If persisted: wired via `logEvent()` with an appropriate `OmegaEvent` variant
 - If excluded: documented as intentional omission in 3e-vi
 
-**3e-v-5 — No event when `writeDiagnostic()` itself fails (LOW)**
-`writeDiagnostic()` is a fallible I/O operation. When it throws, the failure is
-currently silent — the caller's `catch` is either absent or swallows the error.
-The absence of a `diagnostic_written` event after an error that should have
-produced one is an implicit signal, but not an explicit one.
-
-A `diagnostic_error` event would make the failure observable in `events.jsonl`.
-Low priority: diagnostic write failures are rare, and the existing
-`diagnostic_written` / absence pattern is already somewhat informative.
-
-Decision needed: add `diagnostic_error` variant to `OmegaEvent`, or document the
-silent-failure as an intentional omission in 3e-vi?
+**3e-v-5 — No event when `writeDiagnostic()` itself fails** ✅ RESOLVED (commit bfd5d0d)
+Diagnostics removed entirely. `writeDiagnostic`, `DiagnosticWrittenEvent`, and
+`diagnosis/` dir are gone. No longer applicable.
 
 **3e-v — Previously known candidates (resolved):**
 - `session_end` — addressed by 3e-v-3 above.
@@ -507,7 +496,8 @@ Acceptance criteria:
 
 ## Closed items
 
-- **[ARCH] Mid-turn context overflow: error-out path** — Done (commit 13c1f9e). `buildSentContext`, `apiBudget`, `contextHashesForView`, and `context_view_trimmed` deleted. Agent sends `compactedContextHistory` verbatim. Context overflow (400 prompt-too-long / 429 extra-usage-required) is non-retryable: emits `llm_error` + actionable `agent_error` ("Use /compact …"), writes diagnostic with `stopReason: "context_overflow"`. 486 tests, gate green.
+- **[ARCH] Mid-turn context overflow: error-out path** — Done (commit 13c1f9e). `buildSentContext`, `apiBudget`, `contextHashesForView`, and `context_view_trimmed` deleted. Agent sends `compactedContextHistory` verbatim. Context overflow (400 prompt-too-long / 429 extra-usage-required) is non-retryable: emits `llm_error` + actionable `agent_error` ("Use /compact …"). 486 tests, gate green. (Diagnostic write previously included; removed in commit bfd5d0d.)
+- **Diagnostic snapshots / diagnosis/ dir** — Removed (commit bfd5d0d). Replaced by `session_end` event + `.prev` file approach. `writeDiagnostic`, `DiagnosticWrittenEvent`, `diagDir` constructor param, and `checkDiagnostics` all gone. `systemPrompt` added to `session_start`; `cacheBreakpointIndex` added to `llm_call` to close the last data gaps. Terminal startup now reads `events.prev.jsonl` to detect prior session errors.
 - **`/compact` command tests** — Done (commit 8fcf594). 27 tests in `src/compact-command.test.ts` covering all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations (view length before/after), error path, and post-compact continuity. Fixed bug: `/compact` handler passed `this.contextFile ?? undefined` to `appendContextMessage`, coercing `null` (disabled/test) to `undefined` (use production default), causing `compact_user_error` in all tests under `OMEGA_TEST=1`. Fixed to pass `this.contextFile` directly.
 - **UI: tighten tool_call and tool_result display truncation** — Done (commit f99d233). Both blocks now cut at 5 lines / 500 chars in terminal and web. Terminal `renderToolStart` uses `truncateOutput` (was bare `JSON.stringify`). Web `tool_call` uses `truncateOutput` (compact JSON, was `truncate(prettyJSON, 3000)`).
 - **Terminal: minimal append-only prompt editor** — Done (commit 2a9416e). Removed cursor tracking, arrow keys, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace, `redrawLine`, `wordBoundaryBack/Forward`. Esc now context-sensitive: non-empty → clear buffer; empty → abort turn. ~240 lines deleted from `input.ts`. Tests rewritten.
