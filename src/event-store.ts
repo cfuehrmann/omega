@@ -1,9 +1,6 @@
 /**
  * Event persistence — append-only JSONL writer for sessions/events.jsonl.
  *
- * Types are re-exported from src/events.ts (OmegaEvent). Only the persistence
- * helpers live here.
- *
  * Naming authority: persisted names are the single source of truth (see
  * plan/dev-policy.md § "Event naming"). Do not rename event types in events.jsonl
  * to match stream-facing names — it is always the other way around.
@@ -16,34 +13,6 @@ import { assertNotProductionPath } from "./test-guard.js";
 import type { OmegaEvent } from "./events.js";
 
 export const DEFAULT_EVENTS_FILE = "sessions/events.jsonl";
-
-// Re-export all event types from events.ts for convenience.
-export type {
-  OmegaEvent,
-  StreamSignal,
-  TextSignal,
-  SessionStartEvent,
-  SessionEndEvent,
-  UserMessageEvent,
-  LlmCallEvent,
-  LlmResponseEvent,
-  ToolCallEvent,
-  ToolResultEvent,
-  TurnEndEvent,
-  LlmErrorEvent,
-  AgentErrorEvent,
-  TurnInterruptedEvent,
-  CompactUserStartEvent,
-  CompactUserDoneEvent,
-  CompactUserErrorEvent,
-  CompactAutoStartEvent,
-  CompactAutoDoneEvent,
-  CompactAutoErrorEvent,
-  OauthRefreshedEvent,
-  OauthTokenExpiredEvent,
-  LlmRetryEvent,
-  ModelChangedEvent,
-} from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Persistence helpers

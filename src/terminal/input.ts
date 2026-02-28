@@ -62,7 +62,7 @@ export function displayWidth(ch: string): number {
  * The caller decides which case applies; parseKeys signals by calling onEscape
  * only when the buffer is already empty (it clears the buffer itself otherwise).
  */
-export interface KeyCallbacks {
+interface KeyCallbacks {
   onSubmit: (line: string) => void;
   onEscape: () => void;
   onExit: () => void;
@@ -71,10 +71,10 @@ export interface KeyCallbacks {
 }
 
 /** Persistent bracketed-paste state shared across calls in production. */
-export const sharedPasteState = { inPaste: false };
+const sharedPasteState = { inPaste: false };
 
 /** Shared mutable buffer used by setupRawInput in production. */
-export const sharedBuffer: {
+const sharedBuffer: {
   value: string;
 } = { value: "" };
 
