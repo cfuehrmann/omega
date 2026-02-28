@@ -149,7 +149,7 @@ Both terminal and web UIs apply presentation-only truncation to both `tool_resul
 - `src/web/server.ts` — `runWebApp()`, `closeOpenTurn()`, `shouldLogEvent()`. `closeOpenTurn` detects open turns on crash and appends `{ type: "turn_interrupted" }`.
 - `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth; `[SCHEMA]` tests asserting field removals. `buildSentContext` and `contextHashesForView` describe blocks deleted (commit 13c1f9e).
 - `src/compact-command.test.ts` — 27 tests covering the `/compact` slash command: all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations, error path, and post-compact continuity.
-- `src/compact-auto.test.ts` — 26 tests covering auto-compact: threshold constant, fires above/silent below threshold, error path (fallback continues), 9 BUG-1 scenarios (max_tokens poison → synthetic tool_result + agent_error, well-formed context, next turn succeeds), combined integration scenario.
+- `src/compact-auto.test.ts` — 27 tests covering auto-compact: threshold constant (`AUTO_COMPACT_THRESHOLD = 100_000` tokens), fires above/silent below threshold (using `setAboveThreshold()`/`setBelowThreshold()` helpers), error path (fallback continues), 9 BUG-1 scenarios (max_tokens poison → synthetic tool_result + agent_error, well-formed context, next turn succeeds), combined integration scenario.
 
 ### Context Overflow Policy (commit 13c1f9e)
 Context overflow (API returns 400 "prompt is too long" or 429 "extra usage required for long context") is treated as a **non-retryable terminal error**:
@@ -182,8 +182,12 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 ### Recent Session Outcomes
 Completed **BUG-1 fix** (commit 9682be6): `max_tokens` mid-tool-call context poison. When the LLM hit `max_tokens` while generating a `tool_use` block, the dangling assistant message was appended before the `stop_reason` check, permanently bricking the session. Fix: detect `toolUseBlocks.length > 0 && stop_reason === "max_tokens"` after `appendToHistory`; synthesise `tool_result` blocks with `is_error: true` for every dangling id; append via `appendToHistory`; emit `tool_result` + `agent_error` events. Turn ends cleanly; next turn succeeds.
 
-Completed **`src/compact-auto.test.ts`** (commit 9682be6, 26 tests): `AUTO_COMPACT_THRESHOLD` constant; auto-compact fires above threshold (start/done events, view shrinks, ordering vs `llm_call`); silent below threshold; error path (fallback continues, view unchanged); 9 BUG-1 scenarios; combined integration scenario.
+Completed **`src/compact-auto.test.ts`** (commit 9682be6, later updated to 27 tests via commit 1b560ac): `AUTO_COMPACT_THRESHOLD` constant; auto-compact fires above threshold (start/done events, view shrinks, ordering vs `llm_call`); silent below threshold; error path (fallback continues, view unchanged); 9 BUG-1 scenarios; combined integration scenario.
 
-**Auto-compact trigger design:** Trigger metric is `compactedContextHistory.length` (message count). Fires at most once per user turn — after the user message is appended, before the agentic loop starts. Never fires mid-loop. Threshold: `AUTO_COMPACT_THRESHOLD = 60`.
+**Auto-compact trigger design:** Trigger metric is `lastPromptTokens` — total prompt tokens from the last LLM call (`input_tokens + cache_read_input_tokens + cache_creation_input_tokens`). Fires at most once per user turn — after the user message is appended, before the agentic loop starts. Never fires mid-loop. Threshold: `AUTO_COMPACT_THRESHOLD = 100_000` tokens (50% of Claude's 200k window). Constant exported from `src/compaction.ts`.
 
 Completed **context overflow error-out** (commit 13c1f9e): deleted `buildSentContext`, `apiBudget`, `contextHashesForView`, `context_view_trimmed`. Context overflow is now a non-retryable terminal error. 486 tests, gate green.
+
+Completed **BUG-3 fix** (commit 1b560ac): `compact-auto.test.ts` was broken by the token-threshold refactor — tests still used message-count semantics (`seedHistory(agent, AUTO_COMPACT_THRESHOLD + 1)` → 100,001 messages). Fixed by adding `setAboveThreshold()` / `setBelowThreshold()` helpers and rewriting all threshold tests. 27 tests pass.
+
+Completed **synthetic tool_result content fix** (commit fe3c2a9): The `"max_tokens"` literal was absent from the synthetic error content string injected into history on BUG-1 (dangling tool_use). One test was failing. Fix: added `"max_tokens stop — "` prefix to the content. 487 tests, gate green.

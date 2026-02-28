@@ -191,9 +191,9 @@ per tool, emit `agent_error`. Turn ends cleanly; next turn succeeds.
 Tests: 9 BUG-1 scenarios in `src/compact-auto.test.ts`.
 
 **BUG-2 — `compact-auto.test.ts` never written (incomplete session 2026-02-28)** ✅ FIXED (commit 9682be6)
-26 tests covering `AUTO_COMPACT_THRESHOLD` constant, auto-compact firing above/below
+Initial 26 tests covering `AUTO_COMPACT_THRESHOLD` constant, auto-compact firing above/below
 threshold, error path (fallback continues), all BUG-1 scenarios, and a combined
-auto-compact + max_tokens integration scenario. Gate green.
+auto-compact + max_tokens integration scenario. Gate green. (Later grown to 27 tests by BUG-3 fix.)
 
 **BUG-3 — `compact-auto.test.ts` broken by token-threshold refactor** ✅ FIXED (commit 1b560ac)
 The session that implemented token-based auto-compact (`lastPromptTokens` check,
@@ -204,6 +204,13 @@ the tests, leaving `compact-auto.test.ts` still using message-count semantics
 Fix: added `setAboveThreshold()` helper (sets `agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD + 1`,
 seeds minimal history for compactHistory() to work) and `setBelowThreshold()` helper.
 All 27 tests pass; gate green.
+
+**BUG-4 — synthetic `tool_result` content string missing `"max_tokens"` literal** ✅ FIXED (commit fe3c2a9)
+The BUG-1 synthetic error content injected into history on `max_tokens` mid-tool-call
+said `"output budget … was exhausted"` but did not contain the literal string `"max_tokens"`.
+One test (`"synthetic tool_result content mentions max_tokens and non-execution"`) was
+failing. Fix: added `"max_tokens stop — "` prefix to the content string in `agent.ts`.
+487 tests pass; gate green.
 
 **3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic**
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
