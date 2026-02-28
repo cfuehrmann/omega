@@ -720,7 +720,7 @@ export class Agent {
           //     no re-write; those records are already in context.jsonl
           const syntheticHash = await appendContextMessage(
             syntheticMessage,
-            this.contextFile ?? undefined,
+            this.contextFile,
           );
           const tailHashes = this.llmContextHashes.slice(tailStartIndex);
           this.llmContextView = newHistory as Anthropic.MessageParam[];
