@@ -7,19 +7,12 @@
 
 Agreed design from session discussion. Four ordered steps:
 
-#### EU-1 — Delete dead weight
-Remove `metrics` AgentEvent (already suppressed in renderer; covered by
-`llm_to_agent` usage fields and `turn_end` aggregate). Remove
-`tool_result_message` AgentEvent (already suppressed). Remove the two
-"thinking…" / "OpenAI provider active" `status` yields at the top of the
-agentic loop (superseded within milliseconds by `llm_call`). Remove `/help`
-slash-command output (operator will ask the LLM instead).
-
-Acceptance criteria:
-- `AgentEvent` union has no `metrics` or `tool_result_message` variants
-- No `status` yield fires at agentic loop start
-- `/help` command removed or replaced by a one-liner pointing at the LLM
-- All existing tests pass; gate green
+#### EU-1 — Delete dead weight — DONE (commit 00a8078)
+Removed `metrics` and `tool_result_message` from `AgentEvent`. Removed the two
+in-loop `status` yields ("thinking…" / "OpenAI provider active"). Removed the
+`/help` slash command (now yields `agent_error` like any unknown command — operator
+asks the LLM). Removed "generating `<tool>` input…" `status` yield from both
+`processStreamEvents()` and the inline streaming loop. Gate green.
 
 #### EU-2 — Replace remaining `status` yields with typed events
 Every remaining `status` yield corresponds to a real event that should be

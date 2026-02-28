@@ -116,13 +116,20 @@ Breaking changes landed before the schema lock to avoid a post-lock migration:
 - `LlmCallEvent.messageCount` removed — always equalled `contextHashes.length`; use `.length` directly.
 - `ToolCallEvent.input` and `ToolResultEvent.outputLength` removed — both derivable from `context.jsonl` via `contextHash` FK (commit 34f7708).
 
-### Event system unification — TODO (EU-1 through EU-4, see `plan/backlog.md`)
+### Event system unification — IN PROGRESS (EU-1 done, EU-2 through EU-4 TODO)
 `AgentEvent` (streaming, UI-only) and `SessionEvent` (persistence) are two parallel
 type hierarchies. Agreed direction: merge into a single `OmegaEvent` union. A small
 separate `StreamSignal` union covers the only genuinely ephemeral rendering
 primitives: `text` streaming fragments. Everything else is an `OmegaEvent` — persisted
-and rendered. `status` and `metrics` AgentEvent variants are deleted or replaced by
-typed events. See `plan/backlog.md` § "Event system unification" for the ordered steps.
+and rendered.
+
+**EU-1 — DONE (commit 00a8078):** `metrics` and `tool_result_message` variants
+deleted from `AgentEvent`. In-loop `status` yields removed ("thinking…", "OpenAI
+provider active", "generating `<tool>` input…"). `/help` slash command removed.
+
+**EU-2 through EU-4 — TODO.** `status` AgentEvent variant survives until EU-2
+replaces the remaining slash-command acknowledgement yields with typed events.
+See `plan/backlog.md` § "Event system unification" for the ordered steps.
 Active development-phase policies are in `plan/dev-policy.md`.
 
 ### Schema lock — TODO (after EU-1 through EU-4)

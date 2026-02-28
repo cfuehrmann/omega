@@ -65,6 +65,8 @@ OpenAI Codex fallback via `OPENAI_API_KEY` for `/codex` command.
 | `/codex` | OpenAI `gpt-5.2-codex` |
 | `/compact` | Collapse history head into an LLM summary, keep last 10 turns verbatim |
 
+Any other `/…` input is rejected with an error. Ask the LLM directly for help.
+
 ## Git discipline
 
 - Two branches: `main` (stable) and `develop` (working). Omega commits to
