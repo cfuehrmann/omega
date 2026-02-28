@@ -96,8 +96,7 @@ Apply this principle to every future naming or schema decision.
   in the event file the compaction occurred.
 - It must become possible to point Omega to point to any project to work on.
   - Concretely: world-state injection must be opt-in via the project's `README.md`,
-    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/backlog.md` §
-    "Decouple Omega startup from Omega's own repo" for the detailed plan.
+    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/backlog.md` INFRA-4.
 
 > The canonical event log is `sessions/events.jsonl` — the single source of truth.
 > Pino was retired (Step 4, complete).
@@ -125,13 +124,13 @@ acceptance criteria on each sub-step.
 - **Pre-lock field removals** — `LlmResponseEvent.content`, `LlmCallEvent.messageCount`, `ToolCallEvent.input`, `ToolResultEvent.outputLength` all removed. ✅
 - **EU-1–EU-4** — `AgentEvent` and `SessionEvent` unified into `OmegaEvent`; `status` variant deleted; all stream/wire/UI names match persistence; exhaustive switch guards enforced in both UIs. ✅
 
-### Schema lock — TODO
+### Schema lock — TODO (SCHEMA-1 through SCHEMA-6)
 Review and document the full shape of every JSONL record. Write `plan/schema.md` as
 the stable contract for session resume and future tooling. No breaking changes after
-this point without a migration plan. See `plan/backlog.md` § "Schema lock" for
-ordered sub-steps (3e-iv through 3e-viii).
+this point without a migration plan. See `plan/backlog.md` items SCHEMA-1 through
+SCHEMA-6.
 
-### 3f — Session resume — TODO (depends on schema lock)
+### Session resume — TODO (SCHEMA-7, depends on schema lock)
 On startup, if a `.prev` session exists, offer to resume it.
 
 ## In-turn context management policy

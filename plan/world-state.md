@@ -40,33 +40,18 @@ No raw session persistence. No "resume session?" prompt. The world file is the o
 The exported helper `prevPath(filePath)` encapsulates this logic.
 
 ### Manifest Refactor Status
-`manifest.md` describes a major redesign. Current progress:
-- **Step 1** (DONE): System prompt decoupled from Omega's own repo. Project-agnostic prompt reads `README.md` at startup.
-- **Step 2** (DONE): Abandoned `compactAfterTurn()`. History grows verbatim.
-- **Step 3** (DONE through 3e-iii): Replace `MessageParam[]` history with an event-list data structure.
-  - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl`. `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
-  - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.llmContextView` in memory only; `context.jsonl` is append-only and is never rewritten on compaction.
-  - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. All events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
-  - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; source array never mutated. `Agent.llmContextView` (formerly `llmMessageLog`) is the mutable in-memory context window; `getLlmContextView()` is the public accessor. Note: `buildApiMessages` / `apiBudget` / prompt-too-long retry halvings subsequently deleted (see commit 13c1f9e). Context overflow now errors out immediately.
-  - **3e-i** (DONE): Rename `SessionEvent` and `AgentEvent` discriminant strings. 7 renames applied.
-  - **3e-ii** (DONE): Rename `WsEvent` / `AgentEvent` variants to match coordinate-system model. `SessionEvent` variants (`events.jsonl`) remain `tool_call`/`tool_result`/`llm_response` — separate namespace.
-  - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent.
-  - **[SCHEMA] pre-lock fixes** (DONE): `LlmResponseEvent.content` removed (duplication); `LlmCallEvent.messageCount` and `llmCallNumber` removed (derivable). `ToolCallEvent.input` removed; `ToolResultEvent.outputLength` removed. All FK pointers use hash-based pattern consistently. `LlmResponseEvent.usage` records all four Anthropic token counts plus `service_tier`.
-  - **3e-iv** (TODO): Property names and completeness per event — cross-references on error events, `TurnEndEvent.toolCalls`, `SessionStartEvent.authMode`. See backlog.
-  - **3e-v** (TODO): Missing event types — sub-items:
-    - **3e-v-1**: ✅ DONE — compaction event overhaul: `compact_user_*` + `compact_auto_*` events; `context.jsonl` append-only invariant fixed; hash rebuild bug fixed.
-    - **3e-v-2**: "All retries exhausted" path emits bare `agent_error` with no `llm_error` and no diagnostic.
-    - **3e-v-3**: `session_end` event missing — clean shutdown indistinguishable from crash; blocks session resume.
-    - **3e-v-3**: ✅ DONE (commit bfd5d0d) — `session_end` added; diagnostics removed; `systemPrompt` on `session_start`; `cacheBreakpointIndex` on `llm_call`; terminal startup detects prior crash via `events.prev.jsonl`.
-  - **3e-v-4**: Web server protocol errors (`{ type: "error" }`) not in `events.jsonl` — design decision needed.
-  - **3e-v-5**: ✅ RESOLVED (commit bfd5d0d) — diagnostics removed entirely.
-  - **3e-vi through 3e-viii** (TODO): Persistence audit, forward-compatibility policy, schema reference doc. See backlog.
-  - **3f** (TODO): Session resume, depends on schema lock (3e-viii).
-- **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed.
-- **EU-1** (DONE): Delete dead weight — `metrics` and `tool_result_message` removed from `AgentEvent`. In-loop `status` yields removed. `/help` slash command removed.
-- **EU-2** (DONE): Replace remaining `status` yields with typed events. `model_changed`, `oauth_token_expired`, `oauth_refreshed` added to `AgentEvent`. `status` variant deleted entirely.
-- **EU-3** (DONE): Unify `AgentEvent` and `SessionEvent` into one type (`OmegaEvent` in `src/events.ts`). `AgentEvent` kept as backward-compat alias. Stream-facing names now match persisted names: `tool_call`, `tool_result`, `llm_response` are canonical everywhere. `WsEvent` updated to match.
-- **EU-4** (DONE): UI sync invariant — every `OmegaEvent` variant has a render case in both UIs. Exhaustive switch + `exhaustiveCheck(x: never)` guard in `terminal/app.ts` and `App.tsx`. `exhaustiveCheck()` exported from `src/events.ts`.
+`manifest.md` describes a major redesign. All steps through schema pre-lock are done.
+
+**Done:**
+- Steps 1–4: system prompt decoupling, abandon auto-compaction, event-list history, retire pino.
+- Append-only `context.jsonl` + `events.jsonl`; `/compact` command; FK/PK contract (`hash`+`ts` on every record, `contextHashes[]` on `llm_call`); pre-lock field removals.
+- Event system unification: `OmegaEvent` is the single type; `status` variant gone; all names match persistence; exhaustive switch guards in both UIs.
+- Compaction event overhaul; BUG-1 fix; `session_end` event; diagnostics removed.
+
+**TODO (see `plan/backlog.md`):**
+- **SCHEMA-1–SCHEMA-6**: property completeness, missing events, persistence audit, forward-compat policy, schema reference doc (`plan/schema.md`).
+- **SCHEMA-7**: session resume (depends on schema lock).
+- **INFRA-4**: decouple world-state injection from Omega's own repo.
 
 ### Planning Files
 - `plan/world-state.md` — Zone 1 world state; manually maintained; under source control.
