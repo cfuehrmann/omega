@@ -282,7 +282,7 @@ function estimateTokens(msg: Anthropic.MessageParam): number {
   return Math.ceil(text.length / 4);
 }
 
-export function buildApiMessages(
+export function buildSentContext(
   history: Anthropic.MessageParam[],
   budget: number = config.maxContextTokens
 ): Anthropic.MessageParam[] {
@@ -417,9 +417,9 @@ export type StreamProvider = (params: {
 
 export class Agent {
   private client: Anthropic;
-  private llmContextView: Anthropic.MessageParam[] = [];
-  /** Parallel to llmContextView — stores the 8-char content hash of each stored record. */
-  private llmContextHashes: string[] = [];
+  private compactedContextHistory: Anthropic.MessageParam[] = [];
+  /** Parallel to compactedContextHistory — stores the 8-char content hash of each stored record. */
+  private compactedContextHashes: string[] = [];
   public sessionInputTokens = 0;
   public sessionOutputTokens = 0;
   public sessionCostUsd = 0;
@@ -521,23 +521,23 @@ export class Agent {
 
   /**
    * Compute `contextHashes` for a given API view (the trimmed message array
-   * produced by `buildApiMessages()`).  Each hash in the result corresponds
+   * produced by `buildSentContext()`).  Each hash in the result corresponds
    * to the on-disk `context.jsonl` entry for that message.
    *
-   * Mapping strategy: scan `apiView` against `llmContextView` in order.
-   * `buildApiMessages()` always returns a strict subsequence (same object
+   * Mapping strategy: scan `sentContext` against `compactedContextHistory` in order.
+   * `buildSentContext()` always returns a strict subsequence (same object
    * references, same order) so a single forward-scan is O(n).
    */
-  private contextHashesForView(apiView: Anthropic.MessageParam[]): string[] {
+  private contextHashesForView(sentContext: Anthropic.MessageParam[]): string[] {
     const hashes: string[] = [];
     let logIdx = 0;
-    for (const msg of apiView) {
+    for (const msg of sentContext) {
       // Advance logIdx until we find this message by reference
-      while (logIdx < this.llmContextView.length && this.llmContextView[logIdx] !== msg) {
+      while (logIdx < this.compactedContextHistory.length && this.compactedContextHistory[logIdx] !== msg) {
         logIdx++;
       }
-      if (logIdx < this.llmContextView.length) {
-        hashes.push(this.llmContextHashes[logIdx] ?? "????????");
+      if (logIdx < this.compactedContextHistory.length) {
+        hashes.push(this.compactedContextHashes[logIdx] ?? "????????");
         logIdx++;
       } else {
         // Message not found in log (shouldn't happen) — use a placeholder
@@ -548,38 +548,38 @@ export class Agent {
   }
 
   /**
-   * Append a message to llmContextView, compute and store its content hash,
+   * Append a message to compactedContextHistory, compute and store its content hash,
    * and fire-and-forget the context file write. Returns the hash.
    */
   private async appendToHistory(msg: Anthropic.MessageParam): Promise<string> {
-    this.llmContextView.push(msg);
+    this.compactedContextHistory.push(msg);
     // Compute hash (needed for contextHashes) — file write is fire-and-forget
     if (this.contextFile !== null) {
       const hash = await appendContextMessage(msg, this.contextFile ?? undefined);
-      this.llmContextHashes.push(hash);
+      this.compactedContextHashes.push(hash);
       return hash;
     } else {
       // No file write, but still need a hash for contextHashes cross-referencing
       const record = await buildContextRecord(msg);
-      this.llmContextHashes.push(record.hash);
+      this.compactedContextHashes.push(record.hash);
       return record.hash;
     }
   }
 
   /**
-   * Automatically compact llmContextView if it has grown beyond AUTO_COMPACT_THRESHOLD.
+   * Automatically compact compactedContextHistory if it has grown beyond AUTO_COMPACT_THRESHOLD.
    *
    * Yields compact_auto_start, then compact_auto_done on success or
    * compact_auto_error on failure (in which case the session continues
-   * with rolling truncation as a fallback — llmContextView is unchanged).
+   * with rolling truncation as a fallback — compactedContextHistory is unchanged).
    *
    * Called once per user turn, after the user message is appended, before the
    * agentic loop starts.
    */
   private async *performAutoCompact(): AsyncGenerator<OmegaEvent> {
-    if (this.llmContextView.length <= AUTO_COMPACT_THRESHOLD) return;
+    if (this.compactedContextHistory.length <= AUTO_COMPACT_THRESHOLD) return;
 
-    const messagesBefore = this.llmContextView.length;
+    const messagesBefore = this.compactedContextHistory.length;
     const startEv: OmegaEvent = { type: "compact_auto_start", ts: new Date().toISOString(), messagesBefore };
     await this.logEvent(startEv);
     yield startEv;
@@ -587,22 +587,22 @@ export class Agent {
     try {
       const provider = this.getStreamProvider();
       const { history: newHistory, syntheticMessage, tailStartIndex } = await compactHistory(
-        this.llmContextView,
+        this.compactedContextHistory,
         provider,
         this.activeModel,
       );
       // Same pattern as /compact: append only the new synthetic message to
       // context.jsonl; tail messages are already there with their correct hashes.
       const syntheticHash = await appendContextMessage(syntheticMessage, this.contextFile);
-      const tailHashes = this.llmContextHashes.slice(tailStartIndex);
-      this.llmContextView = newHistory as Anthropic.MessageParam[];
-      this.llmContextHashes = [syntheticHash, ...tailHashes];
+      const tailHashes = this.compactedContextHashes.slice(tailStartIndex);
+      this.compactedContextHistory = newHistory as Anthropic.MessageParam[];
+      this.compactedContextHashes = [syntheticHash, ...tailHashes];
 
       const doneEv: OmegaEvent = {
         type: "compact_auto_done",
         ts: new Date().toISOString(),
         messagesBefore,
-        messagesAfter: this.llmContextView.length,
+        messagesAfter: this.compactedContextHistory.length,
       };
       this.logEvent(doneEv);
       yield doneEv;
@@ -691,8 +691,8 @@ export class Agent {
     return true;
   }
 
-  getLlmContextView(): readonly Anthropic.MessageParam[] {
-    return this.llmContextView;
+  getCompactedContextHistory(): readonly Anthropic.MessageParam[] {
+    return this.compactedContextHistory;
   }
 
   /**
@@ -745,7 +745,7 @@ export class Agent {
         await this.logEvent(startEv);
         yield startEv;
 
-        const messagesBefore = this.llmContextView.length;
+        const messagesBefore = this.compactedContextHistory.length;
 
         if (messagesBefore === 0) {
           // Nothing to compact — still emit done with 0 → 0, no LLM call needed.
@@ -758,7 +758,7 @@ export class Agent {
         try {
           const provider = this.getStreamProvider();
           const { history: newHistory, syntheticMessage, tailStartIndex } = await compactHistory(
-            this.llmContextView,
+            this.compactedContextHistory,
             provider,
             this.activeModel,
           );
@@ -766,18 +766,18 @@ export class Agent {
           // tail messages are already there with their correct hashes; we only
           // need to append the new synthetic summary message.
           //
-          // New llmContextHashes = [syntheticHash, ...tailHashes]:
+          // New compactedContextHashes = [syntheticHash, ...tailHashes]:
           //   - syntheticHash: from appendContextMessage (writes one new record)
-          //   - tailHashes: sliced from existing llmContextHashes — no re-hash,
+          //   - tailHashes: sliced from existing compactedContextHashes — no re-hash,
           //     no re-write; those records are already in context.jsonl
           const syntheticHash = await appendContextMessage(
             syntheticMessage,
             this.contextFile,
           );
-          const tailHashes = this.llmContextHashes.slice(tailStartIndex);
-          this.llmContextView = newHistory as Anthropic.MessageParam[];
-          this.llmContextHashes = [syntheticHash, ...tailHashes];
-          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.llmContextView.length };
+          const tailHashes = this.compactedContextHashes.slice(tailStartIndex);
+          this.compactedContextHistory = newHistory as Anthropic.MessageParam[];
+          this.compactedContextHashes = [syntheticHash, ...tailHashes];
+          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.compactedContextHistory.length };
           this.logEvent(doneEv);
           yield doneEv;
         } catch (err: any) {
@@ -805,7 +805,7 @@ export class Agent {
     yield* this.performAutoCompact();
 
     // Budget for the current agentic loop iteration's API view.
-    // Reduced on prompt-too-long retries; llmContextView itself is never trimmed.
+    // Reduced on prompt-too-long retries; compactedContextHistory itself is never trimmed.
     let apiBudget = config.maxContextTokens;
 
     // Cumulative totals across all API calls in this user turn
@@ -870,35 +870,35 @@ export class Agent {
           ]
         : toolDefinitions;
 
-      // Build the API view: a (possibly trimmed) snapshot of llmContextView that
-      // fits within apiBudget. This is ephemeral — llmContextView is never mutated.
+      // Build the API view: a (possibly trimmed) snapshot of compactedContextHistory that
+      // fits within apiBudget. This is ephemeral — compactedContextHistory is never mutated.
       // cachedMessages adds cache_control to the last message for Anthropic caching.
-      const apiView = buildApiMessages(this.llmContextView, apiBudget);
-      if (apiView.length < this.llmContextView.length) {
+      const sentContext = buildSentContext(this.compactedContextHistory, apiBudget);
+      if (sentContext.length < this.compactedContextHistory.length) {
         const trimmedEv: OmegaEvent = {
           type: "context_view_trimmed",
           ts: new Date().toISOString(),
-          originalMessages: this.llmContextView.length,
-          keptMessages: apiView.length,
-          droppedMessages: this.llmContextView.length - apiView.length,
-          estimatedTokensBefore: this.llmContextView.reduce((s, m) => s + estimateTokens(m), 0),
-          estimatedTokensAfter: apiView.reduce((s, m) => s + estimateTokens(m), 0),
+          originalMessages: this.compactedContextHistory.length,
+          keptMessages: sentContext.length,
+          droppedMessages: this.compactedContextHistory.length - sentContext.length,
+          estimatedTokensBefore: this.compactedContextHistory.reduce((s, m) => s + estimateTokens(m), 0),
+          estimatedTokensAfter: sentContext.reduce((s, m) => s + estimateTokens(m), 0),
           reason: "token_budget",
         };
         this.logEvent(trimmedEv);
         yield trimmedEv;
       }
-      const cachedMessages = addCacheControlToLastMessage(apiView);
+      const cachedMessages = addCacheControlToLastMessage(sentContext);
 
       // Compute contextHashes from the view (Step 3e-iii): maps each message in
-      // apiView back to its stored content hash via object-reference identity.
-      const contextHashes = this.contextHashesForView(apiView);
+      // sentContext back to its stored content hash via object-reference identity.
+      const contextHashes = this.contextHashesForView(sentContext);
 
       // Emit llm_call with a snapshot of the params before each call.
       // `request` is a UI-only field (stripped by toPersistedEvent before disk write).
       if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
-          apiView,
+          sentContext,
           systemPrompt,
           activeModel,
           config.maxOutputTokens
@@ -942,7 +942,7 @@ export class Agent {
       if (useOpenAi) {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
           try {
-            const openai = await this.openAiCaller(apiView, systemPrompt, activeModel, config.maxOutputTokens, signal);
+            const openai = await this.openAiCaller(sentContext, systemPrompt, activeModel, config.maxOutputTokens, signal);
             if (ttftMs === null) {
               ttftMs = performance.now() - startTime;
             }
@@ -971,8 +971,8 @@ export class Agent {
                 httpStatus: err.status ?? err.statusCode,
                 provider: "openai",
                 model: activeModel,
-                requestMessages: buildOpenAiRequest(apiView, systemPrompt, activeModel, config.maxOutputTokens),
-                history: this.llmContextView,
+                requestMessages: buildOpenAiRequest(sentContext, systemPrompt, activeModel, config.maxOutputTokens),
+                history: this.compactedContextHistory,
                 extra: { attempts: attempt + 1 },
               },
               this.diagDir,
@@ -993,10 +993,10 @@ export class Agent {
         }
       } else {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
-          // Recompute apiView and cachedMessages each attempt so prompt-too-long
+          // Recompute sentContext and cachedMessages each attempt so prompt-too-long
           // retries pick up the tightened apiBudget set in the catch block below.
-          const attemptApiView = buildApiMessages(this.llmContextView, apiBudget);
-          const attemptCachedMessages = addCacheControlToLastMessage(attemptApiView);
+          const sentContext = buildSentContext(this.compactedContextHistory, apiBudget);
+          const attemptCachedMessages = addCacheControlToLastMessage(sentContext);
           try {
             let fullText = "";
 
@@ -1091,7 +1091,7 @@ export class Agent {
                 model: activeModel,
                 requestMessages: attemptCachedMessages,
                 systemBlocks,
-                history: this.llmContextView,
+                history: this.compactedContextHistory,
                 extra: { attempts: attempt + 1, stopReason: "prompt_too_long" },
               },
               this.diagDir,
@@ -1102,7 +1102,7 @@ export class Agent {
               yield diagEv;
             }
             // Halve the budget each retry to force more aggressive truncation.
-            // llmContextView is never mutated — apiBudget controls the next apiView.
+            // compactedContextHistory is never mutated — apiBudget controls the next sentContext.
             apiBudget = Math.floor(config.maxContextTokens / (2 ** (attempt + 1)));
             yield { type: "agent_error", ts: new Date().toISOString(), error: `Prompt too long. Truncating context and retrying... (${attempt + 1}/${this.retryMaxAttempts})` };
           } else {
@@ -1117,7 +1117,7 @@ export class Agent {
                 model: activeModel,
                 requestMessages: attemptCachedMessages,
                 systemBlocks,
-                history: this.llmContextView,
+                history: this.compactedContextHistory,
                 extra: { attempts: attempt + 1, stopReason: "api_error" },
               },
               this.diagDir,
@@ -1218,7 +1218,7 @@ export class Agent {
 
       // --- BUG-1 guard: max_tokens mid-tool-call ---
       // If the LLM was cut off by max_tokens while emitting tool_use blocks, the
-      // assistant message (already appended to llmContextView above) contains
+      // assistant message (already appended to compactedContextHistory above) contains
       // dangling tool_use blocks with no matching tool_result. Anthropic rejects
       // this with a 400 on the very next API call, permanently bricking the session.
       //

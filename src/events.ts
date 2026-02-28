@@ -58,7 +58,7 @@ export interface LlmCallEvent {
   model: string;
   /**
    * Ordered SHA-256 hashes (8 hex chars each) of every MessageParam in the
-   * `buildApiMessages()` view actually sent with this call. Cross-references
+   * `buildSentContext()` view actually sent with this call. Cross-references
    * entries in `context.jsonl`. Reflects the truncated view, not the full log.
    */
   contextHashes: string[];

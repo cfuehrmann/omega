@@ -4,7 +4,7 @@
  * Covers:
  * - context.jsonl entries carry `hash` and `ts` fields
  * - llm_call events carry `contextHashes: string[]`
- * - Hashes are derived from the buildApiMessages() view, NOT from llmContextView
+ * - Hashes are derived from the buildSentContext() view, NOT from compactedContextHistory
  * - Chaotic scenarios:
  *   - Identical message content → different hashes (ts prevents collision)
  *   - Tool loop: each llm_call's contextHashes grows correctly
@@ -19,7 +19,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
-import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider, buildApiMessages } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider, buildSentContext } from "./agent.js";
 import type { ContextRecord } from "./context-store.js";
 import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./event-store.js";
 
@@ -220,7 +220,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
     const llmCall = llmCallEvents[0];
     expect(Array.isArray(llmCall.contextHashes)).toBe(true);
-    // Only the user message was in llmContextView when the first call was made
+    // Only the user message was in compactedContextHistory when the first call was made
     expect(llmCall.contextHashes).toHaveLength(1);
     expect(llmCall.contextHashes[0]).toHaveLength(8);
     expect(/^[0-9a-f]{8}$/.test(llmCall.contextHashes[0])).toBe(true);
@@ -316,13 +316,13 @@ describe("llm_call contextHashes in events.jsonl", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Truncation scenario: contextHashes reflects the VIEW, not llmContextView
+// Truncation scenario: contextHashes reflects the VIEW, not compactedContextHistory
 // ---------------------------------------------------------------------------
 
-describe("contextHashes reflects truncated view, not full llmContextView", () => {
-  it("after truncation, contextHashes length < llmContextView length", async () => {
+describe("contextHashes reflects truncated view, not full compactedContextHistory", () => {
+  it("after truncation, contextHashes length < compactedContextHistory length", async () => {
     // Build a large history that will be truncated.
-    // We'll override buildApiMessages via a thin wrapper to force truncation
+    // We'll override buildSentContext via a thin wrapper to force truncation
     // by using a very tight budget.
     const dir = makeTempDir();
     const contextFile = join(dir, "context.jsonl");
@@ -342,7 +342,7 @@ describe("contextHashes reflects truncated view, not full llmContextView", () =>
     }
     await Bun.sleep(50);
 
-    // At this point llmContextView has 6 messages.
+    // At this point compactedContextHistory has 6 messages.
     // The last llm_call (for turn3) should have had 5 messages in its view
     // (turns 1-2 = 4 messages + turn3 user = 5)
     const allEvents = readEventLines(eventsFile);
@@ -388,16 +388,16 @@ describe("contextHashes reflects truncated view, not full llmContextView", () =>
 });
 
 // ---------------------------------------------------------------------------
-// buildApiMessages integration: returned subset has same object references
+// buildSentContext integration: returned subset has same object references
 // ---------------------------------------------------------------------------
 
-describe("buildApiMessages preserves object references (needed for contextHashesForView)", () => {
+describe("buildSentContext preserves object references (needed for contextHashesForView)", () => {
   it("messages in the returned view are the same objects as in the source array", () => {
     const msg1: Anthropic.MessageParam = { role: "user", content: "hello" };
     const msg2: Anthropic.MessageParam = { role: "assistant", content: [{ type: "text", text: "hi" }] };
     const history = [msg1, msg2];
 
-    const view = buildApiMessages(history, 1_000_000);
+    const view = buildSentContext(history, 1_000_000);
     // All messages in view should be the exact same object references
     for (const viewMsg of view) {
       const found = history.some(h => h === viewMsg);
@@ -414,7 +414,7 @@ describe("buildApiMessages preserves object references (needed for contextHashes
     }
 
     // Very tight budget — forces truncation
-    const view = buildApiMessages(history, 500);
+    const view = buildSentContext(history, 500);
     expect(view.length).toBeLessThan(history.length);
 
     // Every message in the view must be an exact reference from history

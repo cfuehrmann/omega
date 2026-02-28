@@ -53,8 +53,8 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
   - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent.
   - **[SCHEMA] pre-lock fixes** (DONE): `LlmResponseEvent.content` removed (duplication); `LlmCallEvent.messageCount` and `llmCallNumber` removed (derivable). `ToolCallEvent.input` removed; `ToolResultEvent.outputLength` removed. All FK pointers use hash-based pattern consistently. `LlmResponseEvent.usage` records all four Anthropic token counts plus `service_tier`.
   - **3e-iv** (TODO): Property names and completeness per event — cross-references on error events, `TurnEndEvent.toolCalls`, `SessionStartEvent.authMode`. See backlog.
-  - **3e-v** (TODO): Missing event types — four prioritised sub-items identified by audit:
-    - **3e-v-1**: ✅ DONE (commits 0d77102, bf07337, fba00b9) — compaction event overhaul: three typed events replace `session_compacted`; `context.jsonl` append-only invariant fixed; hash rebuild bug fixed.
+  - **3e-v** (TODO): Missing event types — sub-items:
+    - **3e-v-1**: ✅ DONE — compaction event overhaul: `compact_user_*` + `compact_auto_*` events; `context.jsonl` append-only invariant fixed; hash rebuild bug fixed.
     - **3e-v-2**: "All retries exhausted" path emits bare `agent_error` with no `llm_error` and no diagnostic.
     - **3e-v-3**: `session_end` event missing — clean shutdown indistinguishable from crash; blocks session resume.
     - **3e-v-4**: Web server protocol errors (`{ type: "error" }`) not in `events.jsonl` — design decision needed.
@@ -103,7 +103,7 @@ The `null`-is-no-op pattern still applies to all write functions. e2e tests use 
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `sessions/events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
 
 ### OmegaEvent Variants (streamed from agent.ts AND persisted to events.jsonl)
-`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
+`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
 
 Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`) not an `OmegaEvent` — explicitly outside the persistence boundary by design.
 
@@ -116,7 +116,7 @@ Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`)
 `llm_response` carries metadata only: `stopReason`, `model`, `provider`, `url`, `usage`, and `contextHash` (FK). No `content` field — content is in `context.jsonl`. `usage` includes `input_tokens`, `output_tokens`, `cache_creation_input_tokens?`, `cache_read_input_tokens?`, `service_tier?`.
 
 ### WsEvent Variants (WebSocket protocol, src/web/client/store.ts)
-`connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`, `user_message`, `text`, `tool_call`, `tool_result`, `llm_response`, `model_changed`, `oauth_token_expired`, `oauth_refreshed`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `llm_call`, `world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error` (server-own protocol errors only), `turn_interrupted`. No `status` variant. Note: `session_compacted` is retired — replaced by the three typed compact events above.
+`connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`, `user_message`, `text`, `tool_call`, `tool_result`, `llm_response`, `model_changed`, `oauth_token_expired`, `oauth_refreshed`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `llm_call`, `world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error` (server-own protocol errors only), `turn_interrupted`. No `status` variant. Note: `session_compacted` is retired — replaced by the three typed compact events above.
 
 ### context.jsonl Record Shape (ContextRecord)
 Each line is a JSON object with fields:
@@ -149,6 +149,7 @@ Both terminal and web UIs apply presentation-only truncation to both `tool_resul
 - `src/web/server.ts` — `runWebApp()`, `closeOpenTurn()`, `shouldLogEvent()`. `closeOpenTurn` detects open turns on crash and appends `{ type: "turn_interrupted" }`.
 - `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth, object-reference preservation; `[SCHEMA]` tests asserting field removals.
 - `src/compact-command.test.ts` — 27 tests covering the `/compact` slash command: all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations, error path, and post-compact continuity.
+- `src/compact-auto.test.ts` — 26 tests covering auto-compact: threshold constant, fires above/silent below threshold, error path (fallback continues), 9 BUG-1 scenarios (max_tokens poison → synthetic tool_result + agent_error, well-formed context, next turn succeeds), combined integration scenario.
 
 ### Context Poison Prevention
 Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
@@ -180,16 +181,10 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
-Completed **`/compact` command tests** (commit 8fcf594):
-- 27 tests in `src/compact-command.test.ts` covering all three event variants, state mutations, error path, and post-compact continuity.
-- Fixed bug in `agent.ts`: `/compact` handler passed `this.contextFile ?? undefined` to `appendContextMessage`, coercing `null` (disabled/test) to `undefined` (use production default). In `OMEGA_TEST=1`, `assertNotProductionPath` then threw, causing `compact_user_error` in all tests. Fixed to pass `this.contextFile` directly.
+Completed **BUG-1 fix** (commit 9682be6): `max_tokens` mid-tool-call context poison. When the LLM hit `max_tokens` while generating a `tool_use` block, the dangling assistant message was appended before the `stop_reason` check, permanently bricking the session. Fix: detect `toolUseBlocks.length > 0 && stop_reason === "max_tokens"` after `appendToHistory`; synthesise `tool_result` blocks with `is_error: true` for every dangling id; append via `appendToHistory`; emit `tool_result` + `agent_error` events. Turn ends cleanly; next turn succeeds. Confirmed from a real session crash (`events.prev.jsonl`, 2026-02-28).
 
-Completed **compaction event overhaul** (commits 0d77102, bf07337, fba00b9):
-- `session_compacted` retired; replaced by `compact_user_start`, `compact_user_done`, `compact_user_error`.
-- `compact_user_start` awaited before LLM call; `compact_user_done` unconditional (even no-op 0→0); `compact_user_error` persisted (was silently dropped).
-- Fixed grave bug: `/compact` was calling `clearContextStore()` + rewriting `context.jsonl` from scratch. Now only `llmContextView` and `llmContextHashes` are replaced in memory; `context.jsonl` remains append-only.
-- Fixed hash rebuild bug: after compaction, tail hashes are sliced from existing `llmContextHashes` (no re-hash); only the synthetic message gets a new `appendContextMessage()` call.
-- Empty-history case flows through normally: `start` + `done(0→0)`, no `agent_error`.
-- Renamed `llmMessageLog` → `llmContextView`, `llmMessageHashes` → `llmContextHashes`, `getLlmMessageLog()` → `getLlmContextView()`.
+Completed **`src/compact-auto.test.ts`** (commit 9682be6, 26 tests): `AUTO_COMPACT_THRESHOLD` constant; auto-compact fires above threshold (start/done events, view shrinks, ordering vs `llm_call`); silent below threshold; error path (fallback continues, view unchanged); 9 BUG-1 scenarios (synthetic tool_result, agent_error, well-formed context invariant, next turn succeeds, two tools cut off); combined auto-compact + BUG-1 integration scenario. 497 tests total, gate green.
 
-Completed **EU-4** (DONE), **EU-3** (DONE), **EU-1/2** (DONE), **test-pollution guardrails**, **pre-schema-lock field removals**, **Step 3e-iii FK/PK contract**. See prior session notes for detail.
+**Auto-compact trigger design (clarified):** Trigger metric is `llmContextView.length` (message count, not token count). Fires at most once per user turn — after the user message is appended, before the agentic loop starts. Never fires mid-loop. Threshold: `AUTO_COMPACT_THRESHOLD = 60`. Token-based threshold would be more principled but is not a bug; `buildApiMessages` token truncation remains the safety net.
+
+Cleaned up `diagnosis/` — two forensic snapshots from the 2026-02-28 crash deleted (root cause fixed). BUG-1 and BUG-2 entries in `plan/backlog.md` condensed to summaries (resolved).

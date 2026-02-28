@@ -3,12 +3,12 @@
  * max_tokens mid-tool-call bug fix (BUG-1).
  *
  * Auto-compact:
- *   - Fires when llmContextView.length > AUTO_COMPACT_THRESHOLD
+ *   - Fires when compactedContextHistory.length > AUTO_COMPACT_THRESHOLD
  *   - Emits compact_auto_start → compact_auto_done on success
  *   - Emits compact_auto_start → compact_auto_error on LLM failure,
  *     then continues the turn normally (rolling truncation fallback)
  *   - Does NOT fire when context is below threshold
- *   - Correctly updates llmContextView and llmContextHashes in memory
+ *   - Correctly updates compactedContextHistory and compactedContextHashes in memory
  *
  * BUG-1 (max_tokens mid-tool-call):
  *   - When stop_reason === "max_tokens" and tool_use blocks are present,
@@ -149,9 +149,9 @@ function makeSummaryThenTextProvider(summary: string, text = "ok"): StreamProvid
   };
 }
 
-/** Seed the agent's llmContextView with N synthetic messages alternating user/assistant. */
+/** Seed the agent's compactedContextHistory with N synthetic messages alternating user/assistant. */
 function seedHistory(agent: ReturnType<typeof makeTestAgent>, count: number): void {
-  const view = agent.getLlmContextView() as Anthropic.MessageParam[];
+  const view = agent.getCompactedContextHistory() as Anthropic.MessageParam[];
   for (let i = 0; i < count; i++) {
     view.push({
       role: i % 2 === 0 ? "user" : "assistant",
@@ -239,16 +239,16 @@ describe("auto-compact: fires above threshold", () => {
     }
   });
 
-  it("llmContextView is shorter after auto-compaction", async () => {
+  it("compactedContextHistory is shorter after auto-compaction", async () => {
     const provider = makeSummaryThenTextProvider("summary");
     const agent = makeTestAgent(provider);
     const n = AUTO_COMPACT_THRESHOLD + 10;
     seedHistory(agent, n);
-    const before = agent.getLlmContextView().length;
+    const before = agent.getCompactedContextHistory().length;
 
     await collectEvents(agent, "hello");
 
-    const after = agent.getLlmContextView().length;
+    const after = agent.getCompactedContextHistory().length;
     expect(after).toBeLessThan(before + 1); // grew by user message but was compacted
   });
 
@@ -305,7 +305,7 @@ describe("auto-compact: does not fire below threshold", () => {
     const provider = makeTextProvider("ok");
     const agent = makeTestAgent(provider);
     // Seed to threshold exactly; after user message it will be threshold + 1
-    // BUT the check is: llmContextView.length <= AUTO_COMPACT_THRESHOLD before
+    // BUT the check is: compactedContextHistory.length <= AUTO_COMPACT_THRESHOLD before
     // the user message is appended. Actually the user message is appended first,
     // then performAutoCompact checks. Seed to threshold - 1 so after user append
     // we hit exactly threshold (not above it).
@@ -366,18 +366,18 @@ describe("auto-compact: error path", () => {
     expect(turnEnd).toBeDefined();
   });
 
-  it("llmContextView is unchanged after auto-compact error", async () => {
+  it("compactedContextHistory is unchanged after auto-compact error", async () => {
     const provider = makeFailThenTextProvider("boom");
     const agent = makeTestAgent(provider);
     const n = AUTO_COMPACT_THRESHOLD + 3;
     seedHistory(agent, n);
-    const viewBefore = agent.getLlmContextView().length; // before sendMessage
+    const viewBefore = agent.getCompactedContextHistory().length; // before sendMessage
 
     await collectEvents(agent, "hello");
 
     // After sendMessage: user message + assistant response appended = +2
     // compaction failed so no reduction
-    const viewAfter = agent.getLlmContextView().length;
+    const viewAfter = agent.getCompactedContextHistory().length;
     expect(viewAfter).toBe(viewBefore + 2);
   });
 
@@ -434,7 +434,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
     }
   });
 
-  it("llmContextView ends with a user message (tool_result) after max_tokens", async () => {
+  it("compactedContextHistory ends with a user message (tool_result) after max_tokens", async () => {
     const provider: StreamProvider = async () =>
       makeMockStream(
         maxTokensToolUseStreamEvents("t_max", "write_file"),
@@ -444,7 +444,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
 
     await collectEvents(agent, "write a file");
 
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
     const last = view[view.length - 1];
     expect(last.role).toBe("user");
     // Content must include a tool_result block with our synthetic id
@@ -469,7 +469,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
 
     await collectEvents(agent, "write a file");
 
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
     // Collect all tool_use IDs
     const toolUseIds = new Set<string>();
     const toolResultIds = new Set<string>();
@@ -492,11 +492,11 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseMessage("t_max", "write_file")
       );
     const agent = makeTestAgent(provider);
-    const initialLength = agent.getLlmContextView().length; // 0
+    const initialLength = agent.getCompactedContextHistory().length; // 0
 
     await collectEvents(agent, "write a file");
 
-    expect(agent.getLlmContextView().length).toBe(initialLength + 3);
+    expect(agent.getCompactedContextHistory().length).toBe(initialLength + 3);
   });
 
   it("next sendMessage succeeds after a max_tokens turn (context not bricked)", async () => {
@@ -551,7 +551,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
     expect(names).toContain("run_command");
 
     // Context must be well-formed
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
     const toolUseIds = new Set<string>();
     const toolResultIds = new Set<string>();
     for (const msg of view) {
@@ -590,7 +590,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
 
     await collectEvents(agent, "write a file");
 
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
     const last = view[view.length - 1];
     if (Array.isArray(last.content)) {
       const block = (last.content as any[]).find(b => b.type === "tool_result");

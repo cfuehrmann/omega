@@ -7,8 +7,8 @@
  *   compact_user_error — failure path (LLM throws)
  *
  * Also verifies the in-memory state mutations:
- *   - llmContextView is replaced by the compacted history
- *   - llmContextHashes is updated correctly (tail hashes reused, new
+ *   - compactedContextHistory is replaced by the compacted history
+ *   - compactedContextHashes is updated correctly (tail hashes reused, new
  *     synthetic hash prepended)
  *   - context.jsonl is NOT rewritten (append-only invariant)
  *
@@ -83,7 +83,7 @@ async function collectEvents(
 
 /**
  * Send N real "turn" messages with a plain-text provider so that the agent's
- * llmContextView has history to compact.
+ * compactedContextHistory has history to compact.
  */
 async function seedHistory(
   agent: ReturnType<typeof makeTestAgent>,
@@ -123,7 +123,7 @@ describe("/compact — empty history", () => {
       return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
     };
     const agent = makeTestAgent(provider);
-    // No history seeded — llmContextView is empty
+    // No history seeded — compactedContextHistory is empty
 
     const events = await collectEvents(agent, "/compact");
 
@@ -159,10 +159,10 @@ describe("/compact — empty history", () => {
     expect(startIdx).toBeLessThan(doneIdx);
   });
 
-  it("llmContextView stays empty after compacting empty history", async () => {
+  it("compactedContextHistory stays empty after compacting empty history", async () => {
     const agent = makeTestAgent(makeSummaryProvider("summary"));
     await collectEvents(agent, "/compact");
-    expect(agent.getLlmContextView().length).toBe(0);
+    expect(agent.getCompactedContextHistory().length).toBe(0);
   });
 });
 
@@ -186,7 +186,7 @@ describe("/compact — short history (nothing to compact)", () => {
       await collectEvents(agent, `turn ${i}`);
     }
     const llmCallsAfterSeed = llmCallCount;
-    expect(agent.getLlmContextView().length).toBe(seedCount * 2);
+    expect(agent.getCompactedContextHistory().length).toBe(seedCount * 2);
 
     const events = await collectEvents(agent, "/compact");
     const types = events.map((e) => e.type);
@@ -209,7 +209,7 @@ describe("/compact — short history (nothing to compact)", () => {
     for (let i = 0; i < seedPairs; i++) {
       await collectEvents(agent, `msg ${i}`);
     }
-    const historyLenBefore = agent.getLlmContextView().length;
+    const historyLenBefore = agent.getCompactedContextHistory().length;
 
     const events = await collectEvents(agent, "/compact");
     const done = events.find((e) => e.type === "compact_user_done") as any;
@@ -264,24 +264,24 @@ describe("/compact — long history (compaction happens)", () => {
 
   it("compact_user_done.messagesBefore equals history length before compaction", async () => {
     const agent = await makeAgentWithLongHistory("summary");
-    const historyBefore = agent.getLlmContextView().length;
+    const historyBefore = agent.getCompactedContextHistory().length;
     const events = await collectEvents(agent, "/compact");
     const done = events.find((e) => e.type === "compact_user_done") as any;
     expect(done.messagesBefore).toBe(historyBefore);
   });
 
-  it("compact_user_done.messagesAfter equals new llmContextView length", async () => {
+  it("compact_user_done.messagesAfter equals new compactedContextHistory length", async () => {
     const agent = await makeAgentWithLongHistory("summary");
     const events = await collectEvents(agent, "/compact");
     const done = events.find((e) => e.type === "compact_user_done") as any;
-    expect(done.messagesAfter).toBe(agent.getLlmContextView().length);
+    expect(done.messagesAfter).toBe(agent.getCompactedContextHistory().length);
   });
 
-  it("llmContextView is shorter after compaction", async () => {
+  it("compactedContextHistory is shorter after compaction", async () => {
     const agent = await makeAgentWithLongHistory("summary");
-    const lengthBefore = agent.getLlmContextView().length;
+    const lengthBefore = agent.getCompactedContextHistory().length;
     await collectEvents(agent, "/compact");
-    const lengthAfter = agent.getLlmContextView().length;
+    const lengthAfter = agent.getCompactedContextHistory().length;
     expect(lengthAfter).toBeLessThan(lengthBefore);
   });
 
@@ -289,7 +289,7 @@ describe("/compact — long history (compaction happens)", () => {
     const summaryText = "Agent read many files.";
     const agent = await makeAgentWithLongHistory(summaryText);
     await collectEvents(agent, "/compact");
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
     const first = view[0] as any;
     expect(first.role).toBe("user");
     expect(typeof first.content).toBe("string");
@@ -311,10 +311,10 @@ describe("/compact — long history (compaction happens)", () => {
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `user msg ${i}`);
     }
-    const historyBeforeCompact = [...agent.getLlmContextView()];
+    const historyBeforeCompact = [...agent.getCompactedContextHistory()];
     phase = "compact";
     await collectEvents(agent, "/compact");
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
 
     // Tail = last KEEP_RECENT_TURNS*2 messages of the original history
     const expectedTail = historyBeforeCompact.slice(-(KEEP_RECENT_TURNS * 2));
@@ -325,15 +325,15 @@ describe("/compact — long history (compaction happens)", () => {
   it("messagesAfter = 1 (synthetic) + KEEP_RECENT_TURNS * 2 (tail)", async () => {
     const agent = await makeAgentWithLongHistory("summary");
     await collectEvents(agent, "/compact");
-    const view = agent.getLlmContextView();
+    const view = agent.getCompactedContextHistory();
     expect(view.length).toBe(1 + KEEP_RECENT_TURNS * 2);
   });
 
-  it("llmContextView length matches compact_user_done.messagesAfter", async () => {
+  it("compactedContextHistory length matches compact_user_done.messagesAfter", async () => {
     const agent = await makeAgentWithLongHistory("summary");
     const events = await collectEvents(agent, "/compact");
     const done = events.find((e) => e.type === "compact_user_done") as any;
-    expect(done.messagesAfter).toBe(agent.getLlmContextView().length);
+    expect(done.messagesAfter).toBe(agent.getCompactedContextHistory().length);
   });
 
   it("agent can continue sending messages after compaction", async () => {
@@ -382,10 +382,10 @@ describe("/compact — long history (compaction happens)", () => {
     }
     phase = "compact";
     await collectEvents(agent, "/compact");
-    const lenAfterCompact = agent.getLlmContextView().length;
+    const lenAfterCompact = agent.getCompactedContextHistory().length;
     phase = "post";
     await collectEvents(agent, "one more");
-    const lenAfterOneTurn = agent.getLlmContextView().length;
+    const lenAfterOneTurn = agent.getCompactedContextHistory().length;
     // One more turn = +2 messages (user + assistant)
     expect(lenAfterOneTurn).toBe(lenAfterCompact + 2);
   });
@@ -471,7 +471,7 @@ describe("/compact — error path", () => {
     expect(startIdx).toBeLessThan(errIdx);
   });
 
-  it("llmContextView is unchanged after a failed compaction", async () => {
+  it("compactedContextHistory is unchanged after a failed compaction", async () => {
     let phase: "seed" | "compact" = "seed";
     let seedNum = 0;
     const provider: StreamProvider = async () => {
@@ -486,13 +486,13 @@ describe("/compact — error path", () => {
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
     }
-    const historySnapshot = [...agent.getLlmContextView()];
+    const historySnapshot = [...agent.getCompactedContextHistory()];
     phase = "compact";
 
     await collectEvents(agent, "/compact");
 
     // View should be unchanged — compaction failed before the in-memory mutation
-    expect(agent.getLlmContextView()).toEqual(historySnapshot);
+    expect(agent.getCompactedContextHistory()).toEqual(historySnapshot);
   });
 
   it("agent can still send messages after a failed compaction", async () => {
