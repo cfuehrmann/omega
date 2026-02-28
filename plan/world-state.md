@@ -120,7 +120,7 @@ Each line is a JSON object with fields:
 - `content` — string or content-block array (same as `Anthropic.MessageParam.content`).
 
 ### UI Display Policy
-Both terminal and web UIs apply presentation-only truncation to tool result output — **20 lines or 2000 chars**, whichever fires first. The truncation note states both the total line count and total char count. Full content is always in `context.jsonl` via `ToolResultEvent.contextHash`. The `result` field on `ToolResultEvent` is UI-only and is stripped before writing to `events.jsonl`.
+Both terminal and web UIs apply presentation-only truncation to both `tool_result` output and `tool_call` input — **5 lines or 500 chars**, whichever fires first. The truncation note states both the total line count and total char count. Full content is always in `context.jsonl` via the relevant FK hash. The `result` field on `ToolResultEvent` is UI-only and is stripped before writing to `events.jsonl`.
 
 `llm_response` blocks show `stop_reason` and `usage` only — no content section. Text was already streamed token-by-token; tool calls are shown by the subsequent `tool_call` block. Cache tokens (`cache_write`, `cache_read`) shown only when non-zero. `service_tier` shown only when non-null and not `"standard"`.
 
@@ -133,13 +133,13 @@ Both terminal and web UIs apply presentation-only truncation to tool result outp
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
 - `src/diagnosis.ts` — `writeDiagnostic(data, diagDir?)` writes a JSON snapshot to `diagnosis/<ISO-timestamp>.json`; `null` disables; `checkDiagnostics()` returns existing snapshot paths sorted oldest-first.
 - `src/ui-raw.ts` — **thin re-export shim** (26 lines). CLI entry point.
-- `src/terminal/input.ts` — `parseKeys`, `displayWidth`, all line-editing helpers.
-- `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput` (dual-limit: 20 lines / 2000 chars, whichever first), and all block renderers. `renderApiResponse` shows `stop_reason` + `usage` only (no content). Cache/service_tier lines are conditional on non-zero/non-standard values.
+- `src/terminal/input.ts` — `parseKeys`, `displayWidth`. Minimal append-only line editor: printable chars append at end, backspace deletes last char, Enter submits, Esc clears buffer (or aborts turn if empty), Ctrl+C exits. No cursor movement, no word-jump, no forward-delete. Bracketed paste accumulates and echoes on close marker.
+- `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput` (dual-limit: 5 lines / 500 chars, whichever first), and all block renderers. `renderToolStart` truncates input JSON via `truncateOutput`. `renderApiResponse` shows `stop_reason` + `usage` only (no content). Cache/service_tier lines are conditional on non-zero/non-standard values.
 - `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Calls `clearContextStore()` then `clearSessionEvents()` at startup (rotates both session files). Exhaustive switch on `OmegaEvent | StreamSignal`; `default` calls `exhaustiveCheck`. Shutdown ritual documented in `README.md ## Shutdown`.
 - `src/tools.ts` — All tool implementations. `executeTool()` applies `MAX_TOOL_OUTPUT_CHARS = 100_000` cap to all tool results before they enter history; oversized output is truncated with an actionable note.
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }`.
 - `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`, reactive `AppState`. `turn_interrupted` closes an open turn; server-own protocol errors use `{ type: "error" }`. No `status` variant. `WsEvent` and `Turn` exported.
-- `src/web/client/App.tsx` — SolidJS UI renderer. `EventBlock` exhaustive switch on `WsEvent` type; `default` calls `exhaustiveCheck`. `truncateOutput` (same dual-limit logic as terminal) applied to tool result display.
+- `src/web/client/App.tsx` — SolidJS UI renderer. `EventBlock` exhaustive switch on `WsEvent` type; `default` calls `exhaustiveCheck`. `truncateOutput` (5 lines / 500 chars, same as terminal) applied to both `tool_call` input and `tool_result` output display.
 - `src/web/server.ts` — `runWebApp()`, `closeOpenTurn()`, `shouldLogEvent()`. `closeOpenTurn` detects open turns on crash and appends `{ type: "turn_interrupted" }`.
 - `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth, object-reference preservation; `[SCHEMA]` tests asserting field removals.
 
@@ -172,15 +172,13 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
-Completed **UI redundancy cleanup (this session)**: Three improvements to terminal and web UI presentation:
-1. **`llm_response` content removed from terminal UI** (commit 538eac8): Content blocks (text + tool_use) were fully redundant — text already streamed, tool calls shown by `tool_call` block. `stop_reason` and `usage` retained. `INDENT3` and `raw` parameter removed from `renderApiResponse`. Web UI already matched this behaviour.
-2. **Full Anthropic usage in `llm_response` event** (commit a85f69e): `cache_creation_input_tokens` and `cache_read_input_tokens` now typed as `number | null` (matching SDK); `service_tier` added. Removed two `as any` casts. Terminal shows `cache_write`/`cache_read` when non-zero, `service_tier` when not `"standard"`. Web UI matches. `WsEvent` usage type widened.
-3. **Dual-limit tool result truncation** (commit b29fde5): Terminal and web now truncate tool result display at 20 lines OR 2000 chars (whichever first). Note states total line count and total char count. Persistence unaffected — full content in `context.jsonl` via FK.
+Completed **prompt editor simplification** (commit 2a9416e): Gutted `src/terminal/input.ts` from ~430 lines to ~190. Removed all cursor tracking, arrow key navigation, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace. Removed `cursor`, `columns`, `terminalWidth`, `promptWidth` from shared buffer. Removed `redrawLine`, `moveVisualCol`, `wordBoundaryBack/Forward`, `charsDisplayWidth` helpers. Removed `sharedPasteState.startVisualCol/startCursor`. Esc is now context-sensitive: non-empty buffer → clears buffer + calls `onBufferCleared` (no abort); empty buffer → `onEscape` (abort turn or no-op). `setupRawInput` gains `onBufferCleared` callback; `app.ts` reprints prompt on buffer-cleared. `promptVisualWidth` helper and `sharedBuffer.promptWidth` assignment removed from `app.ts`. Tests rewritten to match; old cursor/navigation tests removed.
 
-Completed **EU-4** (DONE): All 17 `OmegaEvent` variants have render cases in both UIs. Exhaustive switch + `exhaustiveCheck(x: never)` guard enforced in `terminal/app.ts` and `App.tsx`. `exhaustiveCheck()` exported from `events.ts`. `WsEvent`/`Turn` exported from `store.ts`. Gate green (458 tests, Vite build clean).
+Completed **truncation tightening** (commit f99d233): Both `tool_call` input and `tool_result` output now truncated at **5 lines / 500 chars** in both terminal and web UIs (was 20 lines / 2000 chars for results, untruncated / 3000 chars for inputs). Terminal `renderToolStart` now uses `truncateOutput` (multi-line) instead of bare `JSON.stringify`. Web `tool_call` block uses `truncateOutput` (compact JSON) instead of the separate `truncate()` helper.
 
-Completed **EU-3** (DONE): Unified `AgentEvent` and `SessionEvent` into `OmegaEvent`. `tool_call`, `tool_result`, `llm_response` are now canonical everywhere. All consumers updated; gate + e2e green.
+Completed **UI redundancy cleanup**: Three improvements from prior session:
+1. **`llm_response` content removed from terminal UI** (commit 538eac8).
+2. **Full Anthropic usage in `llm_response` event** (commit a85f69e).
+3. **Dual-limit tool result truncation** (commit b29fde5) — superseded by f99d233 above.
 
-Completed **EU-1** (commit 00a8078) and **EU-2** (commit b2ebc02): Dead weight removed; all remaining `status` yields replaced with typed events. Gate green.
-
-Completed **test-pollution guardrails (all five layers)**, **pre-schema-lock field removals**, **Step 3e-iii FK/PK contract**. See prior session notes for detail.
+Completed **EU-4** (DONE), **EU-3** (DONE), **EU-1/2** (DONE), **test-pollution guardrails**, **pre-schema-lock field removals**, **Step 3e-iii FK/PK contract**. See prior session notes for detail.
