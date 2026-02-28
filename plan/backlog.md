@@ -2,6 +2,45 @@
 
 ## Open items
 
+### [ARCH] Mid-turn context overflow: error-out path
+**Priority: HIGHEST**
+
+When a single agentic turn accumulates enough tool results to exhaust the context
+window, the system should surface an explicit `agent_error` and stop the turn
+cleanly — rather than silently trimming messages (dangerous) or compacting
+mid-loop (operationally undesirable). See `manifest.md` § "In-turn context
+management policy" for the full rationale.
+
+**Acceptance criteria:**
+- `buildSentContext()` (or the agentic loop itself) detects when the context
+  exceeds the model limit and cannot be reduced further without dropping
+  the current turn's messages
+- Emits `agent_error` with a clear, actionable message:
+  e.g. `"Turn context too large — tool results exceeded the context window.
+  Start a new turn with a more targeted approach (narrower grep, offset/limit
+  on file reads, fewer parallel tools)."`
+- The turn ends cleanly: `turn_end` is still emitted; history is well-formed
+- `compactedContextHistory` retains the partial turn's messages so auto-compact
+  can summarise them at the next turn start
+- No silent message dropping; no mid-turn compaction
+
+**Implementation notes:**
+- The natural place to detect overflow is at the top of the agentic loop, where
+  `buildSentContext()` is called. If the returned view is still over-budget after
+  the prompt-too-long retry halvings, that is the overflow signal.
+- Particular care needed around **error events**: the existing `agent_error` path
+  must emit a `turn_end` after the error so the UI closes the turn correctly.
+  Review the current error-exit paths to ensure they all do this.
+- **Tests required:**
+  - Mock stream that always returns `prompt_too_long`; assert `agent_error` is
+    emitted after retries are exhausted and context cannot shrink further
+  - Assert `turn_end` follows `agent_error` in this path
+  - Assert `compactedContextHistory` still contains the partial turn's messages
+    after the error
+  - Assert the next `sendMessage` call succeeds (context not bricked)
+
+---
+
 ### [REFACTOR] Event system unification
 **Priority: HIGHEST — prerequisite for schema lock and session resume**
 

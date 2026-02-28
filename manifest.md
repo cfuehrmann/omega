@@ -188,6 +188,54 @@ See `plan/backlog.md` § "Schema lock" for the ordered sub-steps (3e-iv through 
 ### 3f — Session resume — TODO (depends on schema lock)
 On startup, if a `.prev` session exists, offer to resume it.
 
+## In-turn context management policy
+
+### The problem
+Within a single agentic turn, the context window can grow due to accumulated tool
+call/result pairs. Tool results are capped at `MAX_TOOL_OUTPUT_CHARS = 100_000`
+chars each, but a turn with many tool calls — particularly file reads, grep results,
+or command output — can still push the total context beyond the model's limit.
+
+### Three candidate strategies (and why we rejected two)
+
+**Compaction mid-turn — operationally undesirable.**
+Compaction involves an LLM round-trip to summarise the history head. This is a
+significant latency hit inserted into the middle of an agentic loop that is already
+making progress. It also introduces a new failure mode (compaction error) mid-loop.
+Compaction is appropriate at turn boundaries — natural pause points — but not
+mid-loop. Rejected.
+
+**Trimming mid-turn — complex and dangerous in edge cases.**
+Trimming (drop-oldest messages to fit the budget) is cheap and synchronous, but
+in the presence of large tool results it can drop so much early-turn context — the
+user's original request, the first tool call that established state — that the model
+produces garbage on the next API call. Trim-on-append also requires running the
+`sanitizeToolPairs` logic on every append to avoid orphaned tool_use/tool_result
+pairs. The complexity is real and the failure mode is silent. Rejected.
+
+**Error out — honest, simple, and actionable.**
+When the context window is exhausted mid-turn, surface an explicit `agent_error`
+and stop the turn cleanly. The operator sees a clear message and can start a new
+turn with a more focused query (narrower grep pattern, smaller file slice, fewer
+parallel tools). This works because the aborted turn's partial history is already
+in `compactedContextHistory` and will be summarised by auto-compact at the start
+of the next turn — so the session's memory of what was attempted is preserved.
+**This is the chosen approach.**
+
+### Consequences
+- `buildSentContext()` remains ephemeral and read-only; it never mutates
+  `compactedContextHistory`. Its role is prompt-caching optimisation (cache
+  breakpoint placement) and the occasional prompt-too-long retry, not a routine
+  trimming mechanism.
+- Auto-compact fires at turn boundaries only — after the user message is appended,
+  before the agentic loop. It never fires mid-loop.
+- If a single turn genuinely exhausts the context window, the system emits
+  `agent_error` with an actionable message and exits the loop cleanly.
+- The complexity of maintaining two separate arrays (`compactedContextHistory` and
+  an ephemeral `sentContext`) is retained for now because `buildSentContext()` still
+  serves the prompt-caching and retry roles. Collapsing them is a future
+  simplification that can be revisited once the error-out path is in place.
+
 ## Input decoupling
 
 ### Immediate feature: Enter-on-empty pastes clipboard
