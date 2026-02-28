@@ -99,8 +99,8 @@ Apply this principle to every future naming or schema decision.
     not hardcoded to `<cwd>/plan/world-state.md`. See `plan/backlog.md` §
     "Decouple Omega startup from Omega's own repo" for the detailed plan.
 
-> Pino has been retired (Step 4, complete). The canonical event log is
-> `sessions/events.jsonl` via `src/session-event.ts` — the single source of truth.
+> The canonical event log is `sessions/events.jsonl` — the single source of truth.
+> Pino was retired (Step 4, complete).
 
 ## Bootstrapping considerations
 
@@ -112,83 +112,24 @@ in-progress version at `~/omega/dev`.
 
 ## Step 3 sub-step breakdown
 
-Step 3 is broken into four ordered sub-steps. The ordering prioritises **extending
-Omega's practical capacity for long sessions** before completing the full architectural
-vision. See `plan/backlog.md` for detailed acceptance criteria on each.
+Step 3 prioritises **extending Omega's practical capacity for long sessions** before
+completing the full architectural vision. See `plan/backlog.md` for detailed
+acceptance criteria on each sub-step.
 
-### 3a — Append-only context file (foundation) — DONE (commit 551d676)
-Added `src/context-store.ts`. Appends each `MessageParam` to `sessions/context.jsonl`
-as it is pushed to history. No behaviour change; pure foundation for 3b–3d.
+### Done: 3a through 3e-iii, EU-1 through EU-4
+- **3a** — Append-only context file (`sessions/context.jsonl`). ✅
+- **3b** — `/compact` slash command (operator-triggered mid-session compaction). ✅
+- **3c** — `SessionEvent` type + dual-write event log (`sessions/events.jsonl`). ✅
+- **3d** — Non-destructive truncation (later superseded: agent now sends `compactedContextHistory` verbatim; context overflow errors out immediately). ✅
+- **3e-i/ii/iii** — Event renames + FK/PK contract: `context.jsonl` entries carry `hash` (SHA-256 8 hex chars of `{ ts, role, content }`) and `ts`; `llm_call` carries `contextHashes[]`. ✅
+- **Pre-lock field removals** — `LlmResponseEvent.content`, `LlmCallEvent.messageCount`, `ToolCallEvent.input`, `ToolResultEvent.outputLength` all removed. ✅
+- **EU-1–EU-4** — `AgentEvent` and `SessionEvent` unified into `OmegaEvent`; `status` variant deleted; all stream/wire/UI names match persistence; exhaustive switch guards enforced in both UIs. ✅
 
-### 3b — `/compact` slash command (immediate capacity fix) — DONE (commit f2d5631)
-Operator-triggered mid-session compaction. Collapses the history head into an LLM
-summary, preserves the last 10 message-pairs verbatim, rewrites the context file.
-Directly addresses the context ceiling: a 60k-token session collapses to ~3–5k tokens
-of summary + recent tail. Cache prefix is preserved from the summary message forward.
-
-### 3c — SessionEvent type + dual-write event log — DONE (commit 357ec23)
-Defined `SessionEvent` union type in `src/session-event.ts`. Appends every agent
-event to `sessions/events.jsonl`. Additive — established the canonical persistent
-event log that replaced pino in Step 4.
-
-### 3d — Non-destructive truncation (structural cache fix) — DONE (commit 997d7f7); superseded by commit 13c1f9e
-`truncateHistory` renamed to `buildApiMessages` — produced an ephemeral view for a
-single API call; the source `llmMessageLog` was never mutated. `Agent.history` →
-`Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Agentic loop used
-`apiBudget` (halved per prompt-too-long retry).
-
-**Subsequent simplification (commit 13c1f9e):** `buildApiMessages`, `apiBudget`, and the
-prompt-too-long retry loop are all deleted. The agent now sends `compactedContextHistory`
-verbatim — no ephemeral view, no halving, no trimming. Context overflow errors out
-immediately (see "In-turn context management policy" below).
-
-### 3e-i/ii/iii — Event renames + FK/PK contract — DONE (commits through b6ef87c)
-All `SessionEvent`/`AgentEvent`/`WsEvent` discriminant strings renamed to the
-coordinate-system model (`llm_call`, `llm_error`, `agent_error`, `turn_interrupted`,
-etc.). `context.jsonl` entries now carry `hash` (SHA-256 8 hex chars of
-`{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]`
-— the ordered hashes of every message in the `buildApiMessages()` view sent.
-Agent maintains a parallel `llmContextHashes[]` / `compactedContextHashes[]` array.
-`contextHashesForView()` was deleted in commit 13c1f9e (no longer needed — full
-history always sent).
-
-### Pre-lock field removals — DONE (commit b59ba48)
-Breaking changes landed before the schema lock to avoid a post-lock migration:
-- `LlmResponseEvent.content` removed — full assistant response was duplicating `context.jsonl`; join via the `contextHash` FK instead.
-- `LlmCallEvent.messageCount` removed — always equalled `contextHashes.length`; use `.length` directly.
-- `ToolCallEvent.input` and `ToolResultEvent.outputLength` removed — both derivable from `context.jsonl` via `contextHash` FK (commit 34f7708).
-
-### Event system unification — EU-1 through EU-3 done; EU-4 TODO
-`AgentEvent` (streaming, UI-only) and `SessionEvent` (persistence) were two parallel
-type hierarchies. They are now merged into a single `OmegaEvent` union (EU-3). A
-separate `StreamSignal` union covers the only genuinely ephemeral rendering primitive:
-`text` streaming fragments. Everything else is an `OmegaEvent` — persisted and rendered.
-
-Name authority follows the **contract authority rule** above: the persisted name
-(`events.jsonl`) is canonical; stream-facing names were updated to match.
-Concretely: `agent_to_agent_tool_call` → `tool_call`, `agent_to_agent_tool_result`
-→ `tool_result`, `llm_to_agent` → `llm_response`.
-
-**EU-1 — DONE (commit 00a8078):** Dead weight deleted from `AgentEvent`.
-
-**EU-2 — DONE (commit b2ebc02):** All `status` yields replaced with typed events.
-`status` variant deleted from `AgentEvent` entirely.
-
-**EU-3 — DONE (commit 822257f):** `AgentEvent` and `SessionEvent` unified into
-`OmegaEvent` (`src/events.ts`). `AgentEvent` kept as a backward-compat type alias.
-All stream/wire/UI consumers updated. Gate + e2e green.
-
-**EU-4 — DONE (commit 4183922 and subsequent).** UI sync invariant enforced: every
-`OmegaEvent` variant has a render case in the terminal renderer (`src/terminal/app.ts`)
-and `App.tsx`. Exhaustive switch + `exhaustiveCheck(x: never)` guard in both UIs.
-`exhaustiveCheck()` exported from `src/events.ts`. Gate + e2e green.
-
-### Schema lock — TODO (after EU-1 through EU-4)
-Review and explicitly document the full shape of every JSONL record in
-`sessions/context.jsonl` and `sessions/events.jsonl`. Write `plan/schema.md` as the
-stable contract for session resume and any future tooling. No breaking changes after
-this point without a migration plan. Schema stability policy is in `plan/dev-policy.md`.
-See `plan/backlog.md` § "Schema lock" for the ordered sub-steps (3e-iv through 3e-viii).
+### Schema lock — TODO
+Review and document the full shape of every JSONL record. Write `plan/schema.md` as
+the stable contract for session resume and future tooling. No breaking changes after
+this point without a migration plan. See `plan/backlog.md` § "Schema lock" for
+ordered sub-steps (3e-iv through 3e-viii).
 
 ### 3f — Session resume — TODO (depends on schema lock)
 On startup, if a `.prev` session exists, offer to resume it.
@@ -266,18 +207,16 @@ Two defences against Mode B:
 - The prompt-too-long retry loop (halving `apiBudget` on each attempt) is removed.
   On the first prompt-too-long response from the API, the turn errors out immediately
   with `llm_error` + actionable `agent_error` ("Use /compact to summarise history,
-  or start a fresh focused turn.") and a diagnostic with `stopReason: "context_overflow"`.
+  or start a fresh focused turn.").
 - Transient-error retries (rate limit 429, overload 529, 500/503) are kept — these
   are unrelated to context size; the context is fine and the server is just busy.
 - Auto-compact fires at turn boundaries only — after the user message is appended,
   before the agentic loop. It never fires mid-loop.
 - If a single turn genuinely exhausts the context window, the system emits
   `agent_error` with an actionable message and exits the loop cleanly.
-- **If this approach turns out to be too aggressive in practice** (e.g. operators
-  hit context errors on turns that would have succeeded with modest trimming),
-  `sessions/events.jsonl` and `diagnosis/` contain the exact request context and
-  error details. Inspect those to understand the specific syndrome before
-  introducing any trimming complexity.
+- **If this approach turns out to be too aggressive in practice**, inspect
+  `sessions/events.jsonl` and `sessions/context.jsonl` (join via `contextHashes` FKs)
+  to understand the exact syndrome before introducing any trimming complexity.
 
 ## Input decoupling
 

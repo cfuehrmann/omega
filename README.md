@@ -29,12 +29,6 @@ WebSocket. Config is code (`src/config.ts`).
 | `manifest.md` | High-level design manifest for Omega's ongoing refactoring. Consult for strategic direction. |
 | `docs/lessons-learned.md` | Hard-won lessons about external APIs and protocols. Read before integrating with anything new. |
 
-## Diagnosis
-
-`diagnosis/` (gitignored) holds fatal API error snapshots written automatically.
-Each file contains the exact request payload, history state, and error body.
-If any files exist at session start, read them before doing anything else.
-
 ## Key source files
 
 | File | Role |
@@ -91,28 +85,18 @@ Any other `/…` input is rejected with an error. Ask the LLM directly for help.
 
 ### Test isolation — never pollute production files
 
-Tests must **never** write to `sessions/`, `diagnosis/`, or any other
-production file. Five structural layers enforce this:
+Tests must **never** write to `sessions/` or any other production file.
+Five structural layers enforce this:
 
-- **Layer a:** `bunfig.toml` preloads `src/test-setup.ts`, which sets `OMEGA_TEST=1`
-  unconditionally for every `bun test` run.
-- **Layer b:** `src/test-guard.ts` `assertNotProductionPath()` is wired into all
-  production write functions. When `OMEGA_TEST=1`, writing to `sessions/` or
-  `diagnosis/` throws immediately — loud failure, not silent pollution.
-- **Layer c:** `Agent` constructor coerces all `undefined` file paths to `null`
-  when `OMEGA_TEST=1`, unconditionally (not just when a mock provider is injected).
-- **Layer d:** Use `makeTestAgent(streamProvider?, openAiCaller?)` from
-  `src/test-utils.ts` instead of `new Agent(...)` directly. Always passes explicit
-  `null` for all path args.
-- **Layer e:** Pre-commit hook greps for bare `new Agent()` in `*.test.ts` files
-  and fails with an actionable message.
+- **Layer a:** `bunfig.toml` preloads `src/test-setup.ts` → sets `OMEGA_TEST=1` before any test runs.
+- **Layer b:** `assertNotProductionPath()` in `src/test-guard.ts` is wired into all production write functions. Writing to `sessions/` when `OMEGA_TEST=1` throws immediately.
+- **Layer c:** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`.
+- **Layer d:** Use `makeTestAgent()` from `src/test-utils.ts` — always passes `null` for all path args.
+- **Layer e:** Pre-commit hook greps for bare `new Agent()` in `*.test.ts` and fails.
 - All file-writing functions treat `null` path as a no-op.
-- e2e tests use `sessions-test/` (not `sessions/`) via the fixture server in
-  `e2e/fixtures/test-server.ts`.
+- e2e tests use `sessions-test/` via `e2e/fixtures/test-server.ts`.
 
-**If you add a new production side-effect file:** add a `filePath: string | null`
-parameter, disable on `null`, wire `assertNotProductionPath()` into the write
-function, and add an isolation test.
+**If you add a new production side-effect file:** add `filePath: string | null`, wire `assertNotProductionPath()` into the write function, and add an isolation test.
 
 ## Git hooks
 

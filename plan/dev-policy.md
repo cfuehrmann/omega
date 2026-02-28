@@ -8,19 +8,9 @@ relevant work stabilises.
 
 ## Event naming — persisted names are authoritative
 
-`events.jsonl` is the single source of truth for event type names. When any
-representation (in-memory type, WebSocket message, rendered UI block) conflicts
-with the persisted name, **the persisted name wins**. All other consumers are
-updated to match — never the other way around.
-
-This is an instance of the **contract authority rule** in `manifest.md` §
-"Contract authority — the most public contract wins": persistence is the most
-public contract; the stream and the UI are derived projections of it.
-
-Concretely (as of EU-3): the stream-facing names `agent_to_agent_tool_call`,
-`agent_to_agent_tool_result`, and `llm_to_agent` were renamed to match the
-persisted names `tool_call`, `tool_result`, `llm_response` in the unified
-`OmegaEvent`. The `WsEvent` web protocol follows the same names.
+`events.jsonl` names win. In-memory type, WebSocket message, and UI block names
+all conform to the persisted name — never the reverse. See `manifest.md` §
+"Contract authority — the most public contract wins" for the full rationale.
 
 ---
 
