@@ -45,7 +45,7 @@ helper is exported from `src/events.ts` for server-side code and defined
 locally in `App.tsx` for client-side code. A new `OmegaEvent` variant without
 a render case is a compile-time error, not a silent omission.
 
-Status: **ENFORCED** as of EU-4. Verified: `bun test` (458 pass), `vite build`
+Status: **ENFORCED** as of EU-4. Verified: `bun test` (471 pass), `vite build`
 (no errors).
 
 Applies from: completion of EU-3 (event system unification).

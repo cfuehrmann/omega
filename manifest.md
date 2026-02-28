@@ -173,10 +173,10 @@ Concretely: `agent_to_agent_tool_call` → `tool_call`, `agent_to_agent_tool_res
 `OmegaEvent` (`src/events.ts`). `AgentEvent` kept as a backward-compat type alias.
 All stream/wire/UI consumers updated. Gate + e2e green.
 
-**EU-4 — TODO.** Enforce UI sync invariant: every `OmegaEvent` variant must have
-a render case in the terminal renderer and `App.tsx`. See `plan/backlog.md` §
-"Event system unification" for acceptance criteria and `plan/dev-policy.md` for
-the active policy.
+**EU-4 — DONE (commit 4183922 and subsequent).** UI sync invariant enforced: every
+`OmegaEvent` variant has a render case in the terminal renderer (`src/terminal/app.ts`)
+and `App.tsx`. Exhaustive switch + `exhaustiveCheck(x: never)` guard in both UIs.
+`exhaustiveCheck()` exported from `src/events.ts`. Gate + e2e green.
 
 ### Schema lock — TODO (after EU-1 through EU-4)
 Review and explicitly document the full shape of every JSONL record in

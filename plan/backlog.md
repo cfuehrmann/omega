@@ -18,8 +18,8 @@ asks the LLM). Removed "generating `<tool>` input…" `status` yield from both
 Every remaining `status` yield has been replaced with a typed event:
 - `oauth_token_expired` and `oauth_refreshed` AgentEvent variants added
 - `model_changed` AgentEvent variant added; persisted as `SessionEvent`
-- `/compact` yields `session_compacted` AgentEvent; intermediate "Compacting…" dropped
-- Empty-history `/compact` case yields `agent_error`
+- `/compact` temporarily yielded `session_compacted`; later replaced by three
+  typed events in 3e-v-1 (`compact_user_start`, `compact_user_done`, `compact_user_error`)
 - `status` variant deleted from `AgentEvent` entirely
 - Pre-existing `sha256hex8` unused export also fixed
 
@@ -104,60 +104,47 @@ Known candidates, in priority order:
 Decide whether any important lifecycle events are absent. Full audit conducted
 (session 2026-xx-xx); five gaps identified, prioritised by impact below.
 
-**3e-v-1 — Compaction event overhaul** ✅ DONE (commit 0d77102)
-Several problems with the current `/compact` implementation, addressed together:
+**3e-v-1 — Compaction event overhaul** ✅ DONE (commits 0d77102, bf07337, fba00b9)
 
-**Bug: `context.jsonl` is destructively mutated on compaction.**
-The handler calls `clearContextStore()` (blanks the file) then re-appends the
-compacted history. This violates the append-only design. Fix: remove the file
-rewrite entirely. Only `llmMessageLog` and `llmMessageHashes` are replaced in
-memory. `context.jsonl` retains every record ever written — the compacted view
-is what the LLM sees going forward, exactly as `buildApiMessages()` already
-handles truncation non-destructively.
+Three bugs fixed and design overhauled across multiple commits:
 
-**Bug: compaction failure is not persisted.**
-The `catch` block yields an `agent_error` to the UI but never calls `logEvent()`.
-Fix: replace with a new dedicated `compact_user_error` event that is both yielded
-and persisted.
+**Bug: `context.jsonl` was destructively mutated on compaction** (fixed commit 0d77102).
+The handler previously called `clearContextStore()` then re-appended the compacted
+history. Fix: remove the file rewrite entirely. `context.jsonl` is append-only;
+only `llmContextView` and `llmContextHashes` are replaced in memory.
 
-**Bug: success event is conditional on counts differing.**
-`logEvent(session_compacted)` is only called when `newCount !== originalCount`.
-A no-op compaction leaves no trace in `events.jsonl`. Fix: emit unconditionally.
+**Bug: compaction failure was not persisted** (fixed commit 0d77102).
+The `catch` block yielded `agent_error` to the UI but never called `logEvent()`.
+Fix: dedicated `compact_user_error` event, both yielded and persisted.
 
-**Design: replace `session_compacted` with three typed events.**
-- `compact_user_start` — `{ ts }` — emitted and awaited immediately on `/compact`
-  entry, before any LLM call. Every `/compact` invocation starts with this.
-- `compact_user_done` — `{ ts, messagesBefore: number, messagesAfter: number }` —
-  emitted on success, unconditionally. `messagesBefore`/`messagesAfter` are total
-  `llmMessageLog` counts before and after. Equal counts = no-op compaction.
+**Bug: success event was conditional on counts differing** (fixed commit 0d77102).
+`logEvent(session_compacted)` was only called when counts changed. Fix: emit
+`compact_user_done` unconditionally.
+
+**Design: replaced `session_compacted` with three typed events** (commit 0d77102).
+- `compact_user_start` — `{ ts }` — emitted and awaited before any LLM call.
+- `compact_user_done` — `{ ts, messagesBefore, messagesAfter }` — emitted on success.
 - `compact_user_error` — `{ ts, error: string }` — emitted in the catch block.
-  Replaces the current unlogged `agent_error` yield.
+`session_compacted` fully retired from `OmegaEvent`, both UIs, `WsEvent`, all tests.
 
-`session_compacted` is retired from `OmegaEvent`, `events.ts`, both UIs, `WsEvent`,
-and all tests.
+**Design: empty-history no longer special** (commit 0d77102).
+Flows through the normal path: `compact_user_start` → `compact_user_done` with
+`messagesBefore: 0, messagesAfter: 0`, without calling `compactHistory()`.
 
-**Design: empty-history case no longer special.**
-The current early-return with `agent_error` is removed. Instead, empty history
-flows through the normal path: `compact_user_start` then `compact_user_done` with
-`messagesBefore: 0, messagesAfter: 0`, without calling `compactHistory()`. No
-error emitted — the operator sees "0 → 0" in the UI, which is informative enough.
+**Rename: `llmMessageLog` → `llmContextView`, `llmMessageHashes` → `llmContextHashes`**
+(commit bf07337). Pure mechanical rename; no behaviour change. The old name implied
+an append-only historical log; the new name reflects that this is the mutable
+context view forwarded to future LLM calls (distinct from the append-only
+`context.jsonl`). `getLlmMessageLog()` → `getLlmContextView()`.
 
-**Naming convention:**
-Event type strings use `compact_user_*` prefix — `compact_` groups all compaction
-events, `_user` distinguishes manual operator-triggered compaction from any future
-automatic compaction (`compact_auto_*`). Property names are camelCase per existing
-style (`messagesBefore`, `messagesAfter`).
-
-Acceptance criteria:
-- `context.jsonl` is never truncated or rewritten during compaction
-- Every `/compact` invocation produces exactly `compact_user_start` + `compact_user_done`
-  or `compact_user_start` + `compact_user_error` in `events.jsonl` — no exceptions
-- `compact_user_start` is awaited before the LLM call (ordering guarantee)
-- `compact_user_done` carries correct `messagesBefore`/`messagesAfter` counts
-- `compact_user_error` carries the error message string
-- `session_compacted` fully retired — no references remain
-- Both UIs render all three new event types (exhaustive switch enforces this)
-- Gate green
+**Bug: compaction hash rebuild was wrong** (fixed commit fba00b9).
+After compaction the old code called `buildContextRecord()` on every tail message,
+generating fresh timestamps → different hashes than those already in `context.jsonl`,
+breaking the FK/PK contract. The synthetic summary was also never appended to
+`context.jsonl`. Fix: reuse the existing `llmContextHashes` slice for tail messages
+(same objects, no re-hash, no re-write); call `appendContextMessage()` only for the
+new synthetic message. `compactHistory()` now returns `syntheticMessage` and
+`tailStartIndex` to enable correct hash bookkeeping in the caller.
 
 **3e-v-2 — "All retries exhausted" missing `llm_error` + diagnostic** ← START HERE
 When every retry attempt is consumed (both Anthropic and OpenAI paths), the final
@@ -282,13 +269,13 @@ This document is the stable contract that session-resume (Step 3f) builds on.
 **Status: TODO — depends on schema lock**
 
 On startup, if a `.prev` session exists, offer to resume it. Load
-`context.prev.jsonl` and `events.prev.jsonl`, restore `llmMessageLog` and the
+`context.prev.jsonl` and `events.prev.jsonl`, restore `llmContextView` and the
 event history, and continue as if the session had not ended.
 
 Acceptance criteria (to be refined after schema lock):
 - Startup detects a non-empty `context.prev.jsonl`
 - User is prompted: resume previous session or start fresh
-- On resume: `llmMessageLog` is restored from the context file; events file is
+- On resume: `llmContextView` is restored from the context file; events file is
   appended to (not rotated)
 - On fresh start: behaviour unchanged from today
 - Test: round-trip — session writes context, restarts, resumes, next API call
@@ -454,6 +441,7 @@ Acceptance criteria:
 
 ## Closed items
 
+- **`/compact` command tests** — Done (commit 8fcf594). 27 tests in `src/compact-command.test.ts` covering all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations (view length before/after), error path, and post-compact continuity. Fixed bug: `/compact` handler passed `this.contextFile ?? undefined` to `appendContextMessage`, coercing `null` (disabled/test) to `undefined` (use production default), causing `compact_user_error` in all tests under `OMEGA_TEST=1`. Fixed to pass `this.contextFile` directly.
 - **UI: tighten tool_call and tool_result display truncation** — Done (commit f99d233). Both blocks now cut at 5 lines / 500 chars in terminal and web. Terminal `renderToolStart` uses `truncateOutput` (was bare `JSON.stringify`). Web `tool_call` uses `truncateOutput` (compact JSON, was `truncate(prettyJSON, 3000)`).
 - **Terminal: minimal append-only prompt editor** — Done (commit 2a9416e). Removed cursor tracking, arrow keys, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace, `redrawLine`, `wordBoundaryBack/Forward`. Esc now context-sensitive: non-empty → clear buffer; empty → abort turn. ~240 lines deleted from `input.ts`. Tests rewritten.
 - **UI: dual-limit tool result truncation** — Done (commit b29fde5). Terminal and web now cut at 20 lines OR 2000 chars (superseded by f99d233 above).
@@ -479,6 +467,7 @@ Acceptance criteria:
 - **Merge dev → main (Steps 3a–3d)** — Done. `develop` merged into `main`; both branches now in sync.
 - **Step 3d: Non-destructive context truncation** — Done (commit 997d7f7).
 - **Step 3c: SessionEvent + dual-write event log** — Done (commit 357ec23).
+- **3e-v-1: Compaction event overhaul** — Done (commits 0d77102, bf07337, fba00b9). See open items for full detail.
 - **Step 3b: `/compact` slash command** — Done (commit f2d5631).
 - **Step 3a: Append-only context file** — Done (commit 551d676).
 - **Step 2: Abandon automatic compaction** — Done. `compactAfterTurn()` removed.
