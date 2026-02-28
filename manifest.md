@@ -213,6 +213,15 @@ produces garbage on the next API call. Trim-on-append also requires running the
 `sanitizeToolPairs` logic on every append to avoid orphaned tool_use/tool_result
 pairs. The complexity is real and the failure mode is silent. Rejected.
 
+This applies equally to the **prompt-too-long retry loop** (halving `apiBudget` on
+each attempt and recomputing `sentContext`). The halvings produce the same failure
+mode: after enough halvings you may be sending only the tail — potentially just one
+enormous tool result with no framing — and the model produces garbage silently.
+The first prompt-too-long response from the API is already the signal that the
+context is unsendable. Retrying with a progressively lobotomised view is no better
+than silent trimming. The prompt-too-long retry loop is therefore also rejected and
+will be removed.
+
 **Error out — honest, simple, and actionable.**
 When the context window is exhausted mid-turn, surface an explicit `agent_error`
 and stop the turn cleanly. The operator sees a clear message and can start a new
@@ -225,16 +234,24 @@ of the next turn — so the session's memory of what was attempted is preserved.
 ### Consequences
 - `buildSentContext()` remains ephemeral and read-only; it never mutates
   `compactedContextHistory`. Its role is prompt-caching optimisation (cache
-  breakpoint placement) and the occasional prompt-too-long retry, not a routine
-  trimming mechanism.
+  breakpoint placement), not a trimming mechanism.
+- The prompt-too-long retry loop (halving `apiBudget` on each attempt) is removed.
+  On the first prompt-too-long response from the API, the turn errors out immediately.
+- Transient-error retries (rate limit 429, overload 529, 500/503) are kept — these
+  are unrelated to context size; the context is fine and the server is just busy.
 - Auto-compact fires at turn boundaries only — after the user message is appended,
   before the agentic loop. It never fires mid-loop.
 - If a single turn genuinely exhausts the context window, the system emits
   `agent_error` with an actionable message and exits the loop cleanly.
 - The complexity of maintaining two separate arrays (`compactedContextHistory` and
   an ephemeral `sentContext`) is retained for now because `buildSentContext()` still
-  serves the prompt-caching and retry roles. Collapsing them is a future
-  simplification that can be revisited once the error-out path is in place.
+  serves the prompt-caching role. Collapsing them is a future simplification that
+  can be revisited once the error-out path is in place.
+- **If this approach turns out to be too aggressive in practice** (e.g. operators
+  hit context errors on turns that would have succeeded with modest trimming),
+  `sessions/events.jsonl` and `diagnosis/` contain the exact request context and
+  error details. Inspect those to understand the specific syndrome before
+  introducing any trimming complexity.
 
 ## Input decoupling
 

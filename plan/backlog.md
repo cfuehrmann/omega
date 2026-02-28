@@ -30,9 +30,15 @@ management policy" for the full rationale.
 - No silent message dropping; no mid-turn compaction
 
 **Implementation notes:**
-- The natural place to detect overflow is at the top of the agentic loop, where
-  `buildSentContext()` is called. If the returned view is still over-budget after
-  the prompt-too-long retry halvings, that is the overflow signal.
+- The prompt-too-long retry loop (halving `apiBudget` on each attempt, recomputing
+  `sentContext`) is **removed entirely**. The halvings have the same failure mode as
+  silent trimming: after enough halvings the model receives only the tail — possibly
+  just one fat tool result with no framing — and produces garbage silently. The first
+  prompt-too-long response from the API is already the signal; retrying with a
+  progressively lobotomised context is not better than erroring out immediately.
+- The overflow signal is therefore: the API returns a prompt-too-long error (400
+  "prompt is too long" or 429 "Extra usage is required for long context requests").
+  On that first response, error out — no retries, no budget halvings.
 - Particular care needed around **error events**: the existing `agent_error` path
   must emit a `turn_end` after the error so the UI closes the turn correctly.
   Review the current error-exit paths to ensure they all do this.
@@ -43,6 +49,10 @@ management policy" for the full rationale.
   - Assert `compactedContextHistory` still contains the partial turn's messages
     after the error
   - Assert the next `sendMessage` call succeeds (context not bricked)
+- **If this approach proves too aggressive in practice**: `sessions/events.jsonl`
+  and `diagnosis/` contain the exact request context and error details for every
+  prompt-too-long event. Inspect those files to understand the specific syndrome
+  before introducing any trimming or retry complexity.
 
 ---
 
