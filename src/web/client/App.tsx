@@ -64,7 +64,7 @@ function truncate(s: string, maxChars = 3000): string {
   return s.slice(0, maxChars) + `\n… [${s.length} chars total — showing first ${maxChars}]`;
 }
 
-function truncateOutput(s: string, maxLines = 20, maxChars = 2000): string {
+function truncateOutput(s: string, maxLines = 5, maxChars = 500): string {
   const lines = s.split("\n");
   const linesCut = lines.length > maxLines;
   const charsCut = s.length > maxChars;
@@ -106,12 +106,12 @@ function EventBlock(props: { event: WsEvent }) {
 
     case "tool_call": {
       const inputStr = typeof e.input === "object"
-        ? JSON.stringify(e.input, null, 2)
+        ? JSON.stringify(e.input)
         : String(e.input);
       return (
         <div class="block tool">
           <div class="block-label">tool › {e.name}</div>
-          <div class="block-body">{truncate(inputStr)}</div>
+          <div class="block-body">{truncateOutput(inputStr)}</div>
         </div>
       );
     }

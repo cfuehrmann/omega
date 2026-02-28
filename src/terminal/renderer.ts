@@ -48,7 +48,7 @@ export function now(): string {
   return new Date().toLocaleTimeString("en-GB");
 }
 
-function truncateOutput(text: string, maxLines = 20, maxChars = 2000): string {
+function truncateOutput(text: string, maxLines = 5, maxChars = 500): string {
   const lines = text.split("\n");
   const linesCut = lines.length > maxLines;
   const charsCut = text.length > maxChars;
@@ -187,7 +187,9 @@ export function renderToolStart(name: string, input: any, id: string): string[] 
   const lines: string[] = [];
   lines.push(bold(yellow(`tool_call`)) + dim(yellow(`  [${shortId(id)}]`)));
   lines.push(yellow(`${INDENT}name: "${name}"`));
-  lines.push(yellow(`${INDENT}input: ${JSON.stringify(input)}`));
+  for (const line of truncateOutput(JSON.stringify(input)).split("\n")) {
+    lines.push(yellow(`${INDENT}${line}`));
+  }
   return lines;
 }
 
