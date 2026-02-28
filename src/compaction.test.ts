@@ -128,4 +128,38 @@ describe("compactHistory", () => {
     const actualTail = compacted.slice(1); // skip synthetic summary
     expect(actualTail).toEqual(expectedTail);
   });
+
+  it("returns syntheticMessage separately (same object as history[0])", async () => {
+    const history = makeHistory(KEEP_RECENT_TURNS + 2);
+    const provider = makeMockProvider("summary text");
+
+    const { history: compacted, syntheticMessage } = await compactHistory(history, provider);
+
+    expect(syntheticMessage).toBe(compacted[0]); // same object reference
+    expect((syntheticMessage.content as string)).toContain("summary text");
+  });
+
+  it("returns correct tailStartIndex (offset into original history where tail begins)", async () => {
+    const extraPairs = 3;
+    const history = makeHistory(KEEP_RECENT_TURNS + extraPairs);
+    const provider = makeMockProvider("summary");
+
+    const { tailStartIndex } = await compactHistory(history, provider);
+
+    // head = extraPairs * 2 messages; tail starts right after
+    expect(tailStartIndex).toBe(extraPairs * 2);
+  });
+
+  it("tail object references are preserved (no copy — same MessageParam objects)", async () => {
+    const history = makeHistory(KEEP_RECENT_TURNS + 2);
+    const provider = makeMockProvider("summary");
+
+    const { history: compacted, tailStartIndex } = await compactHistory(history, provider);
+
+    const originalTail = history.slice(tailStartIndex);
+    const compactedTail = compacted.slice(1);
+    for (let i = 0; i < compactedTail.length; i++) {
+      expect(compactedTail[i]).toBe(originalTail[i]); // same object reference, not a copy
+    }
+  });
 });

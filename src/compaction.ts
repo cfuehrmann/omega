@@ -76,20 +76,37 @@ export async function compactHistory(
   history: MessageParam[],
   provider: StreamProvider,
   model = "claude-sonnet-4-6"
-): Promise<{ history: MessageParam[]; originalCount: number; newCount: number }> {
+): Promise<{
+  history: MessageParam[];
+  syntheticMessage: MessageParam;
+  tailStartIndex: number;
+  originalCount: number;
+  newCount: number;
+}> {
   const originalCount = history.length;
 
   // Keep the last KEEP_RECENT_TURNS complete message-pairs (user + assistant).
   // Each pair is 2 messages, so tailLength = KEEP_RECENT_TURNS * 2.
   const tailLength = KEEP_RECENT_TURNS * 2;
 
+  // tailStartIndex: index into the original history where the tail begins.
+  // If history is short, tail starts at 0 (the entire history is the "tail").
+  const tailStartIndex = Math.max(0, originalCount - tailLength);
+
   if (originalCount <= tailLength) {
-    // Nothing to compact — history is already short.
-    return { history, originalCount, newCount: originalCount };
+    // Nothing to compact — history is already short enough.
+    // Return a no-op synthetic message (caller will still append it to context.jsonl
+    // if it proceeds, but the early-return path in agent.ts bypasses compactHistory
+    // entirely for the zero-message case).
+    const noopSynthetic: MessageParam = {
+      role: "user",
+      content: `[Compacted context summary: (nothing to compact)]`,
+    };
+    return { history, syntheticMessage: noopSynthetic, tailStartIndex: 0, originalCount, newCount: originalCount };
   }
 
-  const head = history.slice(0, originalCount - tailLength);
-  const tail = history.slice(originalCount - tailLength);
+  const head = history.slice(0, tailStartIndex);
+  const tail = history.slice(tailStartIndex);
 
   const headText = serialiseMessages(head);
 
@@ -109,7 +126,7 @@ export async function compactHistory(
   };
 
   const newHistory: MessageParam[] = [syntheticMessage, ...tail];
-  return { history: newHistory, originalCount, newCount: newHistory.length };
+  return { history: newHistory, syntheticMessage, tailStartIndex, originalCount, newCount: newHistory.length };
 }
 
 /**

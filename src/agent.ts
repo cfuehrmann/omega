@@ -705,23 +705,26 @@ export class Agent {
 
         try {
           const provider = this.getStreamProvider();
-          const { history: newHistory } = await compactHistory(
+          const { history: newHistory, syntheticMessage, tailStartIndex } = await compactHistory(
             this.llmContextView,
             provider,
             this.activeModel,
           );
-          // Replace in-memory context view only. context.jsonl is append-only
-          // and is never truncated — the compacted view is what the LLM sees
-          // going forward, exactly as buildApiMessages() handles truncation.
-          this.llmContextView = newHistory as Anthropic.MessageParam[];
-          // Rebuild the parallel hash array to match the new context view.
-          // The hashes already exist in context.jsonl — we just need to
-          // re-derive them from the retained messages using buildContextRecord.
-          this.llmContextHashes = await Promise.all(
-            this.llmContextView.map(msg =>
-              buildContextRecord(msg).then(r => r.hash)
-            )
+          // Replace in-memory context view only. context.jsonl is append-only —
+          // tail messages are already there with their correct hashes; we only
+          // need to append the new synthetic summary message.
+          //
+          // New llmContextHashes = [syntheticHash, ...tailHashes]:
+          //   - syntheticHash: from appendContextMessage (writes one new record)
+          //   - tailHashes: sliced from existing llmContextHashes — no re-hash,
+          //     no re-write; those records are already in context.jsonl
+          const syntheticHash = await appendContextMessage(
+            syntheticMessage,
+            this.contextFile ?? undefined,
           );
+          const tailHashes = this.llmContextHashes.slice(tailStartIndex);
+          this.llmContextView = newHistory as Anthropic.MessageParam[];
+          this.llmContextHashes = [syntheticHash, ...tailHashes];
           const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.llmContextView.length };
           this.logEvent(doneEv);
           yield doneEv;
