@@ -34,6 +34,43 @@ to omega itself. This is reflected by the idiosyncratic system prompt, world
 compaction, and turn compaction. Omega should be rewritten to separate the two
 aspects.
 
+## Contract authority — the most public contract wins
+
+When multiple representations of the same information exist (persisted log, in-memory
+event, WebSocket message, rendered UI block), they must all be consistent. When they
+diverge — because of a rename, a new field, a schema change — **the most public
+contract is authoritative and all others must conform to it**.
+
+"Most public" means: the one that would cause the worst harm if broken. Concretely,
+for Omega:
+
+1. **Persistence** (`sessions/events.jsonl`, `sessions/context.jsonl`) — the most
+   public contract. Existing log files on disk cannot be retroactively renamed.
+   Any tooling, post-mortem script, or future session-resume feature depends on
+   these exact field names and event type strings. A breaking change here requires
+   explicit migration; an accidental one is silent data corruption.
+
+2. **The in-memory event type** (`OmegaEvent` in `src/events.ts`) — derived from
+   and must match the persistence contract. The canonical source of truth for the
+   type system.
+
+3. **The WebSocket protocol** (`WsEvent` in `src/web/client/store.ts`) — a
+   transport-layer projection of `OmegaEvent`. It may carry extra ephemeral fields
+   (e.g. `request` on `llm_call` for UI debugging) but must use the same type
+   strings.
+
+4. **The rendered UI** (terminal renderer, `App.tsx`) — the least public contract.
+   Display format can change freely; it has no external consumers.
+
+The rule: **when in doubt, update the UI to match the log — never the log to match
+the UI.** This principle resolved the EU-3 naming question (`agent_to_agent_tool_call`
+vs `tool_call`): the persisted name `tool_call` was already in `events.jsonl`, so
+the stream-facing name was changed to match it, not the other way around.
+
+Apply this principle to every future naming or schema decision.
+
+---
+
 ## Major aspects of the redesign
 
 - Abandon all compaction for now. Keep relying on prompt caching for token
@@ -116,24 +153,30 @@ Breaking changes landed before the schema lock to avoid a post-lock migration:
 - `LlmCallEvent.messageCount` removed — always equalled `contextHashes.length`; use `.length` directly.
 - `ToolCallEvent.input` and `ToolResultEvent.outputLength` removed — both derivable from `context.jsonl` via `contextHash` FK (commit 34f7708).
 
-### Event system unification — IN PROGRESS (EU-1 and EU-2 done, EU-3 and EU-4 TODO)
-`AgentEvent` (streaming, UI-only) and `SessionEvent` (persistence) are two parallel
-type hierarchies. Agreed direction: merge into a single `OmegaEvent` union. A small
-separate `StreamSignal` union covers the only genuinely ephemeral rendering
-primitives: `text` streaming fragments. Everything else is an `OmegaEvent` — persisted
-and rendered.
+### Event system unification — EU-1 through EU-3 done; EU-4 TODO
+`AgentEvent` (streaming, UI-only) and `SessionEvent` (persistence) were two parallel
+type hierarchies. They are now merged into a single `OmegaEvent` union (EU-3). A
+separate `StreamSignal` union covers the only genuinely ephemeral rendering primitive:
+`text` streaming fragments. Everything else is an `OmegaEvent` — persisted and rendered.
 
-**EU-1 — DONE (commit 00a8078):** `metrics` and `tool_result_message` variants
-deleted from `AgentEvent`. In-loop `status` yields removed ("thinking…", "OpenAI
-provider active", "generating `<tool>` input…"). `/help` slash command removed.
+Name authority follows the **contract authority rule** above: the persisted name
+(`events.jsonl`) is canonical; stream-facing names were updated to match.
+Concretely: `agent_to_agent_tool_call` → `tool_call`, `agent_to_agent_tool_result`
+→ `tool_result`, `llm_to_agent` → `llm_response`.
 
-**EU-2 — DONE (commit b2ebc02):** All remaining `status` yields replaced with typed
-events. `model_changed`, `oauth_token_expired`, `oauth_refreshed` added to `AgentEvent`
-and (where appropriate) to `SessionEvent`. `/compact` yields `session_compacted`.
-`status` variant deleted from `AgentEvent` entirely. No `status` variant anywhere.
+**EU-1 — DONE (commit 00a8078):** Dead weight deleted from `AgentEvent`.
 
-**EU-3 and EU-4 — TODO.** See `plan/backlog.md` § "Event system unification" for
-the ordered steps. Active development-phase policies are in `plan/dev-policy.md`.
+**EU-2 — DONE (commit b2ebc02):** All `status` yields replaced with typed events.
+`status` variant deleted from `AgentEvent` entirely.
+
+**EU-3 — DONE (commit 822257f):** `AgentEvent` and `SessionEvent` unified into
+`OmegaEvent` (`src/events.ts`). `AgentEvent` kept as a backward-compat type alias.
+All stream/wire/UI consumers updated. Gate + e2e green.
+
+**EU-4 — TODO.** Enforce UI sync invariant: every `OmegaEvent` variant must have
+a render case in the terminal renderer and `App.tsx`. See `plan/backlog.md` §
+"Event system unification" for acceptance criteria and `plan/dev-policy.md` for
+the active policy.
 
 ### Schema lock — TODO (after EU-1 through EU-4)
 Review and explicitly document the full shape of every JSONL record in
