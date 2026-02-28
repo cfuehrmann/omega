@@ -540,6 +540,11 @@ export class Agent {
     return this.compactedContextHistory;
   }
 
+  /** Exposed for testing only — allows verification that the hashes array stays in sync. */
+  getCompactedContextHashes(): readonly string[] {
+    return this.compactedContextHashes;
+  }
+
   /**
    * Get a StreamProvider wrapping the real Anthropic client (or the injected
    * mock, in tests). Used for compaction LLM calls.

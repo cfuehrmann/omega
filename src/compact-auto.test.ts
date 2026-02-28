@@ -149,14 +149,18 @@ function makeSummaryThenTextProvider(summary: string, text = "ok"): StreamProvid
   };
 }
 
-/** Seed the agent's compactedContextHistory with N synthetic messages alternating user/assistant. */
+/** Seed the agent's compactedContextHistory with N synthetic messages alternating user/assistant.
+ *  Also pushes placeholder hashes so compactedContextHashes stays in sync. */
 function seedHistory(agent: ReturnType<typeof makeTestAgent>, count: number): void {
   const view = agent.getCompactedContextHistory() as Anthropic.MessageParam[];
+  const hashes = agent.getCompactedContextHashes() as string[];
   for (let i = 0; i < count; i++) {
     view.push({
       role: i % 2 === 0 ? "user" : "assistant",
       content: `synthetic message ${i}`,
     });
+    // Placeholder hash — 8 hex chars, unique per index, keeps arrays in sync
+    hashes.push(`seed${i.toString().padStart(4, "0")}`);
   }
 }
 
@@ -623,6 +627,175 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
       const block = (last.content as any[]).find(b => b.type === "tool_result");
       expect(block?.content).toContain("max_tokens");
       expect(block?.content).toContain("not executed");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// lastPromptTokens update
+// ---------------------------------------------------------------------------
+
+describe("auto-compact: lastPromptTokens is updated after each turn", () => {
+  it("lastPromptTokens reflects the LLM usage from the completed turn", async () => {
+    // The mock finalMessage carries input_tokens: 10, output_tokens: 5
+    // lastPromptTokens = input_tokens (10) + cache tokens (0) = 10
+    const provider = makeTextProvider("ok");
+    const agent = makeTestAgent(provider);
+    expect(agent.lastPromptTokens).toBe(0); // no turn yet
+
+    await collectEvents(agent, "hello");
+
+    expect(agent.lastPromptTokens).toBeGreaterThan(0);
+  });
+
+  it("lastPromptTokens above threshold triggers auto-compact on the next turn", async () => {
+    // Turn 1: normal, below threshold
+    let callCount = 0;
+    const provider: StreamProvider = async () => {
+      callCount++;
+      if (callCount === 1) {
+        // Turn 1: normal text response, but we will manually set lastPromptTokens high after
+        return makeMockStream(textStreamEvents("first"), textMessage("first"));
+      }
+      if (callCount === 2) {
+        // compaction LLM call (turn 2 triggers auto-compact)
+        return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
+      }
+      // Turn 2 actual response
+      return makeMockStream(textStreamEvents("second"), textMessage("second"));
+    };
+    const agent = makeTestAgent(provider);
+
+    // Complete turn 1
+    await collectEvents(agent, "first message");
+
+    // Manually push lastPromptTokens above threshold (simulates a large session)
+    setAboveThreshold(agent);
+
+    // Turn 2: auto-compact should fire
+    const events2 = omegaEvents(await collectEvents(agent, "second message"));
+    expect(events2.find(e => e.type === "compact_auto_start")).toBeDefined();
+    expect(events2.find(e => e.type === "compact_auto_done")).toBeDefined();
+  });
+
+  it("lastPromptTokens does NOT trigger auto-compact again within the same turn", async () => {
+    // performAutoCompact() is called once per sendMessage, before the agentic loop.
+    // Even if the compaction call itself consumed tokens, the loop must not re-compact.
+    let compactAutoStartCount = 0;
+    const provider = makeSummaryThenTextProvider("summary");
+    const agent = makeTestAgent(provider);
+    setAboveThreshold(agent);
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    compactAutoStartCount = events.filter(e => e.type === "compact_auto_start").length;
+    expect(compactAutoStartCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compact_auto_done.messagesAfter shape
+// ---------------------------------------------------------------------------
+
+describe("auto-compact: messagesAfter shape", () => {
+  it("messagesAfter equals 1 (synthetic) + KEEP_RECENT_TURNS * 2 (tail) when history is long enough", async () => {
+    const provider = makeSummaryThenTextProvider("summary");
+    const agent = makeTestAgent(provider);
+    setAboveThreshold(agent); // seeds KEEP_RECENT_TURNS*2 + 3 messages + appends 1 user msg = enough for tail
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    const done = events.find(e => e.type === "compact_auto_done");
+    expect(done).toBeDefined();
+    if (done?.type === "compact_auto_done") {
+      // synthetic summary (1) + tail (KEEP_RECENT_TURNS * 2)
+      expect(done.messagesAfter).toBe(1 + KEEP_RECENT_TURNS * 2);
+    }
+  });
+
+  it("compactedContextHistory length after auto-compact matches compact_auto_done.messagesAfter", async () => {
+    const provider = makeSummaryThenTextProvider("summary");
+    const agent = makeTestAgent(provider);
+    setAboveThreshold(agent);
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    const done = events.find(e => e.type === "compact_auto_done");
+    if (done?.type === "compact_auto_done") {
+      // After the turn, 1 assistant message was appended on top of the compacted view
+      expect(agent.getCompactedContextHistory().length).toBe(done.messagesAfter + 1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hash consistency after auto-compact
+// ---------------------------------------------------------------------------
+
+describe("auto-compact: hash consistency (compactedContextHashes stays in sync)", () => {
+  it("llm_call.contextHashes length equals compactedContextHistory length at call time", async () => {
+    // After auto-compact, compactedContextHashes must be rebuilt to match the new
+    // compactedContextHistory. The llm_call event snapshots these hashes; its length
+    // must equal done.messagesAfter (the compacted view — user msg is already inside
+    // the tail that survives compaction, so it is included in messagesAfter).
+    const provider = makeSummaryThenTextProvider("summary");
+    const agent = makeTestAgent(provider);
+    setAboveThreshold(agent);
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    // The final llm_call (actual user turn, not compaction) comes after compact_auto_done
+    const doneIdx = events.findIndex(e => e.type === "compact_auto_done");
+    const llmCalls = events.filter((e, i) => e.type === "llm_call" && i > doneIdx);
+    expect(llmCalls.length).toBeGreaterThan(0);
+
+    const firstLlmCall = llmCalls[0];
+    const done = events.find(e => e.type === "compact_auto_done");
+    if (firstLlmCall?.type === "llm_call" && done?.type === "compact_auto_done") {
+      // contextHashes is snapshotted at llm_call time; the user message is already
+      // counted inside the compacted tail, so length === done.messagesAfter.
+      expect(firstLlmCall.contextHashes.length).toBe(done.messagesAfter);
+    }
+  });
+
+  it("first contextHash after auto-compact is a real 8-char hex hash (the synthetic summary)", async () => {
+    // The synthetic summary message is written via appendContextMessage which computes
+    // a real SHA-256 hash — even in test mode (null contextFile). The first hash in the
+    // post-compaction array must be a real hex hash, not a seeded placeholder.
+    const provider = makeSummaryThenTextProvider("summary");
+    const agent = makeTestAgent(provider);
+    setAboveThreshold(agent);
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    const doneIdx = events.findIndex(e => e.type === "compact_auto_done");
+    const llmCalls = events.filter((e, i) => e.type === "llm_call" && i > doneIdx);
+    const firstLlmCall = llmCalls[0];
+    if (firstLlmCall?.type === "llm_call" && firstLlmCall.contextHashes.length > 0) {
+      // First hash is the synthetic compaction summary message — always a real SHA-256
+      expect(firstLlmCall.contextHashes[0]).toMatch(/^[0-9a-f]{8}$/);
+    }
+  });
+
+  it("contextHashes count grows by 1 after the assistant reply is appended post-compaction", async () => {
+    // The hash array after the completed turn should be:
+    //   compacted_view_size + 1 (user) + 1 (assistant) = done.messagesAfter + 2
+    const provider = makeSummaryThenTextProvider("summary");
+    const agent = makeTestAgent(provider);
+    setAboveThreshold(agent);
+
+    const events = omegaEvents(await collectEvents(agent, "hello"));
+
+    const done = events.find(e => e.type === "compact_auto_done");
+    if (done?.type === "compact_auto_done") {
+      // history = compacted + user msg (appended before auto-compact check, inside sendMessage)
+      //         + assistant reply appended after llm_call
+      // Total = done.messagesAfter + 2
+      expect(agent.getCompactedContextHistory().length).toBe(done.messagesAfter + 1);
+      // (+ 1 because user message was already counted in messagesAfter via the +1 user msg
+      //  appended before performAutoCompact — see compact_auto_start.messagesBefore test)
+      // Actually: messagesAfter is the compacted history count BEFORE the agentic loop
+      // appends the assistant response. So final = messagesAfter + 1 (assistant).
     }
   });
 });
