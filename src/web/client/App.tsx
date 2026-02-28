@@ -59,9 +59,26 @@ function sendToServer(msg: object) {
 // Event block components
 // ---------------------------------------------------------------------------
 
-function truncate(s: string, max = 3000): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max) + `\n… [${s.length - max} chars truncated]`;
+function truncate(s: string, maxChars = 3000): string {
+  if (s.length <= maxChars) return s;
+  return s.slice(0, maxChars) + `\n… [${s.length} chars total — showing first ${maxChars}]`;
+}
+
+function truncateOutput(s: string, maxLines = 20, maxChars = 2000): string {
+  const lines = s.split("\n");
+  const linesCut = lines.length > maxLines;
+  const charsCut = s.length > maxChars;
+  if (!linesCut && !charsCut) return s;
+  let result: string;
+  let note: string;
+  if (linesCut && (!charsCut || lines.slice(0, maxLines).join("\n").length <= maxChars)) {
+    result = lines.slice(0, maxLines).join("\n");
+    note = `… [${lines.length} lines / ${s.length} chars total — showing first ${maxLines} lines]`;
+  } else {
+    result = s.slice(0, maxChars);
+    note = `… [${lines.length} lines / ${s.length} chars total — showing first ${maxChars} chars]`;
+  }
+  return result + "\n" + note;
 }
 
 function EventBlock(props: { event: WsEvent }) {
@@ -101,7 +118,7 @@ function EventBlock(props: { event: WsEvent }) {
 
     case "tool_result": {
       const r = e.result;
-      const content = r ? (r.type === "text" ? truncate(r.text ?? "") : `[${r.type}]`) : "";
+      const content = r ? (r.type === "text" ? truncateOutput(r.text ?? "") : `[${r.type}]`) : "";
       return (
         <div class={`block result${r?.is_error ? " result-error" : ""}`}>
           <div class="block-label">result › {e.name}</div>

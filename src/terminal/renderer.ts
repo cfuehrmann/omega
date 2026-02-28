@@ -48,10 +48,23 @@ export function now(): string {
   return new Date().toLocaleTimeString("en-GB");
 }
 
-function truncateOutput(text: string, maxLines = 10): string {
+function truncateOutput(text: string, maxLines = 20, maxChars = 2000): string {
   const lines = text.split("\n");
-  if (lines.length <= maxLines) return text;
-  return lines.slice(0, maxLines).join("\n") + `\n… [${lines.length - maxLines} more lines]`;
+  const linesCut = lines.length > maxLines;
+  const charsCut = text.length > maxChars;
+  if (!linesCut && !charsCut) return text;
+
+  // Apply whichever limit fires first.
+  let result = text;
+  let note = "";
+  if (linesCut && (!charsCut || lines.slice(0, maxLines).join("\n").length <= maxChars)) {
+    result = lines.slice(0, maxLines).join("\n");
+    note = `… [${lines.length} lines / ${text.length} chars total — showing first ${maxLines} lines]`;
+  } else {
+    result = text.slice(0, maxChars);
+    note = `… [${lines.length} lines / ${text.length} chars total — showing first ${maxChars} chars]`;
+  }
+  return result + "\n" + note;
 }
 
 /** Print lines to stdout, first line gets timestamp, rest get indent. */
