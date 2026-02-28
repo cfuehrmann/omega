@@ -8,7 +8,7 @@ import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory } from "./compaction.js";
 import { readWorldState, projectWorldStatePath } from "./world-state.js";
 import { appendContextMessage, buildContextRecord, clearContextStore } from "./context-store.js";
-import { appendSessionEvent, clearSessionEvents, DEFAULT_EVENTS_FILE } from "./session-event.js";
+import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal } from "./events.js";
 
 // --- Types ---
@@ -29,10 +29,6 @@ interface ModelResponse {
   stop_reason?: string;
   usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
 }
-
-// AgentEvent is now an alias for OmegaEvent | StreamSignal — the unified type.
-// Kept for backward compat with test imports; prefer OmegaEvent | StreamSignal directly.
-export type AgentEvent = OmegaEvent | StreamSignal;
 
 export type ProviderName = "anthropic" | "openai";
 
@@ -385,8 +381,8 @@ function sanitizeToolPairs(messages: Anthropic.MessageParam[]): Anthropic.Messag
 /** Process raw Anthropic stream events into AgentEvents.
  *  This is the inner loop of sendMessage, extracted so it can be tested
  *  without a real API connection. */
-export function processStreamEvents(streamEvents: Iterable<any>): AgentEvent[] {
-  const events: AgentEvent[] = [];
+export function processStreamEvents(streamEvents: Iterable<any>): (OmegaEvent | StreamSignal)[] {
+  const events: (OmegaEvent | StreamSignal)[] = [];
   for (const event of streamEvents) {
     if (
       event.type === "content_block_delta" &&
@@ -520,7 +516,7 @@ export class Agent {
   private logEvent(event: OmegaEvent): Promise<void> {
     const path = this.resolveEventsFile();
     if (path === null) return Promise.resolve();
-    return appendSessionEvent(event, path).catch(() => {});
+    return appendEvent(event, path).catch(() => {});
   }
 
   /**
@@ -1140,7 +1136,10 @@ export class Agent {
         content: response.content,
         raw: useOpenAi ? (response as any).raw : undefined,
       };
-      this.logEvent(llmResponseEvent);
+      // Await so llm_response is flushed before any tool_call events fire.
+      // tool_call is causally downstream of llm_response; without await the
+      // two fire-and-forget writes race and tool_call can land first in events.jsonl.
+      await this.logEvent(llmResponseEvent);
       yield llmResponseEvent;
 
       // Process tool calls if any
