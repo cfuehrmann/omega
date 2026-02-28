@@ -131,12 +131,16 @@ Defined `SessionEvent` union type in `src/session-event.ts`. Appends every agent
 event to `sessions/events.jsonl`. Additive — established the canonical persistent
 event log that replaced pino in Step 4.
 
-### 3d — Non-destructive truncation (structural cache fix) — DONE (commit 997d7f7)
-`truncateHistory` renamed to `buildApiMessages` — produces an ephemeral view for a
-single API call; the source `llmMessageLog` is never mutated. `Agent.history` →
-`Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Agentic loop uses
-`apiBudget` (halved per prompt-too-long retry); no mutation of the canonical record.
-Prompt cache prefix is never invalidated by truncation.
+### 3d — Non-destructive truncation (structural cache fix) — DONE (commit 997d7f7); superseded by commit 13c1f9e
+`truncateHistory` renamed to `buildApiMessages` — produced an ephemeral view for a
+single API call; the source `llmMessageLog` was never mutated. `Agent.history` →
+`Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Agentic loop used
+`apiBudget` (halved per prompt-too-long retry).
+
+**Subsequent simplification (commit 13c1f9e):** `buildApiMessages`, `apiBudget`, and the
+prompt-too-long retry loop are all deleted. The agent now sends `compactedContextHistory`
+verbatim — no ephemeral view, no halving, no trimming. Context overflow errors out
+immediately (see "In-turn context management policy" below).
 
 ### 3e-i/ii/iii — Event renames + FK/PK contract — DONE (commits through b6ef87c)
 All `SessionEvent`/`AgentEvent`/`WsEvent` discriminant strings renamed to the
@@ -144,8 +148,9 @@ coordinate-system model (`llm_call`, `llm_error`, `agent_error`, `turn_interrupt
 etc.). `context.jsonl` entries now carry `hash` (SHA-256 8 hex chars of
 `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]`
 — the ordered hashes of every message in the `buildApiMessages()` view sent.
-Agent maintains a parallel `llmMessageHashes[]` array; `contextHashesForView()`
-maps by object-reference identity.
+Agent maintains a parallel `llmContextHashes[]` / `compactedContextHashes[]` array.
+`contextHashesForView()` was deleted in commit 13c1f9e (no longer needed — full
+history always sent).
 
 ### Pre-lock field removals — DONE (commit b59ba48)
 Breaking changes landed before the schema lock to avoid a post-lock migration:
@@ -231,22 +236,20 @@ in `compactedContextHistory` and will be summarised by auto-compact at the start
 of the next turn — so the session's memory of what was attempted is preserved.
 **This is the chosen approach.**
 
-### Consequences
-- `buildSentContext()` remains ephemeral and read-only; it never mutates
-  `compactedContextHistory`. Its role is prompt-caching optimisation (cache
-  breakpoint placement), not a trimming mechanism.
+### Consequences (implemented — commit 13c1f9e)
+- `buildSentContext()` is **deleted**. The agent sends `compactedContextHistory`
+  verbatim on every API call. No ephemeral view, no trimming of any kind.
+- `apiBudget`, `contextHashesForView()`, and `context_view_trimmed` are all deleted.
 - The prompt-too-long retry loop (halving `apiBudget` on each attempt) is removed.
-  On the first prompt-too-long response from the API, the turn errors out immediately.
+  On the first prompt-too-long response from the API, the turn errors out immediately
+  with `llm_error` + actionable `agent_error` ("Use /compact to summarise history,
+  or start a fresh focused turn.") and a diagnostic with `stopReason: "context_overflow"`.
 - Transient-error retries (rate limit 429, overload 529, 500/503) are kept — these
   are unrelated to context size; the context is fine and the server is just busy.
 - Auto-compact fires at turn boundaries only — after the user message is appended,
   before the agentic loop. It never fires mid-loop.
 - If a single turn genuinely exhausts the context window, the system emits
   `agent_error` with an actionable message and exits the loop cleanly.
-- The complexity of maintaining two separate arrays (`compactedContextHistory` and
-  an ephemeral `sentContext`) is retained for now because `buildSentContext()` still
-  serves the prompt-caching role. Collapsing them is a future simplification that
-  can be revisited once the error-out path is in place.
 - **If this approach turns out to be too aggressive in practice** (e.g. operators
   hit context errors on turns that would have succeeded with modest trimming),
   `sessions/events.jsonl` and `diagnosis/` contain the exact request context and

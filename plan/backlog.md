@@ -2,59 +2,7 @@
 
 ## Open items
 
-### [ARCH] Mid-turn context overflow: error-out path
-**Priority: HIGHEST**
 
-When a single agentic turn accumulates enough tool results to exhaust the context
-window, the system should surface an explicit `agent_error` and stop the turn
-cleanly — rather than silently trimming messages (dangerous) or compacting
-mid-loop (operationally undesirable). See `manifest.md` § "In-turn context
-management policy" for the full rationale.
-
-**Acceptance criteria:**
-- `buildSentContext()` (or the agentic loop itself) detects when the context
-  exceeds the model limit and cannot be reduced further without dropping
-  the current turn's messages
-- Emits `agent_error` with a clear, actionable message:
-  e.g. `"Turn context too large — tool results exceeded the context window.
-  Start a new turn with a more targeted approach (narrower grep, offset/limit
-  on file reads, fewer parallel tools)."`
-- The terminal and web UIs must render this `agent_error` with enough prominence
-  that the operator understands what happened and what to do next. A plain error
-  line is fine; the message itself must be human-readable and not a raw exception
-  string. Consider a dedicated render path for context-overflow errors if the
-  generic `agent_error` block is too terse.
-- The turn ends cleanly: `turn_end` is still emitted; history is well-formed
-- `compactedContextHistory` retains the partial turn's messages so auto-compact
-  can summarise them at the next turn start
-- No silent message dropping; no mid-turn compaction
-
-**Implementation notes:**
-- The prompt-too-long retry loop (halving `apiBudget` on each attempt, recomputing
-  `sentContext`) is **removed entirely**. The halvings have the same failure mode as
-  silent trimming: after enough halvings the model receives only the tail — possibly
-  just one fat tool result with no framing — and produces garbage silently. The first
-  prompt-too-long response from the API is already the signal; retrying with a
-  progressively lobotomised context is not better than erroring out immediately.
-- The overflow signal is therefore: the API returns a prompt-too-long error (400
-  "prompt is too long" or 429 "Extra usage is required for long context requests").
-  On that first response, error out — no retries, no budget halvings.
-- Particular care needed around **error events**: the existing `agent_error` path
-  must emit a `turn_end` after the error so the UI closes the turn correctly.
-  Review the current error-exit paths to ensure they all do this.
-- **Tests required:**
-  - Mock stream that always returns `prompt_too_long`; assert `agent_error` is
-    emitted after retries are exhausted and context cannot shrink further
-  - Assert `turn_end` follows `agent_error` in this path
-  - Assert `compactedContextHistory` still contains the partial turn's messages
-    after the error
-  - Assert the next `sendMessage` call succeeds (context not bricked)
-- **If this approach proves too aggressive in practice**: `sessions/events.jsonl`
-  and `diagnosis/` contain the exact request context and error details for every
-  prompt-too-long event. Inspect those files to understand the specific syndrome
-  before introducing any trimming or retry complexity.
-
----
 
 ### [REFACTOR] Event system unification
 **Priority: HIGHEST — prerequisite for schema lock and session resume**
@@ -516,6 +464,7 @@ Acceptance criteria:
 
 ## Closed items
 
+- **[ARCH] Mid-turn context overflow: error-out path** — Done (commit 13c1f9e). `buildSentContext`, `apiBudget`, `contextHashesForView`, and `context_view_trimmed` deleted. Agent sends `compactedContextHistory` verbatim. Context overflow (400 prompt-too-long / 429 extra-usage-required) is non-retryable: emits `llm_error` + actionable `agent_error` ("Use /compact …"), writes diagnostic with `stopReason: "context_overflow"`. 486 tests, gate green.
 - **`/compact` command tests** — Done (commit 8fcf594). 27 tests in `src/compact-command.test.ts` covering all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations (view length before/after), error path, and post-compact continuity. Fixed bug: `/compact` handler passed `this.contextFile ?? undefined` to `appendContextMessage`, coercing `null` (disabled/test) to `undefined` (use production default), causing `compact_user_error` in all tests under `OMEGA_TEST=1`. Fixed to pass `this.contextFile` directly.
 - **UI: tighten tool_call and tool_result display truncation** — Done (commit f99d233). Both blocks now cut at 5 lines / 500 chars in terminal and web. Terminal `renderToolStart` uses `truncateOutput` (was bare `JSON.stringify`). Web `tool_call` uses `truncateOutput` (compact JSON, was `truncate(prettyJSON, 3000)`).
 - **Terminal: minimal append-only prompt editor** — Done (commit 2a9416e). Removed cursor tracking, arrow keys, Ctrl+Left/Right word-jump, Delete, Ctrl+Delete, Ctrl+Backspace, `redrawLine`, `wordBoundaryBack/Forward`. Esc now context-sensitive: non-empty → clear buffer; empty → abort turn. ~240 lines deleted from `input.ts`. Tests rewritten.

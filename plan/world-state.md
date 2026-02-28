@@ -27,7 +27,7 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 - **Zone 3** — current turn: always verbatim, never compacted.
 - Hard message cap: 100 messages. Token budget: 100k.
 
-History grows verbatim. `buildApiMessages()` produces an ephemeral trimmed view for each API call without mutating `llmContextView` — the cache prefix is never invalidated by truncation. `/compact` (Step 3b) is the operator-triggered fix for sessions that grow too long.
+History grows verbatim. The full `compactedContextHistory` is sent verbatim to each API call — no mid-turn trimming. `/compact` (Step 3b) is the operator-triggered fix for sessions that grow too long.
 
 No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session also writes `sessions/context.jsonl` (append-only JSONL of every `MessageParam` as a `ContextRecord`) and `sessions/events.jsonl` (append-only JSONL of every `OmegaEvent`) as persistent records. Both files are **rotated** on startup: renamed to `.prev` files before the fresh session starts. `/compact` only replaces the in-memory `llmContextView`; `context.jsonl` is strictly append-only and is never rewritten.
 
@@ -47,7 +47,7 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
   - **3a** (DONE): `src/context-store.ts` — appends each `MessageParam` to `sessions/context.jsonl`. `null` path is a no-op; mock-provider `Agent` defaults `contextFile` to `null`.
   - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.llmContextView` in memory only; `context.jsonl` is append-only and is never rewritten on compaction.
   - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. All events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
-  - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; produces a trimmed view for each API call without ever mutating `llmContextView`. `Agent.llmContextView` (formerly `llmMessageLog`) is the mutable in-memory context window; `getLlmContextView()` is the public accessor. Prompt-too-long retries reduce `apiBudget` (halved per attempt); the next iteration's `buildApiMessages()` picks up the tighter budget automatically. Cache prefix is never invalidated by truncation.
+  - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; source array never mutated. `Agent.llmContextView` (formerly `llmMessageLog`) is the mutable in-memory context window; `getLlmContextView()` is the public accessor. Note: `buildApiMessages` / `apiBudget` / prompt-too-long retry halvings subsequently deleted (see commit 13c1f9e). Context overflow now errors out immediately.
   - **3e-i** (DONE): Rename `SessionEvent` and `AgentEvent` discriminant strings. 7 renames applied.
   - **3e-ii** (DONE): Rename `WsEvent` / `AgentEvent` variants to match coordinate-system model. `SessionEvent` variants (`events.jsonl`) remain `tool_call`/`tool_result`/`llm_response` — separate namespace.
   - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent.
@@ -103,7 +103,7 @@ The `null`-is-no-op pattern still applies to all write functions. e2e tests use 
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `sessions/events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
 
 ### OmegaEvent Variants (streamed from agent.ts AND persisted to events.jsonl)
-`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
+`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `compact_user_start`, `compact_user_done`, `compact_user_error`, `compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed. `context_view_trimmed` deleted (commit 13c1f9e — no mid-turn trimming). **Pending (3e-v-3):** `session_end` — not yet added; clean shutdown currently indistinguishable from crash.
 
 Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`) not an `OmegaEvent` — explicitly outside the persistence boundary by design.
 
@@ -131,7 +131,7 @@ Both terminal and web UIs apply presentation-only truncation to both `tool_resul
 `llm_response` blocks show `stop_reason` and `usage` only — no content section. Text was already streamed token-by-token; tool calls are shown by the subsequent `tool_call` block. Cache tokens (`cache_write`, `cache_read`) shown only when non-zero. `service_tier` shown only when non-null and not `"standard"`.
 
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmContextView`; never mutates), `PRICING` table; `llmContextView` is the mutable in-memory context window (formerly `llmMessageLog`); `llmContextHashes[]` parallel array stores the content hash of each stored message (formerly `llmMessageHashes`); `appendToHistory()` awaits hash computation then fire-and-forgets the file write; `contextHashesForView()` maps an `apiView` back to its hashes via object-reference identity; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `/compact` handler replaces `llmContextView` and `llmContextHashes` in memory only — `context.jsonl` is never rewritten; on fatal errors calls `writeDiagnostic()`. No `status` AgentEvent — all lifecycle signals are typed. `AgentEvent` is a backward-compat alias for `OmegaEvent`.
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `PRICING` table; `llmContextView` / `compactedContextHistory` is the mutable in-memory context window (formerly `llmMessageLog`); `llmContextHashes[]` / `compactedContextHashes[]` parallel array stores the content hash of each stored message; `appendToHistory()` awaits hash computation then fire-and-forgets the file write; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `/compact` handler replaces context view and hashes in memory only — `context.jsonl` is never rewritten; on fatal errors calls `writeDiagnostic()`. Context overflow (prompt-too-long) is non-retryable: emits `llm_error` + actionable `agent_error`, writes diagnostic with `stopReason: "context_overflow"`. No `buildSentContext`, no `apiBudget`, no `contextHashesForView`. No `status` AgentEvent — all lifecycle signals are typed. `AgentEvent` is a backward-compat alias for `OmegaEvent`.
 - `src/events.ts` — `OmegaEvent` discriminated union (all variants); `StreamSignal` type (`{ type: "text" }`); `exhaustiveCheck(x: never)` guard exported for exhaustive switches in UIs.
 - `src/event-store.ts` — `appendEvent(event, filePath?)` and `clearEvents(filePath?)` — both use `null`-is-no-op pattern. `clearEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`. UI-only fields stripped by `toPersistedEvent()` before disk write.
 - `src/context-store.ts` — `ContextRecord` interface; `buildContextRecord(msg)` (computes hash without writing); `appendContextMessage()` (writes record, returns hash); `clearContextStore()`; `rotateFile()`; `prevPath()`. `sha256hex8()` is internal (not exported). `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation.
@@ -147,32 +147,31 @@ Both terminal and web UIs apply presentation-only truncation to both `tool_resul
 - `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`, reactive `AppState`. `turn_interrupted` closes an open turn; server-own protocol errors use `{ type: "error" }`. No `status` variant. `WsEvent` and `Turn` exported.
 - `src/web/client/App.tsx` — SolidJS UI renderer. `EventBlock` exhaustive switch on `WsEvent` type; `default` calls `exhaustiveCheck`. `truncateOutput` (5 lines / 500 chars, same as terminal) applied to both `tool_call` input and `tool_result` output display.
 - `src/web/server.ts` — `runWebApp()`, `closeOpenTurn()`, `shouldLogEvent()`. `closeOpenTurn` detects open turns on crash and appends `{ type: "turn_interrupted" }`.
-- `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth, object-reference preservation; `[SCHEMA]` tests asserting field removals.
+- `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth; `[SCHEMA]` tests asserting field removals. `buildSentContext` and `contextHashesForView` describe blocks deleted (commit 13c1f9e).
 - `src/compact-command.test.ts` — 27 tests covering the `/compact` slash command: all three event variants (`compact_user_start`, `compact_user_done`, `compact_user_error`), state mutations, error path, and post-compact continuity.
 - `src/compact-auto.test.ts` — 26 tests covering auto-compact: threshold constant, fires above/silent below threshold, error path (fallback continues), 9 BUG-1 scenarios (max_tokens poison → synthetic tool_result + agent_error, well-formed context, next turn succeeds), combined integration scenario.
 
-### Context Poison Prevention
-Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
+### Context Overflow Policy (commit 13c1f9e)
+Context overflow (API returns 400 "prompt is too long" or 429 "extra usage required for long context") is treated as a **non-retryable terminal error**:
+- Emits `llm_error` (carries HTTP status)
+- Emits `agent_error` with actionable message: *"Context too large to send. Use /compact to summarise history, or start a fresh focused turn."*
+- Writes a diagnostic with `stopReason: "context_overflow"`
+- Does **not** retry, does **not** halve a budget — the first overflow response is the signal
 
-1. **`buildApiMessages` short-but-fat handling** (`src/agent.ts`): When all messages fall within the "always keep" tail (≤ `KEEP_RECENT_TURNS*2` messages), instead of returning unchanged, the function drops from the oldest end of the tail, keeping at minimum the last message. This prevented all 5 retries sending the same oversized payload.
+`buildSentContext()`, `apiBudget`, `contextHashesForView()`, and `context_view_trimmed` are all deleted. The agent sends `compactedContextHistory` verbatim on every call. No mid-turn trimming of any kind.
 
-2. **Tool output cap** (`src/tools.ts`): `executeTool()` caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]`
-
-### Non-Destructive Truncation (Step 3d — DONE)
-- `buildApiMessages(history, budget)` — exported from `agent.ts`. Produces an ephemeral trimmed view; the source array is never mutated.
-- `Agent.llmContextView` — the mutable in-memory context window forwarded to future LLM calls (distinct from the append-only `context.jsonl`). Formerly named `llmMessageLog`.
-- `Agent.getLlmContextView()` — public read-only accessor. Formerly `getLlmMessageLog()`.
-- Agentic loop: `apiView = buildApiMessages(llmContextView, apiBudget)` at top of each iteration. `apiBudget` starts at `config.maxContextTokens`; halved on each prompt-too-long retry. `llmContextView` is never touched by truncation.
-- Diagnostic snapshots include both `requestMessages` (the view sent) and `history` (the full `llmContextView`).
+### Tool Output Cap (still active)
+`executeTool()` caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]`
 
 ### FK/PK Contract (Step 3e-iii — DONE)
-Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 of `JSON({ ts, role, content })`, truncated to 8 hex chars) and a `ts` field. Each `llm_call` event carries `contextHashes: string[]` — the ordered hashes of every message in the `buildApiMessages()` view actually sent. Key design decisions:
+Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 of `JSON({ ts, role, content })`, truncated to 8 hex chars) and a `ts` field. Each `llm_call` event carries `contextHashes: string[]` — the ordered hashes of every message in `compactedContextHistory` sent. Key design decisions:
 - Hash computed from `{ ts, role, content }` (not including `hash` itself); `ts` prevents collisions between identical messages.
-- `contextHashes` reflects the truncated view sent, not `llmContextView` — truncated messages are absent.
+- `contextHashes` equals `compactedContextHashes` (the full history — no trimming, no absent messages).
 - SHA-256 via Web Crypto (`crypto.subtle.digest`) benchmarks at ~11 µs per hash — negligible vs. API/tool latency.
 - `appendContextMessage()` returns the hash; `buildContextRecord()` computes hash without writing.
-- Agent maintains `llmContextHashes[]` parallel to `llmContextView`; `appendToHistory()` awaits hash then fire-and-forgets file I/O; `contextHashesForView()` maps by object-reference identity (O(n) scan).
-- On `/compact`: tail hashes are sliced from existing `llmContextHashes` (no re-hash, no re-write); only the new synthetic message is appended to `context.jsonl` via `appendContextMessage()`.
+- Agent maintains `compactedContextHashes[]` parallel to `compactedContextHistory`; `appendToHistory()` awaits hash then fire-and-forgets file I/O.
+- On `/compact`: tail hashes are sliced from existing `compactedContextHashes` (no re-hash, no re-write); only the new synthetic message is appended to `context.jsonl` via `appendContextMessage()`.
+- `contextHashesForView()` deleted (commit 13c1f9e) — no longer needed since the full history is always sent.
 
 ### Key Files (additional)
 - `src/test-guard.ts` — `assertNotProductionPath(filePath, fnName)`. Throws when `OMEGA_TEST=1` and `filePath` is under `sessions/` or `diagnosis/`. No-op in production. Wired into all five production write functions.
@@ -181,10 +180,10 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
-Completed **BUG-1 fix** (commit 9682be6): `max_tokens` mid-tool-call context poison. When the LLM hit `max_tokens` while generating a `tool_use` block, the dangling assistant message was appended before the `stop_reason` check, permanently bricking the session. Fix: detect `toolUseBlocks.length > 0 && stop_reason === "max_tokens"` after `appendToHistory`; synthesise `tool_result` blocks with `is_error: true` for every dangling id; append via `appendToHistory`; emit `tool_result` + `agent_error` events. Turn ends cleanly; next turn succeeds. Confirmed from a real session crash (`events.prev.jsonl`, 2026-02-28).
+Completed **BUG-1 fix** (commit 9682be6): `max_tokens` mid-tool-call context poison. When the LLM hit `max_tokens` while generating a `tool_use` block, the dangling assistant message was appended before the `stop_reason` check, permanently bricking the session. Fix: detect `toolUseBlocks.length > 0 && stop_reason === "max_tokens"` after `appendToHistory`; synthesise `tool_result` blocks with `is_error: true` for every dangling id; append via `appendToHistory`; emit `tool_result` + `agent_error` events. Turn ends cleanly; next turn succeeds.
 
-Completed **`src/compact-auto.test.ts`** (commit 9682be6, 26 tests): `AUTO_COMPACT_THRESHOLD` constant; auto-compact fires above threshold (start/done events, view shrinks, ordering vs `llm_call`); silent below threshold; error path (fallback continues, view unchanged); 9 BUG-1 scenarios (synthetic tool_result, agent_error, well-formed context invariant, next turn succeeds, two tools cut off); combined auto-compact + BUG-1 integration scenario. 497 tests total, gate green.
+Completed **`src/compact-auto.test.ts`** (commit 9682be6, 26 tests): `AUTO_COMPACT_THRESHOLD` constant; auto-compact fires above threshold (start/done events, view shrinks, ordering vs `llm_call`); silent below threshold; error path (fallback continues, view unchanged); 9 BUG-1 scenarios; combined integration scenario.
 
-**Auto-compact trigger design (clarified):** Trigger metric is `llmContextView.length` (message count, not token count). Fires at most once per user turn — after the user message is appended, before the agentic loop starts. Never fires mid-loop. Threshold: `AUTO_COMPACT_THRESHOLD = 60`. Token-based threshold would be more principled but is not a bug; `buildApiMessages` token truncation remains the safety net.
+**Auto-compact trigger design:** Trigger metric is `compactedContextHistory.length` (message count). Fires at most once per user turn — after the user message is appended, before the agentic loop starts. Never fires mid-loop. Threshold: `AUTO_COMPACT_THRESHOLD = 60`.
 
-Cleaned up `diagnosis/` — two forensic snapshots from the 2026-02-28 crash deleted (root cause fixed). BUG-1 and BUG-2 entries in `plan/backlog.md` condensed to summaries (resolved).
+Completed **context overflow error-out** (commit 13c1f9e): deleted `buildSentContext`, `apiBudget`, `contextHashesForView`, `context_view_trimmed`. Context overflow is now a non-retryable terminal error. 486 tests, gate green.
