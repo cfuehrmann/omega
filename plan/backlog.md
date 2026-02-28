@@ -19,6 +19,11 @@ management policy" for the full rationale.
   e.g. `"Turn context too large — tool results exceeded the context window.
   Start a new turn with a more targeted approach (narrower grep, offset/limit
   on file reads, fewer parallel tools)."`
+- The terminal and web UIs must render this `agent_error` with enough prominence
+  that the operator understands what happened and what to do next. A plain error
+  line is fine; the message itself must be human-readable and not a raw exception
+  string. Consider a dedicated render path for context-overflow errors if the
+  generic `agent_error` block is too terse.
 - The turn ends cleanly: `turn_end` is still emitted; history is well-formed
 - `compactedContextHistory` retains the partial turn's messages so auto-compact
   can summarise them at the next turn start
