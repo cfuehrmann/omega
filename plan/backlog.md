@@ -339,6 +339,9 @@ Acceptance criteria:
 
 ## Closed items
 
+- **UI: dual-limit tool result truncation** — Done (commit b29fde5). Terminal and web now cut at 20 lines OR 2000 chars, whichever fires first. Note states total line/char count. Full content preserved in `context.jsonl` via FK.
+- **UI/event: full Anthropic usage in llm_response** — Done (commit a85f69e). `cache_creation_input_tokens`, `cache_read_input_tokens` typed as `number | null` (removed two `as any` casts); `service_tier` added. Terminal/web show cache tokens when non-zero, service_tier when not "standard". `WsEvent` widened.
+- **UI: remove redundant content from llm_response terminal block** — Done (commit 538eac8). Content blocks (text + tool_use) were echoed by stream and tool_call block; removed. `stop_reason` and `usage` retained.
 - **EU-4: UI sync invariant — every OmegaEvent rendered** — Done. All 17 variants rendered; exhaustive switch guards in `terminal/app.ts` and `App.tsx`; `exhaustiveCheck()` in `events.ts`; `WsEvent`/`Turn` exported from `store.ts`; `dev-policy.md` updated. Gate green.
 - **EU-3: Unify AgentEvent and SessionEvent into OmegaEvent** — Done. `tool_call`, `tool_result`, `llm_response` are now the canonical event names everywhere. All consumers updated; gate + e2e green.
 - **Test-pollution prevention (layers a–e)** — Done. All five structural layers

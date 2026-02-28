@@ -19,7 +19,7 @@ Push to origin at least every 3 commits (documented in `README.md`; no longer ha
 `~/omega/` is a git workspace with three subdirectories: `main` (stable agent codebase), `dev` (development version), and `plan`. To run the stable agent on the dev project: `cd ~/omega/dev && bun run ~/omega/main/src/ui-raw.ts`. A shell alias `alias omega='bun run ~/omega/main/src/ui-raw.ts'` is a suggested convenience (not yet confirmed added to shell config). `ui-raw.ts` is the CLI entry point; the web server entry point is `src/web/server.ts`.
 
 ### Branch State
-`develop` is the active branch. Steps 3a–3d, Step 4, Steps 3e-i through 3e-iii, EU-1, and EU-2 are all complete. `main` was previously synced at Steps 3a–3d; it needs merges to pick up Step 4, Steps 3e-i/ii/iii, EU-1, and EU-2.
+`develop` is the active branch. All manifest steps through EU-4 are complete. `main` was previously synced at Steps 3a–3d; it needs merges to pick up Step 4, Steps 3e-i/ii/iii, EU-1 through EU-4, and recent UI cleanups.
 
 ### Context Management
 - **Zone 1** — `plan/world-state.md`: LLM-compacted summary of all prior sessions. Loaded at session start into system prompt. Updated manually at session end. Lives under source control.
@@ -48,19 +48,17 @@ The exported helper `prevPath(filePath)` encapsulates this logic.
   - **3b** (DONE): `/compact` slash command — operator-triggered mid-session compaction. `compactHistory()` in `src/compaction.ts` summarises history head via LLM, keeps last `KEEP_RECENT_TURNS` (10) message-pairs verbatim. Handler in `agent.ts` replaces `this.llmMessageLog` in-place and rewrites `sessions/context.jsonl`.
   - **3c** (DONE): `SessionEvent` type + dual-write to `sessions/events.jsonl`. All events carry ISO `ts`. `logEvent()` private helper in `agent.ts` (fire-and-forget, null-safe). `eventsFile` field with mock-provider heuristic. Wired at every significant site. `clearSessionEvents()` called at startup (rotates to `.prev`).
   - **3d** (DONE): Non-destructive context truncation. `truncateHistory()` renamed to `buildApiMessages()` — purely ephemeral; produces a trimmed view for each API call without ever mutating `llmMessageLog`. `Agent.history` renamed to `Agent.llmMessageLog`; `getHistory()` → `getLlmMessageLog()`. Prompt-too-long retries reduce `apiBudget` (halved per attempt); the next iteration's `buildApiMessages()` picks up the tighter budget automatically. Cache prefix is never invalidated by truncation.
-  - **3e-i** (DONE): Rename `SessionEvent` and `AgentEvent` discriminant strings. 7 renames: `api_call_start`→`llm_call`, `api_error`→`llm_error`, `error`→`agent_error`, `interrupted`→`turn_interrupted`, `oauth_reauthed`→`oauth_refreshed`, `api_retry`→`llm_retry`, `context_truncated`→`context_view_trimmed`.
-  - **3e-ii** (DONE): Rename `WsEvent` / `AgentEvent` variants to match coordinate-system model. `tool_call`→`agent_to_agent_tool_call`, `tool_result`→`agent_to_agent_tool_result`, `llm_response`→`llm_to_agent`. Applied to: `store.ts`, `App.tsx`, `terminal/app.ts`, `agent.ts` (type + emission sites), `session-resilience.test.ts`, `agent-integration.test.ts`, `e2e/web-ui.spec.ts`. `SessionEvent` variants (`events.jsonl`) remain `tool_call`/`tool_result`/`llm_response` — separate namespace. Server-own protocol errors (`invalid JSON`, `turn already in progress`) stay as `{ type: "error" }`.
+  - **3e-i** (DONE): Rename `SessionEvent` and `AgentEvent` discriminant strings. 7 renames applied.
+  - **3e-ii** (DONE): Rename `WsEvent` / `AgentEvent` variants to match coordinate-system model. `SessionEvent` variants (`events.jsonl`) remain `tool_call`/`tool_result`/`llm_response` — separate namespace.
   - **3e-iii** (DONE): FK/PK contract — content-addressed context log. `context.jsonl` entries carry `hash` (SHA-256 8 hex chars, computed from `{ ts, role, content }`) and `ts`. `LlmCallEvent` carries `contextHashes: string[]` — ordered hashes of every message in the `buildApiMessages()` view actually sent.
-  - **[SCHEMA] pre-lock fixes** (DONE, commits b59ba48, aefffb6): `LlmResponseEvent.content` removed (duplication — authoritative record is `context.jsonl`); `LlmCallEvent.messageCount` removed (redundant with `contextHashes.length`); `LlmCallEvent.llmCallNumber` removed (derivable counter). All were breaking changes that had to land before the schema lock. `LlmResponseEvent.usage` records all four Anthropic token counts (`input_tokens`, `output_tokens`, `cache_creation_input_tokens?`, `cache_read_input_tokens?`).
-  - **3e-iv** (TODO): Property names and completeness per event — review all field names; check for missing fields on each variant.
-  - **3e-v** (TODO): Missing event types — decide on `session_end`. (`model_changed` resolved by EU-2.)
-  - **3e-vi** (TODO): Persistence completeness audit — formally document intentional omissions (streaming `text`, per-call `metrics`). `status` is gone (EU-2). `metrics` AgentEvent removed (EU-1).
-  - **3e-vii** (TODO): Forward-compatibility policy — tolerant readers, additive writers, breaking-change migration plan; applies uniformly to new fields and new event types.
-  - **3e-viii** (TODO): Write `plan/schema.md` — definitive reference for every JSONL record; stable contract for session resume.
+  - **[SCHEMA] pre-lock fixes** (DONE): `LlmResponseEvent.content` removed (duplication); `LlmCallEvent.messageCount` and `llmCallNumber` removed (derivable). `ToolCallEvent.input` removed; `ToolResultEvent.outputLength` removed. All FK pointers use hash-based pattern consistently. `LlmResponseEvent.usage` records all four Anthropic token counts plus `service_tier`.
+  - **3e-iv through 3e-viii** (TODO): Property completeness, missing event types, persistence audit, forward-compatibility policy, schema reference doc. See backlog.
   - **3f** (TODO): Session resume, depends on schema lock (3e-viii).
-- **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed. All infra-only events are `SessionEvent` variants. `omega.log`/`omega.prev.log` removed from `.gitignore`.
-- **EU-1** (DONE, commit 00a8078): Delete dead weight — `metrics` and `tool_result_message` removed from `AgentEvent`. In-loop `status` yields removed ("thinking…", "OpenAI provider active", "generating `<tool>` input…"). `/help` slash command removed.
-- **EU-2** (DONE, commit b2ebc02): Replace remaining `status` yields with typed events. `model_changed`, `oauth_token_expired`, `oauth_refreshed` added to `AgentEvent`. `/compact` yields `session_compacted`. `status` variant deleted from `AgentEvent` entirely. `model_changed` also added to `SessionEvent` (persisted).
+- **Step 4** (DONE): Retire pino. `src/logger.ts` deleted, `pino` package removed.
+- **EU-1** (DONE): Delete dead weight — `metrics` and `tool_result_message` removed from `AgentEvent`. In-loop `status` yields removed. `/help` slash command removed.
+- **EU-2** (DONE): Replace remaining `status` yields with typed events. `model_changed`, `oauth_token_expired`, `oauth_refreshed` added to `AgentEvent`. `status` variant deleted entirely.
+- **EU-3** (DONE): Unify `AgentEvent` and `SessionEvent` into one type (`OmegaEvent` in `src/events.ts`). `AgentEvent` kept as backward-compat alias. Stream-facing names now match persisted names: `tool_call`, `tool_result`, `llm_response` are canonical everywhere. `WsEvent` updated to match.
+- **EU-4** (DONE): UI sync invariant — every `OmegaEvent` variant has a render case in both UIs. Exhaustive switch + `exhaustiveCheck(x: never)` guard in `terminal/app.ts` and `App.tsx`. `exhaustiveCheck()` exported from `src/events.ts`.
 
 ### Planning Files
 - `plan/world-state.md` — Zone 1 world state; manually maintained; under source control.
@@ -95,33 +93,24 @@ Tests must **never** write to `sessions/`, `diagnosis/`, or any other production
 
 The `null`-is-no-op pattern still applies to all write functions. e2e tests use `sessions-test/` not `sessions/` and run via `just e2e` (not `bun test`), so they are unaffected by the preload. If a new production side-effect file is added, wire `assertNotProductionPath()` into its write function.
 
-### Event Taxonomy (coordinate-system model)
-Events are named as messages between three parties: **agent**, **user**, **llm**. Direction is explicit in the name.
+### Event Taxonomy
+`OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `sessions/events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
 
-| Event name | Meaning |
-|---|---|
-| `agent_to_llm` | LLM call in main agentic loop |
-| `llm_to_agent` | Response to main loop call |
-| `user_to_agent` | User submits a message |
-| `agent_to_agent_tool_call` | Tool invocation |
-| `agent_to_agent_tool_result` | Tool result |
+### OmegaEvent Variants (streamed from agent.ts AND persisted to events.jsonl)
+`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `session_compacted`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp. No `status` variant — all lifecycle signals are typed.
 
-**One-sided only** (UI-only or infra-only): `text`, `turn_end`, `llm_call`; `startup`, `oauth_*`, `model_changed`, `context_view_trimmed`, `session_compacted`, `llm_retry`, `diagnostic_written`. (`status` and `metrics` removed in EU-1/EU-2.)
+Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`) not an `OmegaEvent` — explicitly outside the persistence boundary by design.
 
-### AgentEvent Variants (streamed from agent.ts)
-`text`, `user_message`, `llm_call`, `llm_to_agent`, `llm_error`, `agent_to_agent_tool_call`, `agent_to_agent_tool_result`, `turn_end`, `agent_error`, `turn_interrupted`, `model_changed`, `oauth_token_expired`, `oauth_refreshed`, `session_compacted`. No `status` variant — all lifecycle signals are typed.
+`llm_call` additionally carries `contextHashes: string[]` — the ordered 8-char SHA-256 hashes of every `ContextRecord` in the `buildApiMessages()` view sent with that call.
 
-### SessionEvent Variants (sessions/events.jsonl)
-`session_start`, `user_message`, `llm_call`, `llm_response`, `tool_call`, `tool_result`, `turn_end`, `llm_error`, `agent_error`, `turn_interrupted`, `session_compacted`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`, `diagnostic_written`, `context_view_trimmed`, `model_changed`. All carry ISO `ts` timestamp.
+`tool_call` additionally carries `contextHash: string` — FK to the assistant `context.jsonl` record containing the `tool_use` block. `input` field removed (content is in `context.jsonl`).
 
-`llm_call` additionally carries `contextHashes: string[]` — the ordered 8-char SHA-256 hashes of every `ContextRecord` in the `buildApiMessages()` view sent with that call. Cross-references `context.jsonl` entries by their `hash` field.
+`tool_result` additionally carries `contextHash: string` — FK to the user `context.jsonl` record containing the `tool_result` block(s). `outputLength` removed (derivable).
 
-`tool_call` additionally carries `contextHash: string` — hash of the assistant `context.jsonl` record containing the `tool_use` block. `input` field was removed (content is in `context.jsonl`).
-
-`tool_result` additionally carries `contextHash: string` — hash of the user `context.jsonl` record containing the `tool_result` block(s). `outputLength` and `input` fields were removed (content is in `context.jsonl`, length is derivable).
+`llm_response` carries metadata only: `stopReason`, `model`, `provider`, `url`, `usage`, and `contextHash` (FK). No `content` field — content is in `context.jsonl`. `usage` includes `input_tokens`, `output_tokens`, `cache_creation_input_tokens?`, `cache_read_input_tokens?`, `service_tier?`.
 
 ### WsEvent Variants (WebSocket protocol, src/web/client/store.ts)
-`connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`, `user_message`, `text`, `agent_to_agent_tool_call`, `agent_to_agent_tool_result`, `model_changed`, `oauth_token_expired`, `oauth_refreshed`, `session_compacted`, `llm_call`, `llm_to_agent`, `world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error` (server-own protocol errors only), `turn_interrupted`. (`status` removed in EU-2.)
+`connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`, `user_message`, `text`, `tool_call`, `tool_result`, `llm_response`, `model_changed`, `oauth_token_expired`, `oauth_refreshed`, `session_compacted`, `llm_call`, `world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error` (server-own protocol errors only), `turn_interrupted`. No `status` variant.
 
 ### context.jsonl Record Shape (ContextRecord)
 Each line is a JSON object with fields:
@@ -130,23 +119,29 @@ Each line is a JSON object with fields:
 - `role` — `"user"` or `"assistant"`.
 - `content` — string or content-block array (same as `Anthropic.MessageParam.content`).
 
+### UI Display Policy
+Both terminal and web UIs apply presentation-only truncation to tool result output — **20 lines or 2000 chars**, whichever fires first. The truncation note states both the total line count and total char count. Full content is always in `context.jsonl` via `ToolResultEvent.contextHash`. The `result` field on `ToolResultEvent` is UI-only and is stripped before writing to `events.jsonl`.
+
+`llm_response` blocks show `stop_reason` and `usage` only — no content section. Text was already streamed token-by-token; tool calls are shown by the subsequent `tool_call` block. Cache tokens (`cache_write`, `cache_read`) shown only when non-zero. `service_tier` shown only when non-null and not `"standard"`.
+
 ### Key Files
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; `llmMessageHashes[]` parallel array stores the content hash of each stored message; `appendToHistory()` awaits hash computation then fire-and-forgets the file write; `contextHashesForView()` maps an `apiView` back to its hashes via object-reference identity; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `eventsFile` field with mock-provider heuristic; `/compact` handler passes `{ rotate: false }` to `clearContextStore` and rebuilds `llmMessageHashes`; on fatal errors calls `writeDiagnostic()`. No `status` AgentEvent — all lifecycle signals are typed.
-- `src/session-event.ts` — `SessionEvent` discriminated union (17 variants, including `model_changed` added in EU-2). `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`. `LlmCallEvent` carries `contextHashes: string[]` (use `.length` for message count — `messageCount` and `llmCallNumber` fields removed as derivable). `LlmResponseEvent` carries metadata only: `stopReason`, `model`, `provider`, `url`, `usage`, and `contextHash` (FK). `ToolCallEvent` carries `contextHash: string` (FK to assistant context record); `input` removed. `ToolResultEvent` carries `contextHash: string` (FK to user context record); `outputLength` removed (derivable).
-- `src/context-store.ts` — `ContextRecord` interface; `buildContextRecord(msg)` (computes hash without writing); `appendContextMessage()` (writes record, returns hash); `clearContextStore()`; `rotateFile()`; `prevPath()`. `sha256hex8()` is internal (not exported). `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`). `rotateFile()` renames file to `.prev` variant (via `prevPath()`) then creates fresh empty file — shared by both context and events stores.
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider` type, `buildApiMessages()` (ephemeral API-call view from `llmMessageLog`; never mutates), `PRICING` table; `llmMessageLog` grows **verbatim**; `llmMessageHashes[]` parallel array stores the content hash of each stored message; `appendToHistory()` awaits hash computation then fire-and-forgets the file write; `contextHashesForView()` maps an `apiView` back to its hashes via object-reference identity; builds `systemBlocks` and `cachedTools` with `cache_control`; `estimateCostWithCache()`; `estimateCacheSavings()`; `private activeModel`; `addCacheControlToLastMessage()` helper; parallel tool execution; `logEvent()` private helper (fire-and-forget, null-safe) wired at every significant site; `/compact` handler passes `{ rotate: false }` to `clearContextStore` and rebuilds `llmMessageHashes`; on fatal errors calls `writeDiagnostic()`. No `status` AgentEvent — all lifecycle signals are typed. `AgentEvent` is a backward-compat alias for `OmegaEvent`.
+- `src/events.ts` — `OmegaEvent` discriminated union (all variants); `StreamSignal` type (`{ type: "text" }`); `exhaustiveCheck(x: never)` guard exported for exhaustive switches in UIs.
+- `src/session-event.ts` — `appendSessionEvent(event, filePath?)` and `clearSessionEvents(filePath?)` — both use `null`-is-no-op pattern. `clearSessionEvents()` rotates via `rotateFile()`. `DEFAULT_EVENTS_FILE = "sessions/events.jsonl"`. UI-only fields (`content`, `raw`, `request`, `input`, `formatted`, `result`) stripped by `toPersistedEvent()` before disk write.
+- `src/context-store.ts` — `ContextRecord` interface; `buildContextRecord(msg)` (computes hash without writing); `appendContextMessage()` (writes record, returns hash); `clearContextStore()`; `rotateFile()`; `prevPath()`. `sha256hex8()` is internal (not exported). `clearContextStore()` rotates by default; accepts `{ rotate: false }` for in-place truncation (used by `/compact`).
 - `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported.
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
 - `src/diagnosis.ts` — `writeDiagnostic(data, diagDir?)` writes a JSON snapshot to `diagnosis/<ISO-timestamp>.json`; `null` disables; `checkDiagnostics()` returns existing snapshot paths sorted oldest-first.
 - `src/ui-raw.ts` — **thin re-export shim** (26 lines). CLI entry point.
 - `src/terminal/input.ts` — `parseKeys`, `displayWidth`, all line-editing helpers.
-- `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput`, and all block renderers.
-- `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Calls `clearContextStore()` then `clearSessionEvents()` at startup (rotates both session files). Shutdown ritual documented in `README.md ## Shutdown`.
+- `src/terminal/renderer.ts` — ANSI color helpers, `printBlock`, `println`, `now()`, `truncateOutput` (dual-limit: 20 lines / 2000 chars, whichever first), and all block renderers. `renderApiResponse` shows `stop_reason` + `usage` only (no content). Cache/service_tier lines are conditional on non-zero/non-standard values.
+- `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Calls `clearContextStore()` then `clearSessionEvents()` at startup (rotates both session files). Exhaustive switch on `OmegaEvent | StreamSignal`; `default` calls `exhaustiveCheck`. Shutdown ritual documented in `README.md ## Shutdown`.
 - `src/tools.ts` — All tool implementations. `executeTool()` applies `MAX_TOOL_OUTPUT_CHARS = 100_000` cap to all tool results before they enter history; oversized output is truncated with an actionable note.
 - `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)` returns `{ turnLine, sessionLine }`.
-- `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`, reactive `AppState`. `turn_interrupted` closes an open turn; server-own protocol errors use `{ type: "error" }`. No `status` variant.
-- `src/web/client/App.tsx` — SolidJS UI renderer. `EventBlock` switch on `WsEvent` type.
+- `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`, reactive `AppState`. `turn_interrupted` closes an open turn; server-own protocol errors use `{ type: "error" }`. No `status` variant. `WsEvent` and `Turn` exported.
+- `src/web/client/App.tsx` — SolidJS UI renderer. `EventBlock` exhaustive switch on `WsEvent` type; `default` calls `exhaustiveCheck`. `truncateOutput` (same dual-limit logic as terminal) applied to tool result display.
 - `src/web/server.ts` — `runWebApp()`, `closeOpenTurn()`, `shouldLogEvent()`. `closeOpenTurn` detects open turns on crash and appends `{ type: "turn_interrupted" }`.
-- `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth, object-reference preservation; `[SCHEMA]` tests asserting `llm_call` has no `messageCount`, `llm_response` has no `content`, `tool_call` carries `contextHash` and has no `input`, `tool_result` carries `contextHash` and has no `outputLength`.
+- `src/context-hash.test.ts` — integration tests for the FK/PK contract: record shape, hash uniqueness, `contextHashes` cross-referencing, tool-loop growth, object-reference preservation; `[SCHEMA]` tests asserting field removals.
 
 ### Context Poison Prevention
 Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
@@ -155,19 +150,17 @@ Two bugs fixed (2026-02-25), both now subsumed by the Step 3d architecture:
 
 2. **Tool output cap** (`src/tools.ts`): `executeTool()` caps all tool results at `MAX_TOOL_OUTPUT_CHARS = 100_000` before they enter history. Oversized output is truncated with a note: `[truncated: tool output was N chars; showing first 100000. Use offset/limit or a more specific query to see other parts.]`
 
-### Non-Destructive Truncation (Step 3d — DONE, commit 997d7f7)
+### Non-Destructive Truncation (Step 3d — DONE)
 - `buildApiMessages(history, budget)` — exported from `agent.ts`. Produces an ephemeral trimmed view; the source array is never mutated.
 - `Agent.llmMessageLog` — the canonical, append-only record of all LLM messages. Never shortened by truncation.
 - `Agent.getLlmMessageLog()` — public read-only accessor.
 - Agentic loop: `apiView = buildApiMessages(llmMessageLog, apiBudget)` at top of each iteration. `apiBudget` starts at `config.maxContextTokens`; halved on each prompt-too-long retry. `llmMessageLog` is never touched.
-- Anthropic retry sub-loop: `attemptApiView` / `attemptCachedMessages` recomputed per attempt to pick up the tighter budget — also fixes a pre-existing stale-`cachedMessages` bug.
 - Diagnostic snapshots include both `requestMessages` (the view sent) and `history` (the full `llmMessageLog`).
 
-### FK/PK Contract (Step 3e-iii — DONE, commit b6ef87c)
+### FK/PK Contract (Step 3e-iii — DONE)
 Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 of `JSON({ ts, role, content })`, truncated to 8 hex chars) and a `ts` field. Each `llm_call` event carries `contextHashes: string[]` — the ordered hashes of every message in the `buildApiMessages()` view actually sent. Key design decisions:
 - Hash computed from `{ ts, role, content }` (not including `hash` itself); `ts` prevents collisions between identical messages.
 - `contextHashes` reflects the truncated view sent, not `llmMessageLog` — truncated messages are absent.
-- `contextHashes` is the correct cross-reference key for a call (there is no `llmCallNumber` — it was removed as a derivable counter).
 - SHA-256 via Web Crypto (`crypto.subtle.digest`) benchmarks at ~11 µs per hash — negligible vs. API/tool latency.
 - `appendContextMessage()` returns the hash; `buildContextRecord()` computes hash without writing.
 - Agent maintains `llmMessageHashes[]` parallel to `llmMessageLog`; `appendToHistory()` awaits hash then fire-and-forgets file I/O; `contextHashesForView()` maps by object-reference identity (O(n) scan).
@@ -179,12 +172,15 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
 
 ### Recent Session Outcomes
-Completed **EU-1** (commit 00a8078): Deleted dead weight from `AgentEvent`. Removed `metrics` and `tool_result_message` variants. Removed in-loop `status` yields ("thinking…", "OpenAI provider active", "generating `<tool>` input…"). Removed `/help` slash command (unknown commands now yield `agent_error`). Gate green.
+Completed **UI redundancy cleanup (this session)**: Three improvements to terminal and web UI presentation:
+1. **`llm_response` content removed from terminal UI** (commit 538eac8): Content blocks (text + tool_use) were fully redundant — text already streamed, tool calls shown by `tool_call` block. `stop_reason` and `usage` retained. `INDENT3` and `raw` parameter removed from `renderApiResponse`. Web UI already matched this behaviour.
+2. **Full Anthropic usage in `llm_response` event** (commit a85f69e): `cache_creation_input_tokens` and `cache_read_input_tokens` now typed as `number | null` (matching SDK); `service_tier` added. Removed two `as any` casts. Terminal shows `cache_write`/`cache_read` when non-zero, `service_tier` when not `"standard"`. Web UI matches. `WsEvent` usage type widened.
+3. **Dual-limit tool result truncation** (commit b29fde5): Terminal and web now truncate tool result display at 20 lines OR 2000 chars (whichever first). Note states total line count and total char count. Persistence unaffected — full content in `context.jsonl` via FK.
 
-Completed **EU-2** (commit b2ebc02): Replaced all remaining `status` yields with typed events. Added `model_changed`, `oauth_token_expired`, `oauth_refreshed` to `AgentEvent`; `/sonnet`, `/opus`, `/codex` yield `model_changed` (also persisted as `SessionEvent`). `/compact` yields `session_compacted`; empty-history case yields `agent_error`. OAuth flows yield typed `oauth_token_expired`/`oauth_refreshed`. `status` variant deleted from `AgentEvent` entirely. Also fixed pre-existing `sha256hex8` unused export. All tests updated; gate green.
+Completed **EU-4** (DONE): All 17 `OmegaEvent` variants have render cases in both UIs. Exhaustive switch + `exhaustiveCheck(x: never)` guard enforced in `terminal/app.ts` and `App.tsx`. `exhaustiveCheck()` exported from `events.ts`. `WsEvent`/`Turn` exported from `store.ts`. Gate green (458 tests, Vite build clean).
 
-Completed **Step 3e-iii** (FK/PK content-addressed context log): `context.jsonl` entries now carry `hash` and `ts`; `LlmCallEvent` carries `contextHashes: string[]`. New helpers `buildContextRecord`, `ContextRecord` in `context-store.ts`. Agent gains `llmMessageHashes[]`, `appendToHistory()`, `contextHashesForView()`. `/compact` handler rebuilt to also rebuild `llmMessageHashes`. Pushed to `origin/develop`.
+Completed **EU-3** (DONE): Unified `AgentEvent` and `SessionEvent` into `OmegaEvent`. `tool_call`, `tool_result`, `llm_response` are now canonical everywhere. All consumers updated; gate + e2e green.
 
-Completed **test-pollution guardrails (all five layers)**: preload gate (a), hard-error write guard (b), Agent constructor coercion (c), `makeTestAgent` factory (d), pre-commit grep (e).
+Completed **EU-1** (commit 00a8078) and **EU-2** (commit b2ebc02): Dead weight removed; all remaining `status` yields replaced with typed events. Gate green.
 
-Completed **pre-schema-lock field removals** (commits b59ba48, aefffb6): removed `LlmResponseEvent.content`, `LlmCallEvent.messageCount`, `LlmCallEvent.llmCallNumber`. Also removed `ToolCallEvent.input` and `ToolResultEvent.outputLength` (commit 34f7708). All FK pointers across the schema now use the hash-based pattern consistently.
+Completed **test-pollution guardrails (all five layers)**, **pre-schema-lock field removals**, **Step 3e-iii FK/PK contract**. See prior session notes for detail.
