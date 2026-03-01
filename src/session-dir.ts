@@ -5,12 +5,14 @@
  * in the current working directory (SESSION-2: sessions live alongside the
  * project being worked on, not alongside the Omega source):
  *
- *   .omega/sessions/2025-07-04T14-32-05/
+ *   .omega/sessions/2025-07-04T14-32-05-a3f7c1b2/
  *     context.jsonl
  *     events.jsonl
  *
- * The folder name is an ISO 8601 datetime truncated to seconds, with colons
- * replaced by hyphens so the name is valid on all filesystems.
+ * The folder name is an ISO 8601 datetime truncated to seconds (colons
+ * replaced with hyphens for filesystem safety), followed by a hyphen and an
+ * 8-char random hex suffix. The suffix makes every session directory globally
+ * unique — no collisions even if two sessions start within the same second.
  *
  * Benefits:
  *   - Sessions are co-located with the project — can be committed to the
@@ -30,14 +32,23 @@ export const SESSIONS_ROOT = ".omega/sessions";
 /** Root directory for e2e test session folders. Distinct from production sessions. */
 export const TEST_SESSIONS_ROOT = ".omega/test-sessions";
 
+/** Regex matching a session dir name — both old (no suffix) and new (with suffix) formats. */
+const SESSION_DIR_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-[0-9a-f]{8})?$/;
+
 /**
- * Generate a session folder name from the current timestamp.
- * Format: `YYYY-MM-DDTHH-MM-SS` (colons replaced with hyphens).
+ * Generate a session folder name from the current timestamp plus a random
+ * 8-char hex suffix for global uniqueness.
+ * Format: `YYYY-MM-DDTHH-MM-SS-<hex8>`
  */
 export function makeSessionDirName(now: Date = new Date()): string {
   // toISOString() → "2025-07-04T14:32:05.123Z"
   // Take the first 19 chars ("2025-07-04T14:32:05"), replace colons
-  return now.toISOString().slice(0, 19).replace(/:/g, "-");
+  const ts = now.toISOString().slice(0, 19).replace(/:/g, "-");
+  // 4 random bytes → 8 hex chars
+  const suffix = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `${ts}-${suffix}`;
 }
 
 export interface SessionPaths {
@@ -93,11 +104,11 @@ export async function findPreviousEventsFile(
     return null; // .omega/sessions/ doesn't exist yet
   }
 
-  // Filter to directories that look like session dirs (timestamp pattern)
-  // and exclude the current session's dir name.
+  // Filter to directories that look like session dirs (timestamp pattern,
+  // with or without the random hex suffix) and exclude the current session.
   const currentDirName = currentDir.split("/").pop() ?? currentDir;
   const sessionDirs = entries
-    .filter((e) => e !== currentDirName && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(e))
+    .filter((e) => e !== currentDirName && SESSION_DIR_RE.test(e))
     .sort(); // lexicographic = chronological for ISO-format names
 
   if (sessionDirs.length === 0) return null;

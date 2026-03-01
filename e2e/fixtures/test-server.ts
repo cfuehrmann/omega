@@ -28,11 +28,11 @@
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
-import { mkdir, readFile, unlink } from "fs/promises";
+import { readFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
 import { appendEvent } from "../../src/event-store.js";
-import { TEST_SESSIONS_ROOT, type SessionPaths } from "../../src/session-dir.js";
+import { makeSessionDir, TEST_SESSIONS_ROOT, type SessionPaths } from "../../src/session-dir.js";
 import type { OmegaEvent } from "../../src/events.js";
 
 const MAIN_PORT = 3001;
@@ -78,27 +78,12 @@ const receivedMessages: string[] = [];
  * Current session directory paths — created by makeSessionDir() on startup
  * and on each /control/reset. Events are persisted to eventsFile on disk.
  *
- * Because makeSessionDirName truncates to seconds, rapid resets within the
- * same second would produce the same directory name. We prevent this by
- * adding a unique counter suffix to each new session dir name.
+ * makeSessionDir() appends an 8-char random hex suffix to the timestamp, so
+ * rapid resets within the same second produce distinct directory names without
+ * any counter bookkeeping.
  */
 
-let sessionResetCount = 0;
-
-async function makeTestSessionDir(): Promise<SessionPaths> {
-  sessionResetCount += 1;
-  const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-  const dirName = `${ts}-${String(sessionResetCount).padStart(4, "0")}`;
-  const dir = join(TEST_SESSIONS_ROOT, dirName);
-  await mkdir(dir, { recursive: true });
-  return {
-    dir,
-    contextFile: join(dir, "context.jsonl"),
-    eventsFile: join(dir, "events.jsonl"),
-  };
-}
-
-let sessionPaths: SessionPaths = await makeTestSessionDir();
+let sessionPaths: SessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
 
 /**
  * Monotonically increasing agent instance counter.
@@ -133,7 +118,7 @@ async function loadReplayEvents(): Promise<object[]> {
 async function resetState(): Promise<void> {
   currentAgentId += 1;
   // Create a fresh uniquely-named session directory for the next session
-  sessionPaths = await makeTestSessionDir();
+  sessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
 }
 
 function sendWs(event: object): void {
@@ -228,7 +213,7 @@ Bun.serve({
       receivedMessages.length = 0;
       currentAgentId = 1;
       // Create a fresh uniquely-named session directory (old one left on disk for inspection)
-      sessionPaths = await makeTestSessionDir();
+      sessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
       return new Response("ok");
     }
 

@@ -14,6 +14,9 @@ src/web/public/index.html
 coverage
 *.lcov
 
+# Playwright e2e test artifacts (screenshots, traces, last-run metadata)
+test-results/
+
 # logs
 logs
 _.log

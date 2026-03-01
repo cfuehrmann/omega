@@ -28,9 +28,16 @@ describe("SESSIONS_ROOT", () => {
 // ---------------------------------------------------------------------------
 
 describe("makeSessionDirName", () => {
-  it("formats a date as YYYY-MM-DDTHH-MM-SS", () => {
+  it("starts with YYYY-MM-DDTHH-MM-SS timestamp", () => {
     const d = new Date("2025-07-04T14:32:05.123Z");
-    expect(makeSessionDirName(d)).toBe("2025-07-04T14-32-05");
+    const name = makeSessionDirName(d);
+    expect(name.startsWith("2025-07-04T14-32-05-")).toBe(true);
+  });
+
+  it("ends with an 8-char lowercase hex suffix", () => {
+    const name = makeSessionDirName(new Date());
+    const suffix = name.slice(-8);
+    expect(suffix).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it("has no colons (filesystem-safe)", () => {
@@ -38,17 +45,27 @@ describe("makeSessionDirName", () => {
     expect(name).not.toContain(":");
   });
 
-  it("matches the timestamp pattern", () => {
+  it("matches the full YYYY-MM-DDTHH-MM-SS-<hex8> pattern", () => {
     const name = makeSessionDirName(new Date());
-    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[0-9a-f]{8}$/);
+  });
+
+  it("total length is 28 characters", () => {
+    const name = makeSessionDirName(new Date());
+    expect(name.length).toBe(28); // 19 (timestamp) + 1 (-) + 8 (hex)
+  });
+
+  it("produces unique names for rapid successive calls", () => {
+    const now = new Date();
+    const a = makeSessionDirName(now);
+    const b = makeSessionDirName(now);
+    expect(a).not.toBe(b);
   });
 
   it("uses current time when no arg given", () => {
     const before = new Date();
     const name = makeSessionDirName();
-    const after = new Date();
-    // The name should be between before and after (within same second range)
-    expect(name.length).toBe(19);
+    // Date portion matches today
     expect(name.slice(0, 10)).toBe(before.toISOString().slice(0, 10));
   });
 });
@@ -70,11 +87,11 @@ describe("makeSessionDir path structure", () => {
   it("contextFile and eventsFile are inside dir", () => {
     // Test the naming logic: dir = sessions/<name>, files inside it
     const name = makeSessionDirName(new Date("2025-01-15T09:05:30.000Z"));
+    // name now has an 8-char hex suffix — just verify the timestamp prefix
+    expect(name).toMatch(/^2025-01-15T09-05-30-[0-9a-f]{8}$/);
     const dir = join(SESSIONS_ROOT, name);
     const contextFile = join(dir, "context.jsonl");
     const eventsFile = join(dir, "events.jsonl");
-    expect(contextFile).toBe(join(dir, "context.jsonl"));
-    expect(eventsFile).toBe(join(dir, "events.jsonl"));
     expect(contextFile.startsWith(dir)).toBe(true);
     expect(eventsFile.startsWith(dir)).toBe(true);
   });
@@ -97,60 +114,72 @@ describe("findPreviousEventsFile", () => {
     // Since we can't control SESSIONS_ROOT, we rely on the regex filter.
     // This test just checks null is returned gracefully when no dirs exist.
     // We'll call it with a fake currentDir that matches a timestamp pattern.
-    const fakeDir = join(".omega", "sessions", "9999-12-31T23-59-59");
+    const fakeDir = join(".omega", "sessions", "9999-12-31T23-59-59-ffffffff");
     const result = await findPreviousEventsFile(fakeDir);
     // Either null (no sessions dir) or a string path or null (all sessions are current)
     // We can only assert it doesn't throw and returns string | null
     expect(result === null || typeof result === "string").toBe(true);
   });
 
-  it("returns null when there is no previous session (only current)", async () => {
-    // Make a temp dir that simulates .omega/sessions/ with only the current session
-    // We test the filtering logic directly
-    tempRoot = await mkdtemp(join(tmpdir(), "omega-sesdir-test-"));
-    const fakeSessionsRoot = join(tempRoot, ".omega", "sessions");
-
-    // Simulate: only one session dir (the current one)
-    const current = "2025-07-04T14-32-05";
-    await mkdir(join(fakeSessionsRoot, current), { recursive: true });
-    await writeFile(join(fakeSessionsRoot, current, "events.jsonl"), "");
-
-    // We can't redirect SESSIONS_ROOT at runtime, but we can verify the
-    // filtering logic by examining what findPreviousEventsFile would filter out.
-    // Test the regex pattern used in the implementation:
+  it("returns null when there is no previous session (only current)", () => {
+    // Test the filtering logic directly using the same regex as the implementation.
+    // Tolerates both old format (no suffix) and new format (with 8-char hex suffix).
+    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-[0-9a-f]{8})?$/;
+    const current = "2025-07-04T14-32-05-a3f7c1b2";
     const allEntries = [current];
-    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/;
     const filtered = allEntries.filter(e => e !== current && regex.test(e));
     expect(filtered).toHaveLength(0);
   });
 
-  it("selects the most recent dir among multiple sessions", () => {
-    // Test the sorting / selection logic
+  it("selects the most recent dir among multiple sessions (new format)", () => {
+    // New format names with hex suffix — lexicographic sort still correct because
+    // the timestamp prefix dominates and the suffix is random (not time-ordered).
     const dirs = [
-      "2025-07-01T10-00-00",
-      "2025-07-03T09-30-00",
-      "2025-07-04T14-32-05",  // ← most recent
+      "2025-07-01T10-00-00-aabbccdd",
+      "2025-07-03T09-30-00-11223344",
+      "2025-07-04T14-32-05-a3f7c1b2",  // ← most recent timestamp
     ];
-    const current = "2025-07-04T15-00-00";  // current session (later)
-    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/;
+    const current = "2025-07-04T15-00-00-deadbeef";
+    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-[0-9a-f]{8})?$/;
     const candidates = dirs
       .filter(e => e !== current && regex.test(e))
       .sort();
     const mostRecent = candidates[candidates.length - 1];
-    expect(mostRecent).toBe("2025-07-04T14-32-05");
+    expect(mostRecent).toBe("2025-07-04T14-32-05-a3f7c1b2");
+  });
+
+  it("tolerates old format (no suffix) alongside new format", () => {
+    // Pre-existing sessions without a suffix must still be found.
+    const dirs = [
+      "2025-07-01T10-00-00",           // old format — no suffix
+      "2025-07-03T09-30-00-aabbccdd",  // new format
+    ];
+    const current = "2025-07-04T15-00-00-deadbeef";
+    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-[0-9a-f]{8})?$/;
+    const candidates = dirs.filter(e => e !== current && regex.test(e)).sort();
+    expect(candidates).toEqual([
+      "2025-07-01T10-00-00",
+      "2025-07-03T09-30-00-aabbccdd",
+    ]);
+    expect(candidates[candidates.length - 1]).toBe("2025-07-03T09-30-00-aabbccdd");
   });
 
   it("excludes non-timestamp-shaped directory names", () => {
     const entries = [
-      "2025-07-04T14-32-05",     // valid
-      "my-cool-session",          // renamed (SESSION-5) — excluded
-      "2025-07-04",               // too short — excluded
-      "2025-07-04T14-32-05-extra", // too long — excluded
+      "2025-07-04T14-32-05-a3f7c1b2",  // new format — valid
+      "2025-07-04T14-32-05",            // old format — still valid (tolerated)
+      "my-cool-session",                 // renamed (SESSION-5) — excluded
+      "2025-07-04",                      // too short — excluded
+      "2025-07-04T14-32-05-UPPERCASE",  // uppercase hex — excluded
+      "2025-07-04T14-32-05-toolong99",  // suffix too long — excluded
     ];
-    const current = "2025-07-05T00-00-00";
-    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/;
+    const current = "2025-07-05T00-00-00-ffffffff";
+    const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-[0-9a-f]{8})?$/;
     const candidates = entries.filter(e => e !== current && regex.test(e));
-    expect(candidates).toEqual(["2025-07-04T14-32-05"]);
+    expect(candidates).toEqual([
+      "2025-07-04T14-32-05-a3f7c1b2",
+      "2025-07-04T14-32-05",
+    ]);
   });
 
   afterEach(async () => {
