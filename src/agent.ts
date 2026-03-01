@@ -5,7 +5,8 @@ import { getAuthToken, forceRefreshToken } from "./auth.js";
 
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory, AUTO_COMPACT_THRESHOLD } from "./compaction.js";
-import { readSystemPromptAppend, systemPromptAppendPath } from "./system-prompt-append.js";
+import { readSystemPromptAppend, systemPromptAppendPath } from "./system-prompt/append.js";
+import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal } from "./events.js";
@@ -494,14 +495,14 @@ export class Agent {
     }
   }
 
-  /** Build the system prompt from config + optional system-prompt-append content. */
+  /** Build the system prompt from all parts. */
   buildSystemPrompt(): string {
-    const base = this.authMode === "oauth"
-      ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
-      : config.systemPrompt;
-    return this.systemPromptAppendContent
-      ? base + "\n\n## World State (from previous sessions)\n\n" + this.systemPromptAppendContent
-      : base;
+    return assembleSystemPrompt({
+      authMode: this.authMode,
+      cwd: process.cwd(),
+      maxOutputTokens: config.maxOutputTokens,
+      appendContent: this.systemPromptAppendContent,
+    });
   }
 
   setProvider(provider: ProviderName): void {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { config } from "./config";
+import { corePrompt } from "./system-prompt/core.js";
 
 /**
  * Structural invariant tests for the planning file system.
@@ -14,14 +14,16 @@ import { config } from "./config";
  *  - backlog.md must exist (the issue tracker we keep).
  *  - past.md and present.md must NOT exist (deleted — redundant with the
  *    system-prompt-append file).
- *  - The system prompt must tell the agent to read README.md for orientation.
- *  - The system prompt must mention system-prompt-append.md (the append mechanism).
+ *  - The core prompt must tell the agent to read README.md for orientation.
+ *  - The core prompt must mention system-prompt-append.md (the append mechanism).
  *  - README.md must reference system-prompt-append.md and backlog.md.
- *  - The system prompt must NOT reference past.md or present.md.
+ *  - The core prompt must NOT reference past.md or present.md.
  */
 
 const ROOT = join(import.meta.dir, "..");
 const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
+// Instantiate the core prompt with representative values for invariant checks.
+const corePromptText = corePrompt({ cwd: "/test/cwd", maxOutputTokens: 32768 });
 
 describe("planning files", () => {
   it("backlog.md exists", () => {
@@ -40,12 +42,12 @@ describe("planning files", () => {
     expect(existsSync(join(ROOT, "README.md"))).toBe(true);
   });
 
-  it("system prompt tells agent to read README.md", () => {
-    expect(config.systemPrompt).toContain("README.md");
+  it("core prompt tells agent to read README.md", () => {
+    expect(corePromptText).toContain("README.md");
   });
 
-  it("system prompt mentions system-prompt-append.md", () => {
-    expect(config.systemPrompt).toContain("system-prompt-append.md");
+  it("core prompt mentions system-prompt-append.md", () => {
+    expect(corePromptText).toContain("system-prompt-append.md");
   });
 
   it("README.md references system-prompt-append.md", () => {
@@ -60,11 +62,11 @@ describe("planning files", () => {
     expect(readme).toContain("manifest.md");
   });
 
-  it("system prompt does not reference past.md", () => {
-    expect(config.systemPrompt).not.toContain("past.md");
+  it("core prompt does not reference past.md", () => {
+    expect(corePromptText).not.toContain("past.md");
   });
 
-  it("system prompt does not reference present.md", () => {
-    expect(config.systemPrompt).not.toContain("present.md");
+  it("core prompt does not reference present.md", () => {
+    expect(corePromptText).not.toContain("present.md");
   });
 });

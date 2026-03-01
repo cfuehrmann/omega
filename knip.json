@@ -2,7 +2,11 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "entry": [
     "src/web/client/main.tsx",
-    "src/**/*.test.ts"
+    "src/**/*.test.ts",
+    "src/system-prompt/index.ts",
+    "src/system-prompt/core.ts",
+    "src/system-prompt/append.ts",
+    "src/system-prompt/identity.ts"
   ],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": ["src/web/vite.config.ts"],

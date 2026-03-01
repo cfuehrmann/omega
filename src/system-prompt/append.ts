@@ -1,13 +1,16 @@
 /**
- * System-prompt append file for Omega.
+ * System prompt — Part 3: Optional append content.
  *
- * When `.omega/system-prompt-append.md` exists in the project directory,
- * its contents are appended to the system prompt at session start.
- * This is the opt-in mechanism for injecting persistent project-specific
- * context (e.g. a world-state summary) into every API call.
+ * If the project contains a `.omega/system-prompt-append.md` file, its
+ * contents are appended to the system prompt at session start. This is the
+ * generic opt-in mechanism for injecting persistent project-specific context
+ * (e.g. a world-state summary, architecture notes, or any other operator-
+ * maintained text) into every API call.
  *
  * The file is project-owned and source-controlled. It is never written
  * automatically — only by the operator or by an explicit compaction command.
+ * If the file is absent, nothing is appended and the system prompt is
+ * unchanged — making this safe to use when Omega operates on foreign repos.
  *
  * Path: <cwd>/.omega/system-prompt-append.md
  */
@@ -29,11 +32,11 @@ export function systemPromptAppendPath(cwd: string = process.cwd()): string {
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// File I/O
 // ---------------------------------------------------------------------------
 
 /**
- * Read the system-prompt-append content from disk.
+ * Read the append content from disk.
  * Returns null if the file does not exist.
  */
 export async function readSystemPromptAppend(
@@ -48,7 +51,7 @@ export async function readSystemPromptAppend(
 }
 
 /**
- * Write the system-prompt-append content to disk.
+ * Write the append content to disk.
  * Creates parent directories as needed.
  */
 export async function writeSystemPromptAppend(
@@ -57,4 +60,21 @@ export async function writeSystemPromptAppend(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf-8");
+}
+
+// ---------------------------------------------------------------------------
+// Section formatter
+// ---------------------------------------------------------------------------
+
+/** Section header used when appending content to the system prompt. */
+export const APPEND_SECTION_HEADER = "## World State (from previous sessions)";
+
+/**
+ * Wrap non-null append content in its section header, ready to be
+ * concatenated onto the end of the assembled system prompt.
+ * Returns null when content is null (file was absent).
+ */
+export function formatAppendSection(content: string | null): string | null {
+  if (content === null) return null;
+  return `${APPEND_SECTION_HEADER}\n\n${content}`;
 }

@@ -10,10 +10,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { readSystemPromptAppend, writeSystemPromptAppend, systemPromptAppendPath } from "./system-prompt-append.js";
+import { readSystemPromptAppend, writeSystemPromptAppend, systemPromptAppendPath } from "./system-prompt/append.js";
 import { Agent, type StreamProvider } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
-import { config } from "./config.js";
+import { corePrompt } from "./system-prompt/core.js";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -118,12 +118,15 @@ describe("writeSystemPromptAppend", () => {
 // 2. Agent.buildSystemPrompt()
 // ---------------------------------------------------------------------------
 
+// A sentinel string that is always present in the core prompt.
+const CORE_PROMPT_SENTINEL = "You are Omega, a coding agent";
+
 describe("Agent.buildSystemPrompt()", () => {
   it("returns base system prompt when no append content is loaded", async () => {
     const { agent, dispose } = await makeTestAgent();
     disposeAll.push(dispose);
     const prompt = agent.buildSystemPrompt();
-    expect(prompt).toContain(config.systemPrompt);
+    expect(prompt).toContain(CORE_PROMPT_SENTINEL);
     expect(prompt).not.toContain("World State");
   });
 
@@ -134,7 +137,7 @@ describe("Agent.buildSystemPrompt()", () => {
     await writeSystemPromptAppend("## My project state\nAll good.", appendPath);
     await agent.loadSystemPromptAppend(appendPath);
     const prompt = agent.buildSystemPrompt();
-    expect(prompt).toContain(config.systemPrompt);
+    expect(prompt).toContain(CORE_PROMPT_SENTINEL);
     expect(prompt).toContain("World State (from previous sessions)");
     expect(prompt).toContain("## My project state\nAll good.");
   });
@@ -146,7 +149,7 @@ describe("Agent.buildSystemPrompt()", () => {
     await writeSystemPromptAppend("APPENDED", appendPath);
     await agent.loadSystemPromptAppend(appendPath);
     const prompt = agent.buildSystemPrompt();
-    expect(prompt.indexOf(config.systemPrompt)).toBeLessThan(prompt.indexOf("APPENDED"));
+    expect(prompt.indexOf(CORE_PROMPT_SENTINEL)).toBeLessThan(prompt.indexOf("APPENDED"));
   });
 
   it("returns base prompt when file does not exist (graceful no-op)", async () => {
@@ -179,7 +182,7 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
     const systemText = llmCall.request.system
       .map((b: any) => b.text ?? "")
       .join("");
-    expect(systemText).toContain(config.systemPrompt);
+    expect(systemText).toContain(CORE_PROMPT_SENTINEL);
     expect(systemText).not.toContain("World State");
   });
 

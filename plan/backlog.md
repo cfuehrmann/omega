@@ -2,6 +2,51 @@
 
 ## Open items
 
+### [SYSPROMPT] System prompt architecture
+
+#### SYSPROMPT-1 — Modular system prompt folder `src/system-prompt/`
+
+**Priority: HIGHEST — do first**
+
+Move the system prompt from a monolithic hardcoded string in `src/config.ts`
+into a dedicated folder `src/system-prompt/` with one TypeScript file per part.
+Each file exports a function that takes typed args and returns a string.
+
+Parts:
+- `src/system-prompt/identity.ts` — Claude Code prefix (conditional on auth mode)
+- `src/system-prompt/core.ts` — main instructions (takes `{ cwd, maxOutputTokens }`)
+- `src/system-prompt/append.ts` — absorbs `src/system-prompt-append.ts`; reads optional `.omega/system-prompt-append.md`; generic, project-neutral
+- `src/system-prompt/index.ts` — assembles all parts, exports `buildSystemPrompt(args)`
+
+`buildSystemPrompt()` in `agent.ts` becomes a thin call to the imported function.
+`systemPrompt` key removed from `config.ts`.
+
+Acceptance criteria:
+- All existing tests pass
+- New tests cover each part in isolation and the assembled result
+- `src/system-prompt-append.ts` deleted; all imports updated
+- `config.systemPrompt` removed; `planning-files.test.ts` updated accordingly
+
+#### SYSPROMPT-2 — Review and correct content of `core.ts`
+
+**Priority: HIGH — do after SYSPROMPT-1**
+
+Once the structure is in place, review the prose in `src/system-prompt/core.ts`
+for accuracy and completeness. Known issues to address during review:
+
+- "If a `.omega/system-prompt-append.md` file exists, it has already been
+  injected above — do not re-read it." — misleading; the injection label in
+  `buildSystemPrompt()` says `## World State (from previous sessions)`, not
+  the file name.
+- Any other stale, incorrect, or missing instructions.
+
+Acceptance criteria:
+- All instructions in `core.ts` are accurate and verified against actual behaviour
+- Misleading/stale text removed or corrected
+- `planning-files.test.ts` updated if any sentinel strings change
+
+---
+
 ### [DECOUPLE] Omega self-coupling — use on foreign repos
 
 **Status: DONE**
