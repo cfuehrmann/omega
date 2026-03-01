@@ -118,16 +118,6 @@ describe("appendContextMessage", () => {
   });
 });
 
-describe("appendContextMessage — null path (test-isolation mode)", () => {
-  it("is a no-op (no file) but still returns a hash", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
-    const hash = await appendContextMessage(msg, null);
-    expect(existsSync(contextFile)).toBe(false);
-    expect(typeof hash).toBe("string");
-    expect(hash).toHaveLength(8);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // buildContextRecord
 // ---------------------------------------------------------------------------

@@ -87,7 +87,7 @@ Any other `/…` input is rejected with an error. Ask the LLM directly for help.
 
 Tests must **never** write to `.omega/sessions/` or any other production file.
 
-**Primary mechanism:** `makeTestAgent()` from `src/test-utils.ts` creates a real per-call temp dir, passes real `contextFile`/`eventsFile` to `Agent`, and returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Call `dispose()` in `afterEach`. Tests use real session files — no null-path blind spots.
+**Primary mechanism:** `makeTestAgent()` from `src/test-utils.ts` calls `makeSessionDir(now, TEST_SESSIONS_ROOT)` to write real session files under `.omega/test-sessions/` — isolation by path, not deletion. Each call gets a unique timestamped dir; `dispose()` is a no-op (sessions accumulate as inspectable artifacts). Returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Tests use real session files — no null-path blind spots.
 
 Belt-and-suspenders secondary layers: `OMEGA_TEST=1` preload via `bunfig.toml`; `assertNotProductionPath()` guard wired into all write functions; Agent constructor coercion; pre-commit grep for bare `new Agent()` in test files.
 

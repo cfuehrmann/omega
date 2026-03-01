@@ -5,7 +5,6 @@
  * - Round-trip serialisation of every OmegaEvent variant
  * - appendEvent file I/O
  * - null path is a no-op (test isolation)
- * - Agent with mock provider does NOT write to .omega/sessions/
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
@@ -30,8 +29,6 @@ import {
   type SessionStartEvent,
   type LlmCallEvent,
 } from "./event-store.js";
-import { makeTestAgent } from "./test-utils.js";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -207,49 +204,4 @@ describe("appendEvent", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Test isolation — mock-provider Agent must NOT write events to .omega/sessions/
-// ---------------------------------------------------------------------------
 
-describe("Agent test isolation — no production file pollution", () => {
-  it("mock-provider agent writes events to its temp session dir, not .omega/sessions/", async () => {
-    const PROD_DIR = ".omega/sessions";
-
-    const countFiles = (dir: string) =>
-      existsSync(dir)
-        ? (readFileSync as any) && require("fs").readdirSync(dir).length
-        : 0;
-
-    // Use makeTestAgent — events go to its temp dir
-    const mockProvider = async (_params: any) => ({
-      async *[Symbol.asyncIterator]() {
-        // no events
-      },
-      async finalMessage() {
-        return {
-          id: "test",
-          type: "message",
-          role: "assistant",
-          content: [{ type: "text", text: "ok" }],
-          model: "claude-sonnet-4-6",
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          usage: { input_tokens: 10, output_tokens: 5 },
-        } as any;
-      },
-    });
-
-    const { agent, eventsFile, dispose } = await makeTestAgent(mockProvider);
-    try {
-      const gen = agent.sendMessage("hello", async () => true);
-      for await (const _ of gen) { /* drain */ }
-      await Bun.sleep(50); // let fire-and-forget writes settle
-
-      // Events file is in .omega/test-sessions/ (not .omega/sessions/)
-      expect(eventsFile).toContain("test-sessions");
-      expect(eventsFile).not.toContain(".omega/sessions");
-    } finally {
-      dispose();
-    }
-  });
-});

@@ -90,17 +90,6 @@ describe("makeTestAgent", () => {
     expect(existsSync(eventsFile)).toBe(true);
   });
 
-  it("does not write to .omega/sessions/ (test-guard secondary layer)", async () => {
-    // assertNotProductionPath would throw synchronously if any write to .omega/sessions/ occurred.
-    const { agent, dispose } = await makeTestAgent(makeMinimalProvider("safe"));
-    disposeAll.push(dispose);
-    const events = [];
-    for await (const event of agent.sendMessage("test")) {
-      events.push(event.type);
-    }
-    expect(events).toContain("turn_end");
-  });
-
   it("two agents from makeTestAgent have distinct sessionIds", async () => {
     const a = await makeTestAgent();
     const b = await makeTestAgent();

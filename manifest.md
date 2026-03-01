@@ -61,9 +61,10 @@ that does **nothing** — test sessions are preserved so they can be inspected.
 
 `assertNotProductionPath()` in `src/test-guard.ts` is a belt-and-suspenders
 guard: it throws if any test (detected via `OMEGA_TEST=1`) attempts to write
-to `.omega/sessions/` or `.omega/test-sessions/` via a write function that
-belongs to the test infrastructure. (Production write functions are allowed to
-write to `.omega/test-sessions/` — that is the whole point.)
+to `.omega/sessions/`. `.omega/test-sessions/` is explicitly **allowed** — that
+is where unit tests and e2e tests are expected to write. The guard exists to
+prevent accidental writes to the production session root, not to restrict test
+infrastructure writes to their designated test root.
 
 The e2e tests follow the same pattern: `test-server.ts` calls `makeSessionDir`
 with `TEST_SESSIONS_ROOT` so every Playwright test run produces real,

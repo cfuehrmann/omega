@@ -32,7 +32,7 @@ History grows verbatim. The full `compactedContextHistory` is sent verbatim to e
 No raw session persistence. No "resume session?" prompt. The world file is the only cross-session artifact. Each session writes to its own timestamped directory `.omega/sessions/YYYY-MM-DDTHH-MM-SS/` containing `context.jsonl` (append-only JSONL of every `MessageParam` as a `ContextRecord`) and `events.jsonl` (append-only JSONL of every `OmegaEvent`). Old session directories accumulate and are never touched. There is no file rotation and no `.prev` files. `/compact` only replaces the in-memory `llmContextView`; `context.jsonl` is strictly append-only and is never rewritten.
 
 ### Session Directory Model
-Each startup calls `makeSessionDir()` in `src/session-dir.ts`, which creates `.omega/sessions/YYYY-MM-DDTHH-MM-SS/` (filesystem-safe, no colons) with empty `context.jsonl` and `events.jsonl`. `SESSIONS_ROOT = ".omega/sessions"`. `findPreviousEventsFile()` finds the most recent prior session directory (for startup crash detection). There is no rotation machinery — no `rotateFile()`, no `prevPath()`, no `.prev` files.
+Each startup calls `makeSessionDir()` in `src/session-dir.ts`, which creates `.omega/sessions/YYYY-MM-DDTHH-MM-SS-mmm-<hex8>/` (millisecond precision + 8-char random hex suffix for global uniqueness; colons/dots replaced with hyphens for filesystem safety) with eager empty `context.jsonl` and `events.jsonl` (created immediately by `makeSessionDir`, not lazily on first write). `SESSIONS_ROOT = ".omega/sessions"`. `TEST_SESSIONS_ROOT = ".omega/test-sessions"`. `findPreviousEventsFile()` finds the most recent prior session directory (for startup crash detection). There is no rotation machinery — no `rotateFile()`, no `prevPath()`, no `.prev` files.
 
 ### Manifest Refactor Status
 `manifest.md` describes a major redesign. All steps through schema pre-lock are done.
@@ -73,15 +73,15 @@ Three cache breakpoints: system prompt, last tool definition, last history messa
 ### Test Isolation — Never Pollute Production Files
 Tests must **never** write to `.omega/sessions/` or any other production file.
 
-**Primary mechanism:** `makeTestAgent()` in `src/test-utils.ts` creates a real per-call temp dir via `mkdtempSync`, passes real `contextFile`/`eventsFile` paths to `Agent`, and returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Tests call `dispose()` in `afterEach` to clean up. Tests use real session files — no null-path blind spots.
+**Primary mechanism:** `makeTestAgent()` in `src/test-utils.ts` calls `makeSessionDir(now, TEST_SESSIONS_ROOT)` to write real session files to `.omega/test-sessions/` (not `/tmp`, not `.omega/sessions/`). Isolation is by path, not by deletion. Each call gets a unique dir (timestamp + counter); `dispose()` is a no-op — sessions persist as inspectable artifacts. Returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. No null-path blind spots.
 
 **Belt-and-suspenders layers (secondary):**
 - **Layer a:** `bunfig.toml` preloads `src/test-setup.ts` → sets `OMEGA_TEST=1` before any test runs.
-- **Layer b:** `assertNotProductionPath()` in `src/test-guard.ts` is wired into all production write functions. Writing to `.omega/sessions/` when `OMEGA_TEST=1` throws immediately.
+- **Layer b:** `assertNotProductionPath()` in `src/test-guard.ts` guards `.omega/sessions/` only (`.omega/test-sessions/` is explicitly allowed). Writing to `.omega/sessions/` when `OMEGA_TEST=1` throws immediately.
 - **Layer c:** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`.
 - **Layer e:** `scripts/pre-commit` greps for bare `new Agent()` in `*.test.ts` files. Fails with an actionable message pointing at `makeTestAgent`.
 
-All write functions treat `null` path as a no-op. e2e tests use their own temp session dirs via `just e2e` (unaffected by the preload). If a new production side-effect file is added, wire `assertNotProductionPath()` into its write function.
+All write functions treat `null` path as a no-op. e2e tests also write to `.omega/test-sessions/` via `makeSessionDir(…, TEST_SESSIONS_ROOT)`. If a new production side-effect file is added, wire `assertNotProductionPath()` into its write function.
 
 ### Event Taxonomy
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
@@ -123,7 +123,7 @@ Both terminal and web UIs apply presentation-only truncation to both `tool_resul
 - `src/events.ts` — `OmegaEvent` discriminated union (all variants); `StreamSignal` type (`{ type: "text" }`); `exhaustiveCheck(x: never)` guard exported for exhaustive switches in UIs.
 - `src/event-store.ts` — `appendEvent(event, filePath?)` — uses `null`-is-no-op pattern. UI-only fields stripped by `toPersistedEvent()` before disk write.
 - `src/context-store.ts` — `ContextRecord` interface; `buildContextRecord(msg)` (computes hash without writing); `appendContextMessage()` (writes record, returns hash). `sha256hex8()` is internal (not exported). No rotation machinery.
-- `src/session-dir.ts` — `makeSessionDir()` creates `.omega/sessions/YYYY-MM-DDTHH-MM-SS/` with empty `context.jsonl` and `events.jsonl`; `makeSessionDirName()`; `findPreviousEventsFile()` (finds most recent prior session dir for crash detection); `SESSIONS_ROOT = ".omega/sessions"`.
+- `src/session-dir.ts` — `makeSessionDir()` creates `.omega/sessions/YYYY-MM-DDTHH-MM-SS-mmm-<hex8>/` and eagerly writes empty `context.jsonl` + `events.jsonl`; `makeSessionDirName()`; `findPreviousEventsFile()` (finds most recent prior session dir for crash detection); `SESSIONS_ROOT = ".omega/sessions"`; `TEST_SESSIONS_ROOT = ".omega/test-sessions"`.
 - `src/compaction.ts` — `compactWorldState()` (LLM-based world-state fold) and `compactHistory()` (Step 3b — mid-session history compaction for `/compact`). `KEEP_RECENT_TURNS` = 10 exported. Returns `{ history, syntheticMessage, tailStartIndex, originalCount, newCount }` — caller uses `tailStartIndex` to reuse existing hashes rather than re-hashing tail messages.
 - `src/world-state.ts` — `readWorldState()`, `writeWorldState()`, `projectWorldStatePath()` → `<cwd>/plan/world-state.md`
 - `src/ui-raw.ts` — **thin re-export shim** (26 lines). CLI entry point.
@@ -160,10 +160,13 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - On `/compact`: tail hashes are sliced from existing `compactedContextHashes` (no re-hash, no re-write); only the new synthetic message is appended to `context.jsonl` via `appendContextMessage()`.
 
 ### Key Files (additional)
-- `src/test-guard.ts` — `assertNotProductionPath(filePath, fnName)`. Throws when `OMEGA_TEST=1` and `filePath` is under `.omega/sessions/` or `diagnosis/`. No-op in production. Wired into all production write functions.
+- `src/test-guard.ts` — `assertNotProductionPath(filePath, fnName)`. Throws when `OMEGA_TEST=1` and `filePath` is under `.omega/sessions/` or `diagnosis/`. `.omega/test-sessions/` is explicitly allowed. No-op in production. Wired into all production write functions.
 - `src/test-setup.ts` — Bun test preload (wired via `bunfig.toml`). Sets `OMEGA_TEST=1` before any test file loads.
 - `src/test-guard.test.ts` — tests covering throw/no-throw behaviour of `assertNotProductionPath`.
-- `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory. Creates a real per-call temp dir, passes real `contextFile`/`eventsFile` to `Agent`. Returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Tests call `dispose()` in `afterEach`.
+- `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory. Calls `makeSessionDir(now, TEST_SESSIONS_ROOT)` → real session files in `.omega/test-sessions/`. `dispose()` is a no-op (sessions preserved). Returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`.
+- `src/session-dir.test.ts` — real-I/O tests for `makeSessionDir`: verifies both files are created eagerly (even for sessions with no messages).
 
 ### Recent Work
-- **TEST-1** (commit 9feb285): Migrated all agent tests to real temp-dir session files. `makeTestAgent()` now creates a real per-call temp dir and returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. The `sessions-test/` directory is eliminated. 498 unit + 41 e2e tests green.
+- **TEST-1** (commit 9feb285): Migrated all agent tests to real temp-dir (`/tmp`) session files. `makeTestAgent()` returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. The `sessions-test/` directory eliminated. 498 unit + 41 e2e tests green.
+- **TEST-2** (commit 06909d3): Moved test sessions from `/tmp` to `.omega/test-sessions/`. `makeTestAgent()` now uses `makeSessionDir(now, TEST_SESSIONS_ROOT)`. `dispose()` is a no-op — sessions accumulate as inspectable artifacts. `assertNotProductionPath()` updated to allow `.omega/test-sessions/`. e2e tests also write to `.omega/test-sessions/`. 499 unit + 41 e2e green.
+- **Eager session files** (commit d9f9f08): `makeSessionDir()` now creates both `context.jsonl` and `events.jsonl` immediately (flag `wx`), so sessions without any messages are never incomplete. 3 new tests in `session-dir.test.ts`. 502 unit + 41 e2e green.

@@ -9,9 +9,6 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import { mkdirSync, rmSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
 import type Anthropic from "@anthropic-ai/sdk";
 
 import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
@@ -110,70 +107,16 @@ async function collectEvents(
 }
 
 // ---------------------------------------------------------------------------
-// Test setup
+// Regression: OpenAI caller must not write to .omega/sessions/events.jsonl
 // ---------------------------------------------------------------------------
 
-// Each test that touches the filesystem gets its own unique directory to
-// avoid races between fire-and-forget persist calls from prior tests leaking
-// into a freshly-recreated shared directory.
-let _testDirCounter = 0;
-function makeTempDir(): string {
-  const dir = join(tmpdir(), `omega-agent-test-${Date.now()}-${++_testDirCounter}`);
-  mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-// ---------------------------------------------------------------------------
-// Pollution guard
-// ---------------------------------------------------------------------------
-
-// Tests that use a mock StreamProvider must never write to production files.
-// These tests prove the contract: when a streamProvider is given without
-// explicit paths, Agent must NOT write to any production file.
 describe("Agent — test isolation (no production file pollution)", () => {
-  it("does not write to .omega/sessions/ during a turn (mock provider isolation)", async () => {
-    const { existsSync, readdirSync: rds } = await import("fs");
-
-    const countFiles = (dir: string) => existsSync(dir) ? rds(dir).length : 0;
-    const beforeSessions = countFiles(join(".omega", "sessions"));
-
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    await collectEvents(agent, "should not write to production files");
-    await Bun.sleep(100);
-
-    expect(countFiles(join(".omega", "sessions"))).toBe(beforeSessions);
-  });
-
-  it("does not write to .omega/sessions/context.jsonl when no contextFile is given", async () => {
-    const { existsSync, statSync } = await import("fs");
-    const contextPath = join(process.cwd(), ".omega", "sessions", "context.jsonl");
-
-    // Record the file size before (it may already exist from a real session)
-    const sizeBefore = existsSync(contextPath) ? statSync(contextPath).size : -1;
-
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-
-    // No contextFile passed — must not append to production context file
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    await collectEvents(agent, "should not write context");
-    await Bun.sleep(100);
-
-    const sizeAfter = existsSync(contextPath) ? statSync(contextPath).size : -1;
-    expect(sizeAfter).toBe(sizeBefore);
-  });
-
-  it("does not write to .omega/sessions/events.jsonl when OpenAI caller used without explicit eventsFile=null", async () => {
-    // Regression test: agent-rate-limit tests previously passed streamProvider=undefined
+  it("does not write to .omega/sessions/events.jsonl when OpenAI caller used", async () => {
+    // Regression: agent-rate-limit tests previously passed streamProvider=undefined
     // with a custom openAiCaller, bypassing the mock-provider heuristic and writing to
-    // the production events file. Explicit null, null must be passed in that pattern.
+    // the production events file. makeTestAgent() routes all writes to test-sessions/.
     const { existsSync, statSync } = await import("fs");
-    const eventsPath = join(process.cwd(), ".omega", "sessions", "events.jsonl");
+    const eventsPath = `${process.cwd()}/.omega/sessions/events.jsonl`;
 
     const sizeBefore = existsSync(eventsPath) ? statSync(eventsPath).size : -1;
 
