@@ -465,7 +465,7 @@ export class Agent {
   async init(): Promise<string> {
     // Auth flow (matching pi-ai's anthropic.js):
     // OAuth via claude.ai → access_token (sk-ant-oat-...)
-    // Pass as authToken (Bearer auth) with Claude Code identity headers.
+    // Pass as authToken (Bearer auth) with Claude Code beta headers.
     // The API requires claude-code-20250219 + oauth-2025-04-20 betas.
     const accessToken = await getAuthToken();
     if (accessToken) {
@@ -498,7 +498,6 @@ export class Agent {
   /** Build the system prompt from all parts. */
   buildSystemPrompt(): string {
     return assembleSystemPrompt({
-      authMode: this.authMode,
       cwd: process.cwd(),
       maxOutputTokens: config.maxOutputTokens,
       appendContent: this.systemPromptAppendContent,
@@ -691,7 +690,7 @@ export class Agent {
       let turnOutputTokens = 0;
       const toolCallsThisTurn: string[] = [];
 
-      // Build system prompt (OAuth identity prefix + system-prompt-append if loaded).
+      // Build system prompt (core instructions + system-prompt-append if loaded).
       const systemPrompt = this.buildSystemPrompt();
 
       if (this.provider === "openai" && !fallbackEnabled) {

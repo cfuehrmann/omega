@@ -38,7 +38,7 @@ History grows verbatim. The full `compactedContextHistory` is sent verbatim to e
 Each startup calls `makeSessionDir()` in `src/session-dir.ts`, which creates `.omega/sessions/YYYY-MM-DDTHH-MM-SS-mmm-<hex8>/` with eager empty `context.jsonl` and `events.jsonl`. `SESSIONS_ROOT = ".omega/sessions"`. `TEST_SESSIONS_ROOT = ".omega/test-sessions"`. `findPreviousEventsFile()` finds the most recent prior session directory (for startup crash detection). No rotation machinery.
 
 ### Open Work
-See `plan/backlog.md`. Priority areas: SCHEMA-1–SCHEMA-7 (schema lock + session resume), ARCH-1 (clean provider boundary), UX-1/UX-2 (abort/prompt queuing).
+See `plan/backlog.md`. Priority areas: SYSPROMPT-2 (system prompt pipeline review, HIGH), SCHEMA-1–SCHEMA-7 (schema lock + session resume), ARCH-1 (clean provider boundary), UX-1/UX-2 (abort/prompt queuing).
 
 ### Planning Files
 - `.omega/system-prompt-append.md` — appended to system prompt at session start; manually maintained; under source control.
@@ -112,7 +112,7 @@ Context overflow (400 "prompt too long" or 429 "extra usage required") is non-re
 - `src/context-store.ts` — `ContextRecord`; `buildContextRecord(msg)`; `appendContextMessage()` returns hash.
 - `src/session-dir.ts` — `makeSessionDir()`; `makeSessionDirName()`; `findPreviousEventsFile()`; `SESSIONS_ROOT`; `TEST_SESSIONS_ROOT`.
 - `src/compaction.ts` — `compactWorldState()` and `compactHistory()`. `KEEP_RECENT_TURNS = 10`.
-- `src/system-prompt-append.ts` — `readSystemPromptAppend()`, `writeSystemPromptAppend()`, `systemPromptAppendPath()`.
+- `src/system-prompt/` — modular system prompt: `identity.ts` (OAuth prefix), `core.ts` (main instructions), `append.ts` (`readSystemPromptAppend()`, `writeSystemPromptAppend()`, `systemPromptAppendPath()`, `formatAppendSection()`), `index.ts` (`buildSystemPrompt()` assembler). 39 tests in `system-prompt/system-prompt.test.ts`.
 - `src/ui-raw.ts` — thin re-export shim. CLI entry point.
 - `src/terminal/input.ts` — `parseKeys`, `displayWidth`. Minimal append-only line editor.
 - `src/terminal/renderer.ts` — ANSI block renderers; `truncateOutput` (5 lines / 500 chars).

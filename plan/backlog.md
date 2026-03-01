@@ -6,43 +6,57 @@
 
 #### SYSPROMPT-1 — Modular system prompt folder `src/system-prompt/`
 
-**Priority: HIGHEST — do first**
+**Status: DONE** (commit 815c74b)
 
-Move the system prompt from a monolithic hardcoded string in `src/config.ts`
-into a dedicated folder `src/system-prompt/` with one TypeScript file per part.
-Each file exports a function that takes typed args and returns a string.
+System prompt extracted from `src/config.ts` into `src/system-prompt/`:
+- `identity.ts` — Claude Code prefix (oauth-conditional)
+- `core.ts` — main instructions as readable prose template (args: `cwd`, `maxOutputTokens`)
+- `append.ts` — absorbed `src/system-prompt-append.ts`; generic opt-in append mechanism
+- `index.ts` — assembles all parts via `buildSystemPrompt(args)`
+- 39 new tests in `system-prompt.test.ts`
+- `config.systemPrompt` removed; `src/system-prompt-append.ts` deleted
 
-Parts:
-- `src/system-prompt/identity.ts` — Claude Code prefix (conditional on auth mode)
-- `src/system-prompt/core.ts` — main instructions (takes `{ cwd, maxOutputTokens }`)
-- `src/system-prompt/append.ts` — absorbs `src/system-prompt-append.ts`; reads optional `.omega/system-prompt-append.md`; generic, project-neutral
-- `src/system-prompt/index.ts` — assembles all parts, exports `buildSystemPrompt(args)`
-
-`buildSystemPrompt()` in `agent.ts` becomes a thin call to the imported function.
-`systemPrompt` key removed from `config.ts`.
-
-Acceptance criteria:
-- All existing tests pass
-- New tests cover each part in isolation and the assembled result
-- `src/system-prompt-append.ts` deleted; all imports updated
-- `config.systemPrompt` removed; `planning-files.test.ts` updated accordingly
-
-#### SYSPROMPT-2 — Review and correct content of `core.ts`
+#### SYSPROMPT-2 — Review the full system prompt assembly process
 
 **Priority: HIGH — do after SYSPROMPT-1**
 
-Once the structure is in place, review the prose in `src/system-prompt/core.ts`
-for accuracy and completeness. Known issues to address during review:
+Now that the structure is in place, conduct a holistic review of the entire
+system prompt assembly pipeline — not just the prose in `core.ts`, but every
+step from disk read through to the string sent to the API:
 
-- "If a `.omega/system-prompt-append.md` file exists, it has already been
-  injected above — do not re-read it." — misleading; the injection label in
-  `buildSystemPrompt()` says `## World State (from previous sessions)`, not
-  the file name.
-- Any other stale, incorrect, or missing instructions.
+- **`loadSystemPromptAppend()`** — when is it called? What happens if it is
+  called multiple times, or not at all? Is the timing correct relative to
+  `init()`?
+- **`buildSystemPrompt()`** — called on every API call; is that the right
+  granularity? Should any parts be computed once and cached?
+- **`src/system-prompt/index.ts`** — is the assembly order (core → append)
+  correct? Are the section headers clear to the model?
+- **`formatAppendSection()`** — is `## World State (from previous sessions)`
+  the best header? Does it correctly signal to the model how to treat that
+  content?
+- **`core.ts` prose** — review all instructions for accuracy and completeness.
+  Known issue: "If a `.omega/system-prompt-append.md` file exists, it has
+  already been injected above — do not re-read it." is misleading; the actual
+  injected header is `## World State (from previous sessions)`, not the
+  filename.
+- **Prompt caching** — the system prompt is wrapped in a single
+  `cache_control: ephemeral` block. Is one cache breakpoint enough? Are there
+  cases where the cache is invalidated unexpectedly (e.g. `cwd` or
+  `maxOutputTokens` changing between calls)?
+- **OAuth identity prefix** — previously there was a Claude Code identity
+  string prepended for OAuth. Verify whether this is still present, still
+  required, and correctly placed.
+- **Test coverage** — does `system-prompt.test.ts` cover the assembly
+  integration end-to-end, or only individual parts in isolation?
 
 Acceptance criteria:
-- All instructions in `core.ts` are accurate and verified against actual behaviour
+- Every stage of the pipeline is understood and documented (inline comments
+  and/or in `manifest.md`)
+- All instructions in `core.ts` are accurate and verified against actual
+  behaviour
 - Misleading/stale text removed or corrected
+- Any structural issues found (ordering, caching, timing) are either fixed
+  here or broken out as new backlog items
 - `planning-files.test.ts` updated if any sentinel strings change
 
 ---
@@ -52,9 +66,10 @@ Acceptance criteria:
 **Status: DONE**
 
 Resolved by renaming `plan/world-state.md` → `.omega/system-prompt-append.md`
-and `src/world-state.ts` → `src/system-prompt-append.ts`. The file is now
-opt-in by existence: if `.omega/system-prompt-append.md` is present, its
-contents are appended to the system prompt; if absent, nothing is injected.
+and extracting the read/write logic into `src/system-prompt/append.ts` (part
+of the SYSPROMPT-1 modular system prompt refactor). The file is opt-in by
+existence: if `.omega/system-prompt-append.md` is present, its contents are
+appended to the system prompt; if absent, nothing is injected.
 Foreign repos will not have this file and are therefore unaffected. System
 prompt examples and docstrings updated to be project-neutral. INFRA-4 closed.
 

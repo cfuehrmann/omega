@@ -51,7 +51,7 @@ Omega has two categories of production side-effect files:
 | Category | Production path | Test path |
 |----------|----------------|-----------|
 | Sessions (test-core + test-browser) | `.omega/sessions/` | `.omega/test-sessions/` |
-| World state | `plan/world-state.md` | — (not written by tests) |
+| World state | `.omega/system-prompt-append.md` | — (not written by tests) |
 
 `makeTestAgent()` in `src/test-utils.ts` is the canonical factory for agent
 tests. It creates a session dir under `.omega/test-sessions/` (via
@@ -204,7 +204,7 @@ Apply this principle to every future naming or schema decision.
   in the event file the compaction occurred.
 - It must become possible to point Omega to point to any project to work on.
   - Concretely: world-state injection must be opt-in via the project's `README.md`,
-    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/backlog.md` INFRA-4.
+    not hardcoded to `<cwd>/plan/world-state.md`. See `plan/backlog.md` INFRA-4 (DONE).
 
 > The canonical event log is `sessions/events.jsonl` — the single source of truth.
 > Pino was retired (Step 4, complete).

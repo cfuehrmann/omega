@@ -38,7 +38,7 @@ WebSocket. Config is code (`src/config.ts`).
 | `src/tools.ts` | All tool implementations; `MAX_TOOL_OUTPUT_CHARS = 100_000` cap applied to every result |
 | `src/compaction.ts` | LLM compaction: `compactWorldState` (folds session into `.omega/system-prompt-append.md`) and `compactHistory` (`/compact` command). |
 | `src/context-store.ts` | Append-only session context file (`sessions/context.jsonl`). Each record is a `ContextRecord` with `hash`, `ts`, `role`, `content`. `appendContextMessage()` returns the hash. `buildContextRecord()` computes hash without writing. |
-| `src/system-prompt-append.ts` | Read/write `.omega/system-prompt-append.md` |
+| `src/system-prompt/` | Modular system prompt: `identity.ts` (OAuth prefix), `core.ts` (main instructions), `append.ts` (read/write/format `.omega/system-prompt-append.md`), `index.ts` (`buildSystemPrompt()` assembler) |
 | `src/terminal/app.ts` | Terminal UI entry point |
 | `src/terminal/input.ts` | Key parsing, line editing |
 | `src/terminal/renderer.ts` | ANSI block renderers |
