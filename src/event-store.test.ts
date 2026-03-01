@@ -3,17 +3,15 @@
  *
  * Covers:
  * - Round-trip serialisation of every OmegaEvent variant
- * - appendEvent / clearEvents file I/O
+ * - appendEvent file I/O
  * - null path is a no-op (test isolation)
  * - Agent with mock provider does NOT write to disk
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, readFileSync, mkdirSync, rmSync } from "fs";
-import { prevPath } from "./context-store.js";
 import {
   appendEvent,
-  clearEvents,
   type OmegaEvent,
   type UserMessageEvent,
   type LlmResponseEvent,
@@ -167,7 +165,7 @@ describe("OmegaEvent round-trip serialisation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// appendEvent / clearEvents I/O
+// appendEvent I/O
 // ---------------------------------------------------------------------------
 
 describe("appendEvent", () => {
@@ -198,41 +196,6 @@ describe("appendEvent", () => {
 
   it("null path is a no-op — no file created", async () => {
     await appendEvent({ type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z" }, null);
-    expect(existsSync(TEST_FILE)).toBe(false);
-  });
-});
-
-describe("clearEvents", () => {
-  const PREV_FILE = prevPath(TEST_FILE);
-
-  beforeEach(() => {
-    mkdirSync("sessions-test", { recursive: true });
-    if (existsSync(TEST_FILE)) rmSync(TEST_FILE);
-    if (existsSync(PREV_FILE)) rmSync(PREV_FILE);
-  });
-  afterEach(() => {
-    if (existsSync(TEST_FILE)) rmSync(TEST_FILE);
-    if (existsSync(PREV_FILE)) rmSync(PREV_FILE);
-  });
-
-  it("rotates: current file ends up empty, previous content preserved as .prev", async () => {
-    await appendEvent({ type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z" }, TEST_FILE);
-    await clearEvents(TEST_FILE);
-    expect(readFileSync(TEST_FILE, "utf-8")).toBe("");
-    expect(existsSync(PREV_FILE)).toBe(true);
-    const prev = readFileSync(PREV_FILE, "utf-8");
-    expect(JSON.parse(prev.trim()).type).toBe("turn_interrupted");
-  });
-
-  it("creates fresh empty file when nothing existed before", async () => {
-    await clearEvents(TEST_FILE);
-    expect(existsSync(TEST_FILE)).toBe(true);
-    expect(readFileSync(TEST_FILE, "utf-8")).toBe("");
-    expect(existsSync(PREV_FILE)).toBe(false);
-  });
-
-  it("null path is a no-op — no file created", async () => {
-    await clearEvents(null);
     expect(existsSync(TEST_FILE)).toBe(false);
   });
 });

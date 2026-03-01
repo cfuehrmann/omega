@@ -1,8 +1,8 @@
 /**
- * Append-only context store (Step 3a / 3e-iii).
+ * Append-only context store.
  *
  * Writes each MessageParam to a JSONL file as it is pushed to the agent's
- * history. Since Step 3e-iii, each record is augmented with:
+ * history. Each record is augmented with:
  *   - `ts`   — ISO timestamp of when the message was appended
  *   - `hash` — SHA-256(JSON of stored record) truncated to 8 hex chars,
  *              serving as a content-addressed primary key.
@@ -11,9 +11,12 @@
  * that identical message content sent at different times gets different
  * hashes. This is the "view hash" used by `llm_call` events to cross-
  * reference which messages were actually sent to the LLM.
+ *
+ * Each session writes to its own timestamped directory (see session-dir.ts),
+ * so no file rotation is needed — every session starts with a fresh file.
  */
 
-import { appendFile, writeFile, mkdir, rename, unlink } from "fs/promises";
+import { appendFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { assertNotProductionPath } from "./test-guard.js";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -50,48 +53,6 @@ export interface ContextRecord {
   /** Original MessageParam fields. */
   role: "user" | "assistant";
   content: Anthropic.MessageParam["content"];
-}
-
-/** Default path for the context file, relative to cwd. */
-const DEFAULT_CONTEXT_FILE = "sessions/context.jsonl";
-
-/**
- * Derive the "previous" rotation path for a given file path.
- *
- * The `.prev` marker is inserted before the last extension so that the
- * rotated file retains a recognised extension (e.g. for syntax highlighting
- * in editors):
- *
- *   context.jsonl  → context.prev.jsonl
- *   events.jsonl   → events.prev.jsonl
- *   noext          → noext.prev
- */
-export function prevPath(filePath: string): string {
-  const lastDot = filePath.lastIndexOf(".");
-  if (lastDot === -1) return filePath + ".prev";
-  return filePath.slice(0, lastDot) + ".prev" + filePath.slice(lastDot);
-}
-
-/**
- * Rotate `filePath` → `prevPath(filePath)` (overwriting any existing prev),
- * then create a fresh empty file at `filePath`.
- *
- * If `filePath` does not exist, just ensures the directory exists and
- * creates a fresh empty file (no rename needed).
- *
- * Used at session start so the previous session's data is preserved for
- * diagnostics while the current session starts clean.
- */
-export async function rotateFile(filePath: string): Promise<void> {
-  const prev = prevPath(filePath);
-  await mkdir(dirname(filePath), { recursive: true });
-  try {
-    await rename(filePath, prev);
-  } catch (err: any) {
-    if (err.code !== "ENOENT") throw err;
-    // file didn't exist — no rename needed, just fall through to create it
-  }
-  await writeFile(filePath, "", "utf-8");
 }
 
 /**
@@ -138,28 +99,4 @@ export async function appendContextMessage(
   return record.hash;
 }
 
-/**
- * Rotate context.jsonl → context.prev.jsonl, then start fresh.
- * Called at session start. Preserves the previous session's context for
- * diagnostics. Pass `null` to disable (test isolation).
- *
- * Also accepts an explicit filePath for rewrites after /compact — in that
- * case it truncates in-place without rotating (rotation is startup-only).
- */
-export async function clearContextStore(
-  filePath: string | null = DEFAULT_CONTEXT_FILE,
-  { rotate = true }: { rotate?: boolean } = {}
-): Promise<void> {
-  if (filePath === null) return; // disabled — no-op
-  assertNotProductionPath(filePath, "clearContextStore");
-  if (rotate) {
-    await rotateFile(filePath);
-  } else {
-    try {
-      await writeFile(filePath, "", "utf-8");
-    } catch (err: any) {
-      if (err.code === "ENOENT") return;
-      throw err;
-    }
-  }
-}
+

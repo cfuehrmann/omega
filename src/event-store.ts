@@ -1,14 +1,16 @@
 /**
- * Event persistence — append-only JSONL writer for sessions/events.jsonl.
+ * Event persistence — append-only JSONL writer for the session events file.
  *
- * Naming authority: persisted names are the single source of truth (see
- * plan/dev-policy.md § "Event naming"). Do not rename event types in events.jsonl
- * to match stream-facing names — it is always the other way around.
+ * Each session writes to its own timestamped directory (see session-dir.ts),
+ * so no file rotation is needed — every session starts with a fresh file.
+ *
+ * Naming authority: persisted names are the single source of truth. Do not
+ * rename event types in events.jsonl to match stream-facing names — it is
+ * always the other way around.
  */
 
-import { appendFile, writeFile, mkdir } from "fs/promises";
+import { appendFile, mkdir } from "fs/promises";
 import { dirname } from "path";
-import { rotateFile } from "./context-store.js";
 import { assertNotProductionPath } from "./test-guard.js";
 import type { OmegaEvent } from "./events.js";
 
@@ -60,16 +62,4 @@ export async function appendEvent(
   await appendFile(filePath, JSON.stringify(toPersistedEvent(event)) + "\n", "utf-8");
 }
 
-/**
- * Rotate events.jsonl → events.prev.jsonl, then start fresh.
- * Called at session start so the previous session's events are preserved
- * for diagnostics while the current session starts clean.
- * No-op if filePath is null (test isolation).
- */
-export async function clearEvents(
-  filePath: string | null = DEFAULT_EVENTS_FILE
-): Promise<void> {
-  if (filePath === null) return;
-  assertNotProductionPath(filePath, "clearEvents");
-  await rotateFile(filePath);
-}
+

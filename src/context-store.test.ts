@@ -1,9 +1,9 @@
 /**
- * Tests for the append-only context store (Step 3a / 3e-iii).
+ * Tests for the append-only context store.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { appendContextMessage, buildContextRecord, clearContextStore, rotateFile, prevPath, type ContextRecord } from "./context-store.js";
+import { appendContextMessage, buildContextRecord, type ContextRecord } from "./context-store.js";
 import { mkdtemp, rm, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -128,91 +128,8 @@ describe("appendContextMessage — null path (test-isolation mode)", () => {
   });
 });
 
-describe("rotateFile", () => {
-  it("renames existing file to .prev and creates fresh empty file", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "prior session" };
-    await appendContextMessage(msg, contextFile);
-
-    await rotateFile(contextFile);
-
-    // Current file is empty
-    const current = await readFile(contextFile, "utf-8");
-    expect(current).toBe("");
-
-    // .prev contains the previous content (as ContextRecord)
-    const prev = await readFile(prevPath(contextFile), "utf-8");
-    expect(prev.trim()).not.toBe("");
-    const record: ContextRecord = JSON.parse(prev.trim());
-    expect(record.role).toBe("user");
-    expect(record.content).toBe("prior session");
-    expect(record.hash).toHaveLength(8);
-  });
-
-  it("creates a fresh empty file when nothing existed before", async () => {
-    expect(existsSync(contextFile)).toBe(false);
-    await rotateFile(contextFile);
-    const current = await readFile(contextFile, "utf-8");
-    expect(current).toBe("");
-    expect(existsSync(prevPath(contextFile))).toBe(false);
-  });
-
-  it("overwrites an existing .prev file", async () => {
-    // First rotation
-    await appendContextMessage({ role: "user", content: "session 1" }, contextFile);
-    await rotateFile(contextFile);
-
-    // Second rotation — session 1 is in .prev, add session 2 content
-    await appendContextMessage({ role: "user", content: "session 2" }, contextFile);
-    await rotateFile(contextFile);
-
-    // .prev should now contain session 2 (session 1 is gone — only 1 prev retained)
-    const prev = await readFile(prevPath(contextFile), "utf-8");
-    const record: ContextRecord = JSON.parse(prev.trim());
-    expect(record.content).toBe("session 2");
-  });
-});
-
-describe("clearContextStore", () => {
-  it("rotates by default: current file ends up empty, previous preserved as .prev", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
-    await appendContextMessage(msg, contextFile);
-
-    await clearContextStore(contextFile);
-
-    const current = await readFile(contextFile, "utf-8");
-    expect(current).toBe("");
-    const prev = await readFile(prevPath(contextFile), "utf-8");
-    const record: ContextRecord = JSON.parse(prev.trim());
-    expect(record.role).toBe("user");
-    expect(record.content).toBe("hello");
-  });
-
-  it("truncates in-place when rotate:false (used for /compact rewrite)", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
-    await appendContextMessage(msg, contextFile);
-
-    await clearContextStore(contextFile, { rotate: false });
-
-    const current = await readFile(contextFile, "utf-8");
-    expect(current).toBe("");
-    expect(existsSync(prevPath(contextFile))).toBe(false);
-  });
-
-  it("is a no-op when the file does not exist (no error)", async () => {
-    await clearContextStore(contextFile);
-    // file ends up as empty (created by rotateFile)
-    expect(existsSync(contextFile)).toBe(true);
-    const content = await readFile(contextFile, "utf-8");
-    expect(content).toBe("");
-  });
-
-  it("is a no-op when filePath is null", async () => {
-    await clearContextStore(null);
-  });
-});
-
 // ---------------------------------------------------------------------------
-// buildContextRecord (Step 3e-iii)
+// buildContextRecord
 // ---------------------------------------------------------------------------
 
 describe("buildContextRecord", () => {
