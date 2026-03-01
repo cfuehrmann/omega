@@ -5,14 +5,17 @@
  * in the current working directory (SESSION-2: sessions live alongside the
  * project being worked on, not alongside the Omega source):
  *
- *   .omega/sessions/2025-07-04T14-32-05-a3f7c1b2/
+ *   .omega/sessions/2025-07-04T14-32-05-123-a3f7c1b2/
  *     context.jsonl
  *     events.jsonl
  *
- * The folder name is an ISO 8601 datetime truncated to seconds (colons
- * replaced with hyphens for filesystem safety), followed by a hyphen and an
- * 8-char random hex suffix. The suffix makes every session directory globally
- * unique — no collisions even if two sessions start within the same second.
+ * The folder name is an ISO 8601 datetime at millisecond precision (colons
+ * and the decimal point replaced with hyphens for filesystem safety), followed
+ * by a hyphen and an 8-char random hex suffix. Millisecond precision means
+ * that `ls`-by-name ordering matches chronological ordering even for sessions
+ * started within the same second. The suffix provides the final uniqueness
+ * guarantee for the rare case of two sessions starting at the exact same
+ * millisecond.
  *
  * Benefits:
  *   - Sessions are co-located with the project — can be committed to the
@@ -32,18 +35,29 @@ export const SESSIONS_ROOT = ".omega/sessions";
 /** Root directory for e2e test session folders. Distinct from production sessions. */
 export const TEST_SESSIONS_ROOT = ".omega/test-sessions";
 
-/** Regex matching a session dir name — both old (no suffix) and new (with suffix) formats. */
-const SESSION_DIR_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-[0-9a-f]{8})?$/;
+/**
+ * Regex matching a session dir name.
+ * Accepts all three historical formats:
+ *   - old:         YYYY-MM-DDTHH-MM-SS                   (second precision, no suffix)
+ *   - v2:          YYYY-MM-DDTHH-MM-SS-<hex8>             (second precision + suffix)
+ *   - current:     YYYY-MM-DDTHH-MM-SS-mmm-<hex8>         (millisecond precision + suffix)
+ */
+const SESSION_DIR_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-\d{3})?(-[0-9a-f]{8})?$/;
 
 /**
- * Generate a session folder name from the current timestamp plus a random
- * 8-char hex suffix for global uniqueness.
- * Format: `YYYY-MM-DDTHH-MM-SS-<hex8>`
+ * Generate a session folder name from the current timestamp (millisecond
+ * precision) plus a random 8-char hex suffix for global uniqueness.
+ * Format: `YYYY-MM-DDTHH-MM-SS-mmm-<hex8>`
+ *
+ * Millisecond precision ensures that `ls`-by-name ordering matches
+ * chronological ordering even for sessions started within the same second.
  */
 export function makeSessionDirName(now: Date = new Date()): string {
   // toISOString() → "2025-07-04T14:32:05.123Z"
-  // Take the first 19 chars ("2025-07-04T14:32:05"), replace colons
-  const ts = now.toISOString().slice(0, 19).replace(/:/g, "-");
+  // Take first 23 chars: "2025-07-04T14:32:05.123"
+  // Replace colons and the decimal point with hyphens → "2025-07-04T14-32-05-123"
+  const ts = now.toISOString().slice(0, 23).replace(/[:.]/g, "-");
   // 4 random bytes → 8 hex chars
   const suffix = Array.from(crypto.getRandomValues(new Uint8Array(4)))
     .map((b) => b.toString(16).padStart(2, "0"))
