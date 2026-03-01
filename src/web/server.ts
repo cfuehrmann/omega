@@ -23,6 +23,7 @@ import { Agent } from "../agent.js";
 
 import type { OmegaEvent } from "../events.js";
 import { loadSession, saveSession, clearSession } from "./session-store.js";
+import { makeSessionDir, type SessionPaths } from "../session-dir.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_DIR = join(import.meta.dir, "public");
@@ -141,8 +142,11 @@ function logEvent(event: object): void {
  *
  * The agent is only replaced when the client sends { type: "reset" }, which
  * explicitly requests a new session.
+ *
+ * Initialized lazily in runWebApp() after the session directory is created.
  */
-let persistentAgent: Agent = new Agent();
+let persistentAgent: Agent;
+let currentSessionPaths: SessionPaths;
 
 // ---------------------------------------------------------------------------
 // WebSocket session (transport layer — one active WS at a time)
@@ -189,8 +193,13 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     session.isStreaming = false;
     session.abortController = null;
 
-    // Replace the persistent agent with a fresh one
-    persistentAgent = new Agent();
+    // Replace the persistent agent with a fresh one (new session dir)
+    currentSessionPaths = await makeSessionDir();
+    persistentAgent = new Agent(
+      undefined, null, undefined,
+      currentSessionPaths.contextFile,
+      currentSessionPaths.eventsFile,
+    );
     // Clear the event log so history replay starts clean
     eventLog = [];
     clearSession().catch(() => {});
@@ -251,6 +260,14 @@ async function handleMessage(session: Session, data: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function runWebApp(): Promise<void> {
+  // Create a fresh session directory for this server run
+  currentSessionPaths = await makeSessionDir();
+  persistentAgent = new Agent(
+    undefined, null, undefined,
+    currentSessionPaths.contextFile,
+    currentSessionPaths.eventsFile,
+  );
+
   // Load persisted session log — enables history replay after crashes/restarts
   eventLog = await loadSession();
 

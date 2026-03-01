@@ -9,9 +9,7 @@ import { Agent } from "../agent.js";
 import { config } from "../config.js";
 import { formatTurnFooter } from "../turn-footer.js";
 import { readFile } from "fs/promises";
-import { prevPath } from "../context-store.js";
-import { clearContextStore } from "../context-store.js";
-import { clearEvents, DEFAULT_EVENTS_FILE } from "../event-store.js";
+import { makeSessionDir, findPreviousEventsFile } from "../session-dir.js";
 import { exhaustiveCheck } from "../events.js";
 import {
   bold, dim, green, red, yellow,
@@ -75,9 +73,14 @@ async function shutdown(agent: Agent | null, code: number = 0): Promise<never> {
 // ---------------------------------------------------------------------------
 
 export async function runApp(): Promise<void> {
-  await clearContextStore(); // fresh session — discard previous session's context
-  await clearEvents(); // fresh session — discard previous session's events
-  const agent = new Agent();
+  const sessionPaths = await makeSessionDir();
+  const agent = new Agent(
+    undefined,   // streamProvider
+    null,        // _sessionDir (legacy placeholder)
+    undefined,   // openAiCaller (use default)
+    sessionPaths.contextFile,
+    sessionPaths.eventsFile,
+  );
 
   try {
     const mode = await agent.init();
@@ -91,26 +94,28 @@ export async function runApp(): Promise<void> {
   }
 
   // Warn if the previous session ended abnormally (no session_end, or outcome = "error").
-  const prevEventsPath = prevPath(DEFAULT_EVENTS_FILE);
-  try {
-    const raw = await readFile(prevEventsPath, "utf-8");
-    const lines = raw.trim().split("\n").filter(Boolean);
-    if (lines.length > 0) {
-      const last = JSON.parse(lines[lines.length - 1]);
-      if (last.type !== "session_end") {
-        printBlock(now(), [
-          yellow(`⚠ Previous session has no session_end — it may have crashed.`),
-          yellow(`  Inspect ${prevEventsPath} and ${prevPath("sessions/context.jsonl")} for details.`),
-        ]);
-      } else if (last.outcome === "error") {
-        printBlock(now(), [
-          yellow(`⚠ Previous session ended with an error: ${last.reason ?? "(no reason)"}`),
-          yellow(`  Inspect ${prevEventsPath} for details.`),
-        ]);
+  const prevEventsPath = await findPreviousEventsFile(sessionPaths.dir);
+  if (prevEventsPath) {
+    try {
+      const raw = await readFile(prevEventsPath, "utf-8");
+      const lines = raw.trim().split("\n").filter(Boolean);
+      if (lines.length > 0) {
+        const last = JSON.parse(lines[lines.length - 1]);
+        if (last.type !== "session_end") {
+          printBlock(now(), [
+            yellow(`⚠ Previous session has no session_end — it may have crashed.`),
+            yellow(`  Inspect ${prevEventsPath} for details.`),
+          ]);
+        } else if (last.outcome === "error") {
+          printBlock(now(), [
+            yellow(`⚠ Previous session ended with an error: ${last.reason ?? "(no reason)"}`),
+            yellow(`  Inspect ${prevEventsPath} for details.`),
+          ]);
+        }
       }
+    } catch {
+      // Previous session file unreadable — nothing to warn about.
     }
-  } catch {
-    // No previous session file — nothing to warn about.
   }
 
   await agent.loadWorldState().catch(() => {});
