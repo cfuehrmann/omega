@@ -26,7 +26,7 @@
  *   - `.omega/` namespace leaves room for future artefacts (config, world-state).
  */
 
-import { mkdir, readdir } from "fs/promises";
+import { mkdir, readdir, writeFile } from "fs/promises";
 import { join } from "path";
 
 /** Root directory for all session folders. Relative to cwd (SESSION-2). */
@@ -92,11 +92,14 @@ export async function makeSessionDir(
   const dirName = makeSessionDirName(now);
   const dir = join(root, dirName);
   await mkdir(dir, { recursive: true });
-  return {
-    dir,
-    contextFile: join(dir, "context.jsonl"),
-    eventsFile: join(dir, "events.jsonl"),
-  };
+  const contextFile = join(dir, "context.jsonl");
+  const eventsFile = join(dir, "events.jsonl");
+  // Create both files eagerly so the session directory is complete from birth.
+  // A session dir always contains both files — absence is never a valid state.
+  // flag "wx" = create-only (safe if files somehow already exist from a race).
+  await writeFile(contextFile, "", { flag: "wx" });
+  await writeFile(eventsFile, "", { flag: "wx" });
+  return { dir, contextFile, eventsFile };
 }
 
 /**

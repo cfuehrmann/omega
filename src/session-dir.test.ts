@@ -84,6 +84,40 @@ describe("makeSessionDirName", () => {
 // Since SESSIONS_ROOT is a module-level constant we can't easily override it,
 // we instead verify the directory and file naming logic indirectly.
 
+// ---------------------------------------------------------------------------
+// makeSessionDir — real I/O against a temp root
+// ---------------------------------------------------------------------------
+
+describe("makeSessionDir real I/O", () => {
+  let tempRoot: string;
+
+  beforeEach(async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "omega-session-dir-test-"));
+  });
+
+  afterEach(async () => {
+    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it("creates context.jsonl eagerly (even if no messages are ever written)", async () => {
+    const { contextFile } = await makeSessionDir(new Date(), tempRoot);
+    expect(existsSync(contextFile)).toBe(true);
+  });
+
+  it("creates events.jsonl eagerly (even if no events are ever written)", async () => {
+    const { eventsFile } = await makeSessionDir(new Date(), tempRoot);
+    expect(existsSync(eventsFile)).toBe(true);
+  });
+
+  it("both files start empty", async () => {
+    const { contextFile, eventsFile } = await makeSessionDir(new Date(), tempRoot);
+    const ctx = await Bun.file(contextFile).text();
+    const ev = await Bun.file(eventsFile).text();
+    expect(ctx).toBe("");
+    expect(ev).toBe("");
+  });
+});
+
 describe("makeSessionDir path structure", () => {
   it("contextFile and eventsFile are inside dir", () => {
     // Test the naming logic: dir = sessions/<name>, files inside it
