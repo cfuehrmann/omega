@@ -1,4 +1,4 @@
-# Future — Issue Tracker
+# Backlog — Issue Tracker
 
 ## Open items
 
@@ -6,19 +6,21 @@
 
 #### SESSION-1 Each persisted session gets its own folder ✅ DONE
 
-Each session writes to its own timestamped folder (`sessions/YYYY-MM-DDTHH-MM-SS/`)
-containing `context.jsonl` and `events.jsonl`. Old sessions accumulate and are never
-touched. The file-rotation machinery (`rotateFile`, `prevPath`, `clearContextStore`,
-`clearEvents`) was removed — each fresh folder makes rotation unnecessary.
+Each session writes to its own timestamped folder
+(`sessions/YYYY-MM-DDTHH-MM-SS/`) containing `context.jsonl` and `events.jsonl`.
+Old sessions accumulate and are never touched. The file-rotation machinery
+(`rotateFile`, `prevPath`, `clearContextStore`, `clearEvents`) was removed —
+each fresh folder makes rotation unnecessary.
 
 Implemented in commits 3fa0df4 and 326729a.
 
 #### SESSION-2 Storage location of persisted sessions ✅ DONE
 
-Sessions live in `.omega/sessions/<timestamp>/` relative to the directory
-Omega is launched from (the project being worked on).
+Sessions live in `.omega/sessions/<timestamp>/` relative to the directory Omega
+is launched from (the project being worked on).
 
 **Decisions made:**
+
 - **Option 2 (launch directory / cwd)** chosen: simple, predictable, operator
   controls placement by choosing where to launch from. No `.git` walk needed.
 - **Nested layout** `.omega/sessions/` over flat `.omega/`: the `.omega/`
@@ -32,17 +34,20 @@ Implemented in commit caf3aee. `SESSIONS_ROOT` changed from `"sessions"` to
 
 #### SESSION-2b Web server persistence parity with terminal ✅ DONE
 
-The web server accumulated a parallel persistence layer (`src/web/session-store.ts`
-→ `sessions/current.jsonl`) that diverged from the terminal agent's model
-(`.omega/sessions/<timestamp>/context.jsonl` + `events.jsonl`). The two paths
-drifted out of sync and the e2e test server only simulated half the picture.
+The web server accumulated a parallel persistence layer
+(`src/web/session-store.ts` → `sessions/current.jsonl`) that diverged from the
+terminal agent's model (`.omega/sessions/<timestamp>/context.jsonl` +
+`events.jsonl`). The two paths drifted out of sync and the e2e test server only
+simulated half the picture.
 
 **Changes (commit 9c631b4):**
+
 - Deleted `src/web/session-store.ts` and the `sessions/current.jsonl` mechanism
-- Web server history replay reads `events.jsonl` written by Agent (no separate store)
+- Web server history replay reads `events.jsonl` written by Agent (no separate
+  store)
 - Graceful shutdown mirrors terminal: `emitSessionEnd("clean")` then exit
-- E2e test server: in-memory event log only; imports `shouldLogEvent`/`closeOpenTurn`
-  from `server.ts` directly (no duplication)
+- E2e test server: in-memory event log only; imports
+  `shouldLogEvent`/`closeOpenTurn` from `server.ts` directly (no duplication)
 - Fixed e2e persistence tests: `text` events are never persisted (ephemeral
   streaming fragments); restart-test checks `turn_end` footer block instead
 
@@ -71,9 +76,9 @@ once and for all — schema evolution becomes less painful.
 
 #### SESSION-5 Human-readable folder names
 
-Session folders should be renameable to meaningful names (e.g. `implement-login-flow`)
-without breaking anything. This is the natural session-labelling mechanism — no
-separate tagging concept needed.
+Session folders should be renameable to meaningful names (e.g.
+`implement-login-flow`) without breaking anything. This is the natural
+session-labelling mechanism — no separate tagging concept needed.
 
 ### [SCHEMA] Persistence contract (schema lock)
 
@@ -182,10 +187,10 @@ document is the stable contract that SCHEMA-7 builds on.
 **Depends on SCHEMA-6**
 
 On startup, offer to resume the most recent previous session. The previous
-session directory is found via `findPreviousEventsFile()` in `src/session-dir.ts`.
-Load `context.jsonl` and `events.jsonl` from that directory, restore
-`llmContextView` and the event history, and continue as if the session had not
-ended.
+session directory is found via `findPreviousEventsFile()` in
+`src/session-dir.ts`. Load `context.jsonl` and `events.jsonl` from that
+directory, restore `llmContextView` and the event history, and continue as if
+the session had not ended.
 
 Acceptance criteria:
 
@@ -350,13 +355,13 @@ stdout/stderr/exitCode. Distinct from `run_background`/`kill_process`
 
 #### WEB-1 — Playwright gap coverage ✅ DONE (partial)
 
-41 e2e tests total (up from 27). New tests added in commit f9bb8e2:
-crash recovery, abort button, streaming lock/unlock (textarea + send btn),
-tool_result/agent_error/llm_error rendering, textarea clear after send,
-history replay completeness (tool_call + footer survive reload), reconnect banner.
+41 e2e tests total (up from 27). New tests added in commit f9bb8e2: crash
+recovery, abort button, streaming lock/unlock (textarea + send btn),
+tool_result/agent_error/llm_error rendering, textarea clear after send, history
+replay completeness (tool_call + footer survive reload), reconnect banner.
 
-Two production bugs found and fixed: textarea was never disabled during streaming;
-`__omegaDispatch` not exposed on window for reconnect banner test.
+Two production bugs found and fixed: textarea was never disabled during
+streaming; `__omegaDispatch` not exposed on window for reconnect banner test.
 
 Remaining gap:
 

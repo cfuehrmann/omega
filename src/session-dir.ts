@@ -27,6 +27,9 @@ import { join } from "path";
 /** Root directory for all session folders. Relative to cwd (SESSION-2). */
 export const SESSIONS_ROOT = ".omega/sessions";
 
+/** Root directory for e2e test session folders. Distinct from production sessions. */
+export const TEST_SESSIONS_ROOT = ".omega/test-sessions";
+
 /**
  * Generate a session folder name from the current timestamp.
  * Format: `YYYY-MM-DDTHH-MM-SS` (colons replaced with hyphens).
@@ -50,12 +53,19 @@ export interface SessionPaths {
  * Create the session directory for the current session and return the paths
  * to use for context and event persistence.
  *
- * Creates `.omega/sessions/<timestamp>/` if it doesn't exist.
+ * Creates `<root>/<timestamp>/` if it doesn't exist, where root defaults to
+ * `.omega/sessions` (production) but can be overridden — e.g. e2e tests pass
+ * `.omega/test-sessions` so their sessions are clearly distinguishable from
+ * production sessions and cannot be confused with them.
+ *
  * Returns the paths; the caller passes them to Agent.
  */
-export async function makeSessionDir(now: Date = new Date()): Promise<SessionPaths> {
+export async function makeSessionDir(
+  now: Date = new Date(),
+  root: string = SESSIONS_ROOT,
+): Promise<SessionPaths> {
   const dirName = makeSessionDirName(now);
-  const dir = join(SESSIONS_ROOT, dirName);
+  const dir = join(root, dirName);
   await mkdir(dir, { recursive: true });
   return {
     dir,

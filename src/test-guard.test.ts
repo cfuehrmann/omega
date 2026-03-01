@@ -17,6 +17,18 @@ describe("assertNotProductionPath", () => {
     );
   });
 
+  it("throws for .omega/test-sessions/ prefix", () => {
+    expect(() => assertNotProductionPath(".omega/test-sessions/events.jsonl", "fn")).toThrow(
+      "[OMEGA_TEST]"
+    );
+  });
+
+  it("throws for .omega/test-sessions/context.jsonl", () => {
+    expect(() => assertNotProductionPath(".omega/test-sessions/context.jsonl", "fn")).toThrow(
+      "[OMEGA_TEST]"
+    );
+  });
+
   it("throws for diagnosis/ prefix", () => {
     expect(() => assertNotProductionPath("diagnosis/", "fn")).toThrow("[OMEGA_TEST]");
   });

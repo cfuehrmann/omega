@@ -13,7 +13,11 @@
  * In production OMEGA_TEST is never set, so this function is a no-op.
  */
 
-const PRODUCTION_PREFIXES = [".omega/sessions/", ".omega\\sessions\\", "diagnosis/", "diagnosis\\"];
+const PRODUCTION_PREFIXES = [
+  ".omega/sessions/", ".omega\\sessions\\",
+  ".omega/test-sessions/", ".omega\\test-sessions\\",
+  "diagnosis/", "diagnosis\\",
+];
 
 export function assertNotProductionPath(filePath: string, fnName: string): void {
   if (process.env.OMEGA_TEST !== "1") return;

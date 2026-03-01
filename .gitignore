@@ -19,14 +19,14 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
-# session persistence (web server event log — runtime artifact)
-sessions/
+# production session persistence (runtime artifact, lives alongside the project being worked on)
+.omega/sessions/
+
+# e2e test session persistence (runtime artifact, lives in the Omega source tree)
+.omega/test-sessions/
 
 # fatal API error diagnostic snapshots (runtime artifacts, not committed)
 diagnosis/
-
-# test session persistence (e2e test server)
-sessions-test/
 
 # dotenv environment variable files
 .env

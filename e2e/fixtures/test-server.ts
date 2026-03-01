@@ -11,19 +11,29 @@
  *
  * Control API:
  *   POST /control/send   { event: object }   — send a WS event to the client
- *   POST /control/reset                      — reset event log + disconnect
+ *   POST /control/reset                      — reset event log + create new session dir
  *   GET  /control/messages                   — drain received client messages
  *   GET  /control/ready                      — health check
+ *   GET  /control/disk-snapshot              — return events.jsonl as parsed JSON array
  *
- * Persistence: in-memory event log only (no real Agent, no disk writes).
- * History replay on reconnect is served from the in-memory log — same
- * protocol as the real server, which reads events.jsonl written by Agent.
+ * Persistence: real disk writes to .omega/test-sessions/<timestamp>/ using the
+ * same appendEvent() + makeSessionDir() machinery as the production server.
+ * The test-sessions root is clearly distinct from .omega/sessions/ so test
+ * data can never be confused with production session data.
+ *
+ * Each /control/reset creates a fresh timestamped session directory, exactly
+ * as a real server restart would. History replay on reconnect reads the current
+ * session's events.jsonl from disk — same protocol as src/web/server.ts.
  */
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
+import { mkdir, readFile, unlink } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
+import { appendEvent } from "../../src/event-store.js";
+import { TEST_SESSIONS_ROOT, type SessionPaths } from "../../src/session-dir.js";
+import type { OmegaEvent } from "../../src/events.js";
 
 const MAIN_PORT = 3001;
 const CTRL_PORT = 3002;
@@ -65,11 +75,30 @@ let activeWs: ServerWebSocket<unknown> | null = null;
 const receivedMessages: string[] = [];
 
 /**
- * In-memory event log — mirrors the role of events.jsonl in the real server.
- * Only events that pass shouldLogEvent() are stored (same filter as real server).
- * Served as a `history` packet on reconnect, with closeOpenTurn applied.
+ * Current session directory paths — created by makeSessionDir() on startup
+ * and on each /control/reset. Events are persisted to eventsFile on disk.
+ *
+ * Because makeSessionDirName truncates to seconds, rapid resets within the
+ * same second would produce the same directory name. We prevent this by
+ * adding a unique counter suffix to each new session dir name.
  */
-let eventLog: object[] = [];
+
+let sessionResetCount = 0;
+
+async function makeTestSessionDir(): Promise<SessionPaths> {
+  sessionResetCount += 1;
+  const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+  const dirName = `${ts}-${String(sessionResetCount).padStart(4, "0")}`;
+  const dir = join(TEST_SESSIONS_ROOT, dirName);
+  await mkdir(dir, { recursive: true });
+  return {
+    dir,
+    contextFile: join(dir, "context.jsonl"),
+    eventsFile: join(dir, "events.jsonl"),
+  };
+}
+
+let sessionPaths: SessionPaths = await makeTestSessionDir();
 
 /**
  * Monotonically increasing agent instance counter.
@@ -77,9 +106,34 @@ let eventLog: object[] = [];
  */
 let currentAgentId = 1;
 
-function resetState(): void {
+/**
+ * Read the current session's events.jsonl and return the subset of events
+ * suitable for history replay (same logic as the real server).
+ */
+async function loadReplayEvents(): Promise<object[]> {
+  const { eventsFile } = sessionPaths;
+  if (!existsSync(eventsFile)) return [];
+  try {
+    const text = await readFile(eventsFile, "utf-8");
+    const events: object[] = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const e = JSON.parse(trimmed);
+        if (shouldLogEvent(e)) events.push(e);
+      } catch { /* skip malformed lines */ }
+    }
+    return closeOpenTurn(events);
+  } catch {
+    return [];
+  }
+}
+
+async function resetState(): Promise<void> {
   currentAgentId += 1;
-  eventLog = [];
+  // Create a fresh uniquely-named session directory for the next session
+  sessionPaths = await makeTestSessionDir();
 }
 
 function sendWs(event: object): void {
@@ -100,10 +154,10 @@ Bun.serve({
     return new Response("Not found", { status: 404 });
   },
   websocket: {
-    open(ws) {
+    async open(ws) {
       activeWs = ws;
-      // Replay event log (with crash recovery) before signalling connected
-      const replay = closeOpenTurn(eventLog.filter(shouldLogEvent));
+      // Replay event log from disk (with crash recovery) before signalling connected
+      const replay = await loadReplayEvents();
       if (replay.length > 0) {
         ws.send(JSON.stringify({ type: "history", events: replay }));
       }
@@ -115,10 +169,11 @@ Bun.serve({
       try { msg = JSON.parse(str); } catch { receivedMessages.push(str); return; }
 
       if (msg.type === "reset") {
-        resetState();
-        ws.send(JSON.stringify({ type: "history", events: [] }));
-        ws.send(JSON.stringify({ type: "reset_done" }));
-        ws.send(JSON.stringify({ type: "turn_ready" }));
+        resetState().then(() => {
+          ws.send(JSON.stringify({ type: "history", events: [] }));
+          ws.send(JSON.stringify({ type: "reset_done" }));
+          ws.send(JSON.stringify({ type: "turn_ready" }));
+        }).catch(() => {});
         return;
       }
 
@@ -160,44 +215,59 @@ Bun.serve({
     if (req.method === "POST" && url.pathname === "/control/send") {
       const body = await req.json() as { event: object };
       const event = body.event;
-      // Store in log (same filter the real server uses)
+      // Persist to disk (same filter the real server uses), then forward to browser
       if (shouldLogEvent(event)) {
-        const t = (event as any).type as string;
-        // auth deduplication — same as real server
-        if (t === "auth") {
-          const idx = eventLog.findIndex((e: any) => e.type === "auth");
-          if (idx !== -1) eventLog.splice(idx, 1);
-        }
-        eventLog.push(event);
+        // appendEvent strips UI-only fields before writing
+        await appendEvent(event as OmegaEvent, sessionPaths.eventsFile);
       }
       sendWs(event);
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/reset") {
-      eventLog = [];
       receivedMessages.length = 0;
       currentAgentId = 1;
+      // Create a fresh uniquely-named session directory (old one left on disk for inspection)
+      sessionPaths = await makeTestSessionDir();
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/save") {
-      // No-op: persistence is in-memory only. Exists so e2e tests that call
-      // /control/save continue to work without modification.
+      // Events are written incrementally on each /control/send, so this is a
+      // true no-op — disk is already up to date. Exists for API compatibility.
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/load") {
-      // No-op: in-memory log is already the source of truth.
-      // The real server reads events.jsonl; here the in-memory log IS events.jsonl.
+      // In-memory state is always derived from disk on reconnect (loadReplayEvents).
+      // No separate in-memory log to refresh. Exists for API compatibility.
       return new Response("ok");
     }
 
     if (req.method === "GET" && url.pathname === "/control/disk-snapshot") {
-      // Return the in-memory log — equivalent to reading events.jsonl in the real server.
-      return new Response(JSON.stringify(eventLog), {
-        headers: { "Content-Type": "application/json" },
-      });
+      // Read and parse the current session's events.jsonl from disk
+      const { eventsFile } = sessionPaths;
+      if (!existsSync(eventsFile)) {
+        return new Response(JSON.stringify([]), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      try {
+        const text = await readFile(eventsFile, "utf-8");
+        const events: object[] = [];
+        for (const line of text.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try { events.push(JSON.parse(trimmed)); } catch { /* skip malformed */ }
+        }
+        return new Response(JSON.stringify(events), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch {
+        return new Response(JSON.stringify([]), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
     }
 
     return new Response("Not found", { status: 404 });
@@ -206,3 +276,4 @@ Bun.serve({
 
 console.log(`Test server:   http://localhost:${MAIN_PORT}`);
 console.log(`Control API:   http://localhost:${CTRL_PORT}/control/ready`);
+console.log(`Session dir:   ${sessionPaths.dir}`);
