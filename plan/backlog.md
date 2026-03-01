@@ -13,16 +13,22 @@ touched. The file-rotation machinery (`rotateFile`, `prevPath`, `clearContextSto
 
 Implemented in commits 3fa0df4 and 326729a.
 
-#### SESSION-2 Storage location of persisted sessions
+#### SESSION-2 Storage location of persisted sessions ✅ DONE
 
-Where should session folders live? Three candidates:
+Sessions live in `.omega/sessions/<timestamp>/` relative to the directory
+Omega is launched from (the project being worked on).
 
-- Alongside the Omega source code.
-- In the directory from which Omega is launched.
-- In the root of the project Omega is working on.
+**Decisions made:**
+- **Option 2 (launch directory / cwd)** chosen: simple, predictable, operator
+  controls placement by choosing where to launch from. No `.git` walk needed.
+- **Nested layout** `.omega/sessions/` over flat `.omega/`: the `.omega/`
+  namespace leaves room for future artefacts (config, per-project world-state,
+  etc.) without mixing session folders with other files.
+- **No automatic `.gitignore`**: committing sessions is the operator's choice —
+  the whole point of co-locating sessions with the project.
 
-> The last option has the appealing property that sessions can be committed
-> under the project's own source control.
+Implemented in commit caf3aee. `SESSIONS_ROOT` changed from `"sessions"` to
+`".omega/sessions"` in `src/session-dir.ts`; `test-guard.ts` updated to match.
 
 #### SESSION-3 Strict session resumption
 
