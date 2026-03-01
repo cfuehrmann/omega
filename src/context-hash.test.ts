@@ -113,7 +113,7 @@ function readEventLines(file: string): any[] {
 // ---------------------------------------------------------------------------
 
 describe("context.jsonl record shape", () => {
-  it("each written record has hash (8 hex chars), ts, role, and content", async () => {
+  it.concurrent("each written record has hash (8 hex chars), ts, role, and content", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
@@ -136,7 +136,7 @@ describe("context.jsonl record shape", () => {
     }
   });
 
-  it("first record is the user message, second is assistant response", async () => {
+  it.concurrent("first record is the user message, second is assistant response", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("world"), textMessage("world"));
@@ -157,7 +157,7 @@ describe("context.jsonl record shape", () => {
 // ---------------------------------------------------------------------------
 
 describe("hash uniqueness — identical content, different times", () => {
-  it("two identical user messages produce different hashes", async () => {
+  it.concurrent("two identical user messages produce different hashes", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -185,7 +185,7 @@ describe("hash uniqueness — identical content, different times", () => {
 // ---------------------------------------------------------------------------
 
 describe("llm_call contextHashes in events.jsonl", () => {
-  it("llm_call event has contextHashes array with one hash per sent message", async () => {
+  it.concurrent("llm_call event has contextHashes array with one hash per sent message", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
@@ -206,7 +206,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
     expect(/^[0-9a-f]{8}$/.test(llmCall.contextHashes[0])).toBe(true);
   });
 
-  it("contextHashes match the hash field of the corresponding context.jsonl records", async () => {
+  it.concurrent("contextHashes match the hash field of the corresponding context.jsonl records", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
@@ -224,7 +224,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
     expect(llmCall.contextHashes[0]).toBe(contextRecords[0].hash);
   });
 
-  it("tool loop: second llm_call contextHashes includes user + assistant + tool_result messages", async () => {
+  it.concurrent("tool loop: second llm_call contextHashes includes user + assistant + tool_result messages", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -254,7 +254,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
     expect(llmCalls[1].contextHashes[2]).toBe(contextRecords[2].hash);
   });
 
-  it("contextHashes grow across multiple turns in the same session", async () => {
+  it.concurrent("contextHashes grow across multiple turns in the same session", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -291,7 +291,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 // ---------------------------------------------------------------------------
 
 describe("contextHashes matches full compactedContextHistory", () => {
-  it("after 3 turns, contextHashes length equals compactedContextHistory length sent", async () => {
+  it.concurrent("after 3 turns, contextHashes length equals compactedContextHistory length sent", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -321,7 +321,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
     }
   });
 
-  it("hashes in contextHashes correctly cross-reference context.jsonl entries", async () => {
+  it.concurrent("hashes in contextHashes correctly cross-reference context.jsonl entries", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -353,7 +353,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
 // ---------------------------------------------------------------------------
 
 describe("no placeholder hashes", () => {
-  it("all contextHashes are 8-char hex strings (no '????????' placeholders)", async () => {
+  it.concurrent("all contextHashes are 8-char hex strings (no '????????' placeholders)", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -383,7 +383,7 @@ describe("no placeholder hashes", () => {
 // ---------------------------------------------------------------------------
 
 describe("[SCHEMA] llm_call has no messageCount field", () => {
-  it("llm_call events written to events.jsonl do not carry messageCount", async () => {
+  it.concurrent("llm_call events written to events.jsonl do not carry messageCount", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
@@ -410,7 +410,7 @@ describe("[SCHEMA] llm_call has no messageCount field", () => {
 // ---------------------------------------------------------------------------
 
 describe("[SCHEMA] llm_response has no content field", () => {
-  it("llm_response events written to events.jsonl do not carry content", async () => {
+  it.concurrent("llm_response events written to events.jsonl do not carry content", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
@@ -432,7 +432,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
     }
   });
 
-  it("llm_response carries contextHash that matches the assistant context.jsonl record", async () => {
+  it.concurrent("llm_response carries contextHash that matches the assistant context.jsonl record", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
@@ -457,7 +457,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
     }
   });
 
-  it("llm_response contextHash points to a record that exists in context.jsonl before the event", async () => {
+  it.concurrent("llm_response contextHash points to a record that exists in context.jsonl before the event", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
@@ -488,7 +488,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
 // ---------------------------------------------------------------------------
 
 describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
-  it("tool_call event carries contextHash matching the assistant context.jsonl record", async () => {
+  it.concurrent("tool_call event carries contextHash matching the assistant context.jsonl record", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -518,7 +518,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     expect(tc.contextHash).toBe(assistantRecord!.hash);
   });
 
-  it("tool_result event carries contextHash matching the user tool_result context.jsonl record", async () => {
+  it.concurrent("tool_result event carries contextHash matching the user tool_result context.jsonl record", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -551,7 +551,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     expect(tr.contextHash).toBe(toolResultRecord!.hash);
   });
 
-  it("tool_call event has no input field", async () => {
+  it.concurrent("tool_call event has no input field", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -572,7 +572,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     }
   });
 
-  it("tool_result event has no outputLength field", async () => {
+  it.concurrent("tool_result event has no outputLength field", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {

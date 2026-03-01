@@ -50,7 +50,7 @@ Omega has two categories of production side-effect files:
 
 | Category | Production path | Test path |
 |----------|----------------|-----------|
-| Sessions (unit tests + e2e) | `.omega/sessions/` | `.omega/test-sessions/` |
+| Sessions (test-core + test-browser) | `.omega/sessions/` | `.omega/test-sessions/` |
 | World state | `plan/world-state.md` | — (not written by tests) |
 
 `makeTestAgent()` in `src/test-utils.ts` is the canonical factory for agent
@@ -62,11 +62,11 @@ that does **nothing** — test sessions are preserved so they can be inspected.
 `assertNotProductionPath()` in `src/test-guard.ts` is a belt-and-suspenders
 guard: it throws if any test (detected via `OMEGA_TEST=1`) attempts to write
 to `.omega/sessions/`. `.omega/test-sessions/` is explicitly **allowed** — that
-is where unit tests and e2e tests are expected to write. The guard exists to
+is where `test-core` and `test-browser` tests are expected to write. The guard exists to
 prevent accidental writes to the production session root, not to restrict test
 infrastructure writes to their designated test root.
 
-The e2e tests follow the same pattern: `test-server.ts` calls `makeSessionDir`
+The browser tests (`just test-browser`) follow the same pattern: `test-server.ts` calls `makeSessionDir`
 with `TEST_SESSIONS_ROOT` so every Playwright test run produces real,
 inspectable session files.
 
@@ -102,6 +102,30 @@ A great way of achieving this is providing:
 > which we append every new event instantly. That session history can be shown
 > in pretty form in the UI _and_, in persisted form, act as the diagnostic log.
 > Thus, we have only one single source of truth.
+
+### Targeted testing as a first-class principle
+
+An AI agent runs tests far more frequently than a human developer — potentially
+many times per session, across many sessions. The cumulative cost of always
+running the full suite is therefore much higher for an AI than for a human.
+
+Projects should be structured so that an agent can run a **targeted subset** of
+tests covering only the area being changed, without running the full suite. This
+means:
+
+- Tests are organised so that a single file or group covers a coherent area.
+- The build/test tooling (Makefile, Justfile, package.json scripts, etc.) exposes
+  a way to run a subset — by file, by tag, or by pattern — not just the full suite.
+- The full suite (and any static analysis) is reserved for pre-commit gates.
+
+Omega's system prompt nudges agents toward this pattern in a project-agnostic
+way: prefer targeted tests while iterating; run the full suite only before
+committing. This principle applies regardless of language or test framework.
+
+Omega itself follows this: `bun test src/foo.test.ts` runs a single file in
+~100ms; `just gate` runs everything. The Justfile makes the distinction explicit
+with `test-fast` (bail on first failure, for mid-iteration checks) vs `gate`
+(full suite + lint, for pre-commit).
 
 ## AI agents
 
@@ -193,29 +217,13 @@ can use do develop the in-progress version of Omega. Currently, we have use Git
 worktree, with a stable but old-fashioned version in `~/omega/main` and the
 in-progress version at `~/omega/dev`.
 
-## Step 3 sub-step breakdown
+## Step 3 — current status
 
-Step 3 prioritises **extending Omega's practical capacity for long sessions** before
-completing the full architectural vision. See `plan/backlog.md` for detailed
-acceptance criteria on each sub-step.
+The persistence architecture (append-only `context.jsonl` + `events.jsonl`, FK/PK contract, unified `OmegaEvent`, exhaustive switch guards) is complete. See `plan/backlog.md` for the remaining work:
 
-### Done: 3a through 3e-iii, EU-1 through EU-4
-- **3a** — Append-only context file (`sessions/context.jsonl`). ✅
-- **3b** — `/compact` slash command (operator-triggered mid-session compaction). ✅
-- **3c** — `SessionEvent` type + dual-write event log (`sessions/events.jsonl`). ✅
-- **3d** — Non-destructive truncation (later superseded: agent now sends `compactedContextHistory` verbatim; context overflow errors out immediately). ✅
-- **3e-i/ii/iii** — Event renames + FK/PK contract: `context.jsonl` entries carry `hash` (SHA-256 8 hex chars of `{ ts, role, content }`) and `ts`; `llm_call` carries `contextHashes[]`. ✅
-- **Pre-lock field removals** — `LlmResponseEvent.content`, `LlmCallEvent.messageCount`, `ToolCallEvent.input`, `ToolResultEvent.outputLength` all removed. ✅
-- **EU-1–EU-4** — `AgentEvent` and `SessionEvent` unified into `OmegaEvent`; `status` variant deleted; all stream/wire/UI names match persistence; exhaustive switch guards enforced in both UIs. ✅
-
-### Schema lock — TODO (SCHEMA-1 through SCHEMA-6)
-Review and document the full shape of every JSONL record. Write `plan/schema.md` as
-the stable contract for session resume and future tooling. No breaking changes after
-this point without a migration plan. See `plan/backlog.md` items SCHEMA-1 through
-SCHEMA-6.
-
-### Session resume — TODO (SCHEMA-7, depends on schema lock)
-On startup, if a `.prev` session exists, offer to resume it.
+- **SCHEMA-1–SCHEMA-6** — schema lock: review field completeness, document intentional omissions, write `plan/schema.md` as the stable contract.
+- **SCHEMA-7** — session resume (depends on schema lock).
+- **INFRA-4** — decouple world-state injection from Omega's own repo.
 
 ## In-turn context management policy
 

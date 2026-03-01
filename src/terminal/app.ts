@@ -118,7 +118,7 @@ export async function runApp(): Promise<void> {
     }
   }
 
-  await agent.loadWorldState().catch(() => {});
+  await agent.loadSystemPromptAppend().catch(() => {});
 
   let abortController: AbortController | null = null;
   let isStreaming = false;

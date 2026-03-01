@@ -23,7 +23,7 @@
  *   - No rotation / `.prev` file management needed — every session starts clean.
  *   - Old sessions are preserved indefinitely (until explicitly pruned).
  *   - Folders can be renamed to human-readable names (SESSION-5).
- *   - `.omega/` namespace leaves room for future artefacts (config, world-state).
+ *   - `.omega/` namespace leaves room for authored artefacts (e.g. system-prompt-append.md).
  */
 
 import { mkdir, readdir, writeFile } from "fs/promises";

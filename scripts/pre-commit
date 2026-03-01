@@ -3,7 +3,7 @@
 # Install via: just install-hooks
 #
 # Aborts the commit if any test fails.
-# Does NOT run e2e tests (use `just gate` for the full suite).
+# Does NOT run browser tests (use `just gate` for the full suite).
 
 # ---------------------------------------------------------------------------
 # Guard: catch bare `new Agent()` with no arguments in test files.

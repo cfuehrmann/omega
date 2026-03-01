@@ -1,9 +1,10 @@
 /**
- * LLM-based world-state compaction for Omega.
+ * LLM-based compaction.
  *
- * compactWorldState(priorWorldState, sessionHistory, provider)
- *   Folds a completed session into the persistent world state.
- *   Returns the new world state string (to be written to disk).
+ * compactWorldState(priorContent, sessionHistory, provider)
+ *   Folds a completed session into the system-prompt-append content.
+ *   Returns the new content string (caller writes it to
+ *   .omega/system-prompt-append.md via writeSystemPromptAppend).
  *
  * Turn compaction (zone 2) has been removed — history now grows verbatim
  * and relies on prompt caching for token efficiency (manifest Step 2).

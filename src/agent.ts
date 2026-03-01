@@ -5,7 +5,7 @@ import { getAuthToken, forceRefreshToken } from "./auth.js";
 
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory, AUTO_COMPACT_THRESHOLD } from "./compaction.js";
-import { readWorldState, projectWorldStatePath } from "./world-state.js";
+import { readSystemPromptAppend, systemPromptAppendPath } from "./system-prompt-append.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal } from "./events.js";
@@ -315,8 +315,8 @@ export class Agent {
   /** Events JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly eventsFile: string | null | undefined;
 
-  /** Zone 1: world state loaded at session start, injected into system prompt. */
-  private worldStateContent: string | null = null;
+  /** Content of .omega/system-prompt-append.md, injected into system prompt at session start. */
+  private systemPromptAppendContent: string | null = null;
 
   /** Optional injectable stream provider (used in tests). */
   private readonly streamProvider: StreamProvider | undefined;
@@ -494,13 +494,13 @@ export class Agent {
     }
   }
 
-  /** Build the system prompt from config + optional world state. */
+  /** Build the system prompt from config + optional system-prompt-append content. */
   buildSystemPrompt(): string {
     const base = this.authMode === "oauth"
       ? "You are Claude Code, Anthropic's official CLI for Claude.\n\n" + config.systemPrompt
       : config.systemPrompt;
-    return this.worldStateContent
-      ? base + "\n\n## World State (from previous sessions)\n\n" + this.worldStateContent
+    return this.systemPromptAppendContent
+      ? base + "\n\n## World State (from previous sessions)\n\n" + this.systemPromptAppendContent
       : base;
   }
 
@@ -564,15 +564,19 @@ export class Agent {
   }
 
   /**
-   * Load world state from disk into memory so it can be injected into the
-   * system prompt. Call once at session start, after init().
+   * Load .omega/system-prompt-append.md from disk into memory so it can be
+   * injected into the system prompt. Call once at session start, after init().
+   *
+   * @param path  Optional override for the file path. Defaults to
+   *              `.omega/system-prompt-append.md` in the current working
+   *              directory. Pass an explicit path in tests to avoid touching
+   *              the real project file.
    */
-  async loadWorldState(): Promise<void> {
-    const path = projectWorldStatePath();
+  async loadSystemPromptAppend(path: string = systemPromptAppendPath()): Promise<void> {
     try {
-      this.worldStateContent = await readWorldState(path);
+      this.systemPromptAppendContent = await readSystemPromptAppend(path);
     } catch {
-      this.worldStateContent = null;
+      this.systemPromptAppendContent = null;
     }
   }
 
@@ -686,7 +690,7 @@ export class Agent {
       let turnOutputTokens = 0;
       const toolCallsThisTurn: string[] = [];
 
-      // Build system prompt (OAuth identity prefix + world state if loaded).
+      // Build system prompt (OAuth identity prefix + system-prompt-append if loaded).
       const systemPrompt = this.buildSystemPrompt();
 
       if (this.provider === "openai" && !fallbackEnabled) {
@@ -699,7 +703,7 @@ export class Agent {
 
       // Build cached system blocks and cached tools for Anthropic prompt caching.
       // The system prompt is split into blocks with cache_control on the last block,
-      // so the entire system prompt (including world state) is cached after the first call.
+      // so the entire system prompt (including any appended content) is cached after the first call.
       // The last tool definition also gets cache_control to cache all tool definitions.
       const systemBlocks: Anthropic.TextBlockParam[] = [
         {

@@ -10,7 +10,7 @@ import { defineConfig, devices } from "@playwright/test";
  * Run: npx playwright test
  *   or: just e2e
  *
- * Requires a built frontend: just build (or just e2e which builds first)
+ * Requires a built frontend: just web-build (or just test-browser which builds first)
  */
 export default defineConfig({
   testDir: "./e2e",

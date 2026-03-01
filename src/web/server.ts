@@ -200,7 +200,7 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     persistentAgent.init()
       .then(mode => {
         send(session.ws, { type: "auth", mode });
-        return persistentAgent.loadWorldState().catch(() => {});
+        return persistentAgent.loadSystemPromptAppend().catch(() => {});
       })
       .catch((err: any) => {
         send(session.ws, { type: "auth", mode: `error: ${err.message}` });
@@ -292,7 +292,7 @@ export async function runWebApp(): Promise<void> {
         persistentAgent.init()
           .then(mode => {
             send(ws, { type: "auth", mode });
-            return persistentAgent.loadWorldState().catch(() => {});
+            return persistentAgent.loadSystemPromptAppend().catch(() => {});
           })
           .catch((err: any) => {
             send(ws, { type: "auth", mode: `error: ${err.message}` });

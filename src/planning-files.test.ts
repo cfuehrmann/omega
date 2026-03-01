@@ -6,12 +6,17 @@ import { config } from "./config";
 /**
  * Structural invariant tests for the planning file system.
  *
+ * These are Omega-on-itself self-tests: they verify invariants that hold
+ * specifically when Omega is running against its own repo. They do not
+ * imply that any project Omega works on must follow this structure.
+ *
  * Rules:
  *  - backlog.md must exist (the issue tracker we keep).
- *  - past.md and present.md must NOT exist (deleted — redundant with world-state.md).
+ *  - past.md and present.md must NOT exist (deleted — redundant with the
+ *    system-prompt-append file).
  *  - The system prompt must tell the agent to read README.md for orientation.
- *  - The system prompt must mention world-state.md and backlog.md (generically).
- *  - README.md must reference world-state.md and backlog.md.
+ *  - The system prompt must mention system-prompt-append.md (the append mechanism).
+ *  - README.md must reference system-prompt-append.md and backlog.md.
  *  - The system prompt must NOT reference past.md or present.md.
  */
 
@@ -23,7 +28,7 @@ describe("planning files", () => {
     expect(existsSync(join(ROOT, "plan/backlog.md"))).toBe(true);
   });
 
-  it("past.md does not exist (redundant with world-state.md)", () => {
+  it("past.md does not exist (redundant with system-prompt-append)", () => {
     expect(existsSync(join(ROOT, "plan/past.md"))).toBe(false);
   });
 
@@ -39,16 +44,12 @@ describe("planning files", () => {
     expect(config.systemPrompt).toContain("README.md");
   });
 
-  it("system prompt mentions world-state.md", () => {
-    expect(config.systemPrompt).toContain("world-state.md");
+  it("system prompt mentions system-prompt-append.md", () => {
+    expect(config.systemPrompt).toContain("system-prompt-append.md");
   });
 
-  it("system prompt mentions backlog.md", () => {
-    expect(config.systemPrompt).toContain("backlog.md");
-  });
-
-  it("README.md references world-state.md", () => {
-    expect(readme).toContain("world-state.md");
+  it("README.md references system-prompt-append.md", () => {
+    expect(readme).toContain("system-prompt-append.md");
   });
 
   it("README.md references backlog.md", () => {

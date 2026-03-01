@@ -10,7 +10,7 @@ conversation with a human operator.
 ```bash
 bun install
 bun run src/ui-raw.ts        # terminal UI
-bun run src/web/server.ts    # web UI (build client first: bun run web:build)
+bun run src/web/server.ts    # web UI (build client first: just web-build)
 ```
 
 ## Stack
@@ -23,7 +23,7 @@ WebSocket. Config is code (`src/config.ts`).
 
 | File | Purpose |
 |------|---------|
-| `plan/world-state.md` | LLM-compacted summary of all prior sessions. Loaded into the system prompt automatically. Updated as part of the shutdown ritual (see below). |
+| `.omega/system-prompt-append.md` | Appended to the system prompt at session start. Contains the LLM-compacted summary of prior sessions. Updated as part of the shutdown ritual (see below). |
 | `plan/backlog.md` | Issue tracker. Discrete, prioritised, actionable items. Update after completing work or making decisions worth recording. |
 | `plan/dev-policy.md` | Active development-phase policies (temporary invariants and conventions). Read before implementing anything in the event/persistence layer. |
 | `manifest.md` | High-level design manifest for Omega's ongoing refactoring. Consult for strategic direction. |
@@ -36,9 +36,9 @@ WebSocket. Config is code (`src/config.ts`).
 | `src/agent.ts` | Agent core — agentic loop, streaming, compaction, tool dispatch |
 | `src/config.ts` | Model selection, system prompt, token limits |
 | `src/tools.ts` | All tool implementations; `MAX_TOOL_OUTPUT_CHARS = 100_000` cap applied to every result |
-| `src/compaction.ts` | LLM compaction: `compactWorldState` (world-state fold) and `compactHistory` (`/compact` command). |
+| `src/compaction.ts` | LLM compaction: `compactWorldState` (folds session into `.omega/system-prompt-append.md`) and `compactHistory` (`/compact` command). |
 | `src/context-store.ts` | Append-only session context file (`sessions/context.jsonl`). Each record is a `ContextRecord` with `hash`, `ts`, `role`, `content`. `appendContextMessage()` returns the hash. `buildContextRecord()` computes hash without writing. |
-| `src/world-state.ts` | Read/write `plan/world-state.md` |
+| `src/system-prompt-append.ts` | Read/write `.omega/system-prompt-append.md` |
 | `src/terminal/app.ts` | Terminal UI entry point |
 | `src/terminal/input.ts` | Key parsing, line editing |
 | `src/terminal/renderer.ts` | ANSI block renderers |
@@ -65,7 +65,7 @@ Any other `/…` input is rejected with an error. Ask the LLM directly for help.
 
 - Two branches: `main` (stable) and `develop` (working). Omega commits to
   `develop` only. The operator merges `develop → main` when satisfied.
-- **Run `just gate` before every commit.** Gate = unit tests + type check + e2e.
+- **Run `just gate` before every commit.** Gate = `test-core` + `test-browser` + knip.
   Never commit without a green gate. `just gate` is not automatic — it must be
   run explicitly.
 - Push to origin at least every 3 commits.
@@ -80,8 +80,22 @@ Any other `/…` input is rejected with an error. Ask the LLM directly for help.
   code. Commit. Never write test + fix together.
 - **Structural invariants** (refactors): Write a test that guards the invariant
   *before* making the change. See `entry.test.ts` for the pattern.
-- Run tests: `bun test`. Run e2e: `just e2e`.
 - A `Justfile` exists — run `just --list` for available recipes.
+
+### Which tests to run, and when
+
+| Situation | Command |
+|-----------|---------|
+| Iterating on a specific area | `bun test src/relevant-file.test.ts` |
+| Quick full-suite sanity check | `just test-fast` (stops on first failure) |
+| Full bun suite | `just test-core` |
+| Full suite including browser tests | `just test` |
+| Before every commit | `just gate` (full suite + knip) |
+
+**Prefer targeted testing while iterating.** Running only the test file relevant
+to your current change is much faster than the full suite and gives tighter
+feedback. Run the full suite only when you need confidence across the whole
+codebase, and run `just gate` only before committing.
 
 ### Test isolation — never pollute production files
 
@@ -111,7 +125,7 @@ To bypass in a genuine emergency: `git commit --no-verify`.
 
 When the operator asks to wrap up or end the session, do the following — in order:
 
-1. **Update `plan/world-state.md`** — use `compactWorldState()` from `src/compaction.ts`
+1. **Update `.omega/system-prompt-append.md`** — use `compactWorldState()` from `src/compaction.ts`
    (or just rewrite the file directly) to fold this session's work into a concise,
    accurate summary of the current state of the project.
 2. **Update `plan/backlog.md`** — mark completed items done, add newly discovered work,

@@ -2,6 +2,51 @@
 
 ## Open items
 
+### [DECOUPLE] Omega self-coupling — use on foreign repos
+
+**Status: DONE**
+
+Resolved by renaming `plan/world-state.md` → `.omega/system-prompt-append.md`
+and `src/world-state.ts` → `src/system-prompt-append.ts`. The file is now
+opt-in by existence: if `.omega/system-prompt-append.md` is present, its
+contents are appended to the system prompt; if absent, nothing is injected.
+Foreign repos will not have this file and are therefore unaffected. System
+prompt examples and docstrings updated to be project-neutral. INFRA-4 closed.
+
+---
+
+### [INFRA] `.omega/` namespace organisation
+
+#### INFRA-5 — Move runtime artefacts into `.omega/runtime/`
+
+**Priority: mid**
+
+`.omega/` currently mixes two categories:
+- **Authored/source-controlled:** `.omega/system-prompt-append.md` (operator-written context injected into the system prompt).
+- **Generated/runtime:** `sessions/` and `test-sessions/` subdirectories written by Omega at runtime.
+
+Move the generated artefacts under `.omega/runtime/` so the distinction is
+explicit in the directory layout:
+
+```
+.omega/
+  system-prompt-append.md   ← authored, source-controlled
+  runtime/
+    sessions/               ← was .omega/sessions/
+    test-sessions/          ← was .omega/test-sessions/
+```
+
+Acceptance criteria:
+- `SESSIONS_ROOT` in `src/session-dir.ts` updated to `.omega/runtime/sessions`.
+- `TEST_SESSIONS_ROOT` updated to `.omega/runtime/test-sessions`.
+- `assertNotProductionPath()` in `src/test-guard.ts` updated to match new paths.
+- `.gitignore` updated if sessions were excluded there.
+- All existing tests pass.
+- Any existing `.omega/sessions/` data is noted as needing manual migration
+  (one-time rename); no automated migration required.
+
+---
+
 ### [SESSION] Session storage
 
 #### SESSION-3 Strict session resumption
@@ -191,33 +236,10 @@ history. Circuit-breaker; real fix is INFRA-2.
 
 #### INFRA-4 — Decouple Omega startup from Omega's own repo (world-state)
 
-Currently `projectWorldStatePath()` always resolves to
-`<cwd>/plan/world-state.md`. This means Omega's self-knowledge is injected into
-_every_ session regardless of which project Omega is pointed at.
-
-**Goal:** When Omega is started on an arbitrary project, it should receive no
-Omega-specific world state. When started on itself (`~/omega/dev`), it should
-still load its own world state as today.
-
-**Proposed approach:**
-
-1. **World-state opt-in via README** — only read the file if the project's
-   `README.md` explicitly references a world state path. If not mentioned, skip
-   it.
-2. **Remove hardcoded startup coupling** — condition `loadWorldState()` calls on
-   the README check, or delegate entirely to the agent after README parsing.
-3. **Omega's own README stays as-is** — already references
-   `plan/world-state.md`.
-
-Acceptance criteria:
-
-- Starting Omega in an arbitrary project directory injects no Omega-specific
-  world state
-- Starting Omega in `~/omega/dev` still loads `plan/world-state.md` as Zone 1
-  context
-- No new config files or command-line flags required
-- All existing tests pass; add a test for the "no README world-state reference →
-  null" path
+**Status: DONE** — Resolved by the DECOUPLE work. `plan/world-state.md` has
+been renamed to `.omega/system-prompt-append.md`. Loading is now opt-in by
+file existence: present → injected, absent → nothing. Foreign repos are
+unaffected.
 
 ---
 

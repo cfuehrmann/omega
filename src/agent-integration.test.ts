@@ -111,7 +111,7 @@ async function collectEvents(
 // ---------------------------------------------------------------------------
 
 describe("Agent — test isolation (no production file pollution)", () => {
-  it("does not write to .omega/sessions/events.jsonl when OpenAI caller used", async () => {
+  it.concurrent("does not write to .omega/sessions/events.jsonl when OpenAI caller used", async () => {
     // Regression: agent-rate-limit tests previously passed streamProvider=undefined
     // with a custom openAiCaller, bypassing the mock-provider heuristic and writing to
     // the production events file. makeTestAgent() routes all writes to test-sessions/.
@@ -146,7 +146,7 @@ describe("Agent — test isolation (no production file pollution)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent.sendMessage — plain text response", () => {
-  it("emits user_message, then text events, then turn_end", async () => {
+  it.concurrent("emits user_message, then text events, then turn_end", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
 
@@ -162,7 +162,7 @@ describe("Agent.sendMessage — plain text response", () => {
     expect(types).not.toContain("metrics");
   });
 
-  it("accumulates text from chunks", async () => {
+  it.concurrent("accumulates text from chunks", async () => {
     const chunkEvents = [
       { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "foo " } },
@@ -184,7 +184,7 @@ describe("Agent.sendMessage — plain text response", () => {
     expect(combined).toBe("foo bar baz");
   });
 
-  it("adds user message and assistant response to history", async () => {
+  it.concurrent("adds user message and assistant response to history", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("I am fine"), textMessage("I am fine"));
 
@@ -198,7 +198,7 @@ describe("Agent.sendMessage — plain text response", () => {
     expect(history[1].role).toBe("assistant");
   });
 
-  it("accumulates token counts across turns", async () => {
+  it.concurrent("accumulates token counts across turns", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
@@ -212,7 +212,7 @@ describe("Agent.sendMessage — plain text response", () => {
     expect(agent.sessionOutputTokens).toBe(10);
   });
 
-  it("turn_end carries correct token counts", async () => {
+  it.concurrent("turn_end carries correct token counts", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
@@ -233,7 +233,7 @@ describe("Agent.sendMessage — plain text response", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent.sendMessage — tool call loop", () => {
-  it("emits tool_call event for auto-approved tools", async () => {
+  it.concurrent("emits tool_call event for auto-approved tools", async () => {
     // First response: use read_file (auto-approved). Second: plain text.
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -256,7 +256,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect((toolCallEvents[0] as any).name).toBe("read_file");
   });
 
-  it("emits tool_result event after executing the tool", async () => {
+  it.concurrent("emits tool_result event after executing the tool", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -282,7 +282,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 
 
 
-  it("adds tool results to history and makes a second API call", async () => {
+  it.concurrent("adds tool results to history and makes a second API call", async () => {
     const calls: any[] = [];
     const mockProvider: StreamProvider = async (params) => {
       // Snapshot immediately — params.messages is this.history by reference
@@ -312,7 +312,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(toolResultMsg).toBeDefined();
   });
 
-  it("history grows correctly across a tool loop", async () => {
+  it.concurrent("history grows correctly across a tool loop", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -338,7 +338,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(history[3].role).toBe("assistant");
   });
 
-  it("executes multiple tools in parallel (both tool_call events before any tool_result)", async () => {
+  it.concurrent("executes multiple tools in parallel (both tool_call events before any tool_result)", async () => {
     // Build a response with two tool_use blocks (list_files + list_files)
     const twoToolMessage: Anthropic.Message = {
       id: "msg_two_tools",
@@ -398,7 +398,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent.sendMessage — error handling", () => {
-  it("emits an error event on non-retryable API failure", async () => {
+  it.concurrent("emits an error event on non-retryable API failure", async () => {
     const mockProvider: StreamProvider = async () => {
       const err: any = new Error("Bad request");
       err.status = 400;
@@ -414,7 +414,7 @@ describe("Agent.sendMessage — error handling", () => {
     expect((errorEvents[0] as any).error).toContain("Bad request");
   });
 
-  it("emits retry error events then succeeds on transient failure", async () => {
+  it.concurrent("emits retry error events then succeeds on transient failure", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "3";
@@ -453,7 +453,7 @@ describe("Agent.sendMessage — error handling", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent.sendMessage — abort", () => {
-  it("stops emitting events when aborted mid-stream", async () => {
+  it.concurrent("stops emitting events when aborted mid-stream", async () => {
     // Stream that yields text chunks with a delay so we can abort mid-way
     const mockProvider: StreamProvider = async () => {
       async function* slowEvents() {
@@ -499,7 +499,7 @@ describe("Agent.sendMessage — abort", () => {
     expect(interrupted).toBeDefined();
   });
 
-  it("does not add incomplete assistant turn to history when aborted", async () => {
+  it.concurrent("does not add incomplete assistant turn to history when aborted", async () => {
     const mockProvider: StreamProvider = async () => {
       async function* slowEvents() {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
@@ -537,7 +537,7 @@ describe("Agent.sendMessage — abort", () => {
 // ---------------------------------------------------------------------------
 
 describe("llm_call event", () => {
-  it("emits llm_call before the first API call", async () => {
+  it.concurrent("emits llm_call before the first API call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -547,7 +547,7 @@ describe("llm_call event", () => {
     expect(startEvents.length).toBe(1);
   });
 
-  it("llm_call carries provider, url, and request", async () => {
+  it.concurrent("llm_call carries provider, url, and request", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -561,7 +561,7 @@ describe("llm_call event", () => {
     expect(e.llmCallNumber).toBeUndefined();
   });
 
-  it("llm_call exposes request messages", async () => {
+  it.concurrent("llm_call exposes request messages", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -572,7 +572,7 @@ describe("llm_call event", () => {
     expect(e.request.messages[0].role).toBe("user");
   });
 
-  it("emits llm_call once per round-trip in a tool loop", async () => {
+  it.concurrent("emits llm_call once per round-trip in a tool loop", async () => {
     // First call: tool_use; second call: text response
     let callCount = 0;
     const mockProvider: StreamProvider = async () => {
@@ -592,7 +592,7 @@ describe("llm_call event", () => {
     expect(startEvents.length).toBe(2);
   });
 
-  it("llm_call request snapshot is correct (not a live reference)", async () => {
+  it.concurrent("llm_call request snapshot is correct (not a live reference)", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -609,7 +609,7 @@ describe("llm_call event", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — full auto-approve", () => {
-  it("never emits tool_pending even for previously-rejected commands", async () => {
+  it.concurrent("never emits tool_pending even for previously-rejected commands", async () => {
     // run_command with a dangerous command — should auto-approve, never ask
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -629,7 +629,7 @@ describe("Agent — full auto-approve", () => {
     expect(pending.length).toBe(0);
   });
 
-  it("emits tool_call for every tool regardless of name", async () => {
+  it.concurrent("emits tool_call for every tool regardless of name", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -649,7 +649,7 @@ describe("Agent — full auto-approve", () => {
     expect((toolCalls[0] as any).name).toBe("run_command");
   });
 
-  it("confirmTool callback is never invoked", async () => {
+  it.concurrent("confirmTool callback is never invoked", async () => {
     let confirmCalled = false;
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -675,7 +675,7 @@ describe("Agent — full auto-approve", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — turn_end event", () => {
-  it("emits exactly one turn_end per user message", async () => {
+  it.concurrent("emits exactly one turn_end per user message", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -685,7 +685,7 @@ describe("Agent — turn_end event", () => {
     expect(turnEnds.length).toBe(1);
   });
 
-  it("turn_end is the last event emitted", async () => {
+  it.concurrent("turn_end is the last event emitted", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -694,7 +694,7 @@ describe("Agent — turn_end event", () => {
     expect(events[events.length - 1].type).toBe("turn_end");
   });
 
-  it("turn_end includes all tool calls across multiple API calls", async () => {
+  it.concurrent("turn_end includes all tool calls across multiple API calls", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -719,7 +719,7 @@ describe("Agent — turn_end event", () => {
     expect(turnEnd.toolCalls).toEqual(["read_file", "run_command"]);
   });
 
-  it("turn_end aggregates token counts across all API calls", async () => {
+  it.concurrent("turn_end aggregates token counts across all API calls", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -740,7 +740,7 @@ describe("Agent — turn_end event", () => {
     expect(turnEnd.metrics.outputTokens).toBe(15);
   });
 
-  it("turn_end toolCalls is empty when no tools used", async () => {
+  it.concurrent("turn_end toolCalls is empty when no tools used", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -750,7 +750,7 @@ describe("Agent — turn_end event", () => {
     expect(turnEnd.toolCalls).toEqual([]);
   });
 
-  it("turn_end model reflects activeModel after /opus switch", async () => {
+  it.concurrent("turn_end model reflects activeModel after /opus switch", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -763,7 +763,7 @@ describe("Agent — turn_end event", () => {
     expect(turnEnd.model).toBe("claude-opus-4-6");
   });
 
-  it("turn_end model is sonnet by default", async () => {
+  it.concurrent("turn_end model is sonnet by default", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -779,7 +779,7 @@ describe("Agent — turn_end event", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — llm_response event", () => {
-  it("emits llm_response after each API call with stop_reason and usage", async () => {
+  it.concurrent("emits llm_response after each API call with stop_reason and usage", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -794,7 +794,7 @@ describe("Agent — llm_response event", () => {
     expect(r.usage.output_tokens).toBe(5);
   });
 
-  it("llm_response content includes text blocks", async () => {
+  it.concurrent("llm_response content includes text blocks", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -804,7 +804,7 @@ describe("Agent — llm_response event", () => {
     expect(r.content.some((b: any) => b.type === "text")).toBe(true);
   });
 
-  it("llm_response content includes tool_use blocks when model requests tools", async () => {
+  it.concurrent("llm_response content includes tool_use blocks when model requests tools", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -831,7 +831,7 @@ describe("Agent — llm_response event", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — tool_result formatted field", () => {
-  it("tool_result event carries the formatted string from formatToolCall", async () => {
+  it.concurrent("tool_result event carries the formatted string from formatToolCall", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -850,7 +850,7 @@ describe("Agent — tool_result formatted field", () => {
     expect(result.formatted).toBe("list_files: src/");
   });
 
-  it("tool_result formatted includes command for run_command", async () => {
+  it.concurrent("tool_result formatted includes command for run_command", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -875,7 +875,7 @@ describe("Agent — tool_result formatted field", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — turn_end timing fields", () => {
-  it("turn_end carries totalMs", async () => {
+  it.concurrent("turn_end carries totalMs", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -892,7 +892,7 @@ describe("Agent — turn_end timing fields", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — user_message event", () => {
-  it("emits user_message as first event with the prompt text", async () => {
+  it.concurrent("emits user_message as first event with the prompt text", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -903,7 +903,7 @@ describe("Agent — user_message event", () => {
     expect(um.content).toBe("hello there");
   });
 
-  it("user_message is emitted before llm_call", async () => {
+  it.concurrent("user_message is emitted before llm_call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -924,7 +924,7 @@ describe("Agent — user_message event", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — verbatim history (no turn compaction)", () => {
-  it("after a turn, history contains the verbatim user+assistant exchange", async () => {
+  it.concurrent("after a turn, history contains the verbatim user+assistant exchange", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -938,7 +938,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
     expect(history[0].content).toBe("hi");
   });
 
-  it("after two turns, history contains all four messages verbatim", async () => {
+  it.concurrent("after two turns, history contains all four messages verbatim", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -957,7 +957,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
     expect(history[3].role).toBe("assistant");
   });
 
-  it("no orphaned tool_result blocks across multiple turns with tool use", async () => {
+  it.concurrent("no orphaned tool_result blocks across multiple turns with tool use", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -996,7 +996,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
 // ---------------------------------------------------------------------------
 
 describe("slash commands", () => {
-  it("/sonnet switches to Anthropic provider with sonnet model", async () => {
+  it.concurrent("/sonnet switches to Anthropic provider with sonnet model", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/sonnet");
@@ -1008,7 +1008,7 @@ describe("slash commands", () => {
     expect(agent.getActiveModel()).toBe("claude-sonnet-4-6");
   });
 
-  it("/opus switches to Anthropic provider with opus model", async () => {
+  it.concurrent("/opus switches to Anthropic provider with opus model", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/opus");
@@ -1020,7 +1020,7 @@ describe("slash commands", () => {
     expect(agent.getActiveModel()).toBe("claude-opus-4-6");
   });
 
-  it("/codex switches to OpenAI provider", async () => {
+  it.concurrent("/codex switches to OpenAI provider", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/codex");
@@ -1030,7 +1030,7 @@ describe("slash commands", () => {
     expect(agent.getProvider()).toBe("openai");
   });
 
-  it("/help is rejected as unknown (operator asks the LLM instead)", async () => {
+  it.concurrent("/help is rejected as unknown (operator asks the LLM instead)", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/help");
@@ -1038,7 +1038,7 @@ describe("slash commands", () => {
     expect(err).toBeDefined();
   });
 
-  it("old /gpt command is rejected as unknown", async () => {
+  it.concurrent("old /gpt command is rejected as unknown", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/gpt");
@@ -1046,7 +1046,7 @@ describe("slash commands", () => {
     expect(err).toBeDefined();
   });
 
-  it("old /openai command is rejected as unknown", async () => {
+  it.concurrent("old /openai command is rejected as unknown", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/openai");
@@ -1054,7 +1054,7 @@ describe("slash commands", () => {
     expect(err).toBeDefined();
   });
 
-  it("old /anthropic command is rejected as unknown", async () => {
+  it.concurrent("old /anthropic command is rejected as unknown", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/anthropic");
@@ -1062,7 +1062,7 @@ describe("slash commands", () => {
     expect(err).toBeDefined();
   });
 
-  it("/sonnet followed by /opus changes active model", async () => {
+  it.concurrent("/sonnet followed by /opus changes active model", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     await collectEvents(agent, "/sonnet");
@@ -1077,7 +1077,7 @@ describe("slash commands", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent — unified event taxonomy (true duals)", () => {
-  it("emits llm_response (not api_response or llm_to_agent) after LLM call", async () => {
+  it.concurrent("emits llm_response (not api_response or llm_to_agent) after LLM call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -1088,7 +1088,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
     expect(events.find((e) => (e as any).type === "llm_to_agent")).toBeUndefined();
   });
 
-  it("emits tool_call (not agent_to_agent_tool_call) when a tool is invoked", async () => {
+  it.concurrent("emits tool_call (not agent_to_agent_tool_call) when a tool is invoked", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -1102,7 +1102,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
     expect(events.find((e) => (e as any).type === "agent_to_agent_tool_call")).toBeUndefined();
   });
 
-  it("emits tool_result (not agent_to_agent_tool_result) after tool execution", async () => {
+  it.concurrent("emits tool_result (not agent_to_agent_tool_result) after tool execution", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
