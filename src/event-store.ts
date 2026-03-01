@@ -14,7 +14,7 @@ import { dirname } from "path";
 import { assertNotProductionPath } from "./test-guard.js";
 import type { OmegaEvent } from "./events.js";
 
-export const DEFAULT_EVENTS_FILE = "sessions/events.jsonl";
+export const DEFAULT_EVENTS_FILE = ".omega/sessions/events.jsonl";
 
 // ---------------------------------------------------------------------------
 // Persistence helpers

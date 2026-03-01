@@ -326,7 +326,7 @@ export class Agent {
 
   /**
    * Production: new Agent()
-   *   — uses real Anthropic client, context appended to sessions/context.jsonl
+   *   — uses real Anthropic client, context appended to .omega/sessions/<ts>/context.jsonl
    * Test: new Agent(mockProvider, null)
    *   — uses mock provider; diagnostics, context file, and events file are
    *     all disabled unless explicit paths are given.

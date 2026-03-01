@@ -21,6 +21,9 @@ import { dirname } from "path";
 import { assertNotProductionPath } from "./test-guard.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
+/** Default path for the context JSONL file. Relative to cwd (SESSION-2). */
+export const DEFAULT_CONTEXT_FILE = ".omega/sessions/context.jsonl";
+
 // ---------------------------------------------------------------------------
 // Hash utilities (Step 3e-iii)
 // ---------------------------------------------------------------------------

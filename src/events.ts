@@ -3,7 +3,7 @@
  *
  * Replaces the former split between `AgentEvent` (streamed, ephemeral) and
  * `SessionEvent` (persisted). Every `OmegaEvent` is both streamed to UI
- * consumers and written to `sessions/events.jsonl`.
+ * consumers and written to `.omega/sessions/<timestamp>/events.jsonl`.
  *
  * Naming authority: persisted names win (EU-3 design rule). The `events.jsonl`
  * file is the single source of truth. Stream-facing names conform to it, not

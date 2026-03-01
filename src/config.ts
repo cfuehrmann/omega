@@ -68,7 +68,7 @@ export const config = {
     "",
     "## Test isolation — never pollute production files",
     "",
-    "Tests must NEVER write to production files: `sessions/`, etc.",
+    "Tests must NEVER write to production files: `.omega/sessions/`, etc.",
     "The established pattern: any production side-effect file controlled by `agent.ts` has a",
     "`filePath: string | null` parameter — passing `null` disables the write. The `Agent`",
     "constructor automatically sets all such paths to `null` when a mock `streamProvider` is",

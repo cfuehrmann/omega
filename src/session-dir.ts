@@ -1,9 +1,11 @@
 /**
- * Session directory management (SESSION-1).
+ * Session directory management (SESSION-1, SESSION-2).
  *
- * Each Omega session gets its own timestamped folder under `sessions/`:
+ * Each Omega session gets its own timestamped folder under `.omega/sessions/`
+ * in the current working directory (SESSION-2: sessions live alongside the
+ * project being worked on, not alongside the Omega source):
  *
- *   sessions/2025-07-04T14-32-05/
+ *   .omega/sessions/2025-07-04T14-32-05/
  *     context.jsonl
  *     events.jsonl
  *
@@ -11,16 +13,19 @@
  * replaced by hyphens so the name is valid on all filesystems.
  *
  * Benefits:
+ *   - Sessions are co-located with the project — can be committed to the
+ *     project's own VCS if the operator chooses (no automatic .gitignore).
  *   - No rotation / `.prev` file management needed — every session starts clean.
  *   - Old sessions are preserved indefinitely (until explicitly pruned).
  *   - Folders can be renamed to human-readable names (SESSION-5).
+ *   - `.omega/` namespace leaves room for future artefacts (config, world-state).
  */
 
 import { mkdir, readdir } from "fs/promises";
 import { join } from "path";
 
-/** Root directory for all session folders. Relative to cwd. */
-export const SESSIONS_ROOT = "sessions";
+/** Root directory for all session folders. Relative to cwd (SESSION-2). */
+export const SESSIONS_ROOT = ".omega/sessions";
 
 /**
  * Generate a session folder name from the current timestamp.
@@ -45,7 +50,7 @@ export interface SessionPaths {
  * Create the session directory for the current session and return the paths
  * to use for context and event persistence.
  *
- * Creates `sessions/<timestamp>/` if it doesn't exist.
+ * Creates `.omega/sessions/<timestamp>/` if it doesn't exist.
  * Returns the paths; the caller passes them to Agent.
  */
 export async function makeSessionDir(now: Date = new Date()): Promise<SessionPaths> {
@@ -61,7 +66,7 @@ export async function makeSessionDir(now: Date = new Date()): Promise<SessionPat
 
 /**
  * Find the most recent *previous* session directory — i.e. the newest folder
- * in `sessions/` that is not `currentDir`.
+ * in `.omega/sessions/` that is not `currentDir`.
  *
  * Returns the events.jsonl path inside that folder, or `null` if no previous
  * session exists.
@@ -75,7 +80,7 @@ export async function findPreviousEventsFile(
   try {
     entries = await readdir(SESSIONS_ROOT);
   } catch {
-    return null; // sessions/ doesn't exist yet
+    return null; // .omega/sessions/ doesn't exist yet
   }
 
   // Filter to directories that look like session dirs (timestamp pattern)

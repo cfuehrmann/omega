@@ -5,14 +5,14 @@ import { assertNotProductionPath } from "./test-guard.js";
 // These tests verify the guard's behaviour in that environment.
 
 describe("assertNotProductionPath", () => {
-  it("throws for sessions/ prefix", () => {
-    expect(() => assertNotProductionPath("sessions/events.jsonl", "fn")).toThrow(
+  it("throws for .omega/sessions/ prefix", () => {
+    expect(() => assertNotProductionPath(".omega/sessions/events.jsonl", "fn")).toThrow(
       "[OMEGA_TEST]"
     );
   });
 
-  it("throws for sessions/context.jsonl", () => {
-    expect(() => assertNotProductionPath("sessions/context.jsonl", "fn")).toThrow(
+  it("throws for .omega/sessions/context.jsonl", () => {
+    expect(() => assertNotProductionPath(".omega/sessions/context.jsonl", "fn")).toThrow(
       "[OMEGA_TEST]"
     );
   });
@@ -28,14 +28,14 @@ describe("assertNotProductionPath", () => {
   });
 
   it("includes the function name in the error message", () => {
-    expect(() => assertNotProductionPath("sessions/events.jsonl", "appendEvent")).toThrow(
+    expect(() => assertNotProductionPath(".omega/sessions/events.jsonl", "appendEvent")).toThrow(
       "appendEvent"
     );
   });
 
   it("includes the path in the error message", () => {
-    expect(() => assertNotProductionPath("sessions/events.jsonl", "fn")).toThrow(
-      "sessions/events.jsonl"
+    expect(() => assertNotProductionPath(".omega/sessions/events.jsonl", "fn")).toThrow(
+      ".omega/sessions/events.jsonl"
     );
   });
 
@@ -55,7 +55,7 @@ describe("assertNotProductionPath", () => {
     const prev = process.env.OMEGA_TEST;
     delete process.env.OMEGA_TEST;
     try {
-      expect(() => assertNotProductionPath("sessions/events.jsonl", "fn")).not.toThrow();
+      expect(() => assertNotProductionPath(".omega/sessions/events.jsonl", "fn")).not.toThrow();
     } finally {
       process.env.OMEGA_TEST = prev;
     }

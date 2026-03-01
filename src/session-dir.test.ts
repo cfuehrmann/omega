@@ -13,6 +13,20 @@ import { existsSync } from "fs";
 // makeSessionDirName
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// SESSIONS_ROOT value (SESSION-2)
+// ---------------------------------------------------------------------------
+
+describe("SESSIONS_ROOT", () => {
+  it("is .omega/sessions (SESSION-2: sessions live in cwd, under .omega namespace)", () => {
+    expect(SESSIONS_ROOT).toBe(".omega/sessions");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeSessionDirName
+// ---------------------------------------------------------------------------
+
 describe("makeSessionDirName", () => {
   it("formats a date as YYYY-MM-DDTHH-MM-SS", () => {
     const d = new Date("2025-07-04T14:32:05.123Z");
@@ -43,7 +57,7 @@ describe("makeSessionDirName", () => {
 // makeSessionDir — uses a temp directory instead of real sessions/
 // ---------------------------------------------------------------------------
 
-// We can't use makeSessionDir() directly because it writes to sessions/ (production).
+// We can't use makeSessionDir() directly because it writes to .omega/sessions/ (production).
 // Instead test the logic by importing and patching, or test the helpers individually.
 // The integration is tested at the terminal app level.
 
@@ -74,16 +88,16 @@ describe("findPreviousEventsFile", () => {
   let tempRoot: string;
 
   // We can't easily patch SESSIONS_ROOT, so we test the helper's logic
-  // by calling it with a fake currentDir that won't match anything in sessions/.
-  // The real sessions/ may or may not exist — we handle both.
+  // by calling it with a fake currentDir that won't match anything in .omega/sessions/.
+  // The real .omega/sessions/ may or may not exist — we handle both.
 
-  it("returns null when sessions/ does not exist (no prior sessions)", async () => {
+  it("returns null when .omega/sessions/ does not exist (no prior sessions)", async () => {
     // Use a non-existent sessions root by passing a currentDir deep enough
-    // that nothing else in sessions/ would be a "previous" session.
+    // that nothing else in .omega/sessions/ would be a "previous" session.
     // Since we can't control SESSIONS_ROOT, we rely on the regex filter.
     // This test just checks null is returned gracefully when no dirs exist.
     // We'll call it with a fake currentDir that matches a timestamp pattern.
-    const fakeDir = join("sessions", "9999-12-31T23-59-59");
+    const fakeDir = join(".omega", "sessions", "9999-12-31T23-59-59");
     const result = await findPreviousEventsFile(fakeDir);
     // Either null (no sessions dir) or a string path or null (all sessions are current)
     // We can only assert it doesn't throw and returns string | null
@@ -91,10 +105,10 @@ describe("findPreviousEventsFile", () => {
   });
 
   it("returns null when there is no previous session (only current)", async () => {
-    // Make a temp dir that simulates sessions/ with only the current session
+    // Make a temp dir that simulates .omega/sessions/ with only the current session
     // We test the filtering logic directly
     tempRoot = await mkdtemp(join(tmpdir(), "omega-sesdir-test-"));
-    const fakeSessionsRoot = join(tempRoot, "sessions");
+    const fakeSessionsRoot = join(tempRoot, ".omega", "sessions");
 
     // Simulate: only one session dir (the current one)
     const current = "2025-07-04T14-32-05";
@@ -102,7 +116,7 @@ describe("findPreviousEventsFile", () => {
     await writeFile(join(fakeSessionsRoot, current, "events.jsonl"), "");
 
     // We can't redirect SESSIONS_ROOT at runtime, but we can verify the
-    // filtering logic by examining what findPreviousEventsFile would filter.
+    // filtering logic by examining what findPreviousEventsFile would filter out.
     // Test the regex pattern used in the implementation:
     const allEntries = [current];
     const regex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/;

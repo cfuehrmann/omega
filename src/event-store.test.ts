@@ -205,8 +205,8 @@ describe("appendEvent", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent test isolation — events file", () => {
-  it("mock-provider agent does not write to sessions/events.jsonl", async () => {
-    const PROD_FILE = "sessions/events.jsonl";
+  it("mock-provider agent does not write to .omega/sessions/events.jsonl", async () => {
+    const PROD_FILE = ".omega/sessions/events.jsonl";
     // Remove if it exists so we can detect a fresh write
     if (existsSync(PROD_FILE)) rmSync(PROD_FILE);
 

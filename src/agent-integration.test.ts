@@ -127,11 +127,11 @@ function makeTempDir(): string {
 // These tests prove the contract: when a streamProvider is given without
 // explicit paths, Agent must NOT write to any production file.
 describe("Agent — test isolation (no production file pollution)", () => {
-  it("does not write to sessions/ during a turn (mock provider isolation)", async () => {
+  it("does not write to .omega/sessions/ during a turn (mock provider isolation)", async () => {
     const { existsSync, readdirSync: rds } = await import("fs");
 
     const countFiles = (dir: string) => existsSync(dir) ? rds(dir).length : 0;
-    const beforeSessions = countFiles("sessions");
+    const beforeSessions = countFiles(join(".omega", "sessions"));
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
@@ -140,12 +140,12 @@ describe("Agent — test isolation (no production file pollution)", () => {
     await collectEvents(agent, "should not write to production files");
     await Bun.sleep(100);
 
-    expect(countFiles("sessions")).toBe(beforeSessions);
+    expect(countFiles(join(".omega", "sessions"))).toBe(beforeSessions);
   });
 
-  it("does not write to sessions/context.jsonl when no contextFile is given", async () => {
+  it("does not write to .omega/sessions/context.jsonl when no contextFile is given", async () => {
     const { existsSync, statSync } = await import("fs");
-    const contextPath = join(process.cwd(), "sessions", "context.jsonl");
+    const contextPath = join(process.cwd(), ".omega", "sessions", "context.jsonl");
 
     // Record the file size before (it may already exist from a real session)
     const sizeBefore = existsSync(contextPath) ? statSync(contextPath).size : -1;
@@ -162,12 +162,12 @@ describe("Agent — test isolation (no production file pollution)", () => {
     expect(sizeAfter).toBe(sizeBefore);
   });
 
-  it("does not write to sessions/events.jsonl when OpenAI caller used without explicit eventsFile=null", async () => {
+  it("does not write to .omega/sessions/events.jsonl when OpenAI caller used without explicit eventsFile=null", async () => {
     // Regression test: agent-rate-limit tests previously passed streamProvider=undefined
     // with a custom openAiCaller, bypassing the mock-provider heuristic and writing to
     // the production events file. Explicit null, null must be passed in that pattern.
     const { existsSync, statSync } = await import("fs");
-    const eventsPath = join(process.cwd(), "sessions", "events.jsonl");
+    const eventsPath = join(process.cwd(), ".omega", "sessions", "events.jsonl");
 
     const sizeBefore = existsSync(eventsPath) ? statSync(eventsPath).size : -1;
 
