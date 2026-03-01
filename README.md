@@ -85,16 +85,11 @@ Any other `/…` input is rejected with an error. Ask the LLM directly for help.
 
 ### Test isolation — never pollute production files
 
-Tests must **never** write to `sessions/` or any other production file.
-Five structural layers enforce this:
+Tests must **never** write to `.omega/sessions/` or any other production file.
 
-- **Layer a:** `bunfig.toml` preloads `src/test-setup.ts` → sets `OMEGA_TEST=1` before any test runs.
-- **Layer b:** `assertNotProductionPath()` in `src/test-guard.ts` is wired into all production write functions. Writing to `sessions/` when `OMEGA_TEST=1` throws immediately.
-- **Layer c:** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`.
-- **Layer d:** Use `makeTestAgent()` from `src/test-utils.ts` — always passes `null` for all path args.
-- **Layer e:** Pre-commit hook greps for bare `new Agent()` in `*.test.ts` and fails.
-- All file-writing functions treat `null` path as a no-op.
-- e2e tests use `sessions-test/` via `e2e/fixtures/test-server.ts`.
+**Primary mechanism:** `makeTestAgent()` from `src/test-utils.ts` creates a real per-call temp dir, passes real `contextFile`/`eventsFile` to `Agent`, and returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Call `dispose()` in `afterEach`. Tests use real session files — no null-path blind spots.
+
+Belt-and-suspenders secondary layers: `OMEGA_TEST=1` preload via `bunfig.toml`; `assertNotProductionPath()` guard wired into all write functions; Agent constructor coercion; pre-commit grep for bare `new Agent()` in test files.
 
 **If you add a new production side-effect file:** add `filePath: string | null`, wire `assertNotProductionPath()` into the write function, and add an isolation test.
 

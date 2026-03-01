@@ -73,14 +73,15 @@ Three cache breakpoints: system prompt, last tool definition, last history messa
 ### Test Isolation — Never Pollute Production Files
 Tests must **never** write to `.omega/sessions/` or any other production file.
 
-**Structural guardrails (all five layers implemented):**
-- **Layer a:** `bunfig.toml` preloads `src/test-setup.ts`, which sets `OMEGA_TEST=1` before any test runs — unconditionally, for every `bun test` invocation.
-- **Layer b:** `src/test-guard.ts` exports `assertNotProductionPath()`, wired into all production write functions (`appendContextMessage`, `appendEvent`). When `OMEGA_TEST=1`, writing to `.omega/sessions/` or `diagnosis/` throws immediately — a loud test failure rather than silent pollution. Temp-dir paths used by file-writing tests are unaffected.
-- **Layer c:** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`, unconditionally — no longer depends on mock `streamProvider` being injected.
-- **Layer d:** `makeTestAgent(streamProvider?, openAiCaller?)` factory in `src/test-utils.ts` — always passes explicit `null` for all path args. Right thing is easy thing.
-- **Layer e:** `scripts/pre-commit` greps for bare `new Agent()` in `*.test.ts` files before running tests. Fails with an actionable message pointing at `makeTestAgent`.
+**Primary mechanism:** `makeTestAgent()` in `src/test-utils.ts` creates a real per-call temp dir via `mkdtempSync`, passes real `contextFile`/`eventsFile` paths to `Agent`, and returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Tests call `dispose()` in `afterEach` to clean up. Tests use real session files — no null-path blind spots.
 
-The `null`-is-no-op pattern still applies to all write functions. e2e tests use their own temp session dirs and run via `just e2e` (not `bun test`), so they are unaffected by the preload. If a new production side-effect file is added, wire `assertNotProductionPath()` into its write function.
+**Belt-and-suspenders layers (secondary):**
+- **Layer a:** `bunfig.toml` preloads `src/test-setup.ts` → sets `OMEGA_TEST=1` before any test runs.
+- **Layer b:** `assertNotProductionPath()` in `src/test-guard.ts` is wired into all production write functions. Writing to `.omega/sessions/` when `OMEGA_TEST=1` throws immediately.
+- **Layer c:** `Agent` constructor coerces `undefined` file paths to `null` when `OMEGA_TEST=1`.
+- **Layer e:** `scripts/pre-commit` greps for bare `new Agent()` in `*.test.ts` files. Fails with an actionable message pointing at `makeTestAgent`.
+
+All write functions treat `null` path as a no-op. e2e tests use their own temp session dirs via `just e2e` (unaffected by the preload). If a new production side-effect file is added, wire `assertNotProductionPath()` into its write function.
 
 ### Event Taxonomy
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events — both streamed from `agent.ts` and persisted to `events.jsonl`. `AgentEvent` in `agent.ts` is a backward-compat alias. All names are consistent across all layers.
@@ -162,17 +163,7 @@ Each `MessageParam` written to `context.jsonl` carries a `hash` field (SHA-256 o
 - `src/test-guard.ts` — `assertNotProductionPath(filePath, fnName)`. Throws when `OMEGA_TEST=1` and `filePath` is under `.omega/sessions/` or `diagnosis/`. No-op in production. Wired into all production write functions.
 - `src/test-setup.ts` — Bun test preload (wired via `bunfig.toml`). Sets `OMEGA_TEST=1` before any test file loads.
 - `src/test-guard.test.ts` — tests covering throw/no-throw behaviour of `assertNotProductionPath`.
-- `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory; always passes `null` for all path args.
+- `src/test-utils.ts` — `makeTestAgent(streamProvider?, openAiCaller?)` factory. Creates a real per-call temp dir, passes real `contextFile`/`eventsFile` to `Agent`. Returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. Tests call `dispose()` in `afterEach`.
 
-### Recent Session Outcomes
-Completed **SESSION-1/2** (commits 3fa0df4, 326729a, caf3aee): Each session now gets its own timestamped directory `.omega/sessions/YYYY-MM-DDTHH-MM-SS/`. Sessions accumulate; no rotation. `SESSIONS_ROOT = ".omega/sessions"`. File-rotation machinery (`rotateFile`, `prevPath`, `clearContextStore`, `clearEvents`) fully removed.
-
-Completed **SESSION-2b** (commit 9c631b4): Deleted `src/web/session-store.ts` and the `sessions/current.jsonl` mechanism. Web server history replay now reads `events.jsonl` from Agent's session dir. E2e test server: in-memory event log only.
-
-Completed **14 new e2e tests + 2 production bug fixes** (commit f9bb8e2): Crash recovery, abort, streaming lock/unlock, tool_result/agent_error/llm_error rendering, textarea clear, history replay completeness, reconnect banner. Bugs found: textarea not disabled during streaming; `__omegaDispatch` not exposed on window.
-
-Completed **BUG-1 fix** (commit 9682be6): `max_tokens` mid-tool-call context poison. Dangling `tool_use` on `max_tokens` now gets synthetic `tool_result(is_error: true)` entries; turn ends cleanly; next turn succeeds.
-
-Completed **context overflow error-out** (commit 13c1f9e): deleted `buildSentContext`, `apiBudget`, `contextHashesForView`, `context_view_trimmed`. Context overflow is now a non-retryable terminal error. 488 unit + 41 e2e tests green.
-
-Completed **diagnostics removal + session_end + event improvements** (commit bfd5d0d): `diagnosis.ts` and all related machinery removed. `session_end` event (`outcome: "clean" | "error"`) — absence = crash signal. Terminal startup reads previous session's `events.jsonl` to warn on prior session errors.
+### Recent Work
+- **TEST-1** (commit 9feb285): Migrated all agent tests to real temp-dir session files. `makeTestAgent()` now creates a real per-call temp dir and returns `{ agent, sessionDir, contextFile, eventsFile, dispose }`. The `sessions-test/` directory is eliminated. 498 unit + 41 e2e tests green.
