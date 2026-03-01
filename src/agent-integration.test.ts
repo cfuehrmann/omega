@@ -140,7 +140,7 @@ describe("Agent — test isolation (no production file pollution)", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "should not write to production files");
     await Bun.sleep(100);
@@ -159,7 +159,7 @@ describe("Agent — test isolation (no production file pollution)", () => {
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
     // No contextFile passed — must not append to production context file
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "should not write context");
     await Bun.sleep(100);
@@ -187,7 +187,7 @@ describe("Agent — test isolation (no production file pollution)", () => {
       raw: { usage: { input_tokens: 1, output_tokens: 2 } },
     });
 
-    const { agent, dispose } = makeTestAgent(undefined, openAiCaller as any);
+    const { agent, dispose } = await makeTestAgent(undefined, openAiCaller as any);
     disposeAll.push(dispose);
     agent.setProvider("openai");
     await collectEvents(agent, "hello");
@@ -207,7 +207,7 @@ describe("Agent.sendMessage — plain text response", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
 
@@ -231,7 +231,7 @@ describe("Agent.sendMessage — plain text response", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(chunkEvents, textMessage("foo bar baz"));
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "tell me something");
 
@@ -245,7 +245,7 @@ describe("Agent.sendMessage — plain text response", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("I am fine"), textMessage("I am fine"));
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "how are you?");
 
@@ -259,7 +259,7 @@ describe("Agent.sendMessage — plain text response", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "first");
     await collectEvents(agent, "second");
@@ -273,7 +273,7 @@ describe("Agent.sendMessage — plain text response", () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "test");
 
@@ -304,7 +304,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "read config");
 
@@ -326,7 +326,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "read config");
 
@@ -353,7 +353,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "read config");
 
@@ -382,7 +382,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "read config");
 
@@ -428,7 +428,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "list dirs");
 
@@ -462,7 +462,7 @@ describe("Agent.sendMessage — error handling", () => {
       throw err;
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "test");
 
@@ -487,7 +487,7 @@ describe("Agent.sendMessage — error handling", () => {
       return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "test");
 
@@ -531,7 +531,7 @@ describe("Agent.sendMessage — abort", () => {
       };
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events: (OmegaEvent | StreamSignal)[] = [];
     const controller = new AbortController();
@@ -573,7 +573,7 @@ describe("Agent.sendMessage — abort", () => {
       };
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const controller = new AbortController();
     const gen = agent.sendMessage("hello", async () => true, controller.signal);
@@ -597,7 +597,7 @@ describe("llm_call event", () => {
   it("emits llm_call before the first API call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const startEvents = events.filter((e) => e.type === "llm_call");
@@ -607,7 +607,7 @@ describe("llm_call event", () => {
   it("llm_call carries provider, url, and request", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const e = events.find((e) => e.type === "llm_call") as any;
@@ -621,7 +621,7 @@ describe("llm_call event", () => {
   it("llm_call exposes request messages", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const e = events.find((e) => e.type === "llm_call") as any;
@@ -642,7 +642,7 @@ describe("llm_call event", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "list files");
     const startEvents = events.filter((e) => e.type === "llm_call");
@@ -652,7 +652,7 @@ describe("llm_call event", () => {
   it("llm_call request snapshot is correct (not a live reference)", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("reply"), textMessage("reply"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
     const e = events.find((ev) => ev.type === "llm_call") as any;
@@ -679,7 +679,7 @@ describe("Agent — full auto-approve", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "do it");
     const pending = events.filter((e) => e.type === "tool_pending");
@@ -698,7 +698,7 @@ describe("Agent — full auto-approve", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "do it");
     const toolCalls = events.filter((e) => e.type === "tool_call");
@@ -719,7 +719,7 @@ describe("Agent — full auto-approve", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const confirm = async () => { confirmCalled = true; return true; };
     for await (const _ of agent.sendMessage("go", confirm)) {}
@@ -735,7 +735,7 @@ describe("Agent — turn_end event", () => {
   it("emits exactly one turn_end per user message", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const turnEnds = events.filter((e) => e.type === "turn_end");
@@ -745,7 +745,7 @@ describe("Agent — turn_end event", () => {
   it("turn_end is the last event emitted", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     expect(events[events.length - 1].type).toBe("turn_end");
@@ -769,7 +769,7 @@ describe("Agent — turn_end event", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "do it");
     const turnEnd = events.find((e) => e.type === "turn_end") as any;
@@ -788,7 +788,7 @@ describe("Agent — turn_end event", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "go");
     const turnEnd = events.find((e) => e.type === "turn_end") as any;
@@ -800,7 +800,7 @@ describe("Agent — turn_end event", () => {
   it("turn_end toolCalls is empty when no tools used", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const turnEnd = events.find((e) => e.type === "turn_end") as any;
@@ -810,7 +810,7 @@ describe("Agent — turn_end event", () => {
   it("turn_end model reflects activeModel after /opus switch", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     // Switch to opus first
     await collectEvents(agent, "/opus");
@@ -823,7 +823,7 @@ describe("Agent — turn_end event", () => {
   it("turn_end model is sonnet by default", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const turnEnd = events.find((e) => e.type === "turn_end") as any;
@@ -839,7 +839,7 @@ describe("Agent — llm_response event", () => {
   it("emits llm_response after each API call with stop_reason and usage", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const r = events.find((e) => e.type === "llm_response") as any;
@@ -854,7 +854,7 @@ describe("Agent — llm_response event", () => {
   it("llm_response content includes text blocks", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const r = events.find((e) => e.type === "llm_response") as any;
@@ -873,7 +873,7 @@ describe("Agent — llm_response event", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "list");
     const responses = events.filter((e) => e.type === "llm_response") as any[];
@@ -900,7 +900,7 @@ describe("Agent — tool_result formatted field", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "list files");
     const result = events.find((e) => e.type === "tool_result") as any;
@@ -919,7 +919,7 @@ describe("Agent — tool_result formatted field", () => {
       }
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "test");
     const result = events.find((e) => e.type === "tool_result") as any;
@@ -935,7 +935,7 @@ describe("Agent — turn_end timing fields", () => {
   it("turn_end carries totalMs", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const m = events.find((e) => e.type === "turn_end") as any;
@@ -952,7 +952,7 @@ describe("Agent — user_message event", () => {
   it("emits user_message as first event with the prompt text", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello there");
     const um = events.find((e) => e.type === "user_message") as any;
@@ -963,7 +963,7 @@ describe("Agent — user_message event", () => {
   it("user_message is emitted before llm_call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const types = events.map((e) => e.type);
@@ -984,7 +984,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
   it("after a turn, history contains the verbatim user+assistant exchange", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "hi");
     const history = agent.getCompactedContextHistory();
@@ -1001,7 +1001,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
       call++;
       return makeMockStream(textStreamEvents(`response ${call}`), textMessage(`response ${call}`));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "turn 1");
     await collectEvents(agent, "turn 2");
@@ -1022,7 +1022,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
       if (call === 2) return makeMockStream(textStreamEvents("done turn 1"), textMessage("done turn 1"));
       return makeMockStream(textStreamEvents("done turn 2"), textMessage("done turn 2"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "turn 1 with tool");
     await collectEvents(agent, "turn 2");
@@ -1054,7 +1054,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
 
 describe("slash commands", () => {
   it("/sonnet switches to Anthropic provider with sonnet model", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/sonnet");
     const mc = events.find((e) => e.type === "model_changed") as any;
@@ -1066,7 +1066,7 @@ describe("slash commands", () => {
   });
 
   it("/opus switches to Anthropic provider with opus model", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/opus");
     const mc = events.find((e) => e.type === "model_changed") as any;
@@ -1078,7 +1078,7 @@ describe("slash commands", () => {
   });
 
   it("/codex switches to OpenAI provider", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/codex");
     const mc = events.find((e) => e.type === "model_changed") as any;
@@ -1088,7 +1088,7 @@ describe("slash commands", () => {
   });
 
   it("/help is rejected as unknown (operator asks the LLM instead)", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/help");
     const err = events.find((e) => e.type === "agent_error") as any;
@@ -1096,7 +1096,7 @@ describe("slash commands", () => {
   });
 
   it("old /gpt command is rejected as unknown", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/gpt");
     const err = events.find((e) => e.type === "agent_error") as any;
@@ -1104,7 +1104,7 @@ describe("slash commands", () => {
   });
 
   it("old /openai command is rejected as unknown", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/openai");
     const err = events.find((e) => e.type === "agent_error") as any;
@@ -1112,7 +1112,7 @@ describe("slash commands", () => {
   });
 
   it("old /anthropic command is rejected as unknown", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/anthropic");
     const err = events.find((e) => e.type === "agent_error") as any;
@@ -1120,7 +1120,7 @@ describe("slash commands", () => {
   });
 
   it("/sonnet followed by /opus changes active model", async () => {
-    const { agent, dispose } = makeTestAgent(undefined);
+    const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     await collectEvents(agent, "/sonnet");
     await collectEvents(agent, "/opus");
@@ -1137,7 +1137,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
   it("emits llm_response (not api_response or llm_to_agent) after LLM call", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     expect(events.find((e) => e.type === "llm_response")).toBeDefined();
@@ -1152,7 +1152,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
       if (call === 1) return makeMockStream(toolUseStreamEvents("read_file"), toolUseMessage("t1", "read_file", { path: "src/config.ts" }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "read it");
     expect(events.find((e) => e.type === "tool_call")).toBeDefined();
@@ -1166,7 +1166,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
       if (call === 1) return makeMockStream(toolUseStreamEvents("read_file"), toolUseMessage("t1", "read_file", { path: "src/config.ts" }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "read it");
     expect(events.find((e) => e.type === "tool_result")).toBeDefined();

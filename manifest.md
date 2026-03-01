@@ -1,5 +1,88 @@
 # High-level manifest for the further development of Omega
 
+## Testing philosophy — prefer real I/O over mocks
+
+### The principle
+
+Tests should exercise the full stack as close to production behaviour as
+possible. Mocking away I/O — file writes, database calls, network calls — makes
+tests faster and more isolated, but it also creates blind spots: the mocked
+paths are never exercised, so regressions in write logic, serialisation, or
+file-naming are invisible until production breaks.
+
+The preferred alternative is **real I/O to a dedicated test location**:
+
+- Tests write to a test-specific directory (e.g. `.omega/test-sessions/`),
+  not to the production directory (e.g. `.omega/sessions/`).
+- The test directory is never cleaned up between runs. Files accumulate just
+  like production sessions do. This makes test output inspectable — the same
+  tools used to inspect production sessions work on test sessions.
+- Isolation is achieved by giving each test run a **uniquely named output
+  location** (timestamp + monotonic counter + random suffix), not by deleting
+  the output or routing it to `/tmp`.
+
+This approach makes tests serve double duty: they verify correctness _and_
+they produce real, inspectable artifacts that can be used to diagnose failures
+or validate future load-bearing features (session resume, history replay,
+post-mortem tooling).
+
+### Parallelism
+
+Unique-per-run naming (timestamp + counter or random suffix) enables full test
+parallelism without conflicts. Tests do not share mutable state, do not need
+to coordinate, and do not need cleanup between runs. Periodic pruning of old
+test sessions is a separate concern (cron job, `just prune`, etc.).
+
+### When mocking is still appropriate
+
+- **External services** (LLMs, third-party APIs): always mock. Real network
+  calls are slow, unreliable, and cost money. The mock injects a
+  `StreamProvider` or equivalent seam.
+- **Clock and randomness**: mock when you need deterministic outputs.
+- **Anything that cannot be isolated by path**: if a side-effect is truly
+  global (e.g. modifying a shared OS resource), mock it.
+
+The rule of thumb: mock the external world; use real I/O for your own storage.
+
+### Application to Omega
+
+Omega has two categories of production side-effect files:
+
+| Category | Production path | Test path |
+|----------|----------------|-----------|
+| Sessions (unit tests + e2e) | `.omega/sessions/` | `.omega/test-sessions/` |
+| World state | `plan/world-state.md` | — (not written by tests) |
+
+`makeTestAgent()` in `src/test-utils.ts` is the canonical factory for agent
+tests. It creates a session dir under `.omega/test-sessions/` (via
+`makeSessionDir(new Date(), TEST_SESSIONS_ROOT)` from `src/session-dir.ts`),
+passes real `contextFile`/`eventsFile` to `Agent`, and returns a `dispose()`
+that does **nothing** — test sessions are preserved so they can be inspected.
+
+`assertNotProductionPath()` in `src/test-guard.ts` is a belt-and-suspenders
+guard: it throws if any test (detected via `OMEGA_TEST=1`) attempts to write
+to `.omega/sessions/` or `.omega/test-sessions/` via a write function that
+belongs to the test infrastructure. (Production write functions are allowed to
+write to `.omega/test-sessions/` — that is the whole point.)
+
+The e2e tests follow the same pattern: `test-server.ts` calls `makeSessionDir`
+with `TEST_SESSIONS_ROOT` so every Playwright test run produces real,
+inspectable session files.
+
+### The TEST-1 mistake (corrected)
+
+The TEST-1 refactor (commit 9feb285) migrated agent tests from null-path mocks
+to "real files in `/tmp` via `mkdtempSync`, deleted by `dispose()`". This was
+a step in the right direction (write paths are exercised) but missed the key
+goal: **the files must survive the test run** so they can be inspected and
+serve as real session artifacts for load-bearing features.
+
+The corrected design: `makeTestAgent()` writes to `.omega/test-sessions/`,
+does not delete on dispose, and uses the same `makeSessionDir()` call that
+production code uses.
+
+---
+
 ## AI-friendly software projects
 
 Any modern software project should have a source repository that makes it easy

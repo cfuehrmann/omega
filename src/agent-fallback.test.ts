@@ -1,12 +1,12 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { type StreamProvider, type OmegaEvent, type StreamSignal } from "./agent.js";
-import { makeTestAgent } from "./test-utils.js";
+import { makeTestAgent, type TestAgent } from "./test-utils.js";
 
 function makeRateLimitError() {
   return { status: 429, message: "rate limit" } as any;
 }
 
-async function collectEvents(agent: ReturnType<typeof makeTestAgent>["agent"], message: string): Promise<(OmegaEvent | StreamSignal)[]> {
+async function collectEvents(agent: TestAgent["agent"], message: string): Promise<(OmegaEvent | StreamSignal)[]> {
   const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(message, async () => true)) {
     events.push(event);
@@ -29,7 +29,7 @@ describe("Agent fallback", () => {
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
 

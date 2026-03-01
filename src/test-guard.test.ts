@@ -17,16 +17,16 @@ describe("assertNotProductionPath", () => {
     );
   });
 
-  it("throws for .omega/test-sessions/ prefix", () => {
-    expect(() => assertNotProductionPath(".omega/test-sessions/events.jsonl", "fn")).toThrow(
-      "[OMEGA_TEST]"
-    );
+  it("does NOT throw for .omega/test-sessions/ (unit and e2e tests may write there)", () => {
+    expect(() =>
+      assertNotProductionPath(".omega/test-sessions/events.jsonl", "fn")
+    ).not.toThrow();
   });
 
-  it("throws for .omega/test-sessions/context.jsonl", () => {
-    expect(() => assertNotProductionPath(".omega/test-sessions/context.jsonl", "fn")).toThrow(
-      "[OMEGA_TEST]"
-    );
+  it("does NOT throw for .omega/test-sessions/context.jsonl", () => {
+    expect(() =>
+      assertNotProductionPath(".omega/test-sessions/context.jsonl", "fn")
+    ).not.toThrow();
   });
 
   it("throws for diagnosis/ prefix", () => {
@@ -51,9 +51,9 @@ describe("assertNotProductionPath", () => {
     );
   });
 
-  it("does NOT throw for a temp-dir path", () => {
+  it("does NOT throw for an arbitrary non-production path", () => {
     expect(() =>
-      assertNotProductionPath("/tmp/omega-test-123/events.jsonl", "fn")
+      assertNotProductionPath("some/random/path/events.jsonl", "fn")
     ).not.toThrow();
   });
 

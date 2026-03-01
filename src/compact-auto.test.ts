@@ -209,7 +209,7 @@ describe("AUTO_COMPACT_THRESHOLD", () => {
 describe("auto-compact: fires above threshold", () => {
   it("emits compact_auto_start and compact_auto_done when context exceeds threshold", async () => {
     const provider = makeSummaryThenTextProvider("summary of head");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -221,7 +221,7 @@ describe("auto-compact: fires above threshold", () => {
 
   it("compact_auto_start carries messagesBefore equal to history length before compaction", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
     const seeded = agent.getCompactedContextHistory().length;
@@ -237,7 +237,7 @@ describe("auto-compact: fires above threshold", () => {
 
   it("compact_auto_done.messagesBefore matches compact_auto_start.messagesBefore", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -252,7 +252,7 @@ describe("auto-compact: fires above threshold", () => {
 
   it("compact_auto_done.messagesAfter is less than messagesBefore", async () => {
     const provider = makeSummaryThenTextProvider("long session summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -267,7 +267,7 @@ describe("auto-compact: fires above threshold", () => {
 
   it("compactedContextHistory is shorter after auto-compaction", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
     const before = agent.getCompactedContextHistory().length;
@@ -280,7 +280,7 @@ describe("auto-compact: fires above threshold", () => {
 
   it("compact_auto_start appears before compact_auto_done in event stream", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -294,7 +294,7 @@ describe("auto-compact: fires above threshold", () => {
 
   it("compact_auto events appear before llm_call in the stream", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -314,7 +314,7 @@ describe("auto-compact: fires above threshold", () => {
 describe("auto-compact: does not fire below threshold", () => {
   it("emits no compact_auto events when lastPromptTokens is below threshold", async () => {
     const provider = makeTextProvider("ok");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setBelowThreshold(agent);
 
@@ -330,7 +330,7 @@ describe("auto-compact: does not fire below threshold", () => {
 
   it("emits no compact_auto events when lastPromptTokens is exactly at threshold", async () => {
     const provider = makeTextProvider("ok");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     agent.lastPromptTokens = AUTO_COMPACT_THRESHOLD;
 
@@ -346,7 +346,7 @@ describe("auto-compact: does not fire below threshold", () => {
 
   it("emits no compact_auto events on first turn (lastPromptTokens starts at 0)", async () => {
     const provider = makeTextProvider("ok");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     const events = omegaEvents(await collectEvents(agent, "hello"));
@@ -367,7 +367,7 @@ describe("auto-compact: does not fire below threshold", () => {
 describe("auto-compact: error path", () => {
   it("emits compact_auto_error when LLM throws during compaction", async () => {
     const provider = makeFailThenTextProvider("LLM failed for compaction");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -382,7 +382,7 @@ describe("auto-compact: error path", () => {
 
   it("emits compact_auto_start before compact_auto_error", async () => {
     const provider = makeFailThenTextProvider("boom");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -396,7 +396,7 @@ describe("auto-compact: error path", () => {
 
   it("turn still completes after auto-compact error (rolling truncation fallback)", async () => {
     const provider = makeFailThenTextProvider("boom");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -407,7 +407,7 @@ describe("auto-compact: error path", () => {
 
   it("compactedContextHistory is unchanged after auto-compact error", async () => {
     const provider = makeFailThenTextProvider("boom");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
     const viewBefore = agent.getCompactedContextHistory().length;
@@ -420,7 +420,7 @@ describe("auto-compact: error path", () => {
 
   it("no compact_auto_done event on error path", async () => {
     const provider = makeFailThenTextProvider("boom");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -441,7 +441,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_max", "write_file"),
         maxTokensToolUseMessage("t_max", "write_file")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     const events = omegaEvents(await collectEvents(agent, "write a file"));
@@ -460,7 +460,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_max", "write_file"),
         maxTokensToolUseMessage("t_max", "write_file")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     const events = omegaEvents(await collectEvents(agent, "write a file"));
@@ -479,7 +479,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_max", "write_file"),
         maxTokensToolUseMessage("t_max", "write_file")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     await collectEvents(agent, "write a file");
@@ -504,7 +504,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_max", "write_file"),
         maxTokensToolUseMessage("t_max", "write_file")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     await collectEvents(agent, "write a file");
@@ -530,7 +530,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_max", "write_file"),
         maxTokensToolUseMessage("t_max", "write_file")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const initialLength = agent.getCompactedContextHistory().length;
 
@@ -551,7 +551,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
       }
       return makeMockStream(textStreamEvents("all good"), textMessage("all good"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     await collectEvents(agent, "write a file");
@@ -574,7 +574,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         ],
         maxTokensTwoToolsMessage("id1", "id2")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     const events = omegaEvents(await collectEvents(agent, "do two things"));
@@ -606,7 +606,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_cut", "fetch_url"),
         maxTokensToolUseMessage("t_cut", "fetch_url")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     const events = omegaEvents(await collectEvents(agent, "fetch a url"));
@@ -621,7 +621,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
         maxTokensToolUseStreamEvents("t_max", "write_file"),
         maxTokensToolUseMessage("t_max", "write_file")
       );
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     await collectEvents(agent, "write a file");
@@ -643,7 +643,7 @@ describe("BUG-1: max_tokens mid-tool-call context poison prevention", () => {
 describe("auto-compact: lastPromptTokens is updated after each turn", () => {
   it("lastPromptTokens reflects the LLM usage from the completed turn", async () => {
     const provider = makeTextProvider("ok");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     expect(agent.lastPromptTokens).toBe(0);
 
@@ -660,7 +660,7 @@ describe("auto-compact: lastPromptTokens is updated after each turn", () => {
       if (callCount === 2) return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
       return makeMockStream(textStreamEvents("second"), textMessage("second"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     await collectEvents(agent, "first message");
@@ -673,7 +673,7 @@ describe("auto-compact: lastPromptTokens is updated after each turn", () => {
 
   it("lastPromptTokens does NOT trigger auto-compact again within the same turn", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -691,7 +691,7 @@ describe("auto-compact: lastPromptTokens is updated after each turn", () => {
 describe("auto-compact: messagesAfter shape", () => {
   it("messagesAfter equals 1 (synthetic) + KEEP_RECENT_TURNS * 2 (tail) when history is long enough", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -706,7 +706,7 @@ describe("auto-compact: messagesAfter shape", () => {
 
   it("compactedContextHistory length after auto-compact matches compact_auto_done.messagesAfter", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -726,7 +726,7 @@ describe("auto-compact: messagesAfter shape", () => {
 describe("auto-compact: hash consistency (compactedContextHashes stays in sync)", () => {
   it("llm_call.contextHashes length equals compactedContextHistory length at call time", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -745,7 +745,7 @@ describe("auto-compact: hash consistency (compactedContextHashes stays in sync)"
 
   it("first contextHash after auto-compact is a real 8-char hex hash (the synthetic summary)", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -761,7 +761,7 @@ describe("auto-compact: hash consistency (compactedContextHashes stays in sync)"
 
   it("contextHashes count grows by 1 after the assistant reply is appended post-compaction", async () => {
     const provider = makeSummaryThenTextProvider("summary");
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 
@@ -792,7 +792,7 @@ describe("auto-compact + max_tokens (combined)", () => {
       }
       return makeMockStream(textStreamEvents("all good"), textMessage("all good"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     setAboveThreshold(agent);
 

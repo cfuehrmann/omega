@@ -93,7 +93,7 @@ describe("/compact — empty history", () => {
       llmCallCount++;
       return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
 
     const events = await collectEvents(agent, "/compact");
@@ -107,7 +107,7 @@ describe("/compact — empty history", () => {
   });
 
   it("compact_user_done has messagesBefore=0 and messagesAfter=0 for empty history", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
 
@@ -118,7 +118,7 @@ describe("/compact — empty history", () => {
   });
 
   it("compact_user_start appears before compact_user_done", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
 
@@ -131,7 +131,7 @@ describe("/compact — empty history", () => {
   });
 
   it("compactedContextHistory stays empty after compacting empty history", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     await collectEvents(agent, "/compact");
     expect(agent.getCompactedContextHistory().length).toBe(0);
@@ -149,7 +149,7 @@ describe("/compact — short history (nothing to compact)", () => {
       llmCallCount++;
       return makeMockStream(textStreamEvents(`reply ${llmCallCount}`), textMessage(`reply ${llmCallCount}`));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const seedCount = 2; // pairs < KEEP_RECENT_TURNS (10)
     for (let i = 0; i < seedCount; i++) {
@@ -172,7 +172,7 @@ describe("/compact — short history (nothing to compact)", () => {
       callNum++;
       return makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const seedPairs = 3;
     for (let i = 0; i < seedPairs; i++) {
@@ -205,7 +205,7 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents(summary), textMessage(summary));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `user msg ${i}`);
@@ -276,7 +276,7 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `user msg ${i}`);
@@ -318,7 +318,7 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents("post-compact reply"), textMessage("post-compact reply"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -346,7 +346,7 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents("post"), textMessage("post"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -376,7 +376,7 @@ describe("/compact — error path", () => {
       }
       throw new Error("API unavailable");
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
@@ -402,7 +402,7 @@ describe("/compact — error path", () => {
       }
       throw new Error(errMessage);
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
@@ -426,7 +426,7 @@ describe("/compact — error path", () => {
       }
       throw new Error("boom");
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
@@ -453,7 +453,7 @@ describe("/compact — error path", () => {
       }
       throw new Error("oops");
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
@@ -478,7 +478,7 @@ describe("/compact — error path", () => {
       if (phase === "compact") throw new Error("fail");
       return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
@@ -501,7 +501,7 @@ describe("/compact — error path", () => {
 
 describe("/compact — event ordering invariants", () => {
   it("compact_user_start carries a ts field", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     const start = events.find((e) => e.type === "compact_user_start") as any;
@@ -510,7 +510,7 @@ describe("/compact — event ordering invariants", () => {
   });
 
   it("compact_user_done carries a ts field", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     const done = events.find((e) => e.type === "compact_user_done") as any;
@@ -527,7 +527,7 @@ describe("/compact — event ordering invariants", () => {
       }
       throw new Error("err");
     };
-    const { agent, dispose } = makeTestAgent(provider);
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
@@ -540,14 +540,14 @@ describe("/compact — event ordering invariants", () => {
   });
 
   it("/compact emits no turn_end (it's a command, not a regular turn)", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     expect(events.find((e) => e.type === "turn_end")).toBeUndefined();
   });
 
   it("/compact emits no user_message (it's a command, not forwarded to LLM)", async () => {
-    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = await makeTestAgent(makeSummaryProvider("summary"));
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     expect(events.find((e) => e.type === "user_message")).toBeUndefined();

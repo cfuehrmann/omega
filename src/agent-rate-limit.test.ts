@@ -47,7 +47,7 @@ describe("rate limit backoff", () => {
       };
     };
 
-    const { agent, dispose } = makeTestAgent(undefined, openAiCaller as any);
+    const { agent, dispose } = await makeTestAgent(undefined, openAiCaller as any);
     disposeAll.push(dispose);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
@@ -72,7 +72,7 @@ describe("rate limit backoff", () => {
       throw rateLimitError("Please try again in 0.01s");
     };
 
-    const { agent, dispose } = makeTestAgent(undefined, openAiCaller as any);
+    const { agent, dispose } = await makeTestAgent(undefined, openAiCaller as any);
     disposeAll.push(dispose);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
@@ -96,7 +96,7 @@ describe("rate limit backoff", () => {
       throw rateLimitError();
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     agent.setProvider("anthropic");
     const events = await collectEvents(agent, "hello");
@@ -144,7 +144,7 @@ describe("OAuth token expiry reauth", () => {
       };
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     // Override reinitAuth so it doesn't touch the real token file
     (agent as any).reinitAuth = async () => {
@@ -166,7 +166,7 @@ describe("OAuth token expiry reauth", () => {
       throw authExpiredError();
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     (agent as any).reinitAuth = async () => false;
 
@@ -197,7 +197,7 @@ describe("context overflow (prompt too long)", () => {
       throw promptTooLongError();
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
 
@@ -222,7 +222,7 @@ describe("context overflow (prompt too long)", () => {
       throw contextTooLongError();
     };
 
-    const { agent, dispose } = makeTestAgent(mockProvider);
+    const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
 

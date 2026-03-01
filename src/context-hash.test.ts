@@ -12,12 +12,11 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { mkdirSync, rmSync, existsSync, readFileSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import { existsSync, readFileSync } from "fs";
 import type Anthropic from "@anthropic-ai/sdk";
 
 import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
+import { makeTestAgent } from "./test-utils.js";
 import type { ContextRecord } from "./context-store.js";
 import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./event-store.js";
 
@@ -107,12 +106,7 @@ function readEventLines(file: string): any[] {
     .map(l => JSON.parse(l));
 }
 
-let _counter = 0;
-function makeTempDir(): string {
-  const dir = join(tmpdir(), `omega-hash-test-${Date.now()}-${++_counter}`);
-  mkdirSync(dir, { recursive: true });
-  return dir;
-}
+
 
 // ---------------------------------------------------------------------------
 // context.jsonl record shape (Step 3e-iii)
@@ -120,14 +114,11 @@ function makeTempDir(): string {
 
 describe("context.jsonl record shape", () => {
   it("each written record has hash (8 hex chars), ts, role, and content", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
     await Bun.sleep(50); // let fire-and-forget writes settle
 
@@ -146,14 +137,11 @@ describe("context.jsonl record shape", () => {
   });
 
   it("first record is the user message, second is assistant response", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("world"), textMessage("world"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -170,9 +158,6 @@ describe("context.jsonl record shape", () => {
 
 describe("hash uniqueness — identical content, different times", () => {
   it("two identical user messages produce different hashes", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -180,7 +165,7 @@ describe("hash uniqueness — identical content, different times", () => {
       return makeMockStream(textStreamEvents(`response ${call}`), textMessage(`response ${call}`));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     // Send the same message twice
     await collectEvents(agent, "ok");
     await new Promise(r => setTimeout(r, 10)); // ensure ts differs
@@ -201,14 +186,11 @@ describe("hash uniqueness — identical content, different times", () => {
 
 describe("llm_call contextHashes in events.jsonl", () => {
   it("llm_call event has contextHashes array with one hash per sent message", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -225,14 +207,11 @@ describe("llm_call contextHashes in events.jsonl", () => {
   });
 
   it("contextHashes match the hash field of the corresponding context.jsonl records", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -246,9 +225,6 @@ describe("llm_call contextHashes in events.jsonl", () => {
   });
 
   it("tool loop: second llm_call contextHashes includes user + assistant + tool_result messages", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -257,7 +233,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -279,9 +255,6 @@ describe("llm_call contextHashes in events.jsonl", () => {
   });
 
   it("contextHashes grow across multiple turns in the same session", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -289,7 +262,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
       return makeMockStream(textStreamEvents(`resp${call}`), textMessage(`resp${call}`));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "turn1");
     await collectEvents(agent, "turn2");
     await Bun.sleep(50);
@@ -319,9 +292,6 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
 describe("contextHashes matches full compactedContextHistory", () => {
   it("after 3 turns, contextHashes length equals compactedContextHistory length sent", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -329,7 +299,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
       return makeMockStream(textStreamEvents(`resp${call}`), textMessage(`resp${call}`));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
 
     // Build up 6 messages (3 turns: user+assistant each)
     for (let i = 0; i < 3; i++) {
@@ -352,9 +322,6 @@ describe("contextHashes matches full compactedContextHistory", () => {
   });
 
   it("hashes in contextHashes correctly cross-reference context.jsonl entries", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -362,7 +329,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
       return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -387,9 +354,6 @@ describe("contextHashes matches full compactedContextHistory", () => {
 
 describe("no placeholder hashes", () => {
   it("all contextHashes are 8-char hex strings (no '????????' placeholders)", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -398,7 +362,7 @@ describe("no placeholder hashes", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "go");
     await Bun.sleep(50);
 
@@ -420,14 +384,11 @@ describe("no placeholder hashes", () => {
 
 describe("[SCHEMA] llm_call has no messageCount field", () => {
   it("llm_call events written to events.jsonl do not carry messageCount", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
     await Bun.sleep(50);
 
@@ -450,14 +411,11 @@ describe("[SCHEMA] llm_call has no messageCount field", () => {
 
 describe("[SCHEMA] llm_response has no content field", () => {
   it("llm_response events written to events.jsonl do not carry content", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
     await Bun.sleep(50);
 
@@ -475,14 +433,11 @@ describe("[SCHEMA] llm_response has no content field", () => {
   });
 
   it("llm_response carries contextHash that matches the assistant context.jsonl record", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
     await Bun.sleep(50);
 
@@ -503,14 +458,11 @@ describe("[SCHEMA] llm_response has no content field", () => {
   });
 
   it("llm_response contextHash points to a record that exists in context.jsonl before the event", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
     await Bun.sleep(50);
 
@@ -537,9 +489,6 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
 describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
   it("tool_call event carries contextHash matching the assistant context.jsonl record", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -548,7 +497,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -570,9 +519,6 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
   });
 
   it("tool_result event carries contextHash matching the user tool_result context.jsonl record", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -581,7 +527,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -606,9 +552,6 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
   });
 
   it("tool_call event has no input field", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -617,7 +560,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -630,9 +573,6 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
   });
 
   it("tool_result event has no outputLength field", async () => {
-    const dir = makeTempDir();
-    const contextFile = join(dir, "context.jsonl");
-    const eventsFile = join(dir, "events.jsonl");
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -641,7 +581,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const agent = new Agent(mockProvider, null, undefined, contextFile, eventsFile);
+    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 

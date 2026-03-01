@@ -239,14 +239,14 @@ describe("Agent test isolation — no production file pollution", () => {
       },
     });
 
-    const { agent, eventsFile, dispose } = makeTestAgent(mockProvider);
+    const { agent, eventsFile, dispose } = await makeTestAgent(mockProvider);
     try {
       const gen = agent.sendMessage("hello", async () => true);
       for await (const _ of gen) { /* drain */ }
       await Bun.sleep(50); // let fire-and-forget writes settle
 
-      // Events file is in the temp dir (not .omega/sessions/)
-      expect(eventsFile).toContain("omega-test-");
+      // Events file is in .omega/test-sessions/ (not .omega/sessions/)
+      expect(eventsFile).toContain("test-sessions");
       expect(eventsFile).not.toContain(".omega/sessions");
     } finally {
       dispose();

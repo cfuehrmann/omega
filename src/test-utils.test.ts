@@ -2,16 +2,18 @@
  * Tests for makeTestAgent factory (src/test-utils.ts).
  *
  * Verifies that:
- * - makeTestAgent() returns an Agent backed by a real temp session dir
+ * - makeTestAgent() returns an Agent backed by a real session dir under .omega/test-sessions/
  * - makeTestAgent() with a mock provider runs the agentic loop and writes real files
  * - The factory is safe to call with no arguments
- * - dispose() removes the temp directory
+ * - Each call produces a distinct session dir (parallelism-safe)
+ * - dispose() is a no-op (test sessions are preserved for inspection)
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
 import { makeTestAgent } from "./test-utils.js";
 import { Agent } from "./agent.js";
 import { existsSync } from "fs";
+import { TEST_SESSIONS_ROOT } from "./session-dir.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // Minimal mock stream that returns one text block and stops.
@@ -41,29 +43,35 @@ const disposeAll: (() => void)[] = [];
 afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("makeTestAgent", () => {
-  it("returns an Agent instance", () => {
-    const { agent, dispose } = makeTestAgent();
+  it("returns an Agent instance", async () => {
+    const { agent, dispose } = await makeTestAgent();
     disposeAll.push(dispose);
     expect(agent).toBeInstanceOf(Agent);
   });
 
-  it("returns an Agent with a sessionId", () => {
-    const { agent, dispose } = makeTestAgent();
+  it("returns an Agent with a sessionId", async () => {
+    const { agent, dispose } = await makeTestAgent();
     disposeAll.push(dispose);
     expect(typeof agent.sessionId).toBe("string");
     expect(agent.sessionId.length).toBeGreaterThan(0);
   });
 
-  it("exposes sessionDir, contextFile, and eventsFile paths", () => {
-    const { sessionDir, contextFile, eventsFile, dispose } = makeTestAgent();
+  it("exposes sessionDir, contextFile, and eventsFile paths under .omega/test-sessions/", async () => {
+    const { sessionDir, contextFile, eventsFile, dispose } = await makeTestAgent();
     disposeAll.push(dispose);
-    expect(sessionDir).toContain("omega-test-");
+    expect(sessionDir).toContain(TEST_SESSIONS_ROOT);
     expect(contextFile).toContain("context.jsonl");
     expect(eventsFile).toContain("events.jsonl");
   });
 
+  it("creates the session directory on disk", async () => {
+    const { sessionDir, dispose } = await makeTestAgent();
+    disposeAll.push(dispose);
+    expect(existsSync(sessionDir)).toBe(true);
+  });
+
   it("accepts a mock stream provider and completes a turn without errors", async () => {
-    const { agent, dispose } = makeTestAgent(makeMinimalProvider("world"));
+    const { agent, dispose } = await makeTestAgent(makeMinimalProvider("world"));
     disposeAll.push(dispose);
     const events: string[] = [];
     for await (const event of agent.sendMessage("hi")) {
@@ -74,7 +82,7 @@ describe("makeTestAgent", () => {
   });
 
   it("writes real context.jsonl and events.jsonl during a turn", async () => {
-    const { agent, contextFile, eventsFile, dispose } = makeTestAgent(makeMinimalProvider("safe"));
+    const { agent, contextFile, eventsFile, dispose } = await makeTestAgent(makeMinimalProvider("safe"));
     disposeAll.push(dispose);
     for await (const _ of agent.sendMessage("test")) { /* drain */ }
     await Bun.sleep(50); // let fire-and-forget writes settle
@@ -84,7 +92,7 @@ describe("makeTestAgent", () => {
 
   it("does not write to .omega/sessions/ (test-guard secondary layer)", async () => {
     // assertNotProductionPath would throw synchronously if any write to .omega/sessions/ occurred.
-    const { agent, dispose } = makeTestAgent(makeMinimalProvider("safe"));
+    const { agent, dispose } = await makeTestAgent(makeMinimalProvider("safe"));
     disposeAll.push(dispose);
     const events = [];
     for await (const event of agent.sendMessage("test")) {
@@ -93,24 +101,25 @@ describe("makeTestAgent", () => {
     expect(events).toContain("turn_end");
   });
 
-  it("two agents from makeTestAgent have distinct sessionIds", () => {
-    const a = makeTestAgent();
-    const b = makeTestAgent();
+  it("two agents from makeTestAgent have distinct sessionIds", async () => {
+    const a = await makeTestAgent();
+    const b = await makeTestAgent();
     disposeAll.push(a.dispose, b.dispose);
     expect(a.agent.sessionId).not.toBe(b.agent.sessionId);
   });
 
-  it("two agents from makeTestAgent have distinct sessionDirs", () => {
-    const a = makeTestAgent();
-    const b = makeTestAgent();
+  it("two agents from makeTestAgent have distinct sessionDirs", async () => {
+    const a = await makeTestAgent();
+    const b = await makeTestAgent();
     disposeAll.push(a.dispose, b.dispose);
     expect(a.sessionDir).not.toBe(b.sessionDir);
   });
 
-  it("dispose() removes the temp directory", () => {
-    const { sessionDir, dispose } = makeTestAgent();
+  it("dispose() is a no-op — session dir is preserved for inspection", async () => {
+    const { sessionDir, dispose } = await makeTestAgent();
     expect(existsSync(sessionDir)).toBe(true);
     dispose();
-    expect(existsSync(sessionDir)).toBe(false);
+    // dir should still exist — test sessions are intentionally preserved
+    expect(existsSync(sessionDir)).toBe(true);
   });
 });

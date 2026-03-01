@@ -3,19 +3,18 @@
  *
  * When OMEGA_TEST=1 (set by src/test-setup.ts via bunfig.toml preload),
  * assertNotProductionPath() throws if a write function is about to write
- * to a production path. This turns silent test pollution into a loud,
- * immediate test failure.
+ * to the production session path. This turns silent test pollution into a
+ * loud, immediate test failure.
  *
- * Production paths are anything under .omega/sessions/ or diagnosis/ (relative
- * to the working directory). Explicit temp-dir paths used by tests that
- * legitimately write files (e.g. context-hash.test.ts) are unaffected.
+ * The only guarded path is `.omega/sessions/` — the production session root.
+ * `.omega/test-sessions/` is intentionally allowed: unit tests (via
+ * makeTestAgent) and e2e tests both write there by design.
  *
  * In production OMEGA_TEST is never set, so this function is a no-op.
  */
 
 const PRODUCTION_PREFIXES = [
   ".omega/sessions/", ".omega\\sessions\\",
-  ".omega/test-sessions/", ".omega\\test-sessions\\",
   "diagnosis/", "diagnosis\\",
 ];
 
