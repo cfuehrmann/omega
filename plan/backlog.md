@@ -30,25 +30,21 @@ Omega is launched from (the project being worked on).
 Implemented in commit caf3aee. `SESSIONS_ROOT` changed from `"sessions"` to
 `".omega/sessions"` in `src/session-dir.ts`; `test-guard.ts` updated to match.
 
-#### SESSION-2b Web server persistence parity with terminal
+#### SESSION-2b Web server persistence parity with terminal ✅ DONE
 
 The web server accumulated a parallel persistence layer (`src/web/session-store.ts`
 → `sessions/current.jsonl`) that diverged from the terminal agent's model
 (`.omega/sessions/<timestamp>/context.jsonl` + `events.jsonl`). The two paths
 drifted out of sync and the e2e test server only simulated half the picture.
 
-**Goal:** The web server is purely a different UI skin — all persistence is
-identical to the terminal path. `Agent` writes `context.jsonl` and `events.jsonl`;
-the web server just iterates the same async generator and forwards events over
-WebSocket.
-
-**Changes:**
-- Delete `src/web/session-store.ts` and the `sessions/current.jsonl` mechanism
-- Web server event loop mirrors terminal: `for await (event of agent.sendMessage)` → `ws.send`
-- History replay on reconnect reads `events.jsonl` from the current session dir
-- E2e test server simplified to match: in-memory event log for replay, no `current.jsonl`
-- `session_start` / `session_end` / crash-detection handled same as terminal
-- `test-guard.ts` updated to protect the new path if needed
+**Changes (commit 9c631b4):**
+- Deleted `src/web/session-store.ts` and the `sessions/current.jsonl` mechanism
+- Web server history replay reads `events.jsonl` written by Agent (no separate store)
+- Graceful shutdown mirrors terminal: `emitSessionEnd("clean")` then exit
+- E2e test server: in-memory event log only; imports `shouldLogEvent`/`closeOpenTurn`
+  from `server.ts` directly (no duplication)
+- Fixed e2e persistence tests: `text` events are never persisted (ephemeral
+  streaming fragments); restart-test checks `turn_end` footer block instead
 
 #### SESSION-3 Strict session resumption
 

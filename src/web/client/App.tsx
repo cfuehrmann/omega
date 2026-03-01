@@ -376,7 +376,7 @@ function InputArea() {
         onKeyDown={onKeyDown}
         placeholder="Message Omega… (Enter to send, Shift+Enter for newline)"
         rows={1}
-        disabled={!state.connected}
+        disabled={!state.connected || state.streaming}
       />
       <Show when={state.streaming}
         fallback={
@@ -449,6 +449,8 @@ export function App() {
 
   // Start WebSocket on mount, clean up on unmount
   onMount(() => {
+    // Expose dispatch for e2e tests (harmless in production)
+    (window as any).__omegaDispatch = dispatch;
     connect();
   });
   onCleanup(() => {
