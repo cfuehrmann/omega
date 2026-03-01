@@ -12,17 +12,18 @@
  *     synthetic hash prepended)
  *   - context.jsonl is NOT rewritten (append-only invariant)
  *
- * Uses makeTestAgent() (no production file writes) and a mock StreamProvider.
+ * Each test uses real session files (contextFile + eventsFile) via makeTestAgent().
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach } from "bun:test";
 import { KEEP_RECENT_TURNS } from "./compaction.js";
 import type { StreamProvider } from "./agent.js";
+import type { Agent } from "./agent.js";
 import type { OmegaEvent, StreamSignal } from "./events.js";
 import { makeTestAgent } from "./test-utils.js";
 
 // ---------------------------------------------------------------------------
-// Mock provider helpers (copied from agent-integration.test.ts pattern)
+// Mock provider helpers
 // ---------------------------------------------------------------------------
 
 function makeMockStream(events: any[], message: any) {
@@ -62,16 +63,9 @@ function makeSummaryProvider(summary: string): StreamProvider {
   return async () => makeMockStream(textStreamEvents(summary), textMessage(summary));
 }
 
-/** A StreamProvider that throws with the given error. */
-function makeErrorProvider(message: string): StreamProvider {
-  return async () => {
-    throw new Error(message);
-  };
-}
-
 /** Collect all events from agent.sendMessage(). */
 async function collectEvents(
-  agent: ReturnType<typeof makeTestAgent>,
+  agent: Agent,
   message: string
 ): Promise<(OmegaEvent | StreamSignal)[]> {
   const events: (OmegaEvent | StreamSignal)[] = [];
@@ -81,35 +75,12 @@ async function collectEvents(
   return events;
 }
 
-/**
- * Send N real "turn" messages with a plain-text provider so that the agent's
- * compactedContextHistory has history to compact.
- */
-async function seedHistory(
-  agent: ReturnType<typeof makeTestAgent>,
-  provider: StreamProvider,
-  turns: number
-) {
-  for (let i = 0; i < turns; i++) {
-    for await (const _ of agent.sendMessage(`user message ${i}`, async () => true)) {
-      // consume stream; provider is set via the agent constructor
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Helper: build an agent pre-loaded with N turns of history.
-// The mock provider is shared between seeding and /compact (it's the same
-// instance the constructor receives).
+// Cleanup: each test registers its dispose(); afterEach drains the list.
 // ---------------------------------------------------------------------------
 
-function makeAgentWithHistory(
-  turns: number,
-  compactProvider: StreamProvider
-): ReturnType<typeof makeTestAgent> {
-  const agent = makeTestAgent(compactProvider);
-  return agent;
-}
+const disposeAll: (() => void)[] = [];
+afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 // ---------------------------------------------------------------------------
 // /compact — empty history (zero messages)
@@ -122,8 +93,8 @@ describe("/compact — empty history", () => {
       llmCallCount++;
       return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
     };
-    const agent = makeTestAgent(provider);
-    // No history seeded — compactedContextHistory is empty
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
 
     const events = await collectEvents(agent, "/compact");
 
@@ -132,13 +103,12 @@ describe("/compact — empty history", () => {
     expect(types).toContain("compact_user_done");
     expect(types).not.toContain("compact_user_error");
     expect(types).not.toContain("agent_error");
-
-    // No LLM call should have been made
     expect(llmCallCount).toBe(0);
   });
 
   it("compact_user_done has messagesBefore=0 and messagesAfter=0 for empty history", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
 
     const done = events.find((e) => e.type === "compact_user_done") as any;
@@ -148,7 +118,8 @@ describe("/compact — empty history", () => {
   });
 
   it("compact_user_start appears before compact_user_done", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
 
     const types = events.map((e) => e.type);
@@ -160,7 +131,8 @@ describe("/compact — empty history", () => {
   });
 
   it("compactedContextHistory stays empty after compacting empty history", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     await collectEvents(agent, "/compact");
     expect(agent.getCompactedContextHistory().length).toBe(0);
   });
@@ -172,15 +144,13 @@ describe("/compact — empty history", () => {
 
 describe("/compact — short history (nothing to compact)", () => {
   it("emits compact_user_start + compact_user_done even when no messages are dropped", async () => {
-    // With short history (< KEEP_RECENT_TURNS pairs), compactHistory returns early
-    // without calling the LLM — but the /compact handler still goes through the
-    // try/success path, so compact_user_done is emitted (not compact_user_error).
     let llmCallCount = 0;
     const provider: StreamProvider = async () => {
       llmCallCount++;
       return makeMockStream(textStreamEvents(`reply ${llmCallCount}`), textMessage(`reply ${llmCallCount}`));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const seedCount = 2; // pairs < KEEP_RECENT_TURNS (10)
     for (let i = 0; i < seedCount; i++) {
       await collectEvents(agent, `turn ${i}`);
@@ -193,8 +163,6 @@ describe("/compact — short history (nothing to compact)", () => {
     expect(types).toContain("compact_user_start");
     expect(types).toContain("compact_user_done");
     expect(types).not.toContain("compact_user_error");
-
-    // compactHistory returns early for short histories — no LLM call during compaction
     expect(llmCallCount).toBe(llmCallsAfterSeed);
   });
 
@@ -204,7 +172,8 @@ describe("/compact — short history (nothing to compact)", () => {
       callNum++;
       return makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const seedPairs = 3;
     for (let i = 0; i < seedPairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -234,10 +203,10 @@ describe("/compact — long history (compaction happens)", () => {
         seedCallNum++;
         return makeMockStream(textStreamEvents(`reply ${seedCallNum}`), textMessage(`reply ${seedCallNum}`));
       }
-      // compact phase — return the summary
       return makeMockStream(textStreamEvents(summary), textMessage(summary));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `user msg ${i}`);
     }
@@ -307,7 +276,8 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents("summary"), textMessage("summary"));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `user msg ${i}`);
     }
@@ -316,7 +286,6 @@ describe("/compact — long history (compaction happens)", () => {
     await collectEvents(agent, "/compact");
     const view = agent.getCompactedContextHistory();
 
-    // Tail = last KEEP_RECENT_TURNS*2 messages of the original history
     const expectedTail = historyBeforeCompact.slice(-(KEEP_RECENT_TURNS * 2));
     const actualTail = view.slice(1); // skip synthetic summary
     expect(actualTail).toEqual(expectedTail);
@@ -349,7 +318,8 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents("post-compact reply"), textMessage("post-compact reply"));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `msg ${i}`);
     }
@@ -376,7 +346,8 @@ describe("/compact — long history (compaction happens)", () => {
       }
       return makeMockStream(textStreamEvents("post"), textMessage("post"));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     for (let i = 0; i < TOTAL_PAIRS; i++) {
       await collectEvents(agent, `msg ${i}`);
     }
@@ -386,7 +357,6 @@ describe("/compact — long history (compaction happens)", () => {
     phase = "post";
     await collectEvents(agent, "one more");
     const lenAfterOneTurn = agent.getCompactedContextHistory().length;
-    // One more turn = +2 messages (user + assistant)
     expect(lenAfterOneTurn).toBe(lenAfterCompact + 2);
   });
 });
@@ -406,8 +376,8 @@ describe("/compact — error path", () => {
       }
       throw new Error("API unavailable");
     };
-    const agent = makeTestAgent(provider);
-    // Seed enough history to trigger a real compaction attempt
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -432,7 +402,8 @@ describe("/compact — error path", () => {
       }
       throw new Error(errMessage);
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -455,7 +426,8 @@ describe("/compact — error path", () => {
       }
       throw new Error("boom");
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -481,7 +453,8 @@ describe("/compact — error path", () => {
       }
       throw new Error("oops");
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -491,7 +464,6 @@ describe("/compact — error path", () => {
 
     await collectEvents(agent, "/compact");
 
-    // View should be unchanged — compaction failed before the in-memory mutation
     expect(agent.getCompactedContextHistory()).toEqual(historySnapshot);
   });
 
@@ -506,7 +478,8 @@ describe("/compact — error path", () => {
       if (phase === "compact") throw new Error("fail");
       return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -528,7 +501,8 @@ describe("/compact — error path", () => {
 
 describe("/compact — event ordering invariants", () => {
   it("compact_user_start carries a ts field", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     const start = events.find((e) => e.type === "compact_user_start") as any;
     expect(typeof start.ts).toBe("string");
@@ -536,7 +510,8 @@ describe("/compact — event ordering invariants", () => {
   });
 
   it("compact_user_done carries a ts field", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     const done = events.find((e) => e.type === "compact_user_done") as any;
     expect(typeof done.ts).toBe("string");
@@ -552,7 +527,8 @@ describe("/compact — event ordering invariants", () => {
       }
       throw new Error("err");
     };
-    const agent = makeTestAgent(provider);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     const pairs = KEEP_RECENT_TURNS + 2;
     for (let i = 0; i < pairs; i++) {
       await collectEvents(agent, `msg ${i}`);
@@ -564,13 +540,15 @@ describe("/compact — event ordering invariants", () => {
   });
 
   it("/compact emits no turn_end (it's a command, not a regular turn)", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     expect(events.find((e) => e.type === "turn_end")).toBeUndefined();
   });
 
   it("/compact emits no user_message (it's a command, not forwarded to LLM)", async () => {
-    const agent = makeTestAgent(makeSummaryProvider("summary"));
+    const { agent, dispose } = makeTestAgent(makeSummaryProvider("summary"));
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "/compact");
     expect(events.find((e) => e.type === "user_message")).toBeUndefined();
   });

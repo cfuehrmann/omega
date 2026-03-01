@@ -9,9 +9,9 @@
  * 5. Session-level cache totals are tracked
  */
 
-import { describe, it, expect } from "bun:test";
-import { Agent } from "./agent.js";
+import { describe, it, expect, afterEach } from "bun:test";
 import type { OmegaEvent, StreamSignal, TurnMetrics, StreamProvider } from "./agent.js";
+import { makeTestAgent } from "./test-utils.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,7 +53,10 @@ function makeStreamProvider(overrides: {
   };
 }
 
-async function runTurn(agent: Agent): Promise<(OmegaEvent | StreamSignal)[]> {
+const disposeAll: (() => void)[] = [];
+afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
+
+async function runTurn(agent: ReturnType<typeof makeTestAgent>["agent"]): Promise<(OmegaEvent | StreamSignal)[]> {
   const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(
     "hello",
@@ -72,7 +75,8 @@ describe("prompt caching — cache_control in streamParams", () => {
   it("injects cache_control on system message blocks", async () => {
     let firstParams: any = null;
     const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     await runTurn(agent);
 
@@ -89,7 +93,8 @@ describe("prompt caching — cache_control in streamParams", () => {
   it("injects cache_control on the last message in the conversation", async () => {
     let firstParams: any = null;
     const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     await runTurn(agent);
 
@@ -108,7 +113,8 @@ describe("prompt caching — cache_control in streamParams", () => {
   it("injects cache_control on the last tool definition", async () => {
     let firstParams: any = null;
     const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     await runTurn(agent);
 
@@ -122,7 +128,8 @@ describe("prompt caching — cache_control in streamParams", () => {
 describe("prompt caching — cache token extraction", () => {
   it("includes cacheCreationTokens in turn_end metrics", async () => {
     const provider = makeStreamProvider({ cacheCreationTokens: 800, cacheReadTokens: 0 });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     const events = await runTurn(agent);
 
@@ -134,7 +141,8 @@ describe("prompt caching — cache token extraction", () => {
 
   it("includes cacheReadTokens in turn_end metrics", async () => {
     const provider = makeStreamProvider({ cacheCreationTokens: 0, cacheReadTokens: 500 });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     const events = await runTurn(agent);
 
@@ -146,7 +154,8 @@ describe("prompt caching — cache token extraction", () => {
 
   it("session totals accumulate cacheCreationTokens across turns", async () => {
     const provider = makeStreamProvider({ cacheCreationTokens: 300, cacheReadTokens: 0 });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     await runTurn(agent);
     await runTurn(agent);
@@ -156,7 +165,8 @@ describe("prompt caching — cache token extraction", () => {
 
   it("session totals accumulate cacheReadTokens across turns", async () => {
     const provider = makeStreamProvider({ cacheCreationTokens: 0, cacheReadTokens: 200 });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     await runTurn(agent);
     await runTurn(agent);
@@ -173,7 +183,8 @@ describe("prompt caching — cost accounting", () => {
     // = (100*3 + 50*15 + 800*3.75) / 1_000_000
     // = (300 + 750 + 3000) / 1_000_000 = 0.004050
     const provider = makeStreamProvider({ cacheCreationTokens: 800, cacheReadTokens: 0 });
-    const agent = new Agent(provider, null, undefined, null);
+    const { agent, dispose } = makeTestAgent(provider);
+    disposeAll.push(dispose);
     await agent.init();
     const events = await runTurn(agent);
 
@@ -215,8 +226,9 @@ describe("prompt caching — cost accounting", () => {
       };
     };
 
-    const agentWithCache = new Agent(makeProvider(100, 500), null, undefined, null);
-    const agentNoCache = new Agent(makeProvider(600, 0), null, undefined, null);
+    const { agent: agentWithCache, dispose: d1 } = makeTestAgent(makeProvider(100, 500));
+    const { agent: agentNoCache, dispose: d2 } = makeTestAgent(makeProvider(600, 0));
+    disposeAll.push(d1, d2);
     await agentWithCache.init();
     await agentNoCache.init();
 

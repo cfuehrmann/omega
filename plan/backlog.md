@@ -2,6 +2,40 @@
 
 ## Open items
 
+### [TEST] Real session files in unit tests
+
+#### TEST-1 — Migrate all null-path Agent tests to real temp-dir session files 🔄 IN PROGRESS
+
+**Motivation:** The `null`-path pattern (`makeTestAgent`, `OMEGA_TEST` coercion,
+`assertNotProductionPath` guard) creates a structural blind spot: if session
+files ever become load-bearing for UI features (e.g. history replay, detailed
+event display, session resume), tests that null-out those paths will not catch
+regressions. The pattern trades correctness coverage for isolation convenience.
+
+**Approach:**
+
+1. Rewrite `makeTestAgent` to create a real per-call temp dir (via `mkdtemp`),
+   pass `contextFile` and `eventsFile` to `Agent`, and register async cleanup
+   via a returned `dispose()` or Bun's `afterAll`. The call sites in
+   `compact-command.test.ts`, `compact-auto.test.ts`, `agent-rate-limit.test.ts`,
+   `agent-fallback.test.ts`, `prompt-caching.test.ts`, and
+   `agent-integration.test.ts` need to drain the session dir.
+2. Fix `event-store.test.ts` to use `mkdtemp` (like `context-store.test.ts`)
+   instead of the ad-hoc `sessions-test/` directory. Eliminates `sessions-test/`.
+3. Remove or retire the null-path infrastructure (`OMEGA_TEST` coercion in
+   `Agent` constructor, `assertNotProductionPath`, `test-guard.ts`,
+   `test-setup.ts`, `bunfig.toml` preload, pre-commit grep) once no tests rely
+   on it. Keep the guard as a belt-and-suspenders safety net if desired, but it
+   should no longer be the primary isolation mechanism.
+
+**Acceptance criteria:**
+
+- `sessions-test/` directory is never created during `just gate`
+- All agent-level tests use real `contextFile`/`eventsFile` paths under a temp dir
+- `makeTestAgent` creates and cleans up a real temp dir per test (or per suite)
+- Gate timing acceptable to the operator
+- All 500+ tests still pass
+
 ### [SESSION] Session storage
 
 #### SESSION-1 Each persisted session gets its own folder ✅ DONE

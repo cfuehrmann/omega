@@ -1,6 +1,7 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach } from "bun:test";
 import { Agent, type OmegaEvent, type StreamSignal } from "./agent.js";
 import type { StreamProvider } from "./agent.js";
+import { makeTestAgent } from "./test-utils.js";
 
 function authExpiredError() {
   const err: any = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}');
@@ -21,6 +22,9 @@ async function collectEvents(agent: Agent, message: string, signal?: AbortSignal
   }
   return events;
 }
+
+const disposeAll: (() => void)[] = [];
+afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("rate limit backoff", () => {
   it("OpenAI retries on rate limit and succeeds", async () => {
@@ -43,7 +47,8 @@ describe("rate limit backoff", () => {
       };
     };
 
-    const agent = new Agent(undefined, null, openAiCaller as any, null, null);
+    const { agent, dispose } = makeTestAgent(undefined, openAiCaller as any);
+    disposeAll.push(dispose);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 
@@ -67,7 +72,8 @@ describe("rate limit backoff", () => {
       throw rateLimitError("Please try again in 0.01s");
     };
 
-    const agent = new Agent(undefined, null, openAiCaller as any, null, null);
+    const { agent, dispose } = makeTestAgent(undefined, openAiCaller as any);
+    disposeAll.push(dispose);
     agent.setProvider("openai");
     const events = await collectEvents(agent, "hello");
 
@@ -90,7 +96,8 @@ describe("rate limit backoff", () => {
       throw rateLimitError();
     };
 
-    const agent = new Agent(mockProvider, null);
+    const { agent, dispose } = makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
     agent.setProvider("anthropic");
     const events = await collectEvents(agent, "hello");
 
@@ -107,9 +114,6 @@ describe("rate limit backoff", () => {
 
 describe("OAuth token expiry reauth", () => {
   it("retries after 401 when reinitAuth succeeds", async () => {
-    // First call throws 401; second call (after mock reauth) succeeds.
-    // Note: the provider may also be called for post-turn compaction — we track
-    // only whether the API call sequence had exactly one 401 before success.
     let llmCallCount = 0;
     let hadAuthError = false;
     let hadSuccess = false;
@@ -140,11 +144,12 @@ describe("OAuth token expiry reauth", () => {
       };
     };
 
-    const agent = new Agent(mockProvider, null);
+    const { agent, dispose } = makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
     // Override reinitAuth so it doesn't touch the real token file
     (agent as any).reinitAuth = async () => {
-      (agent as any).authMode = "oauth"; // stays oauth
-      return true; // pretend refresh succeeded
+      (agent as any).authMode = "oauth";
+      return true;
     };
 
     const events = await collectEvents(agent, "hello");
@@ -152,7 +157,6 @@ describe("OAuth token expiry reauth", () => {
     expect(hadSuccess).toBe(true);
     const texts = events.filter(e => e.type === "text").map((e: any) => e.text);
     expect(texts.join("")).toContain("ok");
-    // No agent_error event — oauth_token_expired and oauth_refreshed typed events are ok
     const errors = events.filter(e => e.type === "agent_error") as any[];
     expect(errors).toHaveLength(0);
   });
@@ -162,8 +166,8 @@ describe("OAuth token expiry reauth", () => {
       throw authExpiredError();
     };
 
-    const agent = new Agent(mockProvider, null);
-    // Override reinitAuth to fail
+    const { agent, dispose } = makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
     (agent as any).reinitAuth = async () => false;
 
     const events = await collectEvents(agent, "hello");
@@ -193,17 +197,15 @@ describe("context overflow (prompt too long)", () => {
       throw promptTooLongError();
     };
 
-    const agent = new Agent(mockProvider, null);
+    const { agent, dispose } = makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
 
-    // Must NOT retry — only one API call
     expect(callCount).toBe(1);
 
-    // Must yield llm_error
     const llmErrors = events.filter(e => e.type === "llm_error");
     expect(llmErrors.length).toBe(1);
 
-    // Must yield actionable agent_error mentioning /compact
     const errorEvents = events.filter(e => e.type === "agent_error") as any[];
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
     expect(errorEvents.some(e => e.error.includes("compact"))).toBe(true);
@@ -220,11 +222,10 @@ describe("context overflow (prompt too long)", () => {
       throw contextTooLongError();
     };
 
-    const agent = new Agent(mockProvider, null);
+    const { agent, dispose } = makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
 
-    // 429 is retryable, so the retry loop exhausts attempts first.
-    // Verify the error path produces an agent_error.
     const errorEvents = events.filter(e => e.type === "agent_error") as any[];
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
   });

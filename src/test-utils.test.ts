@@ -2,14 +2,16 @@
  * Tests for makeTestAgent factory (src/test-utils.ts).
  *
  * Verifies that:
- * - makeTestAgent() returns an Agent with no production file writes
- * - makeTestAgent() with a mock provider runs the agentic loop without writing files
+ * - makeTestAgent() returns an Agent backed by a real temp session dir
+ * - makeTestAgent() with a mock provider runs the agentic loop and writes real files
  * - The factory is safe to call with no arguments
+ * - dispose() removes the temp directory
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterEach } from "bun:test";
 import { makeTestAgent } from "./test-utils.js";
 import { Agent } from "./agent.js";
+import { existsSync } from "fs";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // Minimal mock stream that returns one text block and stops.
@@ -35,20 +37,34 @@ function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0
   });
 }
 
+const disposeAll: (() => void)[] = [];
+afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
+
 describe("makeTestAgent", () => {
   it("returns an Agent instance", () => {
-    const agent = makeTestAgent();
+    const { agent, dispose } = makeTestAgent();
+    disposeAll.push(dispose);
     expect(agent).toBeInstanceOf(Agent);
   });
 
   it("returns an Agent with a sessionId", () => {
-    const agent = makeTestAgent();
+    const { agent, dispose } = makeTestAgent();
+    disposeAll.push(dispose);
     expect(typeof agent.sessionId).toBe("string");
     expect(agent.sessionId.length).toBeGreaterThan(0);
   });
 
+  it("exposes sessionDir, contextFile, and eventsFile paths", () => {
+    const { sessionDir, contextFile, eventsFile, dispose } = makeTestAgent();
+    disposeAll.push(dispose);
+    expect(sessionDir).toContain("omega-test-");
+    expect(contextFile).toContain("context.jsonl");
+    expect(eventsFile).toContain("events.jsonl");
+  });
+
   it("accepts a mock stream provider and completes a turn without errors", async () => {
-    const agent = makeTestAgent(makeMinimalProvider("world"));
+    const { agent, dispose } = makeTestAgent(makeMinimalProvider("world"));
+    disposeAll.push(dispose);
     const events: string[] = [];
     for await (const event of agent.sendMessage("hi")) {
       events.push(event.type);
@@ -57,11 +73,19 @@ describe("makeTestAgent", () => {
     expect(events).toContain("turn_end");
   });
 
-  it("does not write to .omega/sessions/ during a turn", async () => {
-    // Layer b (assertNotProductionPath) would throw synchronously if any write
-    // to .omega/sessions/ were attempted. The turn completing without error is
-    // sufficient proof.
-    const agent = makeTestAgent(makeMinimalProvider("safe"));
+  it("writes real context.jsonl and events.jsonl during a turn", async () => {
+    const { agent, contextFile, eventsFile, dispose } = makeTestAgent(makeMinimalProvider("safe"));
+    disposeAll.push(dispose);
+    for await (const _ of agent.sendMessage("test")) { /* drain */ }
+    await Bun.sleep(50); // let fire-and-forget writes settle
+    expect(existsSync(contextFile)).toBe(true);
+    expect(existsSync(eventsFile)).toBe(true);
+  });
+
+  it("does not write to .omega/sessions/ (test-guard secondary layer)", async () => {
+    // assertNotProductionPath would throw synchronously if any write to .omega/sessions/ occurred.
+    const { agent, dispose } = makeTestAgent(makeMinimalProvider("safe"));
+    disposeAll.push(dispose);
     const events = [];
     for await (const event of agent.sendMessage("test")) {
       events.push(event.type);
@@ -72,6 +96,21 @@ describe("makeTestAgent", () => {
   it("two agents from makeTestAgent have distinct sessionIds", () => {
     const a = makeTestAgent();
     const b = makeTestAgent();
-    expect(a.sessionId).not.toBe(b.sessionId);
+    disposeAll.push(a.dispose, b.dispose);
+    expect(a.agent.sessionId).not.toBe(b.agent.sessionId);
+  });
+
+  it("two agents from makeTestAgent have distinct sessionDirs", () => {
+    const a = makeTestAgent();
+    const b = makeTestAgent();
+    disposeAll.push(a.dispose, b.dispose);
+    expect(a.sessionDir).not.toBe(b.sessionDir);
+  });
+
+  it("dispose() removes the temp directory", () => {
+    const { sessionDir, dispose } = makeTestAgent();
+    expect(existsSync(sessionDir)).toBe(true);
+    dispose();
+    expect(existsSync(sessionDir)).toBe(false);
   });
 });
