@@ -181,16 +181,18 @@ document is the stable contract that SCHEMA-7 builds on.
 
 **Depends on SCHEMA-6**
 
-On startup, if a `.prev` session exists, offer to resume it. Load
-`context.prev.jsonl` and `events.prev.jsonl`, restore `llmContextView` and the
-event history, and continue as if the session had not ended.
+On startup, offer to resume the most recent previous session. The previous
+session directory is found via `findPreviousEventsFile()` in `src/session-dir.ts`.
+Load `context.jsonl` and `events.jsonl` from that directory, restore
+`llmContextView` and the event history, and continue as if the session had not
+ended.
 
 Acceptance criteria:
 
-- Startup detects a non-empty `context.prev.jsonl`
+- Startup detects a non-empty previous session via `findPreviousEventsFile()`
 - User is prompted: resume previous session or start fresh
-- On resume: `llmContextView` is restored from the context file; events file is
-  appended to (not rotated)
+- On resume: `llmContextView` is restored from the context file; a new session
+  dir is created but seeded with the restored history
 - On fresh start: behaviour unchanged from today
 - Test: round-trip — session writes context, restarts, resumes, next API call
   sends the restored history with correct `contextHashes`
@@ -346,23 +348,26 @@ stdout/stderr/exitCode. Distinct from `run_background`/`kill_process`
 
 ### [WEB] Web interface e2e tests — expand coverage
 
-#### WEB-1 — Playwright gap coverage
+#### WEB-1 — Playwright gap coverage ✅ DONE (partial)
 
-Playwright infrastructure works (24 tests). Gaps:
+41 e2e tests total (up from 27). New tests added in commit f9bb8e2:
+crash recovery, abort button, streaming lock/unlock (textarea + send btn),
+tool_result/agent_error/llm_error rendering, textarea clear after send,
+history replay completeness (tool_call + footer survive reload), reconnect banner.
 
-- Reconnection flow: `.reconnect-banner` appears after 2 failed retries
-- Abort button click sends `{type:"abort"}` to server
-- Input clears after send
+Two production bugs found and fixed: textarea was never disabled during streaming;
+`__omegaDispatch` not exposed on window for reconnect banner test.
+
+Remaining gap:
+
 - Auto-scroll: feed scrolls to bottom on new content
-
-Always go RED first.
 
 ---
 
 ## Closed items
 
 - **Diagnostics / diagnosis/ dir** — Removed. Replaced by `session_end` event +
-  `.prev` file crash detection.
+  crash detection via `findPreviousEventsFile()` on startup.
 - **Mid-turn context overflow: error-out** — Done. Context overflow is
   non-retryable: `llm_error` + actionable `agent_error`.
 - **Event system unification** — Done. `AgentEvent`/`SessionEvent` merged into
