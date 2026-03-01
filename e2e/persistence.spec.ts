@@ -79,14 +79,15 @@ test("persistence file contains events in correct order", async ({ page, server 
   const persisted = await server.diskSnapshot() as object[];
   const types = persisted.map((e: any) => e.type);
 
-  // user_message comes before text comes before turn_end
+  // text events are NOT persisted (they are ephemeral streaming fragments,
+  // same as Agent never writes them to events.jsonl).
+  // user_message comes before turn_end in the persisted log.
   const ui = types.indexOf("user_message");
-  const ti = types.indexOf("text");
   const te = types.indexOf("turn_end");
 
   expect(ui).toBeGreaterThanOrEqual(0);
-  expect(ti).toBeGreaterThan(ui);
-  expect(te).toBeGreaterThan(ti);
+  expect(te).toBeGreaterThan(ui);
+  expect(types).not.toContain("text");
 });
 
 // ---------------------------------------------------------------------------
@@ -124,8 +125,12 @@ test("history survives a simulated server restart (save + load cycle)", async ({
   await page.reload();
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
+  // After replay, the user block is visible.
+  // The assistant text block is NOT replayed — text events are ephemeral
+  // streaming fragments that are never persisted (same as events.jsonl).
+  // The turn_end footer block IS replayed, confirming the turn completed.
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".block.assist .block-body")).toHaveText("I will survive.");
+  await expect(page.locator(".block.footer")).toBeVisible({ timeout: 3000 });
 });
 
 test("after load, reset clears both memory and disk", async ({ page, server }) => {

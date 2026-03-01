@@ -30,6 +30,26 @@ Omega is launched from (the project being worked on).
 Implemented in commit caf3aee. `SESSIONS_ROOT` changed from `"sessions"` to
 `".omega/sessions"` in `src/session-dir.ts`; `test-guard.ts` updated to match.
 
+#### SESSION-2b Web server persistence parity with terminal
+
+The web server accumulated a parallel persistence layer (`src/web/session-store.ts`
+→ `sessions/current.jsonl`) that diverged from the terminal agent's model
+(`.omega/sessions/<timestamp>/context.jsonl` + `events.jsonl`). The two paths
+drifted out of sync and the e2e test server only simulated half the picture.
+
+**Goal:** The web server is purely a different UI skin — all persistence is
+identical to the terminal path. `Agent` writes `context.jsonl` and `events.jsonl`;
+the web server just iterates the same async generator and forwards events over
+WebSocket.
+
+**Changes:**
+- Delete `src/web/session-store.ts` and the `sessions/current.jsonl` mechanism
+- Web server event loop mirrors terminal: `for await (event of agent.sendMessage)` → `ws.send`
+- History replay on reconnect reads `events.jsonl` from the current session dir
+- E2e test server simplified to match: in-memory event log for replay, no `current.jsonl`
+- `session_start` / `session_end` / crash-detection handled same as terminal
+- `test-guard.ts` updated to protect the new path if needed
+
 #### SESSION-3 Strict session resumption
 
 On startup, offer to resume a previous session. Validate the candidate session's

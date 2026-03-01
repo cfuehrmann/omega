@@ -14,15 +14,17 @@
  *   Extra: { type: "connected" }            — sent on WebSocket open
  *          { type: "auth", mode: string }   — auth result
  *          { type: "turn_ready" }           — server ready for next message
+ *
+ * Persistence: identical to the terminal UI. Agent writes context.jsonl and
+ * events.jsonl into .omega/sessions/<timestamp>/. History replay on reconnect
+ * reads events.jsonl from the current session dir — no separate session-store.
  */
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
+import { readFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
-
-import type { OmegaEvent } from "../events.js";
-import { loadSession, saveSession, clearSession } from "./session-store.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -45,45 +47,34 @@ const MIME: Record<string, string> = {
 };
 
 function serveStatic(pathname: string): Response | null {
-  // Prevent path traversal
   const rel = pathname === "/" ? "/index.html" : pathname;
   const safe = rel.replace(/\.\./g, "");
   const fullPath = join(PUBLIC_DIR, safe);
-
   if (!existsSync(fullPath)) return null;
-
   const ext = fullPath.match(/(\.[^.]+)$/)?.[1] ?? ".html";
   const mime = MIME[ext] ?? "application/octet-stream";
-
   return new Response(readFileSync(fullPath), {
     headers: { "Content-Type": mime },
   });
 }
 
 // ---------------------------------------------------------------------------
-// Event log — replayed to each new client on connect
-// ---------------------------------------------------------------------------
-
-/**
- * Events that are meaningful for replay (history).
- * Transient connection events are excluded:
- *   connected — synthesised from WebSocket open; meaningless to replay
- *   turn_ready — transient "server ready" signal; replaying it would unlock
- *                the input before the reconnect sequence completes
- * auth IS included so the model label re-appears after a browser refresh.
- */
-const REPLAY_EXCLUDE = new Set(["connected", "turn_ready", "text"]);
-
-// ---------------------------------------------------------------------------
 // Session integrity helpers (exported for tests)
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the event should be persisted to the session log.
- * Streaming `text` events are excluded: they are partial fragments whose only
- * purpose is live display. The frozen text is committed into the event list by
- * the store's turn_end handler and doesn't need to be replayed separately.
- * `connected` and `turn_ready` are transient transport signals.
+ * Events that should not be replayed to a reconnecting browser.
+ *   connected  — synthesised from WebSocket open; meaningless to replay
+ *   turn_ready — transient "server ready" signal; replaying it would unlock
+ *                the input before the reconnect sequence completes
+ *   text       — streaming text fragments; assembled response is in context.jsonl
+ */
+const REPLAY_EXCLUDE = new Set(["connected", "turn_ready", "text"]);
+
+/**
+ * Returns true if the event should be included in history replay.
+ * Mirrors the set of events Agent persists to events.jsonl — streaming
+ * text fragments and transient transport signals are excluded.
  */
 export function shouldLogEvent(event: object): boolean {
   const t = (event as any).type as string;
@@ -94,39 +85,50 @@ export function shouldLogEvent(event: object): boolean {
  * Ensures the event log has no open (un-closed) turn at the tail.
  *
  * A turn is "open" when a `user_message` appears after the last
- * `turn_end` / `interrupted` marker — i.e. the server was killed / crashed
- * before the agentic loop finished. Without this fix, replaying the log
- * would leave `streaming = true` in the client store with no way to recover.
+ * `turn_end` / `turn_interrupted` marker — the server crashed mid-turn.
+ * Replaying such a log leaves `streaming = true` in the client with no
+ * recovery path. We append a synthetic `turn_interrupted` to close it.
  *
  * Returns a new array (does not mutate the input).
  */
 export function closeOpenTurn(log: object[]): object[] {
-  // Walk backwards to find the last turn boundary
   for (let i = log.length - 1; i >= 0; i--) {
     const t = (log[i] as any).type as string;
-    if (t === "turn_end" || t === "turn_interrupted") return log; // already closed
+    if (t === "turn_end" || t === "turn_interrupted") return log;
     if (t === "user_message") {
-      // Found an open turn — append a turn_interrupted marker
       return [...log, { type: "turn_interrupted" }];
     }
   }
-  return log; // no turns at all
+  return log;
 }
 
-let eventLog: object[] = [];
+// ---------------------------------------------------------------------------
+// History replay — read events.jsonl written by Agent
+// ---------------------------------------------------------------------------
 
-function logEvent(event: object): void {
-  if (!shouldLogEvent(event)) return;
-  const t = (event as any).type as string;
-  // Some events should only appear once — deduplicate by removing older copy first
-  if (t === "auth") {
-    const idx = eventLog.findIndex((e: any) => e.type === "auth");
-    if (idx !== -1) eventLog.splice(idx, 1);
-  }
-  eventLog.push(event);
-  // Persist after each turn_end — cheap, no LLM calls, protects against crashes
-  if (t === "turn_end") {
-    saveSession(eventLog).catch(() => {}); // fire-and-forget; never blocks a turn
+/**
+ * Read the current session's events.jsonl and return the subset of events
+ * suitable for history replay (excludes streaming text, transient signals).
+ * Applies closeOpenTurn so a crashed session doesn't lock the browser UI.
+ */
+async function loadReplayEvents(eventsFile: string): Promise<object[]> {
+  if (!existsSync(eventsFile)) return [];
+  try {
+    const text = await readFile(eventsFile, "utf-8");
+    const events: object[] = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const e = JSON.parse(trimmed);
+        if (shouldLogEvent(e)) events.push(e);
+      } catch {
+        // skip malformed lines
+      }
+    }
+    return closeOpenTurn(events);
+  } catch {
+    return [];
   }
 }
 
@@ -136,14 +138,8 @@ function logEvent(event: object): void {
 
 /**
  * The agent is created once at server start and reused across all WebSocket
- * connections. Browser refreshes / reconnects reuse the same agent context
- * (same history, same model, same OAuth token). This prevents "corpse sessions"
- * where a reconnect abandons an existing session and creates a fresh one.
- *
- * The agent is only replaced when the client sends { type: "reset" }, which
- * explicitly requests a new session.
- *
- * Initialized lazily in runWebApp() after the session directory is created.
+ * connections. Browser refreshes / reconnects reuse the same agent context.
+ * The agent is only replaced when the client sends { type: "reset" }.
  */
 let persistentAgent: Agent;
 let currentSessionPaths: SessionPaths;
@@ -160,14 +156,9 @@ interface Session {
 
 let activeSession: Session | null = null;
 
-function getAgent(): Agent {
-  return persistentAgent;
-}
-
 function send(ws: ServerWebSocket<unknown>, event: object): void {
   try {
     ws.send(JSON.stringify(event));
-    logEvent(event);
   } catch {
     // WebSocket may have closed
   }
@@ -188,30 +179,24 @@ async function handleMessage(session: Session, data: string): Promise<void> {
   }
 
   if (msg.type === "reset") {
-    // Abort any running turn first
     session.abortController?.abort();
     session.isStreaming = false;
     session.abortController = null;
 
-    // Replace the persistent agent with a fresh one (new session dir)
+    // Replace the persistent agent with a fresh one in a new session dir
     currentSessionPaths = await makeSessionDir();
     persistentAgent = new Agent(
       undefined, null, undefined,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
     );
-    // Clear the event log so history replay starts clean
-    eventLog = [];
-    clearSession().catch(() => {});
 
-    // Acknowledge: send empty history + reset_done + turn_ready
     try {
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
     } catch { /* socket may have closed */ }
     send(session.ws, { type: "turn_ready" });
 
-    // Init the new agent in background
     persistentAgent.init()
       .then(mode => {
         send(session.ws, { type: "auth", mode });
@@ -234,11 +219,10 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     session.isStreaming = true;
     session.abortController = new AbortController();
     const { ws } = session;
-    const agent = getAgent();
 
     try {
       const confirmTool = async () => true;
-      for await (const event of agent.sendMessage(
+      for await (const event of persistentAgent.sendMessage(
         content,
         confirmTool,
         session.abortController.signal,
@@ -260,7 +244,6 @@ async function handleMessage(session: Session, data: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function runWebApp(): Promise<void> {
-  // Create a fresh session directory for this server run
   currentSessionPaths = await makeSessionDir();
   persistentAgent = new Agent(
     undefined, null, undefined,
@@ -268,18 +251,11 @@ export async function runWebApp(): Promise<void> {
     currentSessionPaths.eventsFile,
   );
 
-  // Load persisted session log — enables history replay after crashes/restarts
-  eventLog = await loadSession();
-
-  // Graceful shutdown: emit session_end, persist session log on SIGINT (Ctrl+C) and SIGTERM
+  // Graceful shutdown: mirrors terminal app — emit session_end then exit
   const handleShutdown = () => {
     persistentAgent.emitSessionEnd("clean")
       .catch(() => {})
-      .finally(() => {
-        saveSession(closeOpenTurn(eventLog))
-          .catch(() => {})
-          .finally(() => process.exit(0));
-      });
+      .finally(() => process.exit(0));
   };
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
@@ -288,18 +264,15 @@ export async function runWebApp(): Promise<void> {
     port: PORT,
 
     fetch(req, srv) {
-      // Upgrade WebSocket connections
       if (srv.upgrade(req)) return undefined as any;
-
       const url = new URL(req.url);
       const res = serveStatic(url.pathname);
       if (res) return res;
-
       return new Response("Not found", { status: 404 });
     },
 
     websocket: {
-      open(ws) {
+      async open(ws) {
         const session: Session = {
           ws,
           abortController: null,
@@ -307,23 +280,19 @@ export async function runWebApp(): Promise<void> {
         };
         activeSession = session;
 
-        // Replay past events before signalling connected — client rebuilds state
-        if (eventLog.length > 0) {
+        // Replay past events from events.jsonl — same file Agent writes to
+        const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
+        if (replayEvents.length > 0) {
           try {
-            ws.send(JSON.stringify({ type: "history", events: eventLog }));
-          } catch {
-            // ignore
-          }
+            ws.send(JSON.stringify({ type: "history", events: replayEvents }));
+          } catch { /* ignore */ }
         }
         send(ws, { type: "connected" });
 
-        // If this is the first connection, init the persistent agent.
-        // On reconnects the agent is already initialised — just re-send auth mode.
-        const agent = getAgent();
-        agent.init()
+        persistentAgent.init()
           .then(mode => {
             send(ws, { type: "auth", mode });
-            return agent.loadWorldState().catch(() => {});
+            return persistentAgent.loadWorldState().catch(() => {});
           })
           .catch((err: any) => {
             send(ws, { type: "auth", mode: `error: ${err.message}` });
@@ -339,8 +308,6 @@ export async function runWebApp(): Promise<void> {
 
       close(ws) {
         if (activeSession?.ws === ws) {
-          // Don't abort on close — the client may reconnect (browser refresh).
-          // The agent survives; only the transport goes away.
           activeSession = null;
         }
       },

@@ -14,47 +14,20 @@
  *   POST /control/reset                      — reset event log + disconnect
  *   GET  /control/messages                   — drain received client messages
  *   GET  /control/ready                      — health check
+ *
+ * Persistence: in-memory event log only (no real Agent, no disk writes).
+ * History replay on reconnect is served from the in-memory log — same
+ * protocol as the real server, which reads events.jsonl written by Agent.
  */
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
-import { readFile, writeFile, unlink, mkdir } from "fs/promises";
 import type { ServerWebSocket } from "bun";
+import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
 
 const MAIN_PORT = 3001;
 const CTRL_PORT = 3002;
 const PUBLIC_DIR = join(import.meta.dir, "../../src/web/public");
-
-// Session persistence (mirrors src/web/session-store.ts logic)
-const SESSIONS_DIR = join(import.meta.dir, "../../sessions-test");
-const SESSION_FILE = join(SESSIONS_DIR, "current.jsonl");
-
-async function persistToDisk(events: object[]): Promise<void> {
-  await mkdir(SESSIONS_DIR, { recursive: true });
-  const lines = events.map(e => JSON.stringify(e)).join("\n");
-  await writeFile(SESSION_FILE, lines, "utf8");
-}
-
-async function loadFromDisk(): Promise<object[]> {
-  if (!existsSync(SESSION_FILE)) return [];
-  try {
-    const text = await readFile(SESSION_FILE, "utf8");
-    const result: object[] = [];
-    for (const line of text.split("\n")) {
-      const t = line.trim();
-      if (t) {
-        try { result.push(JSON.parse(t)); } catch { /* skip */ }
-      }
-    }
-    return result;
-  } catch {
-    return [];
-  }
-}
-
-async function clearDisk(): Promise<void> {
-  if (existsSync(SESSION_FILE)) await unlink(SESSION_FILE);
-}
 
 // ---------------------------------------------------------------------------
 // Static file serving
@@ -90,22 +63,26 @@ function serveStatic(pathname: string): Response | null {
 
 let activeWs: ServerWebSocket<unknown> | null = null;
 const receivedMessages: string[] = [];
+
+/**
+ * In-memory event log — mirrors the role of events.jsonl in the real server.
+ * Only events that pass shouldLogEvent() are stored (same filter as real server).
+ * Served as a `history` packet on reconnect, with closeOpenTurn applied.
+ */
 let eventLog: object[] = [];
 
 /**
  * Monotonically increasing agent instance counter.
- * Increments whenever the "agent" is replaced (i.e. on a reset).
- * In the real server, the agent is a single persistent object; here we
- * simulate that same invariant: it starts at 1 and only increments on reset.
+ * Increments on reset to let tests assert the agent was replaced.
  */
 let currentAgentId = 1;
 
-function resetAgent(): void {
+function resetState(): void {
   currentAgentId += 1;
   eventLog = [];
 }
 
-function sendEvent(event: object): void {
+function sendWs(event: object): void {
   try { activeWs?.send(JSON.stringify(event)); } catch { /* ignore */ }
 }
 
@@ -125,9 +102,10 @@ Bun.serve({
   websocket: {
     open(ws) {
       activeWs = ws;
-      // Replay event log first, then signal connected
-      if (eventLog.length > 0) {
-        ws.send(JSON.stringify({ type: "history", events: eventLog }));
+      // Replay event log (with crash recovery) before signalling connected
+      const replay = closeOpenTurn(eventLog.filter(shouldLogEvent));
+      if (replay.length > 0) {
+        ws.send(JSON.stringify({ type: "history", events: replay }));
       }
       ws.send(JSON.stringify({ type: "connected" }));
     },
@@ -137,9 +115,7 @@ Bun.serve({
       try { msg = JSON.parse(str); } catch { receivedMessages.push(str); return; }
 
       if (msg.type === "reset") {
-        // Reset: create a new "agent" (increment ID), clear history
-        resetAgent();
-        // Acknowledge with reset_done + empty event log replay + turn_ready
+        resetState();
         ws.send(JSON.stringify({ type: "history", events: [] }));
         ws.send(JSON.stringify({ type: "reset_done" }));
         ws.send(JSON.stringify({ type: "turn_ready" }));
@@ -184,46 +160,42 @@ Bun.serve({
     if (req.method === "POST" && url.pathname === "/control/send") {
       const body = await req.json() as { event: object };
       const event = body.event;
-      // Log persistent events (same exclusion as real server)
-      const t = (event as any).type as string;
-      if (!["connected", "turn_ready"].includes(t)) {
+      // Store in log (same filter the real server uses)
+      if (shouldLogEvent(event)) {
+        const t = (event as any).type as string;
+        // auth deduplication — same as real server
         if (t === "auth") {
           const idx = eventLog.findIndex((e: any) => e.type === "auth");
           if (idx !== -1) eventLog.splice(idx, 1);
         }
         eventLog.push(event);
-        // Persist after turn_end (mirrors real server behaviour)
-        if (t === "turn_end") {
-          await persistToDisk(eventLog);
-        }
       }
-      sendEvent(event);
+      sendWs(event);
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/reset") {
-      eventLog.length = 0;
       eventLog = [];
       receivedMessages.length = 0;
-      currentAgentId = 1; // reset to base state for test isolation
-      await clearDisk();
+      currentAgentId = 1;
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/save") {
-      await persistToDisk(eventLog);
+      // No-op: persistence is in-memory only. Exists so e2e tests that call
+      // /control/save continue to work without modification.
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/load") {
-      // Simulate restart: replace in-memory log with disk contents
-      eventLog = await loadFromDisk();
+      // No-op: in-memory log is already the source of truth.
+      // The real server reads events.jsonl; here the in-memory log IS events.jsonl.
       return new Response("ok");
     }
 
     if (req.method === "GET" && url.pathname === "/control/disk-snapshot") {
-      const disk = await loadFromDisk();
-      return new Response(JSON.stringify(disk), {
+      // Return the in-memory log — equivalent to reading events.jsonl in the real server.
+      return new Response(JSON.stringify(eventLog), {
         headers: { "Content-Type": "application/json" },
       });
     }
