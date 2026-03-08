@@ -11,6 +11,10 @@ files. The user interacts via terminal or web UI.
 - Agent core (`src/agent.ts`) must have no UI imports — UI and agent stay cleanly separated.
 - `StreamProvider` is the interface for LLM provider calls; tests inject a mock — the real API is never called in tests. **If `StreamProvider` is renamed, update this file too.**
 
+### Workflow tools
+
+- Use `gh` (not raw `curl`) for GitHub operations — it's authenticated as `cfuehrmann` with `repo` scope. `gh pr create`, `gh issue list`, `gh release create`, `gh auth status`, etc. Still use `git` for push/pull.
+
 ### Branch State
 
 All development work goes on `develop`. Merge to `main` when stable.
