@@ -96,6 +96,7 @@ function EventBlock(props: { event: WsEvent }) {
       );
 
     case "text":
+    case "assistant_text":
       return (
         <div class="block assist">
           <div class="block-label">assistant</div>

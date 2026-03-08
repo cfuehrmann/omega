@@ -256,6 +256,22 @@ export interface ModelChangedEvent {
   model: string;
 }
 
+/**
+ * Full assembled assistant text from one LLM call.
+ *
+ * Emitted once per LLM response that produces text output, immediately after
+ * the streaming fragments are assembled. Persisted so the text survives
+ * history replay (streaming `text` StreamSignals are ephemeral and excluded
+ * from events.jsonl).
+ *
+ * Empty text (tool-only responses) does not produce this event.
+ */
+export interface AssistantTextEvent {
+  type: "assistant_text";
+  ts: string;
+  text: string;
+}
+
 // ---------------------------------------------------------------------------
 // Exhaustiveness helper
 // ---------------------------------------------------------------------------
@@ -286,6 +302,7 @@ export type OmegaEvent =
   | UserMessageEvent
   | LlmCallEvent
   | LlmResponseEvent
+  | AssistantTextEvent
   | ToolCallEvent
   | ToolResultEvent
   | TurnEndEvent

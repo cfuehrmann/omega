@@ -307,6 +307,8 @@ export class Agent {
   private authMode: "api-key" | "oauth" = "api-key";
   private provider: ProviderName = "anthropic";
   private activeModel: string = config.model;
+  /** True once session_start has been logged — prevents duplicate on reconnect. */
+  private sessionStartLogged = false;
 
   public readonly sessionId: string;
   private readonly retryBaseMs = Number(process.env.OMEGA_RETRY_BASE_MS ?? 1000);
@@ -484,12 +486,18 @@ export class Agent {
         },
       });
       this.authMode = "oauth";
-      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "claude-max", systemPrompt: this.buildSystemPrompt() });
+      if (!this.sessionStartLogged) {
+        this.sessionStartLogged = true;
+        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "claude-max", systemPrompt: this.buildSystemPrompt() });
+      }
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
       this.client = new Anthropic();
       this.authMode = "api-key";
-      this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "api-key", systemPrompt: this.buildSystemPrompt() });
+      if (!this.sessionStartLogged) {
+        this.sessionStartLogged = true;
+        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "api-key", systemPrompt: this.buildSystemPrompt() });
+      }
       return "api-key (pay-per-token ⚠)";
     } else {
       throw new Error(
@@ -692,6 +700,7 @@ export class Agent {
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
       const toolCallsThisTurn: string[] = [];
+      let assembledText = "";
 
       // Build system prompt (core instructions + system-prompt-append if loaded).
       const systemPrompt = this.buildSystemPrompt();
@@ -788,6 +797,7 @@ export class Agent {
               ttftMs = performance.now() - startTime;
             }
             if (openai.text) {
+              assembledText = openai.text;
               yield { type: "text", text: openai.text };
             }
             response = openai.response as any;
@@ -817,8 +827,7 @@ export class Agent {
       } else {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
           try {
-            let fullText = "";
-
+          assembledText = "";
           const streamParams = {
             model: activeModel,
             max_tokens: config.maxOutputTokens,
@@ -843,7 +852,7 @@ export class Agent {
               if (ttftMs === null) {
                 ttftMs = performance.now() - startTime;
               }
-              fullText += event.delta.text;
+              assembledText += event.delta.text;
               yield { type: "text", text: event.delta.text };
             }
 
@@ -990,6 +999,15 @@ export class Agent {
       // two fire-and-forget writes race and tool_call can land first in events.jsonl.
       await this.logEvent(llmResponseEvent);
       yield llmResponseEvent;
+
+      // Persist the full assembled text so it survives history replay.
+      // StreamSignal text fragments are ephemeral (never written to events.jsonl);
+      // this single event carries the complete text for the record.
+      if (assembledText) {
+        const assistantTextEvent: OmegaEvent = { type: "assistant_text", ts: new Date().toISOString(), text: assembledText };
+        await this.logEvent(assistantTextEvent);
+        yield assistantTextEvent;
+      }
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(

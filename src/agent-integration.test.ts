@@ -1116,3 +1116,78 @@ describe("Agent — unified event taxonomy (true duals)", () => {
     expect(events.find((e) => (e as any).type === "agent_to_agent_tool_result")).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// assistant_text persistence — survives history replay
+// ---------------------------------------------------------------------------
+
+describe("Agent — assistant_text persisted event", () => {
+  it.concurrent("emits assistant_text after a text response", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("Hello world"), textMessage("Hello world"));
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hi");
+    const textEv = events.find((e) => e.type === "assistant_text") as any;
+    expect(textEv).toBeDefined();
+    expect(textEv.text).toBe("Hello world");
+  });
+
+  it.concurrent("assistant_text is written to events.jsonl", async () => {
+    const { readFile } = await import("fs/promises");
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("Persisted text"), textMessage("Persisted text"));
+    const { agent, eventsFile, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    await collectEvents(agent, "hi");
+    const raw = await readFile(eventsFile, "utf-8");
+    const lines = raw.trim().split("\n").map(l => JSON.parse(l));
+    const textEv = lines.find((e: any) => e.type === "assistant_text");
+    expect(textEv).toBeDefined();
+    expect(textEv.text).toBe("Persisted text");
+  });
+
+  it.concurrent("does NOT emit assistant_text when response is tool-only (no text)", async () => {
+    let call = 0;
+    const mockProvider: StreamProvider = async () => {
+      call++;
+      if (call === 1) return makeMockStream(toolUseStreamEvents("read_file"), toolUseMessage("t1", "read_file", { path: "README.md" }));
+      return makeMockStream(textStreamEvents("done"), textMessage("done"));
+    };
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "use tool");
+    // First LLM call is tool-only — no assistant_text for that call.
+    // The tool-only call yields no text fragments, so assembledText is "".
+    // Second call does yield text, so one assistant_text total.
+    const textEvents = events.filter((e) => e.type === "assistant_text");
+    expect(textEvents.length).toBe(1); // only from the second (text) call
+    expect((textEvents[0] as any).text).toBe("done");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session_start dedup — not re-emitted on reconnect
+// ---------------------------------------------------------------------------
+
+describe("Agent — session_start dedup on reconnect", () => {
+  it.concurrent("init() logs session_start only once even if called multiple times", async () => {
+    const { readFile } = await import("fs/promises");
+    const origKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key-dummy";
+    try {
+      const { agent, eventsFile, dispose } = await makeTestAgent();
+      disposeAll.push(dispose);
+      // Call init() twice (simulating reconnect)
+      await agent.init();
+      await agent.init();
+      const raw = await readFile(eventsFile, "utf-8");
+      const lines = raw.trim().split("\n").map(l => JSON.parse(l));
+      const starts = lines.filter((e: any) => e.type === "session_start");
+      expect(starts.length).toBe(1);
+    } finally {
+      if (origKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = origKey;
+    }
+  });
+});

@@ -6,6 +6,7 @@
  * received over the WebSocket.
  */
 
+import { batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,7 @@ export type WsEvent =
   | { type: "reset_done" }
   | { type: "user_message"; content: string }
   | { type: "text"; text: string }
+  | { type: "assistant_text"; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
   | { type: "session_start"; authMode: string; model: string; provider: string; systemPrompt: string }
   | { type: "session_end"; outcome: "clean" | "error"; reason?: string }
@@ -105,23 +107,26 @@ export function dispatch(event: WsEvent): void {
 
     case "history": {
       // Replay all logged events to rebuild the store from scratch.
-      // Reset state first so we don't duplicate on reconnect.
-      setState("turns", []);
-      setState("authMode", "");
-      setState("streaming", false);
-      nextTurnId = 0;
-      for (const e of event.events) {
-        dispatch(e);
-      }
-      // Belt-and-suspenders: if replay ended with an open turn (server crashed
-      // mid-turn before emitting turn_end/interrupted), close it now so the UI
-      // doesn't get stuck in streaming=true with no way to recover.
-      if (state.streaming) {
-        dispatch({ type: "turn_interrupted" });
-      }
-      // After replay we are still connected (history arrived over an open socket)
-      setState("connected", true);
-      setState("retryCount", 0);
+      // Wrapped in batch() so intermediate states (e.g. streaming=true during
+      // user_message replay) never reach the DOM — prevents yellow flash.
+      batch(() => {
+        setState("turns", []);
+        setState("authMode", "");
+        setState("streaming", false);
+        nextTurnId = 0;
+        for (const e of event.events) {
+          dispatch(e);
+        }
+        // Belt-and-suspenders: if replay ended with an open turn (server crashed
+        // mid-turn before emitting turn_end/interrupted), close it now so the UI
+        // doesn't get stuck in streaming=true with no way to recover.
+        if (state.streaming) {
+          dispatch({ type: "turn_interrupted" });
+        }
+        // After replay we are still connected (history arrived over an open socket)
+        setState("connected", true);
+        setState("retryCount", 0);
+      });
       break;
     }
 
@@ -151,6 +156,22 @@ export function dispatch(event: WsEvent): void {
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
         if (turn) turn.streamingText += event.text;
+      }));
+      break;
+
+    case "assistant_text":
+      // Persisted full-text event — used during history replay.
+      // During live streaming, streamingText is already populated from `text` fragments;
+      // we skip appending here to avoid duplication. During replay, streamingText is
+      // empty (no `text` fragments), so we push a synthetic text block into events.
+      setState(produce(s => {
+        const turn = s.turns[s.turns.length - 1];
+        if (!turn) return;
+        if (!turn.streamingText) {
+          // Replay path: no live fragments — push the full text as a rendered block.
+          turn.events.push({ type: "text", text: event.text });
+        }
+        // Live path: streamingText already has it; turn_end will freeze it — no-op.
       }));
       break;
 

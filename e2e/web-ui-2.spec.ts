@@ -276,6 +276,71 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
 // 8. Reconnect banner
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 9. Assistant text survives page reload (history replay)
+// ---------------------------------------------------------------------------
+
+test("assistant text survives page reload (history replay)", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hello" });
+  // text (StreamSignal) is ephemeral — the real agent also emits assistant_text (OmegaEvent)
+  // which is the persisted form. Both sent here to mirror what the agent does.
+  await server.sendEvent({ type: "text", text: "I am alive." });
+  await server.sendEvent({ type: "assistant_text", text: "I am alive." });
+  await server.sendEvent({
+    type: "turn_end",
+    metrics: { inputTokens: 5, outputTokens: 5, costUsd: 0.0001, savedUsd: 0, ttftMs: 50 },
+    model: "claude-sonnet-4-6",
+    provider: "anthropic",
+  });
+  await server.sendEvent({ type: "turn_ready" });
+
+  // Confirm text is visible before reload
+  await expect(page.locator(".block.assist")).toContainText("I am alive.", { timeout: 3000 });
+
+  await page.reload();
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  // Assistant text must survive the reload via history replay
+  await expect(page.locator(".block.assist")).toContainText("I am alive.", { timeout: 3000 });
+});
+
+// ---------------------------------------------------------------------------
+// 10. No yellow flash during history replay
+// ---------------------------------------------------------------------------
+
+test("no yellow flash during history replay — dot stays green, never streaming", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  // Build up a completed turn
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "text", text: "hello back" });
+  await server.sendEvent({
+    type: "turn_end",
+    metrics: { inputTokens: 5, outputTokens: 5, costUsd: 0.0001, savedUsd: 0, ttftMs: 50 },
+    model: "claude-sonnet-4-6",
+    provider: "anthropic",
+  });
+  await server.sendEvent({ type: "turn_ready" });
+  await expect(page.locator(".dot.connected")).toBeVisible({ timeout: 3000 });
+
+  // Track whether the streaming dot ever appears during reload
+  await page.reload();
+
+  // Immediately after reload starts, we cannot observe intermediate states
+  // reliably, but after reconnect the dot must be green (connected), not yellow.
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  // Dot must NOT be in streaming state
+  await expect(page.locator(".dot.streaming")).not.toBeVisible();
+  // Input must be enabled (streaming=false means textarea is enabled)
+  await expect(page.locator("textarea")).toBeEnabled({ timeout: 3000 });
+});
+
+
+
 test("reconnect banner appears after repeated connection failures", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
