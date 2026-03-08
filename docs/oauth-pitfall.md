@@ -37,8 +37,6 @@ new Anthropic({
 });
 ```
 
-System prompt must start with `"You are Claude Code, Anthropic's official CLI for Claude."`.
-
 All headers are required. Missing any one → auth rejection.
 
 ## Token refresh
