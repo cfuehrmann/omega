@@ -32,7 +32,6 @@ test("reconnecting does not create a new agent — browser sees existing history
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
 
   // Get the agent ID before reload
@@ -67,7 +66,6 @@ test("reset message creates a new agent and clears history", async ({ page, serv
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
 
   const agentIdBefore = await server.agentId();
@@ -79,7 +77,7 @@ test("reset message creates a new agent and clears history", async ({ page, serv
     if (ws) ws.send(JSON.stringify({ type: "reset" }));
   });
 
-  // Server should acknowledge with a reset_done event and turn_ready
+  // Server should acknowledge with a reset_done event
   // Wait for the UI to show empty state (no user blocks)
   await expect(page.locator(".block.user")).not.toBeVisible({ timeout: 5000 });
 

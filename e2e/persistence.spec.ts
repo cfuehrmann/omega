@@ -36,7 +36,6 @@ test("incremental save: each turn_end persists immediately to disk", async ({ pa
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   // Turn 2
   await server.sendEvent({ type: "user_message", content: "second question" });
@@ -47,7 +46,6 @@ test("incremental save: each turn_end persists immediately to disk", async ({ pa
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   await expect(page.locator(".block.user")).toHaveCount(2, { timeout: 3000 });
 
@@ -74,7 +72,6 @@ test("persistence file contains events in correct order", async ({ page, server 
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   const persisted = await server.diskSnapshot() as object[];
   const types = persisted.map((e: any) => e.type);
@@ -106,7 +103,6 @@ test("history survives a simulated server restart (save + load cycle)", async ({
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
 
   // Simulate clean shutdown: flush in-memory log to disk
@@ -141,7 +137,6 @@ test("after load, reset clears both memory and disk", async ({ page, server }) =
   await server.sendEvent({ type: "turn_end",
     metrics: { inputTokens: 5, outputTokens: 2, costUsd: 0, savedUsd: 0, ttftMs: 10 },
     model: "claude-sonnet-4-6", provider: "anthropic" });
-  await server.sendEvent({ type: "turn_ready" });
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
 
   // Save to disk then reset (reset should clear disk too)

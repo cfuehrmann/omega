@@ -18,7 +18,6 @@ export type WsEvent =
   | { type: "disconnected" }
   | { type: "history"; events: WsEvent[] }
   | { type: "auth"; mode: string }
-  | { type: "turn_ready" }
   | { type: "reset_done" }
   | { type: "user_message"; content: string }
   | { type: "text"; text: string }
@@ -27,7 +26,7 @@ export type WsEvent =
   | { type: "session_start"; authMode: string; model: string; provider: string; systemPrompt: string }
   | { type: "session_end"; outcome: "clean" | "error"; reason?: string }
   | { type: "tool_call"; id: string; name: string; input: unknown; formatted?: string }
-  | { type: "tool_result"; id: string; name: string; result?: { type: string; text?: string; is_error?: boolean }; formatted?: string; isError: boolean }
+  | { type: "tool_result"; id: string; name: string; result?: { output: string; isError: boolean; durationMs: number }; formatted?: string; isError: boolean }
   | { type: "llm_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
   | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; request?: unknown }
   | { type: "llm_retry"; attempt: number; provider: string; waitMs: number; error: string }
@@ -166,7 +165,6 @@ export function dispatch(event: WsEvent): void {
           case "disconnected":
           case "history":
           case "auth":
-          case "turn_ready":
           case "reset_done":
             break;
 
@@ -265,11 +263,6 @@ export function dispatch(event: WsEvent): void {
       }));
       // turn_end means the agentic loop finished; clear streaming so replayed
       // history doesn't leave the UI stuck in streaming state.
-      // turn_ready (which also clears streaming) is excluded from replay.
-      setState("streaming", false);
-      break;
-
-    case "turn_ready":
       setState("streaming", false);
       break;
 

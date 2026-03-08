@@ -104,9 +104,7 @@ describe("shouldLogEvent", () => {
     expect(shouldLogEvent({ type: "connected" })).toBe(false);
   });
 
-  it("EXCLUDES turn_ready events (already excluded)", () => {
-    expect(shouldLogEvent({ type: "turn_ready" })).toBe(false);
-  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -166,7 +164,7 @@ describe("store history replay — open turn recovery", () => {
 
   it("replays a complete ping/pong session with all event types", () => {
     // Exact events from a real session (events.jsonl), filtered through shouldLogEvent
-    // (text, connected, turn_ready are excluded; the rest survive)
+    // (text and connected are excluded; the rest survive)
     dispatch({
       type: "history",
       events: [

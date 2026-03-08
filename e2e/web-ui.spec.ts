@@ -114,7 +114,6 @@ test("turn_end shows footer block", async ({ page, server }) => {
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   await expect(page.locator(".block.footer")).toBeVisible({ timeout: 3000 });
   await expect(page.locator(".block.assist")).toBeVisible();
@@ -132,7 +131,6 @@ test("text event shows assistant block", async ({ page, server }) => {
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   const assistBlock = page.locator(".block.assist .block-body");
   await expect(assistBlock).toHaveText("Hello from Omega!", { timeout: 3000 });
@@ -165,7 +163,6 @@ test("error event shows error block", async ({ page, server }) => {
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({ type: "error", error: "Something went wrong" });
-  await server.sendEvent({ type: "turn_ready" });
 
   const errBlock = page.locator(".block.error-b");
   await expect(errBlock).toBeVisible({ timeout: 3000 });
@@ -266,7 +263,6 @@ test("history is replayed after page reload", async ({ page, server }) => {
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
 

@@ -119,9 +119,9 @@ function EventBlock(props: { event: WsEvent }) {
 
     case "tool_result": {
       const r = e.result;
-      const content = r ? (r.type === "text" ? truncateOutput(r.text ?? "") : `[${r.type}]`) : "";
+      const content = r ? truncateOutput(r.output) : "";
       return (
-        <div class={`block result${r?.is_error ? " result-error" : ""}`}>
+        <div class={`block result${e.isError ? " result-error" : ""}`}>
           <div class="block-label">result › {e.name}</div>
           <div class="block-body">{content}</div>
         </div>
@@ -303,7 +303,6 @@ function EventBlock(props: { event: WsEvent }) {
     case "disconnected":
     case "history":
     case "auth":
-    case "turn_ready":
     case "reset_done":
       return null;
 

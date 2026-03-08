@@ -163,7 +163,6 @@ Bun.serve({
           ws.cork(() => {
             ws.send(JSON.stringify({ type: "history", events: [] }));
             ws.send(JSON.stringify({ type: "reset_done" }));
-            ws.send(JSON.stringify({ type: "turn_ready" }));
           });
         }).catch(() => {});
         return;

@@ -13,7 +13,6 @@
  *   All OmegaEvent shapes from events.ts, JSON-serialised.
  *   Extra: { type: "connected" }            — sent on WebSocket open
  *          { type: "auth", mode: string }   — auth result
- *          { type: "turn_ready" }           — server ready for next message
  *
  * Persistence: identical to the terminal UI. Agent writes context.jsonl and
  * events.jsonl into .omega/sessions/<timestamp>/. History replay on reconnect
@@ -64,12 +63,10 @@ function serveStatic(pathname: string): Response | null {
 
 /**
  * Events that should not be replayed to a reconnecting browser.
- *   connected  — synthesised from WebSocket open; meaningless to replay
- *   turn_ready — transient "server ready" signal; replaying it would unlock
- *                the input before the reconnect sequence completes
- *   text       — streaming text fragments; assembled response is in context.jsonl
+ *   connected — synthesised from WebSocket open; meaningless to replay
+ *   text      — streaming text fragments; assembled response is in context.jsonl
  */
-const REPLAY_EXCLUDE = new Set(["connected", "turn_ready", "text"]);
+const REPLAY_EXCLUDE = new Set(["connected", "text"]);
 
 /**
  * Returns true if the event should be included in history replay.
@@ -196,7 +193,6 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     session.ws.cork(() => {
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
-      session.ws.send(JSON.stringify({ type: "turn_ready" }));
     });
 
     persistentAgent.init()
@@ -236,7 +232,6 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     } finally {
       session.isStreaming = false;
       session.abortController = null;
-      send(ws, { type: "turn_ready" });
     }
   }
 }

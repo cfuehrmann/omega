@@ -112,7 +112,6 @@ test("input unlocks after turn_end", async ({ page, server }) => {
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   await expect(page.locator(".send-btn")).toBeVisible({ timeout: 3000 });
   await expect(page.locator("textarea")).toBeEnabled();
@@ -126,7 +125,6 @@ test("input unlocks after turn_interrupted", async ({ page, server }) => {
   await expect(page.locator(".abort-btn")).toBeVisible({ timeout: 3000 });
 
   await server.sendEvent({ type: "turn_interrupted" });
-  await server.sendEvent({ type: "turn_ready" });
 
   await expect(page.locator(".send-btn")).toBeVisible({ timeout: 3000 });
   await expect(page.locator("textarea")).toBeEnabled();
@@ -152,7 +150,7 @@ test("tool_result event shows result block", async ({ page, server }) => {
     id: "tc-001",
     name: "read_file",
     isError: false,
-    result: { type: "text", text: "file contents here", is_error: false },
+    result: { output: "file contents here", isError: false, durationMs: 1 },
   });
 
   const resultBlock = page.locator(".block.result");
@@ -171,7 +169,7 @@ test("tool_result with is_error shows error styling", async ({ page, server }) =
     id: "tc-002",
     name: "run_command",
     isError: true,
-    result: { type: "text", text: "command not found", is_error: true },
+    result: { output: "command not found", isError: true, durationMs: 1 },
   });
 
   await expect(page.locator(".block.result.result-error")).toBeVisible({ timeout: 3000 });
@@ -187,7 +185,6 @@ test("agent_error event shows error block", async ({ page, server }) => {
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({ type: "agent_error", error: "Context too large to send. Use /compact." });
-  await server.sendEvent({ type: "turn_ready" });
 
   const errBlock = page.locator(".block.error-b");
   await expect(errBlock).toBeVisible({ timeout: 3000 });
@@ -206,7 +203,6 @@ test("llm_error event shows error block", async ({ page, server }) => {
     error: "rate limited",
     httpStatus: 429,
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   const errBlock = page.locator(".block.error-b");
   await expect(errBlock).toBeVisible({ timeout: 3000 });
@@ -251,7 +247,7 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     id: "tc-003",
     name: "read_file",
     isError: false,
-    result: { type: "text", text: "readme contents", is_error: false },
+    result: { output: "readme contents", isError: false, durationMs: 1 },
   });
   await server.sendEvent({
     type: "turn_end",
@@ -259,7 +255,6 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   await expect(page.locator(".block.tool")).toBeVisible({ timeout: 3000 });
 
@@ -295,7 +290,6 @@ test("assistant text survives page reload (history replay)", async ({ page, serv
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
 
   // Confirm text is visible before reload
   await expect(page.locator(".block.assist")).toContainText("I am alive.", { timeout: 3000 });
@@ -324,7 +318,6 @@ test("no yellow flash during history replay — dot stays green, never streaming
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await server.sendEvent({ type: "turn_ready" });
   await expect(page.locator(".dot.connected")).toBeVisible({ timeout: 3000 });
 
   // Track whether the streaming dot ever appears during reload

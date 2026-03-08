@@ -53,4 +53,11 @@ is authoritative and all others conform to it. For Omega:
 
 Rule: update the UI to match the log — never the log to match the UI.
 
+### Tricky bugs — ask for session logs
+
+If you have tried two or more approaches on the same bug and are still stuck,
+or if you suspect you may be going in circles, **stop and ask the user whether
+a prior session log is relevant** before trying another approach. Only the user
+can make the connection between a symptom and the right log.
+
 
