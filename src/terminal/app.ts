@@ -256,6 +256,11 @@ export async function runApp(): Promise<void> {
             fullText += event.text;
             break;
 
+          case "assistant_text":
+            // Persisted full-text event emitted after streaming completes.
+            // The text was already displayed via "text" fragments — ignore.
+            break;
+
           case "tool_call":
             if (streamingStarted) { println(""); streamingStarted = false; }
             printBlock(now(), renderToolStart(event.name, event.input, event.id));
