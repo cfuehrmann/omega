@@ -14,15 +14,15 @@ rotation machinery.
 
 ## Context Management
 
-- **Zone 1** — `.omega/system-prompt-append.md`: appended to the system prompt
-  at session start. Contains agent-specific constraints, operational policies,
-  and accumulated world state. Updated manually. Lives under source control.
-- **Zone 3** — current turn: always verbatim, never compacted.
+- **System prompt** — `.omega/system-prompt-append.md` is appended at session
+  start. Contains agent-specific constraints, operational policies, and
+  accumulated world state. Updated manually. Lives under source control.
+- **History** — `compactedContextHistory` grows verbatim across turns. Sent
+  in full to each LLM provider call — no mid-turn trimming. `/compact`
+  summarises the head and keeps the last 10 turns verbatim. Auto-compact fires
+  when `lastPromptTokens` exceeds `AUTO_COMPACT_THRESHOLD = 100_000`.
+- **Current turn** — always verbatim, never compacted mid-turn.
 - Hard message cap: 100 messages. Token budget: 100k.
-
-History grows verbatim. The full `compactedContextHistory` is sent verbatim to
-each LLM provider call — no mid-turn trimming. `/compact` is the user-triggered
-fix for sessions that grow too long.
 
 ## Prompt Caching Architecture
 
@@ -46,8 +46,7 @@ before they enter history.
 ## Event Taxonomy
 
 `OmegaEvent` (in `src/events.ts`) is the single unified type for all events —
-both streamed from `agent.ts` and persisted to `events.jsonl`. `AgentEvent` in
-`agent.ts` is a backward-compat alias.
+both streamed from `agent.ts` and persisted to `events.jsonl`.
 
 ### OmegaEvent Variants
 
@@ -77,11 +76,12 @@ record.
 
 `connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`,
 `user_message`, `text`, `tool_call`, `tool_result`, `llm_response`,
-`model_changed`, `oauth_token_expired`, `oauth_refreshed`, `compact_user_start`,
-`compact_user_done`, `compact_user_error`, `compact_auto_start`,
-`compact_auto_done`, `compact_auto_error`, `llm_call`, `world_state_saved`,
-`turn_end`, `llm_error`, `agent_error`, `error` (server-own protocol errors
-only), `turn_interrupted`, `session_start`, `session_end`.
+`model_changed`, `oauth_token_expired`, `oauth_refreshed`, `llm_retry`,
+`compact_user_start`, `compact_user_done`, `compact_user_error`,
+`compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `llm_call`,
+`world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error`
+(server-own protocol errors only), `turn_interrupted`, `session_start`,
+`session_end`.
 
 ## context.jsonl Record Shape (ContextRecord)
 
@@ -126,9 +126,8 @@ function.
   type, `PRICING` table; `compactedContextHistory` / `compactedContextHashes[]`
   are the mutable in-memory context window and parallel hash array;
   `appendToHistory()` fire-and-forgets file I/O; `logEvent()` fire-and-forget
-  event logger;
-  `emitSessionEnd()` awaits flush; `/compact` replaces context view and hashes
-  in memory only.
+  event logger; `emitSessionEnd()` awaits flush; `/compact` replaces context
+  view and hashes in memory only.
 - `src/events.ts` — `OmegaEvent` discriminated union; `StreamSignal`;
   `exhaustiveCheck(x: never)` guard.
 - `src/event-store.ts` — `appendEvent(event, filePath?)` — null-is-no-op.
