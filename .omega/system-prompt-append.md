@@ -8,12 +8,8 @@ files. The user interacts via terminal or web UI.
 
 ### Stack
 
-TypeScript + Bun. The agent core (`src/agent.ts`) should have no UI imports — UI
-and agent must stay cleanly separated. `StreamProvider` is the interface for LLM
-provider calls (Anthropic, OpenAI); tests inject a mock — the real LLM provider
-API is never called in tests. Config is code (`src/config.ts`).
-
-NOTE: If `StreamProvider` is renamed, update this file too.
+- Agent core (`src/agent.ts`) must have no UI imports — UI and agent stay cleanly separated.
+- `StreamProvider` is the interface for LLM provider calls; tests inject a mock — the real API is never called in tests. **If `StreamProvider` is renamed, update this file too.**
 
 ### Branch State
 
@@ -38,10 +34,6 @@ run so tests can run in parallel without conflicts. Let test artifacts
 accumulate — they become inspectable evidence. Mock external services (LLMs,
 third-party APIs) but always use real I/O with the dedicated test output path.
 
-### Open Work
-
-See `backlog/backlog.md`.
-
 ### Contract Authority — the most public contract wins
 
 When multiple representations of the same information exist, the most public one
@@ -57,8 +49,4 @@ is authoritative and all others conform to it. For Omega:
 
 Rule: update the UI to match the log — never the log to match the UI.
 
-### Reference Docs
 
-Detailed reference material lives in `docs/`. Read on demand:
-
-- `docs/internals.md` — event schemas, session model, test isolation, key files
