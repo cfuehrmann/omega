@@ -28,7 +28,7 @@
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
 import { appendEvent } from "../../src/event-store.js";
@@ -233,6 +233,16 @@ Bun.serve({
     if (req.method === "POST" && url.pathname === "/control/load") {
       // In-memory state is always derived from disk on reconnect (loadReplayEvents).
       // No separate in-memory log to refresh. Exists for API compatibility.
+      return new Response("ok");
+    }
+
+    if (req.method === "POST" && url.pathname === "/control/load-fixture") {
+      // Write raw JSONL content directly to the current session's events.jsonl.
+      // Does NOT send anything over the WebSocket — the browser only sees the
+      // events after it reconnects (page reload) and the server replays from disk.
+      const body = await req.json() as { lines: string[] };
+      const jsonl = body.lines.join("\n") + "\n";
+      await writeFile(sessionPaths.eventsFile, jsonl, "utf-8");
       return new Response("ok");
     }
 

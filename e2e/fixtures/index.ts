@@ -28,6 +28,8 @@ export interface ServerHelper {
   diskSnapshot(): Promise<unknown>;
   /** Return the current server-side agent instance ID (changes on reset) */
   agentId(): Promise<number>;
+  /** Write raw JSONL lines to the session's events.jsonl (no WebSocket send) */
+  loadFixture(lines: string[]): Promise<void>;
 }
 
 async function sendEvent(event: object): Promise<void> {
@@ -77,6 +79,14 @@ async function agentId(): Promise<number> {
   return body.agentId;
 }
 
+async function loadFixture(lines: string[]): Promise<void> {
+  await fetch(`${CTRL}/control/load-fixture`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lines }),
+  });
+}
+
 export interface Fixtures {
   server: ServerHelper;
 }
@@ -84,7 +94,7 @@ export interface Fixtures {
 export const test = base.extend<Fixtures>({
   server: async ({}, use) => {
     await reset();
-    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId };
+    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId, loadFixture };
     await use(helper);
   },
 });
