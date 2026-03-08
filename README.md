@@ -8,8 +8,9 @@ project's documentation and files. The user interacts via terminal or web UI.
 Omega produces append-only JSONL session logs that serve as both operational
 state and diagnostics. These logs are inspectable by humans and machines alike,
 accelerating the agentic development loop — the same artifact that drives the
-session is the post-mortem record when something goes wrong. Both UIs reflect
-every event in the log, so the operator always has full visibility at runtime.
+session is the post-mortem record when something goes wrong. Both UIs should
+reflect every event in the log, so the operator always has full visibility at
+runtime.
 
 > In fact, introspectability of any software system — at runtime and after the
 > fact — is a first-class design goal in the age of agentic AI.
@@ -25,8 +26,8 @@ bun run src/web/server.ts    # web UI (build client first: just web-build)
 ## Stack
 
 TypeScript + Bun. Terminal UI in `src/terminal/`. SolidJS web client in
-`src/web/client/`. No backend framework — Bun's built-in HTTP + WebSocket.
-Agent core in `src/agent.ts`. Config is code (`src/config.ts`).
+`src/web/client/`. No backend framework — Bun's built-in HTTP + WebSocket. Agent
+core in `src/agent.ts`. Config is code (`src/config.ts`).
 
 ## Project layout
 
@@ -34,13 +35,20 @@ Agent core in `src/agent.ts`. Config is code (`src/config.ts`).
 - `backlog/` — work items and planning docs for specific features
 - `docs/` — reference material: architecture, policies, terminology, internals
 
+## For contributors
+
+`.omega/system-prompt-append.md` is injected into the agent's system prompt at
+every session start. It also contains operational policies worth reading: test
+commands, testing philosophy, the contract authority hierarchy, and
+agent-specific constraints.
+
 ## Slash commands
 
-| Command    | Effect                                                               |
-| ---------- | -------------------------------------------------------------------- |
-| `/sonnet`  | Anthropic `claude-sonnet-4-6` (default)                              |
-| `/opus`    | Anthropic `claude-opus-4-6`                                          |
-| `/codex`   | OpenAI `gpt-5.2-codex`                                               |
+| Command    | Effect                                                                 |
+| ---------- | ---------------------------------------------------------------------- |
+| `/sonnet`  | Anthropic `claude-sonnet-4-6` (default)                                |
+| `/opus`    | Anthropic `claude-opus-4-6`                                            |
+| `/codex`   | OpenAI `gpt-5.2-codex`                                                 |
 | `/compact` | Collapse history head into an LLM summary, keep last 10 turns verbatim |
 
 ## Git discipline
