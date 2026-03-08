@@ -47,6 +47,21 @@ third-party APIs) but always use real I/O with the dedicated test output path.
 
 See `backlog/backlog.md`.
 
+### Contract Authority — the most public contract wins
+
+When multiple representations of the same information exist, the most public one
+is authoritative and all others conform to it. For Omega:
+
+1. **Persistence** (`events.jsonl`, `context.jsonl`) — most public. Breaking
+   changes require explicit migration.
+2. **In-memory event type** (`OmegaEvent` in `src/events.ts`) — must match
+   persistence.
+3. **WebSocket protocol** (`WsEvent`) — transport projection of `OmegaEvent`;
+   may carry extra ephemeral fields.
+4. **Rendered UI** — least public; can change freely.
+
+Rule: update the UI to match the log — never the log to match the UI.
+
 ### Reference Docs
 
 Detailed reference material lives in `docs/`. Read on demand:
