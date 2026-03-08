@@ -40,7 +40,7 @@ export type WsEvent =
   | { type: "compact_auto_done"; ts?: string; messagesBefore: number; messagesAfter: number }
   | { type: "compact_auto_error"; ts?: string; error: string }
   | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
-  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
+  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null; totalMs?: number; cacheCreationTokens?: number; cacheReadTokens?: number }; model: string; provider: string }
   | { type: "llm_error"; ts?: string; provider: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
   | { type: "error"; ts?: string; error: string }
@@ -49,9 +49,25 @@ export type WsEvent =
 export interface Turn {
   id: number;
   events: WsEvent[];
-  /** Accumulated streaming text for the current assistant message */
-  streamingText: string;
   done: boolean;
+}
+
+/** Aggregated metrics shown in the sticky footer bar. */
+export interface StickyMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  savedUsd: number;
+  totalMs: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+/** Shape of the last completed turn_end event, for the per-turn sticky row. */
+interface LastTurnInfo {
+  metrics: StickyMetrics;
+  model: string;
+  provider: string;
 }
 
 interface AppState {
@@ -61,11 +77,20 @@ interface AppState {
   turns: Turn[];
   /** Number of consecutive failed reconnect attempts (reset on successful connect) */
   retryCount: number;
+  /** Metrics from the most recently completed turn (null if no turn finished yet). */
+  lastTurnEnd: LastTurnInfo | null;
+  /** Cumulative metrics across all completed turns in the session. */
+  sessionTotals: StickyMetrics;
 }
 
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
+
+const zeroMetrics = (): StickyMetrics => ({
+  inputTokens: 0, outputTokens: 0, costUsd: 0, savedUsd: 0,
+  totalMs: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
+});
 
 const [state, setState] = createStore<AppState>({
   connected: false,
@@ -73,6 +98,8 @@ const [state, setState] = createStore<AppState>({
   authMode: "",
   turns: [],
   retryCount: 0,
+  lastTurnEnd: null,
+  sessionTotals: zeroMetrics(),
 });
 
 export { state };
@@ -88,6 +115,33 @@ function appendEvent(event: WsEvent): void {
     const turn = s.turns[s.turns.length - 1];
     if (turn) turn.events.push(event);
   }));
+}
+
+/** Extract a StickyMetrics snapshot from a turn_end event's metrics field. */
+function metricsFromTurnEnd(e: WsEvent & { type: "turn_end" }): StickyMetrics {
+  const m = e.metrics;
+  return {
+    inputTokens: m.inputTokens,
+    outputTokens: m.outputTokens,
+    costUsd: m.costUsd,
+    savedUsd: m.savedUsd ?? 0,
+    totalMs: m.totalMs ?? 0,
+    cacheCreationTokens: m.cacheCreationTokens ?? 0,
+    cacheReadTokens: m.cacheReadTokens ?? 0,
+  };
+}
+
+/** Add two StickyMetrics together (for cumulative session totals). */
+function addMetrics(a: StickyMetrics, b: StickyMetrics): StickyMetrics {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    costUsd: a.costUsd + b.costUsd,
+    savedUsd: a.savedUsd + b.savedUsd,
+    totalMs: a.totalMs + b.totalMs,
+    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+  };
 }
 
 export function dispatch(event: WsEvent): void {
@@ -113,45 +167,42 @@ export function dispatch(event: WsEvent): void {
       const turns: Turn[] = [];
       let streaming = false;
       let tid = 0;
+      let replayLastTurnEnd: LastTurnInfo | null = null;
+      let replaySessionTotals: StickyMetrics = zeroMetrics();
 
       for (const e of event.events) {
         const cur = () => turns[turns.length - 1];
 
         switch (e.type) {
           case "user_message":
-            turns.push({ id: tid++, events: [e], streamingText: "", done: false });
+            turns.push({ id: tid++, events: [e], done: false });
             streaming = true;
             break;
 
           case "assistant_text": {
+            // Replay path: no live `text` fragments — push the full text as a rendered block.
             const t = cur();
-            if (t && !t.streamingText) {
-              t.events.push({ type: "text", text: (e as any).text });
-            }
+            if (t) t.events.push({ type: "text", text: (e as any).text });
             break;
           }
 
           case "turn_end": {
             const t = cur();
             if (t) {
-              if (t.streamingText) {
-                t.events.push({ type: "text", text: t.streamingText });
-                t.streamingText = "";
-              }
               t.events.push(e);
               t.done = true;
             }
             streaming = false;
+            // Accumulate sticky metrics
+            const sm = metricsFromTurnEnd(e);
+            replayLastTurnEnd = { metrics: sm, model: e.model, provider: e.provider };
+            replaySessionTotals = addMetrics(replaySessionTotals, sm);
             break;
           }
 
           case "turn_interrupted": {
             const t = cur();
             if (t) {
-              if (t.streamingText) {
-                t.events.push({ type: "text", text: t.streamingText });
-                t.streamingText = "";
-              }
               t.events.push(e);
               t.done = true;
             }
@@ -181,10 +232,6 @@ export function dispatch(event: WsEvent): void {
       if (streaming) {
         const t = turns[turns.length - 1];
         if (t) {
-          if (t.streamingText) {
-            t.events.push({ type: "text", text: t.streamingText });
-            t.streamingText = "";
-          }
           t.events.push({ type: "turn_interrupted" });
           t.done = true;
         }
@@ -199,6 +246,8 @@ export function dispatch(event: WsEvent): void {
         setState("streaming", false);
         setState("connected", true);
         setState("retryCount", 0);
+        setState("lastTurnEnd", replayLastTurnEnd);
+        setState("sessionTotals", replaySessionTotals);
       });
       break;
     }
@@ -211,6 +260,8 @@ export function dispatch(event: WsEvent): void {
       // Server has created a new agent — clear all UI state
       setState("turns", []);
       setState("streaming", false);
+      setState("lastTurnEnd", null);
+      setState("sessionTotals", zeroMetrics());
       nextTurnId = 0;
       break;
 
@@ -219,44 +270,50 @@ export function dispatch(event: WsEvent): void {
       setState("turns", t => [...t, {
         id: nextTurnId++,
         events: [event],
-        streamingText: "",
         done: false,
       }]);
       setState("streaming", true);
       break;
 
     case "text":
+      // Interleave text fragments directly into turn.events.
+      // If the last event is already a text block, concatenate into it so
+      // SolidJS re-renders just that node (visible character-by-character).
+      // If the last event is something else (e.g. a tool_result), push a new
+      // text block so the text appears after that event in the correct order.
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
-        if (turn) turn.streamingText += event.text;
+        if (!turn) return;
+        const last = turn.events[turn.events.length - 1];
+        if (last?.type === "text") {
+          (last as { type: "text"; text: string }).text += event.text;
+        } else {
+          turn.events.push({ type: "text", text: event.text });
+        }
       }));
       break;
 
     case "assistant_text":
-      // Persisted full-text event — used during history replay.
-      // During live streaming, streamingText is already populated from `text` fragments;
-      // we skip appending here to avoid duplication. During replay, streamingText is
-      // empty (no `text` fragments), so we push a synthetic text block into events.
+      // Persisted full-text event — used during history replay only.
+      // During live streaming, text is already accumulated into turn.events
+      // from individual `text` fragments, so this is a no-op on the live path.
+      // During replay, no `text` fragments were emitted, so push the full text.
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
         if (!turn) return;
-        if (!turn.streamingText) {
-          // Replay path: no live fragments — push the full text as a rendered block.
+        // Live path: the last event in the list will already be a `text` block
+        // built from streaming fragments — skip to avoid duplication.
+        const hasLiveText = turn.events.some(e => e.type === "text");
+        if (!hasLiveText) {
           turn.events.push({ type: "text", text: event.text });
         }
-        // Live path: streamingText already has it; turn_end will freeze it — no-op.
       }));
       break;
 
-    case "turn_end":
+    case "turn_end": {
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
         if (turn) {
-          // Freeze streaming text into the event list
-          if (turn.streamingText) {
-            turn.events.push({ type: "text", text: turn.streamingText });
-            turn.streamingText = "";
-          }
           turn.events.push(event);
           turn.done = true;
         }
@@ -264,16 +321,17 @@ export function dispatch(event: WsEvent): void {
       // turn_end means the agentic loop finished; clear streaming so replayed
       // history doesn't leave the UI stuck in streaming state.
       setState("streaming", false);
+      // Update sticky metrics
+      const sm = metricsFromTurnEnd(event);
+      setState("lastTurnEnd", { metrics: sm, model: event.model, provider: event.provider });
+      setState("sessionTotals", prev => addMetrics(prev, sm));
       break;
+    }
 
     case "turn_interrupted":
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
         if (turn) {
-          if (turn.streamingText) {
-            turn.events.push({ type: "text", text: turn.streamingText });
-            turn.streamingText = "";
-          }
           turn.events.push(event);
           turn.done = true;
         }

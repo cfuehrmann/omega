@@ -268,7 +268,7 @@ export async function runApp(): Promise<void> {
 
           case "tool_result": {
             if (streamingStarted) { println(""); streamingStarted = false; }
-            printBlock(now(), renderToolResult(event.result, event.id));
+            printBlock(now(), renderToolResult({ output: event.output, isError: event.isError }, event.id));
             break;
           }
 

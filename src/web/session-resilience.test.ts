@@ -85,7 +85,7 @@ describe("shouldLogEvent", () => {
   });
 
   it("allows tool_result events", () => {
-    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", result: {} })).toBe(true);
+    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", output: "", isError: false, durationMs: 0, contextHash: "ab12cd34" })).toBe(true);
   });
 
   it("allows model_changed events", () => {
@@ -184,7 +184,7 @@ describe("store history replay — open turn recovery", () => {
 
     const turn = state.turns[0];
     expect(turn.done).toBe(true);
-    expect(turn.streamingText).toBe("");
+    expect(turn.done).toBe(true);
 
     // The turn should contain rendered events including the "pong" text
     const textEvents = turn.events.filter((e: any) => e.type === "text");

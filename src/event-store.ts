@@ -28,8 +28,6 @@ export const DEFAULT_EVENTS_FILE = ".omega/sessions/events.jsonl";
 const UI_ONLY_FIELDS: Record<string, string[]> = {
   llm_call: ["request"],
   llm_response: ["content", "raw"],
-  tool_call: ["input", "formatted"],
-  tool_result: ["result", "formatted"],
 };
 
 /**

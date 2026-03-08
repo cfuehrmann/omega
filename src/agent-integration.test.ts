@@ -96,7 +96,7 @@ function toolUseStreamEvents(toolName: string): any[] {
 async function collectEvents(
   agent: Agent,
   message: string,
-  confirmFn?: (name: string, input: any, formatted: string) => Promise<boolean>
+  confirmFn?: (name: string, input: any) => Promise<boolean>
 ): Promise<(OmegaEvent | StreamSignal)[]> {
   const events: (OmegaEvent | StreamSignal)[] = [];
   const confirm = confirmFn ?? (async () => true);
@@ -277,7 +277,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(resultEvents.length).toBe(1);
     const result = resultEvents[0] as any;
     expect(result.name).toBe("read_file");
-    expect(result.result.isError).toBe(false);
+    expect(result.isError).toBe(false);
   });
 
 
@@ -827,11 +827,11 @@ describe("Agent — llm_response event", () => {
 });
 
 // ---------------------------------------------------------------------------
-// tool_result carries formatted string
+// tool_call carries input, tool_result carries output
 // ---------------------------------------------------------------------------
 
-describe("Agent — tool_result formatted field", () => {
-  it.concurrent("tool_result event carries the formatted string from formatToolCall", async () => {
+describe("Agent — tool_call input and tool_result output fields", () => {
+  it.concurrent("tool_call event carries the input object", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -846,11 +846,11 @@ describe("Agent — tool_result formatted field", () => {
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "list files");
-    const result = events.find((e) => e.type === "tool_result") as any;
-    expect(result.formatted).toBe("list_files: src/");
+    const toolCall = events.find((e) => e.type === "tool_call") as any;
+    expect(toolCall.input).toEqual({ path: "src/" });
   });
 
-  it.concurrent("tool_result formatted includes command for run_command", async () => {
+  it.concurrent("tool_result event carries the output string", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -866,7 +866,8 @@ describe("Agent — tool_result formatted field", () => {
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "test");
     const result = events.find((e) => e.type === "tool_result") as any;
-    expect(result.formatted).toBe("run_command: echo hi");
+    expect(typeof result.output).toBe("string");
+    expect(result.output).toContain("hi");
   });
 });
 

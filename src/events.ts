@@ -121,12 +121,10 @@ export interface ToolCallEvent {
   ts: string;
   id: string;
   name: string;
+  /** Tool input parameters. */
+  input: unknown;
   /** Hash of the assistant context.jsonl record containing this tool_use block. */
   contextHash: string;
-  /** Tool input. UI only — not persisted (content is in context.jsonl). */
-  input?: any;
-  /** Formatted call string. UI only — not persisted. */
-  formatted?: string;
 }
 
 /** The result of a tool invocation. */
@@ -136,13 +134,11 @@ export interface ToolResultEvent {
   id: string;
   name: string;
   isError: boolean;
-  durationMs?: number;
+  durationMs: number;
+  /** Full text output of the tool. */
+  output: string;
   /** Hash of the user context.jsonl record containing this tool_result block. */
   contextHash: string;
-  /** Full tool result. UI only — not persisted (content is in context.jsonl). */
-  result?: any;
-  /** Formatted call string. UI only — not persisted. */
-  formatted?: string;
 }
 
 /** End of a user turn — aggregate metrics. */

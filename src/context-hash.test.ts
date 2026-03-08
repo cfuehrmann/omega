@@ -483,8 +483,8 @@ describe("[SCHEMA] llm_response has no content field", () => {
 // ---------------------------------------------------------------------------
 // [SCHEMA] tool_call carries contextHash pointing to the assistant context record
 // [SCHEMA] tool_result carries contextHash pointing to the user context record
-// [SCHEMA] tool_call has no input field — content is in context.jsonl
-// [SCHEMA] tool_result has no outputLength field — derivable from context.jsonl
+// [SCHEMA] tool_call carries input field — persisted directly in events.jsonl
+// [SCHEMA] tool_result carries output field — persisted directly in events.jsonl
 // ---------------------------------------------------------------------------
 
 describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
@@ -551,7 +551,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     expect(tr.contextHash).toBe(toolResultRecord!.hash);
   });
 
-  it.concurrent("tool_call event has no input field", async () => {
+  it.concurrent("tool_call event has input field persisted in events.jsonl", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -560,7 +560,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
+    const { agent, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -568,11 +568,11 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     const toolCalls = allEvents.filter(e => e.type === "tool_call");
     expect(toolCalls.length).toBeGreaterThan(0);
     for (const tc of toolCalls) {
-      expect("input" in tc).toBe(false);
+      expect("input" in tc).toBe(true);
     }
   });
 
-  it.concurrent("tool_result event has no outputLength field", async () => {
+  it.concurrent("tool_result event has output field persisted in events.jsonl", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -581,7 +581,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
+    const { agent, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
@@ -589,7 +589,8 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     const toolResults = allEvents.filter(e => e.type === "tool_result");
     expect(toolResults.length).toBeGreaterThan(0);
     for (const tr of toolResults) {
-      expect("outputLength" in tr).toBe(false);
+      expect("output" in tr).toBe(true);
+      expect(typeof (tr as any).output).toBe("string");
     }
   });
 });

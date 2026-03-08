@@ -1,5 +1,5 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo } from "solid-js";
-import { state, dispatch, type Turn, type WsEvent } from "./store";
+import { state, dispatch, type Turn, type WsEvent, type StickyMetrics } from "./store";
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
 function exhaustiveCheck(x: never): null {
@@ -102,7 +102,7 @@ function firstLine(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Tool detail modal
+// Modals
 // ---------------------------------------------------------------------------
 
 interface ToolDetail {
@@ -113,37 +113,127 @@ interface ToolDetail {
   durationMs: number;
 }
 
-const [toolModal, setToolModal] = createSignal<ToolDetail | null>(null);
+interface LlmCallDetail {
+  provider: string;
+  url: string;
+  model: string;
+  contextHashes: string[];
+  request: any;
+}
 
-function ToolModal() {
+interface LlmResponseDetail {
+  provider: string;
+  url: string;
+  model: string;
+  stopReason: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number | null;
+    cache_read_input_tokens?: number | null;
+    service_tier?: string | null;
+  };
+  content: any;
+  raw: any;
+}
+
+type ModalContent =
+  | { kind: "tool"; detail: ToolDetail }
+  | { kind: "llm_call"; detail: LlmCallDetail }
+  | { kind: "llm_response"; detail: LlmResponseDetail };
+
+const [activeModal, setActiveModal] = createSignal<ModalContent | null>(null);
+
+// Keep the old setToolModal helper so tool_call/tool_result call sites are unchanged
+function setToolModal(d: ToolDetail | null) {
+  setActiveModal(d ? { kind: "tool", detail: d } : null);
+}
+
+function closeModal() { setActiveModal(null); }
+
+function ModalShell(props: { title: string; cls: string; children: any }) {
   return (
-    <Show when={toolModal()}>
-      {(detail) => (
-        <div class="modal-backdrop">
-          <div class="modal">
-            <div class="modal-header">
-              <span class="modal-title">tool › {detail().name}</span>
-              <button class="modal-close" onClick={() => setToolModal(null)}>✕ close</button>
-            </div>
-            <div class="modal-section-label">input</div>
-            <pre class="modal-body">{
-              detail().input == null
-                ? "(none)"
-                : typeof detail().input === "object"
-                  ? JSON.stringify(detail().input, null, 2)
-                  : String(detail().input)
-            }</pre>
-            <div class="modal-section-label">
-              output
-              <span class="modal-meta">
-                {detail().isError ? " · error" : ""}
-                {" · "}{detail().durationMs.toFixed(0)} ms
-              </span>
-            </div>
-            <pre class="modal-body">{detail().output}</pre>
-          </div>
+    <div class="modal-backdrop">
+      <div class={`modal ${props.cls}`}>
+        <div class="modal-header">
+          <span class="modal-title">{props.title}</span>
+          <button class="modal-close" onClick={closeModal}>✕ close</button>
         </div>
-      )}
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+function ActiveModal() {
+  return (
+    <Show when={activeModal()}>
+      {(m) => {
+        const modal = m();
+        if (modal.kind === "tool") {
+          const d = modal.detail;
+          return (
+            <ModalShell title={`tool › ${d.name}`} cls="tool-modal">
+              <div class="modal-section-label">input</div>
+              <pre class="modal-body">{
+                d.input == null
+                  ? "(none)"
+                  : typeof d.input === "object"
+                    ? JSON.stringify(d.input, null, 2)
+                    : String(d.input)
+              }</pre>
+              <div class="modal-section-label">
+                output
+                <span class="modal-meta">
+                  {d.isError ? " · error" : ""}
+                  {" · "}{d.durationMs.toFixed(0)} ms
+                </span>
+              </div>
+              <pre class="modal-body">{d.output}</pre>
+            </ModalShell>
+          );
+        }
+        if (modal.kind === "llm_call") {
+          const d = modal.detail;
+          const reqStr = d.request != null
+            ? JSON.stringify(d.request, null, 2)
+            : "(request not captured)";
+          return (
+            <ModalShell title={`llm_call › ${d.provider}`} cls="llm-call-modal">
+              <div class="modal-section-label">
+                {d.model}
+                <span class="modal-meta"> · {d.url} · {d.contextHashes.length} context messages</span>
+              </div>
+              <pre class="modal-body">{reqStr}</pre>
+            </ModalShell>
+          );
+        }
+        // llm_response
+        const d = modal.detail;
+        const u = d.usage;
+        const usageParts = [
+          `input_tokens: ${u.input_tokens}`,
+          `output_tokens: ${u.output_tokens}`,
+          ...(u.cache_creation_input_tokens ? [`cache_write: ${u.cache_creation_input_tokens}`] : []),
+          ...(u.cache_read_input_tokens     ? [`cache_read: ${u.cache_read_input_tokens}`]      : []),
+          ...(u.service_tier && u.service_tier !== "standard" ? [`service_tier: ${u.service_tier}`] : []),
+        ].join("  ");
+        const contentStr = d.content != null
+          ? JSON.stringify(d.content, null, 2)
+          : d.raw != null
+            ? JSON.stringify(d.raw, null, 2)
+            : "(content not captured)";
+        return (
+          <ModalShell title={`llm_response › ${d.provider}`} cls="llm-resp-modal">
+            <div class="modal-section-label">
+              {d.model}
+              <span class="modal-meta"> · stop: {d.stopReason} · {d.url}</span>
+            </div>
+            <div class="modal-section-label">usage<span class="modal-meta"> · {usageParts}</span></div>
+            <pre class="modal-body">{contentStr}</pre>
+          </ModalShell>
+        );
+      }}
     </Show>
   );
 }
@@ -158,7 +248,7 @@ function BlockTs(props: { ts?: string }) {
   return <Show when={label()}><div class="block-ts">{label()}</div></Show>;
 }
 
-function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[] }) {
+function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: boolean }) {
   const e = props.event;
   const ts = (e as any).ts as string | undefined;
 
@@ -178,10 +268,13 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[] }) {
     case "text":
     case "assistant_text":
       return (
-        <div class="block assist">
+        <div class={`block assist${props.streaming ? " streaming" : ""}`}>
           <div class="block-label">assistant</div>
           <BlockTs ts={ts} />
-          <div class="block-body">{e.text}</div>
+          <div class="block-body">
+            {e.text}
+            <Show when={props.streaming}><span class="cursor" /></Show>
+          </div>
         </div>
       );
 
@@ -335,15 +428,25 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[] }) {
       );
 
     case "llm_call": {
-      const reqStr = e.request != null
-        ? truncate(JSON.stringify(e.request, null, 2), 1000)
-        : "(request not captured)";
+      const openModal = () => setActiveModal({
+        kind: "llm_call",
+        detail: {
+          provider: e.provider,
+          url: e.url,
+          model: e.model,
+          contextHashes: e.contextHashes,
+          request: e.request,
+        },
+      });
       return (
-        <details class="block api-call">
-          <summary class="block-label">llm call › {e.provider}</summary>
+        <div class="block api-call">
+          <div class="block-label-row">
+            <span class="block-label">llm_call › {e.provider}</span>
+            <button class="block-expand-btn" onClick={openModal} title="View full request">⤢</button>
+          </div>
           <BlockTs ts={ts} />
-          <div class="block-body">{reqStr}</div>
-        </details>
+          <div class="block-body block-preview">{e.model} · {e.contextHashes.length} messages</div>
+        </div>
       );
     }
 
@@ -357,9 +460,24 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[] }) {
         ...(u.cache_read_input_tokens     ? [`read: ${u.cache_read_input_tokens}`]      : []),
         ...(u.service_tier && u.service_tier !== "standard" ? [`tier: ${u.service_tier}`] : []),
       ];
+      const openModal = () => setActiveModal({
+        kind: "llm_response",
+        detail: {
+          provider: e.provider,
+          url: e.url,
+          model: e.model,
+          stopReason: e.stopReason,
+          usage: e.usage,
+          content: e.content,
+          raw: e.raw,
+        },
+      });
       return (
         <div class="block api-response">
-          <div class="block-label">api response › {e.provider}</div>
+          <div class="block-label-row">
+            <span class="block-label">llm_response › {e.provider}</span>
+            <button class="block-expand-btn" onClick={openModal} title="View full response">⤢</button>
+          </div>
           <BlockTs ts={ts} />
           <div class="block-body">{parts.join("  ")}</div>
         </div>
@@ -458,19 +576,90 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[] }) {
 }
 
 function TurnView(props: { turn: Turn }) {
+  // The cursor belongs on the last text block while the turn is still live.
+  // We compute this per-event: an event gets streaming=true only when it is
+  // a "text" block, the turn is not yet done, and it is the last event.
+  const lastIdx = () => props.turn.events.length - 1;
   return (
     <div class="turn">
-      <For each={props.turn.events}>{(event) => <EventBlock event={event} turnEvents={props.turn.events} />}</For>
-      <Show when={props.turn.streamingText}>
-        <div class="block assist streaming">
-          <div class="block-label">assistant</div>
-          <div class="block-body">
-            {props.turn.streamingText}
-            <span class="cursor" />
-          </div>
-        </div>
-      </Show>
+      <For each={props.turn.events}>{(event, i) => {
+        const isStreamingText = () =>
+          !props.turn.done &&
+          event.type === "text" &&
+          i() === lastIdx();
+        return <EventBlock event={event} turnEvents={props.turn.events} streaming={isStreamingText()} />;
+      }}</For>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sticky metrics bar (per-turn + session totals)
+// ---------------------------------------------------------------------------
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms.toFixed(0)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function MetricsRow(props: {
+  label: string;
+  m: StickyMetrics;
+  model?: string;
+  provider?: string;
+}) {
+  const m = () => props.m;
+  const line = () => {
+    const p = props.provider;
+    const isOpenAi = p === "openai";
+    const costPrefix = isOpenAi ? "<=$" : "$";
+    const parts: string[] = [
+      `in: ${m().inputTokens}`,
+      `out: ${m().outputTokens}`,
+    ];
+    if (!isOpenAi) {
+      parts.push(`write: ${m().cacheCreationTokens}`);
+      parts.push(`read: ${m().cacheReadTokens}`);
+    }
+    parts.push(`cost: ${costPrefix}${m().costUsd.toFixed(4)}`);
+    if (!isOpenAi) {
+      parts.push(`saved: ${m().savedUsd.toFixed(4)}`);
+    }
+    if (m().totalMs > 0) {
+      parts.push(`dur: ${formatDuration(m().totalMs)}`);
+    }
+    if (props.model) {
+      parts.push(`model: ${props.model}`);
+    }
+    return parts.join("  ");
+  };
+  return (
+    <div class="sticky-metrics-row">
+      <span class="sticky-metrics-label">{props.label}</span>
+      <span class="sticky-metrics-body">{line()}</span>
+    </div>
+  );
+}
+
+function StickyMetricsBar() {
+  return (
+    <Show when={state.lastTurnEnd}>
+      {(last) => (
+        <div class="sticky-metrics">
+          <MetricsRow
+            label="turn:"
+            m={last().metrics}
+            model={last().model}
+            provider={last().provider}
+          />
+          <MetricsRow
+            label="session:"
+            m={state.sessionTotals}
+            provider={last().provider}
+          />
+        </div>
+      )}
+    </Show>
   );
 }
 
@@ -625,10 +814,11 @@ export function App() {
 
   // Auto-scroll to bottom on new content — only when tailing
   createEffect(() => {
-    // Track both turn count and streaming text to react to all new content
+    // Track turn count and the event list of the last turn (covers both new
+    // turns and new events/text tokens appended to the current turn).
     const _ = state.turns.length;
     const lastTurn = state.turns[state.turns.length - 1];
-    const __ = lastTurn?.streamingText;
+    const __ = lastTurn?.events.length;
     if (tailing()) {
       queueMicrotask(() => {
         if (feedRef) feedRef.scrollTop = feedRef.scrollHeight;
@@ -638,7 +828,7 @@ export function App() {
 
   return (
     <div class="app">
-      <ToolModal />
+      <ActiveModal />
       <ReconnectBanner />
       <div class="feed-wrapper">
         <div class="feed" ref={feedRef} onScroll={onFeedScroll}>
@@ -657,6 +847,7 @@ export function App() {
           </button>
         </Show>
       </div>
+      <StickyMetricsBar />
       <StatusDot />
       <InputArea />
     </div>

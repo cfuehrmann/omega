@@ -8,8 +8,8 @@
 {"type":"llm_call","ts":"2026-01-15T10:01:00.000Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","model":"claude-sonnet-4-6","contextHashes":["aabb1122","ccdd3344","eeff5566"],"cacheBreakpointIndex":2}
 {"type":"llm_response","ts":"2026-01-15T10:01:01.000Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","stopReason":"tool_use","model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"service_tier":"standard"},"contextHash":"11223344"}
 {"type":"assistant_text","ts":"2026-01-15T10:01:01.000Z","text":"Let me list the files for you."}
-{"type":"tool_call","ts":"2026-01-15T10:01:01.001Z","id":"toolu_01ABC123","name":"list_files","contextHash":"11223344"}
-{"type":"tool_result","ts":"2026-01-15T10:01:01.050Z","id":"toolu_01ABC123","name":"list_files","isError":false,"durationMs":48.5,"contextHash":"55667788"}
+{"type":"tool_call","ts":"2026-01-15T10:01:01.001Z","id":"toolu_01ABC123","name":"list_files","input":{"path":"."},"contextHash":"11223344"}
+{"type":"tool_result","ts":"2026-01-15T10:01:01.050Z","id":"toolu_01ABC123","name":"list_files","isError":false,"durationMs":48.5,"output":"README.md\nsrc/\n","contextHash":"55667788"}
 {"type":"llm_call","ts":"2026-01-15T10:01:01.051Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","model":"claude-sonnet-4-6","contextHashes":["aabb1122","ccdd3344","eeff5566","11223344","55667788"],"cacheBreakpointIndex":4}
 {"type":"llm_response","ts":"2026-01-15T10:01:02.000Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","stopReason":"end_turn","model":"claude-sonnet-4-6","usage":{"input_tokens":50,"output_tokens":40,"cache_creation_input_tokens":500,"cache_read_input_tokens":1000,"service_tier":"standard"},"contextHash":"99aabbcc"}
 {"type":"assistant_text","ts":"2026-01-15T10:01:02.000Z","text":"Here are the files in the current directory:\n- README.md\n- package.json\n- src/"}

@@ -150,7 +150,8 @@ test("tool_result event shows result block", async ({ page, server }) => {
     id: "tc-001",
     name: "read_file",
     isError: false,
-    result: { output: "file contents here", isError: false, durationMs: 1 },
+    durationMs: 1,
+    output: "file contents here",
   });
 
   const resultBlock = page.locator(".block.result");
@@ -169,7 +170,8 @@ test("tool_result with is_error shows error styling", async ({ page, server }) =
     id: "tc-002",
     name: "run_command",
     isError: true,
-    result: { output: "command not found", isError: true, durationMs: 1 },
+    durationMs: 1,
+    output: "command not found",
   });
 
   await expect(page.locator(".block.result.result-error")).toBeVisible({ timeout: 3000 });
@@ -247,7 +249,8 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     id: "tc-003",
     name: "read_file",
     isError: false,
-    result: { output: "readme contents", isError: false, durationMs: 1 },
+    durationMs: 1,
+    output: "readme contents",
   });
   await server.sendEvent({
     type: "turn_end",

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
-import { toolDefinitions, executeTool, formatToolCall, type ToolResult } from "./tools.js";
+import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
 
 import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
@@ -593,7 +593,7 @@ export class Agent {
 
   async *sendMessage(
     userMessage: string,
-    _confirmTool: (name: string, input: any, formatted: string) => Promise<boolean>,
+    _confirmTool: (name: string, input: any) => Promise<boolean>,
     signal?: AbortSignal
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     if (userMessage.startsWith("/")) {
@@ -1041,10 +1041,8 @@ export class Agent {
             name: toolUse.name,
             isError: true,
             durationMs: 0,
+            output: "[not executed: max_tokens stop — output budget exhausted while generating tool call arguments]",
             contextHash: syntheticResultHash,
-            // UI-only fields:
-            result: { output: "[interrupted: max_tokens cut off tool input — not executed]", isError: true, durationMs: 0 },
-            formatted: `[synthetic error result for ${toolUse.name}]`,
           };
           this.logEvent(syntheticResultEvent);
           yield syntheticResultEvent;
@@ -1068,20 +1066,14 @@ export class Agent {
         // Emit all tool_call events first, then execute all tools in parallel,
         // then emit all tool_result events. This reduces wall-clock latency when
         // the model returns multiple tool_use blocks in one response.
-        const formattedCalls: Array<{ toolUse: Anthropic.ToolUseBlock; formatted: string }> = [];
         for (const toolUse of toolUseBlocks) {
-          const formatted = formatToolCall(toolUse.name, toolUse.input);
-          formattedCalls.push({ toolUse, formatted });
-          // Unified tool_call event: logged (without UI-only fields) and yielded (with them).
           const toolCallEvent: OmegaEvent = {
             type: "tool_call",
             ts: new Date().toISOString(),
             id: toolUse.id,
             name: toolUse.name,
-            contextHash: assistantHash,
-            // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):
             input: toolUse.input,
-            formatted,
+            contextHash: assistantHash,
           };
           this.logEvent(toolCallEvent);
           yield toolCallEvent;
@@ -1089,11 +1081,11 @@ export class Agent {
 
         // Execute all tools concurrently
         const results = await Promise.all(
-          formattedCalls.map(({ toolUse }) => executeTool(toolUse.name, toolUse.input))
+          toolUseBlocks.map(toolUse => executeTool(toolUse.name, toolUse.input))
         );
 
-        for (let i = 0; i < formattedCalls.length; i++) {
-          const { toolUse, formatted } = formattedCalls[i];
+        for (let i = 0; i < toolUseBlocks.length; i++) {
+          const toolUse = toolUseBlocks[i];
           const result = results[i];
 
           toolCallsThisTurn.push(toolUse.name);
@@ -1109,10 +1101,9 @@ export class Agent {
 
         // Add tool results to history; capture hash for tool_result events
         const toolResultHash = await this.appendToHistory({ role: "user", content: toolResults });
-        for (let i = 0; i < formattedCalls.length; i++) {
-          const { toolUse, formatted } = formattedCalls[i];
+        for (let i = 0; i < toolUseBlocks.length; i++) {
+          const toolUse = toolUseBlocks[i];
           const result = results[i];
-          // Unified tool_result event: logged (without UI-only fields) and yielded (with them).
           const toolResultEvent: OmegaEvent = {
             type: "tool_result",
             ts: new Date().toISOString(),
@@ -1120,10 +1111,8 @@ export class Agent {
             name: toolUse.name,
             isError: result.isError,
             durationMs: result.durationMs,
+            output: result.output,
             contextHash: toolResultHash,
-            // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):
-            result,
-            formatted,
           };
           this.logEvent(toolResultEvent);
           yield toolResultEvent;

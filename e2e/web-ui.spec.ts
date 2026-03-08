@@ -197,7 +197,7 @@ test("world_state_saved event shows a status pill", async ({ page, server }) => 
   await expect(pill).toContainText("world state saved");
 });
 
-test("llm_call event shows a collapsible api-call block", async ({ page, server }) => {
+test("llm_call event shows an api-call block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
@@ -207,12 +207,14 @@ test("llm_call event shows a collapsible api-call block", async ({ page, server 
     llmCallNumber: 1,
     provider: "anthropic",
     url: "https://api.anthropic.com/v1/messages",
+    model: "claude-sonnet-4-6",
+    contextHashes: [],
     request: { model: "claude-sonnet-4-6", max_tokens: 8192 },
   });
 
   const block = page.locator(".block.api-call");
   await expect(block).toBeVisible({ timeout: 3000 });
-  await expect(block.locator(".block-label")).toContainText("llm call");
+  await expect(block.locator(".block-label")).toContainText("llm_call");
 });
 
 test("llm_response event shows an api-response block", async ({ page, server }) => {
@@ -225,13 +227,14 @@ test("llm_response event shows an api-response block", async ({ page, server }) 
     provider: "anthropic",
     url: "https://api.anthropic.com/v1/messages",
     stopReason: "end_turn",
+    model: "claude-sonnet-4-6",
     usage: { input_tokens: 100, output_tokens: 50 },
     content: [],
   });
 
   const block = page.locator(".block.api-response");
   await expect(block).toBeVisible({ timeout: 3000 });
-  await expect(block.locator(".block-label")).toContainText("api response");
+  await expect(block.locator(".block-label")).toContainText("llm_response");
 });
 
 test("turn_interrupted event shows interrupt block", async ({ page, server }) => {
