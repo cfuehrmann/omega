@@ -15,8 +15,8 @@ rotation machinery.
 ## Context Management
 
 - **Zone 1** — `.omega/system-prompt-append.md`: appended to the system prompt
-  at session start. Contains world state summary. Updated manually. Lives under
-  source control.
+  at session start. Contains agent-specific constraints, operational policies,
+  and accumulated world state. Updated manually. Lives under source control.
 - **Zone 3** — current turn: always verbatim, never compacted.
 - Hard message cap: 100 messages. Token budget: 100k.
 
@@ -125,8 +125,8 @@ function.
 - `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider`
   type, `PRICING` table; `compactedContextHistory` / `compactedContextHashes[]`
   are the mutable in-memory context window and parallel hash array;
-  `appendToHistory()` fire-and-forgets file I/O; `buildSystemPrompt()` builds
-  the system prompt; `logEvent()` fire-and-forget event logger;
+  `appendToHistory()` fire-and-forgets file I/O; `logEvent()` fire-and-forget
+  event logger;
   `emitSessionEnd()` awaits flush; `/compact` replaces context view and hashes
   in memory only.
 - `src/events.ts` — `OmegaEvent` discriminated union; `StreamSignal`;
@@ -139,8 +139,8 @@ function.
   `findPreviousEventsFile()`; `SESSIONS_ROOT`; `TEST_SESSIONS_ROOT`.
 - `src/compaction.ts` — `compactWorldState()` and `compactHistory()`.
   `KEEP_RECENT_TURNS = 10`.
-- `src/system-prompt/` — modular system prompt: `identity.ts`, `core.ts` (main
-  instructions), `append.ts` (`readSystemPromptAppend()`,
+- `src/system-prompt/` — modular system prompt: `identity.ts` (OAuth prefix),
+  `core.ts` (main instructions), `append.ts` (`readSystemPromptAppend()`,
   `writeSystemPromptAppend()`, `systemPromptAppendPath()`,
   `formatAppendSection()`), `index.ts` (`buildSystemPrompt()` assembler).
 - `src/ui-raw.ts` — thin re-export shim. CLI entry point.
