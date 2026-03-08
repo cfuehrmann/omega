@@ -67,5 +67,4 @@ Rule: update the UI to match the log — never the log to match the UI.
 Detailed reference material lives in `docs/`. Read on demand:
 
 - `docs/internals.md` — event schemas, session model, test isolation, key files
-- `docs/manifest.md` — design philosophy and strategic direction
 - `docs/dev-policy.md` — active development-phase policies

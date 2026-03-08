@@ -1,8 +1,17 @@
 # Omega — AI Coding Agent
 
-Omega is a general-purpose coding agent. It can be pointed at any project
-directory and will orient itself by reading available documentation and project
-files. The user interacts via terminal or web UI.
+Omega is a general-purpose coding agent that orients itself by reading a
+project's documentation and files. The user interacts via terminal or web UI.
+
+## Philosophy
+
+Omega produces append-only JSONL session logs that serve as both operational
+state and diagnostics. These logs are inspectable by humans and machines alike,
+accelerating the agentic development loop — the same artifact that drives the
+session is the post-mortem record when something goes wrong.
+
+> In fact, introspectability of any software system — at runtime and after the
+> fact — is a first-class design goal in the age of agentic AI.
 
 ## Quick start
 
