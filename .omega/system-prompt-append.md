@@ -19,13 +19,9 @@ NOTE: If `StreamProvider` is renamed, update this file too.
 
 All development work goes on `develop`. Merge to `main` when stable.
 
-### Git & Gate Policy
-
-**Run `just gate` before every commit.**
-
 ### Testing
 
-- `just gate` — full suite + knip, run before every commit
+- `just gate` — **run before every commit** — full suite + knip
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
