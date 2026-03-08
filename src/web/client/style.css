@@ -102,6 +102,8 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* fill the feed-wrapper */
+  min-height: 0;
 }
 
 .turn {
@@ -176,6 +178,40 @@ details.block[open] > summary::before { content: "▼ "; }
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
+}
+
+/* ── Scroll-to-bottom button ── */
+.feed-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0; /* required for flex child to shrink */
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll-to-bottom {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  transition: border-color 0.15s, color 0.15s;
+  z-index: 10;
+}
+.scroll-to-bottom:hover {
+  border-color: var(--green);
+  color: var(--green);
 }
 
 /* ── Input area ── */

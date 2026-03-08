@@ -450,6 +450,10 @@ function StatusDot() {
 export function App() {
   let feedRef!: HTMLDivElement;
 
+  // true  → auto-scroll to bottom on new content ("tailing")
+  // false → user has scrolled up; show the ↓ button instead
+  const [tailing, setTailing] = createSignal(true);
+
   // Start WebSocket on mount, clean up on unmount
   onMount(() => {
     // Expose dispatch for e2e tests (harmless in production)
@@ -461,29 +465,52 @@ export function App() {
     if (reconnectTimer) clearTimeout(reconnectTimer);
   });
 
-  // Auto-scroll to bottom on new content
+  // Detect manual scroll — switch to sticky mode when user scrolls up
+  function onFeedScroll() {
+    if (!feedRef) return;
+    const atBottom = feedRef.scrollTop + feedRef.clientHeight >= feedRef.scrollHeight - 8;
+    setTailing(atBottom);
+  }
+
+  // Scroll to bottom and return to tailing mode
+  function scrollToBottom() {
+    if (!feedRef) return;
+    feedRef.scrollTop = feedRef.scrollHeight;
+    setTailing(true);
+  }
+
+  // Auto-scroll to bottom on new content — only when tailing
   createEffect(() => {
-    // Access turns length to track changes
+    // Track both turn count and streaming text to react to all new content
     const _ = state.turns.length;
     const lastTurn = state.turns[state.turns.length - 1];
     const __ = lastTurn?.streamingText;
-    queueMicrotask(() => {
-      if (feedRef) feedRef.scrollTop = feedRef.scrollHeight;
-    });
+    if (tailing()) {
+      queueMicrotask(() => {
+        if (feedRef) feedRef.scrollTop = feedRef.scrollHeight;
+      });
+    }
   });
 
   return (
     <div class="app">
       <ReconnectBanner />
-      <div class="feed" ref={feedRef}>
-        <ErrorBoundary fallback={(err) => (
-          <div class="render-error">
-            <strong>Render error</strong>
-            <pre>{err?.message ?? String(err)}</pre>
-          </div>
-        )}>
-          <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
-        </ErrorBoundary>
+      <div class="feed-wrapper">
+        <div class="feed" ref={feedRef} onScroll={onFeedScroll}>
+          <ErrorBoundary fallback={(err) => (
+            <div class="render-error">
+              <strong>Render error</strong>
+              <pre>{err?.message ?? String(err)}</pre>
+            </div>
+          )}>
+            <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
+          </ErrorBoundary>
+        </div>
+        <Show when={!tailing()}>
+          <button class="scroll-to-bottom" onClick={scrollToBottom} title="Scroll to latest">
+            ↓
+          </button>
+        </Show>
       </div>
       <StatusDot />
       <InputArea />
