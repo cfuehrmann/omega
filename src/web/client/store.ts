@@ -19,32 +19,32 @@ export type WsEvent =
   | { type: "history"; events: WsEvent[] }
   | { type: "auth"; mode: string }
   | { type: "reset_done" }
-  | { type: "user_message"; content: string }
+  | { type: "user_message"; ts?: string; content: string }
   | { type: "text"; text: string }
-  | { type: "assistant_text"; text: string }
+  | { type: "assistant_text"; ts?: string; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
-  | { type: "session_start"; authMode: string; model: string; provider: string; systemPrompt: string }
-  | { type: "session_end"; outcome: "clean" | "error"; reason?: string }
-  | { type: "tool_call"; id: string; name: string; input: unknown; formatted?: string }
-  | { type: "tool_result"; id: string; name: string; result?: { output: string; isError: boolean; durationMs: number }; formatted?: string; isError: boolean }
-  | { type: "llm_response"; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
-  | { type: "llm_call"; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; request?: unknown }
-  | { type: "llm_retry"; attempt: number; provider: string; waitMs: number; error: string }
-  | { type: "model_changed"; provider: string; model: string }
-  | { type: "oauth_token_expired"; attempt: number; httpStatus?: number }
-  | { type: "oauth_refreshed" }
-  | { type: "compact_user_start" }
-  | { type: "compact_user_done"; messagesBefore: number; messagesAfter: number }
-  | { type: "compact_user_error"; error: string }
-  | { type: "compact_auto_start"; messagesBefore: number }
-  | { type: "compact_auto_done"; messagesBefore: number; messagesAfter: number }
-  | { type: "compact_auto_error"; error: string }
-  | { type: "world_state_saved"; path: string; charCount: number }
-  | { type: "turn_end"; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
-  | { type: "llm_error"; provider: string; error: string }
-  | { type: "agent_error"; error: string }
-  | { type: "error"; error: string }
-  | { type: "turn_interrupted" };
+  | { type: "session_start"; ts?: string; authMode: string; model: string; provider: string; systemPrompt: string }
+  | { type: "session_end"; ts?: string; outcome: "clean" | "error"; reason?: string }
+  | { type: "tool_call"; ts?: string; id: string; name: string; input: unknown }
+  | { type: "tool_result"; ts?: string; id: string; name: string; isError: boolean; durationMs: number; output: string }
+  | { type: "llm_response"; ts?: string; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
+  | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; request?: unknown }
+  | { type: "llm_retry"; ts?: string; attempt: number; provider: string; waitMs: number; error: string }
+  | { type: "model_changed"; ts?: string; provider: string; model: string }
+  | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
+  | { type: "oauth_refreshed"; ts?: string }
+  | { type: "compact_user_start"; ts?: string }
+  | { type: "compact_user_done"; ts?: string; messagesBefore: number; messagesAfter: number }
+  | { type: "compact_user_error"; ts?: string; error: string }
+  | { type: "compact_auto_start"; ts?: string; messagesBefore: number }
+  | { type: "compact_auto_done"; ts?: string; messagesBefore: number; messagesAfter: number }
+  | { type: "compact_auto_error"; ts?: string; error: string }
+  | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
+  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null }; model: string; provider: string }
+  | { type: "llm_error"; ts?: string; provider: string; error: string }
+  | { type: "agent_error"; ts?: string; error: string }
+  | { type: "error"; ts?: string; error: string }
+  | { type: "turn_interrupted"; ts?: string };
 
 export interface Turn {
   id: number;

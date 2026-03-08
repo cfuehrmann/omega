@@ -1,10 +1,25 @@
-import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount } from "solid-js";
+import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo } from "solid-js";
 import { state, dispatch, type Turn, type WsEvent } from "./store";
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
 function exhaustiveCheck(x: never): null {
   console.warn("Unhandled WsEvent type:", (x as any).type);
   return null;
+}
+
+/**
+ * Format an ISO timestamp string to local date + time with millisecond
+ * precision: "YYYY-MM-DD HH:mm:ss.mmm". Returns "" when ts is absent.
+ */
+function formatTs(ts: string | undefined): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts; // fallback: show raw string
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +96,71 @@ function truncateOutput(s: string, maxLines = 5, maxChars = 500): string {
   return result + "\n" + note;
 }
 
-function EventBlock(props: { event: WsEvent }) {
+/** First non-empty line of a string, for collapsed previews. */
+function firstLine(s: string): string {
+  return s.split("\n").find(l => l.trim()) ?? s.slice(0, 80);
+}
+
+// ---------------------------------------------------------------------------
+// Tool detail modal
+// ---------------------------------------------------------------------------
+
+interface ToolDetail {
+  name: string;
+  input: unknown;
+  output: string;
+  isError: boolean;
+  durationMs: number;
+}
+
+const [toolModal, setToolModal] = createSignal<ToolDetail | null>(null);
+
+function ToolModal() {
+  return (
+    <Show when={toolModal()}>
+      {(detail) => (
+        <div class="modal-backdrop">
+          <div class="modal">
+            <div class="modal-header">
+              <span class="modal-title">tool › {detail().name}</span>
+              <button class="modal-close" onClick={() => setToolModal(null)}>✕ close</button>
+            </div>
+            <div class="modal-section-label">input</div>
+            <pre class="modal-body">{
+              detail().input == null
+                ? "(none)"
+                : typeof detail().input === "object"
+                  ? JSON.stringify(detail().input, null, 2)
+                  : String(detail().input)
+            }</pre>
+            <div class="modal-section-label">
+              output
+              <span class="modal-meta">
+                {detail().isError ? " · error" : ""}
+                {" · "}{detail().durationMs.toFixed(0)} ms
+              </span>
+            </div>
+            <pre class="modal-body">{detail().output}</pre>
+          </div>
+        </div>
+      )}
+    </Show>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Event block
+// ---------------------------------------------------------------------------
+
+/** Timestamp line rendered inside every block that carries a ts field. */
+function BlockTs(props: { ts?: string }) {
+  const label = () => formatTs(props.ts);
+  return <Show when={label()}><div class="block-ts">{label()}</div></Show>;
+}
+
+function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[] }) {
   const e = props.event;
+  const ts = (e as any).ts as string | undefined;
 
   // Exhaustive switch over WsEvent — every variant must have a case.
   // Compile-time guard: if a new WsEvent variant is added without a render
@@ -92,6 +170,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block user">
           <div class="block-label">user_message</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.content}</div>
         </div>
       );
@@ -101,29 +180,70 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block assist">
           <div class="block-label">assistant</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.text}</div>
         </div>
       );
 
     case "tool_call": {
-      const inputStr = typeof e.input === "object"
-        ? JSON.stringify(e.input)
-        : String(e.input);
+      const inputPreview = createMemo(() => {
+        if (e.input == null) return "(none)";
+        const s = typeof e.input === "object" ? JSON.stringify(e.input) : String(e.input);
+        return firstLine(s);
+      });
+      // Find the matching tool_result in the same turn by id
+      const result = createMemo(() =>
+        props.turnEvents.find(
+          (ev): ev is WsEvent & { type: "tool_result" } =>
+            ev.type === "tool_result" && (ev as any).id === e.id
+        )
+      );
+      const openModal = () => {
+        const r = result();
+        setToolModal({
+          name: e.name,
+          input: e.input,
+          output: r ? r.output : "(not yet available)",
+          isError: r ? r.isError : false,
+          durationMs: r ? r.durationMs : 0,
+        });
+      };
       return (
         <div class="block tool">
-          <div class="block-label">tool › {e.name}</div>
-          <div class="block-body">{truncateOutput(inputStr)}</div>
+          <div class="block-label-row">
+            <span class="block-label">tool › {e.name}</span>
+            <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
+          </div>
+          <BlockTs ts={ts} />
+          <div class="block-body block-preview">{inputPreview()}</div>
         </div>
       );
     }
 
     case "tool_result": {
-      const r = e.result;
-      const content = r ? truncateOutput(r.output) : "";
+      const outputPreview = createMemo(() => firstLine(e.output));
+      // Find matching tool_call for the modal
+      const call = props.turnEvents.find(
+        (ev): ev is WsEvent & { type: "tool_call" } =>
+          ev.type === "tool_call" && (ev as any).id === e.id
+      );
+      const openModal = () => {
+        setToolModal({
+          name: e.name,
+          input: call ? call.input : null,
+          output: e.output,
+          isError: e.isError,
+          durationMs: e.durationMs,
+        });
+      };
       return (
         <div class={`block result${e.isError ? " result-error" : ""}`}>
-          <div class="block-label">result › {e.name}</div>
-          <div class="block-body">{content}</div>
+          <div class="block-label-row">
+            <span class="block-label">result › {e.name}</span>
+            <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
+          </div>
+          <BlockTs ts={ts} />
+          <div class="block-body block-preview">{outputPreview()}</div>
         </div>
       );
     }
@@ -131,6 +251,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "model_changed":
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">Switched to {e.provider} {e.model}</div>
         </div>
       );
@@ -138,6 +259,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "oauth_token_expired":
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">OAuth token expired/revoked — refreshing…</div>
         </div>
       );
@@ -145,6 +267,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "oauth_refreshed":
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">Token refreshed, retrying…</div>
         </div>
       );
@@ -152,6 +275,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "compact_user_start":
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">Compacting context…</div>
         </div>
       );
@@ -162,6 +286,7 @@ function EventBlock(props: { event: WsEvent }) {
         : `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">{msg}</div>
         </div>
       );
@@ -170,6 +295,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "compact_user_error":
       return (
         <div class="block error">
+          <BlockTs ts={ts} />
           <div class="block-body">⚠ Compaction failed: {e.error}</div>
         </div>
       );
@@ -177,6 +303,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "compact_auto_start":
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">Auto-compacting context ({e.messagesBefore} messages)…</div>
         </div>
       );
@@ -185,6 +312,7 @@ function EventBlock(props: { event: WsEvent }) {
       const msg = `Context auto-compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
+          <BlockTs ts={ts} />
           <div class="block-body">{msg}</div>
         </div>
       );
@@ -193,6 +321,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "compact_auto_error":
       return (
         <div class="block error">
+          <BlockTs ts={ts} />
           <div class="block-body">⚠ Auto-compaction failed (rolling truncation fallback): {e.error}</div>
         </div>
       );
@@ -200,6 +329,7 @@ function EventBlock(props: { event: WsEvent }) {
     case "world_state_saved":
       return (
         <div class="block world-state-saved">
+          <BlockTs ts={ts} />
           <div class="block-body">✓ world state saved ({e.charCount} chars)</div>
         </div>
       );
@@ -211,6 +341,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <details class="block api-call">
           <summary class="block-label">llm call › {e.provider}</summary>
+          <BlockTs ts={ts} />
           <div class="block-body">{reqStr}</div>
         </details>
       );
@@ -229,6 +360,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block api-response">
           <div class="block-label">api response › {e.provider}</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{parts.join("  ")}</div>
         </div>
       );
@@ -241,6 +373,7 @@ function EventBlock(props: { event: WsEvent }) {
       const line = `in: ${m.inputTokens}  out: ${m.outputTokens}${cost}${saved}  model: ${e.model}`;
       return (
         <div class="block footer">
+          <BlockTs ts={ts} />
           <div class="block-body">{line}</div>
         </div>
       );
@@ -250,6 +383,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block error-b">
           <div class="block-label">api error ({e.provider})</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.error}</div>
         </div>
       );
@@ -258,6 +392,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block error-b">
           <div class="block-label">error</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.error}</div>
         </div>
       );
@@ -266,17 +401,24 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block error-b">
           <div class="block-label">error</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.error}</div>
         </div>
       );
 
     case "turn_interrupted":
-      return <div class="block interrupt">⊘ Interrupted</div>;
+      return (
+        <div class="block interrupt">
+          <BlockTs ts={ts} />
+          ⊘ Interrupted
+        </div>
+      );
 
     case "llm_retry":
       return (
         <div class="block info">
           <div class="block-label">llm retry (attempt {e.attempt})</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.error}</div>
         </div>
       );
@@ -285,6 +427,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block info">
           <div class="block-label">session start</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.authMode} · {e.provider} · {e.model}</div>
         </div>
       );
@@ -293,6 +436,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block info">
           <div class="block-label">session end</div>
+          <BlockTs ts={ts} />
           <div class="block-body">{e.outcome}{e.reason ? ` — ${e.reason}` : ""}</div>
         </div>
       );
@@ -316,7 +460,7 @@ function EventBlock(props: { event: WsEvent }) {
 function TurnView(props: { turn: Turn }) {
   return (
     <div class="turn">
-      <For each={props.turn.events}>{(event) => <EventBlock event={event} />}</For>
+      <For each={props.turn.events}>{(event) => <EventBlock event={event} turnEvents={props.turn.events} />}</For>
       <Show when={props.turn.streamingText}>
         <div class="block assist streaming">
           <div class="block-label">assistant</div>
@@ -494,6 +638,7 @@ export function App() {
 
   return (
     <div class="app">
+      <ToolModal />
       <ReconnectBanner />
       <div class="feed-wrapper">
         <div class="feed" ref={feedRef} onScroll={onFeedScroll}>
