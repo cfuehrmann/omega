@@ -17,8 +17,7 @@ NOTE: If `StreamProvider` is renamed, update this file too.
 
 ### Branch State
 
-All development work goes on `develop`. See `docs/dev-policy.md` for branching
-strategy.
+All development work goes on `develop`. Merge to `main` when stable.
 
 ### Git & Gate Policy
 
@@ -67,4 +66,3 @@ Rule: update the UI to match the log — never the log to match the UI.
 Detailed reference material lives in `docs/`. Read on demand:
 
 - `docs/internals.md` — event schemas, session model, test isolation, key files
-- `docs/dev-policy.md` — active development-phase policies
