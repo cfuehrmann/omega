@@ -8,7 +8,8 @@ project's documentation and files. The user interacts via terminal or web UI.
 Omega produces append-only JSONL session logs that serve as both operational
 state and diagnostics. These logs are inspectable by humans and machines alike,
 accelerating the agentic development loop — the same artifact that drives the
-session is the post-mortem record when something goes wrong.
+session is the post-mortem record when something goes wrong. Both UIs reflect
+every event in the log, so the operator always has full visibility at runtime.
 
 > In fact, introspectability of any software system — at runtime and after the
 > fact — is a first-class design goal in the age of agentic AI.
