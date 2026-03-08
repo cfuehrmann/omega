@@ -18,60 +18,17 @@ System prompt extracted from `src/config.ts` into `src/system-prompt/`:
 
 #### SYSPROMPT-2 — Review the full system prompt assembly process
 
-**Priority: HIGH — do after SYSPROMPT-1**
+**Status: LARGELY DONE** — holistic review of `core.ts`, `system-prompt-append.md`,
+and all docs completed over multiple sessions. Remaining open questions:
 
-**Progress (session 2025-…):**
-- Terminology nailed — see `docs/prompt-terminology.md` for the canonical
-  definitions of operator, user, agent, model/LLM, and tools, plus pronoun
-  conventions and the exo-suit metaphor.
-- First terminology pass done on `core.ts` (two changes, not yet committed):
-  - `"All tool calls are auto-approved. No confirmation needed."` →
-    `"The operator has pre-approved all tool calls. No confirmation is needed."`
-  - `"but use real I/O for your own storage"` →
-    `"but always use real I/O with the dedicated test output path"`
-- **Next:** review `.omega/system-prompt-append.md` (the operator-maintained
-  world-state file injected at the bottom of every system prompt) with the
-  same terminology lens. Then do a holistic review of the full assembled
-  prompt before committing anything.
-
-Now that the structure is in place, conduct a holistic review of the entire
-system prompt assembly pipeline — not just the prose in `core.ts`, but every
-step from disk read through to the string sent to the API:
-
-- **`loadSystemPromptAppend()`** — when is it called? What happens if it is
-  called multiple times, or not at all? Is the timing correct relative to
-  `init()`?
-- **`buildSystemPrompt()`** — called on every API call; is that the right
-  granularity? Should any parts be computed once and cached?
-- **`src/system-prompt/index.ts`** — is the assembly order (core → append)
-  correct? Are the section headers clear to the model?
-- **`formatAppendSection()`** — is `## World State (from previous sessions)`
-  the best header? Does it correctly signal to the model how to treat that
-  content?
-- **`core.ts` prose** — review all instructions for accuracy and completeness.
-  Known issue: "If a `.omega/system-prompt-append.md` file exists, it has
-  already been injected above — do not re-read it." is misleading; the actual
-  injected header is `## World State (from previous sessions)`, not the
-  filename.
+- **`buildSystemPrompt()`** — called on every API call; should any parts be
+  computed once and cached?
 - **Prompt caching** — the system prompt is wrapped in a single
-  `cache_control: ephemeral` block. Is one cache breakpoint enough? Are there
-  cases where the cache is invalidated unexpectedly (e.g. `cwd` or
-  `maxOutputTokens` changing between calls)?
-- **OAuth identity prefix** — previously there was a Claude Code identity
-  string prepended for OAuth. Verify whether this is still present, still
-  required, and correctly placed.
+  `cache_control: ephemeral` block. Are there cases where the cache is
+  invalidated unexpectedly (e.g. `cwd` or `maxOutputTokens` changing between
+  calls)?
 - **Test coverage** — does `system-prompt.test.ts` cover the assembly
   integration end-to-end, or only individual parts in isolation?
-
-Acceptance criteria:
-- Every stage of the pipeline is understood and documented (inline comments
-  and/or in `manifest.md`)
-- All instructions in `core.ts` are accurate and verified against actual
-  behaviour
-- Misleading/stale text removed or corrected
-- Any structural issues found (ordering, caching, timing) are either fixed
-  here or broken out as new backlog items
-- `planning-files.test.ts` updated if any sentinel strings change
 
 ---
 
