@@ -48,9 +48,11 @@ test("recorded session replays all blocks after page reload", async ({
 
   // 5. Assert we see the expected blocks from both turns
 
-  // Two user_message blocks (one per turn)
+  // Two user_message blocks (one per turn) — with their text visible
   const userBlocks = feed.locator(".block.user");
   await expect(userBlocks).toHaveCount(2);
+  await expect(userBlocks.first()).toContainText("ping");
+  await expect(userBlocks.nth(1)).toContainText("list the files");
 
   // Turn 1: assistant "pong"
   await expect(feed.locator(".block.assist").first()).toContainText("pong");

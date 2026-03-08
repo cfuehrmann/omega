@@ -92,6 +92,7 @@ function EventBlock(props: { event: WsEvent }) {
       return (
         <div class="block user">
           <div class="block-label">user_message</div>
+          <div class="block-body">{e.content}</div>
         </div>
       );
 
