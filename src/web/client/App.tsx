@@ -204,7 +204,9 @@ function EventBlock(props: { event: WsEvent }) {
       );
 
     case "llm_call": {
-      const reqStr = truncate(JSON.stringify(e.request, null, 2), 1000);
+      const reqStr = e.request != null
+        ? truncate(JSON.stringify(e.request, null, 2), 1000)
+        : "(request not captured)";
       return (
         <details class="block api-call">
           <summary class="block-label">llm call › {e.provider}</summary>

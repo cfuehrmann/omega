@@ -106,24 +106,99 @@ export function dispatch(event: WsEvent): void {
       break;
 
     case "history": {
-      // Replay all logged events to rebuild the store from scratch.
-      // Wrapped in batch() so intermediate states (e.g. streaming=true during
-      // user_message replay) never reach the DOM — prevents yellow flash.
+      // Rebuild turns from the event log using plain JS objects, then set the
+      // final result in one store write.  Previous approach dispatched each
+      // event individually inside batch(), mixing array replacement with
+      // produce-based mutation — this confused SolidJS's fine-grained change
+      // tracking and left <For> with a stale reference after a page reload.
+      const turns: Turn[] = [];
+      let streaming = false;
+      let tid = 0;
+
+      for (const e of event.events) {
+        const cur = () => turns[turns.length - 1];
+
+        switch (e.type) {
+          case "user_message":
+            turns.push({ id: tid++, events: [e], streamingText: "", done: false });
+            streaming = true;
+            break;
+
+          case "assistant_text": {
+            const t = cur();
+            if (t && !t.streamingText) {
+              t.events.push({ type: "text", text: (e as any).text });
+            }
+            break;
+          }
+
+          case "turn_end": {
+            const t = cur();
+            if (t) {
+              if (t.streamingText) {
+                t.events.push({ type: "text", text: t.streamingText });
+                t.streamingText = "";
+              }
+              t.events.push(e);
+              t.done = true;
+            }
+            streaming = false;
+            break;
+          }
+
+          case "turn_interrupted": {
+            const t = cur();
+            if (t) {
+              if (t.streamingText) {
+                t.events.push({ type: "text", text: t.streamingText });
+                t.streamingText = "";
+              }
+              t.events.push(e);
+              t.done = true;
+            }
+            streaming = false;
+            break;
+          }
+
+          // Transport-only events — never appear in persisted history,
+          // but listed for completeness (server filters them out).
+          case "connected":
+          case "disconnected":
+          case "history":
+          case "auth":
+          case "turn_ready":
+          case "reset_done":
+            break;
+
+          // All other events: append to the current turn's event list.
+          default: {
+            const t = cur();
+            if (t) t.events.push(e);
+            break;
+          }
+        }
+      }
+
+      // Close any open turn (server crashed mid-turn, no turn_end emitted).
+      if (streaming) {
+        const t = turns[turns.length - 1];
+        if (t) {
+          if (t.streamingText) {
+            t.events.push({ type: "text", text: t.streamingText });
+            t.streamingText = "";
+          }
+          t.events.push({ type: "turn_interrupted" });
+          t.done = true;
+        }
+        streaming = false;
+      }
+
+      nextTurnId = tid;
+      // Single batch write — SolidJS sees one atomic state transition.
       batch(() => {
-        setState("turns", []);
+        setState("turns", turns);
         setState("authMode", "");
         setState("streaming", false);
-        nextTurnId = 0;
-        for (const e of event.events) {
-          dispatch(e);
-        }
-        // Belt-and-suspenders: if replay ended with an open turn (server crashed
-        // mid-turn before emitting turn_end/interrupted), close it now so the UI
-        // doesn't get stuck in streaming=true with no way to recover.
-        if (state.streaming) {
-          dispatch({ type: "turn_interrupted" });
-        }
-        // After replay we are still connected (history arrived over an open socket)
         setState("connected", true);
         setState("retryCount", 0);
       });

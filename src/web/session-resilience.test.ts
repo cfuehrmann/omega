@@ -163,4 +163,34 @@ describe("store history replay — open turn recovery", () => {
     const lastEvent = lastTurn.events[lastTurn.events.length - 1];
     expect(lastEvent.type).toBe("turn_interrupted");
   });
+
+  it("replays a complete ping/pong session with all event types", () => {
+    // Exact events from a real session (events.jsonl), filtered through shouldLogEvent
+    // (text, connected, turn_ready are excluded; the rest survive)
+    dispatch({
+      type: "history",
+      events: [
+        { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", provider: "anthropic", systemPrompt: "..." } as any,
+        { type: "user_message", content: "ping" },
+        { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
+        { type: "llm_response", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", stopReason: "end_turn", model: "claude-sonnet-4-6", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" } } as any,
+        { type: "assistant_text", text: "pong" } as any,
+        { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, costUsd: 0.0022794, savedUsd: 0.0089586, ttftMs: 1136.1, totalMs: 9781.8, cacheCreationTokens: 320, cacheReadTokens: 3318 }, model: "claude-sonnet-4-6", provider: "anthropic" } as any,
+        { type: "session_end", outcome: "clean" } as any,
+      ],
+    });
+
+    expect(state.streaming).toBe(false);
+    expect(state.connected).toBe(true);
+    expect(state.turns.length).toBe(1);
+
+    const turn = state.turns[0];
+    expect(turn.done).toBe(true);
+    expect(turn.streamingText).toBe("");
+
+    // The turn should contain rendered events including the "pong" text
+    const textEvents = turn.events.filter((e: any) => e.type === "text");
+    expect(textEvents.length).toBe(1);
+    expect((textEvents[0] as any).text).toBe("pong");
+  });
 });

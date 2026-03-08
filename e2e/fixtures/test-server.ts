@@ -141,12 +141,16 @@ Bun.serve({
   websocket: {
     async open(ws) {
       activeWs = ws;
-      // Replay event log from disk (with crash recovery) before signalling connected
+      // Replay event log from disk (with crash recovery) before signalling connected.
+      // After the await we're outside the auto-corked open callback — cork
+      // explicitly so the history + connected frames are batched reliably.
       const replay = await loadReplayEvents();
-      if (replay.length > 0) {
-        ws.send(JSON.stringify({ type: "history", events: replay }));
-      }
-      ws.send(JSON.stringify({ type: "connected" }));
+      ws.cork(() => {
+        if (replay.length > 0) {
+          ws.send(JSON.stringify({ type: "history", events: replay }));
+        }
+        ws.send(JSON.stringify({ type: "connected" }));
+      });
     },
     message(ws, data) {
       const str = String(data);
@@ -155,9 +159,12 @@ Bun.serve({
 
       if (msg.type === "reset") {
         resetState().then(() => {
-          ws.send(JSON.stringify({ type: "history", events: [] }));
-          ws.send(JSON.stringify({ type: "reset_done" }));
-          ws.send(JSON.stringify({ type: "turn_ready" }));
+          // After await (inside .then) — cork explicitly.
+          ws.cork(() => {
+            ws.send(JSON.stringify({ type: "history", events: [] }));
+            ws.send(JSON.stringify({ type: "reset_done" }));
+            ws.send(JSON.stringify({ type: "turn_ready" }));
+          });
         }).catch(() => {});
         return;
       }

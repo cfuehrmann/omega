@@ -191,11 +191,13 @@ async function handleMessage(session: Session, data: string): Promise<void> {
       currentSessionPaths.eventsFile,
     );
 
-    try {
+    // After the await we're outside the auto-corked message callback —
+    // cork explicitly so all three frames are batched reliably.
+    session.ws.cork(() => {
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
-    } catch { /* socket may have closed */ }
-    send(session.ws, { type: "turn_ready" });
+      session.ws.send(JSON.stringify({ type: "turn_ready" }));
+    });
 
     persistentAgent.init()
       .then(mode => {
@@ -280,14 +282,16 @@ export async function runWebApp(): Promise<void> {
         };
         activeSession = session;
 
-        // Replay past events from events.jsonl — same file Agent writes to
+        // Replay past events from events.jsonl — same file Agent writes to.
+        // After the await we're outside the auto-corked open callback, so we
+        // must cork explicitly (Bun docs: "use cork in async functions").
         const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
-        if (replayEvents.length > 0) {
-          try {
+        ws.cork(() => {
+          if (replayEvents.length > 0) {
             ws.send(JSON.stringify({ type: "history", events: replayEvents }));
-          } catch { /* ignore */ }
-        }
-        send(ws, { type: "connected" });
+          }
+          ws.send(JSON.stringify({ type: "connected" }));
+        });
 
         persistentAgent.init()
           .then(mode => {
