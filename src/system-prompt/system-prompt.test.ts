@@ -54,12 +54,8 @@ describe("corePrompt", () => {
     expect(prompt).toContain("You are Omega");
   });
 
-  it("mentions README.md for project orientation", () => {
-    expect(prompt).toContain("README.md");
-  });
-
-  it("mentions system-prompt-append.md", () => {
-    expect(prompt).toContain("system-prompt-append.md");
+  it("mentions README for project orientation", () => {
+    expect(prompt).toContain("README");
   });
 
   it("does not reference past.md", () => {

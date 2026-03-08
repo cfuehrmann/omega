@@ -20,6 +20,20 @@ System prompt extracted from `src/config.ts` into `src/system-prompt/`:
 
 **Priority: HIGH — do after SYSPROMPT-1**
 
+**Progress (session 2025-…):**
+- Terminology nailed — see `plan/prompt-terminology.md` for the canonical
+  definitions of operator, user, agent, model/LLM, and tools, plus pronoun
+  conventions and the exo-suit metaphor.
+- First terminology pass done on `core.ts` (two changes, not yet committed):
+  - `"All tool calls are auto-approved. No confirmation needed."` →
+    `"The operator has pre-approved all tool calls. No confirmation is needed."`
+  - `"but use real I/O for your own storage"` →
+    `"but always use real I/O with the dedicated test output path"`
+- **Next:** review `.omega/system-prompt-append.md` (the operator-maintained
+  world-state file injected at the bottom of every system prompt) with the
+  same terminology lens. Then do a holistic review of the full assembled
+  prompt before committing anything.
+
 Now that the structure is in place, conduct a holistic review of the entire
 system prompt assembly pipeline — not just the prose in `core.ts`, but every
 step from disk read through to the string sent to the API:
@@ -383,6 +397,43 @@ betas.
 returns a `jobId` immediately; `await_command(jobId, timeout_ms?)` returns
 stdout/stderr/exitCode. Distinct from `run_background`/`kill_process`
 (fire-and-forget). This is awaitable.
+
+---
+
+### [TEST] Testing approach
+
+#### TEST-1 — Evaluate snapshot testing for Omega
+
+**Priority: mid**
+
+Investigate whether snapshot testing is a good fit for Omega's output surfaces.
+Candidate areas:
+
+- **System prompt assembly** — `buildSystemPrompt()` output is a large string;
+  snapshots could catch unintended changes from edits to `core.ts`, `identity.ts`,
+  or `append.ts`.
+- **Event rendering** — terminal ANSI output (`renderer.ts`) and web client
+  HTML/JSX (`App.tsx`); snapshots would catch visual regressions.
+- **JSONL record shapes** — `context.jsonl` and `events.jsonl` record formats;
+  snapshots complement the schema lock work (SCHEMA-1–SCHEMA-6).
+- **Tool output formatting** — `truncateOutput` and related display helpers.
+
+Questions to answer:
+
+- Does Bun's test runner have built-in snapshot support? If not, what library
+  fits best (e.g. `jest-snapshot`, a custom serialiser)?
+- How are snapshots stored and reviewed in code review? Are they committed to
+  source control?
+- What is the update workflow when a snapshot intentionally changes?
+- Are there surfaces where snapshots would produce too much noise (e.g. outputs
+  that embed timestamps or random IDs)?
+
+Acceptance criteria:
+
+- Short written evaluation (can live in `plan/` or inline as a backlog update)
+  covering fit, tooling choice, and a recommendation (adopt / defer / skip)
+- If adopted: at least one example snapshot test added to the codebase as a
+  proof of concept
 
 ---
 

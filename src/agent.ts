@@ -261,12 +261,15 @@ export function processStreamEvents(streamEvents: Iterable<any>): (OmegaEvent | 
 // --- Agent ---
 
 /**
- * A StreamProvider is a function that calls the Anthropic messages API
+ * A StreamProvider is a function that calls the LLM provider API
  * (or a mock in tests) and returns an object with an async iterator of
  * raw stream events and a finalMessage() method.
  *
  * By accepting a StreamProvider in the constructor, the Agent can be
- * tested without hitting the real API.
+ * tested without hitting the real LLM provider API.
+ *
+ * NOTE: This type is referenced by name in .omega/system-prompt-append.md.
+ * If you rename it, update that file too.
  */
 export type StreamProvider = (params: {
   model: string;

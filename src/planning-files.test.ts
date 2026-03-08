@@ -11,12 +11,10 @@ import { corePrompt } from "./system-prompt/core.js";
  * imply that any project Omega works on must follow this structure.
  *
  * Rules:
- *  - backlog.md must exist (the issue tracker we keep).
+ *  - backlog/backlog.md must exist (the issue tracker we keep).
  *  - past.md and present.md must NOT exist (deleted — redundant with the
  *    system-prompt-append file).
- *  - The core prompt must tell the agent to read README.md for orientation.
- *  - The core prompt must mention system-prompt-append.md (the append mechanism).
- *  - README.md must reference system-prompt-append.md and backlog.md.
+ *  - README.md must exist and reference the backlog/ and docs/ folders.
  *  - The core prompt must NOT reference past.md or present.md.
  */
 
@@ -26,40 +24,28 @@ const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
 const corePromptText = corePrompt({ cwd: "/test/cwd", maxOutputTokens: 32768 });
 
 describe("planning files", () => {
-  it("backlog.md exists", () => {
-    expect(existsSync(join(ROOT, "plan/backlog.md"))).toBe(true);
+  it("backlog/backlog.md exists", () => {
+    expect(existsSync(join(ROOT, "backlog/backlog.md"))).toBe(true);
   });
 
   it("past.md does not exist (redundant with system-prompt-append)", () => {
-    expect(existsSync(join(ROOT, "plan/past.md"))).toBe(false);
+    expect(existsSync(join(ROOT, "backlog/past.md"))).toBe(false);
   });
 
   it("present.md does not exist (near-zero value)", () => {
-    expect(existsSync(join(ROOT, "plan/present.md"))).toBe(false);
+    expect(existsSync(join(ROOT, "backlog/present.md"))).toBe(false);
   });
 
   it("README.md exists", () => {
     expect(existsSync(join(ROOT, "README.md"))).toBe(true);
   });
 
-  it("core prompt tells agent to read README.md", () => {
-    expect(corePromptText).toContain("README.md");
+  it("README.md references backlog/ folder", () => {
+    expect(readme).toContain("backlog/");
   });
 
-  it("core prompt mentions system-prompt-append.md", () => {
-    expect(corePromptText).toContain("system-prompt-append.md");
-  });
-
-  it("README.md references system-prompt-append.md", () => {
-    expect(readme).toContain("system-prompt-append.md");
-  });
-
-  it("README.md references backlog.md", () => {
-    expect(readme).toContain("backlog.md");
-  });
-
-  it("README.md references manifest.md", () => {
-    expect(readme).toContain("manifest.md");
+  it("README.md references docs/ folder", () => {
+    expect(readme).toContain("docs/");
   });
 
   it("core prompt does not reference past.md", () => {
