@@ -1,4 +1,4 @@
-import { For, Show, createEffect, onCleanup, createSignal, onMount } from "solid-js";
+import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount } from "solid-js";
 import { state, dispatch, type Turn, type WsEvent } from "./store";
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
@@ -476,7 +476,14 @@ export function App() {
     <div class="app">
       <ReconnectBanner />
       <div class="feed" ref={feedRef}>
-        <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
+        <ErrorBoundary fallback={(err) => (
+          <div class="render-error">
+            <strong>Render error</strong>
+            <pre>{err?.message ?? String(err)}</pre>
+          </div>
+        )}>
+          <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
+        </ErrorBoundary>
       </div>
       <StatusDot />
       <InputArea />
