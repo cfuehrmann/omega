@@ -1,8 +1,17 @@
 # Development Phase Policies
 
-Policies in this file are **temporary** — they apply during an active
-refactoring phase and may be promoted to `manifest.md` or retired once the
-relevant work stabilises.
+## Branching strategy
+
+- `main` — stable, releasable code only. Merge from `develop` when stable.
+- `develop` — active development branch. All day-to-day work goes here.
+
+Push regularly. Never commit red code. Run `just gate` before every commit.
+
+---
+
+The policies below are **temporary** — they apply during an active refactoring
+phase and may be promoted to `manifest.md` or retired once the relevant work
+stabilises.
 
 ---
 
@@ -46,17 +55,12 @@ promote to `manifest.md` or retire.
 
 ## Schema stability
 
-No breaking changes to `plan/schema.md` without explicit operator agreement.
+No breaking changes to the persistence schema without explicit agreement.
 
 A **breaking change** is: removing a field, renaming a field, changing a
 field's type or semantics, removing an event variant.
 
 An **additive change** is: adding a new optional field to an existing event,
-adding a new event variant. These are allowed without a schema revision, per
-the forward-compatibility policy in `plan/schema.md` § Forward compatibility.
+adding a new event variant. These are allowed without a schema revision.
 
-`plan/schema.md` is the authoritative record of agreed event shapes. Any
-proposed breaking change must be discussed and the schema doc updated before
-implementation begins.
-
-Applies from: completion of `plan/schema.md` (step 3e-viii).
+See `backlog/backlog.md` § SCHEMA for the schema lock work in progress.

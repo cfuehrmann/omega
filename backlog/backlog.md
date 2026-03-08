@@ -21,7 +21,7 @@ System prompt extracted from `src/config.ts` into `src/system-prompt/`:
 **Priority: HIGH — do after SYSPROMPT-1**
 
 **Progress (session 2025-…):**
-- Terminology nailed — see `plan/prompt-terminology.md` for the canonical
+- Terminology nailed — see `docs/prompt-terminology.md` for the canonical
   definitions of operator, user, agent, model/LLM, and tools, plus pronoun
   conventions and the exo-suit metaphor.
 - First terminology pass done on `core.ts` (two changes, not yet committed):
@@ -248,7 +248,7 @@ This policy should live in the schema reference document produced by SCHEMA-6.
 
 #### SCHEMA-6 — Schema reference document
 
-After SCHEMA-1 through SCHEMA-5 are resolved, write `plan/schema.md`: the
+After SCHEMA-1 through SCHEMA-5 are resolved, write `docs/schema.md`: the
 definitive reference for every JSONL record in `sessions/context.jsonl` and
 `sessions/events.jsonl`. Covers field names, types, required vs. optional, all
 event variant names, and the forward-compatibility policy from SCHEMA-5. This
@@ -430,7 +430,7 @@ Questions to answer:
 
 Acceptance criteria:
 
-- Short written evaluation (can live in `plan/` or inline as a backlog update)
+- Short written evaluation (can live in `docs/` or inline as a backlog update)
   covering fit, tooling choice, and a recommendation (adopt / defer / skip)
 - If adopted: at least one example snapshot test added to the codebase as a
   proof of concept
