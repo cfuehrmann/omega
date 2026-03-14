@@ -171,7 +171,10 @@ function ModalShell(props: { title: string; cls: string; children: any }) {
 // ---------------------------------------------------------------------------
 
 function TokenLegend() {
-  const isOpenAi = () => provider() === "openai";
+  const isOpenAi = () => {
+    const p = state.liveTurn !== null ? state.liveProvider : (state.lastTurnEnd?.provider ?? "");
+    return p === "openai";
+  };
   return (
     <Show when={legendOpen()}>
       <div class="token-legend-overlay" onClick={() => setLegendOpen(false)}>
