@@ -26,7 +26,25 @@ import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
 
-const PORT = Number(process.env.PORT ?? 3000);
+// ---------------------------------------------------------------------------
+// Port resolution: --port flag > PORT env > 3000
+// ---------------------------------------------------------------------------
+
+function resolvePort(): number {
+  const flagIdx = process.argv.indexOf("--port");
+  if (flagIdx !== -1) {
+    const val = process.argv[flagIdx + 1];
+    const n = Number(val);
+    if (!val || isNaN(n) || !Number.isInteger(n) || n < 1 || n > 65535) {
+      console.error(`Error: --port requires a valid port number (got: ${val ?? "(nothing)"})`);
+      process.exit(1);
+    }
+    return n;
+  }
+  return Number(process.env.PORT ?? 3000);
+}
+
+const PORT = resolvePort();
 const PUBLIC_DIR = join(import.meta.dir, "public");
 
 // ---------------------------------------------------------------------------
@@ -191,6 +209,7 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     // After the await we're outside the auto-corked message callback —
     // cork explicitly so all three frames are batched reliably.
     session.ws.cork(() => {
+      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir }));
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
     });
@@ -257,7 +276,9 @@ export async function runWebApp(): Promise<void> {
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
 
-  const server = Bun.serve({
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = Bun.serve({
     port: PORT,
 
     fetch(req, srv) {
@@ -282,6 +303,7 @@ export async function runWebApp(): Promise<void> {
         // must cork explicitly (Bun docs: "use cork in async functions").
         const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
         ws.cork(() => {
+          ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir }));
           if (replayEvents.length > 0) {
             ws.send(JSON.stringify({ type: "history", events: replayEvents }));
           }
@@ -311,9 +333,18 @@ export async function runWebApp(): Promise<void> {
         }
       },
     },
-  });
+    });
+  } catch (err: any) {
+    const msg: string = err?.message ?? String(err);
+    if (msg.toLowerCase().includes("address already in use")) {
+      console.error(`Error: port ${PORT} is already in use. Choose a different port with --port <n>.`);
+    } else {
+      console.error("Error: failed to start server:", msg);
+    }
+    process.exit(1);
+  }
 
-  console.log(`Omega web UI  →  http://localhost:${server.port}`);
+  console.log(`Omega web UI  →  http://localhost:${server!.port}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -566,6 +566,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "history":
     case "auth":
     case "reset_done":
+    case "session_info":
       return null;
 
     default:
@@ -594,6 +595,21 @@ function TurnView(props: { turn: Turn }) {
 }
 
 // ---------------------------------------------------------------------------
+// Session bar — always-visible sticky line showing the current session dir
+// ---------------------------------------------------------------------------
+
+function SessionBar() {
+  return (
+    <Show when={state.sessionDir}>
+      <div class="session-bar">
+        <span class="session-bar-label">session:</span>
+        <span class="session-bar-dir">{state.sessionDir}</span>
+      </div>
+    </Show>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sticky metrics bar (per-turn + session totals)
 // ---------------------------------------------------------------------------
 
@@ -602,63 +618,80 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function MetricsRow(props: {
-  label: string;
-  m: StickyMetrics;
-  model?: string;
-  provider?: string;
-}) {
-  const m = () => props.m;
-  const line = () => {
-    const p = props.provider;
-    const isOpenAi = p === "openai";
-    const costPrefix = isOpenAi ? "<=$" : "$";
-    const parts: string[] = [
-      `in: ${m().inputTokens}`,
-      `out: ${m().outputTokens}`,
-    ];
-    if (!isOpenAi) {
-      parts.push(`write: ${m().cacheCreationTokens}`);
-      parts.push(`read: ${m().cacheReadTokens}`);
-    }
-    parts.push(`cost: ${costPrefix}${m().costUsd.toFixed(4)}`);
-    if (!isOpenAi) {
-      parts.push(`saved: ${m().savedUsd.toFixed(4)}`);
-    }
-    if (m().totalMs > 0) {
-      parts.push(`dur: ${formatDuration(m().totalMs)}`);
-    }
-    if (props.model) {
-      parts.push(`model: ${props.model}`);
-    }
-    return parts.join("  ");
-  };
-  return (
-    <div class="sticky-metrics-row">
-      <span class="sticky-metrics-label">{props.label}</span>
-      <span class="sticky-metrics-body">{line()}</span>
-    </div>
-  );
-}
-
 function StickyMetricsBar() {
   return (
     <Show when={state.lastTurnEnd}>
-      {(last) => (
-        <div class="sticky-metrics">
-          <MetricsRow
-            label="turn:"
-            m={last().metrics}
-            model={last().model}
-            provider={last().provider}
-          />
-          <MetricsRow
-            label="session:"
-            m={state.sessionTotals}
-            provider={last().provider}
-          />
-        </div>
-      )}
+      {(last) => {
+        const p = () => last().provider;
+        const isOpenAi = () => p() === "openai";
+        const costPrefix = () => isOpenAi() ? "<=$" : "$";
+        const turn = () => last().metrics;
+        const sess = () => state.sessionTotals;
+
+        // Build cell arrays: [label, turnVal, sessVal]
+        const cells = (): Array<[string, string]> => {
+          const rows: Array<[string, string]> = [
+            ["in",  String(turn().inputTokens)],
+            ["out", String(turn().outputTokens)],
+          ];
+          if (!isOpenAi()) {
+            rows.push(["write", String(turn().cacheCreationTokens)]);
+            rows.push(["read",  String(turn().cacheReadTokens)]);
+          }
+          rows.push(["cost", `${costPrefix()}${turn().costUsd.toFixed(4)}`]);
+          if (!isOpenAi()) {
+            rows.push(["saved", turn().savedUsd.toFixed(4)]);
+          }
+          if (turn().totalMs > 0) {
+            rows.push(["dur", formatDuration(turn().totalMs)]);
+          }
+          return rows;
+        };
+
+        const sessCells = (): Array<[string, string]> => {
+          const rows: Array<[string, string]> = [
+            ["in",  String(sess().inputTokens)],
+            ["out", String(sess().outputTokens)],
+          ];
+          if (!isOpenAi()) {
+            rows.push(["write", String(sess().cacheCreationTokens)]);
+            rows.push(["read",  String(sess().cacheReadTokens)]);
+          }
+          rows.push(["cost", `${costPrefix()}${sess().costUsd.toFixed(4)}`]);
+          if (!isOpenAi()) {
+            rows.push(["saved", sess().savedUsd.toFixed(4)]);
+          }
+          if (turn().totalMs > 0) {
+            rows.push(["dur", formatDuration(sess().totalMs)]);
+          }
+          return rows;
+        };
+
+        return (
+          <table class="sticky-metrics">
+            <tbody>
+              <tr>
+                <td class="sm-row-label">turn</td>
+                <For each={cells()}>
+                  {([lbl, val]) => <>
+                    <td class="sm-col-label">{lbl}</td>
+                    <td class="sm-col-val">{val}</td>
+                  </>}
+                </For>
+              </tr>
+              <tr>
+                <td class="sm-row-label">session</td>
+                <For each={sessCells()}>
+                  {([lbl, val]) => <>
+                    <td class="sm-col-label">{lbl}</td>
+                    <td class="sm-col-val">{val}</td>
+                  </>}
+                </For>
+              </tr>
+            </tbody>
+          </table>
+        );
+      }}
     </Show>
   );
 }
@@ -847,6 +880,7 @@ export function App() {
           </button>
         </Show>
       </div>
+      <SessionBar />
       <StickyMetricsBar />
       <StatusDot />
       <InputArea />

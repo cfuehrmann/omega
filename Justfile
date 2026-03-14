@@ -60,8 +60,9 @@ web-build:
     cd src/web && npx vite build
 
 # Start the web server (serves built client + WebSocket on :3000)
-server:
-    bun run src/web/server.ts
+# Pass --port <n> to use a different port: just server --port 3001
+server *args:
+    bun run src/web/server.ts {{args}}
 
 # Start Vite dev server for web client (:5173, proxies WS to :3000)
 # Run `just server` in another terminal first.

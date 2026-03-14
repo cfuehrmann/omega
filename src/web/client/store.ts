@@ -19,6 +19,7 @@ export type WsEvent =
   | { type: "history"; events: WsEvent[] }
   | { type: "auth"; mode: string }
   | { type: "reset_done" }
+  | { type: "session_info"; dir: string }
   | { type: "user_message"; ts?: string; content: string }
   | { type: "text"; text: string }
   | { type: "assistant_text"; ts?: string; text: string }
@@ -81,6 +82,8 @@ interface AppState {
   lastTurnEnd: LastTurnInfo | null;
   /** Cumulative metrics across all completed turns in the session. */
   sessionTotals: StickyMetrics;
+  /** Session directory path for the current session (set by session_info from server). */
+  sessionDir: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +103,7 @@ const [state, setState] = createStore<AppState>({
   retryCount: 0,
   lastTurnEnd: null,
   sessionTotals: zeroMetrics(),
+  sessionDir: "",
 });
 
 export { state };
@@ -217,6 +221,7 @@ export function dispatch(event: WsEvent): void {
           case "history":
           case "auth":
           case "reset_done":
+          case "session_info":
             break;
 
           // All other events: append to the current turn's event list.
@@ -254,6 +259,10 @@ export function dispatch(event: WsEvent): void {
 
     case "auth":
       setState("authMode", event.mode);
+      break;
+
+    case "session_info":
+      setState("sessionDir", event.dir);
       break;
 
     case "reset_done":

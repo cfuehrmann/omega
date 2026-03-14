@@ -36,6 +36,33 @@ html, body, #root {
   padding: 0 12px;
 }
 
+/* ── Session bar (always-visible, shows current session dir) ── */
+.session-bar {
+  border-top: 1px solid var(--border);
+  padding: 3px 0;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--dim);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.session-bar-label {
+  font-weight: bold;
+  color: var(--dim);
+  flex-shrink: 0;
+  min-width: 52px;
+}
+
+.session-bar-dir {
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Sticky metrics bar (per-turn + session totals) ── */
 .sticky-metrics {
   border-top: 1px solid var(--border);
@@ -43,32 +70,30 @@ html, body, #root {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--dim);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  border-collapse: collapse;
+  width: auto;
 }
 
-.sticky-metrics-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sticky-metrics-label {
+.sm-row-label {
   font-weight: bold;
   color: var(--dim);
-  flex-shrink: 0;
-  min-width: 52px;
+  padding: 1px 8px 1px 0;
+  white-space: nowrap;
 }
 
-.sticky-metrics-body {
+.sm-col-label {
+  color: var(--dim);
+  opacity: 0.75;
+  padding: 1px 2px 1px 8px;
+  white-space: nowrap;
+}
+
+.sm-col-val {
   color: var(--dim);
   opacity: 0.85;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 1px 0;
+  text-align: right;
+  white-space: nowrap;
 }
 
 /* ── Status bar (sticky bottom, above input) ── */
