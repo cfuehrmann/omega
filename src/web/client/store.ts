@@ -53,6 +53,40 @@ export interface Turn {
   done: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Pricing (mirrors agent.ts — keep in sync when models are added)
+// ---------------------------------------------------------------------------
+
+const PRICING: Record<string, { input: number; output: number }> = {
+  "claude-opus-4-6":          { input: 5,    output: 25 },
+  "claude-sonnet-4-6":        { input: 3,    output: 15 },
+  "claude-sonnet-4-20250514": { input: 3,    output: 15 },
+  "gpt-5.2-codex":            { input: 1.25, output: 10 },
+};
+
+function estimateCostWithCache(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationTokens: number,
+  cacheReadTokens: number,
+): number {
+  const p = PRICING[model] ?? { input: 5, output: 25 };
+  return (
+    inputTokens * p.input +
+    outputTokens * p.output +
+    cacheCreationTokens * p.input * 1.25 +
+    cacheReadTokens * p.input * 0.1
+  ) / 1_000_000;
+}
+
+function estimateCacheSavings(model: string, cacheReadTokens: number): number {
+  const p = PRICING[model] ?? { input: 5, output: 25 };
+  return (cacheReadTokens * p.input * 0.9) / 1_000_000;
+}
+
+// ---------------------------------------------------------------------------
+
 /** Aggregated metrics shown in the sticky footer bar. */
 export interface StickyMetrics {
   inputTokens: number;
@@ -86,6 +120,8 @@ interface AppState {
   liveTurn: StickyMetrics | null;
   /** Provider for the current/last turn (set from llm_response, used for live bar display). */
   liveProvider: string;
+  /** Model for the current/last turn (set from llm_call, used for live cost estimation). */
+  liveModel: string;
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
 }
@@ -109,6 +145,7 @@ const [state, setState] = createStore<AppState>({
   sessionTotals: zeroMetrics(),
   liveTurn: null,
   liveProvider: "",
+  liveModel: "",
   sessionDir: "",
 });
 
@@ -279,6 +316,7 @@ export function dispatch(event: WsEvent): void {
       setState("sessionTotals", zeroMetrics());
       setState("liveTurn", null);
       setState("liveProvider", "");
+      setState("liveModel", "");
       nextTurnId = 0;
       break;
 
@@ -361,29 +399,42 @@ export function dispatch(event: WsEvent): void {
 
     case "llm_response": {
       appendEvent(event);
-      // Accumulate live per-turn token totals so the metrics bar ticks up mid-turn.
+      // Accumulate live per-turn token totals and cost so the metrics bar ticks up mid-turn.
       const u = event.usage;
+      const model = state.liveModel;
+      const callCost = estimateCostWithCache(
+        model,
+        u.input_tokens,
+        u.output_tokens,
+        u.cache_creation_input_tokens ?? 0,
+        u.cache_read_input_tokens ?? 0,
+      );
+      const callSaved = estimateCacheSavings(model, u.cache_read_input_tokens ?? 0);
       setState("liveProvider", event.provider);
       setState("liveTurn", prev => {
         if (!prev) return prev;
         return {
-          inputTokens:        prev.inputTokens        + u.input_tokens,
-          outputTokens:       prev.outputTokens       + u.output_tokens,
+          inputTokens:         prev.inputTokens         + u.input_tokens,
+          outputTokens:        prev.outputTokens        + u.output_tokens,
           cacheCreationTokens: prev.cacheCreationTokens + (u.cache_creation_input_tokens ?? 0),
-          cacheReadTokens:    prev.cacheReadTokens    + (u.cache_read_input_tokens ?? 0),
-          costUsd:  0,  // finalized at turn_end
-          savedUsd: 0,
-          totalMs:  0,
+          cacheReadTokens:     prev.cacheReadTokens     + (u.cache_read_input_tokens ?? 0),
+          costUsd:             prev.costUsd             + callCost,
+          savedUsd:            prev.savedUsd            + callSaved,
+          totalMs:             0,  // finalized at turn_end
         };
       });
       break;
     }
 
+    case "llm_call":
+      appendEvent(event);
+      setState("liveModel", event.model);
+      break;
+
     case "session_start":
     case "session_end":
     case "tool_call":
     case "tool_result":
-    case "llm_call":
     case "llm_retry":
     case "model_changed":
     case "oauth_token_expired":

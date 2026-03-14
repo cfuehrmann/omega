@@ -659,11 +659,9 @@ function StickyMetricsBar() {
       rows.push(["write", String(t.cacheCreationTokens)]);
       rows.push(["read",  String(t.cacheReadTokens)]);
     }
-    const costVal = isLive() ? "…" : `${costPrefix()}${t.costUsd.toFixed(4)}`;
-    rows.push(["cost", costVal]);
+    rows.push(["cost", `${costPrefix()}${t.costUsd.toFixed(4)}`]);
     if (!isOpenAi()) {
-      const savedVal = isLive() ? "…" : t.savedUsd.toFixed(4);
-      rows.push(["saved", savedVal]);
+      rows.push(["saved", t.savedUsd.toFixed(4)]);
     }
     if (!isLive() && t.totalMs > 0) {
       rows.push(["dur", formatDuration(t.totalMs)]);
@@ -682,11 +680,9 @@ function StickyMetricsBar() {
       rows.push(["write", String(s.cacheCreationTokens)]);
       rows.push(["read",  String(s.cacheReadTokens)]);
     }
-    const costVal = isLive() ? "…" : `${costPrefix()}${s.costUsd.toFixed(4)}`;
-    rows.push(["cost", costVal]);
+    rows.push(["cost", `${costPrefix()}${s.costUsd.toFixed(4)}`]);
     if (!isOpenAi()) {
-      const savedVal = isLive() ? "…" : s.savedUsd.toFixed(4);
-      rows.push(["saved", savedVal]);
+      rows.push(["saved", s.savedUsd.toFixed(4)]);
     }
     if (!isLive() && t.totalMs > 0) {
       rows.push(["dur", formatDuration(s.totalMs)]);
