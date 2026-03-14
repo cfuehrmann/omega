@@ -12,7 +12,7 @@ import { readFile } from "fs/promises";
 import { makeSessionDir, findPreviousEventsFile } from "../session-dir.js";
 import { exhaustiveCheck } from "../events.js";
 import {
-  bold, dim, green, red, yellow,
+  bold, dim, green, lavender, red, yellow,
   TIME_WIDTH, INDENT, INDENT2,
   now, printBlock, println,
   renderUserMessage, renderApiRequest, renderApiResponse,
@@ -142,7 +142,7 @@ export async function runApp(): Promise<void> {
       const clipboard = (await readClipboard()).trim();
       if (!clipboard) {
         printBlock(now(), [dim("(empty input and clipboard — type a message or copy something)")]);
-        printPrompt(bold(green("❯ ")));
+        printPrompt(bold(lavender("❯ ")));
         return;
       }
       // Echo the clipboard content as if typed, then submit it
@@ -151,7 +151,7 @@ export async function runApp(): Promise<void> {
       trimmed = clipboard;
     }
     if (isStreaming) {
-      printPrompt(bold(green("❯ ")));
+      printPrompt(bold(lavender("❯ ")));
       return;
     }
 
@@ -336,7 +336,7 @@ export async function runApp(): Promise<void> {
     } finally {
       isStreaming = false;
       abortController = null;
-      printPrompt(bold(green("❯ ")));
+      printPrompt(bold(lavender("❯ ")));
     }
   }
 
@@ -364,5 +364,5 @@ export async function runApp(): Promise<void> {
   );
 
   printBlock(now(), [renderStatus(false)]);
-  printPrompt(bold(green("❯ ")));
+  printPrompt(bold(lavender("❯ ")));
 }

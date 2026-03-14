@@ -39,7 +39,7 @@ function color(s: string, r: number, g: number, b: number, mods: number[] = []):
 // ---------------------------------------------------------------------------
 
 // Accent colors
-const MOCHA_BLUE     = [137, 180, 250] as const; // #89b4fa  — user messages
+const MOCHA_LAVENDER = [180, 190, 254] as const; // #b4befe  — user messages + prompt
 const MOCHA_SAPPHIRE = [116, 199, 236] as const; // #74c7ec  — llm_call + llm_response
 const MOCHA_TEAL     = [148, 226, 213] as const; // #94e2d5  — (available)
 const MOCHA_GREEN    = [166, 227, 161] as const; // #a6e3a1  — prompt, ok states
@@ -75,8 +75,8 @@ function sapphireDim(s: string)  { return color(s, ...MOCHA_OVERLAY1); }
 function yellowBold(s: string) { return color(s, ...MOCHA_YELLOW, [1]); }
 function yellowDim(s: string)  { return color(s, ...MOCHA_OVERLAY1); }
 
-// user_message
-function blue  (s: string) { return color(s, ...MOCHA_BLUE); }
+// user_message + prompt
+export function lavender(s: string) { return color(s, ...MOCHA_LAVENDER); }
 
 // status / misc
 function mauve (s: string) { return color(s, ...MOCHA_MAUVE); }
@@ -135,7 +135,7 @@ export function println(s: string): void {
 // ---------------------------------------------------------------------------
 
 export function renderUserMessage(): string[] {
-  return [bold(blue("user_message"))];
+  return [bold(lavender("user_message"))];
 }
 
 function summariseContent(content: any): string {
