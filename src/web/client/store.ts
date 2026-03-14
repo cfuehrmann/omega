@@ -82,6 +82,10 @@ interface AppState {
   lastTurnEnd: LastTurnInfo | null;
   /** Cumulative metrics across all completed turns in the session. */
   sessionTotals: StickyMetrics;
+  /** Live accumulation of the current in-progress turn (reset on user_message, updated on llm_response). */
+  liveTurn: StickyMetrics | null;
+  /** Provider for the current/last turn (set from llm_response, used for live bar display). */
+  liveProvider: string;
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
 }
@@ -90,7 +94,7 @@ interface AppState {
 // Store
 // ---------------------------------------------------------------------------
 
-const zeroMetrics = (): StickyMetrics => ({
+export const zeroMetrics = (): StickyMetrics => ({
   inputTokens: 0, outputTokens: 0, costUsd: 0, savedUsd: 0,
   totalMs: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
 });
@@ -103,6 +107,8 @@ const [state, setState] = createStore<AppState>({
   retryCount: 0,
   lastTurnEnd: null,
   sessionTotals: zeroMetrics(),
+  liveTurn: null,
+  liveProvider: "",
   sessionDir: "",
 });
 
@@ -271,6 +277,8 @@ export function dispatch(event: WsEvent): void {
       setState("streaming", false);
       setState("lastTurnEnd", null);
       setState("sessionTotals", zeroMetrics());
+      setState("liveTurn", null);
+      setState("liveProvider", "");
       nextTurnId = 0;
       break;
 
@@ -282,6 +290,7 @@ export function dispatch(event: WsEvent): void {
         done: false,
       }]);
       setState("streaming", true);
+      setState("liveTurn", zeroMetrics());
       break;
 
     case "text":
@@ -330,10 +339,11 @@ export function dispatch(event: WsEvent): void {
       // turn_end means the agentic loop finished; clear streaming so replayed
       // history doesn't leave the UI stuck in streaming state.
       setState("streaming", false);
-      // Update sticky metrics
+      // Update sticky metrics and clear live accumulator
       const sm = metricsFromTurnEnd(event);
       setState("lastTurnEnd", { metrics: sm, model: event.model, provider: event.provider });
       setState("sessionTotals", prev => addMetrics(prev, sm));
+      setState("liveTurn", null);
       break;
     }
 
@@ -346,13 +356,33 @@ export function dispatch(event: WsEvent): void {
         }
       }));
       setState("streaming", false);
+      setState("liveTurn", null);
       break;
+
+    case "llm_response": {
+      appendEvent(event);
+      // Accumulate live per-turn token totals so the metrics bar ticks up mid-turn.
+      const u = event.usage;
+      setState("liveProvider", event.provider);
+      setState("liveTurn", prev => {
+        if (!prev) return prev;
+        return {
+          inputTokens:        prev.inputTokens        + u.input_tokens,
+          outputTokens:       prev.outputTokens       + u.output_tokens,
+          cacheCreationTokens: prev.cacheCreationTokens + (u.cache_creation_input_tokens ?? 0),
+          cacheReadTokens:    prev.cacheReadTokens    + (u.cache_read_input_tokens ?? 0),
+          costUsd:  0,  // finalized at turn_end
+          savedUsd: 0,
+          totalMs:  0,
+        };
+      });
+      break;
+    }
 
     case "session_start":
     case "session_end":
     case "tool_call":
     case "tool_result":
-    case "llm_response":
     case "llm_call":
     case "llm_retry":
     case "model_changed":

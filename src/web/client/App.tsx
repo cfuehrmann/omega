@@ -1,5 +1,5 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo } from "solid-js";
-import { state, dispatch, type Turn, type WsEvent, type StickyMetrics } from "./store";
+import { state, dispatch, zeroMetrics, type Turn, type WsEvent, type StickyMetrics } from "./store";
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
 function exhaustiveCheck(x: never): null {
@@ -619,79 +619,105 @@ function formatDuration(ms: number): string {
 }
 
 function StickyMetricsBar() {
+  // Show if we have a live turn in progress OR a completed turn to display.
+  const visible = () => state.liveTurn !== null || state.lastTurnEnd !== null;
+
+  // During a live turn, use the live accumulator; otherwise fall back to lastTurnEnd.
+  const turnMetrics = (): StickyMetrics =>
+    state.liveTurn ?? state.lastTurnEnd?.metrics ?? zeroMetrics();
+
+  const provider = (): string =>
+    state.liveTurn !== null ? state.liveProvider : (state.lastTurnEnd?.provider ?? "");
+
+  const isLive = () => state.liveTurn !== null;
+  const isOpenAi = () => provider() === "openai";
+  const costPrefix = () => isOpenAi() ? "<=$" : "$";
+
+  // Session row: completed-turns total + whatever is live right now.
+  const sessMetrics = (): StickyMetrics => {
+    const base = state.sessionTotals;
+    const live = state.liveTurn;
+    if (!live) return base;
+    return {
+      inputTokens:         base.inputTokens         + live.inputTokens,
+      outputTokens:        base.outputTokens        + live.outputTokens,
+      cacheCreationTokens: base.cacheCreationTokens + live.cacheCreationTokens,
+      cacheReadTokens:     base.cacheReadTokens     + live.cacheReadTokens,
+      costUsd:             base.costUsd,   // cost finalized at turn_end
+      savedUsd:            base.savedUsd,
+      totalMs:             base.totalMs,
+    };
+  };
+
+  const cells = (): Array<[string, string]> => {
+    const t = turnMetrics();
+    const rows: Array<[string, string]> = [
+      ["in",  String(t.inputTokens)],
+      ["out", String(t.outputTokens)],
+    ];
+    if (!isOpenAi()) {
+      rows.push(["write", String(t.cacheCreationTokens)]);
+      rows.push(["read",  String(t.cacheReadTokens)]);
+    }
+    const costVal = isLive() ? "…" : `${costPrefix()}${t.costUsd.toFixed(4)}`;
+    rows.push(["cost", costVal]);
+    if (!isOpenAi()) {
+      const savedVal = isLive() ? "…" : t.savedUsd.toFixed(4);
+      rows.push(["saved", savedVal]);
+    }
+    if (!isLive() && t.totalMs > 0) {
+      rows.push(["dur", formatDuration(t.totalMs)]);
+    }
+    return rows;
+  };
+
+  const sessCells = (): Array<[string, string]> => {
+    const s = sessMetrics();
+    const t = turnMetrics();
+    const rows: Array<[string, string]> = [
+      ["in",  String(s.inputTokens)],
+      ["out", String(s.outputTokens)],
+    ];
+    if (!isOpenAi()) {
+      rows.push(["write", String(s.cacheCreationTokens)]);
+      rows.push(["read",  String(s.cacheReadTokens)]);
+    }
+    const costVal = isLive() ? "…" : `${costPrefix()}${s.costUsd.toFixed(4)}`;
+    rows.push(["cost", costVal]);
+    if (!isOpenAi()) {
+      const savedVal = isLive() ? "…" : s.savedUsd.toFixed(4);
+      rows.push(["saved", savedVal]);
+    }
+    if (!isLive() && t.totalMs > 0) {
+      rows.push(["dur", formatDuration(s.totalMs)]);
+    }
+    return rows;
+  };
+
   return (
-    <Show when={state.lastTurnEnd}>
-      {(last) => {
-        const p = () => last().provider;
-        const isOpenAi = () => p() === "openai";
-        const costPrefix = () => isOpenAi() ? "<=$" : "$";
-        const turn = () => last().metrics;
-        const sess = () => state.sessionTotals;
-
-        // Build cell arrays: [label, turnVal, sessVal]
-        const cells = (): Array<[string, string]> => {
-          const rows: Array<[string, string]> = [
-            ["in",  String(turn().inputTokens)],
-            ["out", String(turn().outputTokens)],
-          ];
-          if (!isOpenAi()) {
-            rows.push(["write", String(turn().cacheCreationTokens)]);
-            rows.push(["read",  String(turn().cacheReadTokens)]);
-          }
-          rows.push(["cost", `${costPrefix()}${turn().costUsd.toFixed(4)}`]);
-          if (!isOpenAi()) {
-            rows.push(["saved", turn().savedUsd.toFixed(4)]);
-          }
-          if (turn().totalMs > 0) {
-            rows.push(["dur", formatDuration(turn().totalMs)]);
-          }
-          return rows;
-        };
-
-        const sessCells = (): Array<[string, string]> => {
-          const rows: Array<[string, string]> = [
-            ["in",  String(sess().inputTokens)],
-            ["out", String(sess().outputTokens)],
-          ];
-          if (!isOpenAi()) {
-            rows.push(["write", String(sess().cacheCreationTokens)]);
-            rows.push(["read",  String(sess().cacheReadTokens)]);
-          }
-          rows.push(["cost", `${costPrefix()}${sess().costUsd.toFixed(4)}`]);
-          if (!isOpenAi()) {
-            rows.push(["saved", sess().savedUsd.toFixed(4)]);
-          }
-          if (turn().totalMs > 0) {
-            rows.push(["dur", formatDuration(sess().totalMs)]);
-          }
-          return rows;
-        };
-
-        return (
-          <table class="sticky-metrics">
-            <tbody>
-              <tr>
-                <td class="sm-row-label">turn</td>
-                <For each={cells()}>
-                  {([lbl, val]) => <>
-                    <td class="sm-col-label">{lbl}</td>
-                    <td class="sm-col-val">{val}</td>
-                  </>}
-                </For>
-              </tr>
-              <tr>
-                <td class="sm-row-label">session</td>
-                <For each={sessCells()}>
-                  {([lbl, val]) => <>
-                    <td class="sm-col-label">{lbl}</td>
-                    <td class="sm-col-val">{val}</td>
-                  </>}
-                </For>
-              </tr>
-            </tbody>
-          </table>
-        );
-      }}
+    <Show when={visible()}>
+      <table class="sticky-metrics">
+        <tbody>
+          <tr>
+            <td class="sm-row-label">turn</td>
+            <For each={cells()}>
+              {([lbl, val]) => <>
+                <td class="sm-col-label">{lbl}</td>
+                <td class="sm-col-val">{val}</td>
+              </>}
+            </For>
+          </tr>
+          <tr>
+            <td class="sm-row-label">session</td>
+            <For each={sessCells()}>
+              {([lbl, val]) => <>
+                <td class="sm-col-label">{lbl}</td>
+                <td class="sm-col-val">{val}</td>
+              </>}
+            </For>
+          </tr>
+        </tbody>
+      </table>
     </Show>
   );
 }
