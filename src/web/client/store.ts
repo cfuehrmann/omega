@@ -41,7 +41,7 @@ export type WsEvent =
   | { type: "compact_auto_done"; ts?: string; messagesBefore: number; messagesAfter: number; usage?: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }
   | { type: "compact_auto_error"; ts?: string; error: string }
   | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
-  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; costUsd: number; savedUsd?: number; ttftMs: number | null; totalMs?: number; cacheCreationTokens?: number; cacheReadTokens?: number }; model: string; provider: string }
+  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; ttftMs: number | null; totalMs?: number; cacheCreationTokens?: number; cacheReadTokens?: number }; model: string; provider: string }
   | { type: "llm_error"; ts?: string; provider: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
   | { type: "error"; ts?: string; error: string }

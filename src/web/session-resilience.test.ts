@@ -118,7 +118,7 @@ describe("store history replay — open turn recovery", () => {
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "turn_end", metrics: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, ttftMs: null }, model: "sonnet", provider: "anthropic" },
+        { type: "turn_end", metrics: { inputTokens: 10, outputTokens: 5, ttftMs: null }, model: "sonnet", provider: "anthropic" },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -173,7 +173,7 @@ describe("store history replay — open turn recovery", () => {
         { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
         { type: "llm_response", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", stopReason: "end_turn", model: "claude-sonnet-4-6", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" } } as any,
         { type: "assistant_text", text: "pong" } as any,
-        { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, costUsd: 0.0022794, savedUsd: 0.0089586, ttftMs: 1136.1, totalMs: 9781.8, cacheCreationTokens: 320, cacheReadTokens: 3318 }, model: "claude-sonnet-4-6", provider: "anthropic" } as any,
+        { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, ttftMs: 1136.1, totalMs: 9781.8, cacheCreationTokens: 320, cacheReadTokens: 3318 }, model: "claude-sonnet-4-6", provider: "anthropic" } as any,
         { type: "session_end", outcome: "clean" } as any,
       ],
     });

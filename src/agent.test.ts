@@ -1,64 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { estimateCost, estimateCostWithCache, isAutoApproved, isRetryable, isAuthExpired, isContextTooLong, PRICING } from "./agent.js";
+import { isAutoApproved, isRetryable, isAuthExpired, isContextTooLong } from "./agent.js";
 // isAutoApproved is kept exported for logging purposes; it always returns true.
 import type Anthropic from "@anthropic-ai/sdk";
 
 // ---------------------------------------------------------------------------
 // Unit tests for agent.ts pure functions
 // ---------------------------------------------------------------------------
-
-// --- Cost estimation ---
-
-describe("estimateCost", () => {
-  it("calculates cost for sonnet correctly", () => {
-    // 1000 input tokens at $3/M + 500 output at $15/M = $0.003 + $0.0075 = $0.0105
-    const cost = estimateCost("claude-sonnet-4-6", 1000, 500);
-    expect(cost).toBeCloseTo(0.0105, 6);
-  });
-
-  it("calculates cost for opus correctly", () => {
-    // 1000 input at $5/M + 1000 output at $25/M = $0.005 + $0.025 = $0.03
-    const cost = estimateCost("claude-opus-4-6", 1000, 1000);
-    expect(cost).toBeCloseTo(0.03, 6);
-  });
-
-  it("falls back to opus pricing for unknown model", () => {
-    const cost = estimateCost("unknown-model", 1000, 0);
-    expect(cost).toBeCloseTo(0.005, 6);
-  });
-
-  it("returns 0 for zero tokens", () => {
-    expect(estimateCost("claude-sonnet-4-6", 0, 0)).toBe(0);
-  });
-});
-
-// --- Prompt caching cost estimation ---
-
-describe("estimateCostWithCache", () => {
-  it("accounts for cache read and creation tokens", () => {
-    // For Sonnet: input=$3/M, output=$15/M, cache write=1.25x input, cache read=0.1x input
-    // base input: 1000 tokens, cache creation: 200, cache read: 300, output: 500
-    // cost = input(1000)*3 + output(500)*15 + cache_creation(200)*3.75 + cache_read(300)*0.3
-    // = 0.003 + 0.0075 + 0.00075 + 0.00009 = 0.01134
-    const cost = estimateCostWithCache("claude-sonnet-4-6", 1000, 500, 200, 300);
-    expect(cost).toBeCloseTo(0.01134, 6);
-  });
-
-  it("falls back to estimateCost when cache tokens are zero", () => {
-    const base = estimateCost("claude-sonnet-4-6", 1000, 500);
-    const cost = estimateCostWithCache("claude-sonnet-4-6", 1000, 500, 0, 0);
-    expect(cost).toBeCloseTo(base, 6);
-  });
-});
-
-// --- Pricing table ---
-
-describe("PRICING", () => {
-  it("has entries for all supported models", () => {
-    expect(PRICING["claude-opus-4-6"]).toBeDefined();
-    expect(PRICING["claude-sonnet-4-6"]).toBeDefined();
-  });
-});
 
 // --- Auto-approve logic ---
 

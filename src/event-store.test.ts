@@ -114,7 +114,7 @@ describe("OmegaEvent round-trip serialisation", () => {
       ts: "2025-01-01T00:00:00.000Z",
       provider: "anthropic",
       model: "claude-sonnet-4-6",
-      metrics: { inputTokens: 200, outputTokens: 50, costUsd: 0.001, savedUsd: 0.0005, ttftMs: 300, totalMs: 1200, cacheCreationTokens: 0, cacheReadTokens: 100 },
+      metrics: { inputTokens: 200, outputTokens: 50, ttftMs: 300, totalMs: 1200, cacheCreationTokens: 0, cacheReadTokens: 100 },
       toolCalls: ["read_file", "write_file"],
     };
     await appendEvent(e, testFile);
