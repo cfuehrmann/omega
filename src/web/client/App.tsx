@@ -342,7 +342,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class="block tool">
           <div class="block-label-row">
-            <span class="block-label">tool › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
+            <span class="block-label">tool_call › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
           <BlockTs ts={ts} />
@@ -371,7 +371,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class={`block result${e.isError ? " result-error" : ""}`}>
           <div class="block-label-row">
-            <span class="block-label">result › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
+            <span class="block-label">tool_result › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
           <BlockTs ts={ts} />
