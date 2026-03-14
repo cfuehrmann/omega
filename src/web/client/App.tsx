@@ -306,7 +306,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "assistant_text":
       return (
         <div class={`block assist${props.streaming ? " streaming" : ""}`}>
-          <div class="block-label">assistant</div>
+          <div class="block-label">assistant_text</div>
           <BlockTs ts={ts} />
           <div class="block-body">
             {e.text}
