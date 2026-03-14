@@ -90,6 +90,16 @@ record.
 - `role` — `"user"` or `"assistant"`.
 - `content` — string or content-block array.
 
+## UI Conventions
+
+- **Mobile-first:** every UI element must be usable on a small touch screen.
+  Avoid hover-only interactions; prefer tap targets ≥ 44 px; no fixed-width
+  layouts that overflow on narrow viewports.
+- **Inline legends** use `<details>`/`<summary>` (zero JS, tap-to-expand) — not
+  the full-screen modal. The modal is reserved for inspecting large variable-
+  length content (tool call bodies, LLM request/response payloads).
+- **Modals** are triggered by the `⤢` expand button on feed blocks.
+
 ## UI Display Policy
 
 Both UIs truncate `tool_result` output and `tool_call` input for display: **5

@@ -64,10 +64,13 @@ html, body, #root {
 }
 
 /* ── Sticky metrics bar (per-turn + session totals) ── */
-.sticky-metrics {
+.sticky-metrics-wrap {
   border-top: 1px solid var(--border);
-  padding: 3px 0;
   flex-shrink: 0;
+}
+
+.sticky-metrics {
+  padding: 3px 0;
   font-size: 11px;
   color: var(--dim);
   border-collapse: collapse;
@@ -88,11 +91,56 @@ html, body, #root {
   white-space: nowrap;
 }
 
+/* Extra left padding creates the visual gap before `out` */
+.sm-col-gap {
+  padding-left: 28px;
+}
+
 .sm-col-val {
   color: var(--dim);
   opacity: 0.85;
   padding: 1px 0;
   text-align: right;
+  white-space: nowrap;
+}
+
+/* ── Metrics legend (inline <details>/<summary>) ── */
+.sm-legend {
+  font-size: 11px;
+  color: var(--dim);
+  padding: 0 0 4px 0;
+}
+
+.sm-legend-toggle {
+  cursor: pointer;
+  opacity: 0.55;
+  user-select: none;
+  list-style: none;   /* hide default triangle on some browsers */
+  display: inline-block;
+  padding: 2px 4px;
+}
+.sm-legend-toggle::-webkit-details-marker { display: none; }
+
+.sm-legend-body {
+  padding: 6px 8px 4px 8px;
+  line-height: 1.5;
+}
+
+.sm-legend-body p {
+  margin: 0 0 4px 0;
+}
+
+.sm-legend-table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.sm-legend-table td {
+  padding: 1px 12px 1px 0;
+  vertical-align: top;
+}
+
+.sm-legend-table td:first-child {
   white-space: nowrap;
 }
 

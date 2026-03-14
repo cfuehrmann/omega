@@ -486,9 +486,10 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
 
     case "turn_end": {
       const m = e.metrics;
-      const cost = m.costUsd != null ? `  cost: ${m.costUsd.toFixed(4)}` : "";
-      const saved = m.savedUsd ? `  saved: ${m.savedUsd.toFixed(4)}` : "";
-      const line = `in: ${m.inputTokens}  out: ${m.outputTokens}${cost}${saved}  model: ${e.model}`;
+      const cacheDetail = (m.cacheCreationTokens || m.cacheReadTokens)
+        ? `  write_in: ${m.cacheCreationTokens ?? 0}  read_in: ${m.cacheReadTokens ?? 0}`
+        : "";
+      const line = `in: ${m.inputTokens}${cacheDetail}  out: ${m.outputTokens}  model: ${e.model}`;
       return (
         <div class="block footer">
           <BlockTs ts={ts} />
@@ -631,7 +632,6 @@ function StickyMetricsBar() {
 
   const isLive = () => state.liveTurn !== null;
   const isOpenAi = () => provider() === "openai";
-  const costPrefix = () => isOpenAi() ? "<=$" : "$";
 
   // Session row: completed-turns total + whatever is live right now.
   const sessMetrics = (): StickyMetrics => {
@@ -639,81 +639,99 @@ function StickyMetricsBar() {
     const live = state.liveTurn;
     if (!live) return base;
     return {
-      inputTokens:         base.inputTokens         + live.inputTokens,
-      outputTokens:        base.outputTokens        + live.outputTokens,
-      cacheCreationTokens: base.cacheCreationTokens + live.cacheCreationTokens,
-      cacheReadTokens:     base.cacheReadTokens     + live.cacheReadTokens,
-      costUsd:             base.costUsd,   // cost finalized at turn_end
-      savedUsd:            base.savedUsd,
-      totalMs:             base.totalMs,
+      freshInTokens: base.freshInTokens + live.freshInTokens,
+      writeInTokens: base.writeInTokens + live.writeInTokens,
+      readInTokens:  base.readInTokens  + live.readInTokens,
+      outTokens:     base.outTokens     + live.outTokens,
+      totalMs:       base.totalMs,
     };
   };
 
-  const cells = (): Array<[string, string]> => {
-    const t = turnMetrics();
-    const rows: Array<[string, string]> = [
-      ["in",  String(t.inputTokens)],
-      ["out", String(t.outputTokens)],
-    ];
-    if (!isOpenAi()) {
-      rows.push(["write", String(t.cacheCreationTokens)]);
-      rows.push(["read",  String(t.cacheReadTokens)]);
+  // Build the [label, value, isGap] cell list for one row.
+  // isGap=true marks the cell before `out` to render the visual separation.
+  const buildCells = (m: StickyMetrics): Array<[string, string, boolean]> => {
+    const cells: Array<[string, string, boolean]> = [];
+    if (isOpenAi()) {
+      cells.push(["in", String(m.freshInTokens), false]);
+    } else {
+      const totalIn = m.freshInTokens + m.writeInTokens + m.readInTokens;
+      cells.push(["total_in",   String(totalIn),          false]);
+      cells.push(["in",         String(m.freshInTokens),  false]);
+      cells.push(["write_in",   String(m.writeInTokens),  false]);
+      cells.push(["read_in",    String(m.readInTokens),   false]);
     }
-    rows.push(["cost", `${costPrefix()}${t.costUsd.toFixed(4)}`]);
-    if (!isOpenAi()) {
-      rows.push(["saved", t.savedUsd.toFixed(4)]);
+    // gap before out
+    cells.push(["out", String(m.outTokens), true]);
+    if (!isLive() && m.totalMs > 0) {
+      cells.push(["dur", formatDuration(m.totalMs), false]);
     }
-    if (!isLive() && t.totalMs > 0) {
-      rows.push(["dur", formatDuration(t.totalMs)]);
-    }
-    return rows;
+    return cells;
   };
 
-  const sessCells = (): Array<[string, string]> => {
-    const s = sessMetrics();
-    const t = turnMetrics();
-    const rows: Array<[string, string]> = [
-      ["in",  String(s.inputTokens)],
-      ["out", String(s.outputTokens)],
-    ];
-    if (!isOpenAi()) {
-      rows.push(["write", String(s.cacheCreationTokens)]);
-      rows.push(["read",  String(s.cacheReadTokens)]);
-    }
-    rows.push(["cost", `${costPrefix()}${s.costUsd.toFixed(4)}`]);
-    if (!isOpenAi()) {
-      rows.push(["saved", s.savedUsd.toFixed(4)]);
-    }
-    if (!isLive() && t.totalMs > 0) {
-      rows.push(["dur", formatDuration(s.totalMs)]);
-    }
-    return rows;
-  };
+  const anthropicLegend = (
+    <details class="sm-legend">
+      <summary class="sm-legend-toggle">ⓘ</summary>
+      <div class="sm-legend-body">
+        <p><strong>Anthropic token fields</strong></p>
+        <p>
+          <code>total_in = in + write_in + read_in</code>
+          <br/>— the three input fields are mutually exclusive partitions of the full input sent.
+        </p>
+        <table class="sm-legend-table">
+          <tbody>
+            <tr><td><code>total_in</code></td><td>All tokens sent as input (derived)</td></tr>
+            <tr><td><code>in</code></td><td>Tokens processed fresh (uncached)</td></tr>
+            <tr><td><code>write_in</code></td><td>Tokens written into the prompt cache</td></tr>
+            <tr><td><code>read_in</code></td><td>Tokens served from the prompt cache</td></tr>
+            <tr><td><code>out</code></td><td>Tokens generated by the model</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+
+  const openAiLegend = (
+    <details class="sm-legend">
+      <summary class="sm-legend-toggle">ⓘ</summary>
+      <div class="sm-legend-body">
+        <p><strong>OpenAI token fields</strong></p>
+        <table class="sm-legend-table">
+          <tbody>
+            <tr><td><code>in</code></td><td>Total prompt tokens</td></tr>
+            <tr><td><code>out</code></td><td>Tokens generated by the model</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
 
   return (
     <Show when={visible()}>
-      <table class="sticky-metrics">
-        <tbody>
-          <tr>
-            <td class="sm-row-label">turn</td>
-            <For each={cells()}>
-              {([lbl, val]) => <>
-                <td class="sm-col-label">{lbl}</td>
-                <td class="sm-col-val">{val}</td>
-              </>}
-            </For>
-          </tr>
-          <tr>
-            <td class="sm-row-label">session</td>
-            <For each={sessCells()}>
-              {([lbl, val]) => <>
-                <td class="sm-col-label">{lbl}</td>
-                <td class="sm-col-val">{val}</td>
-              </>}
-            </For>
-          </tr>
-        </tbody>
-      </table>
+      <div class="sticky-metrics-wrap">
+        <table class="sticky-metrics">
+          <tbody>
+            <tr>
+              <td class="sm-row-label">turn</td>
+              <For each={buildCells(turnMetrics())}>
+                {([lbl, val, gap]) => <>
+                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}</td>
+                  <td class="sm-col-val">{val}</td>
+                </>}
+              </For>
+            </tr>
+            <tr>
+              <td class="sm-row-label">session</td>
+              <For each={buildCells(sessMetrics())}>
+                {([lbl, val, gap]) => <>
+                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}</td>
+                  <td class="sm-col-val">{val}</td>
+                </>}
+              </For>
+            </tr>
+          </tbody>
+        </table>
+        {isOpenAi() ? openAiLegend : anthropicLegend}
+      </div>
     </Show>
   );
 }
