@@ -793,11 +793,7 @@ function InputArea() {
           placeholder="Message Omega… (Enter to send, Shift+Enter for newline)"
           rows={1}
           disabled={!state.connected}
-          class={state.streaming ? "textarea-busy" : ""}
         />
-        <Show when={state.streaming}>
-          <div class="textarea-busy-notice">turn in progress — send disabled</div>
-        </Show>
       </div>
       <Show when={state.streaming}
         fallback={
@@ -813,12 +809,7 @@ function InputArea() {
           </div>
         }
       >
-        <div class="btn-group">
-          <button class="send-btn" disabled title="Turn in progress — wait for it to finish or abort">
-            Send
-          </button>
-          <button class="abort-btn" onClick={abort}>Abort</button>
-        </div>
+        <button class="abort-btn" onClick={abort}>Abort</button>
       </Show>
     </div>
   );

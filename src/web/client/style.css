@@ -357,22 +357,6 @@ html, body, #root {
 .input-area textarea::placeholder { color: var(--dim); }
 .input-area textarea:disabled { opacity: 0.5; }
 
-/* Yellow border while a turn is in progress — typing allowed but send blocked */
-.input-area textarea.textarea-busy {
-  border-color: var(--yellow);
-}
-.input-area textarea.textarea-busy:focus {
-  border-color: var(--yellow);
-}
-
-/* Small notice rendered below the textarea during a live turn */
-.textarea-busy-notice {
-  font-size: 10px;
-  color: var(--yellow);
-  opacity: 0.75;
-  padding: 0 2px;
-  letter-spacing: 0.3px;
-}
 
 .send-btn, .abort-btn {
   padding: 0 16px;
