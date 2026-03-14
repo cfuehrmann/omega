@@ -284,6 +284,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
         const s = typeof e.input === "object" ? JSON.stringify(e.input) : String(e.input);
         return firstLine(s);
       });
+      const shortId = (id: string) => id.length <= 6 ? id : `…${id.slice(-6)}`;
       // Find the matching tool_result in the same turn by id
       const result = createMemo(() =>
         props.turnEvents.find(
@@ -304,7 +305,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class="block tool">
           <div class="block-label-row">
-            <span class="block-label">tool › {e.name}</span>
+            <span class="block-label">tool › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
           <BlockTs ts={ts} />
@@ -315,6 +316,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
 
     case "tool_result": {
       const outputPreview = createMemo(() => firstLine(e.output));
+      const shortId = (id: string) => id.length <= 6 ? id : `…${id.slice(-6)}`;
       // Find matching tool_call for the modal
       const call = props.turnEvents.find(
         (ev): ev is WsEvent & { type: "tool_call" } =>
@@ -332,7 +334,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class={`block result${e.isError ? " result-error" : ""}`}>
           <div class="block-label-row">
-            <span class="block-label">result › {e.name}</span>
+            <span class="block-label">result › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
           <BlockTs ts={ts} />
@@ -441,11 +443,11 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class="block api-call">
           <div class="block-label-row">
-            <span class="block-label">llm_call › {e.provider}</span>
+            <span class="block-label">llm_call<span class="block-model"> · {e.model}</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full request">⤢</button>
           </div>
           <BlockTs ts={ts} />
-          <div class="block-body block-preview">{e.model} · {e.contextHashes.length} messages</div>
+          <div class="block-body block-preview">{e.provider} · {e.contextHashes.length} messages</div>
         </div>
       );
     }
@@ -475,7 +477,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class="block api-response">
           <div class="block-label-row">
-            <span class="block-label">llm_response › {e.provider}</span>
+            <span class="block-label">llm_response<span class="block-model"> · {e.model}</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full response">⤢</button>
           </div>
           <BlockTs ts={ts} />

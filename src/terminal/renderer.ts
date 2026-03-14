@@ -3,6 +3,8 @@
  *
  * No Agent imports, no key-handling logic.
  * Exported for use by the terminal app and for unit tests.
+ *
+ * Colors follow Catppuccin Mocha (24-bit / truecolor ANSI).
  */
 
 // ---------------------------------------------------------------------------
@@ -15,22 +17,69 @@ function sgr(...codes: number[]) {
   return `${CSI}${codes.join(";")}m`;
 }
 
-const RESET  = sgr(0);
-const BOLD   = sgr(1);
-const DIM_ON = sgr(2);
+const RESET = sgr(0);
 
 function styled(s: string, ...codes: number[]): string {
   return sgr(...codes) + s + RESET;
 }
 
+/** 24-bit foreground color. */
+function fg(r: number, g: number, b: number): string {
+  return `${CSI}38;2;${r};${g};${b}m`;
+}
+
+/** Wrap text in a 24-bit foreground color + optional bold/dim, then reset. */
+function color(s: string, r: number, g: number, b: number, mods: number[] = []): string {
+  const modCodes = mods.length ? sgr(...mods) : "";
+  return modCodes + fg(r, g, b) + s + RESET;
+}
+
+// ---------------------------------------------------------------------------
+// Catppuccin Mocha palette
+// ---------------------------------------------------------------------------
+
+// Accent colors
+const MOCHA_BLUE     = [137, 180, 250] as const; // #89b4fa  — user messages
+const MOCHA_SAPPHIRE = [116, 199, 236] as const; // #74c7ec  — llm_call + llm_response
+const MOCHA_TEAL     = [148, 226, 213] as const; // #94e2d5  — (available)
+const MOCHA_GREEN    = [166, 227, 161] as const; // #a6e3a1  — prompt, ok states
+const MOCHA_YELLOW   = [249, 226, 175] as const; // #f9e2af  — tool_call + tool_result
+const MOCHA_PEACH    = [250, 179, 135] as const; // #fab387  — (available)
+const MOCHA_RED      = [243, 139, 168] as const; // #f38ba8  — errors
+const MOCHA_MAUVE    = [203, 166, 247] as const; // #cba6f7  — status / misc
+
+// Neutral / surface
+const MOCHA_TEXT     = [205, 214, 244] as const; // #cdd6f4  — primary text
+const MOCHA_SUBTEXT1 = [186, 194, 222] as const; // #bac2de
+const MOCHA_OVERLAY2 = [147, 153, 178] as const; // #9399b2  — dim text
+const MOCHA_OVERLAY1 = [127, 132, 156] as const; // #7f849c  — dimmer
+
+// ---------------------------------------------------------------------------
+// Named color helpers (matching the logical roles used in the app)
+// ---------------------------------------------------------------------------
+
 export function bold   (s: string) { return styled(s, 1); }
-export function dim    (s: string) { return styled(s, 2); }
-export function green  (s: string) { return styled(s, 32); }
-function cyan   (s: string) { return styled(s, 36); }
-function blue   (s: string) { return styled(s, 34); }
-export function yellow (s: string) { return styled(s, 33); }
-function magenta(s: string) { return styled(s, 35); }
-export function red    (s: string) { return styled(s, 31); }
+export function dim    (s: string) { return color(s, ...MOCHA_OVERLAY2); }
+
+// Semantic role → Mocha color
+export function green  (s: string) { return color(s, ...MOCHA_GREEN); }
+export function yellow (s: string) { return color(s, ...MOCHA_YELLOW); }
+export function red    (s: string) { return color(s, ...MOCHA_RED); }
+
+// llm_call / llm_response share the same sapphire accent
+function sapphire(s: string) { return color(s, ...MOCHA_SAPPHIRE); }
+function sapphireBold(s: string) { return color(s, ...MOCHA_SAPPHIRE, [1]); }
+function sapphireDim(s: string)  { return color(s, ...MOCHA_OVERLAY1); }
+
+// tool_call / tool_result share the yellow accent
+function yellowBold(s: string) { return color(s, ...MOCHA_YELLOW, [1]); }
+function yellowDim(s: string)  { return color(s, ...MOCHA_OVERLAY1); }
+
+// user_message
+function blue  (s: string) { return color(s, ...MOCHA_BLUE); }
+
+// status / misc
+function mauve (s: string) { return color(s, ...MOCHA_MAUVE); }
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -86,7 +135,7 @@ export function println(s: string): void {
 // ---------------------------------------------------------------------------
 
 export function renderUserMessage(): string[] {
-  return [bold(green("user_message"))];
+  return [bold(blue("user_message"))];
 }
 
 function summariseContent(content: any): string {
@@ -107,9 +156,11 @@ export function renderApiRequest(
   provider: "anthropic" | "openai",
   url: string,
   request: any,
+  model?: string,
 ): string[] {
+  const modelSuffix = model ? dim(`  [${model}]`) : "";
   if (provider === "anthropic") {
-    const messages: any[] = request.messages ?? [];
+    const messages: any[] = request?.messages ?? [];
     const n = messages.length;
     const last = messages[n - 1];
     const prev = n >= 2 ? messages[n - 2] : null;
@@ -120,9 +171,12 @@ export function renderApiRequest(
       : prevSummary
         ? `messages[${n}]: ${prevSummary} … ${lastSummary}`
         : `messages[${n}]: … ${lastSummary}`;
-    return [bold(cyan("llm_call")), dim(cyan(`${INDENT}${msgLine}`))];
+    return [
+      sapphireBold("llm_call") + modelSuffix,
+      sapphireDim(`${INDENT}${msgLine}`),
+    ];
   } else {
-    const input: any[] = request.input ?? [];
+    const input: any[] = request?.input ?? [];
     const n = input.length;
     const last = input[n - 1];
     const prev = n >= 2 ? input[n - 2] : null;
@@ -133,7 +187,10 @@ export function renderApiRequest(
       : prevSummary
         ? `input[${n}]: ${prevSummary} … ${lastSummary}`
         : `input[${n}]: … ${lastSummary}`;
-    return [bold(cyan("llm_call")), dim(cyan(`${INDENT}${msgLine}`))];
+    return [
+      sapphireBold("llm_call") + modelSuffix,
+      sapphireDim(`${INDENT}${msgLine}`),
+    ];
   }
 }
 
@@ -161,16 +218,18 @@ export function renderApiResponse(
     cache_read_input_tokens?: number | null;
     service_tier?: string | null;
   },
+  model?: string,
 ): string[] {
+  const modelSuffix = model ? dim(`  [${model}]`) : "";
   const lines: string[] = [];
-  lines.push(bold(blue("llm_response")));
-  lines.push(blue(`${INDENT}stop_reason: "${stopReason}"`));
-  lines.push(blue(`${INDENT}usage:`));
-  lines.push(dim(blue(`${INDENT2}input_tokens: ${usage.input_tokens}`)));
-  lines.push(dim(blue(`${INDENT2}output_tokens: ${usage.output_tokens}`)));
-  if (usage.cache_creation_input_tokens) lines.push(dim(blue(`${INDENT2}cache_write: ${usage.cache_creation_input_tokens}`)));
-  if (usage.cache_read_input_tokens)     lines.push(dim(blue(`${INDENT2}cache_read: ${usage.cache_read_input_tokens}`)));
-  if (usage.service_tier && usage.service_tier !== "standard") lines.push(dim(blue(`${INDENT2}service_tier: ${usage.service_tier}`)));
+  lines.push(sapphireBold("llm_response") + modelSuffix);
+  lines.push(sapphire(`${INDENT}stop_reason: "${stopReason}"`));
+  lines.push(sapphire(`${INDENT}usage:`));
+  lines.push(sapphireDim(`${INDENT2}input_tokens: ${usage.input_tokens}`));
+  lines.push(sapphireDim(`${INDENT2}output_tokens: ${usage.output_tokens}`));
+  if (usage.cache_creation_input_tokens) lines.push(sapphireDim(`${INDENT2}cache_write: ${usage.cache_creation_input_tokens}`));
+  if (usage.cache_read_input_tokens)     lines.push(sapphireDim(`${INDENT2}cache_read: ${usage.cache_read_input_tokens}`));
+  if (usage.service_tier && usage.service_tier !== "standard") lines.push(sapphireDim(`${INDENT2}service_tier: ${usage.service_tier}`));
   return lines;
 }
 
@@ -182,7 +241,7 @@ function shortId(id: string): string {
 /** Render the start of a tool call (name + input only). Shown immediately when the call is issued. */
 export function renderToolStart(name: string, input: any, id: string): string[] {
   const lines: string[] = [];
-  lines.push(bold(yellow(`tool_call`)) + dim(yellow(`  [${shortId(id)}]`)));
+  lines.push(yellowBold(`tool_call`) + yellowDim(`  [${shortId(id)}]`));
   lines.push(yellow(`${INDENT}name: "${name}"`));
   for (const line of truncateOutput(JSON.stringify(input)).split("\n")) {
     lines.push(yellow(`${INDENT}${line}`));
@@ -193,16 +252,14 @@ export function renderToolStart(name: string, input: any, id: string): string[] 
 /** Render the result of a tool call. Shown with a fresh timestamp when the tool completes. */
 export function renderToolResult(result: { output: string; isError: boolean }, id: string): string[] {
   const lines: string[] = [];
-  lines.push(bold(yellow(`tool_result`)) + dim(yellow(`  [${shortId(id)}]`)));
-  lines.push(dim(yellow(`${INDENT}is_error: ${result.isError}`)));
-  lines.push(dim(yellow(`${INDENT}content:`)));
+  lines.push(yellowBold(`tool_result`) + yellowDim(`  [${shortId(id)}]`));
+  lines.push(yellowDim(`${INDENT}is_error: ${result.isError}`));
+  lines.push(yellowDim(`${INDENT}content:`));
   for (const line of truncateOutput(result.output).split("\n")) {
-    lines.push(dim(yellow(`${INDENT2}${line}`)));
+    lines.push(yellowDim(`${INDENT2}${line}`));
   }
   return lines;
 }
-
-
 
 export function renderAssistantMessage(text: string, dimText?: string): string[] {
   const lines: string[] = text.split("\n");

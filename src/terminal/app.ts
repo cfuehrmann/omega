@@ -174,6 +174,7 @@ export async function runApp(): Promise<void> {
               event.provider,
               event.url,
               event.request,
+              event.model,
             ));
             break;
 
@@ -187,6 +188,7 @@ export async function runApp(): Promise<void> {
               event.url,
               event.stopReason,
               event.usage,
+              event.model,
             ));
             break;
 

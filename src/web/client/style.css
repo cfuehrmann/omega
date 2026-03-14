@@ -1,16 +1,49 @@
+/* ── Catppuccin Mocha palette ── */
 :root {
-  --bg:      #1a1a1a;
-  --bg2:     #242424;
-  --bg3:     #2e2e2e;
-  --border:  #3a3a3a;
-  --text:    #d4d4d4;
-  --dim:     #666;
-  --green:   #4ec94e;
-  --blue:    #5b9bd5;
-  --yellow:  #e5c07b;
-  --red:     #e06c75;
-  --magenta: #c678dd;
-  --cyan:    #56b6c2;
+  /* Accent */
+  --ctp-blue:     #89b4fa;
+  --ctp-sapphire: #74c7ec;
+  --ctp-teal:     #94e2d5;
+  --ctp-green:    #a6e3a1;
+  --ctp-yellow:   #f9e2af;
+  --ctp-peach:    #fab387;
+  --ctp-red:      #f38ba8;
+  --ctp-maroon:   #eba0ac;
+  --ctp-mauve:    #cba6f7;
+  --ctp-pink:     #f5c2e7;
+  --ctp-lavender: #b4befe;
+  /* Neutral */
+  --ctp-text:     #cdd6f4;
+  --ctp-subtext1: #bac2de;
+  --ctp-subtext0: #a6adc8;
+  --ctp-overlay2: #9399b2;
+  --ctp-overlay1: #7f849c;
+  --ctp-overlay0: #6c7086;
+  --ctp-surface2: #585b70;
+  --ctp-surface1: #45475a;
+  --ctp-surface0: #313244;
+  --ctp-base:     #1e1e2e;
+  --ctp-mantle:   #181825;
+  --ctp-crust:    #11111b;
+
+  /* Semantic aliases — maps old names to Mocha */
+  --bg:      var(--ctp-base);
+  --bg2:     var(--ctp-mantle);
+  --bg3:     var(--ctp-surface0);
+  --border:  var(--ctp-surface1);
+  --text:    var(--ctp-text);
+  --dim:     var(--ctp-overlay1);
+
+  /* Role colors */
+  --green:   var(--ctp-green);
+  --blue:    var(--ctp-blue);
+  --yellow:  var(--ctp-yellow);
+  --red:     var(--ctp-red);
+  --mauve:   var(--ctp-mauve);
+  --peach:   var(--ctp-peach);
+  /* llm_call and llm_response share sapphire */
+  --llm:     var(--ctp-sapphire);
+
   --font:    "Fira Code", "Cascadia Code", "Menlo", "Consolas", monospace;
   --radius:  6px;
 }
@@ -190,7 +223,7 @@ html, body, #root {
 
 /* ── Reconnect banner ── */
 .reconnect-banner {
-  background: #2a1f00;
+  background: color-mix(in srgb, var(--ctp-yellow) 8%, var(--bg));
   border: 1px solid var(--yellow);
   border-radius: var(--radius);
   color: var(--yellow);
@@ -256,18 +289,25 @@ html, body, #root {
 
 .block-body { /* inherits */ }
 
-.block.user      { border-color: var(--blue);    color: var(--blue);    }
-.block.assist    { border-color: var(--border);                          }
-.block.tool      { border-color: var(--yellow);  color: var(--yellow);  font-size: 12px; }
-.block.result    { border-color: var(--yellow);  color: var(--yellow);  font-size: 12px; }
-.block.result-error { border-color: var(--red);  color: var(--red);     font-size: 12px; }
-.block.status    { border-color: var(--magenta); color: var(--magenta); font-size: 12px; }
-.block.footer    { border-color: var(--border);  color: var(--dim);     font-size: 11px; }
-.block.error-b   { border-color: var(--red);     color: var(--red);     }
-.block.interrupt { border-color: var(--red);     color: var(--red);     }
+/* ── Block color variants ── */
+.block.user    { border-color: var(--blue);   color: var(--blue);   }
+.block.assist  { border-color: var(--border);                        }
+
+/* tool_call and tool_result share the same yellow accent */
+.block.tool    { border-color: var(--yellow); color: var(--yellow); font-size: 12px; }
+.block.result  { border-color: var(--yellow); color: var(--yellow); font-size: 12px; }
+.block.result-error { border-color: var(--red); color: var(--red);  font-size: 12px; }
+
+/* llm_call and llm_response share the same sapphire accent */
+.block.api-call     { border-color: var(--llm); color: var(--llm); font-size: 11px; }
+.block.api-response { border-color: var(--llm); color: var(--llm); font-size: 11px; }
+
+.block.status        { border-color: var(--mauve);  color: var(--mauve);  font-size: 12px; }
+.block.footer        { border-color: var(--border); color: var(--dim);    font-size: 11px; }
+.block.error-b       { border-color: var(--red);    color: var(--red);    }
+.block.interrupt     { border-color: var(--red);    color: var(--red);    }
 .block.world-state-saved { border-color: var(--green); color: var(--green); font-size: 11px; }
-.block.api-call  { border-color: var(--cyan);    color: var(--cyan);    font-size: 11px; }
-.block.api-response { border-color: var(--blue);  color: var(--blue);   font-size: 11px; }
+.block.info          { border-color: var(--ctp-overlay2); color: var(--ctp-subtext0); font-size: 12px; }
 
 /* Streaming cursor */
 .block.streaming .block-label::after {
@@ -369,8 +409,8 @@ html, body, #root {
   align-self: flex-end;
   transition: opacity 0.15s;
 }
-.send-btn  { background: var(--green); color: #000; font-weight: bold; }
-.abort-btn { background: var(--red);   color: #fff; }
+.send-btn  { background: var(--green); color: var(--ctp-crust); font-weight: bold; }
+.abort-btn { background: var(--red);   color: var(--ctp-crust); }
 .send-btn:disabled { opacity: 0.4; cursor: default; }
 
 .btn-group {
@@ -404,6 +444,22 @@ html, body, #root {
 
 .block-label-row .block-label {
   margin-bottom: 0;
+}
+
+/* Tool call id suffix — slightly dimmer than the label */
+.block-id {
+  font-weight: normal;
+  opacity: 0.65;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Model suffix in llm_call / llm_response labels */
+.block-model {
+  font-weight: normal;
+  opacity: 0.75;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .block-preview {
@@ -464,9 +520,10 @@ html, body, #root {
   font-weight: bold;
   color: var(--modal-accent, var(--yellow));
 }
+/* tool modal → yellow, llm modals → sapphire (matching block colors) */
 .modal.tool-modal     { --modal-accent: var(--yellow); }
-.modal.llm-call-modal { --modal-accent: var(--cyan); }
-.modal.llm-resp-modal { --modal-accent: var(--blue); }
+.modal.llm-call-modal { --modal-accent: var(--llm); }
+.modal.llm-resp-modal { --modal-accent: var(--llm); }
 
 .modal-close {
   background: none;
@@ -510,7 +567,7 @@ html, body, #root {
 
 /* ── Render error boundary ── */
 .render-error {
-  background: #2a1010;
+  background: color-mix(in srgb, var(--ctp-red) 8%, var(--bg));
   border: 1px solid var(--red);
   border-radius: var(--radius);
   color: var(--red);
