@@ -486,6 +486,18 @@ html, body, #root {
 }
 .block-expand-btn:hover { opacity: 1; }
 
+.llm-legend-btn {
+  cursor: pointer;
+  opacity: 0.55;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  padding: 0 2px;
+  vertical-align: baseline;
+}
+.llm-legend-btn:hover { opacity: 0.9; }
+
 /* ── Tool detail modal ── */
 .modal-backdrop {
   position: fixed;

@@ -515,11 +515,10 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
         <div class="block api-response">
           <div class="block-label-row">
             <span class="block-label">llm_response<span class="block-model"> · {e.model}</span></span>
-            <button class="block-expand-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>
             <button class="block-expand-btn" onClick={openModal} title="View full response">⤢</button>
           </div>
           <BlockTs ts={ts} />
-          <div class="block-body">{parts.join("  ")}</div>
+          <div class="block-body">{parts.join("  ")}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
         </div>
       );
     }
