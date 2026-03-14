@@ -275,7 +275,6 @@ html, body, #root {
 .block-label {
   font-size: 11px;
   font-weight: bold;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   opacity: 0.6;
   margin-bottom: 3px;
