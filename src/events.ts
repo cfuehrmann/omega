@@ -15,6 +15,7 @@
  */
 
 import type { TurnMetrics, ProviderName } from "./agent.js";
+import type { CompactionUsage } from "./compaction.js";
 
 // ---------------------------------------------------------------------------
 // StreamSignal — ephemeral, never persisted
@@ -186,6 +187,7 @@ export interface CompactUserDoneEvent {
   ts: string;
   messagesBefore: number;
   messagesAfter: number;
+  usage?: CompactionUsage;
 }
 
 /** Compaction failed. */
@@ -208,6 +210,7 @@ export interface CompactAutoDoneEvent {
   ts: string;
   messagesBefore: number;
   messagesAfter: number;
+  usage?: CompactionUsage;
 }
 
 /** Automatic compaction failed — session continues with rolling truncation as fallback. */

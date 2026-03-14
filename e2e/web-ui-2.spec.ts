@@ -85,18 +85,22 @@ test("send button is disabled while streaming", async ({ page, server }) => {
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  // user_message sets streaming=true → send-btn is replaced by abort-btn
+  // user_message sets streaming=true → send-btn stays visible but disabled (abort-btn also shown)
   await expect(page.locator(".abort-btn")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".send-btn")).not.toBeVisible();
+  await expect(page.locator(".send-btn")).toBeVisible();
+  await expect(page.locator(".send-btn")).toBeDisabled();
 });
 
-test("textarea is disabled while streaming", async ({ page, server }) => {
+test("textarea is enabled while streaming (typing allowed, send blocked)", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await expect(page.locator(".abort-btn")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator("textarea")).toBeDisabled();
+  // Textarea stays enabled so the user can compose a reply while waiting
+  await expect(page.locator("textarea")).toBeEnabled();
+  // But it carries the busy CSS class to signal the blocked-send state
+  await expect(page.locator("textarea.textarea-busy")).toBeVisible();
 });
 
 test("input unlocks after turn_end", async ({ page, server }) => {

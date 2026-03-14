@@ -40,12 +40,6 @@ test("status dot is green when connected", async ({ page, server }) => {
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 });
 
-test("shows auth mode label after auth event", async ({ page, server }) => {
-  await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-  await server.sendEvent({ type: "auth", mode: "oauth (test)" });
-  await expect(page.locator(".model-label")).toHaveText("oauth (test)", { timeout: 3000 });
-});
 
 // ---------------------------------------------------------------------------
 // Input area

@@ -435,7 +435,7 @@ export class Agent {
 
     try {
       const provider = this.getStreamProvider();
-      const { history: newHistory, syntheticMessage, tailStartIndex } = await compactHistory(
+      const { history: newHistory, syntheticMessage, tailStartIndex, usage } = await compactHistory(
         this.compactedContextHistory,
         provider,
         this.activeModel,
@@ -452,6 +452,7 @@ export class Agent {
         ts: new Date().toISOString(),
         messagesBefore,
         messagesAfter: this.compactedContextHistory.length,
+        usage,
       };
       this.logEvent(doneEv);
       yield doneEv;
@@ -630,7 +631,7 @@ export class Agent {
 
         try {
           const provider = this.getStreamProvider();
-          const { history: newHistory, syntheticMessage, tailStartIndex } = await compactHistory(
+          const { history: newHistory, syntheticMessage, tailStartIndex, usage } = await compactHistory(
             this.compactedContextHistory,
             provider,
             this.activeModel,
@@ -650,7 +651,7 @@ export class Agent {
           const tailHashes = this.compactedContextHashes.slice(tailStartIndex);
           this.compactedContextHistory = newHistory as Anthropic.MessageParam[];
           this.compactedContextHashes = [syntheticHash, ...tailHashes];
-          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.compactedContextHistory.length };
+          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.compactedContextHistory.length, usage };
           this.logEvent(doneEv);
           yield doneEv;
         } catch (err: any) {
@@ -688,6 +689,8 @@ export class Agent {
     const allToolCalls: string[] = [];
 
     const fallbackEnabled = Boolean(config.fallbackModel && process.env.OPENAI_API_KEY);
+
+    const turnStartTime = performance.now();
 
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
@@ -1131,7 +1134,7 @@ export class Agent {
       costUsd: totalCostUsd,
       savedUsd: totalSavedUsd,
       ttftMs: totalTtftMs,
-      totalMs: performance.now() - (this._llmCallCount > 0 ? 0 : 0), // wall time not tracked here
+      totalMs: performance.now() - turnStartTime,
       cacheCreationTokens: totalCacheCreationTokens,
       cacheReadTokens: totalCacheReadTokens,
     };

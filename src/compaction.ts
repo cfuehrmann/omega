@@ -33,13 +33,20 @@ function serialiseMessages(msgs: MessageParam[]): string {
   }).join("\n\n");
 }
 
-/** Call the LLM with a single user message and return the text response. */
+export interface CompactionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+/** Call the LLM with a single user message and return the text response and usage. */
 async function callLlm(
   prompt: string,
   provider: StreamProvider,
   model = "claude-sonnet-4-6",
   maxTokens = 2048
-): Promise<string> {
+): Promise<{ text: string; usage: CompactionUsage }> {
   const stream = await provider({
     model,
     max_tokens: maxTokens,
@@ -49,7 +56,14 @@ async function callLlm(
   });
   const msg = await stream.finalMessage();
   const textBlock = msg.content.find((b: any) => b.type === "text");
-  return textBlock ? (textBlock as any).text : "";
+  const text = textBlock ? (textBlock as any).text : "";
+  const usage: CompactionUsage = {
+    input_tokens:                  msg.usage.input_tokens,
+    output_tokens:                 msg.usage.output_tokens,
+    cache_creation_input_tokens:   (msg.usage as any).cache_creation_input_tokens ?? undefined,
+    cache_read_input_tokens:       (msg.usage as any).cache_read_input_tokens ?? undefined,
+  };
+  return { text, usage };
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +110,7 @@ export async function compactHistory(
   tailStartIndex: number;
   originalCount: number;
   newCount: number;
+  usage: CompactionUsage;
 }> {
   const originalCount = history.length;
 
@@ -109,14 +124,12 @@ export async function compactHistory(
 
   if (originalCount <= tailLength) {
     // Nothing to compact — history is already short enough.
-    // Return a no-op synthetic message (caller will still append it to context.jsonl
-    // if it proceeds, but the early-return path in agent.ts bypasses compactHistory
-    // entirely for the zero-message case).
     const noopSynthetic: MessageParam = {
       role: "user",
       content: `[Compacted context summary: (nothing to compact)]`,
     };
-    return { history, syntheticMessage: noopSynthetic, tailStartIndex: 0, originalCount, newCount: originalCount };
+    const zeroUsage: CompactionUsage = { input_tokens: 0, output_tokens: 0 };
+    return { history, syntheticMessage: noopSynthetic, tailStartIndex: 0, originalCount, newCount: originalCount, usage: zeroUsage };
   }
 
   const head = history.slice(0, tailStartIndex);
@@ -132,7 +145,7 @@ export async function compactHistory(
     `<conversation>\n${headText}\n</conversation>\n\n` +
     `Write a dense, factual summary in plain prose. No preamble.`;
 
-  const summary = await callLlm(prompt, provider, model);
+  const { text: summary, usage } = await callLlm(prompt, provider, model);
 
   const syntheticMessage: MessageParam = {
     role: "user",
@@ -140,7 +153,7 @@ export async function compactHistory(
   };
 
   const newHistory: MessageParam[] = [syntheticMessage, ...tail];
-  return { history: newHistory, syntheticMessage, tailStartIndex, originalCount, newCount: newHistory.length };
+  return { history: newHistory, syntheticMessage, tailStartIndex, originalCount, newCount: newHistory.length, usage };
 }
 
 /**
@@ -176,5 +189,6 @@ Write in present tense for current state, past tense for history.
 Be concise but complete. Ruthlessly prune: prefer one accurate sentence over three redundant ones.
 No preamble, just the document.`;
 
-  return callLlm(prompt, provider, model, 4096);
+  const { text } = await callLlm(prompt, provider, model, 4096);
+  return text;
 }

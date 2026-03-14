@@ -45,7 +45,6 @@ html, body, #root {
   color: var(--dim);
   display: flex;
   align-items: baseline;
-  gap: 8px;
   white-space: nowrap;
   overflow: hidden;
 }
@@ -54,13 +53,20 @@ html, body, #root {
   font-weight: bold;
   color: var(--dim);
   flex-shrink: 0;
-  min-width: 52px;
+  padding-right: 8px;
 }
 
 .session-bar-dir {
   opacity: 0.85;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.session-bar-provider-model {
+  flex-shrink: 0;
+  opacity: 0.75;
+  white-space: nowrap;
+  padding-left: 28px;
 }
 
 /* ── Sticky metrics bar (per-turn + session totals) ── */
@@ -87,13 +93,13 @@ html, body, #root {
 .sm-col-label {
   color: var(--dim);
   opacity: 0.75;
-  padding: 1px 2px 1px 8px;
+  padding: 1px 2px 1px 16px;
   white-space: nowrap;
 }
 
 /* Extra left padding creates the visual gap before `out` */
 .sm-col-gap {
-  padding-left: 28px;
+  padding-left: 32px;
 }
 
 .sm-col-val {
@@ -104,24 +110,26 @@ html, body, #root {
   white-space: nowrap;
 }
 
-/* ── Metrics legend (inline <details>/<summary>) ── */
-.sm-legend {
-  font-size: 11px;
-  color: var(--dim);
-  padding: 0 0 4px 0;
+/* ── Metrics legend (button in session row cell; body expands below table) ── */
+.sm-legend-cell {
+  padding-left: 12px;
+  vertical-align: middle;
 }
 
 .sm-legend-toggle {
   cursor: pointer;
   opacity: 0.55;
-  user-select: none;
-  list-style: none;   /* hide default triangle on some browsers */
-  display: inline-block;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
   padding: 2px 4px;
 }
-.sm-legend-toggle::-webkit-details-marker { display: none; }
+.sm-legend-toggle:hover { opacity: 0.9; }
 
 .sm-legend-body {
+  font-size: 11px;
+  color: var(--dim);
   padding: 6px 8px 4px 8px;
   line-height: 1.5;
 }
@@ -179,7 +187,6 @@ html, body, #root {
 }
 
 .status-label { font-size: 11px; color: var(--dim); }
-.model-label  { margin-left: auto; font-size: 11px; color: var(--dim); }
 
 /* ── Reconnect banner ── */
 .reconnect-banner {
@@ -323,8 +330,16 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.input-area textarea {
+/* Wrapper holds the textarea + busy notice, fills flex space */
+.textarea-wrap {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.input-area textarea {
+  width: 100%;
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -341,6 +356,23 @@ html, body, #root {
 .input-area textarea:focus { border-color: var(--green); }
 .input-area textarea::placeholder { color: var(--dim); }
 .input-area textarea:disabled { opacity: 0.5; }
+
+/* Yellow border while a turn is in progress — typing allowed but send blocked */
+.input-area textarea.textarea-busy {
+  border-color: var(--yellow);
+}
+.input-area textarea.textarea-busy:focus {
+  border-color: var(--yellow);
+}
+
+/* Small notice rendered below the textarea during a live turn */
+.textarea-busy-notice {
+  font-size: 10px;
+  color: var(--yellow);
+  opacity: 0.75;
+  padding: 0 2px;
+  letter-spacing: 0.3px;
+}
 
 .send-btn, .abort-btn {
   padding: 0 16px;
