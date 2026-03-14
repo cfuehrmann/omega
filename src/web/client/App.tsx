@@ -639,16 +639,16 @@ function StickyMetricsBar() {
   const isLive = () => state.liveTurn !== null;
   const isOpenAi = () => provider() === "openai";
 
-  // Session row: completed-turns total + whatever is live right now.
+  // Session row: completed-turns total + live turn + compaction totals.
   const sessMetrics = (): StickyMetrics => {
     const base = state.sessionTotals;
     const live = state.liveTurn;
-    if (!live) return base;
+    const compact = state.compactionTotals;
     return {
-      freshInTokens: base.freshInTokens + live.freshInTokens,
-      writeInTokens: base.writeInTokens + live.writeInTokens,
-      readInTokens:  base.readInTokens  + live.readInTokens,
-      outTokens:     base.outTokens     + live.outTokens,
+      freshInTokens: base.freshInTokens + (live?.freshInTokens ?? 0) + compact.freshInTokens,
+      writeInTokens: base.writeInTokens + (live?.writeInTokens ?? 0) + compact.writeInTokens,
+      readInTokens:  base.readInTokens  + (live?.readInTokens  ?? 0) + compact.readInTokens,
+      outTokens:     base.outTokens     + (live?.outTokens     ?? 0) + compact.outTokens,
     };
   };
 
@@ -709,6 +709,17 @@ function StickyMetricsBar() {
                 </>}
               </For>
             </tr>
+            <Show when={state.compactionTotals.outTokens > 0 || state.compactionTotals.freshInTokens > 0 || state.compactionTotals.writeInTokens > 0 || state.compactionTotals.readInTokens > 0}>
+              <tr>
+                <td class="sm-row-label">compact</td>
+                <For each={buildCells(state.compactionTotals)}>
+                  {([lbl, val, gap]) => <>
+                    <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
+                    <td class="sm-col-val">{val}</td>
+                  </>}
+                </For>
+              </tr>
+            </Show>
             <tr>
               <td class="sm-row-label">session</td>
               <For each={buildCells(sessMetrics())}>
@@ -721,17 +732,6 @@ function StickyMetricsBar() {
                 <button class="sm-legend-toggle" onClick={() => setLegendOpen(o => !o)}>ⓘ</button>
               </td>
             </tr>
-            <Show when={state.compactionTotals.outTokens > 0 || state.compactionTotals.freshInTokens > 0 || state.compactionTotals.writeInTokens > 0 || state.compactionTotals.readInTokens > 0}>
-              <tr>
-                <td class="sm-row-label">compact</td>
-                <For each={buildCells(state.compactionTotals)}>
-                  {([lbl, val, gap]) => <>
-                    <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
-                    <td class="sm-col-val">{val}</td>
-                  </>}
-                </For>
-              </tr>
-            </Show>
           </tbody>
         </table>
         <Show when={legendOpen()}>
