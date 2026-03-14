@@ -383,6 +383,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "model_changed":
       return (
         <div class="block status">
+          <div class="block-label">model_changed</div>
           <BlockTs ts={ts} />
           <div class="block-body">Switched to {e.provider} {e.model}</div>
         </div>
@@ -391,6 +392,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "oauth_token_expired":
       return (
         <div class="block status">
+          <div class="block-label">oauth_token_expired</div>
           <BlockTs ts={ts} />
           <div class="block-body">OAuth token expired/revoked — refreshing…</div>
         </div>
@@ -399,6 +401,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "oauth_refreshed":
       return (
         <div class="block status">
+          <div class="block-label">oauth_refreshed</div>
           <BlockTs ts={ts} />
           <div class="block-body">Token refreshed, retrying…</div>
         </div>
@@ -407,6 +410,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "compact_user_start":
       return (
         <div class="block status">
+          <div class="block-label">compact_user_start</div>
           <BlockTs ts={ts} />
           <div class="block-body">Compacting context…</div>
         </div>
@@ -418,6 +422,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
         : `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
+          <div class="block-label">compact_user_done</div>
           <BlockTs ts={ts} />
           <div class="block-body">{msg}</div>
         </div>
@@ -427,6 +432,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "compact_user_error":
       return (
         <div class="block error">
+          <div class="block-label">compact_user_error</div>
           <BlockTs ts={ts} />
           <div class="block-body">⚠ Compaction failed: {e.error}</div>
         </div>
@@ -435,6 +441,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "compact_auto_start":
       return (
         <div class="block status">
+          <div class="block-label">compact_auto_start</div>
           <BlockTs ts={ts} />
           <div class="block-body">Auto-compacting context ({e.messagesBefore} messages)…</div>
         </div>
@@ -444,6 +451,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       const msg = `Context auto-compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
+          <div class="block-label">compact_auto_done</div>
           <BlockTs ts={ts} />
           <div class="block-body">{msg}</div>
         </div>
@@ -453,6 +461,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "compact_auto_error":
       return (
         <div class="block error">
+          <div class="block-label">compact_auto_error</div>
           <BlockTs ts={ts} />
           <div class="block-body">⚠ Auto-compaction failed (rolling truncation fallback): {e.error}</div>
         </div>
@@ -461,6 +470,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "world_state_saved":
       return (
         <div class="block world-state-saved">
+          <div class="block-label">world_state_saved</div>
           <BlockTs ts={ts} />
           <div class="block-body">✓ world state saved ({e.charCount} chars)</div>
         </div>
