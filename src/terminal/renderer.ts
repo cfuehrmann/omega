@@ -225,9 +225,9 @@ export function renderApiResponse(
   lines.push(sapphireBold("llm_response") + modelSuffix);
   lines.push(sapphire(`${INDENT}stop_reason: "${stopReason}"`));
   lines.push(sapphire(`${INDENT}usage:`));
-  lines.push(sapphireDim(`${INDENT2}new: ${usage.input_tokens}`));
-  if (usage.cache_creation_input_tokens) lines.push(sapphireDim(`${INDENT2}write: ${usage.cache_creation_input_tokens}`));
-  if (usage.cache_read_input_tokens)     lines.push(sapphireDim(`${INDENT2}read: ${usage.cache_read_input_tokens}`));
+  lines.push(sapphireDim(`${INDENT2}in (uncached): ${usage.input_tokens}`));
+  if (usage.cache_creation_input_tokens) lines.push(sapphireDim(`${INDENT2}in (cache write): ${usage.cache_creation_input_tokens}`));
+  if (usage.cache_read_input_tokens)     lines.push(sapphireDim(`${INDENT2}in (cache read): ${usage.cache_read_input_tokens}`));
   lines.push(sapphireDim(`${INDENT2}out: ${usage.output_tokens}`));
   if (usage.service_tier && usage.service_tier !== "standard") lines.push(sapphireDim(`${INDENT2}service_tier: ${usage.service_tier}`));
   return lines;
