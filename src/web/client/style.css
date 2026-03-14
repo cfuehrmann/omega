@@ -144,7 +144,7 @@ html, body, #root {
   white-space: nowrap;
 }
 
-/* ── Metrics legend (button in session row cell; body expands below table) ── */
+/* ── Metrics legend button (in session row cell) ── */
 .sm-legend-cell {
   padding-left: 12px;
   vertical-align: middle;
@@ -161,6 +161,7 @@ html, body, #root {
 }
 .sm-legend-toggle:hover { opacity: 0.9; }
 
+/* (old .sm-legend-body removed — legend is now the global TokenLegend overlay) */
 .sm-legend-body {
   font-size: 11px;
   color: var(--dim);
@@ -587,4 +588,83 @@ html, body, #root {
   background: var(--bg);
   border-radius: 3px;
   padding: 6px 8px;
+}
+
+/* ── Token legend overlay ── */
+/* Dim backdrop — tapping outside closes the legend (mobile-friendly) */
+.token-legend-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: flex-end;     /* sheet slides up from bottom on mobile */
+  justify-content: center;
+  z-index: 200;
+}
+
+@media (min-width: 600px) {
+  .token-legend-overlay {
+    align-items: center;     /* centered dialog on desktop */
+  }
+}
+
+.token-legend {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 16px 20px 20px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+}
+
+@media (min-width: 600px) {
+  .token-legend {
+    border-radius: var(--radius);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    width: auto;
+    min-width: 320px;
+  }
+}
+
+.token-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--ctp-subtext1);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.token-legend-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--dim);
+  font-size: 12px;
+  padding: 2px 7px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.token-legend-close:hover { border-color: var(--red); color: var(--red); }
+
+.token-legend-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.token-legend-table td {
+  padding: 5px 10px 5px 0;
+  vertical-align: top;
+  color: var(--text);
+}
+
+.token-legend-table td:first-child {
+  white-space: nowrap;
+  color: var(--ctp-subtext1);
+  padding-right: 16px;
 }
