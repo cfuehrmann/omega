@@ -21,7 +21,7 @@ export type WsEvent =
   | { type: "reset_done" }
   | { type: "session_info"; dir: string }
   | { type: "user_message"; ts?: string; content: string }
-  | { type: "text"; text: string }
+  | { type: "text"; ts?: string; text: string }
   | { type: "assistant_text"; ts?: string; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
   | { type: "session_start"; ts?: string; authMode: string; model: string; provider: string; systemPrompt: string }
@@ -196,7 +196,7 @@ export function dispatch(event: WsEvent): void {
           case "assistant_text": {
             // Replay path: no live `text` fragments — push the full text as a rendered block.
             const t = cur();
-            if (t) t.events.push({ type: "text", text: (e as any).text });
+            if (t) t.events.push({ type: "text", ts: (e as any).ts, text: (e as any).text });
             break;
           }
 
@@ -344,7 +344,7 @@ export function dispatch(event: WsEvent): void {
         // built from streaming fragments — skip to avoid duplication.
         const hasLiveText = turn.events.some(e => e.type === "text");
         if (!hasLiveText) {
-          turn.events.push({ type: "text", text: event.text });
+          turn.events.push({ type: "text", ts: event.ts, text: event.text });
         }
       }));
       break;
