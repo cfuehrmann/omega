@@ -123,6 +123,8 @@ interface LlmCallDetail {
   /** Number of hashes in the previous llm_call (0 if this is the first). */
   previousLength: number;
   requestSummary?: Record<string, unknown>;
+  /** Which event opened this modal — affects the title. */
+  source?: "llm_call" | "llm_response";
 }
 
 interface LlmResponseDetail {
@@ -137,6 +139,8 @@ interface LlmResponseDetail {
     service_tier?: string | null;
   };
   contextHash: string;
+  /** Full hashes array: preceding llm_call's contextHashes + this response's contextHash. */
+  allContextHashes: string[];
   text?: string;
   responseSummary?: Record<string, unknown>;
 }
@@ -163,6 +167,25 @@ function setToolModal(d: ToolDetail | null) {
 }
 
 function closeModal() { setActiveModal(null); }
+
+/** Render a context record's content array (or string) as a readable string. */
+function renderContent(content: any): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((block: any) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "tool_use") return `[tool_use: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`;
+      if (block.type === "tool_result") {
+        const out = Array.isArray(block.content)
+          ? block.content.map((c: any) => c.text ?? JSON.stringify(c)).join("\n")
+          : String(block.content ?? "");
+        return `[tool_result]\n${out}`;
+      }
+      return JSON.stringify(block, null, 2);
+    }).join("\n");
+  }
+  return JSON.stringify(content, null, 2);
+}
 
 function ModalShell(props: { title: string; cls: string; children: any }) {
   return (
@@ -276,27 +299,8 @@ function ActiveModal() {
             },
           );
 
-          /** Render a context record's content as a readable string. */
-          const renderContent = (content: any): string => {
-            if (typeof content === "string") return content;
-            if (Array.isArray(content)) {
-              return content.map((block: any) => {
-                if (block.type === "text") return block.text;
-                if (block.type === "tool_use") return `[tool_use: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`;
-                if (block.type === "tool_result") {
-                  const out = Array.isArray(block.content)
-                    ? block.content.map((c: any) => c.text ?? JSON.stringify(c)).join("\n")
-                    : String(block.content ?? "");
-                  return `[tool_result]\n${out}`;
-                }
-                return JSON.stringify(block, null, 2);
-              }).join("\n");
-            }
-            return JSON.stringify(content, null, 2);
-          };
-
           return (
-            <ModalShell title="llm_call › messages" cls="llm-call-modal">
+            <ModalShell title={`${d.source ?? "llm_call"} › messages`} cls="llm-call-modal">
               <Show when={d.ts}>
                 <div class="modal-section-label">{formatTs(d.ts)}</div>
               </Show>
@@ -371,20 +375,30 @@ function ActiveModal() {
           ? JSON.stringify(d.responseSummary, null, 2)
           : "(response summary not available)";
 
+        const openMessages = () => setActiveModal({
+          kind: "llm_call_messages",
+          detail: {
+            ts: d.ts,
+            provider: "",
+            url: "",
+            model: "",
+            contextHashes: d.allContextHashes,
+            previousLength: d.allContextHashes.length - 1,
+            requestSummary: undefined,
+            source: "llm_response",
+          },
+        });
+
         return (
-          <ModalShell title={`llm_response › ${d.stopReason}`} cls="llm-resp-modal">
+          <ModalShell title="llm_response › payload" cls="llm-resp-modal">
             <Show when={d.streamingStart}>
               <div class="modal-section-label">streaming start: {formatTs(d.streamingStart)}</div>
             </Show>
             <Show when={d.ts}>
               <div class="modal-section-label">time: {formatTs(d.ts)}</div>
             </Show>
-            <div class="modal-section-label">{usageParts}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
-            <Show when={d.text}>
-              <div class="modal-section-label">text</div>
-              <pre class="modal-body">{d.text}</pre>
-            </Show>
-            <div class="modal-section-label">response summary</div>
+            <div class="modal-section-label">{usageParts}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>  <button class="llm-legend-btn" onClick={openMessages} title="View as messages">messages (+1)</button></div>
+            <div class="modal-section-label">payload</div>
             <pre class="modal-body">{respStr}</pre>
           </ModalShell>
         );
@@ -658,7 +672,16 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     }
 
     case "llm_response": {
-      const openModal = () => setActiveModal({
+      // Find the preceding llm_call in this turn to get its contextHashes.
+      const precedingCall = [...props.turnEvents]
+        .reverse()
+        .find((ev): ev is WsEvent & { type: "llm_call" } => ev.type === "llm_call");
+      const allContextHashes = [
+        ...(precedingCall?.contextHashes ?? []),
+        e.contextHash,
+      ];
+
+      const openPayload = () => setActiveModal({
         kind: "llm_response",
         detail: {
           ts,
@@ -666,15 +689,31 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
           stopReason: e.stopReason,
           usage: e.usage,
           contextHash: e.contextHash,
+          allContextHashes,
           text: e.text,
           responseSummary: e.responseSummary,
+        },
+      });
+      const openMessages = () => setActiveModal({
+        kind: "llm_call_messages",
+        detail: {
+          ts,
+          provider: "",
+          url: "",
+          model: "",
+          contextHashes: allContextHashes,
+          previousLength: allContextHashes.length - 1,
+          requestSummary: undefined,
         },
       });
       return (
         <div class="block api-response">
           <div class="block-label-row">
             <span class="block-label">llm_response<span class="block-label-meta">{e.stopReason}</span></span>
-            <button class="block-expand-btn" onClick={openModal} title="View full response">⤢</button>
+            <div class="block-btn-group">
+              <button class="block-expand-btn" onClick={openMessages} title="View as messages">messages (+1)</button>
+              <button class="block-expand-btn" onClick={openPayload} title="View response payload">payload</button>
+            </div>
           </div>
           <Show when={e.text}>
             <div class="block-body">{e.text}</div>
@@ -814,7 +853,10 @@ function TurnView(props: { turn: Turn; allLlmCalls: Array<WsEvent & { type: "llm
       {/* Temporary streaming slot — visible only while text is arriving,
           before llm_response clears it (text is then on the llm_response event itself). */}
       <Show when={props.turn.streamingText}>
-        <div class="block assist streaming">
+        <div class="block api-response streaming">
+          <div class="block-label-row">
+            <span class="block-label">llm_response</span>
+          </div>
           <div class="block-body">
             {props.turn.streamingText}
             <span class="cursor" />

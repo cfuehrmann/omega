@@ -110,7 +110,7 @@ test("turn_end shows footer block", async ({ page, server }) => {
   });
 
   await expect(page.locator(".block.footer")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".block.assist")).toBeVisible();
+  await expect(page.locator(".block.api-response")).toBeVisible();
 });
 
 test("text event shows assistant block", async ({ page, server }) => {
@@ -126,7 +126,7 @@ test("text event shows assistant block", async ({ page, server }) => {
     provider: "anthropic",
   });
 
-  const assistBlock = page.locator(".block.assist .block-body");
+  const assistBlock = page.locator(".block.api-response .block-body");
   await expect(assistBlock).toHaveText("Hello from Omega!", { timeout: 3000 });
 });
 
