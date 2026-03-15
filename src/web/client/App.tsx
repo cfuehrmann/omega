@@ -218,7 +218,7 @@ function ActiveModal() {
           return (
             <ModalShell title={d.label} cls="block-modal">
               <Show when={d.ts}>
-                <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+                <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
               </Show>
               <div class="modal-section-label">content</div>
               <pre class="modal-body">{d.body}</pre>
@@ -230,7 +230,7 @@ function ActiveModal() {
           return (
             <ModalShell title={`tool › ${d.name}`} cls="tool-modal">
               <Show when={d.ts}>
-                <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+                <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
               </Show>
               <div class="modal-section-label">input</div>
               <pre class="modal-body">{
@@ -259,7 +259,7 @@ function ActiveModal() {
           return (
             <ModalShell title={`llm_call › ${d.provider}`} cls="llm-call-modal">
               <Show when={d.ts}>
-                <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+                <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
               </Show>
               <div class="modal-section-label">
                 {d.model}
@@ -287,7 +287,7 @@ function ActiveModal() {
         return (
           <ModalShell title="llm_response" cls="llm-resp-modal">
             <Show when={d.ts}>
-              <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+              <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
             </Show>
             <div class="modal-section-label">stop: {d.stopReason}</div>
             <div class="modal-section-label">usage<span class="modal-meta"> · {usageParts}</span></div>
