@@ -427,7 +427,6 @@ describe("[SCHEMA] llm_response has no content field", () => {
       expect("content" in llmResponse).toBe(false);
       // metadata fields must still be present
       expect(typeof llmResponse.stopReason).toBe("string");
-      expect(typeof llmResponse.model).toBe("string");
       expect(typeof llmResponse.usage).toBe("object");
     }
   });

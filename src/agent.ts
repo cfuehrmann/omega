@@ -16,8 +16,6 @@ import type { OmegaEvent, StreamSignal } from "./events.js";
 export interface TurnMetrics {
   inputTokens: number;
   outputTokens: number;
-  ttftMs: number | null;
-  totalMs: number;
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
 }
@@ -623,12 +621,8 @@ export class Agent {
     let totalOutputTokens = 0;
     let totalCacheCreationTokens = 0;
     let totalCacheReadTokens = 0;
-    let totalTtftMs: number | null = null;
-    const allToolCalls: string[] = [];
 
     const fallbackEnabled = Boolean(config.fallbackModel && process.env.OPENAI_API_KEY);
-
-    const turnStartTime = performance.now();
 
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
@@ -636,11 +630,8 @@ export class Agent {
     while (continueLoop) {
       continueLoop = false;
 
-      const startTime = performance.now();
-      let ttftMs: number | null = null;
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
-      const toolCallsThisTurn: string[] = [];
       let assembledText = "";
 
       // Build system prompt (core instructions + system-prompt-append if loaded).
@@ -734,9 +725,6 @@ export class Agent {
         for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
           try {
             const openai = await this.openAiCaller(sentContext, systemPrompt, activeModel, config.maxOutputTokens, signal);
-            if (ttftMs === null) {
-              ttftMs = performance.now() - startTime;
-            }
             if (openai.text) {
               assembledText = openai.text;
               yield { type: "text", text: openai.text };
@@ -790,9 +778,6 @@ export class Agent {
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
             ) {
-              if (ttftMs === null) {
-                ttftMs = performance.now() - startTime;
-              }
               assembledText += event.delta.text;
               yield { type: "text", text: event.delta.text };
             }
@@ -895,9 +880,6 @@ export class Agent {
       totalOutputTokens += turnOutputTokens;
       totalCacheCreationTokens += turnCacheCreation;
       totalCacheReadTokens += turnCacheRead;
-      if (totalTtftMs === null) totalTtftMs = ttftMs; // first API call sets TTFT
-
-      const totalMs = performance.now() - startTime;
 
       // Add assistant response to history; capture hash for llm_response + tool_call events.
       // appendToHistory is awaited so the context.jsonl record is on disk before
@@ -907,10 +889,7 @@ export class Agent {
       const llmResponseEvent: OmegaEvent = {
         type: "llm_response",
         ts: new Date().toISOString(),
-        provider: useOpenAi ? "openai" : "anthropic",
-        url: useOpenAi ? getOpenAiUrl() : "https://api.anthropic.com/v1/messages",
         stopReason: response.stop_reason ?? "unknown",
-        model: activeModel,
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,
@@ -1017,9 +996,6 @@ export class Agent {
           const toolUse = toolUseBlocks[i];
           const result = results[i];
 
-          toolCallsThisTurn.push(toolUse.name);
-          allToolCalls.push(toolUse.name);
-
           toolResults.push({
             type: "tool_result",
             tool_use_id: toolUse.id,
@@ -1052,23 +1028,16 @@ export class Agent {
     }
 
     // Emit one turn_end after all API calls complete
-    const endProvider: ProviderName = this.provider === "openai" ? "openai" : "anthropic";
-    const endModel = activeModel;
     const turnEndMetrics: TurnMetrics = {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
-      ttftMs: totalTtftMs,
-      totalMs: performance.now() - turnStartTime,
       cacheCreationTokens: totalCacheCreationTokens,
       cacheReadTokens: totalCacheReadTokens,
     };
     const turnEndEvent: OmegaEvent = {
       type: "turn_end",
       ts: new Date().toISOString(),
-      provider: endProvider,
-      model: endModel,
       metrics: turnEndMetrics,
-      toolCalls: allToolCalls,
     };
     this.logEvent(turnEndEvent);
     yield turnEndEvent;

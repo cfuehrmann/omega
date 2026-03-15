@@ -15,7 +15,6 @@ describe("formatTurnFooter", () => {
   const metrics = {
     inputTokens: 1234,
     outputTokens: 567,
-    ttftMs: 850,
   };
   const session = {
     inputTokens: 9999,
@@ -65,14 +64,9 @@ describe("formatTurnFooter", () => {
     expect(stripAnsi(sessionLine)).not.toContain("$");
   });
 
-  it("turn line contains ttft", () => {
+  it("turn line does NOT contain ttft", () => {
     const { turnLine } = formatTurnFooter(metrics, session, provider, model);
-    expect(stripAnsi(turnLine)).toContain("ttft:");
-  });
-
-  it("session line does NOT contain ttft", () => {
-    const { sessionLine } = formatTurnFooter(metrics, session, provider, model);
-    expect(stripAnsi(sessionLine)).not.toContain("ttft:");
+    expect(stripAnsi(turnLine)).not.toContain("ttft:");
   });
 
   it("turn line contains model", () => {
@@ -100,14 +94,12 @@ describe("formatTurnFooter — cache token display", () => {
   const metricsWithCache = {
     inputTokens: 100,
     outputTokens: 50,
-    ttftMs: 400,
     cacheCreationTokens: 800,
     cacheReadTokens: 0,
   };
   const metricsWithRead = {
     inputTokens: 100,
     outputTokens: 50,
-    ttftMs: 300,
     cacheCreationTokens: 0,
     cacheReadTokens: 500,
   };
@@ -133,7 +125,7 @@ describe("formatTurnFooter — cache token display", () => {
   });
 
   it("turn line shows write: 0 and read: 0 even when both are zero (always-on labels)", () => {
-    const metricsZero = { inputTokens: 100, outputTokens: 50, ttftMs: 300, cacheCreationTokens: 0, cacheReadTokens: 0 };
+    const metricsZero = { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0 };
     const { turnLine } = formatTurnFooter(metricsZero, sessionNoCache, provider, model);
     const plain = stripAnsi(turnLine);
     expect(plain).toContain("write: 0");
@@ -141,7 +133,7 @@ describe("formatTurnFooter — cache token display", () => {
   });
 
   it("turn line shows write: 0 and read: 0 when cache fields absent (defaults to 0)", () => {
-    const metricsNone = { inputTokens: 100, outputTokens: 50, ttftMs: 300 };
+    const metricsNone = { inputTokens: 100, outputTokens: 50 };
     const { turnLine } = formatTurnFooter(metricsNone, sessionNoCache, provider, model);
     const plain = stripAnsi(turnLine);
     expect(plain).toContain("write: 0");
@@ -176,7 +168,6 @@ describe("formatTurnFooter — OpenAI provider", () => {
   const metrics = {
     inputTokens: 2000,
     outputTokens: 300,
-    ttftMs: 600,
     cacheCreationTokens: 100,   // should be ignored for OpenAI
     cacheReadTokens: 400,       // should be ignored for OpenAI
   };
@@ -223,12 +214,11 @@ describe("formatTurnFooter — OpenAI provider", () => {
     expect(plain).not.toContain("read:");
   });
 
-  it("turn line still shows new:, out:, ttft:, and provider/model for OpenAI", () => {
+  it("turn line still shows new:, out:, and provider/model for OpenAI", () => {
     const { turnLine } = formatTurnFooter(metrics, session, provider, model);
     const plain = stripAnsi(turnLine);
     expect(plain).toContain("new: 2000");
     expect(plain).toContain("out: 300");
-    expect(plain).toContain("ttft:");
     expect(plain).toContain(model);
   });
 });

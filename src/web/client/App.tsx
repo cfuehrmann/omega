@@ -107,6 +107,7 @@ function firstLine(s: string): string {
 
 interface ToolDetail {
   name: string;
+  ts?: string;
   input: unknown;
   output: string;
   isError: boolean;
@@ -114,6 +115,7 @@ interface ToolDetail {
 }
 
 interface LlmCallDetail {
+  ts?: string;
   provider: string;
   url: string;
   model: string;
@@ -122,9 +124,7 @@ interface LlmCallDetail {
 }
 
 interface LlmResponseDetail {
-  provider: string;
-  url: string;
-  model: string;
+  ts?: string;
   stopReason: string;
   usage: {
     input_tokens: number;
@@ -137,15 +137,21 @@ interface LlmResponseDetail {
   raw: any;
 }
 
+interface BlockDetail {
+  label: string;
+  ts?: string;
+  body: string;
+}
+
 type ModalContent =
   | { kind: "tool"; detail: ToolDetail }
   | { kind: "llm_call"; detail: LlmCallDetail }
-  | { kind: "llm_response"; detail: LlmResponseDetail };
+  | { kind: "llm_response"; detail: LlmResponseDetail }
+  | { kind: "block"; detail: BlockDetail };
 
 const [activeModal, setActiveModal] = createSignal<ModalContent | null>(null);
 const [legendOpen, setLegendOpen] = createSignal(false);
 
-// Keep the old setToolModal helper so tool_call/tool_result call sites are unchanged
 function setToolModal(d: ToolDetail | null) {
   setActiveModal(d ? { kind: "tool", detail: d } : null);
 }
@@ -207,10 +213,25 @@ function ActiveModal() {
     <Show when={activeModal()}>
       {(m) => {
         const modal = m();
+        if (modal.kind === "block") {
+          const d = modal.detail;
+          return (
+            <ModalShell title={d.label} cls="block-modal">
+              <Show when={d.ts}>
+                <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+              </Show>
+              <div class="modal-section-label">content</div>
+              <pre class="modal-body">{d.body}</pre>
+            </ModalShell>
+          );
+        }
         if (modal.kind === "tool") {
           const d = modal.detail;
           return (
             <ModalShell title={`tool › ${d.name}`} cls="tool-modal">
+              <Show when={d.ts}>
+                <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+              </Show>
               <div class="modal-section-label">input</div>
               <pre class="modal-body">{
                 d.input == null
@@ -237,6 +258,9 @@ function ActiveModal() {
             : "(request not captured)";
           return (
             <ModalShell title={`llm_call › ${d.provider}`} cls="llm-call-modal">
+              <Show when={d.ts}>
+                <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+              </Show>
               <div class="modal-section-label">
                 {d.model}
                 <span class="modal-meta"> · {d.url} · {d.contextHashes.length} context messages</span>
@@ -261,11 +285,11 @@ function ActiveModal() {
             ? JSON.stringify(d.raw, null, 2)
             : "(content not captured)";
         return (
-          <ModalShell title={`llm_response › ${d.provider}`} cls="llm-resp-modal">
-            <div class="modal-section-label">
-              {d.model}
-              <span class="modal-meta"> · stop: {d.stopReason} · {d.url}</span>
-            </div>
+          <ModalShell title="llm_response" cls="llm-resp-modal">
+            <Show when={d.ts}>
+              <div class="modal-section-label">timestamp<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+            </Show>
+            <div class="modal-section-label">stop: {d.stopReason}</div>
             <div class="modal-section-label">usage<span class="modal-meta"> · {usageParts}</span></div>
             <pre class="modal-body">{contentStr}</pre>
           </ModalShell>
@@ -279,11 +303,6 @@ function ActiveModal() {
 // Event block
 // ---------------------------------------------------------------------------
 
-/** Timestamp line rendered inside every block that carries a ts field. */
-function BlockTs(props: { ts?: string }) {
-  const label = () => formatTs(props.ts);
-  return <Show when={label()}><div class="block-ts">{label()}</div></Show>;
-}
 
 function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: boolean }) {
   const e = props.event;
@@ -296,8 +315,10 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "user_message":
       return (
         <div class="block user">
-          <div class="block-label">user_message</div>
-          <BlockTs ts={ts} />
+          <div class="block-label-row">
+            <span class="block-label">user_message</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "user_message", ts, body: e.content } })} title="Details">⤢</button>
+          </div>
           <div class="block-body">{e.content}</div>
         </div>
       );
@@ -306,8 +327,10 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     case "assistant_text":
       return (
         <div class={`block assist${props.streaming ? " streaming" : ""}`}>
-          <div class="block-label">assistant_text</div>
-          <BlockTs ts={ts} />
+          <div class="block-label-row">
+            <span class="block-label">assistant_text</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "assistant_text", ts, body: e.text } })} title="Details">⤢</button>
+          </div>
           <div class="block-body">
             {e.text}
             <Show when={props.streaming}><span class="cursor" /></Show>
@@ -333,6 +356,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
         const r = result();
         setToolModal({
           name: e.name,
+          ts,
           input: e.input,
           output: r ? r.output : "(not yet available)",
           isError: r ? r.isError : false,
@@ -345,7 +369,6 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
             <span class="block-label">tool_call › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
-          <BlockTs ts={ts} />
           <div class="block-body block-preview">{inputPreview()}</div>
         </div>
       );
@@ -362,6 +385,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       const openModal = () => {
         setToolModal({
           name: e.name,
+          ts,
           input: call ? call.input : null,
           output: e.output,
           isError: e.isError,
@@ -374,112 +398,148 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
             <span class="block-label">tool_result › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
-          <BlockTs ts={ts} />
           <div class="block-body block-preview">{outputPreview()}</div>
         </div>
       );
     }
 
-    case "model_changed":
+    case "model_changed": {
+      const body = `Switched to ${e.provider} ${e.model}`;
       return (
         <div class="block status">
-          <div class="block-label">model_changed</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">Switched to {e.provider} {e.model}</div>
+          <div class="block-label-row">
+            <span class="block-label">model_changed</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "model_changed", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "oauth_token_expired":
+    case "oauth_token_expired": {
+      const body = "OAuth token expired/revoked — refreshing…";
       return (
         <div class="block status">
-          <div class="block-label">oauth_token_expired</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">OAuth token expired/revoked — refreshing…</div>
+          <div class="block-label-row">
+            <span class="block-label">oauth_token_expired</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "oauth_token_expired", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "oauth_refreshed":
+    case "oauth_refreshed": {
+      const body = "Token refreshed, retrying…";
       return (
         <div class="block status">
-          <div class="block-label">oauth_refreshed</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">Token refreshed, retrying…</div>
+          <div class="block-label-row">
+            <span class="block-label">oauth_refreshed</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "oauth_refreshed", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "compact_user_start":
+    case "compact_user_start": {
+      const body = "Compacting context…";
       return (
         <div class="block status">
-          <div class="block-label">compact_user_start</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">Compacting context…</div>
+          <div class="block-label-row">
+            <span class="block-label">compact_user_start</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_user_start", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
     case "compact_user_done": {
-      const msg = e.messagesAfter === e.messagesBefore
+      const body = e.messagesAfter === e.messagesBefore
         ? `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages (no change)`
         : `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
-          <div class="block-label">compact_user_done</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{msg}</div>
+          <div class="block-label-row">
+            <span class="block-label">compact_user_done</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_user_done", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
     }
 
-    case "compact_user_error":
+    case "compact_user_error": {
+      const body = `⚠ Compaction failed: ${e.error}`;
       return (
         <div class="block error">
-          <div class="block-label">compact_user_error</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">⚠ Compaction failed: {e.error}</div>
+          <div class="block-label-row">
+            <span class="block-label">compact_user_error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_user_error", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "compact_auto_start":
+    case "compact_auto_start": {
+      const body = `Auto-compacting context (${e.messagesBefore} messages)…`;
       return (
         <div class="block status">
-          <div class="block-label">compact_auto_start</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">Auto-compacting context ({e.messagesBefore} messages)…</div>
+          <div class="block-label-row">
+            <span class="block-label">compact_auto_start</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_auto_start", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
     case "compact_auto_done": {
-      const msg = `Context auto-compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
+      const body = `Context auto-compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
       return (
         <div class="block status">
-          <div class="block-label">compact_auto_done</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{msg}</div>
+          <div class="block-label-row">
+            <span class="block-label">compact_auto_done</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_auto_done", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
     }
 
-    case "compact_auto_error":
+    case "compact_auto_error": {
+      const body = `⚠ Auto-compaction failed (rolling truncation fallback): ${e.error}`;
       return (
         <div class="block error">
-          <div class="block-label">compact_auto_error</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">⚠ Auto-compaction failed (rolling truncation fallback): {e.error}</div>
+          <div class="block-label-row">
+            <span class="block-label">compact_auto_error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_auto_error", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "world_state_saved":
+    case "world_state_saved": {
+      const body = `✓ world state saved (${e.charCount} chars)`;
       return (
         <div class="block world-state-saved">
-          <div class="block-label">world_state_saved</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">✓ world state saved ({e.charCount} chars)</div>
+          <div class="block-label-row">
+            <span class="block-label">world_state_saved</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "world_state_saved", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
     case "llm_call": {
       const openModal = () => setActiveModal({
         kind: "llm_call",
         detail: {
+          ts,
           provider: e.provider,
           url: e.url,
           model: e.model,
@@ -490,11 +550,10 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class="block api-call">
           <div class="block-label-row">
-            <span class="block-label">llm_call<span class="block-model"> · {e.model}</span></span>
+            <span class="block-label">llm_call<span class="block-model"> · {e.provider} · {e.model}</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full request">⤢</button>
           </div>
-          <BlockTs ts={ts} />
-          <div class="block-body block-preview">{e.provider} · {e.contextHashes.length} messages</div>
+          <div class="block-body block-preview">{e.contextHashes.length} messages</div>
         </div>
       );
     }
@@ -512,9 +571,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       const openModal = () => setActiveModal({
         kind: "llm_response",
         detail: {
-          provider: e.provider,
-          url: e.url,
-          model: e.model,
+          ts,
           stopReason: e.stopReason,
           usage: e.usage,
           content: e.content,
@@ -524,10 +581,9 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       return (
         <div class="block api-response">
           <div class="block-label-row">
-            <span class="block-label">llm_response<span class="block-model"> · {e.model}</span></span>
+            <span class="block-label">llm_response</span>
             <button class="block-expand-btn" onClick={openModal} title="View full response">⤢</button>
           </div>
-          <BlockTs ts={ts} />
           <div class="block-body">{parts.join("  ")}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
         </div>
       );
@@ -538,76 +594,105 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       const cacheDetail = (m.cacheCreationTokens || m.cacheReadTokens)
         ? `  in (cache write): ${m.cacheCreationTokens ?? 0}  in (cache read): ${m.cacheReadTokens ?? 0}`
         : "";
-      const line = `in (uncached): ${m.inputTokens}${cacheDetail}  out: ${m.outputTokens}  model: ${e.model}`;
+      const line = `in (uncached): ${m.inputTokens}${cacheDetail}  out: ${m.outputTokens}`;
       return (
         <div class="block footer">
-          <BlockTs ts={ts} />
-          <div class="block-body">{line}</div>
+          <div class="block-label-row">
+            <span class="block-label">turn_end</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_end", ts, body: line } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{line}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
         </div>
       );
     }
 
-    case "llm_error":
+    case "llm_error": {
+      const body = e.error;
       return (
         <div class="block error-b">
-          <div class="block-label">api error ({e.provider})</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{e.error}</div>
+          <div class="block-label-row">
+            <span class="block-label">api error ({e.provider})</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `api error (${e.provider})`, ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "agent_error":
+    case "agent_error": {
+      const body = e.error;
       return (
         <div class="block error-b">
-          <div class="block-label">error</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{e.error}</div>
+          <div class="block-label-row">
+            <span class="block-label">error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "agent_error", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "error":
+    case "error": {
+      const body = e.error;
       return (
         <div class="block error-b">
-          <div class="block-label">error</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{e.error}</div>
+          <div class="block-label-row">
+            <span class="block-label">error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "error", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
     case "turn_interrupted":
       return (
         <div class="block interrupt">
-          <BlockTs ts={ts} />
-          ⊘ Interrupted
+          <div class="block-label-row">
+            <span>⊘ Interrupted</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_interrupted", ts, body: "⊘ Interrupted" } })} title="Details">⤢</button>
+          </div>
         </div>
       );
 
-    case "llm_retry":
+    case "llm_retry": {
+      const body = e.error;
       return (
         <div class="block info">
-          <div class="block-label">llm retry (attempt {e.attempt})</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{e.error}</div>
+          <div class="block-label-row">
+            <span class="block-label">llm retry (attempt {e.attempt})</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `llm retry (attempt ${e.attempt})`, ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "session_start":
+    case "session_start": {
+      const body = `${e.authMode} · ${e.provider} · ${e.model}`;
       return (
         <div class="block info">
-          <div class="block-label">session start</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{e.authMode} · {e.provider} · {e.model}</div>
+          <div class="block-label-row">
+            <span class="block-label">session start</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_start", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
-    case "session_end":
+    case "session_end": {
+      const body = `${e.outcome}${e.reason ? ` — ${e.reason}` : ""}`;
       return (
         <div class="block info">
-          <div class="block-label">session end</div>
-          <BlockTs ts={ts} />
-          <div class="block-body">{e.outcome}{e.reason ? ` — ${e.reason}` : ""}</div>
+          <div class="block-label-row">
+            <span class="block-label">session end</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_end", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
         </div>
       );
+    }
 
     // Web-protocol-only events — handled by dispatch(), never appear in turn.events.
     // Listed here to satisfy the exhaustive check.

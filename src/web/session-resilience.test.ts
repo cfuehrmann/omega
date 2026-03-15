@@ -23,7 +23,7 @@ describe("closeOpenTurn", () => {
   it("returns the log unchanged when the last turn is already closed by turn_end", () => {
     const log = [
       { type: "user_message", content: "hi" },
-      { type: "turn_end", metrics: {}, model: "sonnet", provider: "anthropic" },
+      { type: "turn_end", metrics: {} },
     ];
     expect(closeOpenTurn(log)).toEqual(log);
   });
@@ -50,7 +50,7 @@ describe("closeOpenTurn", () => {
   it("handles multiple turns: only patches the open last turn", () => {
     const log = [
       { type: "user_message", content: "first" },
-      { type: "turn_end", metrics: {}, model: "sonnet", provider: "anthropic" },
+      { type: "turn_end", metrics: {} },
       { type: "user_message", content: "second" },
       { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", request: {} },
     ];
@@ -118,7 +118,7 @@ describe("store history replay — open turn recovery", () => {
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "turn_end", metrics: { inputTokens: 10, outputTokens: 5, ttftMs: null }, model: "sonnet", provider: "anthropic" },
+        { type: "turn_end", metrics: { inputTokens: 10, outputTokens: 5 } },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -171,9 +171,9 @@ describe("store history replay — open turn recovery", () => {
         { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", provider: "anthropic", systemPrompt: "..." } as any,
         { type: "user_message", content: "ping" },
         { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
-        { type: "llm_response", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", stopReason: "end_turn", model: "claude-sonnet-4-6", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" } } as any,
+        { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" } } as any,
         { type: "assistant_text", text: "pong" } as any,
-        { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, ttftMs: 1136.1, totalMs: 9781.8, cacheCreationTokens: 320, cacheReadTokens: 3318 }, model: "claude-sonnet-4-6", provider: "anthropic" } as any,
+        { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, cacheCreationTokens: 320, cacheReadTokens: 3318 } } as any,
         { type: "session_end", outcome: "clean" } as any,
       ],
     });

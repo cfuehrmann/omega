@@ -28,7 +28,7 @@ export type WsEvent =
   | { type: "session_end"; ts?: string; outcome: "clean" | "error"; reason?: string }
   | { type: "tool_call"; ts?: string; id: string; name: string; input: unknown }
   | { type: "tool_result"; ts?: string; id: string; name: string; isError: boolean; durationMs: number; output: string }
-  | { type: "llm_response"; ts?: string; provider: string; url: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
+  | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
   | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; request?: unknown }
   | { type: "llm_retry"; ts?: string; attempt: number; provider: string; waitMs: number; error: string }
   | { type: "model_changed"; ts?: string; provider: string; model: string }
@@ -41,7 +41,7 @@ export type WsEvent =
   | { type: "compact_auto_done"; ts?: string; messagesBefore: number; messagesAfter: number; usage?: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }
   | { type: "compact_auto_error"; ts?: string; error: string }
   | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
-  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; ttftMs: number | null; totalMs?: number; cacheCreationTokens?: number; cacheReadTokens?: number }; model: string; provider: string }
+  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
   | { type: "llm_error"; ts?: string; provider: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
   | { type: "error"; ts?: string; error: string }
@@ -384,8 +384,6 @@ export function dispatch(event: WsEvent): void {
       appendEvent(event);
       // Accumulate live per-turn token totals so the metrics bar ticks up mid-turn.
       const u = event.usage;
-      setState("liveProvider", event.provider);
-      setState("liveModel", event.model);
       setState("liveTurn", prev => {
         if (!prev) return prev;
         return {
@@ -399,10 +397,16 @@ export function dispatch(event: WsEvent): void {
     }
 
     case "session_start":
+    case "llm_call": {
+      appendEvent(event);
+      setState("liveProvider", event.provider);
+      setState("liveModel", event.model);
+      break;
+    }
+
     case "session_end":
     case "tool_call":
     case "tool_result":
-    case "llm_call":
     case "llm_retry":
     case "model_changed":
     case "oauth_token_expired":

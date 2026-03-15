@@ -280,13 +280,7 @@ html, body, #root {
   margin-bottom: 3px;
 }
 
-.block-ts {
-  font-size: 10px;
-  color: var(--dim);
-  opacity: 0.7;
-  margin-bottom: 3px;
-  letter-spacing: 0.2px;
-}
+
 
 .block-body { /* inherits */ }
 
@@ -533,10 +527,11 @@ html, body, #root {
   font-weight: bold;
   color: var(--modal-accent, var(--yellow));
 }
-/* tool modal → yellow, llm modals → sapphire (matching block colors) */
+/* tool modal → yellow, llm modals → sapphire, generic block modal → subtext */
 .modal.tool-modal     { --modal-accent: var(--yellow); }
 .modal.llm-call-modal { --modal-accent: var(--llm); }
 .modal.llm-resp-modal { --modal-accent: var(--llm); }
+.modal.block-modal    { --modal-accent: var(--ctp-subtext1); }
 
 .modal-close {
   background: none;

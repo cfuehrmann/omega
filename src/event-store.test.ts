@@ -82,10 +82,7 @@ describe("OmegaEvent round-trip serialisation", () => {
     const e: LlmResponseEvent = {
       type: "llm_response",
       ts: "2025-01-01T00:00:00.000Z",
-      provider: "anthropic",
-      url: "https://api.anthropic.com/v1/messages",
       stopReason: "end_turn",
-      model: "claude-sonnet-4-6",
       usage: { input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 50 },
       contextHash: "ab12cd34",
     };
@@ -112,10 +109,7 @@ describe("OmegaEvent round-trip serialisation", () => {
     const e: TurnEndEvent = {
       type: "turn_end",
       ts: "2025-01-01T00:00:00.000Z",
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      metrics: { inputTokens: 200, outputTokens: 50, ttftMs: 300, totalMs: 1200, cacheCreationTokens: 0, cacheReadTokens: 100 },
-      toolCalls: ["read_file", "write_file"],
+      metrics: { inputTokens: 200, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 100 },
     };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);

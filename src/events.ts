@@ -90,10 +90,7 @@ export interface LlmCallEvent {
 export interface LlmResponseEvent {
   type: "llm_response";
   ts: string;
-  provider: ProviderName;
-  url: string;
   stopReason: string;
-  model: string;
   usage: {
     input_tokens: number;
     output_tokens: number;
@@ -146,10 +143,7 @@ export interface ToolResultEvent {
 export interface TurnEndEvent {
   type: "turn_end";
   ts: string;
-  provider: ProviderName;
-  model: string;
   metrics: TurnMetrics;
-  toolCalls: string[];
 }
 
 /** A non-retryable LLM provider call error. */

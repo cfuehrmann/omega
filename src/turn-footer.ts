@@ -25,16 +25,9 @@ function dim(s: string): string {
   return sgr(2) + s + RESET;
 }
 
-function formatMs(ms: number | null): string {
-  if (ms === null) return "-";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
 interface TurnMetrics {
   inputTokens: number;
   outputTokens: number;
-  ttftMs: number | null;
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
 }
@@ -75,7 +68,7 @@ export function formatTurnFooter(
       : `new: ${inp}  write: ${write}  read: ${read}  out: ${out}`;
 
   const turnBody =
-    `${inputFields(turn.inputTokens, turn.cacheCreationTokens ?? 0, turn.cacheReadTokens ?? 0, turn.outputTokens)}  ttft: ${formatMs(turn.ttftMs)}  [${provider}/${model}]`;
+    `${inputFields(turn.inputTokens, turn.cacheCreationTokens ?? 0, turn.cacheReadTokens ?? 0, turn.outputTokens)}  [${provider}/${model}]`;
   const sessionBody =
     `${inputFields(session.inputTokens, session.cacheCreationTokens ?? 0, session.cacheReadTokens ?? 0, session.outputTokens)}`;
 

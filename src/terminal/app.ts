@@ -297,13 +297,11 @@ export async function runApp(): Promise<void> {
               streamingStarted = false;
             }
             const m = event.metrics;
-            const provider = event.provider;
-            const model = event.model;
             const { turnLine, sessionLine } = formatTurnFooter(
-              { inputTokens: m.inputTokens, outputTokens: m.outputTokens, ttftMs: m.ttftMs, cacheCreationTokens: m.cacheCreationTokens, cacheReadTokens: m.cacheReadTokens },
+              { inputTokens: m.inputTokens, outputTokens: m.outputTokens, cacheCreationTokens: m.cacheCreationTokens, cacheReadTokens: m.cacheReadTokens },
               { inputTokens: agent.sessionInputTokens, outputTokens: agent.sessionOutputTokens, cacheCreationTokens: agent.sessionCacheCreationTokens, cacheReadTokens: agent.sessionCacheReadTokens },
-              provider,
-              model,
+              agent.getProvider(),
+              agent.getActiveModel(),
             );
             printBlock(now(), [turnLine]);
             printBlock(now(), [sessionLine]);

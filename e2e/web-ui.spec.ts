@@ -218,10 +218,7 @@ test("llm_response event shows an api-response block", async ({ page, server }) 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
     type: "llm_response",
-    provider: "anthropic",
-    url: "https://api.anthropic.com/v1/messages",
     stopReason: "end_turn",
-    model: "claude-sonnet-4-6",
     usage: { input_tokens: 100, output_tokens: 50 },
     content: [],
   });

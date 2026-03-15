@@ -694,31 +694,6 @@ describe("Agent — turn_end event", () => {
     expect(events[events.length - 1].type).toBe("turn_end");
   });
 
-  it.concurrent("turn_end includes all tool calls across multiple API calls", async () => {
-    let call = 0;
-    const mockProvider: StreamProvider = async () => {
-      call++;
-      if (call === 1) {
-        return makeMockStream(
-          toolUseStreamEvents("read_file"),
-          toolUseMessage("t1", "read_file", { path: "x.ts" })
-        );
-      }
-      if (call === 2) {
-        return makeMockStream(
-          toolUseStreamEvents("run_command"),
-          toolUseMessage("t2", "run_command", { command: "ls" })
-        );
-      }
-      return makeMockStream(textStreamEvents("done"), textMessage("done"));
-    };
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "do it");
-    const turnEnd = events.find((e) => e.type === "turn_end") as any;
-    expect(turnEnd.toolCalls).toEqual(["read_file", "run_command"]);
-  });
-
   it.concurrent("turn_end aggregates token counts across all API calls", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -739,39 +714,6 @@ describe("Agent — turn_end event", () => {
     expect(turnEnd.metrics.inputTokens).toBe(30);
     expect(turnEnd.metrics.outputTokens).toBe(15);
   });
-
-  it.concurrent("turn_end toolCalls is empty when no tools used", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "hi");
-    const turnEnd = events.find((e) => e.type === "turn_end") as any;
-    expect(turnEnd.toolCalls).toEqual([]);
-  });
-
-  it.concurrent("turn_end model reflects activeModel after /opus switch", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    // Switch to opus first
-    await collectEvents(agent, "/opus");
-    // Send a real message and check the turn_end model
-    const events = await collectEvents(agent, "hi");
-    const turnEnd = events.find((e) => e.type === "turn_end") as any;
-    expect(turnEnd.model).toBe("claude-opus-4-6");
-  });
-
-  it.concurrent("turn_end model is sonnet by default", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "hi");
-    const turnEnd = events.find((e) => e.type === "turn_end") as any;
-    expect(turnEnd.model).toBe("claude-sonnet-4-6");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -787,8 +729,6 @@ describe("Agent — llm_response event", () => {
     const events = await collectEvents(agent, "hi");
     const r = events.find((e) => e.type === "llm_response") as any;
     expect(r).toBeDefined();
-    expect(r.provider).toBe("anthropic");
-    expect(r.url).toBe("https://api.anthropic.com/v1/messages");
     expect(r.stopReason).toBe("end_turn");
     expect(r.usage.input_tokens).toBe(10);
     expect(r.usage.output_tokens).toBe(5);
@@ -868,23 +808,6 @@ describe("Agent — tool_call input and tool_result output fields", () => {
     const result = events.find((e) => e.type === "tool_result") as any;
     expect(typeof result.output).toBe("string");
     expect(result.output).toContain("hi");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// turn_end carries timing fields
-// ---------------------------------------------------------------------------
-
-describe("Agent — turn_end timing fields", () => {
-  it.concurrent("turn_end carries totalMs", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
-    const { agent, dispose } = await makeTestAgent(mockProvider);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "hi");
-    const m = events.find((e) => e.type === "turn_end") as any;
-    expect(typeof m.metrics.totalMs).toBe("number");
-    expect(m.metrics.totalMs).toBeGreaterThanOrEqual(0);
   });
 });
 
