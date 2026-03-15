@@ -25,10 +25,7 @@ export const DEFAULT_EVENTS_FILE = ".omega/sessions/events.jsonl";
  * These fields exist on OmegaEvent variants for stream consumers but are
  * intentionally absent from the persisted record (content lives in context.jsonl).
  */
-const UI_ONLY_FIELDS: Record<string, string[]> = {
-  llm_call: ["request"],
-  llm_response: ["content", "raw"],
-};
+const UI_ONLY_FIELDS: Record<string, string[]> = {};
 
 /**
  * Strip UI-only fields before writing to disk.

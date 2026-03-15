@@ -21,15 +21,14 @@ export type WsEvent =
   | { type: "reset_done" }
   | { type: "session_info"; dir: string }
   | { type: "user_message"; ts?: string; content: string }
-  | { type: "text"; ts?: string; text: string }
-  | { type: "assistant_text"; ts?: string; text: string }
+  | { type: "text"; ts?: string; streamingStart?: string; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
   | { type: "session_start"; ts?: string; authMode: string; model: string; provider: string; systemPrompt: string }
   | { type: "session_end"; ts?: string; outcome: "clean" | "error"; reason?: string }
   | { type: "tool_call"; ts?: string; id: string; name: string; input: unknown }
   | { type: "tool_result"; ts?: string; id: string; name: string; isError: boolean; durationMs: number; output: string }
-  | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; content?: unknown[]; raw?: unknown }
-  | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; request?: unknown }
+  | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; contextHash: string; text?: string; streamingStart?: string; responseSummary?: Record<string, unknown> }
+  | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestSummary?: Record<string, unknown> }
   | { type: "llm_retry"; ts?: string; attempt: number; provider: string; waitMs: number; error: string }
   | { type: "model_changed"; ts?: string; provider: string; model: string }
   | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
@@ -51,6 +50,9 @@ export interface Turn {
   id: number;
   events: WsEvent[];
   done: boolean;
+  /** Accumulated streaming text, shown in a temporary slot during streaming.
+   *  Cleared when llm_response arrives; the text is then carried in the llm_response event itself. */
+  streamingText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,9 +91,9 @@ interface AppState {
   compactionTotals: StickyMetrics;
   /** Live accumulation of the current in-progress turn (reset on user_message, updated on llm_response). */
   liveTurn: StickyMetrics | null;
-  /** Provider for the current/last turn (set from llm_response, used for live bar display). */
+  /** Provider for the current/last turn (set from llm_call, used for live bar display). */
   liveProvider: string;
-  /** Model for the current/last turn (set from llm_response, used for live bar display). */
+  /** Model for the current/last turn (set from llm_call, used for live bar display). */
   liveModel: string;
 
   /** Session directory path for the current session (set by session_info from server). */
@@ -192,13 +194,6 @@ export function dispatch(event: WsEvent): void {
             turns.push({ id: tid++, events: [e], done: false });
             streaming = true;
             break;
-
-          case "assistant_text": {
-            // Replay path: no live `text` fragments — push the full text as a rendered block.
-            const t = cur();
-            if (t) t.events.push({ type: "text", ts: (e as any).ts, text: (e as any).text });
-            break;
-          }
 
           case "turn_end": {
             const t = cur();
@@ -315,37 +310,14 @@ export function dispatch(event: WsEvent): void {
       break;
 
     case "text":
-      // Interleave text fragments directly into turn.events.
-      // If the last event is already a text block, concatenate into it so
-      // SolidJS re-renders just that node (visible character-by-character).
-      // If the last event is something else (e.g. a tool_result), push a new
-      // text block so the text appears after that event in the correct order.
+      // Accumulate streaming text fragments into the turn's temporary streamingText
+      // slot. This is shown as a plain live preview below the event list, separate
+      // from events[]. It is cleared when llm_response arrives (which carries the
+      // settled text as its own field).
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
         if (!turn) return;
-        const last = turn.events[turn.events.length - 1];
-        if (last?.type === "text") {
-          (last as { type: "text"; text: string }).text += event.text;
-        } else {
-          turn.events.push({ type: "text", text: event.text });
-        }
-      }));
-      break;
-
-    case "assistant_text":
-      // Persisted full-text event — used during history replay only.
-      // During live streaming, text is already accumulated into turn.events
-      // from individual `text` fragments, so this is a no-op on the live path.
-      // During replay, no `text` fragments were emitted, so push the full text.
-      setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (!turn) return;
-        // Live path: the last event in the list will already be a `text` block
-        // built from streaming fragments — skip to avoid duplication.
-        const hasLiveText = turn.events.some(e => e.type === "text");
-        if (!hasLiveText) {
-          turn.events.push({ type: "text", ts: event.ts, text: event.text });
-        }
+        turn.streamingText = (turn.streamingText ?? "") + event.text;
       }));
       break;
 
@@ -381,6 +353,12 @@ export function dispatch(event: WsEvent): void {
       break;
 
     case "llm_response": {
+      // Clear the temporary streaming text slot — the settled text is now carried
+      // directly on this event and rendered from events[] in log order.
+      setState(produce(s => {
+        const turn = s.turns[s.turns.length - 1];
+        if (turn) turn.streamingText = undefined;
+      }));
       appendEvent(event);
       // Accumulate live per-turn token totals so the metrics bar ticks up mid-turn.
       const u = event.usage;

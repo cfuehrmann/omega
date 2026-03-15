@@ -82,8 +82,12 @@ export interface LlmCallEvent {
    * provider is "anthropic". Null for OpenAI (no prompt caching).
    */
   cacheBreakpointIndex: number | null;
-  /** Snapshot of the full request object (Anthropic or OpenAI). UI only — not persisted. */
-  request?: any;
+  /**
+   * Elided summary of the request sent to the provider. Large repetitive
+   * fields (system prompt, messages, tool definitions) are replaced with
+   * compact descriptors. Persisted to events.jsonl.
+   */
+  requestSummary?: Record<string, unknown>;
 }
 
 /** An LLM response received by the agent. */
@@ -107,10 +111,21 @@ export interface LlmResponseEvent {
    * look it up via this hash.
    */
   contextHash: string;
-  /** Full content blocks from the response. UI only — not persisted. */
-  content?: any[];
-  /** Raw provider response. UI only — not persisted. */
-  raw?: any;
+  /**
+   * The full assembled assistant text for this response, if any.
+   * Absent for tool-only responses (stop_reason "tool_use" with no text block).
+   * Replaces the former separate `assistant_text` event.
+   */
+  text?: string;
+  /** ISO timestamp of the first streaming text delta — when text visibly began arriving. */
+  streamingStart?: string;
+  /**
+   * Elided summary of the provider response envelope. The content field is
+   * omitted (it lives in context.jsonl via contextHash); all other envelope
+   * fields (id, model, stop_reason, usage, type, role) are kept verbatim.
+   * Persisted to events.jsonl.
+   */
+  responseSummary?: Record<string, unknown>;
 }
 
 /** A tool invocation by the agent. */
@@ -249,21 +264,7 @@ export interface ModelChangedEvent {
   model: string;
 }
 
-/**
- * Full assembled assistant text from one LLM call.
- *
- * Emitted once per LLM response that produces text output, immediately after
- * the streaming fragments are assembled. Persisted so the text survives
- * history replay (streaming `text` StreamSignals are ephemeral and excluded
- * from events.jsonl).
- *
- * Empty text (tool-only responses) does not produce this event.
- */
-export interface AssistantTextEvent {
-  type: "assistant_text";
-  ts: string;
-  text: string;
-}
+
 
 // ---------------------------------------------------------------------------
 // Exhaustiveness helper
@@ -295,7 +296,6 @@ export type OmegaEvent =
   | UserMessageEvent
   | LlmCallEvent
   | LlmResponseEvent
-  | AssistantTextEvent
   | ToolCallEvent
   | ToolResultEvent
   | TurnEndEvent

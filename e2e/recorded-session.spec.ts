@@ -54,13 +54,13 @@ test("recorded session replays all blocks after page reload", async ({
   await expect(userBlocks.first()).toContainText("ping");
   await expect(userBlocks.nth(1)).toContainText("list the files");
 
-  // Turn 1: assistant "pong"
-  await expect(feed.locator(".block.assist").first()).toContainText("pong");
+  // Turn 1: assistant "pong" — text is now in the llm_response block
+  await expect(feed.locator(".block.api-response").first()).toContainText("pong");
 
   // Turn 2: tool_call block with tool name, then assistant text with file listing
   await expect(feed.locator(".block.tool").first()).toContainText("list_files");
-  // The fixture has 3 assistant_text events total (1 in turn 1, 2 in turn 2)
-  await expect(feed.locator(".block.assist").nth(2)).toContainText("README.md");
+  // The fixture has 3 llm_response events total (1 in turn 1, 2 in turn 2)
+  await expect(feed.locator(".block.api-response").nth(2)).toContainText("README.md");
 
   // Both turns should have footer blocks (turn_end)
   const footers = feed.locator(".block.footer");

@@ -171,8 +171,7 @@ describe("store history replay — open turn recovery", () => {
         { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", provider: "anthropic", systemPrompt: "..." } as any,
         { type: "user_message", content: "ping" },
         { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
-        { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" } } as any,
-        { type: "assistant_text", text: "pong" } as any,
+        { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" }, text: "pong" } as any,
         { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, cacheCreationTokens: 320, cacheReadTokens: 3318 } } as any,
         { type: "session_end", outcome: "clean" } as any,
       ],
@@ -186,9 +185,9 @@ describe("store history replay — open turn recovery", () => {
     expect(turn.done).toBe(true);
     expect(turn.done).toBe(true);
 
-    // The turn should contain rendered events including the "pong" text
-    const textEvents = turn.events.filter((e: any) => e.type === "text");
-    expect(textEvents.length).toBe(1);
-    expect((textEvents[0] as any).text).toBe("pong");
+    // The turn should contain an llm_response event with the text
+    const llmResponse = turn.events.find((e: any) => e.type === "llm_response") as any;
+    expect(llmResponse).toBeDefined();
+    expect(llmResponse.text).toBe("pong");
   });
 });

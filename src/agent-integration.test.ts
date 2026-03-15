@@ -547,7 +547,7 @@ describe("llm_call event", () => {
     expect(startEvents.length).toBe(1);
   });
 
-  it.concurrent("llm_call carries provider, url, and request", async () => {
+  it.concurrent("llm_call carries provider, url, and requestSummary", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -557,19 +557,20 @@ describe("llm_call event", () => {
     expect(e).toBeDefined();
     expect(e.provider).toBe("anthropic");
     expect(typeof e.url).toBe("string");
-    expect(typeof e.request).toBe("object");
+    expect(typeof e.requestSummary).toBe("object");
     expect(e.llmCallNumber).toBeUndefined();
   });
 
-  it.concurrent("llm_call exposes request messages", async () => {
+  it.concurrent("llm_call requestSummary has elided messages descriptor", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const e = events.find((e) => e.type === "llm_call") as any;
-    expect(Array.isArray(e.request.messages)).toBe(true);
-    expect(e.request.messages[0].role).toBe("user");
+    // messages is elided to a string descriptor, not a live array
+    expect(typeof e.requestSummary.messages).toBe("string");
+    expect(e.requestSummary.messages).toMatch(/1 message/);
   });
 
   it.concurrent("emits llm_call once per round-trip in a tool loop", async () => {
@@ -592,15 +593,15 @@ describe("llm_call event", () => {
     expect(startEvents.length).toBe(2);
   });
 
-  it.concurrent("llm_call request snapshot is correct (not a live reference)", async () => {
+  it.concurrent("llm_call requestSummary reflects the number of messages sent", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
     const e = events.find((ev) => ev.type === "llm_call") as any;
-    expect(e.request.messages.length).toBe(1);
-    expect(e.request.messages[0].role).toBe("user");
+    // descriptor shows the message count
+    expect(e.requestSummary.messages).toMatch(/1 message/);
   });
 });
 
@@ -734,17 +735,19 @@ describe("Agent — llm_response event", () => {
     expect(r.usage.output_tokens).toBe(5);
   });
 
-  it.concurrent("llm_response content includes text blocks", async () => {
+  it.concurrent("llm_response responseSummary has stop_reason and usage", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
     const r = events.find((e) => e.type === "llm_response") as any;
-    expect(r.content.some((b: any) => b.type === "text")).toBe(true);
+    expect(r.responseSummary).toBeDefined();
+    expect(r.responseSummary.stop_reason).toBe("end_turn");
+    expect(typeof r.responseSummary.usage).toBe("object");
   });
 
-  it.concurrent("llm_response content includes tool_use blocks when model requests tools", async () => {
+  it.concurrent("llm_response responseSummary content is elided", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -761,8 +764,9 @@ describe("Agent — llm_response event", () => {
     const events = await collectEvents(agent, "list");
     const responses = events.filter((e) => e.type === "llm_response") as any[];
     const first = responses[0];
-    expect(first.content.some((b: any) => b.type === "tool_use")).toBe(true);
-    expect(first.content.find((b: any) => b.type === "tool_use").name).toBe("list_files");
+    // content is replaced with a string descriptor, not an array
+    expect(typeof first.responseSummary.content).toBe("string");
+    expect(first.responseSummary.content).toMatch(/elided/);
   });
 });
 
@@ -1042,22 +1046,22 @@ describe("Agent — unified event taxonomy (true duals)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// assistant_text persistence — survives history replay
+// llm_response.text — text field on the response event
 // ---------------------------------------------------------------------------
 
-describe("Agent — assistant_text persisted event", () => {
-  it.concurrent("emits assistant_text after a text response", async () => {
+describe("Agent — llm_response text field", () => {
+  it.concurrent("llm_response carries text when response has text", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Hello world"), textMessage("Hello world"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
-    const textEv = events.find((e) => e.type === "assistant_text") as any;
-    expect(textEv).toBeDefined();
-    expect(textEv.text).toBe("Hello world");
+    const r = events.find((e) => e.type === "llm_response") as any;
+    expect(r).toBeDefined();
+    expect(r.text).toBe("Hello world");
   });
 
-  it.concurrent("assistant_text is written to events.jsonl", async () => {
+  it.concurrent("llm_response.text is written to events.jsonl", async () => {
     const { readFile } = await import("fs/promises");
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("Persisted text"), textMessage("Persisted text"));
@@ -1066,12 +1070,12 @@ describe("Agent — assistant_text persisted event", () => {
     await collectEvents(agent, "hi");
     const raw = await readFile(eventsFile, "utf-8");
     const lines = raw.trim().split("\n").map(l => JSON.parse(l));
-    const textEv = lines.find((e: any) => e.type === "assistant_text");
-    expect(textEv).toBeDefined();
-    expect(textEv.text).toBe("Persisted text");
+    const r = lines.find((e: any) => e.type === "llm_response");
+    expect(r).toBeDefined();
+    expect(r.text).toBe("Persisted text");
   });
 
-  it.concurrent("does NOT emit assistant_text when response is tool-only (no text)", async () => {
+  it.concurrent("llm_response has no text field when response is tool-only", async () => {
     let call = 0;
     const mockProvider: StreamProvider = async () => {
       call++;
@@ -1081,12 +1085,11 @@ describe("Agent — assistant_text persisted event", () => {
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "use tool");
-    // First LLM call is tool-only — no assistant_text for that call.
-    // The tool-only call yields no text fragments, so assembledText is "".
-    // Second call does yield text, so one assistant_text total.
-    const textEvents = events.filter((e) => e.type === "assistant_text");
-    expect(textEvents.length).toBe(1); // only from the second (text) call
-    expect((textEvents[0] as any).text).toBe("done");
+    const responses = events.filter((e) => e.type === "llm_response") as any[];
+    // First call is tool-only — no text field.
+    expect(responses[0].text).toBeUndefined();
+    // Second call has text.
+    expect(responses[1].text).toBe("done");
   });
 });
 

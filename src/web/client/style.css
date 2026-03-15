@@ -276,8 +276,15 @@ html, body, #root {
   font-size: 11px;
   font-weight: bold;
   letter-spacing: 0.5px;
-  opacity: 0.6;
   margin-bottom: 3px;
+}
+
+.block-label-meta {
+  font-weight: normal;
+  letter-spacing: 0;
+  opacity: 0.7;
+  margin-left: 10px;
+  word-spacing: -2px;
 }
 
 
@@ -464,6 +471,12 @@ html, body, #root {
   font-size: 12px;
 }
 
+.block-btn-group {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .block-expand-btn {
   background: none;
   border: 1px solid currentColor;
@@ -546,10 +559,8 @@ html, body, #root {
 .modal-close:hover { border-color: var(--red); color: var(--red); }
 
 .modal-section-label {
-  font-size: 10px;
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 11px;
+  font-weight: normal;
   color: var(--dim);
   padding: 6px 14px 2px;
   flex-shrink: 0;
@@ -557,8 +568,6 @@ html, body, #root {
 
 .modal-meta {
   font-weight: normal;
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .modal-body {
@@ -571,6 +580,65 @@ html, body, #root {
   word-break: break-word;
   color: var(--text);
   min-height: 0;
+}
+
+/* ── llm_call modal — context message list ── */
+
+.llm-call-messages {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.llm-call-msg {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.llm-call-msg-role {
+  font-size: 11px;
+  font-weight: normal;
+  color: var(--dim);
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
+.llm-call-msg-user      .llm-call-msg-role { color: var(--green); }
+.llm-call-msg-assistant .llm-call-msg-role { color: var(--llm); }
+
+.llm-call-msg-ts {
+  opacity: 0.55;
+  font-weight: normal;
+}
+
+.llm-call-msg-body {
+  font-family: var(--font);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  margin: 0;
+}
+
+.llm-call-separator {
+  font-size: 11px;
+  text-align: center;
+  color: var(--dim);
+  opacity: 0.6;
+  padding: 5px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  flex-shrink: 0;
+}
+
+.llm-call-msg-loading {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 10px 14px;
 }
 
 /* ── Render error boundary ── */
@@ -641,8 +709,6 @@ html, body, #root {
   font-size: 13px;
   font-weight: bold;
   color: var(--ctp-subtext1);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .token-legend-close {

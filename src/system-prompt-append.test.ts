@@ -169,17 +169,17 @@ describe("Agent.buildSystemPrompt()", () => {
 
 describe("system-prompt-append end-to-end: content reaches API request", () => {
   it("system field of outgoing request contains base prompt when no file loaded", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    let capturedSystem: any;
+    const mockProvider: StreamProvider = async (params: any) => {
+      capturedSystem = params.system;
+      return makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    };
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
 
-    const events = await collectEvents(agent, "hello");
-    const llmCall = events.find(e => e.type === "llm_call") as any;
-    expect(llmCall).toBeDefined();
+    await collectEvents(agent, "hello");
 
-    // system is an array of blocks in the Anthropic request
-    const systemText = llmCall.request.system
+    const systemText = (Array.isArray(capturedSystem) ? capturedSystem : [])
       .map((b: any) => b.text ?? "")
       .join("");
     expect(systemText).toContain(CORE_PROMPT_SENTINEL);
@@ -187,8 +187,11 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
   });
 
   it("system field contains appended content when file is loaded", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    let capturedSystem: any;
+    const mockProvider: StreamProvider = async (params: any) => {
+      capturedSystem = params.system;
+      return makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    };
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
 
@@ -196,9 +199,9 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
     await writeSystemPromptAppend("SENTINEL_CONTENT_XYZ", appendPath);
     await agent.loadSystemPromptAppend(appendPath);
 
-    const events = await collectEvents(agent, "hello");
-    const llmCall = events.find(e => e.type === "llm_call") as any;
-    const systemText = llmCall.request.system
+    await collectEvents(agent, "hello");
+
+    const systemText = (Array.isArray(capturedSystem) ? capturedSystem : [])
       .map((b: any) => b.text ?? "")
       .join("");
     expect(systemText).toContain("SENTINEL_CONTENT_XYZ");
@@ -206,17 +209,18 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
   });
 
   it("appended content is absent when file does not exist", async () => {
-    const mockProvider: StreamProvider = async () =>
-      makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    let capturedSystem: any;
+    const mockProvider: StreamProvider = async (params: any) => {
+      capturedSystem = params.system;
+      return makeMockStream(textStreamEvents("hi"), textMessage("hi"));
+    };
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
 
-    // Explicitly try to load from a non-existent path
     await agent.loadSystemPromptAppend(join(tempDir, "no-such-file.md"));
+    await collectEvents(agent, "hello");
 
-    const events = await collectEvents(agent, "hello");
-    const llmCall = events.find(e => e.type === "llm_call") as any;
-    const systemText = llmCall.request.system
+    const systemText = (Array.isArray(capturedSystem) ? capturedSystem : [])
       .map((b: any) => b.text ?? "")
       .join("");
     expect(systemText).not.toContain("World State");
@@ -224,8 +228,10 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
 
   it("appended content is present across multiple turns (stable in system prompt)", async () => {
     let callCount = 0;
-    const mockProvider: StreamProvider = async () => {
+    const capturedSystems: any[] = [];
+    const mockProvider: StreamProvider = async (params: any) => {
       callCount++;
+      capturedSystems.push(params.system);
       return makeMockStream(textStreamEvents(`reply ${callCount}`), textMessage(`reply ${callCount}`));
     };
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -235,12 +241,11 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
     await writeSystemPromptAppend("PERSISTENT_STATE", appendPath);
     await agent.loadSystemPromptAppend(appendPath);
 
-    const events1 = await collectEvents(agent, "turn one");
-    const events2 = await collectEvents(agent, "turn two");
+    await collectEvents(agent, "turn one");
+    await collectEvents(agent, "turn two");
 
-    for (const events of [events1, events2]) {
-      const llmCall = events.find(e => e.type === "llm_call") as any;
-      const systemText = llmCall.request.system
+    for (const sys of capturedSystems) {
+      const systemText = (Array.isArray(sys) ? sys : [])
         .map((b: any) => b.text ?? "")
         .join("");
       expect(systemText).toContain("PERSISTENT_STATE");

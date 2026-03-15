@@ -1,16 +1,13 @@
 {"type":"session_start","ts":"2026-01-15T10:00:00.000Z","sessionId":"1700000000000-abc123","model":"claude-sonnet-4-6","provider":"anthropic","authMode":"api-key","systemPrompt":"You are Omega, a coding agent."}
 {"type":"user_message","ts":"2026-01-15T10:00:01.000Z","content":"ping"}
 {"type":"llm_call","ts":"2026-01-15T10:00:01.000Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","model":"claude-sonnet-4-6","contextHashes":["aabb1122"],"cacheBreakpointIndex":0}
-{"type":"llm_response","ts":"2026-01-15T10:00:02.000Z","stopReason":"end_turn","usage":{"input_tokens":3,"output_tokens":5,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"service_tier":"standard"},"contextHash":"ccdd3344"}
-{"type":"assistant_text","ts":"2026-01-15T10:00:02.000Z","text":"pong"}
+{"type":"llm_response","ts":"2026-01-15T10:00:02.000Z","stopReason":"end_turn","usage":{"input_tokens":3,"output_tokens":5,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"service_tier":"standard"},"contextHash":"ccdd3344","text":"pong"}
 {"type":"turn_end","ts":"2026-01-15T10:00:02.001Z","provider":"anthropic","model":"claude-sonnet-4-6","metrics":{"inputTokens":3,"outputTokens":5,"costUsd":0.01,"savedUsd":0,"ttftMs":800,"totalMs":1001,"cacheCreationTokens":1000,"cacheReadTokens":0},"toolCalls":[]}
 {"type":"user_message","ts":"2026-01-15T10:01:00.000Z","content":"list the files in the current directory"}
 {"type":"llm_call","ts":"2026-01-15T10:01:00.000Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","model":"claude-sonnet-4-6","contextHashes":["aabb1122","ccdd3344","eeff5566"],"cacheBreakpointIndex":2}
-{"type":"llm_response","ts":"2026-01-15T10:01:01.000Z","stopReason":"tool_use","usage":{"input_tokens":10,"output_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"service_tier":"standard"},"contextHash":"11223344"}
-{"type":"assistant_text","ts":"2026-01-15T10:01:01.000Z","text":"Let me list the files for you."}
+{"type":"llm_response","ts":"2026-01-15T10:01:01.000Z","stopReason":"tool_use","usage":{"input_tokens":10,"output_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"service_tier":"standard"},"contextHash":"11223344","text":"Let me list the files for you."}
 {"type":"tool_call","ts":"2026-01-15T10:01:01.001Z","id":"toolu_01ABC123","name":"list_files","input":{"path":"."},"contextHash":"11223344"}
 {"type":"tool_result","ts":"2026-01-15T10:01:01.050Z","id":"toolu_01ABC123","name":"list_files","isError":false,"durationMs":48.5,"output":"README.md\nsrc/\n","contextHash":"55667788"}
 {"type":"llm_call","ts":"2026-01-15T10:01:01.051Z","provider":"anthropic","url":"https://api.anthropic.com/v1/messages","model":"claude-sonnet-4-6","contextHashes":["aabb1122","ccdd3344","eeff5566","11223344","55667788"],"cacheBreakpointIndex":4}
-{"type":"llm_response","ts":"2026-01-15T10:01:02.000Z","stopReason":"end_turn","usage":{"input_tokens":50,"output_tokens":40,"cache_creation_input_tokens":500,"cache_read_input_tokens":1000,"service_tier":"standard"},"contextHash":"99aabbcc"}
-{"type":"assistant_text","ts":"2026-01-15T10:01:02.000Z","text":"Here are the files in the current directory:\n- README.md\n- package.json\n- src/"}
+{"type":"llm_response","ts":"2026-01-15T10:01:02.000Z","stopReason":"end_turn","usage":{"input_tokens":50,"output_tokens":40,"cache_creation_input_tokens":500,"cache_read_input_tokens":1000,"service_tier":"standard"},"contextHash":"99aabbcc","text":"Here are the files in the current directory:\n- README.md\n- package.json\n- src/"}
 {"type":"turn_end","ts":"2026-01-15T10:01:02.001Z","provider":"anthropic","model":"claude-sonnet-4-6","metrics":{"inputTokens":60,"outputTokens":70,"costUsd":0.05,"savedUsd":0.02,"ttftMs":500,"totalMs":2001,"cacheCreationTokens":500,"cacheReadTokens":2000},"toolCalls":["list_files"]}

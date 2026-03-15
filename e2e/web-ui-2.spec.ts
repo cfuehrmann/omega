@@ -284,10 +284,16 @@ test("assistant text survives page reload (history replay)", async ({ page, serv
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hello" });
-  // text (StreamSignal) is ephemeral — the real agent also emits assistant_text (OmegaEvent)
-  // which is the persisted form. Both sent here to mirror what the agent does.
+  // text (StreamSignal) is ephemeral — shown live during streaming.
+  // llm_response carries the settled text field — this is the persisted form.
   await server.sendEvent({ type: "text", text: "I am alive." });
-  await server.sendEvent({ type: "assistant_text", text: "I am alive." });
+  await server.sendEvent({
+    type: "llm_response",
+    stopReason: "end_turn",
+    usage: { input_tokens: 5, output_tokens: 5 },
+    contextHash: "ab12cd34",
+    text: "I am alive.",
+  });
   await server.sendEvent({
     type: "turn_end",
     metrics: { inputTokens: 5, outputTokens: 5, costUsd: 0.0001, savedUsd: 0, ttftMs: 50 },
@@ -295,14 +301,14 @@ test("assistant text survives page reload (history replay)", async ({ page, serv
     provider: "anthropic",
   });
 
-  // Confirm text is visible before reload
-  await expect(page.locator(".block.assist")).toContainText("I am alive.", { timeout: 3000 });
+  // Confirm text is visible before reload — now inside the llm_response block
+  await expect(page.locator(".block.api-response")).toContainText("I am alive.", { timeout: 3000 });
 
   await page.reload();
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   // Assistant text must survive the reload via history replay
-  await expect(page.locator(".block.assist")).toContainText("I am alive.", { timeout: 3000 });
+  await expect(page.locator(".block.api-response")).toContainText("I am alive.", { timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------

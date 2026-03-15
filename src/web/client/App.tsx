@@ -1,4 +1,4 @@
-import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo } from "solid-js";
+import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import { state, dispatch, zeroMetrics, type Turn, type WsEvent, type StickyMetrics } from "./store";
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
@@ -120,11 +120,14 @@ interface LlmCallDetail {
   url: string;
   model: string;
   contextHashes: string[];
-  request: any;
+  /** Number of hashes in the previous llm_call (0 if this is the first). */
+  previousLength: number;
+  requestSummary?: Record<string, unknown>;
 }
 
 interface LlmResponseDetail {
   ts?: string;
+  streamingStart?: string;
   stopReason: string;
   usage: {
     input_tokens: number;
@@ -133,19 +136,22 @@ interface LlmResponseDetail {
     cache_read_input_tokens?: number | null;
     service_tier?: string | null;
   };
-  content: any;
-  raw: any;
+  contextHash: string;
+  text?: string;
+  responseSummary?: Record<string, unknown>;
 }
 
 interface BlockDetail {
   label: string;
   ts?: string;
+  streamingStart?: string;
   body: string;
 }
 
 type ModalContent =
   | { kind: "tool"; detail: ToolDetail }
-  | { kind: "llm_call"; detail: LlmCallDetail }
+  | { kind: "llm_call_messages"; detail: LlmCallDetail }
+  | { kind: "llm_call_raw"; detail: LlmCallDetail }
   | { kind: "llm_response"; detail: LlmResponseDetail }
   | { kind: "block"; detail: BlockDetail };
 
@@ -217,8 +223,11 @@ function ActiveModal() {
           const d = modal.detail;
           return (
             <ModalShell title={d.label} cls="block-modal">
+              <Show when={d.streamingStart}>
+                <div class="modal-section-label">streaming start: {formatTs(d.streamingStart)}</div>
+              </Show>
               <Show when={d.ts}>
-                <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+                <div class="modal-section-label">time: {formatTs(d.ts)}</div>
               </Show>
               <div class="modal-section-label">content</div>
               <pre class="modal-body">{d.body}</pre>
@@ -230,7 +239,7 @@ function ActiveModal() {
           return (
             <ModalShell title={`tool › ${d.name}`} cls="tool-modal">
               <Show when={d.ts}>
-                <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+                <div class="modal-section-label">{formatTs(d.ts)}</div>
               </Show>
               <div class="modal-section-label">input</div>
               <pre class="modal-body">{
@@ -251,21 +260,99 @@ function ActiveModal() {
             </ModalShell>
           );
         }
-        if (modal.kind === "llm_call") {
+        if (modal.kind === "llm_call_messages") {
           const d = modal.detail;
-          const reqStr = d.request != null
-            ? JSON.stringify(d.request, null, 2)
-            : "(request not captured)";
+          const deltaCount = d.contextHashes.length - d.previousLength;
+
+          // Fetch context records lazily when the modal opens.
+          // hashes are ordered oldest→newest; we render newest→oldest.
+          const [records] = createResource(
+            () => d.contextHashes.join(","),
+            async (hashParam) => {
+              if (!hashParam) return [];
+              const res = await fetch(`/context?hashes=${encodeURIComponent(hashParam)}`);
+              if (!res.ok) return [];
+              return res.json() as Promise<Array<{ hash: string; ts?: string; role: string; content: any }>>;
+            },
+          );
+
+          /** Render a context record's content as a readable string. */
+          const renderContent = (content: any): string => {
+            if (typeof content === "string") return content;
+            if (Array.isArray(content)) {
+              return content.map((block: any) => {
+                if (block.type === "text") return block.text;
+                if (block.type === "tool_use") return `[tool_use: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`;
+                if (block.type === "tool_result") {
+                  const out = Array.isArray(block.content)
+                    ? block.content.map((c: any) => c.text ?? JSON.stringify(c)).join("\n")
+                    : String(block.content ?? "");
+                  return `[tool_result]\n${out}`;
+                }
+                return JSON.stringify(block, null, 2);
+              }).join("\n");
+            }
+            return JSON.stringify(content, null, 2);
+          };
+
           return (
-            <ModalShell title={`llm_call › ${d.provider}`} cls="llm-call-modal">
+            <ModalShell title="llm_call › messages" cls="llm-call-modal">
               <Show when={d.ts}>
-                <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+                <div class="modal-section-label">{formatTs(d.ts)}</div>
               </Show>
-              <div class="modal-section-label">
-                {d.model}
-                <span class="modal-meta"> · {d.url} · {d.contextHashes.length} context messages</span>
+              <div class="modal-section-label">{d.contextHashes.length} messages · +{deltaCount} new</div>
+
+              {/* Messages: newest first, separator between new and old */}
+              <div class="llm-call-messages">
+                <Show when={records.loading}>
+                  <div class="llm-call-msg-loading">Loading…</div>
+                </Show>
+                <Show when={!records.loading}>
+                  <For each={[...(records() ?? [])].reverse()}>
+                    {(rec, i) => {
+                      const reversedIdx = i(); // 0 = newest
+                      const totalLen = (records() ?? []).length;
+                      // In reversed order, index deltaCount-1 is the oldest new message.
+                      // The separator goes AFTER it (between new and old).
+                      const showSeparator = deltaCount > 0
+                        && deltaCount < totalLen
+                        && reversedIdx === deltaCount - 1;
+                      return (
+                        <>
+                          <div class={`llm-call-msg llm-call-msg-${rec.role}`}>
+                            <span class="llm-call-msg-role">{rec.role}<span class="llm-call-msg-ts">{rec.ts ? "  " + formatTs(rec.ts) : ""}</span></span>
+                            <pre class="llm-call-msg-body">{renderContent(rec.content)}</pre>
+                          </div>
+                          <Show when={showSeparator}>
+                            <div class="llm-call-separator">── already in context ──</div>
+                          </Show>
+                        </>
+                      );
+                    }}
+                  </For>
+                  <Show when={(records() ?? []).length === 0}>
+                    <div class="llm-call-msg-loading">(context not available)</div>
+                  </Show>
+                </Show>
               </div>
-              <pre class="modal-body">{reqStr}</pre>
+            </ModalShell>
+          );
+        }
+        if (modal.kind === "llm_call_raw") {
+          const d = modal.detail;
+          const deltaCount = d.contextHashes.length - d.previousLength;
+          const rawStr = d.requestSummary != null
+            ? JSON.stringify(d.requestSummary, null, 2)
+            : "(request summary not available)";
+
+          return (
+            <ModalShell title="llm_call › payload" cls="llm-call-modal">
+              <Show when={d.ts}>
+                <div class="modal-section-label">{formatTs(d.ts)}</div>
+              </Show>
+              <div class="modal-section-label">{d.url}</div>
+              <div class="modal-section-label">{d.contextHashes.length} messages · +{deltaCount} new</div>
+              <pre class="modal-body">{rawStr}</pre>
             </ModalShell>
           );
         }
@@ -279,19 +366,26 @@ function ActiveModal() {
           `out: ${u.output_tokens}`,
           ...(u.service_tier && u.service_tier !== "standard" ? [`service_tier: ${u.service_tier}`] : []),
         ].join("  ");
-        const contentStr = d.content != null
-          ? JSON.stringify(d.content, null, 2)
-          : d.raw != null
-            ? JSON.stringify(d.raw, null, 2)
-            : "(content not captured)";
+
+        const respStr = d.responseSummary != null
+          ? JSON.stringify(d.responseSummary, null, 2)
+          : "(response summary not available)";
+
         return (
-          <ModalShell title="llm_response" cls="llm-resp-modal">
-            <Show when={d.ts}>
-              <div class="modal-section-label">time<span class="modal-meta"> · {formatTs(d.ts)}</span></div>
+          <ModalShell title={`llm_response › ${d.stopReason}`} cls="llm-resp-modal">
+            <Show when={d.streamingStart}>
+              <div class="modal-section-label">streaming start: {formatTs(d.streamingStart)}</div>
             </Show>
-            <div class="modal-section-label">stop: {d.stopReason}</div>
-            <div class="modal-section-label">usage<span class="modal-meta"> · {usageParts}</span></div>
-            <pre class="modal-body">{contentStr}</pre>
+            <Show when={d.ts}>
+              <div class="modal-section-label">time: {formatTs(d.ts)}</div>
+            </Show>
+            <div class="modal-section-label">{usageParts}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
+            <Show when={d.text}>
+              <div class="modal-section-label">text</div>
+              <pre class="modal-body">{d.text}</pre>
+            </Show>
+            <div class="modal-section-label">response summary</div>
+            <pre class="modal-body">{respStr}</pre>
           </ModalShell>
         );
       }}
@@ -304,9 +398,10 @@ function ActiveModal() {
 // ---------------------------------------------------------------------------
 
 
-function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: boolean }) {
+function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls: Array<WsEvent & { type: "llm_call" }> }) {
   const e = props.event;
   const ts = (e as any).ts as string | undefined;
+  const streamingStart = (e as any).streamingStart as string | undefined;
 
   // Exhaustive switch over WsEvent — every variant must have a case.
   // Compile-time guard: if a new WsEvent variant is added without a render
@@ -324,17 +419,13 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
       );
 
     case "text":
-    case "assistant_text":
       return (
-        <div class={`block assist${props.streaming ? " streaming" : ""}`}>
+        <div class="block assist">
           <div class="block-label-row">
             <span class="block-label">assistant_text</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "assistant_text", ts, body: e.text } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "assistant_text", ts, streamingStart, body: e.text } })} title="Details">⤢</button>
           </div>
-          <div class="block-body">
-            {e.text}
-            <Show when={props.streaming}><span class="cursor" /></Show>
-          </div>
+          <div class="block-body">{e.text}</div>
         </div>
       );
 
@@ -536,55 +627,58 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
     }
 
     case "llm_call": {
-      const openModal = () => setActiveModal({
-        kind: "llm_call",
-        detail: {
-          ts,
-          provider: e.provider,
-          url: e.url,
-          model: e.model,
-          contextHashes: e.contextHashes,
-          request: e.request,
-        },
-      });
+      // Find the previous llm_call across all turns to compute the delta.
+      const myIdx = props.allLlmCalls.indexOf(e);
+      const prevLlmCall = myIdx > 0 ? props.allLlmCalls[myIdx - 1] : undefined;
+      const previousLength = prevLlmCall?.contextHashes.length ?? 0;
+      const deltaCount = e.contextHashes.length - previousLength;
+
+      const detail = {
+        ts,
+        provider: e.provider,
+        url: e.url,
+        model: e.model,
+        contextHashes: e.contextHashes,
+        previousLength,
+        requestSummary: e.requestSummary,
+      };
+      const openMessages = () => setActiveModal({ kind: "llm_call_messages", detail });
+      const openRaw      = () => setActiveModal({ kind: "llm_call_raw",      detail });
       return (
         <div class="block api-call">
           <div class="block-label-row">
-            <span class="block-label">llm_call<span class="block-model"> · {e.provider} · {e.model}</span></span>
-            <button class="block-expand-btn" onClick={openModal} title="View full request">⤢</button>
+            <span class="block-label">llm_call</span>
+            <div class="block-btn-group">
+              <button class="block-expand-btn" onClick={openMessages} title="View context messages">messages (+{deltaCount})</button>
+              <button class="block-expand-btn" onClick={openRaw}      title="View API payload">payload</button>
+            </div>
           </div>
-          <div class="block-body block-preview">{e.contextHashes.length} messages</div>
         </div>
       );
     }
 
     case "llm_response": {
-      const u = e.usage;
-      const parts = [
-        `stop: ${e.stopReason}`,
-        `in (uncached): ${u.input_tokens}`,
-        ...(u.cache_creation_input_tokens ? [`in (cache write): ${u.cache_creation_input_tokens}`] : []),
-        ...(u.cache_read_input_tokens     ? [`in (cache read): ${u.cache_read_input_tokens}`]      : []),
-        `out: ${u.output_tokens}`,
-        ...(u.service_tier && u.service_tier !== "standard" ? [`tier: ${u.service_tier}`] : []),
-      ];
       const openModal = () => setActiveModal({
         kind: "llm_response",
         detail: {
           ts,
+          streamingStart: e.streamingStart,
           stopReason: e.stopReason,
           usage: e.usage,
-          content: e.content,
-          raw: e.raw,
+          contextHash: e.contextHash,
+          text: e.text,
+          responseSummary: e.responseSummary,
         },
       });
       return (
         <div class="block api-response">
           <div class="block-label-row">
-            <span class="block-label">llm_response</span>
+            <span class="block-label">llm_response<span class="block-label-meta">{e.stopReason}</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full response">⤢</button>
           </div>
-          <div class="block-body">{parts.join("  ")}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
+          <Show when={e.text}>
+            <div class="block-body">{e.text}</div>
+          </Show>
         </div>
       );
     }
@@ -711,20 +805,22 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; streaming?: 
   }
 }
 
-function TurnView(props: { turn: Turn }) {
-  // The cursor belongs on the last text block while the turn is still live.
-  // We compute this per-event: an event gets streaming=true only when it is
-  // a "text" block, the turn is not yet done, and it is the last event.
-  const lastIdx = () => props.turn.events.length - 1;
+function TurnView(props: { turn: Turn; allLlmCalls: Array<WsEvent & { type: "llm_call" }> }) {
   return (
     <div class="turn">
-      <For each={props.turn.events}>{(event, i) => {
-        const isStreamingText = () =>
-          !props.turn.done &&
-          event.type === "text" &&
-          i() === lastIdx();
-        return <EventBlock event={event} turnEvents={props.turn.events} streaming={isStreamingText()} />;
-      }}</For>
+      <For each={props.turn.events}>{(event) => (
+        <EventBlock event={event} turnEvents={props.turn.events} allLlmCalls={props.allLlmCalls} />
+      )}</For>
+      {/* Temporary streaming slot — visible only while text is arriving,
+          before llm_response clears it (text is then on the llm_response event itself). */}
+      <Show when={props.turn.streamingText}>
+        <div class="block assist streaming">
+          <div class="block-body">
+            {props.turn.streamingText}
+            <span class="cursor" />
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }
@@ -1022,7 +1118,19 @@ export function App() {
               <pre>{err?.message ?? String(err)}</pre>
             </div>
           )}>
-            <For each={state.turns}>{(turn) => <TurnView turn={turn} />}</For>
+            <For each={state.turns}>{(turn, turnIdx) => {
+              // Collect all llm_call events across all turns up to and including
+              // this one, in chronological order, for cross-turn delta computation.
+              // Use turnIdx() (not indexOf) — indexOf on a SolidJS store proxy is
+              // unreliable and can return -1, making every call look like the first.
+              const allLlmCalls = createMemo(() =>
+                state.turns
+                  .slice(0, turnIdx() + 1)
+                  .flatMap(t => t.events)
+                  .filter((ev): ev is WsEvent & { type: "llm_call" } => ev.type === "llm_call")
+              );
+              return <TurnView turn={turn} allLlmCalls={allLlmCalls()} />;
+            }}</For>
           </ErrorBoundary>
         </div>
         <Show when={!tailing()}>

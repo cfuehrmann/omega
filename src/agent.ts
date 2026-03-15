@@ -21,14 +21,116 @@ export interface TurnMetrics {
 }
 
 interface ModelResponse {
+  id?: string;
+  model?: string;
+  type?: string;
+  role?: string;
   content: Anthropic.ContentBlock[];
-  stop_reason?: string;
-  usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
+  stop_reason?: string | null;
+  usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null };
 }
 
 export type ProviderName = "anthropic" | "openai";
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
+
+// --- Request / response elision helpers ---
+
+/** Count total characters across all text blocks in a system array or string. */
+function charCount(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (!Array.isArray(value)) return 0;
+  return value.reduce((n: number, b: any) => n + (typeof b?.text === "string" ? b.text.length : 0), 0);
+}
+
+/**
+ * Build a persisted elided summary of an Anthropic request.
+ * Keeps all scalar fields verbatim; replaces system, tools, and messages
+ * with compact descriptors so the shape is clear without the walls of text.
+ */
+function elideAnthropicRequest(req: {
+  model: string;
+  max_tokens: number;
+  system: unknown;
+  tools: unknown[];
+  messages: unknown[];
+}): Record<string, unknown> {
+  const systemChars = charCount(req.system);
+  const systemBlocks = Array.isArray(req.system) ? req.system.length : 1;
+  const msgChars = JSON.stringify(req.messages).length;
+  return {
+    model: req.model,
+    max_tokens: req.max_tokens,
+    system: `[${systemBlocks} block${systemBlocks !== 1 ? "s" : ""}, ${systemChars} chars]`,
+    tools: (req.tools as any[]).map((t: any) => ({
+      name: t.name,
+      description: `[${typeof t.description === "string" ? t.description.length : 0} chars]`,
+      input_schema: `[elided]`,
+      ...(t.cache_control ? { cache_control: t.cache_control } : {}),
+    })),
+    messages: `[${req.messages.length} message${req.messages.length !== 1 ? "s" : ""}, ${msgChars} chars]`,
+  };
+}
+
+/**
+ * Build a persisted elided summary of an OpenAI Responses API request.
+ * Keeps scalar fields; replaces instructions, input array, and tool parameter
+ * schemas with compact descriptors.
+ */
+function elideOpenAiRequest(req: {
+  model: string;
+  max_output_tokens: number;
+  instructions?: string;
+  input: unknown[];
+  tools: unknown[];
+  tool_choice: string;
+}): Record<string, unknown> {
+  const instrChars = typeof req.instructions === "string" ? req.instructions.length : 0;
+  const inputChars = JSON.stringify(req.input).length;
+  return {
+    model: req.model,
+    max_output_tokens: req.max_output_tokens,
+    instructions: `[${instrChars} chars]`,
+    input: `[${req.input.length} item${req.input.length !== 1 ? "s" : ""}, ${inputChars} chars]`,
+    tools: (req.tools as any[]).map((t: any) => ({
+      type: t.type,
+      name: t.name,
+      description: `[${typeof t.description === "string" ? t.description.length : 0} chars]`,
+      parameters: `[elided]`,
+      strict: t.strict,
+    })),
+    tool_choice: req.tool_choice,
+  };
+}
+
+/**
+ * Build a persisted elided summary of an Anthropic response.
+ * Omits content (lives in context.jsonl); keeps all envelope fields verbatim.
+ */
+function elideAnthropicResponse(resp: ModelResponse): Record<string, unknown> {
+  return {
+    id: resp.id,
+    type: resp.type,
+    role: resp.role,
+    model: resp.model,
+    stop_reason: resp.stop_reason,
+    usage: resp.usage,
+    content: `[elided — use context hash]`,
+  };
+}
+
+/**
+ * Build a persisted elided summary of an OpenAI Responses API response.
+ * Omits output content (lives in context.jsonl); keeps envelope fields verbatim.
+ */
+function elideOpenAiResponse(raw: any): Record<string, unknown> {
+  if (!raw) return {};
+  const { output: _output, ...rest } = raw;
+  return {
+    ...rest,
+    output: `[elided — use context hash]`,
+  };
+}
 
 // --- Auto-approve logic ---
 
@@ -318,11 +420,15 @@ export class Agent {
     return this.eventsFile === undefined ? DEFAULT_EVENTS_FILE : this.eventsFile;
   }
 
-  /** Append an OmegaEvent to the events file. Returns the promise; caller may await for ordering guarantees. Errors silently dropped. */
+  /** Serial write queue — ensures events are appended in the order logEvent() is called, regardless of whether the caller awaits. */
+  private logQueue: Promise<void> = Promise.resolve();
+
+  /** Append an OmegaEvent to the events file. Calls are serialised through logQueue, so ordering is guaranteed even for fire-and-forget callers. Errors silently dropped. */
   private logEvent(event: OmegaEvent): Promise<void> {
     const path = this.resolveEventsFile();
     if (path === null) return Promise.resolve();
-    return appendEvent(event, path).catch(() => {});
+    this.logQueue = this.logQueue.then(() => appendEvent(event, path).catch(() => {}));
+    return this.logQueue;
   }
 
   /**
@@ -605,10 +711,8 @@ export class Agent {
     }
 
     await this.appendToHistory({ role: "user", content: userMessage });
-    // Await the event write so user_message is guaranteed to appear in events.jsonl
-    // before the llm_call event that follows. logEvent is otherwise fire-and-forget.
     const userMessageEvent: OmegaEvent = { type: "user_message", ts: new Date().toISOString(), content: userMessage };
-    await this.logEvent(userMessageEvent);
+    this.logEvent(userMessageEvent);
     yield userMessageEvent;
 
     // Auto-compact if context has grown beyond the threshold. Fires at most once
@@ -633,6 +737,7 @@ export class Agent {
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
       let assembledText = "";
+      let assembledTextTs: string | null = null;
 
       // Build system prompt (core instructions + system-prompt-append if loaded).
       const systemPrompt = this.buildSystemPrompt();
@@ -674,8 +779,7 @@ export class Agent {
       // contextHashes: all hashes in order, one per message in compactedContextHistory.
       const contextHashes = [...this.compactedContextHashes];
 
-      // Emit llm_call with a snapshot of the params before each call.
-      // `request` is a UI-only field (stripped by toPersistedEvent before disk write).
+      // Emit llm_call with a persisted elided request summary.
       if (useOpenAi) {
         const openAiRequest = buildOpenAiRequest(
           sentContext,
@@ -691,7 +795,7 @@ export class Agent {
           model: activeModel,
           contextHashes,
           cacheBreakpointIndex: null,
-          request: openAiRequest,
+          requestSummary: elideOpenAiRequest(openAiRequest),
         };
         this.logEvent(llmCallEv);
         yield llmCallEv;
@@ -711,7 +815,7 @@ export class Agent {
           model: activeModel,
           contextHashes,
           cacheBreakpointIndex: contextHashes.length > 0 ? contextHashes.length - 1 : null,
-          request,
+          requestSummary: elideAnthropicRequest(request),
         };
         this.logEvent(llmCallEv);
         yield llmCallEv;
@@ -778,6 +882,7 @@ export class Agent {
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
             ) {
+              if (assembledTextTs === null) assembledTextTs = new Date().toISOString();
               assembledText += event.delta.text;
               yield { type: "text", text: event.delta.text };
             }
@@ -793,7 +898,7 @@ export class Agent {
             return;
           }
 
-          response = await stream.finalMessage();
+          response = await stream.finalMessage() as unknown as ModelResponse;
           lastError = null;
           break;
         } catch (err: any) {
@@ -885,7 +990,6 @@ export class Agent {
       // appendToHistory is awaited so the context.jsonl record is on disk before
       // logEvent(llm_response) fires (which carries contextHash as a FK).
       const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
-      // Unified llm_response event: logged (without UI-only fields) and yielded (with them).
       const llmResponseEvent: OmegaEvent = {
         type: "llm_response",
         ts: new Date().toISOString(),
@@ -898,24 +1002,16 @@ export class Agent {
           service_tier: response.usage.service_tier ?? undefined,
         },
         contextHash: assistantHash,
-        // UI-only fields (stripped by toPersistedEvent before writing to events.jsonl):
-        content: response.content,
-        raw: useOpenAi ? (response as any).raw : undefined,
+        ...(assembledText ? { text: assembledText, streamingStart: assembledTextTs ?? undefined } : {}),
+        responseSummary: useOpenAi
+          ? elideOpenAiResponse((response as any).raw)
+          : elideAnthropicResponse(response),
       };
       // Await so llm_response is flushed before any tool_call events fire.
       // tool_call is causally downstream of llm_response; without await the
       // two fire-and-forget writes race and tool_call can land first in events.jsonl.
       await this.logEvent(llmResponseEvent);
       yield llmResponseEvent;
-
-      // Persist the full assembled text so it survives history replay.
-      // StreamSignal text fragments are ephemeral (never written to events.jsonl);
-      // this single event carries the complete text for the record.
-      if (assembledText) {
-        const assistantTextEvent: OmegaEvent = { type: "assistant_text", ts: new Date().toISOString(), text: assembledText };
-        await this.logEvent(assistantTextEvent);
-        yield assistantTextEvent;
-      }
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(

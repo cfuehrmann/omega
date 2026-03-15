@@ -25,6 +25,7 @@ import { readFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { Agent } from "../agent.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
+import type { ContextRecord } from "../context-store.js";
 
 // ---------------------------------------------------------------------------
 // Port resolution: --port flag > PORT env > 3000
@@ -62,6 +63,35 @@ const MIME: Record<string, string> = {
   ".png":   "image/png",
   ".woff2": "font/woff2",
 };
+
+// ---------------------------------------------------------------------------
+// Context record lookup — serves GET /context?hashes=abc,def,...
+// ---------------------------------------------------------------------------
+
+/**
+ * Read context.jsonl and return the records whose hash appears in the
+ * requested set, preserving the order of the requested hashes array.
+ */
+async function lookupContextRecords(
+  contextFile: string,
+  hashes: string[],
+): Promise<ContextRecord[]> {
+  if (!existsSync(contextFile)) return [];
+  const hashSet = new Set(hashes);
+  const map = new Map<string, ContextRecord>();
+  try {
+    const text = await readFile(contextFile, "utf-8");
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const rec = JSON.parse(trimmed) as ContextRecord;
+        if (hashSet.has(rec.hash)) map.set(rec.hash, rec);
+      } catch { /* skip malformed lines */ }
+    }
+  } catch { /* file unreadable */ }
+  return hashes.map(h => map.get(h)).filter(Boolean) as ContextRecord[];
+}
 
 function serveStatic(pathname: string): Response | null {
   const rel = pathname === "/" ? "/index.html" : pathname;
@@ -281,9 +311,25 @@ export async function runWebApp(): Promise<void> {
     server = Bun.serve({
     port: PORT,
 
-    fetch(req, srv) {
+    async fetch(req, srv) {
       if (srv.upgrade(req)) return undefined as any;
       const url = new URL(req.url);
+
+      // Context record lookup: GET /context?hashes=abc123,def456,...
+      if (url.pathname === "/context" && req.method === "GET") {
+        const raw = url.searchParams.get("hashes") ?? "";
+        const hashes = raw.split(",").map(h => h.trim()).filter(Boolean);
+        if (hashes.length === 0) {
+          return new Response(JSON.stringify([]), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const records = await lookupContextRecords(currentSessionPaths.contextFile, hashes);
+        return new Response(JSON.stringify(records), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       const res = serveStatic(url.pathname);
       if (res) return res;
       return new Response("Not found", { status: 404 });
