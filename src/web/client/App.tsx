@@ -1,5 +1,18 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import { state, dispatch, zeroMetrics, type Turn, type WsEvent, type StickyMetrics } from "./store";
+import { marked } from "marked";
+
+// Configure marked: GFM (tables, strikethrough), no raw HTML passthrough.
+marked.setOptions({ gfm: true, breaks: false });
+const _renderer = new marked.Renderer();
+_renderer.html = ({ text }: { text: string }) =>
+  text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+marked.use({ renderer: _renderer });
+
+/** Render markdown to an HTML string (raw HTML in source is escaped). */
+function renderMarkdown(text: string): string {
+  return marked.parse(text) as string;
+}
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
 function exhaustiveCheck(x: never): null {
@@ -716,7 +729,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
             </div>
           </div>
           <Show when={e.text}>
-            <div class="block-body">{e.text}</div>
+            <div class="block-body md-body" innerHTML={renderMarkdown(e.text!)} />
           </Show>
         </div>
       );

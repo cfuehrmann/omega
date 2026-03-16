@@ -68,6 +68,12 @@ hitting the limit mid-generation, leaving a broken turn. For large new
 files: write a skeleton first, then extend with \`edit_file\`. For large
 existing files: always prefer \`edit_file\` over a full rewrite.
 
+## Output format
+
+Use markdown formatting where helpful — tables, code blocks, bold, and lists
+are rendered in the UI. Plain prose is fine too; don't force structure where
+it adds no value.
+
 ## Design discipline
 
 Discuss design with the user before implementing non-trivial changes.
