@@ -61,6 +61,7 @@ async function refreshToken(token: TokenData): Promise<TokenData | null> {
         grant_type: "refresh_token",
         client_id: OAUTH_CONFIG.clientId,
         refresh_token: token.refresh_token,
+        scope: OAUTH_CONFIG.scopes,
       }),
     });
 

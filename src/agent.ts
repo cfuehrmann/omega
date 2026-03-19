@@ -754,7 +754,17 @@ export class Agent {
       // The system prompt is split into blocks with cache_control on the last block,
       // so the entire system prompt (including any appended content) is cached after the first call.
       // The last tool definition also gets cache_control to cache all tool definitions.
+      //
+      // The first block is a plain billing/attribution header (no cache_control) that
+      // Anthropic's infrastructure uses for client identification — matching the pattern
+      // used by Claude Code.  It must come before the cached prompt block.
+      const billingHeaderText = `x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;`;
       const systemBlocks: Anthropic.TextBlockParam[] = [
+        {
+          type: "text",
+          text: billingHeaderText,
+          // No cache_control — this block is intentionally uncached.
+        },
         {
           type: "text",
           text: systemPrompt,

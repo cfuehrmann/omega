@@ -71,6 +71,27 @@ async function runTurn(agent: TestAgent["agent"]): Promise<(OmegaEvent | StreamS
 // ---------------------------------------------------------------------------
 
 describe("prompt caching — cache_control in streamParams", () => {
+  it("prepends billing header block as first system block", async () => {
+    let firstParams: any = null;
+    const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
+    const { agent, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+    await agent.init();
+    await runTurn(agent);
+
+    const blocks: any[] = firstParams.system;
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    const first = blocks[0];
+    // Must be a plain text block (no cache_control)
+    expect(first.type).toBe("text");
+    expect(first.cache_control).toBeUndefined();
+    // Must contain the billing header keyword with all required fields
+    expect(first.text).toMatch(/x-anthropic-billing-header:/);
+    expect(first.text).toMatch(/cc_version=/);
+    expect(first.text).toMatch(/cc_entrypoint=/);
+    expect(first.text).toMatch(/cch=/);
+  });
+
   it("injects cache_control on system message blocks", async () => {
     let firstParams: any = null;
     const provider = makeStreamProvider({ captureFirstParams: (p) => { firstParams = p; } });
