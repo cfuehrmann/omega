@@ -152,16 +152,8 @@ function.
   `core.ts` (main instructions), `append.ts` (`readSystemPromptAppend()`,
   `writeSystemPromptAppend()`, `systemPromptAppendPath()`,
   `formatAppendSection()`), `index.ts` (`buildSystemPrompt()` assembler).
-- `src/ui-raw.ts` — thin re-export shim. CLI entry point.
-- `src/terminal/input.ts` — `parseKeys`, `displayWidth`. Minimal append-only
-  line editor.
-- `src/terminal/renderer.ts` — ANSI block renderers; `truncateOutput` (5 lines /
-  500 chars).
-- `src/terminal/app.ts` — `runApp`, `shutdown`, `setupRawInput`. Exhaustive
-  switch on `OmegaEvent | StreamSignal`.
 - `src/tools.ts` — All tool implementations; `MAX_TOOL_OUTPUT_CHARS = 100_000`
   cap.
-- `src/turn-footer.ts` — `formatTurnFooter(turn, session, provider, model)`.
 - `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`,
   `AppState`.
 - `src/web/client/App.tsx` — SolidJS UI. Exhaustive switch on `WsEvent`;

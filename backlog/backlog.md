@@ -237,10 +237,9 @@ Acceptance criteria:
 
 #### INFRA-1 — Structural invariant tests for web server entry point
 
-`entry.test.ts` guards `ui-raw.ts` and terminal modules. Same pattern needed for
-`src/web/server.ts` exports (`runWebApp`, `closeOpenTurn`, `shouldLogEvent`). If
-someone renames or restructures `server.ts`, `bun test` currently won't catch
-it.
+`entry.test.ts` guards `src/web/server.ts` exports (`runWebApp`, `closeOpenTurn`,
+`shouldLogEvent`). If someone renames or restructures `server.ts`, `bun test`
+will catch it. Consider expanding coverage if more public exports are added.
 
 Acceptance criteria:
 
@@ -369,8 +368,8 @@ Candidate areas:
 - **System prompt assembly** — `buildSystemPrompt()` output is a large string;
   snapshots could catch unintended changes from edits to `core.ts`, `identity.ts`,
   or `append.ts`.
-- **Event rendering** — terminal ANSI output (`renderer.ts`) and web client
-  HTML/JSX (`App.tsx`); snapshots would catch visual regressions.
+- **Event rendering** — web client HTML/JSX (`App.tsx`); snapshots would catch
+  visual regressions.
 - **JSONL record shapes** — `context.jsonl` and `events.jsonl` record formats;
   snapshots complement the schema lock work (SCHEMA-1–SCHEMA-6).
 - **Tool output formatting** — `truncateOutput` and related display helpers.

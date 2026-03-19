@@ -1,16 +1,16 @@
 # Omega — AI Coding Agent
 
 Omega is a general-purpose coding agent that orients itself by reading a
-project's documentation and files. The user interacts via terminal or web UI.
+project's documentation and files. The user interacts via a web UI served
+locally or over an SSH tunnel.
 
 ## Philosophy
 
 Omega produces append-only JSONL session logs that serve as both operational
 state and diagnostics. These logs are inspectable by humans and machines alike,
 accelerating the agentic development loop — the same artifact that drives the
-session is the post-mortem record when something goes wrong. Both UIs should
-reflect every event in the log, so the operator always has full visibility at
-runtime.
+session is the post-mortem record when something goes wrong. The web UI reflects
+every event in the log, so the operator always has full visibility at runtime.
 
 > In fact, introspectability of any software system — at runtime and after the
 > fact — is a first-class design goal in the age of agentic AI.
@@ -19,15 +19,15 @@ runtime.
 
 ```bash
 bun install
-bun run src/ui-raw.ts        # terminal UI
-bun run src/web/server.ts    # web UI (build client first: just web-build)
+just web-build
+just server          # web UI on :3000
 ```
 
 ## Stack
 
-TypeScript + Bun. Terminal UI in `src/terminal/`. SolidJS web client in
-`src/web/client/`. No backend framework — Bun's built-in HTTP + WebSocket. Agent
-core in `src/agent.ts`. Config is code (`src/config.ts`).
+TypeScript + Bun. SolidJS web client in `src/web/client/`. No backend framework
+— Bun's built-in HTTP + WebSocket. Agent core in `src/agent.ts`. Config is code
+(`src/config.ts`).
 
 ## Project layout
 
