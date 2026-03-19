@@ -83,6 +83,12 @@ export interface LlmCallEvent {
    */
   cacheBreakpointIndex: number | null;
   /**
+   * Serialized byte size of the full request payload sent to the provider.
+   * Measured as JSON.stringify(payload).length at the call site, before any
+   * elision. Useful for estimating upstream network cost.
+   */
+  requestBytes: number;
+  /**
    * Elided summary of the request sent to the provider. Large repetitive
    * fields (system prompt, messages, tool definitions) are replaced with
    * compact descriptors. Persisted to events.jsonl.

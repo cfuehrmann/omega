@@ -120,18 +120,22 @@ html, body, #root {
 .sm-row-label {
   font-weight: bold;
   color: var(--dim);
-  padding: 1px 8px 1px 0;
+  padding: 1px 12px 1px 0;
   white-space: nowrap;
+  text-align: left;
 }
 
-.sm-col-label {
+/* Header cells: right-aligned label above the value column */
+.sm-header-cell {
   color: var(--dim);
-  opacity: 0.75;
-  padding: 1px 2px 1px 16px;
+  opacity: 0.65;
+  font-weight: normal;
+  padding: 2px 0 1px 16px;
   white-space: nowrap;
+  text-align: right;
 }
 
-/* Extra left padding creates the visual gap before `out` */
+/* Extra left padding creates the visual gap between column groups */
 .sm-col-gap {
   padding-left: 32px;
 }
@@ -139,7 +143,7 @@ html, body, #root {
 .sm-col-val {
   color: var(--dim);
   opacity: 0.85;
-  padding: 1px 0;
+  padding: 1px 0 1px 16px;
   text-align: right;
   white-space: nowrap;
 }

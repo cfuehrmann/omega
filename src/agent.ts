@@ -805,6 +805,7 @@ export class Agent {
           model: activeModel,
           contextHashes,
           cacheBreakpointIndex: null,
+          requestBytes: JSON.stringify(openAiRequest).length,
           requestSummary: elideOpenAiRequest(openAiRequest),
         };
         this.logEvent(llmCallEv);
@@ -825,6 +826,7 @@ export class Agent {
           model: activeModel,
           contextHashes,
           cacheBreakpointIndex: contextHashes.length > 0 ? contextHashes.length - 1 : null,
+          requestBytes: JSON.stringify(request).length,
           requestSummary: elideAnthropicRequest(request),
         };
         this.logEvent(llmCallEv);

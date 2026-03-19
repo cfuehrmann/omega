@@ -23,6 +23,16 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/**
+ * Format a byte count as KB with context-appropriate precision.
+ * perCall=true (payload modal): 2 decimal places, e.g. "14.23 KB"
+ * perCall=false (turn/session bar): 1 decimal place, e.g. "67.8 KB"
+ */
+function formatKb(bytes: number, perCall = false): string {
+  const kb = bytes / 1024;
+  return perCall ? `${kb.toFixed(2)} KB` : `${kb.toFixed(1)} KB`;
+}
+
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
 function exhaustiveCheck(x: never): null {
   console.warn("Unhandled WsEvent type:", (x as any).type);
@@ -144,6 +154,7 @@ interface LlmCallDetail {
   contextHashes: string[];
   /** Number of hashes in the previous llm_call (0 if this is the first). */
   previousLength: number;
+  requestBytes?: number;
   requestSummary?: Record<string, unknown>;
   /** Which event opened this modal — affects the title. */
   source?: "llm_call" | "llm_response";
@@ -378,6 +389,9 @@ function ActiveModal() {
               </Show>
               <div class="modal-section-label">{d.url}</div>
               <div class="modal-section-label">{d.contextHashes.length} messages · +{deltaCount} new</div>
+              <Show when={d.requestBytes != null && d.requestBytes > 0}>
+                <div class="modal-section-label">request size: {formatKb(d.requestBytes!, true)}</div>
+              </Show>
               <pre class="modal-body">{rawStr}</pre>
             </ModalShell>
           );
@@ -676,6 +690,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
         model: e.model,
         contextHashes: e.contextHashes,
         previousLength,
+        requestBytes: e.requestBytes,
         requestSummary: e.requestSummary,
       };
       const openMessages = () => setActiveModal({ kind: "llm_call_messages", detail });
@@ -948,6 +963,7 @@ function StickyMetricsBar() {
       writeInTokens: base.writeInTokens + (live?.writeInTokens ?? 0) + compact.writeInTokens,
       readInTokens:  base.readInTokens  + (live?.readInTokens  ?? 0) + compact.readInTokens,
       outTokens:     base.outTokens     + (live?.outTokens     ?? 0) + compact.outTokens,
+      requestBytes:  base.requestBytes  + (live?.requestBytes  ?? 0) + compact.requestBytes,
     };
   };
 
@@ -962,85 +978,127 @@ function StickyMetricsBar() {
     };
   };
 
-  // Build the [label, value, isGap] cell list for one row.
-  // isGap=true marks the cell before `out` to render the visual separation.
-  const buildTokenCells = (m: StickyMetrics): Array<[string, string, boolean]> => {
-    const cells: Array<[string, string, boolean]> = [];
+  // ---------------------------------------------------------------------------
+  // Column definitions — fixed schema, each column always present.
+  // Value functions receive the metrics/durations for that row.
+  // gap=true adds extra left padding to visually separate groups.
+  // ---------------------------------------------------------------------------
+
+  interface ColDef {
+    label: string;
+    gap: boolean;
+    turnVal:    (m: StickyMetrics, d: DurationMetrics, isLive: boolean) => string;
+    compactVal: (m: StickyMetrics) => string;
+    sessVal:    (m: StickyMetrics, d: DurationMetrics) => string;
+  }
+
+  const tokenCols = (): ColDef[] => {
     if (isOpenAi()) {
-      cells.push(["in", String(m.freshInTokens), false]);
-    } else {
-      cells.push(["in (uncached)",    String(m.freshInTokens),  false]);
-      cells.push(["in (cache write)", String(m.writeInTokens),  false]);
-      cells.push(["in (cache read)",  String(m.readInTokens),   false]);
+      return [
+        { label: "in",             gap: false, turnVal: (m) => String(m.freshInTokens), compactVal: (m) => String(m.freshInTokens), sessVal: (m) => String(m.freshInTokens) },
+        { label: "out",            gap: true,  turnVal: (m) => String(m.outTokens),     compactVal: (m) => String(m.outTokens),     sessVal: (m) => String(m.outTokens) },
+      ];
     }
-    cells.push(["out", String(m.outTokens), true]);
-    return cells;
+    return [
+      { label: "in (uncached)",    gap: false, turnVal: (m) => String(m.freshInTokens), compactVal: (m) => String(m.freshInTokens), sessVal: (m) => String(m.freshInTokens) },
+      { label: "in (cache write)", gap: false, turnVal: (m) => String(m.writeInTokens), compactVal: (m) => String(m.writeInTokens), sessVal: (m) => String(m.writeInTokens) },
+      { label: "in (cache read)",  gap: false, turnVal: (m) => String(m.readInTokens),  compactVal: (m) => String(m.readInTokens),  sessVal: (m) => String(m.readInTokens) },
+      { label: "out",              gap: true,  turnVal: (m) => String(m.outTokens),     compactVal: (m) => String(m.outTokens),     sessVal: (m) => String(m.outTokens) },
+    ];
   };
 
-  // Duration cells: only emit non-zero entries so early rows aren't cluttered.
-  // isGap=true on the first duration cell to add visual separation from tokens.
-  const buildDurationCells = (d: DurationMetrics, includeTurn: boolean): Array<[string, string, boolean]> => {
-    const cells: Array<[string, string, boolean]> = [];
-    let first = true;
-    const add = (label: string, ms: number) => {
-      if (ms <= 0) return;
-      cells.push([label, formatDuration(ms), first]);
-      first = false;
-    };
-    add("llm", d.llmMs);
-    add("tools", d.toolMs);
-    if (includeTurn) add("total", d.turnMs);
-    return cells;
-  };
+  // Fixed non-token columns always shown
+  const fixedCols = (): ColDef[] => [
+    {
+      label: "request size",
+      gap: true,
+      turnVal:    (m) => formatKb(m.requestBytes),
+      compactVal: (_m) => "—",
+      sessVal:    (m) => formatKb(m.requestBytes),
+    },
+    {
+      label: "llm",
+      gap: true,
+      turnVal:    (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",
+      compactVal: (_m) => "—",
+      sessVal:    (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",
+    },
+    {
+      label: "tools",
+      gap: false,
+      turnVal:    (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—",
+      compactVal: (_m) => "—",
+      sessVal:    (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—",
+    },
+    {
+      label: "total",
+      gap: false,
+      turnVal:    (_m, d, isLive) => (!isLive && d.turnMs > 0) ? formatDuration(d.turnMs) : "—",
+      compactVal: (_m) => "—",
+      sessVal:    (_m, _d) => "—",
+    },
+  ];
+
+  const allCols = (): ColDef[] => [...tokenCols(), ...fixedCols()];
+
+  const showCompact = () =>
+    state.compactionTotals.outTokens > 0 ||
+    state.compactionTotals.freshInTokens > 0 ||
+    state.compactionTotals.writeInTokens > 0 ||
+    state.compactionTotals.readInTokens > 0;
 
   return (
     <Show when={visible()}>
       <div class="sticky-metrics-wrap">
         <table class="sticky-metrics">
+          <thead>
+            <tr>
+              <th class="sm-row-label sm-header-cell"></th>
+              <For each={allCols()}>
+                {(col) => (
+                  <th class={`sm-header-cell${col.gap ? " sm-col-gap" : ""}`}>{col.label}</th>
+                )}
+              </For>
+              <th class="sm-legend-cell sm-header-cell">
+                <button class="sm-legend-toggle" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>
+              </th>
+            </tr>
+          </thead>
           <tbody>
             <tr>
               <td class="sm-row-label">turn</td>
-              <For each={buildTokenCells(turnMetrics())}>
-                {([lbl, val, gap]) => <>
-                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
-                  <td class="sm-col-val">{val}</td>
-                </>}
+              <For each={allCols()}>
+                {(col) => (
+                  <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
+                    {col.turnVal(turnMetrics(), turnDurations(), state.liveTurn !== null)}
+                  </td>
+                )}
               </For>
-              <For each={buildDurationCells(turnDurations(), state.liveTurn === null)}>
-                {([lbl, val, gap]) => <>
-                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
-                  <td class="sm-col-val">{val}</td>
-                </>}
-              </For>
+              <td />
             </tr>
-            <Show when={state.compactionTotals.outTokens > 0 || state.compactionTotals.freshInTokens > 0 || state.compactionTotals.writeInTokens > 0 || state.compactionTotals.readInTokens > 0}>
+            <Show when={showCompact()}>
               <tr>
                 <td class="sm-row-label">compact</td>
-                <For each={buildTokenCells(state.compactionTotals)}>
-                  {([lbl, val, gap]) => <>
-                    <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
-                    <td class="sm-col-val">{val}</td>
-                  </>}
+                <For each={allCols()}>
+                  {(col) => (
+                    <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
+                      {col.compactVal(state.compactionTotals)}
+                    </td>
+                  )}
                 </For>
+                <td />
               </tr>
             </Show>
             <tr>
               <td class="sm-row-label">session</td>
-              <For each={buildTokenCells(sessMetrics())}>
-                {([lbl, val, gap]) => <>
-                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
-                  <td class="sm-col-val">{val}</td>
-                </>}
+              <For each={allCols()}>
+                {(col) => (
+                  <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
+                    {col.sessVal(sessMetrics(), sessDurations())}
+                  </td>
+                )}
               </For>
-              <For each={buildDurationCells(sessDurations(), false)}>
-                {([lbl, val, gap]) => <>
-                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
-                  <td class="sm-col-val">{val}</td>
-                </>}
-              </For>
-              <td class="sm-legend-cell">
-                <button class="sm-legend-toggle" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>
-              </td>
+              <td />
             </tr>
           </tbody>
         </table>
