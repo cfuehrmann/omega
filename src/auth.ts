@@ -1,6 +1,5 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
-import { randomBytes, createHash } from "crypto";
 
 // OAuth configuration for Claude Max (from pi-ai's anthropic.js)
 // CRITICAL: Must use claude.ai + console.anthropic.com endpoints.
@@ -20,15 +19,6 @@ interface TokenData {
   access_token: string;
   refresh_token?: string;
   expires_at?: number; // unix ms timestamp
-}
-
-// Generate PKCE challenge
-function generatePKCE(): { verifier: string; challenge: string } {
-  const verifier = randomBytes(32).toString("base64url");
-  const challenge = createHash("sha256")
-    .update(verifier)
-    .digest("base64url");
-  return { verifier, challenge };
 }
 
 async function ensureConfigDir(): Promise<void> {
@@ -78,63 +68,6 @@ async function refreshToken(token: TokenData): Promise<TokenData | null> {
   } catch {
     return null;
   }
-}
-
-// Start the OAuth authorization code flow with PKCE
-export async function startOAuthFlow(): Promise<{
-  url: string;
-  exchangeCode: (codeWithState: string) => Promise<TokenData>;
-}> {
-  const { verifier, challenge } = generatePKCE();
-
-  const params = new URLSearchParams({
-    code: "true",  // Required by claude.ai OAuth
-    client_id: OAUTH_CONFIG.clientId,
-    response_type: "code",
-    redirect_uri: OAUTH_CONFIG.redirectUri,
-    scope: OAUTH_CONFIG.scopes,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    state: verifier,
-  });
-
-  const url = `${OAUTH_CONFIG.authorizeUrl}?${params}`;
-
-  const exchangeCode = async (codeWithState: string): Promise<TokenData> => {
-    // Parse code#state from the pasted value
-    const parts = codeWithState.split("#");
-    const code = parts[0];
-    const state = parts[1];
-
-    const resp = await fetch(OAUTH_CONFIG.tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "authorization_code",
-        client_id: OAUTH_CONFIG.clientId,
-        code,
-        state,
-        redirect_uri: OAUTH_CONFIG.redirectUri,
-        code_verifier: verifier,
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`Token exchange failed (${resp.status}): ${text}`);
-    }
-
-    const data = (await resp.json()) as any;
-    const token: TokenData = {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_at: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
-    };
-    await saveToken(token);
-    return token;
-  };
-
-  return { url, exchangeCode };
 }
 
 // Get a valid access token (= API key for Claude Max).

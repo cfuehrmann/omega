@@ -9,10 +9,6 @@
 # Production (no hot-reload):
 #   just web-build && just server
 
-# Start Omega (terminal UI)
-start:
-    bun run src/ui-raw.ts
-
 # Run all tests in parallel: web-build first, then test-core and test-browser concurrently.
 # Outputs are captured and printed sequentially (core first, then browser) for readability.
 test:
@@ -73,10 +69,6 @@ client:
 ports:
     @echo "=== :3000 (Bun server) ===" && lsof -iTCP:3000 -sTCP:LISTEN -P -n 2>/dev/null || echo "  nothing"
     @echo "=== :5173 (Vite client) ===" && lsof -iTCP:5173 -sTCP:LISTEN -P -n 2>/dev/null || echo "  nothing"
-
-# Log in / refresh OAuth token
-login:
-    bun run src/login.ts
 
 # Push current branch to origin
 push:
