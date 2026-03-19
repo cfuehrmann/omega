@@ -1,5 +1,5 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
-import { state, dispatch, zeroMetrics, type Turn, type WsEvent, type StickyMetrics } from "./store";
+import { state, dispatch, zeroMetrics, zeroDurations, type Turn, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
 import { marked } from "marked";
 
 // Configure marked: GFM (tables, strikethrough), no raw HTML passthrough.
@@ -12,6 +12,15 @@ marked.use({ renderer: _renderer });
 /** Render markdown to an HTML string (raw HTML in source is escaped). */
 function renderMarkdown(text: string): string {
   return marked.parse(text) as string;
+}
+
+/**
+ * Format a duration in milliseconds for display.
+ * < 1000ms → "NNNms", ≥ 1000ms → "N.Ns" (one decimal place).
+ */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 /** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
@@ -918,13 +927,18 @@ function StickyMetricsBar() {
   const turnMetrics = (): StickyMetrics =>
     state.liveTurn ?? state.lastTurnEnd?.metrics ?? zeroMetrics();
 
+  // Duration for the turn row:
+  //   - live turn → liveDurations (llmMs/toolMs tick up; turnMs=0 until turn_end)
+  //   - completed turn → lastTurnEnd.durations (all three fields set)
+  const turnDurations = (): DurationMetrics =>
+    state.liveTurn !== null ? state.liveDurations : (state.lastTurnEnd?.durations ?? zeroDurations());
+
   const provider = (): string =>
     state.liveTurn !== null ? state.liveProvider : (state.lastTurnEnd?.provider ?? "");
 
-  const isLive = () => state.liveTurn !== null;
   const isOpenAi = () => provider() === "openai";
 
-  // Session row: completed-turns total + live turn + compaction totals.
+  // Session row tokens: completed-turns total + live turn + compaction totals.
   const sessMetrics = (): StickyMetrics => {
     const base = state.sessionTotals;
     const live = state.liveTurn;
@@ -937,9 +951,20 @@ function StickyMetricsBar() {
     };
   };
 
+  // Session row durations: completed-turns total + live turn durations.
+  const sessDurations = (): DurationMetrics => {
+    const base = state.sessionDurations;
+    const live = state.liveDurations;
+    return {
+      llmMs:  base.llmMs  + live.llmMs,
+      toolMs: base.toolMs + live.toolMs,
+      turnMs: base.turnMs + live.turnMs,
+    };
+  };
+
   // Build the [label, value, isGap] cell list for one row.
   // isGap=true marks the cell before `out` to render the visual separation.
-  const buildCells = (m: StickyMetrics): Array<[string, string, boolean]> => {
+  const buildTokenCells = (m: StickyMetrics): Array<[string, string, boolean]> => {
     const cells: Array<[string, string, boolean]> = [];
     if (isOpenAi()) {
       cells.push(["in", String(m.freshInTokens), false]);
@@ -952,6 +977,22 @@ function StickyMetricsBar() {
     return cells;
   };
 
+  // Duration cells: only emit non-zero entries so early rows aren't cluttered.
+  // isGap=true on the first duration cell to add visual separation from tokens.
+  const buildDurationCells = (d: DurationMetrics, includeTurn: boolean): Array<[string, string, boolean]> => {
+    const cells: Array<[string, string, boolean]> = [];
+    let first = true;
+    const add = (label: string, ms: number) => {
+      if (ms <= 0) return;
+      cells.push([label, formatDuration(ms), first]);
+      first = false;
+    };
+    add("llm", d.llmMs);
+    add("tools", d.toolMs);
+    if (includeTurn) add("total", d.turnMs);
+    return cells;
+  };
+
   return (
     <Show when={visible()}>
       <div class="sticky-metrics-wrap">
@@ -959,7 +1000,13 @@ function StickyMetricsBar() {
           <tbody>
             <tr>
               <td class="sm-row-label">turn</td>
-              <For each={buildCells(turnMetrics())}>
+              <For each={buildTokenCells(turnMetrics())}>
+                {([lbl, val, gap]) => <>
+                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
+                  <td class="sm-col-val">{val}</td>
+                </>}
+              </For>
+              <For each={buildDurationCells(turnDurations(), state.liveTurn === null)}>
                 {([lbl, val, gap]) => <>
                   <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
                   <td class="sm-col-val">{val}</td>
@@ -969,7 +1016,7 @@ function StickyMetricsBar() {
             <Show when={state.compactionTotals.outTokens > 0 || state.compactionTotals.freshInTokens > 0 || state.compactionTotals.writeInTokens > 0 || state.compactionTotals.readInTokens > 0}>
               <tr>
                 <td class="sm-row-label">compact</td>
-                <For each={buildCells(state.compactionTotals)}>
+                <For each={buildTokenCells(state.compactionTotals)}>
                   {([lbl, val, gap]) => <>
                     <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
                     <td class="sm-col-val">{val}</td>
@@ -979,7 +1026,13 @@ function StickyMetricsBar() {
             </Show>
             <tr>
               <td class="sm-row-label">session</td>
-              <For each={buildCells(sessMetrics())}>
+              <For each={buildTokenCells(sessMetrics())}>
+                {([lbl, val, gap]) => <>
+                  <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
+                  <td class="sm-col-val">{val}</td>
+                </>}
+              </For>
+              <For each={buildDurationCells(sessDurations(), false)}>
                 {([lbl, val, gap]) => <>
                   <td class={gap ? "sm-col-label sm-col-gap" : "sm-col-label"}>{lbl}:</td>
                   <td class="sm-col-val">{val}</td>

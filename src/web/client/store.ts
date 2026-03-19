@@ -69,9 +69,28 @@ export interface StickyMetrics {
   outTokens: number;
 }
 
+/**
+ * Duration metrics derived from event timestamps — never from wall-clock.
+ * Safe for replay after reconnect because they are recomputed from persisted ts fields.
+ *
+ * llmMs:  sum of (llm_response.ts − llm_call.ts) per call pair.
+ * toolMs: sum of parallel-batch wall spans: (max tool_result.ts − min tool_call.ts)
+ *         per batch, where a batch is the group of tool calls between one
+ *         llm_response and the next llm_call.
+ * turnMs: turn_end.ts − user_message.ts (0 until turn_end arrives).
+ */
+export interface DurationMetrics {
+  llmMs: number;
+  toolMs: number;
+  turnMs: number;
+}
+
+export const zeroDurations = (): DurationMetrics => ({ llmMs: 0, toolMs: 0, turnMs: 0 });
+
 /** Shape of the last completed turn_end event, for the per-turn sticky row. */
 interface LastTurnInfo {
   metrics: StickyMetrics;
+  durations: DurationMetrics;
   model: string;
   provider: string;
 }
@@ -85,12 +104,20 @@ interface AppState {
   retryCount: number;
   /** Metrics from the most recently completed turn (null if no turn finished yet). */
   lastTurnEnd: LastTurnInfo | null;
-  /** Cumulative metrics across all completed turns in the session. */
+  /** Cumulative token metrics across all completed turns in the session. */
   sessionTotals: StickyMetrics;
+  /** Cumulative duration metrics across all completed turns in the session. */
+  sessionDurations: DurationMetrics;
   /** Cumulative metrics from all compaction LLM calls in the session. */
   compactionTotals: StickyMetrics;
   /** Live accumulation of the current in-progress turn (reset on user_message, updated on llm_response). */
   liveTurn: StickyMetrics | null;
+  /**
+   * Live duration accumulation for the current in-progress turn.
+   * llmMs / toolMs tick up as each llm_response / last-tool_result arrives.
+   * turnMs stays 0 until turn_end (we never use Date.now() — replay safety).
+   */
+  liveDurations: DurationMetrics;
   /** Provider for the current/last turn (set from llm_call, used for live bar display). */
   liveProvider: string;
   /** Model for the current/last turn (set from llm_call, used for live bar display). */
@@ -116,8 +143,10 @@ const [state, setState] = createStore<AppState>({
   retryCount: 0,
   lastTurnEnd: null,
   sessionTotals: zeroMetrics(),
+  sessionDurations: zeroDurations(),
   compactionTotals: zeroMetrics(),
   liveTurn: null,
+  liveDurations: zeroDurations(),
   liveProvider: "",
   liveModel: "",
   sessionDir: "",
@@ -126,10 +155,6 @@ const [state, setState] = createStore<AppState>({
 export { state };
 
 let nextTurnId = 0;
-
-function currentTurn(): Turn | undefined {
-  return state.turns[state.turns.length - 1];
-}
 
 function appendEvent(event: WsEvent): void {
   setState(produce(s => {
@@ -159,6 +184,237 @@ function addMetrics(a: StickyMetrics, b: StickyMetrics): StickyMetrics {
   };
 }
 
+function addDurations(a: DurationMetrics, b: DurationMetrics): DurationMetrics {
+  return {
+    llmMs:  a.llmMs  + b.llmMs,
+    toolMs: a.toolMs + b.toolMs,
+    turnMs: a.turnMs + b.turnMs,
+  };
+}
+
+/**
+ * Parse an ISO timestamp string to milliseconds-since-epoch.
+ * Returns NaN if absent or unparseable (callers must guard).
+ */
+function tsMs(ts: string | undefined): number {
+  if (!ts) return NaN;
+  return new Date(ts).getTime();
+}
+
+// ---------------------------------------------------------------------------
+// Duration computation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute DurationMetrics by walking a completed turn's event list.
+ *
+ * Safe for replay: uses only .ts fields from persisted events, never Date.now().
+ *
+ * Algorithm:
+ *   - LLM time: each llm_call starts a pending call; when the matching
+ *     llm_response arrives, compute the diff and add to llmMs.
+ *   - Tool time: between each llm_response and the following llm_call, collect
+ *     all tool_call and tool_result timestamps. The batch span is
+ *     (max tool_result.ts − min tool_call.ts). Add to toolMs.
+ *   - Turn time: turn_end.ts − user_message.ts.
+ */
+export function computeDurations(events: WsEvent[]): DurationMetrics {
+  let llmMs = 0;
+  let toolMs = 0;
+  let turnMs = 0;
+
+  let pendingLlmCallTs: number | null = null;
+  // Tool batch state: between llm_response and next llm_call
+  let inToolBatch = false;
+  let batchMinCallTs = Infinity;
+  let batchMaxResultTs = -Infinity;
+  let batchHasCall = false;
+  let batchHasResult = false;
+
+  let userMessageTs: number | null = null;
+
+  for (const e of events) {
+    switch (e.type) {
+      case "user_message":
+        userMessageTs = tsMs(e.ts);
+        break;
+
+      case "llm_call": {
+        // Flush any pending tool batch before the next LLM call starts
+        if (inToolBatch && batchHasCall && batchHasResult) {
+          const span = batchMaxResultTs - batchMinCallTs;
+          if (span > 0) toolMs += span;
+        }
+        inToolBatch = false;
+        batchHasCall = false;
+        batchHasResult = false;
+        batchMinCallTs = Infinity;
+        batchMaxResultTs = -Infinity;
+
+        pendingLlmCallTs = tsMs(e.ts);
+        break;
+      }
+
+      case "llm_response": {
+        if (pendingLlmCallTs !== null) {
+          const respTs = tsMs(e.ts);
+          if (!isNaN(respTs) && !isNaN(pendingLlmCallTs)) {
+            llmMs += respTs - pendingLlmCallTs;
+          }
+          pendingLlmCallTs = null;
+        }
+        // Start a new tool batch window after this response
+        inToolBatch = true;
+        batchHasCall = false;
+        batchHasResult = false;
+        batchMinCallTs = Infinity;
+        batchMaxResultTs = -Infinity;
+        break;
+      }
+
+      case "tool_call": {
+        if (inToolBatch) {
+          const t = tsMs(e.ts);
+          if (!isNaN(t)) {
+            batchHasCall = true;
+            if (t < batchMinCallTs) batchMinCallTs = t;
+          }
+        }
+        break;
+      }
+
+      case "tool_result": {
+        if (inToolBatch) {
+          const t = tsMs(e.ts);
+          if (!isNaN(t)) {
+            batchHasResult = true;
+            if (t > batchMaxResultTs) batchMaxResultTs = t;
+          }
+        }
+        break;
+      }
+
+      case "turn_end": {
+        // Flush any trailing tool batch (shouldn't happen in normal flow, but be safe)
+        if (inToolBatch && batchHasCall && batchHasResult) {
+          const span = batchMaxResultTs - batchMinCallTs;
+          if (span > 0) toolMs += span;
+        }
+        inToolBatch = false;
+
+        if (userMessageTs !== null) {
+          const endTs = tsMs(e.ts);
+          if (!isNaN(endTs) && !isNaN(userMessageTs)) {
+            turnMs = endTs - userMessageTs;
+          }
+        }
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  return { llmMs, toolMs, turnMs };
+}
+
+/**
+ * Compute live (in-progress) duration metrics from a partial turn's event list.
+ *
+ * Same as computeDurations but:
+ *  - turnMs is always 0 (no turn_end yet — we never use Date.now())
+ *  - A pending tool batch is flushed as soon as all expected results have arrived
+ *    (i.e. every tool_call.id has a matching tool_result.id).
+ *
+ * This is called incrementally on every new llm_response or tool_result event
+ * so the display updates promptly.
+ */
+export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
+  // Re-use computeDurations on partial events. The only difference is that
+  // an open tool batch at the end should be flushed if all tool_calls have results.
+  let llmMs = 0;
+  let toolMs = 0;
+
+  let pendingLlmCallTs: number | null = null;
+  let inToolBatch = false;
+  let batchMinCallTs = Infinity;
+  let batchMaxResultTs = -Infinity;
+  // Track ids to detect when the last result has arrived
+  const batchCallIds = new Set<string>();
+  const batchResultIds = new Set<string>();
+
+  for (const e of events) {
+    switch (e.type) {
+      case "llm_call": {
+        // Flush completed batch before next LLM call
+        if (inToolBatch && batchCallIds.size > 0 && batchCallIds.size === batchResultIds.size) {
+          const span = batchMaxResultTs - batchMinCallTs;
+          if (span > 0) toolMs += span;
+        }
+        inToolBatch = false;
+        batchCallIds.clear();
+        batchResultIds.clear();
+        batchMinCallTs = Infinity;
+        batchMaxResultTs = -Infinity;
+
+        pendingLlmCallTs = tsMs(e.ts);
+        break;
+      }
+
+      case "llm_response": {
+        if (pendingLlmCallTs !== null) {
+          const respTs = tsMs(e.ts);
+          if (!isNaN(respTs) && !isNaN(pendingLlmCallTs)) {
+            llmMs += respTs - pendingLlmCallTs;
+          }
+          pendingLlmCallTs = null;
+        }
+        inToolBatch = true;
+        batchCallIds.clear();
+        batchResultIds.clear();
+        batchMinCallTs = Infinity;
+        batchMaxResultTs = -Infinity;
+        break;
+      }
+
+      case "tool_call": {
+        if (inToolBatch) {
+          batchCallIds.add(e.id);
+          const t = tsMs(e.ts);
+          if (!isNaN(t) && t < batchMinCallTs) batchMinCallTs = t;
+        }
+        break;
+      }
+
+      case "tool_result": {
+        if (inToolBatch) {
+          batchResultIds.add(e.id);
+          const t = tsMs(e.ts);
+          if (!isNaN(t) && t > batchMaxResultTs) batchMaxResultTs = t;
+
+          // Flush if all calls have results
+          if (batchCallIds.size > 0 && batchCallIds.size === batchResultIds.size) {
+            const span = batchMaxResultTs - batchMinCallTs;
+            if (span > 0) toolMs += span;
+            // Reset so we don't double-count if more results arrive (shouldn't happen)
+            batchCallIds.clear();
+            batchResultIds.clear();
+            batchMinCallTs = Infinity;
+            batchMaxResultTs = -Infinity;
+          }
+        }
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  return { llmMs, toolMs, turnMs: 0 };
+}
+
 export function dispatch(event: WsEvent): void {
   switch (event.type) {
     case "connected":
@@ -184,6 +440,7 @@ export function dispatch(event: WsEvent): void {
       let tid = 0;
       let replayLastTurnEnd: LastTurnInfo | null = null;
       let replaySessionTotals: StickyMetrics = zeroMetrics();
+      let replaySessionDurations: DurationMetrics = zeroDurations();
       let replayCompactionTotals: StickyMetrics = zeroMetrics();
 
       for (const e of event.events) {
@@ -204,8 +461,10 @@ export function dispatch(event: WsEvent): void {
             streaming = false;
             // Accumulate sticky metrics
             const sm = metricsFromTurnEnd(e);
-            replayLastTurnEnd = { metrics: sm, model: e.model, provider: e.provider };
+            const sd = computeDurations(t ? t.events : []);
+            replayLastTurnEnd = { metrics: sm, durations: sd, model: e.model, provider: e.provider };
             replaySessionTotals = addMetrics(replaySessionTotals, sm);
+            replaySessionDurations = addDurations(replaySessionDurations, sd);
             break;
           }
 
@@ -252,12 +511,17 @@ export function dispatch(event: WsEvent): void {
         }
       }
 
-      // Close any open turn (server crashed mid-turn, no turn_end emitted).
+      // If the last turn is still open (e.g. server reconnect mid-turn), compute
+      // live durations from what we have so far.
+      let replayLiveDurations = zeroDurations();
       if (streaming) {
         const t = turns[turns.length - 1];
         if (t) {
+          // Close the turn with a synthetic interrupted marker for display
           t.events.push({ type: "turn_interrupted" });
           t.done = true;
+          // Durations from partial events (turnMs will be 0)
+          replayLiveDurations = computeLiveDurations(t.events);
         }
         streaming = false;
       }
@@ -272,7 +536,9 @@ export function dispatch(event: WsEvent): void {
         setState("retryCount", 0);
         setState("lastTurnEnd", replayLastTurnEnd);
         setState("sessionTotals", replaySessionTotals);
+        setState("sessionDurations", replaySessionDurations);
         setState("compactionTotals", replayCompactionTotals);
+        setState("liveDurations", replayLiveDurations);
       });
       break;
     }
@@ -291,8 +557,10 @@ export function dispatch(event: WsEvent): void {
       setState("streaming", false);
       setState("lastTurnEnd", null);
       setState("sessionTotals", zeroMetrics());
+      setState("sessionDurations", zeroDurations());
       setState("compactionTotals", zeroMetrics());
       setState("liveTurn", null);
+      setState("liveDurations", zeroDurations());
       setState("liveProvider", "");
       setState("liveModel", "");
       nextTurnId = 0;
@@ -307,6 +575,7 @@ export function dispatch(event: WsEvent): void {
       }]);
       setState("streaming", true);
       setState("liveTurn", zeroMetrics());
+      setState("liveDurations", zeroDurations());
       break;
 
     case "text":
@@ -332,11 +601,16 @@ export function dispatch(event: WsEvent): void {
       // turn_end means the agentic loop finished; clear streaming so replayed
       // history doesn't leave the UI stuck in streaming state.
       setState("streaming", false);
-      // Update sticky metrics and clear live accumulator
+      // Compute durations from the now-complete turn events
+      const currentTurnEvents = state.turns[state.turns.length - 1]?.events ?? [];
+      const sd = computeDurations(currentTurnEvents);
+      // Update sticky metrics and clear live accumulators
       const sm = metricsFromTurnEnd(event);
-      setState("lastTurnEnd", { metrics: sm, model: event.model, provider: event.provider });
+      setState("lastTurnEnd", { metrics: sm, durations: sd, model: event.model, provider: event.provider });
       setState("sessionTotals", prev => addMetrics(prev, sm));
+      setState("sessionDurations", prev => addDurations(prev, sd));
       setState("liveTurn", null);
+      setState("liveDurations", zeroDurations());
       break;
     }
 
@@ -350,16 +624,20 @@ export function dispatch(event: WsEvent): void {
       }));
       setState("streaming", false);
       setState("liveTurn", null);
+      setState("liveDurations", zeroDurations());
       break;
 
     case "llm_response": {
-      // Clear the temporary streaming text slot — the settled text is now carried
-      // directly on this event and rendered from events[] in log order.
+      // Append to turn first so computeLiveDurations sees the new event
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
-        if (turn) turn.streamingText = undefined;
+        if (!turn) return;
+        turn.streamingText = undefined;
+        turn.events.push(event);
       }));
-      appendEvent(event);
+      // Recompute live durations from the updated turn events (llmMs ticks up)
+      const turnEventsAfterResp = state.turns[state.turns.length - 1]?.events ?? [];
+      setState("liveDurations", computeLiveDurations(turnEventsAfterResp));
       // Accumulate live per-turn token totals so the metrics bar ticks up mid-turn.
       const u = event.usage;
       setState("liveTurn", prev => {
@@ -382,9 +660,20 @@ export function dispatch(event: WsEvent): void {
       break;
     }
 
+    case "tool_result": {
+      // Append first so computeLiveDurations sees the new result
+      setState(produce(s => {
+        const turn = s.turns[s.turns.length - 1];
+        if (turn) turn.events.push(event);
+      }));
+      // Recompute live durations (toolMs may tick up when last result of batch arrives)
+      const turnEventsAfterResult = state.turns[state.turns.length - 1]?.events ?? [];
+      setState("liveDurations", computeLiveDurations(turnEventsAfterResult));
+      break;
+    }
+
     case "session_end":
     case "tool_call":
-    case "tool_result":
     case "llm_retry":
     case "model_changed":
     case "oauth_token_expired":
@@ -392,7 +681,7 @@ export function dispatch(event: WsEvent): void {
     case "compact_auto_done":
     case "compact_user_done": {
       appendEvent(event);
-      const u = event.usage;
+      const u = (event as any).usage;
       if (u) setState("compactionTotals", prev => addMetrics(prev, {
         freshInTokens: u.input_tokens ?? 0,
         writeInTokens: u.cache_creation_input_tokens ?? 0,
