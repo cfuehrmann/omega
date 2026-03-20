@@ -30,7 +30,7 @@ export type WsEvent =
   | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; contextHash: string; text?: string; streamingStart?: string; responseSummary?: Record<string, unknown> }
   | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestBytes?: number; requestSummary?: Record<string, unknown> }
   | { type: "llm_retry"; ts?: string; attempt: number; provider: string; waitMs: number; error: string }
-  | { type: "model_changed"; ts?: string; provider: string; model: string }
+  | { type: "model_changed"; ts?: string; model: string }
   | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed"; ts?: string }
   | { type: "compact_user_start"; ts?: string }
@@ -94,7 +94,6 @@ interface LastTurnInfo {
   metrics: StickyMetrics;
   durations: DurationMetrics;
   model: string;
-  provider: string;
 }
 
 interface AppState {
@@ -120,8 +119,7 @@ interface AppState {
    * turnMs stays 0 until turn_end (we never use Date.now() — replay safety).
    */
   liveDurations: DurationMetrics;
-  /** Provider for the current/last turn (set from llm_call, used for live bar display). */
-  liveProvider: string;
+
   /** Model for the current/last turn (set from llm_call, used for live bar display). */
   liveModel: string;
 
@@ -149,7 +147,6 @@ const [state, setState] = createStore<AppState>({
   compactionTotals: zeroMetrics(),
   liveTurn: null,
   liveDurations: zeroDurations(),
-  liveProvider: "",
   liveModel: "",
   sessionDir: "",
 });
@@ -477,7 +474,7 @@ export function dispatch(event: WsEvent): void {
             const turnEvents = t ? t.events : [];
             const sm = metricsFromTurnEnd(e, sumRequestBytes(turnEvents));
             const sd = computeDurations(turnEvents);
-            replayLastTurnEnd = { metrics: sm, durations: sd, model: e.model, provider: e.provider };
+            replayLastTurnEnd = { metrics: sm, durations: sd, model: e.model };
             replaySessionTotals = addMetrics(replaySessionTotals, sm);
             replaySessionDurations = addDurations(replaySessionDurations, sd);
             break;
@@ -577,7 +574,6 @@ export function dispatch(event: WsEvent): void {
       setState("compactionTotals", zeroMetrics());
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
-      setState("liveProvider", "");
       setState("liveModel", "");
       nextTurnId = 0;
       break;
@@ -622,7 +618,7 @@ export function dispatch(event: WsEvent): void {
       const sd = computeDurations(currentTurnEvents);
       // Update sticky metrics and clear live accumulators
       const sm = metricsFromTurnEnd(event, sumRequestBytes(currentTurnEvents));
-      setState("lastTurnEnd", { metrics: sm, durations: sd, model: event.model, provider: event.provider });
+      setState("lastTurnEnd", { metrics: sm, durations: sd, model: event.model });
       setState("sessionTotals", prev => addMetrics(prev, sm));
       setState("sessionDurations", prev => addDurations(prev, sd));
       setState("liveTurn", null);
@@ -671,14 +667,12 @@ export function dispatch(event: WsEvent): void {
 
     case "session_start": {
       appendEvent(event);
-      setState("liveProvider", event.provider);
       setState("liveModel", event.model);
       break;
     }
 
     case "llm_call": {
       appendEvent(event);
-      setState("liveProvider", event.provider);
       setState("liveModel", event.model);
       // Tick up requestBytes in the live turn accumulator
       setState("liveTurn", prev => {

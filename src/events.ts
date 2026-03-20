@@ -261,11 +261,10 @@ export interface LlmRetryEvent {
 
 
 
-/** The operator switched the active model/provider via a slash command. */
+/** The operator switched the active model via a slash command. */
 export interface ModelChangedEvent {
   type: "model_changed";
   ts: string;
-  provider: "anthropic";
   model: string;
 }
 

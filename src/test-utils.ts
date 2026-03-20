@@ -63,9 +63,9 @@ let _counter = 0;
  * Each call creates a fresh uniquely-named session directory (via
  * `makeSessionDir()`), so concurrent tests never collide.
  *
- * @param streamProvider  Optional mock stream provider. If omitted, any API
- *                        call will throw (which is fine for tests that don't
- *                        exercise the streaming path).
+ * @param streamProvider  Optional mock stream provider. If omitted, any LLM
+ *                        call will throw (fine for tests that don't exercise
+ *                        the streaming path).
  */
 export async function makeTestAgent(
   streamProvider?: StreamProvider
@@ -78,13 +78,7 @@ export async function makeTestAgent(
     TEST_SESSIONS_ROOT,
   );
 
-  const agent = new Agent(
-    streamProvider,
-    null, // _sessionDir (unused legacy positional)
-    undefined,
-    contextFile,
-    eventsFile,
-  );
+  const agent = new Agent(streamProvider, contextFile, eventsFile);
 
   return {
     agent,

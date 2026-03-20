@@ -176,7 +176,7 @@ test("model_changed event shows status block", async ({ page, server }) => {
 
   const statusBlock = page.locator(".block.status");
   await expect(statusBlock).toBeVisible({ timeout: 3000 });
-  await expect(statusBlock.locator(".block-body")).toHaveText("Switched to anthropic claude-opus-4-6");
+  await expect(statusBlock.locator(".block-body")).toHaveText("Switched to claude-opus-4-6");
 });
 
 test("world_state_saved event shows a status pill", async ({ page, server }) => {

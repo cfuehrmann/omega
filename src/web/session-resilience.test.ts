@@ -89,7 +89,7 @@ describe("shouldLogEvent", () => {
   });
 
   it("allows model_changed events", () => {
-    expect(shouldLogEvent({ type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" })).toBe(true);
+    expect(shouldLogEvent({ type: "model_changed", model: "claude-sonnet-4-6" })).toBe(true);
   });
 
   it("allows llm_response events", () => {
@@ -141,7 +141,7 @@ describe("store history replay — open turn recovery", () => {
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" } as any,
+        { type: "model_changed", model: "claude-sonnet-4-6" } as any,
         // NO turn_end — simulates a crash mid-turn
       ],
     });
@@ -153,7 +153,7 @@ describe("store history replay — open turn recovery", () => {
       type: "history",
       events: [
         { type: "user_message", content: "hello" },
-        { type: "model_changed", provider: "anthropic", model: "claude-sonnet-4-6" } as any,
+        { type: "model_changed", model: "claude-sonnet-4-6" } as any,
       ],
     });
     const lastTurn = state.turns[state.turns.length - 1];

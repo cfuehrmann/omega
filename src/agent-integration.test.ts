@@ -891,27 +891,23 @@ describe("Agent — verbatim history (no turn compaction)", () => {
 // ---------------------------------------------------------------------------
 
 describe("slash commands", () => {
-  it.concurrent("/sonnet switches to Anthropic provider with sonnet model", async () => {
+  it.concurrent("/sonnet switches to sonnet model", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/sonnet");
     const mc = events.find((e) => e.type === "model_changed") as any;
     expect(mc).toBeDefined();
     expect(mc.model).toBe("claude-sonnet-4-6");
-    expect(mc.provider).toBe("anthropic");
-    expect(agent.getProvider()).toBe("anthropic");
     expect(agent.getActiveModel()).toBe("claude-sonnet-4-6");
   });
 
-  it.concurrent("/opus switches to Anthropic provider with opus model", async () => {
+  it.concurrent("/opus switches to opus model", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/opus");
     const mc = events.find((e) => e.type === "model_changed") as any;
     expect(mc).toBeDefined();
     expect(mc.model).toBe("claude-opus-4-6");
-    expect(mc.provider).toBe("anthropic");
-    expect(agent.getProvider()).toBe("anthropic");
     expect(agent.getActiveModel()).toBe("claude-opus-4-6");
   });
 
@@ -945,7 +941,6 @@ describe("slash commands", () => {
     await collectEvents(agent, "/sonnet");
     await collectEvents(agent, "/opus");
     expect(agent.getActiveModel()).toBe("claude-opus-4-6");
-    expect(agent.getProvider()).toBe("anthropic");
   });
 });
 

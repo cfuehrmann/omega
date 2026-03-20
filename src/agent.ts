@@ -29,8 +29,6 @@ interface ModelResponse {
   usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null };
 }
 
-type ProviderName = "anthropic";
-
 export type { OmegaEvent, StreamSignal } from "./events.js";
 
 // --- Request / response elision helpers ---
@@ -286,7 +284,6 @@ export class Agent {
 
 
   private authMode: "api-key" | "oauth" = "api-key";
-  private provider: ProviderName = "anthropic";
   private activeModel: string = config.model;
   /** True once session_start has been logged — prevents duplicate on reconnect. */
   private sessionStartLogged = false;
@@ -311,18 +308,12 @@ export class Agent {
   /**
    * Production: new Agent()
    *   — uses real Anthropic client, context appended to .omega/sessions/<ts>/context.jsonl
-   * Test: new Agent(mockProvider, null)
-   *   — uses mock provider; diagnostics, context file, and events file are
-   *     all disabled unless explicit paths are given.
-   *
-   * The sessionDir parameter is removed. Session persistence no longer exists.
-   * The second parameter (formerly sessionDir) is kept as a positional placeholder
-   * accepting null so existing test call-sites still compile.
+   * Test: new Agent(mockProvider, contextFile, eventsFile)
+   *   — uses mock provider; context file and events file are disabled unless
+   *     explicit paths are given.
    */
   constructor(
     streamProvider?: StreamProvider,
-    _sessionDir?: string | null,
-    _unused?: unknown,
     contextFile?: string | null,
     eventsFile?: string | null
   ) {
@@ -466,7 +457,7 @@ export class Agent {
       this.authMode = "oauth";
       if (!this.sessionStartLogged) {
         this.sessionStartLogged = true;
-        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "claude-max", systemPrompt: this.buildSystemPrompt() });
+        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: "anthropic", authMode: "claude-max", systemPrompt: this.buildSystemPrompt() });
       }
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
@@ -474,7 +465,7 @@ export class Agent {
       this.authMode = "api-key";
       if (!this.sessionStartLogged) {
         this.sessionStartLogged = true;
-        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: this.provider, authMode: "api-key", systemPrompt: this.buildSystemPrompt() });
+        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: "anthropic", authMode: "api-key", systemPrompt: this.buildSystemPrompt() });
       }
       return "api-key (pay-per-token ⚠)";
     } else {
@@ -493,16 +484,8 @@ export class Agent {
     });
   }
 
-  setProvider(provider: ProviderName): void {
-    this.provider = provider;
-  }
-
   getAuthMode(): string {
     return this.authMode;
-  }
-
-  getProvider(): ProviderName {
-    return this.provider;
   }
 
   getActiveModel(): string {
@@ -577,14 +560,12 @@ export class Agent {
     if (userMessage.startsWith("/")) {
       const cmd = userMessage.trim().toLowerCase();
       if (cmd === "/sonnet") {
-        this.provider = "anthropic";
         this.activeModel = "claude-sonnet-4-6";
-        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-sonnet-4-6" };
+        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), model: "claude-sonnet-4-6" };
         this.logEvent(ev); yield ev;
       } else if (cmd === "/opus") {
-        this.provider = "anthropic";
         this.activeModel = "claude-opus-4-6";
-        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-opus-4-6" };
+        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), model: "claude-opus-4-6" };
         this.logEvent(ev); yield ev;
       } else if (cmd === "/compact") {
         const startEv: OmegaEvent = { type: "compact_user_start", ts: new Date().toISOString() };
