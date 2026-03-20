@@ -106,40 +106,7 @@ async function collectEvents(
   return events;
 }
 
-// ---------------------------------------------------------------------------
-// Regression: OpenAI caller must not write to .omega/sessions/events.jsonl
-// ---------------------------------------------------------------------------
 
-describe("Agent — test isolation (no production file pollution)", () => {
-  it.concurrent("does not write to .omega/sessions/events.jsonl when OpenAI caller used", async () => {
-    // Regression: agent-rate-limit tests previously passed streamProvider=undefined
-    // with a custom openAiCaller, bypassing the mock-provider heuristic and writing to
-    // the production events file. makeTestAgent() routes all writes to test-sessions/.
-    const { existsSync, statSync } = await import("fs");
-    const eventsPath = `${process.cwd()}/.omega/sessions/events.jsonl`;
-
-    const sizeBefore = existsSync(eventsPath) ? statSync(eventsPath).size : -1;
-
-    const openAiCaller = async () => ({
-      response: {
-        content: [{ type: "text", text: "ok" } as any],
-        stop_reason: "stop",
-        usage: { input_tokens: 1, output_tokens: 2 },
-      },
-      text: "ok",
-      raw: { usage: { input_tokens: 1, output_tokens: 2 } },
-    });
-
-    const { agent, dispose } = await makeTestAgent(undefined, openAiCaller as any);
-    disposeAll.push(dispose);
-    agent.setProvider("openai");
-    await collectEvents(agent, "hello");
-    await Bun.sleep(100);
-
-    const sizeAfter = existsSync(eventsPath) ? statSync(eventsPath).size : -1;
-    expect(sizeAfter).toBe(sizeBefore);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Plain text response
@@ -948,36 +915,18 @@ describe("slash commands", () => {
     expect(agent.getActiveModel()).toBe("claude-opus-4-6");
   });
 
-  it.concurrent("/codex switches to OpenAI provider", async () => {
+  it.concurrent("/codex is rejected as unknown", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/codex");
-    const mc = events.find((e) => e.type === "model_changed") as any;
-    expect(mc).toBeDefined();
-    expect(mc.provider).toBe("openai");
-    expect(agent.getProvider()).toBe("openai");
+    const err = events.find((e) => e.type === "agent_error") as any;
+    expect(err).toBeDefined();
   });
 
   it.concurrent("/help is rejected as unknown (operator asks the LLM instead)", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "/help");
-    const err = events.find((e) => e.type === "agent_error") as any;
-    expect(err).toBeDefined();
-  });
-
-  it.concurrent("old /gpt command is rejected as unknown", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/gpt");
-    const err = events.find((e) => e.type === "agent_error") as any;
-    expect(err).toBeDefined();
-  });
-
-  it.concurrent("old /openai command is rejected as unknown", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/openai");
     const err = events.find((e) => e.type === "agent_error") as any;
     expect(err).toBeDefined();
   });

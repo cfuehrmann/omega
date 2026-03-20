@@ -19,8 +19,6 @@ afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("Agent fallback", () => {
   it("emits api_error on rate limit", async () => {
-    process.env.OPENAI_API_KEY = "test-key";
-
     const mockProvider: StreamProvider = async () => {
       throw makeRateLimitError();
     };

@@ -14,7 +14,7 @@
  * fragments). The `sendMessage` generator yields `OmegaEvent | StreamSignal`.
  */
 
-import type { TurnMetrics, ProviderName } from "./agent.js";
+import type { TurnMetrics } from "./agent.js";
 import type { CompactionUsage } from "./compaction.js";
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ export interface SessionStartEvent {
   ts: string;
   sessionId: string;
   model: string;
-  provider: ProviderName;
+  provider: "anthropic";
   authMode: string;
   /** The full system prompt text at session start. */
   systemPrompt: string;
@@ -66,7 +66,7 @@ export interface UserMessageEvent {
 export interface LlmCallEvent {
   type: "llm_call";
   ts: string;
-  provider: ProviderName;
+  provider: "anthropic";
   url: string;
   model: string;
   /**
@@ -78,8 +78,7 @@ export interface LlmCallEvent {
   /**
    * Index (0-based) of the message in the sent context that received the
    * `cache_control: { type: "ephemeral" }` breakpoint for Anthropic prompt
-   * caching. Always the last message index (contextHashes.length - 1) when
-   * provider is "anthropic". Null for OpenAI (no prompt caching).
+   * caching. Always the last message index (contextHashes.length - 1).
    */
   cacheBreakpointIndex: number | null;
   /**
@@ -171,7 +170,7 @@ export interface TurnEndEvent {
 export interface LlmErrorEvent {
   type: "llm_error";
   ts: string;
-  provider: ProviderName;
+  provider: "anthropic";
   url: string;
   error: string;
   httpStatus?: number;
@@ -254,7 +253,7 @@ export interface LlmRetryEvent {
   type: "llm_retry";
   ts: string;
   attempt: number;
-  provider: ProviderName;
+  provider: "anthropic";
   httpStatus?: number;
   waitMs: number;
   error: string;
@@ -266,7 +265,7 @@ export interface LlmRetryEvent {
 export interface ModelChangedEvent {
   type: "model_changed";
   ts: string;
-  provider: ProviderName;
+  provider: "anthropic";
   model: string;
 }
 

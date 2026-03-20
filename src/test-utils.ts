@@ -38,7 +38,6 @@
  */
 
 import { Agent, type StreamProvider } from "./agent.js";
-import { callOpenAi } from "./openai.js";
 import { makeSessionDir, TEST_SESSIONS_ROOT } from "./session-dir.js";
 
 export interface TestAgent {
@@ -67,11 +66,9 @@ let _counter = 0;
  * @param streamProvider  Optional mock stream provider. If omitted, any API
  *                        call will throw (which is fine for tests that don't
  *                        exercise the streaming path).
- * @param openAiCaller    Optional mock OpenAI caller.
  */
 export async function makeTestAgent(
-  streamProvider?: StreamProvider,
-  openAiCaller?: typeof callOpenAi
+  streamProvider?: StreamProvider
 ): Promise<TestAgent> {
   // Incorporate a monotonic counter into the timestamp to guarantee uniqueness
   // even when multiple calls happen within the same millisecond.
@@ -84,7 +81,7 @@ export async function makeTestAgent(
   const agent = new Agent(
     streamProvider,
     null, // _sessionDir (unused legacy positional)
-    openAiCaller,
+    undefined,
     contextFile,
     eventsFile,
   );

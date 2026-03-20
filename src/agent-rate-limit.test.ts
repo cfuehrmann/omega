@@ -3,6 +3,7 @@ import { Agent, type OmegaEvent, type StreamSignal } from "./agent.js";
 import type { StreamProvider } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
 
+
 function authExpiredError() {
   const err: any = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}');
   err.status = 401;
@@ -27,67 +28,7 @@ const disposeAll: (() => void)[] = [];
 afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("rate limit backoff", () => {
-  it("OpenAI retries on rate limit and succeeds", async () => {
-    process.env.OMEGA_RETRY_BASE_MS = "1";
-    process.env.OMEGA_RETRY_MAX_MS = "2";
-    process.env.OMEGA_RETRY_ATTEMPTS = "3";
-
-    let openAiCalls = 0;
-    const openAiCaller = async () => {
-      openAiCalls += 1;
-      if (openAiCalls < 3) throw rateLimitError("Please try again in 0.01s");
-      return {
-        response: {
-          content: [{ type: "text", text: "ok" } as any],
-          stop_reason: "stop",
-          usage: { input_tokens: 1, output_tokens: 2 },
-        },
-        text: "ok",
-        raw: { usage: { input_tokens: 1, output_tokens: 2 } },
-      };
-    };
-
-    const { agent, dispose } = await makeTestAgent(undefined, openAiCaller as any);
-    disposeAll.push(dispose);
-    agent.setProvider("openai");
-    const events = await collectEvents(agent, "hello");
-
-    expect(openAiCalls).toBe(3);
-    const errors = events.filter((e) => e.type === "agent_error") as any[];
-    if (errors.length > 0) {
-      expect(errors[errors.length - 1].error).not.toContain("/sonnet");
-    }
-
-    delete process.env.OMEGA_RETRY_BASE_MS;
-    delete process.env.OMEGA_RETRY_MAX_MS;
-    delete process.env.OMEGA_RETRY_ATTEMPTS;
-  });
-
-  it("OpenAI gives up after retries and suggests /sonnet or /opus", async () => {
-    process.env.OMEGA_RETRY_BASE_MS = "1";
-    process.env.OMEGA_RETRY_MAX_MS = "2";
-    process.env.OMEGA_RETRY_ATTEMPTS = "2";
-
-    const openAiCaller = async () => {
-      throw rateLimitError("Please try again in 0.01s");
-    };
-
-    const { agent, dispose } = await makeTestAgent(undefined, openAiCaller as any);
-    disposeAll.push(dispose);
-    agent.setProvider("openai");
-    const events = await collectEvents(agent, "hello");
-
-    const errors = events.filter((e) => e.type === "agent_error") as any[];
-    const error = errors[errors.length - 1];
-    expect(error).toBeTruthy();
-    expect(error.error).toContain("/sonnet");
-
-    delete process.env.OMEGA_RETRY_BASE_MS;
-    delete process.env.OMEGA_RETRY_MAX_MS;
-    delete process.env.OMEGA_RETRY_ATTEMPTS;
-  });
-
-  it("Anthropic gives up after retries and suggests /codex", async () => {
+  it("Anthropic gives up after retries and emits agent_error", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
@@ -98,13 +39,12 @@ describe("rate limit backoff", () => {
 
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
-    agent.setProvider("anthropic");
     const events = await collectEvents(agent, "hello");
 
     const errors = events.filter((e) => e.type === "agent_error") as any[];
     const error = errors[errors.length - 1];
     expect(error).toBeTruthy();
-    expect(error.error).toContain("/codex");
+    expect(error.error).toContain("rate limit");
 
     delete process.env.OMEGA_RETRY_BASE_MS;
     delete process.env.OMEGA_RETRY_MAX_MS;

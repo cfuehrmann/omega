@@ -3,7 +3,6 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
 
-import { callOpenAi, buildOpenAiRequest, getOpenAiUrl } from "./openai.js";
 import { compactHistory, AUTO_COMPACT_THRESHOLD } from "./compaction.js";
 import { readSystemPromptAppend, systemPromptAppendPath } from "./system-prompt/append.js";
 import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index.js";
@@ -30,7 +29,7 @@ interface ModelResponse {
   usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null };
 }
 
-export type ProviderName = "anthropic" | "openai";
+type ProviderName = "anthropic";
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
 
@@ -73,37 +72,6 @@ function elideAnthropicRequest(req: {
 }
 
 /**
- * Build a persisted elided summary of an OpenAI Responses API request.
- * Keeps scalar fields; replaces instructions, input array, and tool parameter
- * schemas with compact descriptors.
- */
-function elideOpenAiRequest(req: {
-  model: string;
-  max_output_tokens: number;
-  instructions?: string;
-  input: unknown[];
-  tools: unknown[];
-  tool_choice: string;
-}): Record<string, unknown> {
-  const instrChars = typeof req.instructions === "string" ? req.instructions.length : 0;
-  const inputChars = JSON.stringify(req.input).length;
-  return {
-    model: req.model,
-    max_output_tokens: req.max_output_tokens,
-    instructions: `[${instrChars} chars]`,
-    input: `[${req.input.length} item${req.input.length !== 1 ? "s" : ""}, ${inputChars} chars]`,
-    tools: (req.tools as any[]).map((t: any) => ({
-      type: t.type,
-      name: t.name,
-      description: `[${typeof t.description === "string" ? t.description.length : 0} chars]`,
-      parameters: `[elided]`,
-      strict: t.strict,
-    })),
-    tool_choice: req.tool_choice,
-  };
-}
-
-/**
  * Build a persisted elided summary of an Anthropic response.
  * Omits content (lives in context.jsonl); keeps all envelope fields verbatim.
  */
@@ -116,19 +84,6 @@ function elideAnthropicResponse(resp: ModelResponse): Record<string, unknown> {
     stop_reason: resp.stop_reason,
     usage: resp.usage,
     content: `[elided — use context hash]`,
-  };
-}
-
-/**
- * Build a persisted elided summary of an OpenAI Responses API response.
- * Omits output content (lives in context.jsonl); keeps envelope fields verbatim.
- */
-function elideOpenAiResponse(raw: any): Record<string, unknown> {
-  if (!raw) return {};
-  const { output: _output, ...rest } = raw;
-  return {
-    ...rest,
-    output: `[elided — use context hash]`,
   };
 }
 
@@ -260,20 +215,6 @@ export function isAuthExpired(err: any): boolean {
 // Always preserves the first user message (the original task) and the most
 // recent N turns.
 
-function getOpenAiRetryDelayMs(err: any, attempt: number, baseMs: number, maxMs: number): number {
-  const msg = typeof err?.message === "string" ? err.message : "";
-  const match = msg.match(/try again in\s*(\d+(?:\.\d+)?)\s*s/i);
-  if (match) {
-    const seconds = Number(match[1]);
-    if (!Number.isNaN(seconds)) {
-      return Math.min(Math.ceil(seconds * 1000), maxMs);
-    }
-  }
-  const jitter = Math.random() * 0.2 + 0.9; // 0.9–1.1
-  const delay = baseMs * Math.pow(2, attempt) * jitter;
-  return Math.min(Math.round(delay), maxMs);
-}
-
 function getAnthropicRetryDelayMs(_err: any, attempt: number, baseMs: number, maxMs: number): number {
   const jitter = Math.random() * 0.2 + 0.9; // 0.9–1.1
   const delay = baseMs * Math.pow(2, attempt) * jitter;
@@ -367,9 +308,6 @@ export class Agent {
   /** Optional injectable stream provider (used in tests). */
   private readonly streamProvider: StreamProvider | undefined;
 
-  /** Optional injectable OpenAI caller (used in tests). */
-  private readonly openAiCaller: typeof callOpenAi;
-
   /**
    * Production: new Agent()
    *   — uses real Anthropic client, context appended to .omega/sessions/<ts>/context.jsonl
@@ -384,7 +322,7 @@ export class Agent {
   constructor(
     streamProvider?: StreamProvider,
     _sessionDir?: string | null,
-    openAiCaller: typeof callOpenAi = callOpenAi,
+    _unused?: unknown,
     contextFile?: string | null,
     eventsFile?: string | null
   ) {
@@ -392,13 +330,8 @@ export class Agent {
     this.client = new Anthropic();
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
-    this.openAiCaller = openAiCaller;
 
     // Layer c: in test env, any unspecified file path defaults to null (disabled).
-    // This is a structural guardrail — it fires regardless of whether a mock
-    // streamProvider was injected, closing the gap where tests that inject an
-    // OpenAI caller (or no provider at all) would silently fall through to
-    // production defaults.
     const inTestEnv = process.env.OMEGA_TEST === "1";
 
     // Context file: disable in test env unless explicitly set; or if mock provider given.
@@ -653,11 +586,6 @@ export class Agent {
         this.activeModel = "claude-opus-4-6";
         const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "anthropic", model: "claude-opus-4-6" };
         this.logEvent(ev); yield ev;
-      } else if (cmd === "/codex") {
-        this.provider = "openai";
-        this.activeModel = config.fallbackModel as string;
-        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), provider: "openai", model: this.activeModel };
-        this.logEvent(ev); yield ev;
       } else if (cmd === "/compact") {
         const startEv: OmegaEvent = { type: "compact_user_start", ts: new Date().toISOString() };
         await this.logEvent(startEv);
@@ -726,8 +654,6 @@ export class Agent {
     let totalCacheCreationTokens = 0;
     let totalCacheReadTokens = 0;
 
-    const fallbackEnabled = Boolean(config.fallbackModel && process.env.OPENAI_API_KEY);
-
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
     let activeModel = this.activeModel;
@@ -742,12 +668,6 @@ export class Agent {
       // Build system prompt (core instructions + system-prompt-append if loaded).
       const systemPrompt = this.buildSystemPrompt();
 
-      if (this.provider === "openai" && !fallbackEnabled) {
-        yield { type: "agent_error", ts: new Date().toISOString(), error: "OpenAI provider selected but OPENAI_API_KEY is not set" };
-        return;
-      }
-
-      const useOpenAi = this.provider === "openai";
       activeModel = this.activeModel;
 
       // Build cached system blocks and cached tools for Anthropic prompt caching.
@@ -790,27 +710,7 @@ export class Agent {
       const contextHashes = [...this.compactedContextHashes];
 
       // Emit llm_call with a persisted elided request summary.
-      if (useOpenAi) {
-        const openAiRequest = buildOpenAiRequest(
-          sentContext,
-          systemPrompt,
-          activeModel,
-          config.maxOutputTokens
-        );
-        const llmCallEv: OmegaEvent = {
-          type: "llm_call",
-          ts: new Date().toISOString(),
-          provider: "openai",
-          url: getOpenAiUrl(),
-          model: activeModel,
-          contextHashes,
-          cacheBreakpointIndex: null,
-          requestBytes: JSON.stringify(openAiRequest).length,
-          requestSummary: elideOpenAiRequest(openAiRequest),
-        };
-        this.logEvent(llmCallEv);
-        yield llmCallEv;
-      } else {
+      {
         const request = {
           model: activeModel,
           max_tokens: config.maxOutputTokens,
@@ -837,40 +737,7 @@ export class Agent {
       let response: ModelResponse | null = null;
       let lastError: any = null;
 
-      if (useOpenAi) {
-        for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
-          try {
-            const openai = await this.openAiCaller(sentContext, systemPrompt, activeModel, config.maxOutputTokens, signal);
-            if (openai.text) {
-              assembledText = openai.text;
-              yield { type: "text", text: openai.text };
-            }
-            response = openai.response as any;
-            (response as any).raw = openai.raw;
-            lastError = null;
-            break;
-          } catch (err: any) {
-            lastError = err;
-            if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
-              const waitMs = getOpenAiRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-              const retryEv: OmegaEvent = { type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "openai", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message };
-              this.logEvent(retryEv);
-              yield retryEv;
-              yield { type: "agent_error", ts: new Date().toISOString(), error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})` };
-              await sleep(waitMs, signal);
-              continue;
-            }
-            const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "openai", url: getOpenAiUrl(), error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
-            this.logEvent(llmErrEv);
-            yield llmErrEv;
-            const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "OpenAI rate limit. Try /sonnet or /opus to switch providers." };
-            this.logEvent(rateLimitEv);
-            yield rateLimitEv;
-            return;
-          }
-        }
-      } else {
-        for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
+      for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
           try {
           assembledText = "";
           const streamParams = {
@@ -958,7 +825,7 @@ export class Agent {
               this.logEvent(overflowEv);
               yield overflowEv;
             } else if (isRetryable(err)) {
-              const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Try /codex to switch providers." };
+              const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Use /compact to reduce context, or try again shortly." };
               this.logEvent(rateLimitEv);
               yield rateLimitEv;
             } else {
@@ -968,7 +835,6 @@ export class Agent {
             }
             return;
           }
-        }
         }
       }
 
@@ -1015,9 +881,7 @@ export class Agent {
         },
         contextHash: assistantHash,
         ...(assembledText ? { text: assembledText, streamingStart: assembledTextTs ?? undefined } : {}),
-        responseSummary: useOpenAi
-          ? elideOpenAiResponse((response as any).raw)
-          : elideAnthropicResponse(response),
+        responseSummary: elideAnthropicResponse(response),
       };
       // Await so llm_response is flushed before any tool_call events fire.
       // tool_call is causally downstream of llm_response; without await the
