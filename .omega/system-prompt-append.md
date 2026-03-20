@@ -11,6 +11,15 @@ files. The user interacts via terminal or web UI.
 - Agent core (`src/agent.ts`) must have no UI imports — UI and agent stay cleanly separated.
 - `StreamProvider` is the interface for LLM provider calls; tests inject a mock — the real API is never called in tests. **If `StreamProvider` is renamed, update this file too.**
 
+### LLM Provider
+
+Omega is Anthropic-only. The two supported models are:
+
+- `claude-sonnet-4-6` — default, fast
+- `claude-opus-4-6` — slower, more capable
+
+Platform documentation: https://platform.claude.com/docs/en/home
+
 ### Workflow tools
 
 - Use `gh` (not raw `curl`) for GitHub operations — it's authenticated as `cfuehrmann` with `repo` scope. `gh pr create`, `gh issue list`, `gh release create`, `gh auth status`, etc. Still use `git` for push/pull.
