@@ -1,4 +1,4 @@
-## Omega — State of the World
+## Project conventions and state
 
 ### Purpose
 
