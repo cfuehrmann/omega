@@ -10,6 +10,7 @@ import { config } from "./config";
 // ---------------------------------------------------------------------------
 
 const FETCH_MAX_CHARS = 8_000;
+const FETCH_URL_MAX_CHARS = 20_000;
 
 /**
  * Bun's TLS implementation may not trust the system CA bundle on some machines.
@@ -201,8 +202,8 @@ async function executeFetchUrl(input: { url: string }): Promise<string> {
   const body = await res.text();
   const text = isHtml ? htmlToText(body) : body;
 
-  if (text.length > FETCH_MAX_CHARS) {
-    return text.slice(0, FETCH_MAX_CHARS) + `\n\n[Truncated at ${FETCH_MAX_CHARS} chars. Full page is ${text.length} chars.]`;
+  if (text.length > FETCH_URL_MAX_CHARS) {
+    return text.slice(0, FETCH_URL_MAX_CHARS) + `\n\n[Truncated at ${FETCH_URL_MAX_CHARS} chars. Full page is ${text.length} chars.]`;
   }
   return text;
 }
@@ -345,7 +346,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
     description:
       "Fetch the content of a URL and return it as plain text. " +
       "HTML pages are converted to readable text (tags stripped). " +
-      "Content is truncated at 8000 characters. Use this to read documentation, " +
+      "Content is truncated at 20000 characters. Use this to read documentation, " +
       "articles, or any web page.",
     input_schema: {
       type: "object" as const,

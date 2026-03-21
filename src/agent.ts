@@ -3,7 +3,10 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
 
-import { readSystemPromptAppend, systemPromptAppendPath } from "./system-prompt/append.js";
+import {
+  readSystemPromptAppend,
+  systemPromptAppendPath,
+} from "./system-prompt/append.js";
 import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
@@ -44,7 +47,11 @@ export type { OmegaEvent, StreamSignal } from "./events.js";
 function charCount(value: unknown): number {
   if (typeof value === "string") return value.length;
   if (!Array.isArray(value)) return 0;
-  return value.reduce((n: number, b: any) => n + (typeof b?.text === "string" ? b.text.length : 0), 0);
+  return value.reduce(
+    (n: number, b: any) =>
+      n + (typeof b?.text === "string" ? b.text.length : 0),
+    0,
+  );
 }
 
 /**
@@ -109,7 +116,7 @@ export function isAutoApproved(_toolName: string, _toolInput: any): boolean {
  * ≥4096 prefix tokens before caching activates.
  */
 function addCacheControlToLastMessage(
-  messages: Anthropic.MessageParam[]
+  messages: Anthropic.MessageParam[],
 ): Anthropic.MessageParam[] {
   if (messages.length === 0) return messages;
   const result = [...messages];
@@ -167,7 +174,9 @@ export function isContextTooLong(err: any): boolean {
   const status = err.status ?? err.statusCode;
   if (status !== 429) return false;
   if (typeof err.message !== "string") return false;
-  return err.message.includes("Extra usage is required for long context requests");
+  return err.message.includes(
+    "Extra usage is required for long context requests",
+  );
 }
 
 export function isRetryable(err: any): boolean {
@@ -176,7 +185,8 @@ export function isRetryable(err: any): boolean {
   // Exclude it before the blanket status check so we don't retry fruitlessly.
   if (isContextTooLong(err)) return false;
   const status = err.status ?? err.statusCode;
-  if (status === 429 || status === 529 || status === 500 || status === 503) return true;
+  if (status === 429 || status === 529 || status === 500 || status === 503)
+    return true;
   if (typeof err.message === "string") {
     const msg: string = err.message;
     // The Anthropic SDK throws this when the server restarts a stream mid-flight
@@ -204,13 +214,20 @@ export function isRetryable(err: any): boolean {
 export function isAuthExpired(err: any): boolean {
   if (!err) return false;
   const status = err.status ?? err.statusCode;
-  const msg: string = typeof err.message === "string" ? err.message : JSON.stringify(err);
+  const msg: string =
+    typeof err.message === "string" ? err.message : JSON.stringify(err);
   if (status === 401) {
-    return msg.includes("authentication_error") || msg.includes("OAuth token has expired");
+    return (
+      msg.includes("authentication_error") ||
+      msg.includes("OAuth token has expired")
+    );
   }
   if (status === 403) {
     // Anthropic 403 body: {"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked..."}}
-    return msg.includes("revoked") && (msg.includes("permission_error") || msg.includes("OAuth token"));
+    return (
+      msg.includes("revoked") &&
+      (msg.includes("permission_error") || msg.includes("OAuth token"))
+    );
   }
   return false;
 }
@@ -220,20 +237,25 @@ export function isAuthExpired(err: any): boolean {
 // Always preserves the first user message (the original task) and the most
 // recent N turns.
 
-function getAnthropicRetryDelayMs(_err: any, attempt: number, baseMs: number, maxMs: number): number {
+function getAnthropicRetryDelayMs(
+  _err: any,
+  attempt: number,
+  baseMs: number,
+  maxMs: number,
+): number {
   const jitter = Math.random() * 0.2 + 0.9; // 0.9–1.1
   const delay = baseMs * Math.pow(2, attempt) * jitter;
   return Math.min(Math.round(delay), maxMs);
 }
-
-
 
 // --- Stream event processing (extracted for testability) ---
 
 /** Process raw Anthropic stream events into AgentEvents.
  *  This is the inner loop of sendMessage, extracted so it can be tested
  *  without a real API connection. */
-export function processStreamEvents(streamEvents: Iterable<any>): (OmegaEvent | StreamSignal)[] {
+export function processStreamEvents(
+  streamEvents: Iterable<any>,
+): (OmegaEvent | StreamSignal)[] {
   const events: (OmegaEvent | StreamSignal)[] = [];
   for (const event of streamEvents) {
     if (
@@ -271,7 +293,9 @@ export type StreamProvider = (params: {
   context_management?: Record<string, unknown>;
 }) => Promise<{
   [Symbol.asyncIterator](): AsyncIterator<any>;
-  finalMessage(): Promise<Anthropic.Message>;
+  finalMessage(): Promise<
+    Anthropic.Message | Anthropic.Beta.Messages.BetaMessage
+  >;
 }>;
 
 export class Agent {
@@ -284,16 +308,19 @@ export class Agent {
   public sessionCacheCreationTokens = 0;
   public sessionCacheReadTokens = 0;
 
-
   private authMode: "api-key" | "oauth" = "api-key";
   private activeModel: string = config.model;
   /** True once session_start has been logged — prevents duplicate on reconnect. */
   private sessionStartLogged = false;
 
   public readonly sessionId: string;
-  private readonly retryBaseMs = Number(process.env.OMEGA_RETRY_BASE_MS ?? 1000);
+  private readonly retryBaseMs = Number(
+    process.env.OMEGA_RETRY_BASE_MS ?? 1000,
+  );
   private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
-  private readonly retryMaxAttempts = Number(process.env.OMEGA_RETRY_ATTEMPTS ?? 5);
+  private readonly retryMaxAttempts = Number(
+    process.env.OMEGA_RETRY_ATTEMPTS ?? 5,
+  );
 
   /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly contextFile: string | null | undefined;
@@ -317,7 +344,7 @@ export class Agent {
   constructor(
     streamProvider?: StreamProvider,
     contextFile?: string | null,
-    eventsFile?: string | null
+    eventsFile?: string | null,
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
@@ -328,13 +355,19 @@ export class Agent {
     const inTestEnv = process.env.OMEGA_TEST === "1";
 
     // Context file: disable in test env unless explicitly set; or if mock provider given.
-    if ((inTestEnv || streamProvider !== undefined) && contextFile === undefined) {
+    if (
+      (inTestEnv || streamProvider !== undefined) &&
+      contextFile === undefined
+    ) {
       this.contextFile = null;
     } else {
       this.contextFile = contextFile;
     }
     // Events file: disable in test env unless explicitly set; or if mock provider given.
-    if ((inTestEnv || streamProvider !== undefined) && eventsFile === undefined) {
+    if (
+      (inTestEnv || streamProvider !== undefined) &&
+      eventsFile === undefined
+    ) {
       this.eventsFile = null;
     } else {
       this.eventsFile = eventsFile;
@@ -343,7 +376,9 @@ export class Agent {
 
   /** Resolve the events file path (null = disabled). */
   private resolveEventsFile(): string | null {
-    return this.eventsFile === undefined ? DEFAULT_EVENTS_FILE : this.eventsFile;
+    return this.eventsFile === undefined
+      ? DEFAULT_EVENTS_FILE
+      : this.eventsFile;
   }
 
   /** Serial write queue — ensures events are appended in the order logEvent() is called, regardless of whether the caller awaits. */
@@ -353,7 +388,9 @@ export class Agent {
   private logEvent(event: OmegaEvent): Promise<void> {
     const path = this.resolveEventsFile();
     if (path === null) return Promise.resolve();
-    this.logQueue = this.logQueue.then(() => appendEvent(event, path).catch(() => {}));
+    this.logQueue = this.logQueue.then(() =>
+      appendEvent(event, path).catch(() => {}),
+    );
     return this.logQueue;
   }
 
@@ -362,8 +399,16 @@ export class Agent {
    * Call this at clean shutdown before process.exit().
    * A crash/SIGKILL will leave no session_end — that absence is the crash signal.
    */
-  async emitSessionEnd(outcome: "clean" | "error", reason?: string): Promise<void> {
-    await this.logEvent({ type: "session_end", ts: new Date().toISOString(), outcome, ...(reason ? { reason } : {}) });
+  async emitSessionEnd(
+    outcome: "clean" | "error",
+    reason?: string,
+  ): Promise<void> {
+    await this.logEvent({
+      type: "session_end",
+      ts: new Date().toISOString(),
+      outcome,
+      ...(reason ? { reason } : {}),
+    });
   }
 
   /**
@@ -374,7 +419,10 @@ export class Agent {
     this.compactedContextHistory.push(msg);
     // Compute hash (needed for contextHashes) — file write is fire-and-forget
     if (this.contextFile !== null) {
-      const hash = await appendContextMessage(msg, this.contextFile ?? undefined);
+      const hash = await appendContextMessage(
+        msg,
+        this.contextFile ?? undefined,
+      );
       this.compactedContextHashes.push(hash);
       return hash;
     } else {
@@ -396,7 +444,7 @@ export class Agent {
         apiKey: null as any,
         authToken: accessToken,
         defaultHeaders: {
-          "accept": "application/json",
+          accept: "application/json",
           "anthropic-dangerous-direct-browser-access": "true",
           "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
           "user-agent": "claude-cli/2.1.2 (external, cli)",
@@ -406,7 +454,15 @@ export class Agent {
       this.authMode = "oauth";
       if (!this.sessionStartLogged) {
         this.sessionStartLogged = true;
-        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: "anthropic", authMode: "claude-max", systemPrompt: this.buildSystemPrompt() });
+        this.logEvent({
+          type: "session_start",
+          ts: new Date().toISOString(),
+          sessionId: this.sessionId,
+          model: this.activeModel,
+          provider: "anthropic",
+          authMode: "claude-max",
+          systemPrompt: this.buildSystemPrompt(),
+        });
       }
       return "Claude Max";
     } else if (process.env.ANTHROPIC_API_KEY) {
@@ -414,12 +470,20 @@ export class Agent {
       this.authMode = "api-key";
       if (!this.sessionStartLogged) {
         this.sessionStartLogged = true;
-        this.logEvent({ type: "session_start", ts: new Date().toISOString(), sessionId: this.sessionId, model: this.activeModel, provider: "anthropic", authMode: "api-key", systemPrompt: this.buildSystemPrompt() });
+        this.logEvent({
+          type: "session_start",
+          ts: new Date().toISOString(),
+          sessionId: this.sessionId,
+          model: this.activeModel,
+          provider: "anthropic",
+          authMode: "api-key",
+          systemPrompt: this.buildSystemPrompt(),
+        });
       }
       return "api-key (pay-per-token ⚠)";
     } else {
       throw new Error(
-        "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY."
+        "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY.",
       );
     }
   }
@@ -454,7 +518,7 @@ export class Agent {
       apiKey: null as any,
       authToken: newToken,
       defaultHeaders: {
-        "accept": "application/json",
+        accept: "application/json",
         "anthropic-dangerous-direct-browser-access": "true",
         "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
         "user-agent": "claude-cli/2.1.2 (external, cli)",
@@ -481,7 +545,7 @@ export class Agent {
   private getStreamProvider(): StreamProvider {
     if (this.streamProvider) return this.streamProvider;
     const client = this.client;
-    return async (params) => client.messages.stream(params as any);
+    return async (params) => client.beta.messages.stream(params as any);
   }
 
   /**
@@ -493,7 +557,9 @@ export class Agent {
    *              directory. Pass an explicit path in tests to avoid touching
    *              the real project file.
    */
-  async loadSystemPromptAppend(path: string = systemPromptAppendPath()): Promise<void> {
+  async loadSystemPromptAppend(
+    path: string = systemPromptAppendPath(),
+  ): Promise<void> {
     try {
       this.systemPromptAppendContent = await readSystemPromptAppend(path);
     } catch {
@@ -504,26 +570,44 @@ export class Agent {
   async *sendMessage(
     userMessage: string,
     _confirmTool: (name: string, input: any) => Promise<boolean>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     if (userMessage.startsWith("/")) {
       const cmd = userMessage.trim().toLowerCase();
       if (cmd === "/sonnet") {
         this.activeModel = "claude-sonnet-4-6";
-        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), model: "claude-sonnet-4-6" };
-        this.logEvent(ev); yield ev;
+        const ev: OmegaEvent = {
+          type: "model_changed",
+          ts: new Date().toISOString(),
+          model: "claude-sonnet-4-6",
+        };
+        this.logEvent(ev);
+        yield ev;
       } else if (cmd === "/opus") {
         this.activeModel = "claude-opus-4-6";
-        const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), model: "claude-opus-4-6" };
-        this.logEvent(ev); yield ev;
+        const ev: OmegaEvent = {
+          type: "model_changed",
+          ts: new Date().toISOString(),
+          model: "claude-opus-4-6",
+        };
+        this.logEvent(ev);
+        yield ev;
       } else {
-        yield { type: "agent_error", ts: new Date().toISOString(), error: `Unknown command: ${userMessage}` };
+        yield {
+          type: "agent_error",
+          ts: new Date().toISOString(),
+          error: `Unknown command: ${userMessage}`,
+        };
       }
       return;
     }
 
     await this.appendToHistory({ role: "user", content: userMessage });
-    const userMessageEvent: OmegaEvent = { type: "user_message", ts: new Date().toISOString(), content: userMessage };
+    const userMessageEvent: OmegaEvent = {
+      type: "user_message",
+      ts: new Date().toISOString(),
+      content: userMessage,
+    };
     this.logEvent(userMessageEvent);
     yield userMessageEvent;
 
@@ -570,15 +654,16 @@ export class Agent {
           cache_control: { type: "ephemeral" },
         },
       ];
-      const cachedTools: Anthropic.Tool[] = toolDefinitions.length > 0
-        ? [
-            ...toolDefinitions.slice(0, -1),
-            {
-              ...(toolDefinitions[toolDefinitions.length - 1] as any),
-              cache_control: { type: "ephemeral" },
-            },
-          ]
-        : toolDefinitions;
+      const cachedTools: Anthropic.Tool[] =
+        toolDefinitions.length > 0
+          ? [
+              ...toolDefinitions.slice(0, -1),
+              {
+                ...(toolDefinitions[toolDefinitions.length - 1] as any),
+                cache_control: { type: "ephemeral" },
+              },
+            ]
+          : toolDefinitions;
 
       // All messages are sent verbatim — no in-turn trimming.
       // addCacheControlToLastMessage adds cache_control to the last message for Anthropic caching.
@@ -604,7 +689,8 @@ export class Agent {
           url: "https://api.anthropic.com/v1/messages",
           model: activeModel,
           contextHashes,
-          cacheBreakpointIndex: contextHashes.length > 0 ? contextHashes.length - 1 : null,
+          cacheBreakpointIndex:
+            contextHashes.length > 0 ? contextHashes.length - 1 : null,
           requestBytes: JSON.stringify(request).length,
           requestSummary: elideAnthropicRequest(request),
         };
@@ -617,7 +703,7 @@ export class Agent {
       let lastError: any = null;
 
       for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
-          try {
+        try {
           assembledText = "";
           const streamParams = {
             model: activeModel,
@@ -627,12 +713,17 @@ export class Agent {
             messages: cachedMessages,
             betas: ["compact-2026-01-12"],
             context_management: {
-              edits: [{ type: "compact_20260112" }],
+              edits: [
+                {
+                  type: "compact_20260112",
+                  trigger: { type: "input_tokens", value: 50_000 },
+                },
+              ],
             },
           };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
-            : this.client.messages.stream(streamParams as any);
+            : this.client.beta.messages.stream(streamParams as any);
 
           let aborted = false;
           for await (const event of stream) {
@@ -644,7 +735,8 @@ export class Agent {
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
             ) {
-              if (assembledTextTs === null) assembledTextTs = new Date().toISOString();
+              if (assembledTextTs === null)
+                assembledTextTs = new Date().toISOString();
               assembledText += event.delta.text;
               yield { type: "text", text: event.delta.text };
             }
@@ -655,13 +747,16 @@ export class Agent {
           if (aborted) {
             // Don't add the partial assistant turn to history.
             // The user message stays — it was real input.
-            const interruptEv: OmegaEvent = { type: "turn_interrupted", ts: new Date().toISOString() };
+            const interruptEv: OmegaEvent = {
+              type: "turn_interrupted",
+              ts: new Date().toISOString(),
+            };
             this.logEvent(interruptEv);
             yield interruptEv;
             return;
           }
 
-          response = await stream.finalMessage() as unknown as ModelResponse;
+          response = (await stream.finalMessage()) as unknown as ModelResponse;
           lastError = null;
           break;
         } catch (err: any) {
@@ -669,7 +764,12 @@ export class Agent {
 
           if (isAuthExpired(err) && attempt === 0) {
             // OAuth token expired or revoked mid-session — try to refresh and retry once
-            const expiredEv: OmegaEvent = { type: "oauth_token_expired", ts: new Date().toISOString(), attempt: attempt + 1, httpStatus: err.status ?? err.statusCode };
+            const expiredEv: OmegaEvent = {
+              type: "oauth_token_expired",
+              ts: new Date().toISOString(),
+              attempt: attempt + 1,
+              httpStatus: err.status ?? err.statusCode,
+            };
             this.logEvent(expiredEv);
             yield expiredEv;
             const reauthed = await this.reinitAuth();
@@ -678,20 +778,49 @@ export class Agent {
               yield { type: "oauth_refreshed", ts: new Date().toISOString() };
               // Loop continues — the next iteration will use the fresh client
             } else {
-              const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
+              const llmErrEv: OmegaEvent = {
+                type: "llm_error",
+                ts: new Date().toISOString(),
+                provider: "anthropic",
+                url: "https://api.anthropic.com/v1/messages",
+                error: err.message ?? String(err),
+                httpStatus: err.status ?? err.statusCode,
+              };
               this.logEvent(llmErrEv);
               yield llmErrEv;
-              const authFailEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate." };
+              const authFailEv: OmegaEvent = {
+                type: "agent_error",
+                ts: new Date().toISOString(),
+                error:
+                  "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate.",
+              };
               this.logEvent(authFailEv);
               yield authFailEv;
               return;
             }
           } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
-            const waitMs = getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs);
-            const retryEv: OmegaEvent = { type: "llm_retry", ts: new Date().toISOString(), attempt: attempt + 1, provider: "anthropic", httpStatus: err.status ?? err.statusCode, waitMs, error: err.message };
+            const waitMs = getAnthropicRetryDelayMs(
+              err,
+              attempt,
+              this.retryBaseMs,
+              this.retryMaxMs,
+            );
+            const retryEv: OmegaEvent = {
+              type: "llm_retry",
+              ts: new Date().toISOString(),
+              attempt: attempt + 1,
+              provider: "anthropic",
+              httpStatus: err.status ?? err.statusCode,
+              waitMs,
+              error: err.message,
+            };
             this.logEvent(retryEv);
             yield retryEv;
-            yield { type: "agent_error", ts: new Date().toISOString(), error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})` };
+            yield {
+              type: "agent_error",
+              ts: new Date().toISOString(),
+              error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
+            };
             await sleep(waitMs, signal);
           } else {
             // Non-retryable error (includes prompt-too-long — no retry, no trimming).
@@ -701,19 +830,38 @@ export class Agent {
                 typeof err.message === "string" &&
                 err.message.includes("prompt is too long")) ||
               isContextTooLong(err);
-            const llmErrEv: OmegaEvent = { type: "llm_error", ts: new Date().toISOString(), provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: err.message ?? String(err), httpStatus: err.status ?? err.statusCode };
+            const llmErrEv: OmegaEvent = {
+              type: "llm_error",
+              ts: new Date().toISOString(),
+              provider: "anthropic",
+              url: "https://api.anthropic.com/v1/messages",
+              error: err.message ?? String(err),
+              httpStatus: err.status ?? err.statusCode,
+            };
             this.logEvent(llmErrEv);
             yield llmErrEv;
             if (isContextOverflow) {
-              const overflowEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Context too large to send. Start a fresh focused turn." };
+              const overflowEv: OmegaEvent = {
+                type: "agent_error",
+                ts: new Date().toISOString(),
+                error: "Context too large to send. Start a fresh focused turn.",
+              };
               this.logEvent(overflowEv);
               yield overflowEv;
             } else if (isRetryable(err)) {
-              const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Try again shortly." };
+              const rateLimitEv: OmegaEvent = {
+                type: "agent_error",
+                ts: new Date().toISOString(),
+                error: "Anthropic rate limit. Try again shortly.",
+              };
               this.logEvent(rateLimitEv);
               yield rateLimitEv;
             } else {
-              const apiErrEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: `API error: ${err.message ?? err}` };
+              const apiErrEv: OmegaEvent = {
+                type: "agent_error",
+                ts: new Date().toISOString(),
+                error: `API error: ${err.message ?? err}`,
+              };
               this.logEvent(apiErrEv);
               yield apiErrEv;
             }
@@ -723,7 +871,11 @@ export class Agent {
       }
 
       if (!response) {
-        yield { type: "agent_error", ts: new Date().toISOString(), error: `API error after 5 retries: ${lastError?.message ?? lastError}` };
+        yield {
+          type: "agent_error",
+          ts: new Date().toISOString(),
+          error: `API error after 5 retries: ${lastError?.message ?? lastError}`,
+        };
         return;
       }
 
@@ -747,7 +899,9 @@ export class Agent {
       // the server summarised the history. Prune compactedContextHistory and
       // compactedContextHashes so the next call only sends from the compaction
       // block onward. The compaction block sits at index 0 of the content array.
-      const compactionBlockIndex = response.content.findIndex((b: any) => b.type === "compaction");
+      const compactionBlockIndex = response.content.findIndex(
+        (b: any) => b.type === "compaction",
+      );
       if (compactionBlockIndex !== -1) {
         // The API drops everything prior to the compaction block server-side,
         // but we also prune locally so our local array stays in sync.
@@ -770,7 +924,10 @@ export class Agent {
       // Add assistant response to history; capture hash for llm_response + tool_call events.
       // appendToHistory is awaited so the context.jsonl record is on disk before
       // logEvent(llm_response) fires (which carries contextHash as a FK).
-      const assistantHash = await this.appendToHistory({ role: "assistant", content: response.content });
+      const assistantHash = await this.appendToHistory({
+        role: "assistant",
+        content: response.content,
+      });
       const llmResponseEvent: OmegaEvent = {
         type: "llm_response",
         ts: new Date().toISOString(),
@@ -778,12 +935,19 @@ export class Agent {
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,
-          cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? undefined,
-          cache_read_input_tokens: response.usage.cache_read_input_tokens ?? undefined,
+          cache_creation_input_tokens:
+            response.usage.cache_creation_input_tokens ?? undefined,
+          cache_read_input_tokens:
+            response.usage.cache_read_input_tokens ?? undefined,
           service_tier: response.usage.service_tier ?? undefined,
         },
         contextHash: assistantHash,
-        ...(assembledText ? { text: assembledText, streamingStart: assembledTextTs ?? undefined } : {}),
+        ...(assembledText
+          ? {
+              text: assembledText,
+              streamingStart: assembledTextTs ?? undefined,
+            }
+          : {}),
         responseSummary: elideAnthropicResponse(response),
       };
       // Await so llm_response is flushed before any tool_call events fire.
@@ -794,7 +958,7 @@ export class Agent {
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
 
       // --- BUG-1 guard: max_tokens mid-tool-call ---
@@ -809,13 +973,17 @@ export class Agent {
       // continueLoop = true), but the context is well-formed and the next user
       // message will succeed.
       if (toolUseBlocks.length > 0 && response.stop_reason === "max_tokens") {
-        const syntheticResults: Anthropic.ToolResultBlockParam[] = toolUseBlocks.map(b => ({
-          type: "tool_result" as const,
-          tool_use_id: b.id,
-          content: `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
-          is_error: true,
-        }));
-        const syntheticResultHash = await this.appendToHistory({ role: "user", content: syntheticResults });
+        const syntheticResults: Anthropic.ToolResultBlockParam[] =
+          toolUseBlocks.map((b) => ({
+            type: "tool_result" as const,
+            tool_use_id: b.id,
+            content: `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
+            is_error: true,
+          }));
+        const syntheticResultHash = await this.appendToHistory({
+          role: "user",
+          content: syntheticResults,
+        });
         for (const toolUse of toolUseBlocks) {
           const syntheticResultEvent: OmegaEvent = {
             type: "tool_result",
@@ -824,20 +992,25 @@ export class Agent {
             name: toolUse.name,
             isError: true,
             durationMs: 0,
-            output: "[not executed: max_tokens stop — output budget exhausted while generating tool call arguments]",
+            output:
+              "[not executed: max_tokens stop — output budget exhausted while generating tool call arguments]",
             contextHash: syntheticResultHash,
           };
           this.logEvent(syntheticResultEvent);
           yield syntheticResultEvent;
         }
-        const toolNames = toolUseBlocks.map(b => b.name).join(", ");
+        const toolNames = toolUseBlocks.map((b) => b.name).join(", ");
         const truncErr =
           `Output budget exhausted (max_tokens) while generating tool call input for [${toolNames}] — the tool was not executed. ` +
           `This means the tool call arguments alone exceeded the ${config.maxOutputTokens}-token output budget. ` +
           `To avoid this: break large write_file calls into a skeleton + edit_file extensions; ` +
           `never attempt to write a file longer than ~500 lines in a single write_file call. ` +
           `The session context is intact — retry with a smaller approach.`;
-        const truncErrEvent: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: truncErr };
+        const truncErrEvent: OmegaEvent = {
+          type: "agent_error",
+          ts: new Date().toISOString(),
+          error: truncErr,
+        };
         await this.logEvent(truncErrEvent);
         yield truncErrEvent;
         // Do NOT set continueLoop = true — turn ends here.
@@ -864,7 +1037,9 @@ export class Agent {
 
         // Execute all tools concurrently
         const results = await Promise.all(
-          toolUseBlocks.map(toolUse => executeTool(toolUse.name, toolUse.input))
+          toolUseBlocks.map((toolUse) =>
+            executeTool(toolUse.name, toolUse.input),
+          ),
         );
 
         for (let i = 0; i < toolUseBlocks.length; i++) {
@@ -880,7 +1055,10 @@ export class Agent {
         }
 
         // Add tool results to history; capture hash for tool_result events
-        const toolResultHash = await this.appendToHistory({ role: "user", content: toolResults });
+        const toolResultHash = await this.appendToHistory({
+          role: "user",
+          content: toolResults,
+        });
         for (let i = 0; i < toolUseBlocks.length; i++) {
           const toolUse = toolUseBlocks[i];
           const result = results[i];
@@ -899,7 +1077,6 @@ export class Agent {
         }
         continueLoop = true;
       }
-
     }
 
     // Emit one turn_end after all API calls complete
@@ -916,6 +1093,5 @@ export class Agent {
     };
     this.logEvent(turnEndEvent);
     yield turnEndEvent;
-
   }
 }

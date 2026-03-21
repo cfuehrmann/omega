@@ -18,7 +18,10 @@ Omega is Anthropic-only. The two supported models are:
 - `claude-sonnet-4-6` — default, fast
 - `claude-opus-4-6` — slower, more capable
 
-Platform documentation: https://platform.claude.com/docs/en/home
+To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
+to get an indexed list of all docs pages (each entry links to a `.md` URL), find the
+relevant page, then fetch that specific `.md` URL with `fetch_url`. Individual pages fit
+comfortably within the 20 000-char `fetch_url` limit.
 
 ### Workflow tools
 
