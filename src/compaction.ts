@@ -1,13 +1,9 @@
 /**
- * LLM-based compaction.
+ * LLM-based in-session compaction.
  *
- * compactWorldState(priorContent, sessionHistory, provider)
- *   Folds a completed session into the system-prompt-append content.
- *   Returns the new content string (caller writes it to
- *   .omega/system-prompt-append.md via writeSystemPromptAppend).
- *
- * Turn compaction (zone 2) has been removed — history now grows verbatim
- * and relies on prompt caching for token efficiency (manifest Step 2).
+ * compactHistory() summarises the head of the in-memory context and keeps the
+ * last KEEP_RECENT_TURNS message-pairs verbatim. Called by the agent on
+ * /compact commands and auto-compact threshold crossings.
  */
 
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
@@ -156,39 +152,4 @@ export async function compactHistory(
   return { history: newHistory, syntheticMessage, tailStartIndex, originalCount, newCount: newHistory.length, usage };
 }
 
-/**
- * Fold a completed session into the persistent world state.
- *
- * @param priorWorldState - The existing world state string (null if none exists yet).
- * @param sessionHistory - The full history of the completed session.
- * @param provider - The stream provider to use for the LLM call.
- * @returns The new world state string (caller should write this to disk).
- */
-export async function compactWorldState(
-  priorWorldState: string | null,
-  sessionHistory: MessageParam[],
-  provider: StreamProvider,
-  model = "claude-sonnet-4-6"
-): Promise<string> {
-  const sessionText = serialiseMessages(sessionHistory);
 
-  const priorSection = priorWorldState
-    ? `Here is the current state of the world (from previous sessions):\n<world_state>\n${priorWorldState}\n</world_state>\n\n`
-    : "";
-
-  const prompt = `${priorSection}Here is the session that just ended:\n<session>\n${sessionText}\n</session>\n\nProduce an updated "state of the world" document that captures:
-- The overall purpose and current state of the project
-- Key architectural decisions and why they were made
-- Important files and what they do
-- What was accomplished in the most recent session (1–4 sentences max; omit commit hashes, step-by-step procedural detail, and anything already captured in the durable sections above — only record net outcomes and decisions that change how future sessions should behave)
-- Open issues or known problems
-- Anything the agent should know to continue working effectively
-
-This document will be injected into the system prompt for the next session.
-Write in present tense for current state, past tense for history.
-Be concise but complete. Ruthlessly prune: prefer one accurate sentence over three redundant ones.
-No preamble, just the document.`;
-
-  const { text } = await callLlm(prompt, provider, model, 4096);
-  return text;
-}

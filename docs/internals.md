@@ -15,8 +15,8 @@ rotation machinery.
 ## Context Management
 
 - **System prompt** — `.omega/system-prompt-append.md` is appended at session
-  start. Contains agent-specific constraints, operational policies, and
-  accumulated world state. Updated manually. Lives under source control.
+  start. Contains agent-specific constraints and operational policies. Updated
+  manually. Lives under source control.
 - **History** — `compactedContextHistory` grows verbatim across turns. Sent
   in full to each LLM provider call — no mid-turn trimming. `/compact`
   summarises the head and keeps the last 10 turns verbatim. Auto-compact fires
@@ -146,8 +146,7 @@ function.
   `appendContextMessage()` returns hash.
 - `src/session-dir.ts` — `makeSessionDir()`; `makeSessionDirName()`;
   `findPreviousEventsFile()`; `SESSIONS_ROOT`; `TEST_SESSIONS_ROOT`.
-- `src/compaction.ts` — `compactWorldState()` and `compactHistory()`.
-  `KEEP_RECENT_TURNS = 10`.
+- `src/compaction.ts` — `compactHistory()`. `KEEP_RECENT_TURNS = 10`.
 - `src/system-prompt/` — modular system prompt: `identity.ts` (OAuth prefix),
   `core.ts` (main instructions), `append.ts` (`readSystemPromptAppend()`,
   `writeSystemPromptAppend()`, `systemPromptAppendPath()`,

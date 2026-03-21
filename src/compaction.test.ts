@@ -1,11 +1,10 @@
 /**
- * Tests for world-state compaction (zone 1) and history compaction (step 3b).
- * Turn compaction (zone 2) was removed in manifest Step 2.
+ * Tests for in-session history compaction.
  */
 
 import { describe, it, expect } from "bun:test";
 import type { StreamProvider } from "./agent.js";
-import { compactWorldState, compactHistory, KEEP_RECENT_TURNS } from "./compaction.js";
+import { compactHistory, KEEP_RECENT_TURNS } from "./compaction.js";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
 // ---------------------------------------------------------------------------
@@ -37,35 +36,7 @@ function makeMockProvider(responseText: string): StreamProvider {
 }
 
 // ---------------------------------------------------------------------------
-// compactWorldState
-// ---------------------------------------------------------------------------
-
-describe("compactWorldState", () => {
-  it("returns a string (the new world state)", async () => {
-    const provider = makeMockProvider("State: foo.ts has 42 lines. We refactored bar.ts.");
-    const sessionHistory: MessageParam[] = [
-      { role: "user", content: "read foo.ts" },
-      { role: "assistant", content: [{ type: "text", text: "done" }] as any },
-    ];
-    const result = await compactWorldState("Old world state.", sessionHistory, provider);
-    expect(typeof result).toBe("string");
-    expect(result.length).toBeGreaterThan(0);
-  });
-
-  it("works with empty prior world state", async () => {
-    const provider = makeMockProvider("Initial state: nothing done yet.");
-    const sessionHistory: MessageParam[] = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: [{ type: "text", text: "hi" }] as any },
-    ];
-    const result = await compactWorldState(null, sessionHistory, provider);
-    expect(typeof result).toBe("string");
-    expect(result.length).toBeGreaterThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// compactHistory (Step 3b)
+// compactHistory
 // ---------------------------------------------------------------------------
 
 /** Build a history of N complete message-pairs (user + assistant). */
