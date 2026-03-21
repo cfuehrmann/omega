@@ -62,6 +62,15 @@ is authoritative and all others conform to it. For Omega:
 
 Rule: update the UI to match the log — never the log to match the UI.
 
+### Bug fixes — red-green testing
+
+When fixing a bug, write a failing test that reproduces it first (red), then
+fix the code so the test passes (green), wherever this is practical. Practical
+means: the bug is deterministic, the failure mode is directly observable in a
+test, and writing the test doesn't cost more than the fix itself. Skip red-green
+when the bug is a one-liner typo or the reproduction requires complex
+infrastructure that already exists only in production.
+
 ### Tricky bugs — ask for session logs
 
 If you have tried two or more approaches on the same bug and are still stuck,
