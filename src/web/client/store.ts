@@ -22,12 +22,13 @@ export type WsEvent =
   | { type: "session_info"; dir: string }
   | { type: "user_message"; ts?: string; content: string }
   | { type: "text"; ts?: string; streamingStart?: string; text: string }
+  | { type: "thinking"; ts?: string; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
   | { type: "session_start"; ts?: string; authMode: string; model: string; provider: string; systemPrompt: string }
   | { type: "session_end"; ts?: string; outcome: "clean" | "error"; reason?: string }
   | { type: "tool_call"; ts?: string; id: string; name: string; input: unknown }
   | { type: "tool_result"; ts?: string; id: string; name: string; isError: boolean; durationMs: number; output: string }
-  | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; contextHash: string; text?: string; streamingStart?: string; responseSummary?: Record<string, unknown> }
+  | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; contextHash: string; text?: string; thinking?: string; streamingStart?: string; responseSummary?: Record<string, unknown> }
   | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestBytes?: number; requestSummary?: Record<string, unknown> }
   | { type: "llm_retry"; ts?: string; attempt: number; provider: string; waitMs: number; error: string }
   | { type: "model_changed"; ts?: string; model: string }
@@ -48,6 +49,9 @@ export interface Turn {
   /** Accumulated streaming text, shown in a temporary slot during streaming.
    *  Cleared when llm_response arrives; the text is then carried in the llm_response event itself. */
   streamingText?: string;
+  /** Accumulated streaming thinking content, shown during streaming.
+   *  Cleared when llm_response arrives; thinking is then carried in the llm_response event itself. */
+  streamingThinking?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +592,16 @@ export function dispatch(event: WsEvent): void {
       }));
       break;
 
+    case "thinking":
+      // Accumulate streaming thinking fragments into the turn's temporary streamingThinking
+      // slot. Cleared when llm_response arrives (thinking is then on the llm_response event).
+      setState(produce(s => {
+        const turn = s.turns[s.turns.length - 1];
+        if (!turn) return;
+        turn.streamingThinking = (turn.streamingThinking ?? "") + event.text;
+      }));
+      break;
+
     case "turn_end": {
       setState(produce(s => {
         const turn = s.turns[s.turns.length - 1];
@@ -631,6 +645,7 @@ export function dispatch(event: WsEvent): void {
         const turn = s.turns[s.turns.length - 1];
         if (!turn) return;
         turn.streamingText = undefined;
+        turn.streamingThinking = undefined;
         turn.events.push(event);
       }));
       // Recompute live durations from the updated turn events (llmMs ticks up)

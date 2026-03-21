@@ -258,11 +258,12 @@ export function processStreamEvents(
 ): (OmegaEvent | StreamSignal)[] {
   const events: (OmegaEvent | StreamSignal)[] = [];
   for (const event of streamEvents) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      events.push({ type: "text", text: event.delta.text });
+    if (event.type === "content_block_delta") {
+      if (event.delta.type === "text_delta") {
+        events.push({ type: "text", text: event.delta.text });
+      } else if (event.delta.type === "thinking_delta") {
+        events.push({ type: "thinking", text: event.delta.thinking });
+      }
     }
   }
   return events;
@@ -291,6 +292,8 @@ export type StreamProvider = (params: {
   betas?: string[];
   /** Server-side context management directives (e.g. compaction). */
   context_management?: Record<string, unknown>;
+  /** Enable extended thinking. When set, the model reasons before responding. */
+  thinking?: { type: "adaptive" };
 }) => Promise<{
   [Symbol.asyncIterator](): AsyncIterator<any>;
   finalMessage(): Promise<
@@ -627,6 +630,9 @@ export class Agent {
       let turnOutputTokens = 0;
       let assembledText = "";
       let assembledTextTs: string | null = null;
+      let assembledThinking = "";
+      /** True when we are inside a thinking block (between block_start and block_stop). */
+      let inThinkingBlock = false;
 
       // Build system prompt (core instructions + system-prompt-append if loaded).
       const systemPrompt = this.buildSystemPrompt();
@@ -705,6 +711,8 @@ export class Agent {
       for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
         try {
           assembledText = "";
+          assembledThinking = "";
+          inThinkingBlock = false;
           const streamParams = {
             model: activeModel,
             max_tokens: config.maxOutputTokens,
@@ -720,6 +728,7 @@ export class Agent {
                 },
               ],
             },
+            thinking: { type: "adaptive" as const },
           };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
@@ -731,14 +740,28 @@ export class Agent {
               aborted = true;
               break;
             }
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              if (assembledTextTs === null)
-                assembledTextTs = new Date().toISOString();
-              assembledText += event.delta.text;
-              yield { type: "text", text: event.delta.text };
+            if (event.type === "content_block_start") {
+              if (event.content_block?.type === "thinking") {
+                // If we already have thinking content, insert a divider between blocks.
+                if (assembledThinking.length > 0) {
+                  assembledThinking += "\n\n---\n\n";
+                }
+                inThinkingBlock = true;
+              }
+            } else if (event.type === "content_block_stop") {
+              if (inThinkingBlock) {
+                inThinkingBlock = false;
+              }
+            } else if (event.type === "content_block_delta") {
+              if (event.delta.type === "text_delta") {
+                if (assembledTextTs === null)
+                  assembledTextTs = new Date().toISOString();
+                assembledText += event.delta.text;
+                yield { type: "text", text: event.delta.text };
+              } else if (event.delta.type === "thinking_delta") {
+                assembledThinking += event.delta.thinking;
+                yield { type: "thinking", text: event.delta.thinking };
+              }
             }
             // Compaction content blocks arrive as a single delta (no incremental
             // streaming). We don't yield them as text — they're structural.
@@ -948,6 +971,7 @@ export class Agent {
               streamingStart: assembledTextTs ?? undefined,
             }
           : {}),
+        ...(assembledThinking ? { thinking: assembledThinking } : {}),
         responseSummary: elideAnthropicResponse(response),
       };
       // Await so llm_response is flushed before any tool_call events fire.

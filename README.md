@@ -32,7 +32,7 @@ TypeScript + Bun. SolidJS web client in `src/web/client/`. No backend framework
 ## Project layout
 
 - `src/` — all source code
-- `backlog/` — work items and planning docs for specific features
+- `backlog.md` — work items and planning docs for specific features
 - `docs/` — reference material: architecture, policies, terminology, internals
 
 ## For contributors

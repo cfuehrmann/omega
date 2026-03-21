@@ -4,18 +4,6 @@
 
 ### [SYSPROMPT] System prompt architecture
 
-#### SYSPROMPT-1 — Modular system prompt folder `src/system-prompt/`
-
-**Status: DONE** (commit 815c74b)
-
-System prompt extracted from `src/config.ts` into `src/system-prompt/`:
-- `identity.ts` — Claude Code prefix (oauth-conditional)
-- `core.ts` — main instructions as readable prose template (args: `cwd`, `maxOutputTokens`)
-- `append.ts` — absorbed `src/system-prompt-append.ts`; generic opt-in append mechanism
-- `index.ts` — assembles all parts via `buildSystemPrompt(args)`
-- 39 new tests in `system-prompt.test.ts`
-- `config.systemPrompt` removed; `src/system-prompt-append.ts` deleted
-
 #### SYSPROMPT-2 — Review the full system prompt assembly process
 
 **Status: LARGELY DONE** — holistic review of `core.ts`, `system-prompt-append.md`,
@@ -29,20 +17,6 @@ and all docs completed over multiple sessions. Remaining open questions:
   calls)?
 - **Test coverage** — does `system-prompt.test.ts` cover the assembly
   integration end-to-end, or only individual parts in isolation?
-
----
-
-### [DECOUPLE] Omega self-coupling — use on foreign repos
-
-**Status: DONE**
-
-Resolved by renaming `plan/world-state.md` → `.omega/system-prompt-append.md`
-and extracting the read/write logic into `src/system-prompt/append.ts` (part
-of the SYSPROMPT-1 modular system prompt refactor). The file is opt-in by
-existence: if `.omega/system-prompt-append.md` is present, its contents are
-appended to the system prompt; if absent, nothing is injected.
-Foreign repos will not have this file and are therefore unaffected. System
-prompt examples and docstrings updated to be project-neutral. INFRA-4 closed.
 
 ---
 
@@ -264,13 +238,6 @@ Cheap sanity check at top of agentic loop: every `tool_use` block must have a
 matching `tool_result`. If not, abort the turn rather than sending malformed
 history. Circuit-breaker; real fix is INFRA-2.
 
-#### INFRA-4 — Decouple Omega startup from Omega's own repo (world-state)
-
-**Status: DONE** — Resolved by the DECOUPLE work. `plan/world-state.md` has
-been renamed to `.omega/system-prompt-append.md`. Loading is now opt-in by
-file existence: present → injected, absent → nothing. Foreign repos are
-unaffected.
-
 ---
 
 ### [UX] Prompt queuing — interruption, injection, and turn sequencing
@@ -342,17 +309,6 @@ through agentic loop; reset on turn boundary; tests.
 OAuth client sets `anthropic-beta: claude-code-20250219,oauth-2025-04-20`.
 API-key client sends no beta headers. Goal: unify so both paths get the same
 betas.
-
----
-
-### [TOOLS] Tool set expansion
-
-#### TOOLS-1 — `run_command_async` + `await_command`
-
-`run_command` is blocking. Two new tools: `run_command_async(command, cwd?)`
-returns a `jobId` immediately; `await_command(jobId, timeout_ms?)` returns
-stdout/stderr/exitCode. Distinct from `run_background`/`kill_process`
-(fire-and-forget). This is awaitable.
 
 ---
 

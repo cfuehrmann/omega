@@ -26,7 +26,13 @@ export interface TextSignal {
   text: string;
 }
 
-export type StreamSignal = TextSignal;
+/** A raw streaming thinking fragment from the LLM. Never written to events.jsonl. */
+export interface ThinkingSignal {
+  type: "thinking";
+  text: string;
+}
+
+export type StreamSignal = TextSignal | ThinkingSignal;
 
 // ---------------------------------------------------------------------------
 // OmegaEvent variants — all persisted, all rendered
@@ -121,6 +127,12 @@ export interface LlmResponseEvent {
    * Replaces the former separate `assistant_text` event.
    */
   text?: string;
+  /**
+   * The full assembled thinking content for this response, if any.
+   * Multiple thinking blocks are concatenated with a divider.
+   * Persisted so thinking survives session replay and is inspectable.
+   */
+  thinking?: string;
   /** ISO timestamp of the first streaming text delta — when text visibly began arriving. */
   streamingStart?: string;
   /**

@@ -671,11 +671,22 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
           requestSummary: undefined,
         },
       });
+      const openThinking = () => setActiveModal({
+        kind: "block",
+        detail: {
+          label: "thinking",
+          ts,
+          body: e.thinking ?? "",
+        },
+      });
       return (
         <div class="block api-response">
           <div class="block-label-row">
             <span class="block-label">llm_response<span class="block-label-meta">{e.stopReason}</span></span>
             <div class="block-btn-group">
+              <Show when={e.thinking}>
+                <button class="block-expand-btn thinking-btn" onClick={openThinking} title="View thinking">thinking</button>
+              </Show>
               <button class="block-expand-btn" onClick={openMessages} title="View as messages">messages (+1)</button>
               <button class="block-expand-btn" onClick={openPayload} title="View response payload">payload</button>
             </div>
@@ -800,6 +811,8 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     case "auth":
     case "reset_done":
     case "session_info":
+    // thinking is a streaming-only signal — never pushed into turn.events
+    case "thinking":
       return null;
 
     default:
@@ -815,6 +828,18 @@ function TurnView(props: { turn: Turn; allLlmCalls: Array<WsEvent & { type: "llm
       <For each={props.turn.events}>{(event) => (
         <EventBlock event={event} turnEvents={props.turn.events} allLlmCalls={props.allLlmCalls} />
       )}</For>
+      {/* Temporary streaming thinking slot — visible while thinking is arriving. */}
+      <Show when={props.turn.streamingThinking}>
+        <div class="block thinking streaming">
+          <div class="block-label-row">
+            <span class="block-label">thinking</span>
+          </div>
+          <div class="block-body">
+            <pre class="thinking-body">{props.turn.streamingThinking}</pre>
+            <span class="cursor" />
+          </div>
+        </div>
+      </Show>
       {/* Temporary streaming slot — visible only while text is arriving,
           before llm_response clears it (text is then on the llm_response event itself). */}
       <Show when={props.turn.streamingText}>
