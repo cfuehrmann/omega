@@ -578,80 +578,13 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       );
     }
 
-    case "compact_user_start": {
-      const body = "Compacting context…";
+    case "compacted": {
+      const body = "Context compacted by server.";
       return (
         <div class="block status">
           <div class="block-label-row">
-            <span class="block-label">compact_user_start</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_user_start", ts, body } })} title="Details">⤢</button>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
-    case "compact_user_done": {
-      const body = e.messagesAfter === e.messagesBefore
-        ? `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages (no change)`
-        : `Context compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
-      return (
-        <div class="block status">
-          <div class="block-label-row">
-            <span class="block-label">compact_user_done</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_user_done", ts, body } })} title="Details">⤢</button>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
-    case "compact_user_error": {
-      const body = `⚠ Compaction failed: ${e.error}`;
-      return (
-        <div class="block error">
-          <div class="block-label-row">
-            <span class="block-label">compact_user_error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_user_error", ts, body } })} title="Details">⤢</button>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
-    case "compact_auto_start": {
-      const body = `Auto-compacting context (${e.messagesBefore} messages)…`;
-      return (
-        <div class="block status">
-          <div class="block-label-row">
-            <span class="block-label">compact_auto_start</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_auto_start", ts, body } })} title="Details">⤢</button>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
-    case "compact_auto_done": {
-      const body = `Context auto-compacted: ${e.messagesBefore} → ${e.messagesAfter} messages`;
-      return (
-        <div class="block status">
-          <div class="block-label-row">
-            <span class="block-label">compact_auto_done</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_auto_done", ts, body } })} title="Details">⤢</button>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
-    case "compact_auto_error": {
-      const body = `⚠ Auto-compaction failed (rolling truncation fallback): ${e.error}`;
-      return (
-        <div class="block error">
-          <div class="block-label-row">
-            <span class="block-label">compact_auto_error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compact_auto_error", ts, body } })} title="Details">⤢</button>
+            <span class="block-label">compacted</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compacted", ts, body: JSON.stringify(e.usage, null, 2) } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>

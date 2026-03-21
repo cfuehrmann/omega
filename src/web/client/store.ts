@@ -33,12 +33,7 @@ export type WsEvent =
   | { type: "model_changed"; ts?: string; model: string }
   | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed"; ts?: string }
-  | { type: "compact_user_start"; ts?: string }
-  | { type: "compact_user_done"; ts?: string; messagesBefore: number; messagesAfter: number; usage?: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }
-  | { type: "compact_user_error"; ts?: string; error: string }
-  | { type: "compact_auto_start"; ts?: string; messagesBefore: number }
-  | { type: "compact_auto_done"; ts?: string; messagesBefore: number; messagesAfter: number; usage?: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }
-  | { type: "compact_auto_error"; ts?: string; error: string }
+  | { type: "compacted"; ts?: string; usage: unknown }
   | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
   | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
   | { type: "llm_error"; ts?: string; provider: string; error: string }
@@ -490,16 +485,7 @@ export function dispatch(event: WsEvent): void {
             break;
           }
 
-          case "compact_auto_done":
-          case "compact_user_done": {
-            const u = (e as any).usage;
-            if (u) replayCompactionTotals = addMetrics(replayCompactionTotals, {
-              freshInTokens: u.input_tokens ?? 0,
-              writeInTokens: u.cache_creation_input_tokens ?? 0,
-              readInTokens:  u.cache_read_input_tokens ?? 0,
-              outTokens:     u.output_tokens ?? 0,
-              requestBytes:  0,
-            });
+          case "compacted": {
             const t = cur();
             if (t) t.events.push(e);
             break;
@@ -700,24 +686,7 @@ export function dispatch(event: WsEvent): void {
     case "model_changed":
     case "oauth_token_expired":
     case "oauth_refreshed":
-    case "compact_auto_done":
-    case "compact_user_done": {
-      appendEvent(event);
-      const u = (event as any).usage;
-      if (u) setState("compactionTotals", prev => addMetrics(prev, {
-        freshInTokens: u.input_tokens ?? 0,
-        writeInTokens: u.cache_creation_input_tokens ?? 0,
-        readInTokens:  u.cache_read_input_tokens ?? 0,
-        outTokens:     u.output_tokens ?? 0,
-        requestBytes:  0,
-      }));
-      break;
-    }
-
-    case "compact_user_start":
-    case "compact_user_error":
-    case "compact_auto_start":
-    case "compact_auto_error":
+    case "compacted":
     case "world_state_saved":
     case "llm_error":
     case "agent_error":

@@ -148,7 +148,7 @@ describe("context overflow (prompt too long)", () => {
 
     const errorEvents = events.filter(e => e.type === "agent_error") as any[];
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
-    expect(errorEvents.some(e => e.error.includes("compact"))).toBe(true);
+    expect(errorEvents.some(e => e.error.includes("Context too large"))).toBe(true);
   });
 
   it("also errors out cleanly for isContextTooLong (429 extra usage required)", async () => {

@@ -3,7 +3,6 @@ import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { getAuthToken, forceRefreshToken } from "./auth.js";
 
-import { compactHistory, AUTO_COMPACT_THRESHOLD } from "./compaction.js";
 import { readSystemPromptAppend, systemPromptAppendPath } from "./system-prompt/append.js";
 import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
@@ -26,7 +25,15 @@ interface ModelResponse {
   role?: string;
   content: Anthropic.ContentBlock[];
   stop_reason?: string | null;
-  usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null };
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number | null;
+    cache_read_input_tokens?: number | null;
+    service_tier?: string | null;
+    /** Present when server-side compaction fires — breakdown per iteration. */
+    iterations?: unknown[] | null;
+  };
 }
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
@@ -258,6 +265,10 @@ export type StreamProvider = (params: {
   system: string | Anthropic.TextBlockParam[];
   tools: Anthropic.Tool[];
   messages: Anthropic.MessageParam[];
+  /** Beta headers to include with this request (e.g. compact-2026-01-12). */
+  betas?: string[];
+  /** Server-side context management directives (e.g. compaction). */
+  context_management?: Record<string, unknown>;
 }) => Promise<{
   [Symbol.asyncIterator](): AsyncIterator<any>;
   finalMessage(): Promise<Anthropic.Message>;
@@ -272,15 +283,6 @@ export class Agent {
   public sessionOutputTokens = 0;
   public sessionCacheCreationTokens = 0;
   public sessionCacheReadTokens = 0;
-
-  /**
-   * Total prompt tokens observed on the most recent LLM call:
-   *   input_tokens + cache_read_input_tokens + cache_creation_input_tokens
-   * Updated after every LLM response. Used by performAutoCompact() to decide
-   * whether the context is large enough to warrant compaction.
-   * Starts at 0 (no LLM call yet → no compaction on first turn).
-   */
-  public lastPromptTokens = 0;
 
 
   private authMode: "api-key" | "oauth" = "api-key";
@@ -383,59 +385,6 @@ export class Agent {
     }
   }
 
-  /**
-   * Automatically compact compactedContextHistory if it has grown beyond AUTO_COMPACT_THRESHOLD.
-   *
-   * Yields compact_auto_start, then compact_auto_done on success or
-   * compact_auto_error on failure (in which case the session continues
-   * with rolling truncation as a fallback — compactedContextHistory is unchanged).
-   *
-   * Called once per user turn, after the user message is appended, before the
-   * agentic loop starts.
-   */
-  private async *performAutoCompact(): AsyncGenerator<OmegaEvent> {
-    if (this.lastPromptTokens <= AUTO_COMPACT_THRESHOLD) return;
-
-    const messagesBefore = this.compactedContextHistory.length;
-    const startEv: OmegaEvent = { type: "compact_auto_start", ts: new Date().toISOString(), messagesBefore };
-    await this.logEvent(startEv);
-    yield startEv;
-
-    try {
-      const provider = this.getStreamProvider();
-      const { history: newHistory, syntheticMessage, tailStartIndex, usage } = await compactHistory(
-        this.compactedContextHistory,
-        provider,
-        this.activeModel,
-      );
-      // Same pattern as /compact: append only the new synthetic message to
-      // context.jsonl; tail messages are already there with their correct hashes.
-      const syntheticHash = await appendContextMessage(syntheticMessage, this.contextFile);
-      const tailHashes = this.compactedContextHashes.slice(tailStartIndex);
-      this.compactedContextHistory = newHistory as Anthropic.MessageParam[];
-      this.compactedContextHashes = [syntheticHash, ...tailHashes];
-
-      const doneEv: OmegaEvent = {
-        type: "compact_auto_done",
-        ts: new Date().toISOString(),
-        messagesBefore,
-        messagesAfter: this.compactedContextHistory.length,
-        usage,
-      };
-      this.logEvent(doneEv);
-      yield doneEv;
-    } catch (err: any) {
-      const errEv: OmegaEvent = {
-        type: "compact_auto_error",
-        ts: new Date().toISOString(),
-        error: err.message ?? String(err),
-      };
-      this.logEvent(errEv);
-      yield errEv;
-      // Do NOT rethrow — session continues with rolling truncation as fallback.
-    }
-  }
-
   async init(): Promise<string> {
     // Auth flow (matching pi-ai's anthropic.js):
     // OAuth via claude.ai → access_token (sk-ant-oat-...)
@@ -527,7 +476,7 @@ export class Agent {
 
   /**
    * Get a StreamProvider wrapping the real Anthropic client (or the injected
-   * mock, in tests). Used for compaction LLM calls.
+   * mock, in tests).
    */
   private getStreamProvider(): StreamProvider {
     if (this.streamProvider) return this.streamProvider;
@@ -567,52 +516,6 @@ export class Agent {
         this.activeModel = "claude-opus-4-6";
         const ev: OmegaEvent = { type: "model_changed", ts: new Date().toISOString(), model: "claude-opus-4-6" };
         this.logEvent(ev); yield ev;
-      } else if (cmd === "/compact") {
-        const startEv: OmegaEvent = { type: "compact_user_start", ts: new Date().toISOString() };
-        await this.logEvent(startEv);
-        yield startEv;
-
-        const messagesBefore = this.compactedContextHistory.length;
-
-        if (messagesBefore === 0) {
-          // Nothing to compact — still emit done with 0 → 0, no LLM call needed.
-          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore: 0, messagesAfter: 0 };
-          this.logEvent(doneEv);
-          yield doneEv;
-          return;
-        }
-
-        try {
-          const provider = this.getStreamProvider();
-          const { history: newHistory, syntheticMessage, tailStartIndex, usage } = await compactHistory(
-            this.compactedContextHistory,
-            provider,
-            this.activeModel,
-          );
-          // Replace in-memory context view only. context.jsonl is append-only —
-          // tail messages are already there with their correct hashes; we only
-          // need to append the new synthetic summary message.
-          //
-          // New compactedContextHashes = [syntheticHash, ...tailHashes]:
-          //   - syntheticHash: from appendContextMessage (writes one new record)
-          //   - tailHashes: sliced from existing compactedContextHashes — no re-hash,
-          //     no re-write; those records are already in context.jsonl
-          const syntheticHash = await appendContextMessage(
-            syntheticMessage,
-            this.contextFile,
-          );
-          const tailHashes = this.compactedContextHashes.slice(tailStartIndex);
-          this.compactedContextHistory = newHistory as Anthropic.MessageParam[];
-          this.compactedContextHashes = [syntheticHash, ...tailHashes];
-          const doneEv: OmegaEvent = { type: "compact_user_done", ts: new Date().toISOString(), messagesBefore, messagesAfter: this.compactedContextHistory.length, usage };
-          this.logEvent(doneEv);
-          yield doneEv;
-        } catch (err: any) {
-          const errEv: OmegaEvent = { type: "compact_user_error", ts: new Date().toISOString(), error: err.message ?? String(err) };
-          this.logEvent(errEv);
-          yield errEv;
-        }
-        return;
       } else {
         yield { type: "agent_error", ts: new Date().toISOString(), error: `Unknown command: ${userMessage}` };
       }
@@ -623,11 +526,6 @@ export class Agent {
     const userMessageEvent: OmegaEvent = { type: "user_message", ts: new Date().toISOString(), content: userMessage };
     this.logEvent(userMessageEvent);
     yield userMessageEvent;
-
-    // Auto-compact if context has grown beyond the threshold. Fires at most once
-    // per user turn, before the agentic loop, so the LLM always sees a compact view.
-    // On error, yields compact_auto_error and continues (rolling truncation fallback).
-    yield* this.performAutoCompact();
 
     // Cumulative totals across all API calls in this user turn
     let totalInputTokens = 0;
@@ -727,10 +625,14 @@ export class Agent {
             system: systemBlocks,
             tools: cachedTools,
             messages: cachedMessages,
+            betas: ["compact-2026-01-12"],
+            context_management: {
+              edits: [{ type: "compact_20260112" }],
+            },
           };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
-            : this.client.messages.stream(streamParams);
+            : this.client.messages.stream(streamParams as any);
 
           let aborted = false;
           for await (const event of stream) {
@@ -746,7 +648,8 @@ export class Agent {
               assembledText += event.delta.text;
               yield { type: "text", text: event.delta.text };
             }
-
+            // Compaction content blocks arrive as a single delta (no incremental
+            // streaming). We don't yield them as text — they're structural.
           }
 
           if (aborted) {
@@ -802,11 +705,11 @@ export class Agent {
             this.logEvent(llmErrEv);
             yield llmErrEv;
             if (isContextOverflow) {
-              const overflowEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Context too large to send. Use /compact to summarise history, or start a fresh focused turn." };
+              const overflowEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Context too large to send. Start a fresh focused turn." };
               this.logEvent(overflowEv);
               yield overflowEv;
             } else if (isRetryable(err)) {
-              const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Use /compact to reduce context, or try again shortly." };
+              const rateLimitEv: OmegaEvent = { type: "agent_error", ts: new Date().toISOString(), error: "Anthropic rate limit. Try again shortly." };
               this.logEvent(rateLimitEv);
               yield rateLimitEv;
             } else {
@@ -834,16 +737,35 @@ export class Agent {
       this.sessionCacheCreationTokens += turnCacheCreation;
       this.sessionCacheReadTokens += turnCacheRead;
 
-      // Update lastPromptTokens — used by performAutoCompact() on the *next* user turn
-      // to decide whether the context has grown large enough to warrant compaction.
-      // All three categories occupy the context window; output tokens are excluded.
-      this.lastPromptTokens = turnInputTokens + turnCacheRead + turnCacheCreation;
-
       // Accumulate turn-level totals
       totalInputTokens += turnInputTokens;
       totalOutputTokens += turnOutputTokens;
       totalCacheCreationTokens += turnCacheCreation;
       totalCacheReadTokens += turnCacheRead;
+
+      // Detect server-side compaction: a compaction block in the response means
+      // the server summarised the history. Prune compactedContextHistory and
+      // compactedContextHashes so the next call only sends from the compaction
+      // block onward. The compaction block sits at index 0 of the content array.
+      const compactionBlockIndex = response.content.findIndex((b: any) => b.type === "compaction");
+      if (compactionBlockIndex !== -1) {
+        // The API drops everything prior to the compaction block server-side,
+        // but we also prune locally so our local array stays in sync.
+        // The compaction block is part of this assistant message, which we are
+        // about to append. After appending, the local array should start from
+        // this message — so clear all prior history.
+        this.compactedContextHistory = [];
+        this.compactedContextHashes = [];
+
+        // Emit a compacted event — full usage object preserved verbatim.
+        const compactedEv: OmegaEvent = {
+          type: "compacted",
+          ts: new Date().toISOString(),
+          usage: response.usage,
+        };
+        await this.logEvent(compactedEv);
+        yield compactedEv;
+      }
 
       // Add assistant response to history; capture hash for llm_response + tool_call events.
       // appendToHistory is awaited so the context.jsonl record is on disk before

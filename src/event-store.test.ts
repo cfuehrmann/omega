@@ -23,9 +23,7 @@ import {
   type LlmErrorEvent,
   type AgentErrorEvent,
   type TurnInterruptedEvent,
-  type CompactUserStartEvent,
-  type CompactUserDoneEvent,
-  type CompactUserErrorEvent,
+  type CompactedEvent,
   type SessionStartEvent,
   type LlmCallEvent,
 } from "./event-store.js";
@@ -137,22 +135,30 @@ describe("OmegaEvent round-trip serialisation", () => {
     expect(read).toEqual(e);
   });
 
-  it("compact_user_start", async () => {
-    const e: CompactUserStartEvent = { type: "compact_user_start", ts: "2025-01-01T00:00:00.000Z" };
+  it("compacted (no iterations)", async () => {
+    const e: CompactedEvent = {
+      type: "compacted",
+      ts: "2025-01-01T00:00:00.000Z",
+      usage: { input_tokens: 500, output_tokens: 200 },
+    };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);
   });
 
-  it("compact_user_done", async () => {
-    const e: CompactUserDoneEvent = { type: "compact_user_done", ts: "2025-01-01T00:00:00.000Z", messagesBefore: 40, messagesAfter: 8 };
-    await appendEvent(e, testFile);
-    const [read] = readEvents(testFile);
-    expect(read).toEqual(e);
-  });
-
-  it("compact_user_error", async () => {
-    const e: CompactUserErrorEvent = { type: "compact_user_error", ts: "2025-01-01T00:00:00.000Z", error: "LLM call failed" };
+  it("compacted (with iterations array)", async () => {
+    const e: CompactedEvent = {
+      type: "compacted",
+      ts: "2025-01-01T00:00:00.000Z",
+      usage: {
+        input_tokens: 500,
+        output_tokens: 200,
+        iterations: [
+          { type: "compaction", input_tokens: 80000, output_tokens: 300 },
+          { type: "message", input_tokens: 500, output_tokens: 200 },
+        ],
+      },
+    };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

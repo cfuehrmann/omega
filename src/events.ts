@@ -15,7 +15,6 @@
  */
 
 import type { TurnMetrics } from "./agent.js";
-import type { CompactionUsage } from "./compaction.js";
 
 // ---------------------------------------------------------------------------
 // StreamSignal — ephemeral, never persisted
@@ -189,49 +188,22 @@ export interface TurnInterruptedEvent {
   ts: string;
 }
 
-/** Operator triggered /compact — compaction LLM call about to start. */
-export interface CompactUserStartEvent {
-  type: "compact_user_start";
+/**
+ * Server-side compaction fired during this turn. Emitted once per response
+ * that contains a compaction block. The full usage object from the API
+ * response is preserved verbatim (including usage.iterations when present,
+ * which breaks down the compaction iteration vs. the main iteration costs).
+ */
+export interface CompactedEvent {
+  type: "compacted";
   ts: string;
-}
-
-/** Compaction completed successfully. */
-export interface CompactUserDoneEvent {
-  type: "compact_user_done";
-  ts: string;
-  messagesBefore: number;
-  messagesAfter: number;
-  usage?: CompactionUsage;
-}
-
-/** Compaction failed. */
-export interface CompactUserErrorEvent {
-  type: "compact_user_error";
-  ts: string;
-  error: string;
-}
-
-/** Automatic compaction triggered (context grew beyond threshold). */
-export interface CompactAutoStartEvent {
-  type: "compact_auto_start";
-  ts: string;
-  messagesBefore: number;
-}
-
-/** Automatic compaction completed successfully. */
-export interface CompactAutoDoneEvent {
-  type: "compact_auto_done";
-  ts: string;
-  messagesBefore: number;
-  messagesAfter: number;
-  usage?: CompactionUsage;
-}
-
-/** Automatic compaction failed — session continues with rolling truncation as fallback. */
-export interface CompactAutoErrorEvent {
-  type: "compact_auto_error";
-  ts: string;
-  error: string;
+  /**
+   * Full usage object from the API response. When compaction fires,
+   * usage.iterations is an array with one compaction entry and one message
+   * entry. The top-level input_tokens/output_tokens reflect only the main
+   * (non-compaction) iteration. Sum across iterations for the true total.
+   */
+  usage: unknown;
 }
 
 /** OAuth token was successfully refreshed mid-session. */
@@ -290,12 +262,7 @@ export type OmegaEvent =
   | LlmErrorEvent
   | AgentErrorEvent
   | TurnInterruptedEvent
-  | CompactUserStartEvent
-  | CompactUserDoneEvent
-  | CompactUserErrorEvent
-  | CompactAutoStartEvent
-  | CompactAutoDoneEvent
-  | CompactAutoErrorEvent
+  | CompactedEvent
   | OauthRefreshedEvent
   | OauthTokenExpiredEvent
   | LlmRetryEvent
