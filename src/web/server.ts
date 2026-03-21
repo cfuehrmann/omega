@@ -23,7 +23,7 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
-import { Agent } from "../agent.js";
+import { Agent, type StreamProvider } from "../agent.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
 import type { ContextRecord } from "../context-store.js";
 
@@ -209,7 +209,7 @@ function send(ws: ServerWebSocket<unknown>, event: object): void {
   }
 }
 
-async function handleMessage(session: Session, data: string): Promise<void> {
+async function handleMessage(session: Session, data: string, streamProvider?: StreamProvider): Promise<void> {
   let msg: any;
   try {
     msg = JSON.parse(data);
@@ -231,7 +231,7 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     // Replace the persistent agent with a fresh one in a new session dir
     currentSessionPaths = await makeSessionDir();
     persistentAgent = new Agent(
-      undefined,
+      streamProvider,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
     );
@@ -289,10 +289,17 @@ async function handleMessage(session: Session, data: string): Promise<void> {
 // Server
 // ---------------------------------------------------------------------------
 
-export async function runWebApp(): Promise<void> {
+export interface WebAppOptions {
+  /** Injectable LLM stream provider (used in tests to avoid real API calls). */
+  streamProvider?: StreamProvider;
+  /** Override the HTTP port (default: resolved from --port flag / PORT env / 3000). */
+  port?: number;
+}
+
+export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
   currentSessionPaths = await makeSessionDir();
   persistentAgent = new Agent(
-    undefined,
+    opts.streamProvider,
     currentSessionPaths.contextFile,
     currentSessionPaths.eventsFile,
   );
@@ -309,7 +316,7 @@ export async function runWebApp(): Promise<void> {
   let server: ReturnType<typeof Bun.serve>;
   try {
     server = Bun.serve({
-    port: PORT,
+    port: opts.port ?? PORT,
 
     async fetch(req, srv) {
       if (srv.upgrade(req)) return undefined as any;
@@ -368,7 +375,7 @@ export async function runWebApp(): Promise<void> {
 
       message(ws, data) {
         if (activeSession?.ws !== ws) return;
-        handleMessage(activeSession, String(data)).catch((err: any) => {
+        handleMessage(activeSession, String(data), opts.streamProvider).catch((err: any) => {
           send(ws, { type: "error", error: String(err) });
         });
       },
