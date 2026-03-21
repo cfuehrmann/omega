@@ -231,7 +231,7 @@ async function handleMessage(session: Session, data: string): Promise<void> {
     // Replace the persistent agent with a fresh one in a new session dir
     currentSessionPaths = await makeSessionDir();
     persistentAgent = new Agent(
-      undefined, null, undefined,
+      undefined,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
     );
@@ -292,7 +292,7 @@ async function handleMessage(session: Session, data: string): Promise<void> {
 export async function runWebApp(): Promise<void> {
   currentSessionPaths = await makeSessionDir();
   persistentAgent = new Agent(
-    undefined, null, undefined,
+    undefined,
     currentSessionPaths.contextFile,
     currentSessionPaths.eventsFile,
   );
