@@ -606,31 +606,16 @@ export class Agent {
    * Request a switch to Claude Max mode.
    *
    * If a valid OAuth token already exists, switches immediately and returns
-   * { kind: "switched", event }.
-   *
-   * If no valid token exists (never logged in, or refresh token expired),
-   * starts the PKCE authorization flow and returns
+   * Starts the PKCE authorization flow and returns
    * { kind: "needs_oauth", url, complete } — the caller should show the URL
    * to the user and call complete(codeWithState) once they paste it back.
    */
   async requestClaudeMaxSwitch(): Promise<
-    | { kind: "switched"; event: AuthModeChangedEvent }
-    | { kind: "needs_oauth"; url: string; complete: (codeWithState: string) => Promise<AuthModeChangedEvent> }
+    { kind: "needs_oauth"; url: string; complete: (codeWithState: string) => Promise<AuthModeChangedEvent> }
   > {
-    const auth = await getAuthToken();
-    if (auth.kind === "ok") {
-      await writeAuthConfig("claude-max");
-      this.client = this.makeOAuthClient(auth.token);
-      this.authMode = "oauth";
-      const ev: AuthModeChangedEvent = {
-        type: "auth_mode_changed",
-        ts: new Date().toISOString(),
-        authMode: "claude-max",
-      };
-      this.logEvent(ev);
-      return { kind: "switched", event: ev };
-    }
-
+    // Always start a fresh OAuth flow. The user is explicitly requesting
+    // Claude Max authentication — never silently reuse a cached token that
+    // may be stale or invalid.
     const { url, exchangeCode } = await startOAuthFlow();
     const complete = async (codeWithState: string): Promise<AuthModeChangedEvent> => {
       await exchangeCode(codeWithState);

@@ -314,12 +314,8 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     } else if (mode === "claude-max") {
       try {
         const result = await persistentAgent.requestClaudeMaxSwitch();
-        if (result.kind === "switched") {
-          send(session.ws, result.event);
-        } else {
-          session.pendingOAuthExchange = result.complete;
-          send(session.ws, { type: "oauth_url", url: result.url });
-        }
+        session.pendingOAuthExchange = result.complete;
+        send(session.ws, { type: "oauth_url", url: result.url });
       } catch (err: any) {
         send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: err.message });
       }

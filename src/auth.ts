@@ -2,15 +2,13 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomBytes, createHash } from "node:crypto";
 
-// OAuth configuration for Claude Max (from pi-ai's anthropic.js)
-// CRITICAL: Must use claude.ai + console.anthropic.com endpoints.
-// The access_token IS the API key — no create_api_key step needed.
+// OAuth configuration for Claude Max — endpoints verified against Claude Code source.
 const OAUTH_CONFIG = {
   clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   authorizeUrl: "https://claude.ai/oauth/authorize",
-  tokenUrl: "https://console.anthropic.com/v1/oauth/token",
-  redirectUri: "https://console.anthropic.com/oauth/code/callback",
-  scopes: "org:create_api_key user:profile user:inference",
+  tokenUrl: "https://platform.claude.com/v1/oauth/token",
+  redirectUri: "https://platform.claude.com/oauth/code/callback",
+  scopes: "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers",
 };
 
 const CONFIG_DIR = join(process.env.HOME ?? "~", ".config", "omega");
