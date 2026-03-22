@@ -266,6 +266,103 @@ describe("Agent — adaptive thinking", () => {
     expect(llmResponse!.thinking).toBe(`${thinking1}\n\n---\n\n${thinking2}`);
   });
 
+  it("thinking block signatures are preserved in messages passed to subsequent API calls after tool use", async () => {
+    const THINKING_TEXT = "I need to check which files exist first.";
+    const SIGNATURE = "test-sig-abc";
+    const TOOL_USE_ID = "tool-use-1";
+    const FINAL_TEXT = "Done.";
+
+    let capturedSecondCallMessages: Anthropic.MessageParam[] | undefined;
+    let callCount = 0;
+
+    const provider: StreamProvider = async (params) => {
+      callCount++;
+
+      if (callCount === 1) {
+        // First call: return thinking block + tool_use, stop_reason: "tool_use"
+        return makeMockStream(
+          [
+            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: THINKING_TEXT } },
+            { type: "content_block_stop", index: 0 },
+            { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: TOOL_USE_ID, name: "list_files" } },
+            { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path": "."}' } },
+            { type: "content_block_stop", index: 1 },
+            { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 20 } },
+            { type: "message_stop" },
+          ],
+          {
+            id: "msg_thinking_tool",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [
+              { type: "thinking", thinking: THINKING_TEXT, signature: SIGNATURE },
+              { type: "tool_use", id: TOOL_USE_ID, name: "list_files", input: { path: "." } },
+            ],
+            stop_reason: "tool_use",
+            stop_sequence: null,
+            usage: { input_tokens: 50, output_tokens: 20 },
+          }
+        );
+      } else {
+        // Second call: capture params.messages so we can inspect them, then return final text
+        capturedSecondCallMessages = params.messages;
+        return makeMockStream(
+          [
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: FINAL_TEXT } },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+            { type: "message_stop" },
+          ],
+          {
+            id: "msg_final",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [{ type: "text", text: FINAL_TEXT }],
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            usage: { input_tokens: 80, output_tokens: 5 },
+          }
+        );
+      }
+    };
+
+    const { agent, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+
+    await collectAll(agent, "list the files for me");
+
+    // Should have made exactly 2 API calls (first for thinking+tool, second for final answer)
+    expect(callCount).toBe(2);
+
+    // The second call must have received messages
+    expect(capturedSecondCallMessages).toBeDefined();
+
+    // The messages must include the assistant message from the first turn
+    const assistantMessages = capturedSecondCallMessages!.filter(
+      (m) => m.role === "assistant",
+    );
+    expect(assistantMessages.length).toBeGreaterThan(0);
+
+    // The first assistant message is the one with thinking + tool_use from the first turn
+    const firstAssistantContent = assistantMessages[0]!.content;
+    expect(Array.isArray(firstAssistantContent)).toBe(true);
+
+    // Find the thinking block in that message's content
+    const thinkingBlock = (firstAssistantContent as any[]).find(
+      (b: any) => b.type === "thinking",
+    );
+    expect(thinkingBlock).toBeDefined();
+    expect(thinkingBlock.thinking).toBe(THINKING_TEXT);
+
+    // *** Key assertion: the signature must be preserved verbatim so the LLM
+    // can decrypt and reconstruct its original reasoning from the previous turn. ***
+    expect(thinkingBlock.signature).toBe(SIGNATURE);
+  });
+
   it("thinking field survives events.jsonl round-trip", async () => {
     const thinking = "Round-trip thinking content.";
     const text = "Round-trip response.";
