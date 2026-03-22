@@ -550,6 +550,10 @@ export class Agent {
     return new Anthropic({
       apiKey: null as any,
       authToken: token,
+      // ?beta=true is required for Anthropic's backend to accept OAuth bearer
+      // tokens — without it the API returns 401 "OAuth authentication is
+      // currently not supported."  (Observed in Claude Code network traffic.)
+      defaultQuery: { beta: "true" },
       defaultHeaders: {
         accept: "application/json",
         "anthropic-dangerous-direct-browser-access": "true",
