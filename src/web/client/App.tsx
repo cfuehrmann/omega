@@ -804,7 +804,6 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     case "auth":
     case "reset_done":
     case "session_info":
-    case "world_state_saved":
     // thinking is a streaming-only signal — never pushed into turn.events
     case "thinking":
       return null;

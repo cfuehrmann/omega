@@ -42,7 +42,6 @@ export type WsEvent =
   | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed"; ts?: string }
   | { type: "compacted"; ts?: string; usage: unknown }
-  | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
   | { type: "turn_end"; ts?: string; model?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
   | { type: "llm_error"; ts?: string; provider: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
@@ -697,7 +696,6 @@ export function dispatch(event: WsEvent): void {
     case "llm_error":
     case "agent_error":
     case "transport_error":
-    case "world_state_saved":
       setState(produce(s => { s.events.push(event); }));
       break;
   }
