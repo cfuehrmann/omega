@@ -193,6 +193,7 @@ type ModalContent =
 
 const [activeModal, setActiveModal] = createSignal<ModalContent | null>(null);
 const [legendOpen, setLegendOpen] = createSignal(false);
+const [claudeMaxDialogOpen, setClaudeMaxDialogOpen] = createSignal(false);
 
 function setToolModal(d: ToolDetail | null) {
   setActiveModal(d ? { kind: "tool", detail: d } : null);
@@ -891,6 +892,15 @@ function SessionBar() {
 
   const handleAuthChange = (e: Event) => {
     const mode = (e.currentTarget as HTMLSelectElement).value;
+    if (mode === "test") {
+      alert("Hello");
+      return;
+    }
+    if (mode === "claude-max") {
+      setClaudeMaxDialogOpen(true);
+      sendToServer({ type: "set_auth_mode", mode: "claude-max" });
+      return;
+    }
     sendToServer({ type: "set_auth_mode", mode });
   };
 
@@ -914,6 +924,7 @@ function SessionBar() {
             >
               <option value="claude-max">Claude Max</option>
               <option value="api-key">API Key</option>
+              <option value="test">test</option>
             </select>
           </Show>
           <Show when={activeModel()}>
@@ -934,11 +945,28 @@ function SessionBar() {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth re-authentication overlay
+// Claude Max OAuth dialog
+//
+// Opens immediately when the user picks "Claude Max" in the auth dropdown
+// (claudeMaxDialogOpen) and also whenever the server pushes an oauth_url
+// event mid-session (state.oauthUrl).  The two signals are OR-ed so the
+// dialog never misses either trigger.
 // ---------------------------------------------------------------------------
 
-function OAuthOverlay() {
+function ClaudeMaxDialog() {
   const [code, setCode] = createSignal("");
+
+  // Auto-close when the server confirms an immediate switch (valid token
+  // already cached — no OAuth URL ever arrives).
+  createEffect((prevMode: string) => {
+    const mode = state.authMode;
+    if (mode !== prevMode && mode === "claude-max") {
+      setClaudeMaxDialogOpen(false);
+    }
+    return mode;
+  }, state.authMode);
+
+  const show = () => claudeMaxDialogOpen() || !!state.oauthUrl;
 
   const submit = () => {
     const trimmed = code().trim();
@@ -946,23 +974,36 @@ function OAuthOverlay() {
       sendToServer({ type: "submit_oauth_code", code: trimmed });
       setCode("");
     }
+    setClaudeMaxDialogOpen(false);
   };
 
   const cancel = () => {
+    dispatch({ type: "oauth_cancelled" }); // clear state.oauthUrl immediately
     sendToServer({ type: "cancel_oauth" });
     setCode("");
+    setClaudeMaxDialogOpen(false);
   };
 
   return (
-    <Show when={state.oauthUrl}>
+    <Show when={show()}>
       <div class="oauth-overlay">
         <div class="oauth-dialog">
           <p class="oauth-title">Authenticate with Claude Max</p>
           <ol class="oauth-steps">
             <li>
-              <a class="oauth-link" href={state.oauthUrl!} target="_blank" rel="noopener noreferrer">
-                Open authorization page ↗
-              </a>
+              <Show
+                when={state.oauthUrl}
+                fallback={<span class="oauth-loading">Generating authorization link…</span>}
+              >
+                <a
+                  class="oauth-link"
+                  href={state.oauthUrl!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open authorization page ↗
+                </a>
+              </Show>
             </li>
             <li>Sign in with your Claude Max account and authorize Omega.</li>
             <li>
@@ -974,7 +1015,10 @@ function OAuthOverlay() {
                   placeholder="code#state"
                   value={code()}
                   onInput={(e) => setCode(e.currentTarget.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submit();
+                    if (e.key === "Escape") cancel();
+                  }}
                   autofocus
                 />
                 <button class="oauth-submit-btn" onClick={submit} disabled={!code().trim()}>
@@ -989,6 +1033,8 @@ function OAuthOverlay() {
     </Show>
   );
 }
+
+
 
 // ---------------------------------------------------------------------------
 // Sticky metrics bar (per-turn + session totals)
@@ -1331,6 +1377,7 @@ export function App() {
     <div class="app">
       <TokenLegend />
       <ActiveModal />
+      <ClaudeMaxDialog />
       <ReconnectBanner />
       <div class="feed-wrapper">
         <div class="feed" ref={feedRef} onScroll={onFeedScroll}>
@@ -1359,7 +1406,7 @@ export function App() {
       <StickyMetricsBar />
       <StatusDot />
       <InputArea />
-      <OAuthOverlay />
+
     </div>
   );
 }
