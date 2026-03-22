@@ -12,7 +12,6 @@
  */
 
 import { corePrompt } from "./core.js";
-import { formatAppendSection } from "./append.js";
 
 export interface BuildSystemPromptArgs {
   cwd: string;
@@ -33,8 +32,7 @@ export function buildSystemPrompt({
 
   parts.push(corePrompt({ cwd, maxOutputTokens }));
 
-  const appendSection = formatAppendSection(appendContent);
-  if (appendSection) parts.push(appendSection);
+  if (appendContent) parts.push(appendContent);
 
   return parts.join("\n\n");
 }

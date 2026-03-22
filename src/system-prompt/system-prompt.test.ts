@@ -3,7 +3,7 @@
  *
  * Three layers tested:
  *  1. core.ts     — corePrompt() interpolates args; contains required sections
- *  2. append.ts   — file I/O (read/write) and formatAppendSection()
+ *  2. append.ts   — file I/O (read/write)
  *  3. index.ts    — buildSystemPrompt() assembles all parts correctly
  */
 
@@ -17,8 +17,6 @@ import {
   readSystemPromptAppend,
   writeSystemPromptAppend,
   systemPromptAppendPath,
-  formatAppendSection,
-  APPEND_SECTION_HEADER,
 } from "./append.js";
 import { buildSystemPrompt } from "./index.js";
 
@@ -156,27 +154,7 @@ describe("writeSystemPromptAppend", () => {
   });
 });
 
-describe("formatAppendSection", () => {
-  it("returns null when content is null", () => {
-    expect(formatAppendSection(null)).toBeNull();
-  });
 
-  it("returns a string starting with the section header when content is given", () => {
-    const result = formatAppendSection("some content");
-    expect(result).not.toBeNull();
-    expect(result!.startsWith(APPEND_SECTION_HEADER)).toBe(true);
-  });
-
-  it("includes the content after the header", () => {
-    const result = formatAppendSection("my state text");
-    expect(result).toContain("my state text");
-  });
-
-  it("separates header from content with a blank line", () => {
-    const result = formatAppendSection("body");
-    expect(result).toContain(`${APPEND_SECTION_HEADER}\n\nbody`);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // 3. index.ts — buildSystemPrompt assembly
@@ -204,25 +182,25 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("/test/project");
   });
 
-  it("no append section when appendContent is null", () => {
+  it("no append content when appendContent is null", () => {
+    const base2 = corePrompt({ cwd: base.cwd, maxOutputTokens: base.maxOutputTokens });
     const prompt = buildSystemPrompt({ ...base, appendContent: null });
-    expect(prompt).not.toContain(APPEND_SECTION_HEADER);
+    expect(prompt).toBe(base2);
   });
 
-  it("includes append section when appendContent is provided", () => {
-    const prompt = buildSystemPrompt({ ...base, appendContent: "my state" });
-    expect(prompt).toContain(APPEND_SECTION_HEADER);
-    expect(prompt).toContain("my state");
+  it("includes append content when appendContent is provided", () => {
+    const prompt = buildSystemPrompt({ ...base, appendContent: "my notes" });
+    expect(prompt).toContain("my notes");
   });
 
-  it("append section appears after the core prompt", () => {
+  it("append content appears after the core prompt", () => {
     const prompt = buildSystemPrompt({ ...base, appendContent: "APPENDED" });
     expect(prompt.indexOf("You are Omega")).toBeLessThan(prompt.indexOf("APPENDED"));
   });
 
   it("core and append are separated by double newlines", () => {
     const prompt = buildSystemPrompt({ ...base, appendContent: "STATE" });
-    expect(prompt).toContain(`\n\n${APPEND_SECTION_HEADER}`);
+    expect(prompt).toContain("\n\nSTATE");
   });
 
   it("is stable: same args produce identical string", () => {

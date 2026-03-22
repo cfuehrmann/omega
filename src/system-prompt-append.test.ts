@@ -130,7 +130,7 @@ describe("Agent.buildSystemPrompt()", () => {
     expect(prompt).not.toContain("World State");
   });
 
-  it("appends content under a World State section when content is loaded", async () => {
+  it("appends content verbatim when content is loaded", async () => {
     const { agent, dispose } = await makeTestAgent();
     disposeAll.push(dispose);
     const appendPath = join(tempDir, "system-prompt-append.md");
@@ -138,7 +138,6 @@ describe("Agent.buildSystemPrompt()", () => {
     await agent.loadSystemPromptAppend(appendPath);
     const prompt = agent.buildSystemPrompt();
     expect(prompt).toContain(CORE_PROMPT_SENTINEL);
-    expect(prompt).toContain("World State (from previous sessions)");
     expect(prompt).toContain("## My project state\nAll good.");
   });
 
@@ -205,7 +204,6 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
       .map((b: any) => b.text ?? "")
       .join("");
     expect(systemText).toContain("SENTINEL_CONTENT_XYZ");
-    expect(systemText).toContain("World State (from previous sessions)");
   });
 
   it("appended content is absent when file does not exist", async () => {

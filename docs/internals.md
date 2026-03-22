@@ -150,7 +150,7 @@ function.
 - `src/system-prompt/` — modular system prompt: `identity.ts` (OAuth prefix),
   `core.ts` (main instructions), `append.ts` (`readSystemPromptAppend()`,
   `writeSystemPromptAppend()`, `systemPromptAppendPath()`,
-  `formatAppendSection()`), `index.ts` (`buildSystemPrompt()` assembler).
+  ), `index.ts` (`buildSystemPrompt()` assembler).
 - `src/tools.ts` — All tool implementations; `MAX_TOOL_OUTPUT_CHARS = 100_000`
   cap.
 - `src/web/client/store.ts` — `WsEvent` discriminated union, `dispatch()`,

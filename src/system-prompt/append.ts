@@ -2,10 +2,10 @@
  * System prompt — Part 3: Optional append content.
  *
  * If the project contains a `.omega/system-prompt-append.md` file, its
- * contents are appended to the system prompt at session start. This is the
- * generic opt-in mechanism for injecting persistent project-specific context
- * (e.g. a world-state summary, architecture notes, or any other operator-
- * maintained text) into every API call.
+ * contents are appended verbatim to the system prompt at session start.
+ * This is the generic opt-in mechanism for injecting persistent
+ * project-specific content (e.g. architecture notes, key rules, or any
+ * other operator-maintained text) into every API call.
  *
  * The file is project-owned and source-controlled. It is never written
  * automatically — only by the operator or by an explicit compaction command.
@@ -62,19 +62,4 @@ export async function writeSystemPromptAppend(
   await writeFile(path, content, "utf-8");
 }
 
-// ---------------------------------------------------------------------------
-// Section formatter
-// ---------------------------------------------------------------------------
 
-/** Section header used when appending content to the system prompt. */
-export const APPEND_SECTION_HEADER = "## World State (from previous sessions)";
-
-/**
- * Wrap non-null append content in its section header, ready to be
- * concatenated onto the end of the assembled system prompt.
- * Returns null when content is null (file was absent).
- */
-export function formatAppendSection(content: string | null): string | null {
-  if (content === null) return null;
-  return `${APPEND_SECTION_HEADER}\n\n${content}`;
-}
