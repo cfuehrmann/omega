@@ -57,7 +57,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("session_start", async () => {
-    const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", provider: "anthropic", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
+    const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);
@@ -71,7 +71,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("llm_call", async () => {
-    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"], cacheBreakpointIndex: 2, requestBytes: 1024 };
+    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"], cacheBreakpointIndex: 2, requestBytes: 1024 };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);
@@ -116,7 +116,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("llm_error", async () => {
-    const e: LlmErrorEvent = { type: "llm_error", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", error: "rate limited", httpStatus: 429 };
+    const e: LlmErrorEvent = { type: "llm_error", ts: "2025-01-01T00:00:00.000Z", url: "https://api.anthropic.com/v1/messages", error: "rate limited", httpStatus: 429 };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

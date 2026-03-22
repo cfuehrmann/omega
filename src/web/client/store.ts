@@ -31,19 +31,19 @@ export type WsEvent =
   | { type: "text"; ts?: string; streamingStart?: string; text: string }
   | { type: "thinking"; ts?: string; text: string }
   // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
-  | { type: "session_start"; ts?: string; authMode: string; model: string; provider: string; systemPrompt: string }
+  | { type: "session_start"; ts?: string; authMode: string; model: string; systemPrompt: string }
   | { type: "session_end"; ts?: string; outcome: "clean" | "error"; reason?: string }
   | { type: "tool_call"; ts?: string; id: string; name: string; input: unknown }
   | { type: "tool_result"; ts?: string; id: string; name: string; isError: boolean; durationMs: number; output: string }
   | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; contextHash: string; text?: string; thinking?: string; streamingStart?: string; responseSummary?: Record<string, unknown> }
-  | { type: "llm_call"; ts?: string; provider: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestBytes?: number; requestSummary?: Record<string, unknown> }
-  | { type: "llm_retry"; ts?: string; attempt: number; provider: string; waitMs: number; error: string }
+  | { type: "llm_call"; ts?: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestBytes?: number; requestSummary?: Record<string, unknown> }
+  | { type: "llm_retry"; ts?: string; attempt: number; waitMs: number; error: string }
   | { type: "model_changed"; ts?: string; model: string }
   | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed"; ts?: string }
   | { type: "compacted"; ts?: string; usage: unknown }
   | { type: "turn_end"; ts?: string; model?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
-  | { type: "llm_error"; ts?: string; provider: string; error: string }
+  | { type: "llm_error"; ts?: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
   | { type: "transport_error"; ts?: string; error: string; context?: string }
   | { type: "turn_interrupted"; ts?: string; reason?: "aborted" | "error" };

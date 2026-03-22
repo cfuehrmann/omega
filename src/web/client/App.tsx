@@ -148,7 +148,6 @@ interface ToolDetail {
 
 interface LlmCallDetail {
   ts?: string;
-  provider: string;
   url: string;
   model: string;
   contextHashes: string[];
@@ -410,7 +409,6 @@ function ActiveModal() {
           kind: "llm_call_messages",
           detail: {
             ts: d.ts,
-            provider: "",
             url: "",
             model: "",
             contextHashes: d.allContextHashes,
@@ -600,7 +598,6 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
 
       const detail = {
         ts,
-        provider: e.provider,
         url: e.url,
         model: e.model,
         contextHashes: e.contextHashes,
@@ -650,7 +647,6 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
         kind: "llm_call_messages",
         detail: {
           ts,
-          provider: "",
           url: "",
           model: "",
           contextHashes: allContextHashes,
@@ -707,8 +703,8 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       return (
         <div class="block error-b">
           <div class="block-label-row">
-            <span class="block-label">api error ({e.provider})</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `api error (${e.provider})`, ts, body } })} title="Details">⤢</button>
+            <span class="block-label">api error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "api error", ts, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -771,7 +767,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     }
 
     case "session_start": {
-      const body = `${e.authMode} · ${e.provider} · ${e.model}`;
+      const body = `${e.authMode} · ${e.model}`;
       return (
         <div class="block info">
           <div class="block-label-row">

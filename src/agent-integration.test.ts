@@ -525,7 +525,7 @@ describe("llm_call event", () => {
     expect(startEvents.length).toBe(1);
   });
 
-  it.concurrent("llm_call carries provider, url, and requestSummary", async () => {
+  it.concurrent("llm_call carries url and requestSummary", async () => {
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -533,7 +533,6 @@ describe("llm_call event", () => {
     const events = await collectEvents(agent, "hi");
     const e = events.find((e) => e.type === "llm_call") as any;
     expect(e).toBeDefined();
-    expect(e.provider).toBe("anthropic");
     expect(typeof e.url).toBe("string");
     expect(typeof e.requestSummary).toBe("object");
     expect(e.llmCallNumber).toBeUndefined();

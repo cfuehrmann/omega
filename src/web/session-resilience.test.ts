@@ -39,7 +39,7 @@ describe("closeOpenTurn", () => {
   it("appends turn_interrupted when the last user_message has no closing event", () => {
     const log = [
       { type: "user_message", content: "hi" },
-      { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", request: {} },
+      { type: "llm_call", url: "https://api.anthropic.com/v1/messages", request: {} },
       { type: "text", text: "Partial" },
     ];
     const result = closeOpenTurn(log);
@@ -52,7 +52,7 @@ describe("closeOpenTurn", () => {
       { type: "user_message", content: "first" },
       { type: "turn_end", metrics: {} },
       { type: "user_message", content: "second" },
-      { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", request: {} },
+      { type: "llm_call", url: "https://api.anthropic.com/v1/messages", request: {} },
     ];
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
@@ -168,9 +168,9 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", provider: "anthropic", systemPrompt: "..." } as any,
+        { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", systemPrompt: "..." } as any,
         { type: "user_message", content: "ping" },
-        { type: "llm_call", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
+        { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
         { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" }, text: "pong" } as any,
         { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, cacheCreationTokens: 320, cacheReadTokens: 3318 } } as any,
         { type: "session_end", outcome: "clean" } as any,
@@ -226,7 +226,6 @@ describe("store retrying state", () => {
     dispatch({
       type: "llm_retry",
       attempt: 1,
-      provider: "anthropic",
       waitMs: 1000,
       error: "overloaded",
     } as any);
@@ -235,7 +234,7 @@ describe("store retrying state", () => {
 
   it("clears to false when llm_response arrives after a retry", () => {
     startTurn();
-    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    dispatch({ type: "llm_retry", attempt: 1, waitMs: 100, error: "overloaded" } as any);
     expect(state.retrying).toBe(true);
     dispatch({
       type: "llm_response",
@@ -248,7 +247,7 @@ describe("store retrying state", () => {
 
   it("clears to false when turn_end arrives", () => {
     startTurn();
-    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    dispatch({ type: "llm_retry", attempt: 1, waitMs: 100, error: "overloaded" } as any);
     expect(state.retrying).toBe(true);
     dispatch({ type: "turn_end", metrics: { inputTokens: 5, outputTokens: 2 } } as any);
     expect(state.retrying).toBe(false);
@@ -256,7 +255,7 @@ describe("store retrying state", () => {
 
   it("clears to false when turn_interrupted arrives", () => {
     startTurn();
-    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    dispatch({ type: "llm_retry", attempt: 1, waitMs: 100, error: "overloaded" } as any);
     expect(state.retrying).toBe(true);
     dispatch({ type: "turn_interrupted", reason: "error" } as any);
     expect(state.retrying).toBe(false);
@@ -264,7 +263,7 @@ describe("store retrying state", () => {
 
   it("clears to false on reset_done", () => {
     startTurn();
-    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    dispatch({ type: "llm_retry", attempt: 1, waitMs: 100, error: "overloaded" } as any);
     expect(state.retrying).toBe(true);
     dispatch({ type: "reset_done" } as any);
     expect(state.retrying).toBe(false);

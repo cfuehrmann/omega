@@ -460,7 +460,6 @@ export class Agent {
           ts: new Date().toISOString(),
           sessionId: this.sessionId,
           model: this.activeModel,
-          provider: "anthropic",
           authMode: "claude-max",
           systemPrompt: this.buildSystemPrompt(),
         });
@@ -476,7 +475,6 @@ export class Agent {
           ts: new Date().toISOString(),
           sessionId: this.sessionId,
           model: this.activeModel,
-          provider: "anthropic",
           authMode: "api-key",
           systemPrompt: this.buildSystemPrompt(),
         });
@@ -703,7 +701,6 @@ export class Agent {
         const llmCallEv: OmegaEvent = {
           type: "llm_call",
           ts: new Date().toISOString(),
-          provider: "anthropic",
           url: "https://api.anthropic.com/v1/messages",
           model: activeModel,
           contextHashes,
@@ -800,7 +797,6 @@ export class Agent {
               const llmErrEv: OmegaEvent = {
                 type: "llm_error",
                 ts: new Date().toISOString(),
-                provider: "anthropic",
                 url: "https://api.anthropic.com/v1/messages",
                 error: err.message ?? String(err),
                 httpStatus: err.status ?? err.statusCode,
@@ -835,7 +831,6 @@ export class Agent {
               type: "llm_retry",
               ts: new Date().toISOString(),
               attempt: attempt + 1,
-              provider: "anthropic",
               httpStatus: err.status ?? err.statusCode,
               waitMs,
               error: err.message,
@@ -854,7 +849,6 @@ export class Agent {
             const llmErrEv: OmegaEvent = {
               type: "llm_error",
               ts: new Date().toISOString(),
-              provider: "anthropic",
               url: "https://api.anthropic.com/v1/messages",
               error: err.message ?? String(err),
               httpStatus: err.status ?? err.statusCode,

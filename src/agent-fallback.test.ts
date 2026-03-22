@@ -33,7 +33,6 @@ describe("Agent fallback", () => {
 
     const apiError = events.find((e) => e.type === "llm_error") as any;
     expect(apiError).toBeTruthy();
-    expect(apiError.provider).toBe("anthropic");
     expect(apiError.url).toBe("https://api.anthropic.com/v1/messages");
     expect(apiError.error).toContain("rate limit");
 

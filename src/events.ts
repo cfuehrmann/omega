@@ -44,7 +44,6 @@ export interface SessionStartEvent {
   ts: string;
   sessionId: string;
   model: string;
-  provider: "anthropic";
   authMode: string;
   /** The full system prompt text at session start. */
   systemPrompt: string;
@@ -71,7 +70,6 @@ export interface UserMessageEvent {
 export interface LlmCallEvent {
   type: "llm_call";
   ts: string;
-  provider: "anthropic";
   url: string;
   model: string;
   /**
@@ -181,7 +179,6 @@ export interface TurnEndEvent {
 export interface LlmErrorEvent {
   type: "llm_error";
   ts: string;
-  provider: "anthropic";
   url: string;
   error: string;
   httpStatus?: number;
@@ -244,7 +241,6 @@ export interface LlmRetryEvent {
   type: "llm_retry";
   ts: string;
   attempt: number;
-  provider: "anthropic";
   httpStatus?: number;
   waitMs: number;
   error: string;
