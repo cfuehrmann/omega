@@ -768,6 +768,7 @@ export class Agent {
             const interruptEv: OmegaEvent = {
               type: "turn_interrupted",
               ts: new Date().toISOString(),
+              reason: "aborted",
             };
             this.logEvent(interruptEv);
             yield interruptEv;
@@ -814,6 +815,13 @@ export class Agent {
               };
               this.logEvent(authFailEv);
               yield authFailEv;
+              const oauthInterruptEv: OmegaEvent = {
+                type: "turn_interrupted",
+                ts: new Date().toISOString(),
+                reason: "error",
+              };
+              this.logEvent(oauthInterruptEv);
+              yield oauthInterruptEv;
               return;
             }
           } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
@@ -834,11 +842,6 @@ export class Agent {
             };
             this.logEvent(retryEv);
             yield retryEv;
-            yield {
-              type: "agent_error",
-              ts: new Date().toISOString(),
-              error: `${err.message ?? err}. Retrying in ${Math.round(waitMs / 1000)}s... (${attempt + 1}/${this.retryMaxAttempts})`,
-            };
             await sleep(waitMs, signal);
           } else {
             // Non-retryable error (includes prompt-too-long — no retry, no trimming).
@@ -883,17 +886,34 @@ export class Agent {
               this.logEvent(apiErrEv);
               yield apiErrEv;
             }
+            const terminalInterruptEv: OmegaEvent = {
+              type: "turn_interrupted",
+              ts: new Date().toISOString(),
+              reason: "error",
+            };
+            this.logEvent(terminalInterruptEv);
+            yield terminalInterruptEv;
             return;
           }
         }
       }
 
       if (!response) {
-        yield {
+        // All retry attempts exhausted — response was never assigned.
+        const fallbackErrEv: OmegaEvent = {
           type: "agent_error",
           ts: new Date().toISOString(),
-          error: `API error after 5 retries: ${lastError?.message ?? lastError}`,
+          error: `API error after ${this.retryMaxAttempts} retries: ${lastError?.message ?? lastError}`,
         };
+        this.logEvent(fallbackErrEv);
+        yield fallbackErrEv;
+        const fallbackInterruptEv: OmegaEvent = {
+          type: "turn_interrupted",
+          ts: new Date().toISOString(),
+          reason: "error",
+        };
+        this.logEvent(fallbackInterruptEv);
+        yield fallbackInterruptEv;
         return;
       }
 

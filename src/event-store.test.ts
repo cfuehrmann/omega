@@ -135,6 +135,20 @@ describe("OmegaEvent round-trip serialisation", () => {
     expect(read).toEqual(e);
   });
 
+  it("turn_interrupted with reason=aborted", async () => {
+    const e: TurnInterruptedEvent = { type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z", reason: "aborted" };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
+  it("turn_interrupted with reason=error", async () => {
+    const e: TurnInterruptedEvent = { type: "turn_interrupted", ts: "2025-01-01T00:00:00.000Z", reason: "error" };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
   it("compacted (no iterations)", async () => {
     const e: CompactedEvent = {
       type: "compacted",

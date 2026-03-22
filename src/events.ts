@@ -194,10 +194,17 @@ export interface AgentErrorEvent {
   error: string;
 }
 
-/** The user interrupted an in-flight turn. */
+/** The user interrupted an in-flight turn, or the turn ended due to an error. */
 export interface TurnInterruptedEvent {
   type: "turn_interrupted";
   ts: string;
+  /**
+   * Why the turn ended without a normal turn_end:
+   * - "aborted"  — user pressed Abort
+   * - "error"    — agent terminated due to an unrecoverable API/auth error
+   * - undefined  — legacy / synthetic crash-recovery record (server restart mid-turn)
+   */
+  reason?: "aborted" | "error";
 }
 
 /**

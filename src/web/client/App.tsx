@@ -754,15 +754,21 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       );
     }
 
-    case "turn_interrupted":
+    case "turn_interrupted": {
+      const reason = (e as any).reason as "aborted" | "error" | undefined;
+      const label =
+        reason === "aborted" ? "⊘ Aborted"
+        : reason === "error"   ? "⊘ Failed"
+        :                        "⊘ Interrupted";
       return (
         <div class="block interrupt">
           <div class="block-label-row">
-            <span>⊘ Interrupted</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_interrupted", ts, body: "⊘ Interrupted" } })} title="Details">⤢</button>
+            <span>{label}</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_interrupted", ts, body: label + (reason ? ` (reason: ${reason})` : "") } })} title="Details">⤢</button>
           </div>
         </div>
       );
+    }
 
     case "llm_retry": {
       const body = e.error;
@@ -1144,8 +1150,9 @@ function StatusDot() {
     : "dot connected";
 
   const label = () =>
-    !state.connected ? "disconnected"
-    : state.streaming  ? "streaming…"
+    !state.connected  ? "disconnected"
+    : state.retrying  ? "retrying…"
+    : state.streaming ? "streaming…"
     : "ready";
 
   return (

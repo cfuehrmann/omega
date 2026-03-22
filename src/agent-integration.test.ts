@@ -379,6 +379,10 @@ describe("Agent.sendMessage — error handling", () => {
     const errorEvents = events.filter((e) => e.type === "agent_error");
     expect(errorEvents.length).toBeGreaterThan(0);
     expect((errorEvents[0] as any).error).toContain("Bad request");
+    // Turn ends with turn_interrupted(reason=error) so the UI streaming flag resets
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_interrupted");
+    expect(last.reason).toBe("error");
   });
 
   it.concurrent("emits retry error events then succeeds on transient failure", async () => {
@@ -407,9 +411,12 @@ describe("Agent.sendMessage — error handling", () => {
 
     // Should have retried and eventually succeeded (compaction may add extra calls)
     expect(attempts).toBeGreaterThanOrEqual(3);
+    // No agent_error emitted during retries — llm_retry carries the info
     const errorEvents = events.filter((e) => e.type === "agent_error");
-    // Two retry error messages emitted before success
-    expect(errorEvents.length).toBe(2);
+    expect(errorEvents.length).toBe(0);
+    // llm_retry events were emitted (one per failed attempt)
+    const retryEvents = events.filter((e) => e.type === "llm_retry");
+    expect(retryEvents.length).toBe(2);
     // Final event should be turn_end (success)
     expect(events[events.length - 1].type).toBe("turn_end");
   }, 30_000);
@@ -462,8 +469,9 @@ describe("Agent.sendMessage — abort", () => {
     expect((textEvents[0] as any).text).toContain("chunk1");
 
     // Should emit a "turn_interrupted" event so the UI can show feedback
-    const interrupted = events.find((e) => e.type === "turn_interrupted");
+    const interrupted = events.find((e) => e.type === "turn_interrupted") as any;
     expect(interrupted).toBeDefined();
+    expect(interrupted.reason).toBe("aborted");
   });
 
   it.concurrent("does not add incomplete assistant turn to history when aborted", async () => {

@@ -40,7 +40,7 @@ export type WsEvent =
   | { type: "llm_error"; ts?: string; provider: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
   | { type: "error"; ts?: string; error: string }
-  | { type: "turn_interrupted"; ts?: string };
+  | { type: "turn_interrupted"; ts?: string; reason?: "aborted" | "error" };
 
 export interface Turn {
   id: number;
@@ -98,6 +98,8 @@ interface LastTurnInfo {
 interface AppState {
   connected: boolean;
   streaming: boolean;
+  /** True while an llm_retry backoff is in progress (clears on llm_response / turn end). */
+  retrying: boolean;
   authMode: string;
   turns: Turn[];
   /** Number of consecutive failed reconnect attempts (reset on successful connect) */
@@ -137,6 +139,7 @@ export const zeroMetrics = (): StickyMetrics => ({
 const [state, setState] = createStore<AppState>({
   connected: false,
   streaming: false,
+  retrying: false,
   authMode: "",
   turns: [],
   retryCount: 0,
@@ -558,6 +561,7 @@ export function dispatch(event: WsEvent): void {
       // Server has created a new agent — clear all UI state
       setState("turns", []);
       setState("streaming", false);
+      setState("retrying", false);
       setState("lastTurnEnd", null);
       setState("sessionTotals", zeroMetrics());
       setState("sessionDurations", zeroDurations());
@@ -613,6 +617,7 @@ export function dispatch(event: WsEvent): void {
       // turn_end means the agentic loop finished; clear streaming so replayed
       // history doesn't leave the UI stuck in streaming state.
       setState("streaming", false);
+      setState("retrying", false);
       // Compute durations from the now-complete turn events
       const currentTurnEvents = state.turns[state.turns.length - 1]?.events ?? [];
       const sd = computeDurations(currentTurnEvents);
@@ -635,6 +640,7 @@ export function dispatch(event: WsEvent): void {
         }
       }));
       setState("streaming", false);
+      setState("retrying", false);
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
       break;
@@ -648,6 +654,8 @@ export function dispatch(event: WsEvent): void {
         turn.streamingThinking = undefined;
         turn.events.push(event);
       }));
+      // A response arrived — retry backoff (if any) resolved successfully.
+      setState("retrying", false);
       // Recompute live durations from the updated turn events (llmMs ticks up)
       const turnEventsAfterResp = state.turns[state.turns.length - 1]?.events ?? [];
       setState("liveDurations", computeLiveDurations(turnEventsAfterResp));
@@ -695,9 +703,13 @@ export function dispatch(event: WsEvent): void {
       break;
     }
 
+    case "llm_retry":
+      appendEvent(event);
+      setState("retrying", true);
+      break;
+
     case "session_end":
     case "tool_call":
-    case "llm_retry":
     case "model_changed":
     case "oauth_token_expired":
     case "oauth_refreshed":

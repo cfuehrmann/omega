@@ -45,6 +45,10 @@ describe("rate limit backoff", () => {
     const error = errors[errors.length - 1];
     expect(error).toBeTruthy();
     expect(error.error).toContain("rate limit");
+    // Turn ends with turn_interrupted(reason=error) so streaming flag resets
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_interrupted");
+    expect(last.reason).toBe("error");
 
     delete process.env.OMEGA_RETRY_BASE_MS;
     delete process.env.OMEGA_RETRY_MAX_MS;
@@ -115,6 +119,10 @@ describe("OAuth token expiry reauth", () => {
     expect(errors.length).toBeGreaterThan(0);
     const lastError = errors[errors.length - 1];
     expect(lastError.error).toContain("login");
+    // Turn ends with turn_interrupted(reason=error) so streaming flag resets
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_interrupted");
+    expect(last.reason).toBe("error");
   });
 });
 
@@ -149,6 +157,10 @@ describe("context overflow (prompt too long)", () => {
     const errorEvents = events.filter(e => e.type === "agent_error") as any[];
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
     expect(errorEvents.some(e => e.error.includes("Context too large"))).toBe(true);
+    // Turn ends with turn_interrupted(reason=error)
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_interrupted");
+    expect(last.reason).toBe("error");
   });
 
   it("also errors out cleanly for isContextTooLong (429 extra usage required)", async () => {
@@ -168,5 +180,9 @@ describe("context overflow (prompt too long)", () => {
 
     const errorEvents = events.filter(e => e.type === "agent_error") as any[];
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+    // Turn ends with turn_interrupted(reason=error)
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_interrupted");
+    expect(last.reason).toBe("error");
   });
 });
