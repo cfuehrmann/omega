@@ -313,7 +313,6 @@ html, body, #root {
 .block.footer        { border-color: var(--border); color: var(--dim);    font-size: 11px; }
 .block.error-b       { border-color: var(--red);    color: var(--red);    }
 .block.interrupt     { border-color: var(--red);    color: var(--red);    }
-.block.world-state-saved { border-color: var(--green); color: var(--green); font-size: 11px; }
 .block.info          { border-color: var(--ctp-overlay2); color: var(--ctp-subtext0); font-size: 12px; }
 
 /* Streaming cursor */

@@ -79,9 +79,9 @@ record.
 `model_changed`, `oauth_token_expired`, `oauth_refreshed`, `llm_retry`,
 `compact_user_start`, `compact_user_done`, `compact_user_error`,
 `compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `llm_call`,
-`world_state_saved`, `turn_end`, `llm_error`, `agent_error`, `error`
-(server-own protocol errors only), `turn_interrupted`, `session_start`,
-`session_end`.
+`turn_end`, `llm_error`, `agent_error`, `transport_error`
+(WebSocket/server transport errors, persisted best-effort), `turn_interrupted`,
+`session_start`, `session_end`.
 
 ## context.jsonl Record Shape (ContextRecord)
 

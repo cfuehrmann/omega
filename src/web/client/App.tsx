@@ -1,5 +1,5 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
-import { state, dispatch, zeroMetrics, zeroDurations, type Turn, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
+import { state, dispatch, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
 import { marked } from "marked";
 
 // Configure marked: GFM (tables, strikethrough), no raw HTML passthrough.
@@ -591,19 +591,6 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       );
     }
 
-    case "world_state_saved": {
-      const body = `✓ world state saved (${e.charCount} chars)`;
-      return (
-        <div class="block world-state-saved">
-          <div class="block-label-row">
-            <span class="block-label">world_state_saved</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "world_state_saved", ts, body } })} title="Details">⤢</button>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
     case "llm_call": {
       // Find the previous llm_call across all turns to compute the delta.
       const myIdx = props.allLlmCalls.indexOf(e);
@@ -741,13 +728,13 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       );
     }
 
-    case "error": {
+    case "transport_error": {
       const body = e.error;
       return (
         <div class="block error-b">
           <div class="block-label-row">
-            <span class="block-label">error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "error", ts, body } })} title="Details">⤢</button>
+            <span class="block-label">transport_error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "transport_error", ts, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -828,38 +815,55 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
   }
 }
 
-function TurnView(props: { turn: Turn; allLlmCalls: Array<WsEvent & { type: "llm_call" }> }) {
+function TurnView(props: {
+  group: RenderGroup & { kind: "turn" };
+  isLast: boolean;
+  allLlmCalls: Array<WsEvent & { type: "llm_call" }>;
+}) {
   return (
     <div class="turn">
-      <For each={props.turn.events}>{(event) => (
-        <EventBlock event={event} turnEvents={props.turn.events} allLlmCalls={props.allLlmCalls} />
+      <For each={props.group.events}>{(event) => (
+        <EventBlock event={event} turnEvents={props.group.events} allLlmCalls={props.allLlmCalls} />
       )}</For>
-      {/* Temporary streaming thinking slot — visible while thinking is arriving. */}
-      <Show when={props.turn.streamingThinking}>
+      {/* Streaming slots: only shown for the last turn (the one currently receiving
+          or that most recently received content). No done-guard — if llm_response
+          never arrives before turn_end, any accumulated streaming text stays
+          visible (matching old behaviour). The text is cleared on the *next*
+          user_message so it never bleeds into a following turn. */}
+      <Show when={props.isLast && state.streamingThinking}>
         <div class="block thinking streaming">
           <div class="block-label-row">
             <span class="block-label">thinking</span>
           </div>
           <div class="block-body">
-            <pre class="thinking-body">{props.turn.streamingThinking}</pre>
+            <pre class="thinking-body">{state.streamingThinking}</pre>
             <span class="cursor" />
           </div>
         </div>
       </Show>
-      {/* Temporary streaming slot — visible only while text is arriving,
-          before llm_response clears it (text is then on the llm_response event itself). */}
-      <Show when={props.turn.streamingText}>
+      <Show when={props.isLast && state.streamingText}>
         <div class="block api-response streaming">
           <div class="block-label-row">
             <span class="block-label">llm_response</span>
           </div>
           <div class="block-body">
-            {props.turn.streamingText}
+            {state.streamingText}
             <span class="cursor" />
           </div>
         </div>
       </Show>
     </div>
+  );
+}
+
+function FreeView(props: {
+  group: RenderGroup & { kind: "free" };
+  allLlmCalls: Array<WsEvent & { type: "llm_call" }>;
+}) {
+  return (
+    <For each={props.group.events}>{(event) => (
+      <EventBlock event={event} turnEvents={[]} allLlmCalls={props.allLlmCalls} />
+    )}</For>
   );
 }
 
@@ -1108,7 +1112,7 @@ function InputArea() {
             <button class="send-btn" onClick={send} disabled={!state.connected}>
               Send
             </button>
-            <Show when={state.connected && state.turns.length > 0}>
+            <Show when={state.connected && state.events.length > 0}>
               <button class="new-session-btn" onClick={newSession} title="Start a new session (clears history)">
                 ＋ New
               </button>
@@ -1175,6 +1179,13 @@ export function App() {
   // false → user has scrolled up; show the ↓ button instead
   const [tailing, setTailing] = createSignal(true);
 
+  // Derive render groups from the flat event list.
+  // These memos are created once at component-init time (correct SolidJS pattern).
+  const renderGroups = createMemo(() => computeRenderGroups(state.events));
+  const allLlmCalls = createMemo(() =>
+    state.events.filter((ev): ev is WsEvent & { type: "llm_call" } => ev.type === "llm_call")
+  );
+
   // Start WebSocket on mount, clean up on unmount
   onMount(() => {
     // Expose dispatch for e2e tests (harmless in production)
@@ -1202,11 +1213,11 @@ export function App() {
 
   // Auto-scroll to bottom on new content — only when tailing
   createEffect(() => {
-    // Track turn count and the event list of the last turn (covers both new
-    // turns and new events/text tokens appended to the current turn).
-    const _ = state.turns.length;
-    const lastTurn = state.turns[state.turns.length - 1];
-    const __ = lastTurn?.events.length;
+    // Track the flat event list length and ephemeral streaming content.
+    // Any change to these signals new content in the feed.
+    const _ = state.events.length;
+    const __ = state.streamingText;
+    const ___ = state.streamingThinking;
     if (tailing()) {
       queueMicrotask(() => {
         if (feedRef) feedRef.scrollTop = feedRef.scrollHeight;
@@ -1227,18 +1238,12 @@ export function App() {
               <pre>{err?.message ?? String(err)}</pre>
             </div>
           )}>
-            <For each={state.turns}>{(turn, turnIdx) => {
-              // Collect all llm_call events across all turns up to and including
-              // this one, in chronological order, for cross-turn delta computation.
-              // Use turnIdx() (not indexOf) — indexOf on a SolidJS store proxy is
-              // unreliable and can return -1, making every call look like the first.
-              const allLlmCalls = createMemo(() =>
-                state.turns
-                  .slice(0, turnIdx() + 1)
-                  .flatMap(t => t.events)
-                  .filter((ev): ev is WsEvent & { type: "llm_call" } => ev.type === "llm_call")
-              );
-              return <TurnView turn={turn} allLlmCalls={allLlmCalls()} />;
+            <For each={renderGroups()}>{(group, groupIdx) => {
+              const isLast = () => groupIdx() === renderGroups().length - 1;
+              if (group.kind === "turn") {
+                return <TurnView group={group} isLast={isLast()} allLlmCalls={allLlmCalls()} />;
+              }
+              return <FreeView group={group} allLlmCalls={allLlmCalls()} />;
             }}</For>
           </ErrorBoundary>
         </div>

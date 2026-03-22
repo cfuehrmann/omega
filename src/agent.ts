@@ -898,23 +898,13 @@ export class Agent {
         }
       }
 
+      // Every code path in the retry loop either sets `response` (via break) or
+      // calls return (terminal error paths). The `!response` guard below is
+      // therefore unreachable in practice, but kept as a defensive assertion so
+      // a future refactor doesn't silently produce a null-deref.
       if (!response) {
-        // All retry attempts exhausted — response was never assigned.
-        const fallbackErrEv: OmegaEvent = {
-          type: "agent_error",
-          ts: new Date().toISOString(),
-          error: `API error after ${this.retryMaxAttempts} retries: ${lastError?.message ?? lastError}`,
-        };
-        this.logEvent(fallbackErrEv);
-        yield fallbackErrEv;
-        const fallbackInterruptEv: OmegaEvent = {
-          type: "turn_interrupted",
-          ts: new Date().toISOString(),
-          reason: "error",
-        };
-        this.logEvent(fallbackInterruptEv);
-        yield fallbackInterruptEv;
-        return;
+        // Should never happen: indicates a logic error in the retry loop above.
+        throw new Error("BUG: retry loop exited without response or return");
       }
 
       // Track tokens

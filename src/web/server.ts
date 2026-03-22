@@ -25,6 +25,7 @@ import { readFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { Agent, type StreamProvider } from "../agent.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
+import { appendEvent } from "../event-store.js";
 import type { ContextRecord } from "../context-store.js";
 
 // ---------------------------------------------------------------------------
@@ -209,12 +210,31 @@ function send(ws: ServerWebSocket<unknown>, event: object): void {
   }
 }
 
+/**
+ * Send a transport_error event to the client and best-effort persist it to
+ * the current session's events.jsonl.
+ *
+ * Persistence is best-effort: if the write fails (e.g. because the error IS
+ * a file I/O failure) the exception is silently swallowed so the WebSocket
+ * send is never blocked.
+ */
+function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context?: string): void {
+  const event = {
+    type: "transport_error" as const,
+    ts: new Date().toISOString(),
+    error,
+    ...(context !== undefined ? { context } : {}),
+  };
+  send(ws, event);
+  appendEvent(event, currentSessionPaths.eventsFile).catch(() => {});
+}
+
 async function handleMessage(session: Session, data: string, streamProvider?: StreamProvider): Promise<void> {
   let msg: any;
   try {
     msg = JSON.parse(data);
   } catch {
-    send(session.ws, { type: "error", error: "Invalid JSON from client" });
+    sendTransportError(session.ws, "Invalid JSON from client", "handleMessage");
     return;
   }
 
@@ -257,7 +277,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
 
   if (msg.type === "message") {
     if (session.isStreaming) {
-      send(session.ws, { type: "error", error: "Turn already in progress" });
+      sendTransportError(session.ws, "Turn already in progress", "handleMessage");
       return;
     }
     const content: string = String(msg.content ?? "").trim();
@@ -277,7 +297,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
         send(ws, event);
       }
     } catch (err: any) {
-      send(ws, { type: "error", error: err.message ?? String(err) });
+      sendTransportError(ws, err.message ?? String(err), "handleMessage");
     } finally {
       session.isStreaming = false;
       session.abortController = null;
@@ -376,7 +396,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
       message(ws, data) {
         if (activeSession?.ws !== ws) return;
         handleMessage(activeSession, String(data), opts.streamProvider).catch((err: any) => {
-          send(ws, { type: "error", error: String(err) });
+          sendTransportError(ws, String(err), "websocket_message_handler");
         });
       },
 

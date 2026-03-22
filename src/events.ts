@@ -259,6 +259,31 @@ export interface ModelChangedEvent {
   model: string;
 }
 
+/**
+ * A transport-layer error emitted by the web server.
+ *
+ * Distinct from `agent_error` (agent application logic) and `llm_error`
+ * (LLM provider call failures). Covers WebSocket protocol violations and
+ * unhandled server exceptions that are not attributable to the agent:
+ *   - client sent invalid JSON
+ *   - client sent a message while a turn was already in progress
+ *   - unhandled exception in the message handler
+ *
+ * `context` is an optional tag identifying the server code path that raised
+ * the error (e.g. "handleMessage", "websocket_message_handler"), useful for
+ * post-mortem analysis and LLM-assisted log inspection.
+ *
+ * Persisted best-effort: if the events file itself is unwritable the event
+ * is still sent over the WebSocket so the UI shows it, but the write is
+ * silently skipped.
+ */
+export interface TransportErrorEvent {
+  type: "transport_error";
+  ts: string;
+  error: string;
+  context?: string;
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -285,4 +310,5 @@ export type OmegaEvent =
   | OauthRefreshedEvent
   | OauthTokenExpiredEvent
   | LlmRetryEvent
-  | ModelChangedEvent;
+  | ModelChangedEvent
+  | TransportErrorEvent;

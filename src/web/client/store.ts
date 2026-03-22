@@ -1,9 +1,16 @@
 /**
- * Application store — Turn[] state model.
+ * Application store — flat WsEvent[] state model.
  *
- * All UI rendering derives from this reactive store.
- * Each Turn holds an ordered list of AgentEvent-shaped objects
- * received over the WebSocket.
+ * The primary data structure is a flat `events: WsEvent[]` array that mirrors
+ * the structure of events.jsonl. Turn grouping is a *rendering concern*,
+ * derived by `computeRenderGroups()` at render time rather than baked into
+ * the store shape. This means events that don't belong to any turn
+ * (session_start, session_end, future inter-turn events) are naturally
+ * first-class citizens — they just sit in the flat array where they belong.
+ *
+ * Ephemeral streaming signals (text/thinking fragments) are never persisted
+ * and never pushed into `events`; they accumulate in `streamingText` /
+ * `streamingThinking` and are cleared when the settled `llm_response` arrives.
  */
 
 import { batch } from "solid-js";
@@ -36,24 +43,70 @@ export type WsEvent =
   | { type: "oauth_refreshed"; ts?: string }
   | { type: "compacted"; ts?: string; usage: unknown }
   | { type: "world_state_saved"; ts?: string; path: string; charCount: number }
-  | { type: "turn_end"; ts?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
+  | { type: "turn_end"; ts?: string; model?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
   | { type: "llm_error"; ts?: string; provider: string; error: string }
   | { type: "agent_error"; ts?: string; error: string }
-  | { type: "error"; ts?: string; error: string }
+  | { type: "transport_error"; ts?: string; error: string; context?: string }
   | { type: "turn_interrupted"; ts?: string; reason?: "aborted" | "error" };
 
-export interface Turn {
-  id: number;
-  events: WsEvent[];
-  done: boolean;
-  /** Accumulated streaming text, shown in a temporary slot during streaming.
-   *  Cleared when llm_response arrives; the text is then carried in the llm_response event itself. */
-  streamingText?: string;
-  /** Accumulated streaming thinking content, shown during streaming.
-   *  Cleared when llm_response arrives; thinking is then carried in the llm_response event itself. */
-  streamingThinking?: string;
+// ---------------------------------------------------------------------------
+// Render groups — derived from the flat event list at render time
+// ---------------------------------------------------------------------------
+
+/**
+ * A render group is either:
+ *  - "free": events not belonging to any turn (pre-first-turn, inter-turn, or
+ *    post-last-turn). These render as standalone blocks in the feed.
+ *  - "turn": a user-initiated turn, starting with user_message, optionally
+ *    ending with turn_end or turn_interrupted.
+ */
+export type RenderGroup =
+  | { kind: "free"; events: WsEvent[] }
+  | { kind: "turn"; events: WsEvent[]; done: boolean };
+
+/**
+ * Derive render groups from a flat event list.
+ *
+ * Events before the first user_message, and between turns (after turn_end /
+ * turn_interrupted and before the next user_message), form "free" groups.
+ * Each user_message starts a new "turn" group.
+ */
+export function computeRenderGroups(events: WsEvent[]): RenderGroup[] {
+  const groups: RenderGroup[] = [];
+  let currentTurnIdx = -1; // index into groups[] of the active turn group
+  let freeEvents: WsEvent[] = [];
+
+  const flushFree = () => {
+    if (freeEvents.length > 0) {
+      groups.push({ kind: "free", events: freeEvents });
+      freeEvents = [];
+    }
+  };
+
+  for (const e of events) {
+    if (e.type === "user_message") {
+      flushFree();
+      groups.push({ kind: "turn", events: [e], done: false });
+      currentTurnIdx = groups.length - 1;
+    } else if (currentTurnIdx >= 0) {
+      const g = groups[currentTurnIdx] as Extract<RenderGroup, { kind: "turn" }>;
+      g.events.push(e);
+      if (e.type === "turn_end" || e.type === "turn_interrupted") {
+        g.done = true;
+        currentTurnIdx = -1; // subsequent events are free until the next user_message
+      }
+    } else {
+      // No active turn: collect as a free event
+      freeEvents.push(e);
+    }
+  }
+
+  flushFree();
+  return groups;
 }
 
+// ---------------------------------------------------------------------------
+// Metrics and duration types (unchanged)
 // ---------------------------------------------------------------------------
 
 /** Aggregated metrics shown in the sticky footer bar. */
@@ -72,13 +125,6 @@ export interface StickyMetrics {
 
 /**
  * Duration metrics derived from event timestamps — never from wall-clock.
- * Safe for replay after reconnect because they are recomputed from persisted ts fields.
- *
- * llmMs:  sum of (llm_response.ts − llm_call.ts) per call pair.
- * toolMs: sum of parallel-batch wall spans: (max tool_result.ts − min tool_call.ts)
- *         per batch, where a batch is the group of tool calls between one
- *         llm_response and the next llm_call.
- * turnMs: turn_end.ts − user_message.ts (0 until turn_end arrives).
  */
 export interface DurationMetrics {
   llmMs: number;
@@ -101,7 +147,12 @@ interface AppState {
   /** True while an llm_retry backoff is in progress (clears on llm_response / turn end). */
   retrying: boolean;
   authMode: string;
-  turns: Turn[];
+  /** Flat event log — mirrors events.jsonl. Primary source of truth for the UI. */
+  events: WsEvent[];
+  /** Ephemeral accumulated streaming text (not in events; cleared on llm_response). */
+  streamingText: string;
+  /** Ephemeral accumulated streaming thinking (not in events; cleared on llm_response). */
+  streamingThinking: string;
   /** Number of consecutive failed reconnect attempts (reset on successful connect) */
   retryCount: number;
   /** Metrics from the most recently completed turn (null if no turn finished yet). */
@@ -116,14 +167,10 @@ interface AppState {
   liveTurn: StickyMetrics | null;
   /**
    * Live duration accumulation for the current in-progress turn.
-   * llmMs / toolMs tick up as each llm_response / last-tool_result arrives.
-   * turnMs stays 0 until turn_end (we never use Date.now() — replay safety).
    */
   liveDurations: DurationMetrics;
-
-  /** Model for the current/last turn (set from llm_call, used for live bar display). */
+  /** Model for the current/last turn (set from llm_call or session_start). */
   liveModel: string;
-
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
 }
@@ -141,7 +188,9 @@ const [state, setState] = createStore<AppState>({
   streaming: false,
   retrying: false,
   authMode: "",
-  turns: [],
+  events: [],
+  streamingText: "",
+  streamingThinking: "",
   retryCount: 0,
   lastTurnEnd: null,
   sessionTotals: zeroMetrics(),
@@ -154,15 +203,6 @@ const [state, setState] = createStore<AppState>({
 });
 
 export { state };
-
-let nextTurnId = 0;
-
-function appendEvent(event: WsEvent): void {
-  setState(produce(s => {
-    const turn = s.turns[s.turns.length - 1];
-    if (turn) turn.events.push(event);
-  }));
-}
 
 /** Extract a StickyMetrics snapshot from a turn_end event's metrics field.
  *  requestBytes is not in turn_end — pass it in separately (summed from llm_call events). */
@@ -214,22 +254,25 @@ function tsMs(ts: string | undefined): number {
   return new Date(ts).getTime();
 }
 
+/**
+ * Find the index of the most recent user_message in an event list.
+ * Returns 0 as a fallback if none found.
+ */
+function findCurrentTurnStart(events: WsEvent[]): number {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === "user_message") return i;
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
-// Duration computation helpers
+// Duration computation helpers (unchanged — operate on event slices)
 // ---------------------------------------------------------------------------
 
 /**
  * Compute DurationMetrics by walking a completed turn's event list.
  *
  * Safe for replay: uses only .ts fields from persisted events, never Date.now().
- *
- * Algorithm:
- *   - LLM time: each llm_call starts a pending call; when the matching
- *     llm_response arrives, compute the diff and add to llmMs.
- *   - Tool time: between each llm_response and the following llm_call, collect
- *     all tool_call and tool_result timestamps. The batch span is
- *     (max tool_result.ts − min tool_call.ts). Add to toolMs.
- *   - Turn time: turn_end.ts − user_message.ts.
  */
 export function computeDurations(events: WsEvent[]): DurationMetrics {
   let llmMs = 0;
@@ -237,7 +280,6 @@ export function computeDurations(events: WsEvent[]): DurationMetrics {
   let turnMs = 0;
 
   let pendingLlmCallTs: number | null = null;
-  // Tool batch state: between llm_response and next llm_call
   let inToolBatch = false;
   let batchMinCallTs = Infinity;
   let batchMaxResultTs = -Infinity;
@@ -253,7 +295,6 @@ export function computeDurations(events: WsEvent[]): DurationMetrics {
         break;
 
       case "llm_call": {
-        // Flush any pending tool batch before the next LLM call starts
         if (inToolBatch && batchHasCall && batchHasResult) {
           const span = batchMaxResultTs - batchMinCallTs;
           if (span > 0) toolMs += span;
@@ -276,7 +317,6 @@ export function computeDurations(events: WsEvent[]): DurationMetrics {
           }
           pendingLlmCallTs = null;
         }
-        // Start a new tool batch window after this response
         inToolBatch = true;
         batchHasCall = false;
         batchHasResult = false;
@@ -308,7 +348,6 @@ export function computeDurations(events: WsEvent[]): DurationMetrics {
       }
 
       case "turn_end": {
-        // Flush any trailing tool batch (shouldn't happen in normal flow, but be safe)
         if (inToolBatch && batchHasCall && batchHasResult) {
           const span = batchMaxResultTs - batchMinCallTs;
           if (span > 0) toolMs += span;
@@ -334,18 +373,8 @@ export function computeDurations(events: WsEvent[]): DurationMetrics {
 
 /**
  * Compute live (in-progress) duration metrics from a partial turn's event list.
- *
- * Same as computeDurations but:
- *  - turnMs is always 0 (no turn_end yet — we never use Date.now())
- *  - A pending tool batch is flushed as soon as all expected results have arrived
- *    (i.e. every tool_call.id has a matching tool_result.id).
- *
- * This is called incrementally on every new llm_response or tool_result event
- * so the display updates promptly.
  */
 export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
-  // Re-use computeDurations on partial events. The only difference is that
-  // an open tool batch at the end should be flushed if all tool_calls have results.
   let llmMs = 0;
   let toolMs = 0;
 
@@ -353,14 +382,12 @@ export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
   let inToolBatch = false;
   let batchMinCallTs = Infinity;
   let batchMaxResultTs = -Infinity;
-  // Track ids to detect when the last result has arrived
   const batchCallIds = new Set<string>();
   const batchResultIds = new Set<string>();
 
   for (const e of events) {
     switch (e.type) {
       case "llm_call": {
-        // Flush completed batch before next LLM call
         if (inToolBatch && batchCallIds.size > 0 && batchCallIds.size === batchResultIds.size) {
           const span = batchMaxResultTs - batchMinCallTs;
           if (span > 0) toolMs += span;
@@ -406,11 +433,9 @@ export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
           const t = tsMs(e.ts);
           if (!isNaN(t) && t > batchMaxResultTs) batchMaxResultTs = t;
 
-          // Flush if all calls have results
           if (batchCallIds.size > 0 && batchCallIds.size === batchResultIds.size) {
             const span = batchMaxResultTs - batchMinCallTs;
             if (span > 0) toolMs += span;
-            // Reset so we don't double-count if more results arrive (shouldn't happen)
             batchCallIds.clear();
             batchResultIds.clear();
             batchMinCallTs = Infinity;
@@ -443,99 +468,79 @@ export function dispatch(event: WsEvent): void {
       break;
 
     case "history": {
-      // Rebuild turns from the event log using plain JS objects, then set the
-      // final result in one store write.  Previous approach dispatched each
-      // event individually inside batch(), mixing array replacement with
-      // produce-based mutation — this confused SolidJS's fine-grained change
-      // tracking and left <For> with a stale reference after a page reload.
-      const turns: Turn[] = [];
-      let streaming = false;
-      let tid = 0;
+      // Rebuild all state from the flat event log sent by the server.
+      // The server runs closeOpenTurn() before sending, so any open turn
+      // already has a synthetic turn_interrupted appended.
+      const rawEvents = event.events as WsEvent[];
+
       let replayLastTurnEnd: LastTurnInfo | null = null;
       let replaySessionTotals: StickyMetrics = zeroMetrics();
       let replaySessionDurations: DurationMetrics = zeroDurations();
       let replayCompactionTotals: StickyMetrics = zeroMetrics();
+      let replayLiveModel = "";
+      let replayLiveDurations: DurationMetrics = zeroDurations();
+      let replayStreaming = false;
 
-      for (const e of event.events) {
-        const cur = () => turns[turns.length - 1];
+      // Scan events to derive session-level aggregates.
+      // We process turn slices to compute per-turn metrics.
+      let currentTurnStartIdx = -1;
 
-        switch (e.type) {
-          case "user_message":
-            turns.push({ id: tid++, events: [e], done: false });
-            streaming = true;
-            break;
+      for (let i = 0; i < rawEvents.length; i++) {
+        const e = rawEvents[i];
 
-          case "turn_end": {
-            const t = cur();
-            if (t) {
-              t.events.push(e);
-              t.done = true;
-            }
-            streaming = false;
-            // Accumulate sticky metrics
-            const turnEvents = t ? t.events : [];
-            const sm = metricsFromTurnEnd(e, sumRequestBytes(turnEvents));
-            const sd = computeDurations(turnEvents);
-            replayLastTurnEnd = { metrics: sm, durations: sd, model: e.model };
-            replaySessionTotals = addMetrics(replaySessionTotals, sm);
-            replaySessionDurations = addDurations(replaySessionDurations, sd);
-            break;
-          }
-
-          case "turn_interrupted": {
-            const t = cur();
-            if (t) {
-              t.events.push(e);
-              t.done = true;
-            }
-            streaming = false;
-            break;
-          }
-
-          case "compacted": {
-            const t = cur();
-            if (t) t.events.push(e);
-            break;
-          }
-
-          // Transport-only events — never appear in persisted history,
-          // but listed for completeness (server filters them out).
-          case "connected":
-          case "disconnected":
-          case "history":
-          case "auth":
-          case "reset_done":
-          case "session_info":
-            break;
-
-          // All other events: append to the current turn's event list.
-          default: {
-            const t = cur();
-            if (t) t.events.push(e);
-            break;
-          }
+        if (e.type === "session_start") {
+          replayLiveModel = e.model;
         }
+
+        if (e.type === "llm_call") {
+          replayLiveModel = e.model ?? replayLiveModel;
+        }
+
+        if (e.type === "user_message") {
+          currentTurnStartIdx = i;
+          replayStreaming = true;
+        }
+
+        if (e.type === "turn_end" && currentTurnStartIdx >= 0) {
+          const turnEvents = rawEvents.slice(currentTurnStartIdx, i + 1);
+          const sm = metricsFromTurnEnd(e, sumRequestBytes(turnEvents));
+          const sd = computeDurations(turnEvents);
+          replayLastTurnEnd = {
+            metrics: sm,
+            durations: sd,
+            model: e.model ?? replayLiveModel,
+          };
+          replaySessionTotals = addMetrics(replaySessionTotals, sm);
+          replaySessionDurations = addDurations(replaySessionDurations, sd);
+          replayStreaming = false;
+          currentTurnStartIdx = -1;
+        }
+
+        if (e.type === "turn_interrupted") {
+          replayStreaming = false;
+          currentTurnStartIdx = -1;
+        }
+
+        // Note: compacted handling could go here if needed for replayCompactionTotals
       }
 
-      // If the last turn is still open (e.g. server reconnect mid-turn), compute
-      // live durations from what we have so far.
-      let replayLiveDurations = zeroDurations();
-      if (streaming) {
-        const t = turns[turns.length - 1];
-        if (t) {
-          // Close the turn with a synthetic interrupted marker for display
-          t.events.push({ type: "turn_interrupted" });
-          t.done = true;
-          // Durations from partial events (turnMs will be 0)
-          replayLiveDurations = computeLiveDurations(t.events);
-        }
-        streaming = false;
+      // Secondary crash recovery: if still marked streaming after all events,
+      // the server didn't close the turn (defensive). Append a synthetic
+      // turn_interrupted so the UI is never left stuck in streaming state.
+      const replayEvents = replayStreaming && currentTurnStartIdx >= 0
+        ? [...rawEvents, { type: "turn_interrupted" as const }]
+        : rawEvents;
+
+      if (replayStreaming && currentTurnStartIdx >= 0) {
+        const partialTurnEvents = replayEvents.slice(currentTurnStartIdx);
+        replayLiveDurations = computeLiveDurations(partialTurnEvents);
       }
 
-      nextTurnId = tid;
       // Single batch write — SolidJS sees one atomic state transition.
       batch(() => {
-        setState("turns", turns);
+        setState("events", replayEvents);
+        setState("streamingText", "");
+        setState("streamingThinking", "");
         setState("authMode", "");
         setState("streaming", false);
         setState("connected", true);
@@ -545,6 +550,7 @@ export function dispatch(event: WsEvent): void {
         setState("sessionDurations", replaySessionDurations);
         setState("compactionTotals", replayCompactionTotals);
         setState("liveDurations", replayLiveDurations);
+        setState("liveModel", replayLiveModel);
       });
       break;
     }
@@ -559,7 +565,9 @@ export function dispatch(event: WsEvent): void {
 
     case "reset_done":
       // Server has created a new agent — clear all UI state
-      setState("turns", []);
+      setState("events", []);
+      setState("streamingText", "");
+      setState("streamingThinking", "");
       setState("streaming", false);
       setState("retrying", false);
       setState("lastTurnEnd", null);
@@ -569,61 +577,45 @@ export function dispatch(event: WsEvent): void {
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
       setState("liveModel", "");
-      nextTurnId = 0;
       break;
 
     case "user_message":
-      // Start a new turn
-      setState("turns", t => [...t, {
-        id: nextTurnId++,
-        events: [event],
-        done: false,
-      }]);
+      setState(produce(s => {
+        // Clear any leftover streaming content from a previous turn that ended
+        // without an llm_response (edge case). This prevents abandoned text
+        // from showing in the new turn's streaming slot.
+        s.streamingText = "";
+        s.streamingThinking = "";
+        s.events.push(event);
+      }));
       setState("streaming", true);
       setState("liveTurn", zeroMetrics());
       setState("liveDurations", zeroDurations());
       break;
 
     case "text":
-      // Accumulate streaming text fragments into the turn's temporary streamingText
-      // slot. This is shown as a plain live preview below the event list, separate
-      // from events[]. It is cleared when llm_response arrives (which carries the
-      // settled text as its own field).
-      setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (!turn) return;
-        turn.streamingText = (turn.streamingText ?? "") + event.text;
-      }));
+      // Accumulate streaming text fragments into the ephemeral streamingText slot.
+      // Cleared when llm_response arrives (which carries the settled text as its own field).
+      setState("streamingText", t => t + event.text);
       break;
 
     case "thinking":
-      // Accumulate streaming thinking fragments into the turn's temporary streamingThinking
-      // slot. Cleared when llm_response arrives (thinking is then on the llm_response event).
-      setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (!turn) return;
-        turn.streamingThinking = (turn.streamingThinking ?? "") + event.text;
-      }));
+      // Accumulate streaming thinking fragments.
+      // Cleared when llm_response arrives.
+      setState("streamingThinking", t => t + event.text);
       break;
 
     case "turn_end": {
-      setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (turn) {
-          turn.events.push(event);
-          turn.done = true;
-        }
-      }));
-      // turn_end means the agentic loop finished; clear streaming so replayed
-      // history doesn't leave the UI stuck in streaming state.
+      setState(produce(s => { s.events.push(event); }));
       setState("streaming", false);
       setState("retrying", false);
-      // Compute durations from the now-complete turn events
-      const currentTurnEvents = state.turns[state.turns.length - 1]?.events ?? [];
+      // Compute durations and metrics from the current turn's events
+      const allEvents = state.events;
+      const turnStart = findCurrentTurnStart(allEvents);
+      const currentTurnEvents = allEvents.slice(turnStart);
       const sd = computeDurations(currentTurnEvents);
-      // Update sticky metrics and clear live accumulators
       const sm = metricsFromTurnEnd(event, sumRequestBytes(currentTurnEvents));
-      setState("lastTurnEnd", { metrics: sm, durations: sd, model: event.model });
+      setState("lastTurnEnd", { metrics: sm, durations: sd, model: event.model ?? state.liveModel });
       setState("sessionTotals", prev => addMetrics(prev, sm));
       setState("sessionDurations", prev => addDurations(prev, sd));
       setState("liveTurn", null);
@@ -632,13 +624,7 @@ export function dispatch(event: WsEvent): void {
     }
 
     case "turn_interrupted":
-      setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (turn) {
-          turn.events.push(event);
-          turn.done = true;
-        }
-      }));
+      setState(produce(s => { s.events.push(event); }));
       setState("streaming", false);
       setState("retrying", false);
       setState("liveTurn", null);
@@ -646,20 +632,17 @@ export function dispatch(event: WsEvent): void {
       break;
 
     case "llm_response": {
-      // Append to turn first so computeLiveDurations sees the new event
       setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (!turn) return;
-        turn.streamingText = undefined;
-        turn.streamingThinking = undefined;
-        turn.events.push(event);
+        s.streamingText = "";
+        s.streamingThinking = "";
+        s.events.push(event);
       }));
-      // A response arrived — retry backoff (if any) resolved successfully.
       setState("retrying", false);
-      // Recompute live durations from the updated turn events (llmMs ticks up)
-      const turnEventsAfterResp = state.turns[state.turns.length - 1]?.events ?? [];
-      setState("liveDurations", computeLiveDurations(turnEventsAfterResp));
-      // Accumulate live per-turn token totals so the metrics bar ticks up mid-turn.
+      // Recompute live durations from the current turn's events (llmMs ticks up)
+      const allEventsAfterResp = state.events;
+      const turnStartAfterResp = findCurrentTurnStart(allEventsAfterResp);
+      setState("liveDurations", computeLiveDurations(allEventsAfterResp.slice(turnStartAfterResp)));
+      // Accumulate live per-turn token totals
       const u = event.usage;
       setState("liveTurn", prev => {
         if (!prev) return prev;
@@ -675,13 +658,13 @@ export function dispatch(event: WsEvent): void {
     }
 
     case "session_start": {
-      appendEvent(event);
+      setState(produce(s => { s.events.push(event); }));
       setState("liveModel", event.model);
       break;
     }
 
     case "llm_call": {
-      appendEvent(event);
+      setState(produce(s => { s.events.push(event); }));
       setState("liveModel", event.model);
       // Tick up requestBytes in the live turn accumulator
       setState("liveTurn", prev => {
@@ -692,19 +675,16 @@ export function dispatch(event: WsEvent): void {
     }
 
     case "tool_result": {
-      // Append first so computeLiveDurations sees the new result
-      setState(produce(s => {
-        const turn = s.turns[s.turns.length - 1];
-        if (turn) turn.events.push(event);
-      }));
+      setState(produce(s => { s.events.push(event); }));
       // Recompute live durations (toolMs may tick up when last result of batch arrives)
-      const turnEventsAfterResult = state.turns[state.turns.length - 1]?.events ?? [];
-      setState("liveDurations", computeLiveDurations(turnEventsAfterResult));
+      const allEventsAfterResult = state.events;
+      const turnStartAfterResult = findCurrentTurnStart(allEventsAfterResult);
+      setState("liveDurations", computeLiveDurations(allEventsAfterResult.slice(turnStartAfterResult)));
       break;
     }
 
     case "llm_retry":
-      appendEvent(event);
+      setState(produce(s => { s.events.push(event); }));
       setState("retrying", true);
       break;
 
@@ -714,11 +694,11 @@ export function dispatch(event: WsEvent): void {
     case "oauth_token_expired":
     case "oauth_refreshed":
     case "compacted":
-    case "world_state_saved":
     case "llm_error":
     case "agent_error":
-    case "error":
-      appendEvent(event);
+    case "transport_error":
+    case "world_state_saved":
+      setState(produce(s => { s.events.push(event); }));
       break;
   }
 }

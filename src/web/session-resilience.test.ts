@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "bun:test";
 import { closeOpenTurn, shouldLogEvent } from "./server.js";
-import { dispatch, state } from "./client/store.js";
+import { dispatch, state, computeRenderGroups } from "./client/store.js";
 
 // ---------------------------------------------------------------------------
 // closeOpenTurn
@@ -156,9 +156,9 @@ describe("store history replay — open turn recovery", () => {
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
       ],
     });
-    const lastTurn = state.turns[state.turns.length - 1];
-    expect(lastTurn).toBeDefined();
-    const lastEvent = lastTurn.events[lastTurn.events.length - 1];
+    // The last event in the flat list should be a synthetic turn_interrupted
+    const lastEvent = state.events[state.events.length - 1];
+    expect(lastEvent).toBeDefined();
     expect(lastEvent.type).toBe("turn_interrupted");
   });
 
@@ -179,15 +179,100 @@ describe("store history replay — open turn recovery", () => {
 
     expect(state.streaming).toBe(false);
     expect(state.connected).toBe(true);
-    expect(state.turns.length).toBe(1);
 
-    const turn = state.turns[0];
-    expect(turn.done).toBe(true);
+    // Derive turn groups from the flat event list
+    const groups = computeRenderGroups(state.events);
+    const turns = groups.filter(g => g.kind === "turn");
+    expect(turns.length).toBe(1);
+
+    const turn = turns[0] as Extract<typeof turns[0], { kind: "turn" }>;
     expect(turn.done).toBe(true);
 
     // The turn should contain an llm_response event with the text
     const llmResponse = turn.events.find((e: any) => e.type === "llm_response") as any;
     expect(llmResponse).toBeDefined();
     expect(llmResponse.text).toBe("pong");
+
+    // session_start should appear as a free group before the turn
+    expect(groups[0].kind).toBe("free");
+    expect(groups[0].events[0].type).toBe("session_start");
+
+    // session_end should appear as a free group after the turn
+    const lastGroup = groups[groups.length - 1];
+    expect(lastGroup.kind).toBe("free");
+    expect(lastGroup.events[0].type).toBe("session_end");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Store: retrying state
+// ---------------------------------------------------------------------------
+
+describe("store retrying state", () => {
+  // Reset to a known baseline before each test
+  function startTurn() {
+    dispatch({ type: "history", events: [] });          // clear store
+    dispatch({ type: "connected" });
+    dispatch({ type: "user_message", content: "hi" } as any);
+  }
+
+  it("starts as false", () => {
+    dispatch({ type: "history", events: [] });
+    expect(state.retrying).toBe(false);
+  });
+
+  it("becomes true when llm_retry is received", () => {
+    startTurn();
+    dispatch({
+      type: "llm_retry",
+      attempt: 1,
+      provider: "anthropic",
+      waitMs: 1000,
+      error: "overloaded",
+    } as any);
+    expect(state.retrying).toBe(true);
+  });
+
+  it("clears to false when llm_response arrives after a retry", () => {
+    startTurn();
+    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    expect(state.retrying).toBe(true);
+    dispatch({
+      type: "llm_response",
+      stopReason: "end_turn",
+      usage: { input_tokens: 5, output_tokens: 2 },
+      contextHash: "ab12cd34",
+    } as any);
+    expect(state.retrying).toBe(false);
+  });
+
+  it("clears to false when turn_end arrives", () => {
+    startTurn();
+    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    expect(state.retrying).toBe(true);
+    dispatch({ type: "turn_end", metrics: { inputTokens: 5, outputTokens: 2 } } as any);
+    expect(state.retrying).toBe(false);
+  });
+
+  it("clears to false when turn_interrupted arrives", () => {
+    startTurn();
+    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    expect(state.retrying).toBe(true);
+    dispatch({ type: "turn_interrupted", reason: "error" } as any);
+    expect(state.retrying).toBe(false);
+  });
+
+  it("clears to false on reset_done", () => {
+    startTurn();
+    dispatch({ type: "llm_retry", attempt: 1, provider: "anthropic", waitMs: 100, error: "overloaded" } as any);
+    expect(state.retrying).toBe(true);
+    dispatch({ type: "reset_done" } as any);
+    expect(state.retrying).toBe(false);
+  });
+
+  it("remains false during streaming without a retry", () => {
+    startTurn();
+    dispatch({ type: "text", text: "hello" } as any);
+    expect(state.retrying).toBe(false);
   });
 });

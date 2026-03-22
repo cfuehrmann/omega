@@ -26,6 +26,7 @@ import {
   type CompactedEvent,
   type SessionStartEvent,
   type LlmCallEvent,
+  type TransportErrorEvent,
 } from "./event-store.js";
 // ---------------------------------------------------------------------------
 // Helpers
@@ -173,6 +174,20 @@ describe("OmegaEvent round-trip serialisation", () => {
         ],
       },
     };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
+  it("transport_error (no context)", async () => {
+    const e: TransportErrorEvent = { type: "transport_error", ts: "2025-01-01T00:00:00.000Z", error: "Invalid JSON from client" };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
+  it("transport_error (with context)", async () => {
+    const e: TransportErrorEvent = { type: "transport_error", ts: "2025-01-01T00:00:00.000Z", error: "Turn already in progress", context: "handleMessage" };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

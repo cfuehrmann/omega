@@ -151,12 +151,12 @@ test("tool_call event shows tool block", async ({ page, server }) => {
 // Error handling
 // ---------------------------------------------------------------------------
 
-test("error event shows error block", async ({ page, server }) => {
+test("transport_error event shows error block", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await server.sendEvent({ type: "error", error: "Something went wrong" });
+  await server.sendEvent({ type: "transport_error", error: "Something went wrong" });
 
   const errBlock = page.locator(".block.error-b");
   await expect(errBlock).toBeVisible({ timeout: 3000 });
@@ -177,18 +177,6 @@ test("model_changed event shows status block", async ({ page, server }) => {
   const statusBlock = page.locator(".block.status");
   await expect(statusBlock).toBeVisible({ timeout: 3000 });
   await expect(statusBlock.locator(".block-body")).toHaveText("Switched to claude-opus-4-6");
-});
-
-test("world_state_saved event shows a status pill", async ({ page, server }) => {
-  await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-
-  await server.sendEvent({ type: "user_message", content: "hi" });
-  await server.sendEvent({ type: "world_state_saved", path: "plan/world-state.md", charCount: 1234 });
-
-  const pill = page.locator(".block.world-state-saved");
-  await expect(pill).toBeVisible({ timeout: 3000 });
-  await expect(pill).toContainText("world state saved");
 });
 
 test("llm_call event shows an api-call block", async ({ page, server }) => {
@@ -238,6 +226,52 @@ test("turn_interrupted event shows interrupt block", async ({ page, server }) =>
   const block = page.locator(".block.interrupt");
   await expect(block).toBeVisible({ timeout: 3000 });
   await expect(block).toContainText("Interrupted");
+});
+
+test("turn_interrupted with reason=aborted shows '⊘ Aborted'", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "turn_interrupted", reason: "aborted" });
+
+  const block = page.locator(".block.interrupt");
+  await expect(block).toBeVisible({ timeout: 3000 });
+  await expect(block).toContainText("Aborted");
+});
+
+test("turn_interrupted with reason=error shows '⊘ Failed'", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "turn_interrupted", reason: "error" });
+
+  const block = page.locator(".block.interrupt");
+  await expect(block).toBeVisible({ timeout: 3000 });
+  await expect(block).toContainText("Failed");
+});
+
+test("llm_retry event changes status dot to 'retrying…'", async ({ page, server }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  // Status should be streaming at this point
+  await expect(page.locator(".status-row")).toContainText("streaming", { timeout: 3000 });
+
+  await server.sendEvent({
+    type: "llm_retry",
+    attempt: 1,
+    provider: "anthropic",
+    waitMs: 5000,
+    error: "overloaded",
+  });
+  await expect(page.locator(".status-row")).toContainText("retrying", { timeout: 3000 });
+
+  // After turn_interrupted the status returns to ready
+  await server.sendEvent({ type: "turn_interrupted", reason: "error" });
+  await expect(page.locator(".status-row")).toContainText("ready", { timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------
