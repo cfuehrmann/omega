@@ -57,9 +57,15 @@ test-browser-log: web-build
     echo "Log saved: $LOG"
     exit $EC
 
-# Operator-run gate: knip + full test suite (test-core and test-browser run in parallel).
+# Type-check all TypeScript (three passes: backend/tests, web client, e2e).
+typecheck:
+    bunx tsc --noEmit
+    bunx tsc -p src/web/client/tsconfig.json --noEmit
+    bunx tsc -p e2e/tsconfig.json --noEmit
+
+# Operator-run gate: typecheck + knip + full test suite (test-core and test-browser run in parallel).
 # Never invoked automatically by Omega — operator-only.
-gate: test
+gate: typecheck test
     bunx knip
 
 # Build the web client (Vite → src/web/public/)

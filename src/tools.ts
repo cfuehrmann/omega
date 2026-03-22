@@ -137,11 +137,11 @@ async function executeDuckDuckGoSearch(query: string): Promise<string> {
     const snippets: string[] = [];
     let m: RegExpExecArray | null;
     while ((m = snippetRe.exec(html)) !== null && snippets.length < 6) {
-      snippets.push(htmlToText(m[1]));
+      snippets.push(htmlToText(m[1]!));
     }
     const urls: string[] = [];
     while ((m = urlRe.exec(html)) !== null && urls.length < 6) {
-      urls.push(htmlToText(m[1]).trim());
+      urls.push(htmlToText(m[1]!).trim());
     }
     if (snippets.length > 0) {
       lines.push("Results:");
@@ -732,7 +732,8 @@ async function executeGrepFiles(input: {
     (resolve) => {
       let stdout = "";
       let stderr = "";
-      const proc = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+      const [cmd, ...cmdArgs] = args as [string, ...string[]];
+      const proc = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"] });
       proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
       proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
       proc.on("close", (code) => resolve({ stdout, stderr, code }));
@@ -802,7 +803,8 @@ async function executeFindFiles(input: {
     (resolve) => {
       let stdout = "";
       let stderr = "";
-      const proc = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+      const [cmd, ...cmdArgs] = args as [string, ...string[]];
+      const proc = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"] });
       proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
       proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
       proc.on("close", (code) => resolve({ stdout, stderr, code }));

@@ -247,10 +247,10 @@ describe("server-side compaction — history pruning", () => {
     // Only the compacting assistant message remains (appended after the clear).
     const history = agent.getCompactedContextHistory();
     expect(history.length).toBe(1);
-    expect(history[0].role).toBe("assistant");
+    expect(history[0]!.role).toBe("assistant");
     // The compaction block should be the first content block
-    const content = history[0].content as any[];
-    expect(content[0].type).toBe("compaction");
+    const content = history[0]!.content as any[];
+    expect(content[0]!.type).toBe("compaction");
   });
 
   it("compactedContextHashes length matches compactedContextHistory length after compaction", async () => {

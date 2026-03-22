@@ -42,10 +42,11 @@ function textMessage(text: string): Anthropic.Message {
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
-    content: [{ type: "text", text }],
+    container: null,
+    content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5 },
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
 }
 
@@ -71,10 +72,11 @@ function toolUseMessage(
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
-    content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput }],
+    container: null,
+    content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
-    usage: { input_tokens: 20, output_tokens: 10 },
+    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
 }
 
@@ -161,8 +163,8 @@ describe("Agent.sendMessage — plain text response", () => {
 
     const history = agent.getCompactedContextHistory();
     expect(history.length).toBe(2);
-    expect(history[0]).toEqual({ role: "user", content: "how are you?" });
-    expect(history[1].role).toBe("assistant");
+    expect(history[0]!).toEqual({ role: "user", content: "how are you?" });
+    expect(history[1]!.role).toBe("assistant");
   });
 
   it.concurrent("accumulates token counts across turns", async () => {
@@ -299,10 +301,10 @@ describe("Agent.sendMessage — tool call loop", () => {
     // Expected: user, assistant(tool_use), user(tool_result), assistant(text)
     const history = agent.getCompactedContextHistory();
     expect(history.length).toBe(4);
-    expect(history[0].role).toBe("user");
-    expect(history[1].role).toBe("assistant");
-    expect(history[2].role).toBe("user"); // tool result
-    expect(history[3].role).toBe("assistant");
+    expect(history[0]!.role).toBe("user");
+    expect(history[1]!.role).toBe("assistant");
+    expect(history[2]!.role).toBe("user"); // tool result
+    expect(history[3]!.role).toBe("assistant");
   });
 
   it.concurrent("executes multiple tools in parallel (both tool_call events before any tool_result)", async () => {
@@ -312,13 +314,14 @@ describe("Agent.sendMessage — tool call loop", () => {
       type: "message",
       role: "assistant",
       model: "claude-sonnet-4-6",
+      container: null,
       content: [
-        { type: "tool_use", id: "tA", name: "list_files", input: { path: "src" } },
-        { type: "tool_use", id: "tB", name: "list_files", input: { path: "plan" } },
+        { type: "tool_use", id: "tA", name: "list_files", input: { path: "src" }, caller: { type: "direct" } },
+        { type: "tool_use", id: "tB", name: "list_files", input: { path: "plan" }, caller: { type: "direct" } },
       ],
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 20, output_tokens: 10 },
+      usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
     };
     const twoToolStreamEvents: any[] = [
       { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tA", name: "list_files" } },
@@ -418,7 +421,7 @@ describe("Agent.sendMessage — error handling", () => {
     const retryEvents = events.filter((e) => e.type === "llm_retry");
     expect(retryEvents.length).toBe(2);
     // Final event should be turn_end (success)
-    expect(events[events.length - 1].type).toBe("turn_end");
+    expect(events[events.length - 1]!.type).toBe("turn_end");
   }, 30_000);
 });
 
@@ -503,7 +506,7 @@ describe("Agent.sendMessage — abort", () => {
     // History should only have the user message — no partial assistant turn
     const history = agent.getCompactedContextHistory();
     expect(history.length).toBe(1);
-    expect(history[0].role).toBe("user");
+    expect(history[0]!.role).toBe("user");
   });
 });
 
@@ -614,7 +617,7 @@ describe("Agent — full auto-approve", () => {
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "do it");
-    const pending = events.filter((e) => e.type === "tool_pending");
+    const pending = events.filter((e) => (e.type as string) === "tool_pending");
     expect(pending.length).toBe(0);
   });
 
@@ -680,7 +683,7 @@ describe("Agent — turn_end event", () => {
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hi");
-    expect(events[events.length - 1].type).toBe("turn_end");
+    expect(events[events.length - 1]!.type).toBe("turn_end");
   });
 
   it.concurrent("turn_end aggregates token counts across all API calls", async () => {
@@ -849,9 +852,9 @@ describe("Agent — verbatim history (no turn compaction)", () => {
     const history = agent.getCompactedContextHistory();
     // History has 2 messages: user + assistant (verbatim, no compaction)
     expect(history).toHaveLength(2);
-    expect(history[0].role).toBe("user");
-    expect(history[1].role).toBe("assistant");
-    expect(history[0].content).toBe("hi");
+    expect(history[0]!.role).toBe("user");
+    expect(history[1]!.role).toBe("assistant");
+    expect(history[0]!.content).toBe("hi");
   });
 
   it.concurrent("after two turns, history contains all four messages verbatim", async () => {
@@ -867,10 +870,10 @@ describe("Agent — verbatim history (no turn compaction)", () => {
     const history = agent.getCompactedContextHistory();
     // 4 messages: user1, asst1, user2, asst2
     expect(history).toHaveLength(4);
-    expect(history[0].role).toBe("user");
-    expect(history[1].role).toBe("assistant");
-    expect(history[2].role).toBe("user");
-    expect(history[3].role).toBe("assistant");
+    expect(history[0]!.role).toBe("user");
+    expect(history[1]!.role).toBe("assistant");
+    expect(history[2]!.role).toBe("user");
+    expect(history[3]!.role).toBe("assistant");
   });
 
   it.concurrent("no orphaned tool_result blocks across multiple turns with tool use", async () => {

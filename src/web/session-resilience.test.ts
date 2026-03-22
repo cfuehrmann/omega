@@ -157,7 +157,7 @@ describe("store history replay — open turn recovery", () => {
       ],
     });
     // The last event in the flat list should be a synthetic turn_interrupted
-    const lastEvent = state.events[state.events.length - 1];
+    const lastEvent = state.events[state.events.length - 1]!;
     expect(lastEvent).toBeDefined();
     expect(lastEvent.type).toBe("turn_interrupted");
   });
@@ -194,13 +194,13 @@ describe("store history replay — open turn recovery", () => {
     expect(llmResponse.text).toBe("pong");
 
     // session_start should appear as a free group before the turn
-    expect(groups[0].kind).toBe("free");
-    expect(groups[0].events[0].type).toBe("session_start");
+    expect(groups[0]!.kind).toBe("free");
+    expect(groups[0]!.events[0]!.type).toBe("session_start");
 
     // session_end should appear as a free group after the turn
-    const lastGroup = groups[groups.length - 1];
+    const lastGroup = groups[groups.length - 1]!;
     expect(lastGroup.kind).toBe("free");
-    expect(lastGroup.events[0].type).toBe("session_end");
+    expect(lastGroup.events[0]!.type).toBe("session_end");
   });
 });
 

@@ -30,7 +30,7 @@ describe("appendContextMessage", () => {
     const raw = await readFile(contextFile, "utf-8");
     const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(1);
-    const record: ContextRecord = JSON.parse(lines[0]);
+    const record: ContextRecord = JSON.parse(lines[0]!);
     // Must have the original fields plus hash and ts
     expect(record.role).toBe("user");
     expect(record.content).toBe("hello");
@@ -65,8 +65,8 @@ describe("appendContextMessage", () => {
     const raw = await readFile(contextFile, "utf-8");
     const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(2);
-    const r1: ContextRecord = JSON.parse(lines[0]);
-    const r2: ContextRecord = JSON.parse(lines[1]);
+    const r1: ContextRecord = JSON.parse(lines[0]!);
+    const r2: ContextRecord = JSON.parse(lines[1]!);
     expect(r1.role).toBe("user");
     expect(r1.content).toBe("hello");
     expect(r2.role).toBe("assistant");

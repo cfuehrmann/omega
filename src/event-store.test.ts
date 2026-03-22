@@ -12,22 +12,22 @@ import { existsSync, readFileSync } from "fs";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import {
-  appendEvent,
-  type OmegaEvent,
-  type UserMessageEvent,
-  type LlmResponseEvent,
-  type ToolCallEvent,
-  type ToolResultEvent,
-  type TurnEndEvent,
-  type LlmErrorEvent,
-  type AgentErrorEvent,
-  type TurnInterruptedEvent,
-  type CompactedEvent,
-  type SessionStartEvent,
-  type LlmCallEvent,
-  type TransportErrorEvent,
-} from "./event-store.js";
+import { appendEvent } from "./event-store.js";
+import type {
+  OmegaEvent,
+  UserMessageEvent,
+  LlmResponseEvent,
+  ToolCallEvent,
+  ToolResultEvent,
+  TurnEndEvent,
+  LlmErrorEvent,
+  AgentErrorEvent,
+  TurnInterruptedEvent,
+  CompactedEvent,
+  SessionStartEvent,
+  LlmCallEvent,
+  TransportErrorEvent,
+} from "./events.js";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("session_start", async () => {
-    const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", provider: "anthropic", authMode: "api-key" };
+    const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", provider: "anthropic", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);
@@ -71,7 +71,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("llm_call", async () => {
-    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"] };
+    const e: LlmCallEvent = { type: "llm_call", ts: "2025-01-01T00:00:00.000Z", provider: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"], cacheBreakpointIndex: 2, requestBytes: 1024 };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

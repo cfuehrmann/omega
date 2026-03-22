@@ -22,11 +22,12 @@ function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0
     id: "msg_test",
     type: "message",
     role: "assistant",
-    content: [{ type: "text", text }],
+    container: null,
+    content: [{ type: "text", text, citations: null }],
     model: "claude-sonnet-4-6",
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
   return async (_params) => ({
     async *[Symbol.asyncIterator]() {
@@ -74,7 +75,7 @@ describe("makeTestAgent", () => {
     const { agent, dispose } = await makeTestAgent(makeMinimalProvider("world"));
     disposeAll.push(dispose);
     const events: string[] = [];
-    for await (const event of agent.sendMessage("hi")) {
+    for await (const event of agent.sendMessage("hi", async () => true)) {
       events.push(event.type);
     }
     expect(events).toContain("text");
@@ -84,7 +85,7 @@ describe("makeTestAgent", () => {
   it("writes real context.jsonl and events.jsonl during a turn", async () => {
     const { agent, contextFile, eventsFile, dispose } = await makeTestAgent(makeMinimalProvider("safe"));
     disposeAll.push(dispose);
-    for await (const _ of agent.sendMessage("test")) { /* drain */ }
+    for await (const _ of agent.sendMessage("test", async () => true)) { /* drain */ }
     await Bun.sleep(50); // let fire-and-forget writes settle
     expect(existsSync(contextFile)).toBe(true);
     expect(existsSync(eventsFile)).toBe(true);

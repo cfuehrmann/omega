@@ -49,10 +49,10 @@ function makeMockStream(events: any[], message: Anthropic.Message) {
 function textMessage(text: string): Anthropic.Message {
   return {
     id: "msg_test", type: "message", role: "assistant",
-    model: "claude-sonnet-4-6",
-    content: [{ type: "text", text }],
+    model: "claude-sonnet-4-6", container: null,
+    content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn", stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5 },
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
 }
 

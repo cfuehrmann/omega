@@ -118,7 +118,7 @@ function addCacheControlToLastMessage(
 ): Anthropic.MessageParam[] {
   if (messages.length === 0) return messages;
   const result = [...messages];
-  const last = result[result.length - 1];
+  const last = result[result.length - 1]!;
 
   // Normalise content to an array of blocks
   let blocks: Anthropic.ContentBlockParam[];
@@ -1072,8 +1072,8 @@ export class Agent {
         );
 
         for (let i = 0; i < toolUseBlocks.length; i++) {
-          const toolUse = toolUseBlocks[i];
-          const result = results[i];
+          const toolUse = toolUseBlocks[i]!;
+          const result = results[i]!;
 
           toolResults.push({
             type: "tool_result",
@@ -1089,8 +1089,8 @@ export class Agent {
           content: toolResults,
         });
         for (let i = 0; i < toolUseBlocks.length; i++) {
-          const toolUse = toolUseBlocks[i];
-          const result = results[i];
+          const toolUse = toolUseBlocks[i]!;
+          const result = results[i]!;
           const toolResultEvent: OmegaEvent = {
             type: "tool_result",
             ts: new Date().toISOString(),

@@ -59,7 +59,7 @@ describe("stream event handling", () => {
     expect(textEvents[1]).toEqual({ type: "text", text: "the plan now." });
 
     // No status events — EU-1 removes the "generating tool input" feedback
-    const statusEvents = events.filter((e) => e.type === "status");
+    const statusEvents = events.filter((e) => (e.type as string) === "status");
     expect(statusEvents).toHaveLength(0);
   });
 

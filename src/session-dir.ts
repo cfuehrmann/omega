@@ -130,6 +130,6 @@ export async function findPreviousEventsFile(
 
   if (sessionDirs.length === 0) return null;
 
-  const mostRecent = sessionDirs[sessionDirs.length - 1];
+  const mostRecent = sessionDirs[sessionDirs.length - 1]!;
   return join(SESSIONS_ROOT, mostRecent, "events.jsonl");
 }

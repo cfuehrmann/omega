@@ -50,7 +50,7 @@ async function nextMessage(): Promise<unknown> {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const msgs = await drainMessages();
-    if (msgs.length > 0) return JSON.parse(msgs[0]);
+    if (msgs.length > 0) return JSON.parse(msgs[0]!);
     await new Promise(r => setTimeout(r, 50));
   }
   throw new Error("Timed out waiting for message from browser");

@@ -260,7 +260,7 @@ function tsMs(ts: string | undefined): number {
  */
 function findCurrentTurnStart(events: WsEvent[]): number {
   for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type === "user_message") return i;
+    if (events[i]!.type === "user_message") return i;
   }
   return 0;
 }
@@ -486,7 +486,7 @@ export function dispatch(event: WsEvent): void {
       let currentTurnStartIdx = -1;
 
       for (let i = 0; i < rawEvents.length; i++) {
-        const e = rawEvents[i];
+        const e = rawEvents[i]!;
 
         if (e.type === "session_start") {
           replayLiveModel = e.model;

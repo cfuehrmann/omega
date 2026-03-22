@@ -91,7 +91,7 @@ async function collectAll(
   message: string
 ): Promise<(OmegaEvent | StreamSignal)[]> {
   const results: (OmegaEvent | StreamSignal)[] = [];
-  for await (const ev of agent.sendMessage(message)) {
+  for await (const ev of agent.sendMessage(message, async () => true)) {
     results.push(ev);
   }
   return results;

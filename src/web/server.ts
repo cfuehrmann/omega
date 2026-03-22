@@ -339,7 +339,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
     port: opts.port ?? PORT,
 
     async fetch(req, srv) {
-      if (srv.upgrade(req)) return undefined as any;
+      if (srv.upgrade(req, { data: undefined })) return undefined as any;
       const url = new URL(req.url);
 
       // Context record lookup: GET /context?hashes=abc123,def456,...

@@ -39,10 +39,11 @@ const mockStreamProvider: StreamProvider = async () => {
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
-    content: [{ type: "text", text: "pong" }],
+    container: null,
+    content: [{ type: "text", text: "pong", citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5 },
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
   const events = [
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },

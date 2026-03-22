@@ -137,7 +137,7 @@ describe("makeSessionDir path structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("findPreviousEventsFile", () => {
-  let tempRoot: string;
+  let tempRoot: string | undefined;
 
   // We can't easily patch SESSIONS_ROOT, so we test the helper's logic
   // by calling it with a fake currentDir that won't match anything in .omega/sessions/.

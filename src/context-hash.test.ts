@@ -18,7 +18,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
 import type { ContextRecord } from "./context-store.js";
-import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./event-store.js";
+import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,10 +39,11 @@ function textMessage(text: string): Anthropic.Message {
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
-    content: [{ type: "text", text }],
+    container: null,
+    content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5 },
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
 }
 
@@ -62,10 +63,11 @@ function toolUseMessage(toolId: string, toolName: string, toolInput: any): Anthr
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
-    content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput }],
+    container: null,
+    content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
-    usage: { input_tokens: 20, output_tokens: 10 },
+    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
   };
 }
 
@@ -146,9 +148,9 @@ describe("context.jsonl record shape", () => {
     await Bun.sleep(50);
 
     const records = readContextRecords(contextFile);
-    expect(records[0].role).toBe("user");
-    expect(records[0].content).toBe("hello");
-    expect(records[1].role).toBe("assistant");
+    expect(records[0]!.role).toBe("user");
+    expect(records[0]!.content).toBe("hello");
+    expect(records[1]!.role).toBe("assistant");
   });
 });
 
@@ -176,7 +178,7 @@ describe("hash uniqueness — identical content, different times", () => {
     // Both user messages have content "ok" — their hashes must differ
     const userRecords = records.filter(r => r.role === "user" && r.content === "ok");
     expect(userRecords.length).toBe(2);
-    expect(userRecords[0].hash).not.toBe(userRecords[1].hash);
+    expect(userRecords[0]!.hash).not.toBe(userRecords[1]!.hash);
   });
 });
 
@@ -198,12 +200,12 @@ describe("llm_call contextHashes in events.jsonl", () => {
     const llmCallEvents = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
     expect(llmCallEvents.length).toBe(1);
 
-    const llmCall = llmCallEvents[0];
+    const llmCall = llmCallEvents[0]!;
     expect(Array.isArray(llmCall.contextHashes)).toBe(true);
     // Only the user message was in compactedContextHistory when the first call was made
     expect(llmCall.contextHashes).toHaveLength(1);
-    expect(llmCall.contextHashes[0]).toHaveLength(8);
-    expect(/^[0-9a-f]{8}$/.test(llmCall.contextHashes[0])).toBe(true);
+    expect(llmCall.contextHashes[0]!).toHaveLength(8);
+    expect(/^[0-9a-f]{8}$/.test(llmCall.contextHashes[0]!)).toBe(true);
   });
 
   it.concurrent("contextHashes match the hash field of the corresponding context.jsonl records", async () => {
@@ -221,7 +223,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
     // The first llm_call should only have the user message in its view
     expect(llmCall.contextHashes).toHaveLength(1);
-    expect(llmCall.contextHashes[0]).toBe(contextRecords[0].hash);
+    expect(llmCall.contextHashes[0]!).toBe(contextRecords[0]!.hash);
   });
 
   it.concurrent("tool loop: second llm_call contextHashes includes user + assistant + tool_result messages", async () => {
@@ -244,14 +246,14 @@ describe("llm_call contextHashes in events.jsonl", () => {
     expect(llmCalls.length).toBe(2);
 
     // First call: only the user message
-    expect(llmCalls[0].contextHashes).toHaveLength(1);
-    expect(llmCalls[0].contextHashes[0]).toBe(contextRecords[0].hash);
+    expect(llmCalls[0]!.contextHashes).toHaveLength(1);
+    expect(llmCalls[0]!.contextHashes[0]!).toBe(contextRecords[0]!.hash);
 
     // Second call: user + assistant(tool_use) + user(tool_result)
-    expect(llmCalls[1].contextHashes).toHaveLength(3);
-    expect(llmCalls[1].contextHashes[0]).toBe(contextRecords[0].hash);
-    expect(llmCalls[1].contextHashes[1]).toBe(contextRecords[1].hash);
-    expect(llmCalls[1].contextHashes[2]).toBe(contextRecords[2].hash);
+    expect(llmCalls[1]!.contextHashes).toHaveLength(3);
+    expect(llmCalls[1]!.contextHashes[0]!).toBe(contextRecords[0]!.hash);
+    expect(llmCalls[1]!.contextHashes[1]!).toBe(contextRecords[1]!.hash);
+    expect(llmCalls[1]!.contextHashes[2]!).toBe(contextRecords[2]!.hash);
   });
 
   it.concurrent("contextHashes grow across multiple turns in the same session", async () => {
@@ -271,10 +273,10 @@ describe("llm_call contextHashes in events.jsonl", () => {
     const llmCalls = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
 
     // First call: 1 message (turn1 user)
-    expect(llmCalls[0].contextHashes).toHaveLength(1);
+    expect(llmCalls[0]!.contextHashes).toHaveLength(1);
 
     // Second call: 3 messages (turn1 user, turn1 asst, turn2 user)
-    expect(llmCalls[1].contextHashes).toHaveLength(3);
+    expect(llmCalls[1]!.contextHashes).toHaveLength(3);
 
     // All hashes must be 8-char hex
     for (const llmCall of llmCalls) {
@@ -311,12 +313,12 @@ describe("contextHashes matches full compactedContextHistory", () => {
     const llmCalls = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
 
     // Third call: 5 messages (turns 1-2 = 4 + turn3 user = 5) — all sent, none trimmed
-    expect(llmCalls[2].contextHashes).toHaveLength(5);
+    expect(llmCalls[2]!.contextHashes).toHaveLength(5);
 
     // Each hash must appear as a hash in context.jsonl
     const contextRecords = readContextRecords(contextFile);
     const contextHashSet = new Set(contextRecords.map(r => r.hash));
-    for (const h of llmCalls[2].contextHashes) {
+    for (const h of llmCalls[2]!.contextHashes) {
       expect(contextHashSet.has(h)).toBe(true);
     }
   });
@@ -505,11 +507,11 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     const toolCalls = allEvents.filter(e => e.type === "tool_call") as ToolCallEvent[];
 
     expect(toolCalls.length).toBe(1);
-    const tc = toolCalls[0];
+    const tc = toolCalls[0]!;
 
     // contextHash must be an 8-char hex string
     expect(typeof tc.contextHash).toBe("string");
-    expect(/^[0-9a-f]{8}$/.test(tc.contextHash)).toBe(true);
+    expect(/^[0-9a-f]{8}$/.test(tc.contextHash!)).toBe(true);
 
     // Must point to the assistant message (index 1: user, assistant, user(tool_result))
     const assistantRecord = contextRecords.find(r => r.role === "assistant");
@@ -535,11 +537,11 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     const toolResults = allEvents.filter(e => e.type === "tool_result") as ToolResultEvent[];
 
     expect(toolResults.length).toBe(1);
-    const tr = toolResults[0];
+    const tr = toolResults[0]!;
 
     // contextHash must be an 8-char hex string
     expect(typeof tr.contextHash).toBe("string");
-    expect(/^[0-9a-f]{8}$/.test(tr.contextHash)).toBe(true);
+    expect(/^[0-9a-f]{8}$/.test(tr.contextHash!)).toBe(true);
 
     // Must point to the user message containing the tool_result block
     // That's the third context record: user(original), assistant(tool_use), user(tool_result)
