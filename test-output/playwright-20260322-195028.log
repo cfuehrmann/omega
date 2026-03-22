@@ -1,0 +1,86 @@
+
+Running 53 tests using 1 worker
+
+  ✓   1 [chromium] › e2e/persistence.spec.ts:26:1 › incremental save: each turn_end persists immediately to disk (141ms)
+  ✓   2 [chromium] › e2e/persistence.spec.ts:63:1 › persistence file contains events in correct order (76ms)
+  ✓   3 [chromium] › e2e/persistence.spec.ts:94:1 › history survives a simulated server restart (save + load cycle) (102ms)
+  ✓   4 [chromium] › e2e/persistence.spec.ts:132:1 › after load, reset clears both memory and disk (105ms)
+  ✓   5 [chromium] › e2e/recorded-session.spec.ts:28:1 › recorded session replays all blocks after page reload (123ms)
+  ✓   6 [chromium] › e2e/recorded-session.spec.ts:73:1 › recorded session shows no render-error boundary (589ms)
+  ✓   7 [chromium] › e2e/session-continuity.spec.ts:22:1 › reconnecting does not create a new agent — browser sees existing history (103ms)
+  ✓   8 [chromium] › e2e/session-continuity.spec.ts:56:1 › reset message creates a new agent and clears history (77ms)
+  ✓   9 [chromium] › e2e/session-continuity.spec.ts:93:1 › opening a second connection reuses the same agent (not a new one) (120ms)
+  ✓  10 [chromium] › e2e/web-ui-2.spec.ts:21:1 › crash recovery: page reload after open turn shows turn_interrupted (100ms)
+  ✓  11 [chromium] › e2e/web-ui-2.spec.ts:46:1 › crash recovery: UI is not stuck streaming after open-turn replay (91ms)
+  ✓  12 [chromium] › e2e/web-ui-2.spec.ts:64:1 › abort button click sends abort message to server (116ms)
+  ✓  13 [chromium] › e2e/web-ui-2.spec.ts:83:1 › abort button replaces send button while streaming (71ms)
+  ✓  14 [chromium] › e2e/web-ui-2.spec.ts:93:1 › textarea is enabled while streaming (typing allowed, send blocked) (71ms)
+  ✓  15 [chromium] › e2e/web-ui-2.spec.ts:103:1 › input unlocks after turn_end (73ms)
+  ✓  16 [chromium] › e2e/web-ui-2.spec.ts:121:1 › input unlocks after turn_interrupted (73ms)
+  ✓  17 [chromium] › e2e/web-ui-2.spec.ts:138:1 › tool_result event shows result block (76ms)
+  ✓  18 [chromium] › e2e/web-ui-2.spec.ts:164:1 › tool_result with is_error shows error styling (70ms)
+  ✓  19 [chromium] › e2e/web-ui-2.spec.ts:185:1 › agent_error event shows error block (71ms)
+  ✓  20 [chromium] › e2e/web-ui-2.spec.ts:197:1 › llm_error event shows error block (70ms)
+  ✓  21 [chromium] › e2e/web-ui-2.spec.ts:219:1 › textarea is empty after sending a message (74ms)
+  ✓  22 [chromium] › e2e/web-ui-2.spec.ts:237:1 › tool_call survives page reload (history replay) (96ms)
+  ✓  23 [chromium] › e2e/web-ui-2.spec.ts:282:1 › assistant text survives page reload (history replay) (113ms)
+  ✓  24 [chromium] › e2e/web-ui-2.spec.ts:318:1 › no yellow flash during history replay — dot stays green, never streaming (99ms)
+  ✓  25 [chromium] › e2e/web-ui-2.spec.ts:347:1 › reconnect banner appears after repeated connection failures (68ms)
+  ✓  26 [chromium] › e2e/web-ui-3.spec.ts:18:1 › session_start event renders as info block even before any turn (68ms)
+  ✓  27 [chromium] › e2e/web-ui-3.spec.ts:42:1 › session_end event renders as info block in the feed (72ms)
+  ✓  28 [chromium] › e2e/web-ui-3.spec.ts:63:1 › history replay shows session_start block before the first turn (103ms)
+  ✓  29 [chromium] › e2e/web-ui-3.spec.ts:93:1 › session_start block appears before the first user_message block (95ms)
+  ✓  30 [chromium] › e2e/web-ui.spec.ts:18:1 › page title is 'Omega' (59ms)
+  ✓  31 [chromium] › e2e/web-ui.spec.ts:23:1 › heading 'Ω Omega' is visible (69ms)
+  ✓  32 [chromium] › e2e/web-ui.spec.ts:32:1 › shows 'ready' status after connecting to server (62ms)
+  ✓  33 [chromium] › e2e/web-ui.spec.ts:38:1 › status dot is green when connected (61ms)
+  ✓  34 [chromium] › e2e/web-ui.spec.ts:48:1 › textarea is enabled when connected (63ms)
+  ✓  35 [chromium] › e2e/web-ui.spec.ts:54:1 › send button is visible when connected and not streaming (61ms)
+  ✓  36 [chromium] › e2e/web-ui.spec.ts:64:1 › sending a message — browser sends JSON to server (70ms)
+  ✓  37 [chromium] › e2e/web-ui.spec.ts:77:1 › user_message event shows user block in feed (72ms)
+  ✓  38 [chromium] › e2e/web-ui.spec.ts:86:1 › abort button appears when streaming (68ms)
+  ✓  39 [chromium] › e2e/web-ui.spec.ts:99:1 › turn_end shows footer block (75ms)
+  ✓  40 [chromium] › e2e/web-ui.spec.ts:116:1 › text event shows assistant block (73ms)
+  ✓  41 [chromium] › e2e/web-ui.spec.ts:133:1 › tool_call event shows tool block (76ms)
+  ✓  42 [chromium] › e2e/web-ui.spec.ts:154:1 › transport_error event shows error block (70ms)
+  ✓  43 [chromium] › e2e/web-ui.spec.ts:170:1 › model_changed event shows status block (71ms)
+  ✓  44 [chromium] › e2e/web-ui.spec.ts:182:1 › llm_call event shows an api-call block (72ms)
+  ✓  45 [chromium] › e2e/web-ui.spec.ts:202:1 › llm_response event shows an api-response block (72ms)
+  ✓  46 [chromium] › e2e/web-ui.spec.ts:219:1 › turn_interrupted event shows interrupt block (72ms)
+  ✓  47 [chromium] › e2e/web-ui.spec.ts:231:1 › turn_interrupted with reason=aborted shows '⊘ Aborted' (73ms)
+  ✓  48 [chromium] › e2e/web-ui.spec.ts:243:1 › turn_interrupted with reason=error shows '⊘ Failed' (73ms)
+  ✓  49 [chromium] › e2e/web-ui.spec.ts:255:1 › llm_retry event changes status dot to 'retrying…' (74ms)
+  ✓  50 [chromium] › e2e/web-ui.spec.ts:281:1 › history is replayed after page reload (88ms)
+  ✓  51 [real-server] › e2e/real-server-replay.spec.ts:19:1 › events persist through the real server and replay after page reload (263ms)
+  ✘  52 [real-server] › e2e/real-server-replay.spec.ts:52:1 › abort during run_command kills subprocess and shows '⊘ Aborted' quickly (3.3s)
+  ✓  53 [real-server] › e2e/real-server-replay.spec.ts:71:1 › session dir shown in session bar persists after reload (166ms)
+
+
+  1) [real-server] › e2e/real-server-replay.spec.ts:52:1 › abort during run_command kills subprocess and shows '⊘ Aborted' quickly 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoContainText[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator: locator('.block.interrupt')
+    Expected substring: [32m"Aborted"[39m
+    Timeout: 3000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toContainText" with timeout 3000ms[22m
+    [2m  - waiting for locator('.block.interrupt')[22m
+
+
+      66 |   // '⊘ Aborted' must appear within 3 seconds.
+      67 |   // Without the subprocess-kill fix this times out because sleep 10 keeps running.
+    > 68 |   await expect(page.locator(".block.interrupt")).toContainText("Aborted", { timeout: 3000 });
+         |                                                  ^
+      69 | });
+      70 |
+      71 | test("session dir shown in session bar persists after reload", async ({ page }) => {
+        at /home/carsten/omega/dev/e2e/real-server-replay.spec.ts:68:50
+
+    Error Context: test-results/real-server-replay-abort-d-42976-and-shows-⊘-Aborted-quickly-real-server/error-context.md
+
+  1 failed
+    [real-server] › e2e/real-server-replay.spec.ts:52:1 › abort during run_command kills subprocess and shows '⊘ Aborted' quickly 
+  52 passed (11.5s)

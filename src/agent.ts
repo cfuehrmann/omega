@@ -1122,10 +1122,12 @@ export class Agent {
           yield toolCallEvent;
         }
 
-        // Execute all tools concurrently
+        // Execute all tools concurrently.
+        // Pass signal so blocking tools (e.g. run_command) can be killed
+        // immediately when the user presses Abort.
         const results = await Promise.all(
           toolUseBlocks.map((toolUse) =>
-            executeTool(toolUse.name, toolUse.input),
+            executeTool(toolUse.name, toolUse.input, signal),
           ),
         );
 

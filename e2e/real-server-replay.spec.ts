@@ -45,6 +45,29 @@ test("events persist through the real server and replay after page reload", asyn
   await expect(llmResponseBlock).toContainText("pong");
 });
 
+// ---------------------------------------------------------------------------
+// Abort during tool execution — subprocess must be killed promptly
+// ---------------------------------------------------------------------------
+
+test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+
+  // Send the trigger message — the mock provider returns run_command(sleep 10)
+  await page.locator("textarea").fill("abort_sleep_test");
+  await page.locator("textarea").press("Enter");
+
+  // Wait for the tool_call block — this confirms the sleep subprocess is running
+  await expect(page.locator(".block.tool")).toBeVisible({ timeout: 10000 });
+
+  // Click Abort — with the fix, the subprocess is killed immediately
+  await page.locator(".abort-btn").click();
+
+  // '⊘ Aborted' must appear within 3 seconds.
+  // Without the subprocess-kill fix this times out because sleep 10 keeps running.
+  await expect(page.locator(".block.interrupt")).toContainText("Aborted", { timeout: 3000 });
+});
+
 test("session dir shown in session bar persists after reload", async ({ page }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });

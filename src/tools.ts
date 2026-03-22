@@ -594,21 +594,33 @@ async function executeEditFile(input: {
   return `edit_file: ${input.path} — replaced ${oldLines} line(s) with ${newLines} line(s)`;
 }
 
-function executeRunCommand(input: {
-  command: string;
-  timeout?: number;
-}): Promise<string> {
+function executeRunCommand(
+  input: { command: string; timeout?: number },
+  signal?: AbortSignal,
+): Promise<string> {
   const timeoutMs = (input.timeout ?? 30) * 1000;
 
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let killed = false;
+    let killedByAbort = false;
 
     const proc = spawn("bash", ["-c", input.command], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: timeoutMs,
     });
+
+    // Kill the subprocess immediately when the abort signal fires.
+    const onAbort = () => {
+      killedByAbort = true;
+      proc.kill();
+    };
+    if (signal?.aborted) {
+      onAbort();
+    } else {
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }
 
     proc.stdout.on("data", (data: Buffer) => {
       stdout += data.toString();
@@ -628,10 +640,12 @@ function executeRunCommand(input: {
     });
 
     proc.on("close", (code) => {
+      signal?.removeEventListener("abort", onAbort);
       let result = "";
       if (stdout) result += stdout;
       if (stderr) result += (result ? "\n" : "") + `[stderr]\n${stderr}`;
-      if (killed) result += "\n[Output truncated at 100KB]";
+      if (killedByAbort) result += "\n[killed by abort signal]";
+      else if (killed) result += "\n[Output truncated at 100KB]";
       if (code !== 0 && code !== null) {
         result += `\n[exit code: ${code}]`;
       }
@@ -639,6 +653,7 @@ function executeRunCommand(input: {
     });
 
     proc.on("error", (err) => {
+      signal?.removeEventListener("abort", onAbort);
       resolve(`[error: ${err.message}]`);
     });
   });
@@ -962,7 +977,8 @@ function validateToolInput(name: string, input: any): void {
 
 export async function executeTool(
   name: string,
-  input: any
+  input: any,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   const startTime = performance.now();
   try {
@@ -980,7 +996,7 @@ export async function executeTool(
         output = await executeEditFile(input);
         break;
       case "run_command":
-        output = await executeRunCommand(input);
+        output = await executeRunCommand(input, signal);
         break;
       case "list_files":
         output = await executeListFiles(input);

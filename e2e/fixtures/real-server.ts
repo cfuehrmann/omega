@@ -21,7 +21,7 @@ export const REAL_SERVER_PORT = 3003;
 const CTRL_PORT = 3004;
 
 // ---------------------------------------------------------------------------
-// Mock StreamProvider — returns a fixed "pong" text response
+// Mock StreamProvider — routes by trigger message content
 // ---------------------------------------------------------------------------
 
 function makeMockStream(events: any[], message: Anthropic.Message) {
@@ -33,7 +33,7 @@ function makeMockStream(events: any[], message: Anthropic.Message) {
   };
 }
 
-const mockStreamProvider: StreamProvider = async () => {
+function makePongStream() {
   const message: Anthropic.Message = {
     id: "msg_test",
     type: "message",
@@ -53,6 +53,51 @@ const mockStreamProvider: StreamProvider = async () => {
     { type: "message_stop" },
   ];
   return makeMockStream(events, message);
+}
+
+/**
+ * Returns a tool_use stream that invokes run_command with "sleep 10".
+ * Used by the abort-during-tool-execution Playwright test.
+ */
+function makeSleepToolUseStream() {
+  const TOOL_ID = "toolu_sleep_abort_test";
+  const message: Anthropic.Message = {
+    id: "msg_sleep_test",
+    type: "message",
+    role: "assistant",
+    model: "claude-sonnet-4-6",
+    container: null,
+    content: [{ type: "tool_use", id: TOOL_ID, name: "run_command", input: { command: "sleep 10" } } as any],
+    stop_reason: "tool_use",
+    stop_sequence: null,
+    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+  };
+  const events = [
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: TOOL_ID, name: "run_command" } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command":"sleep 10"}' } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
+    { type: "message_stop" },
+  ];
+  return makeMockStream(events, message);
+}
+
+const mockStreamProvider: StreamProvider = async (params) => {
+  // Inspect the last user message to route to the right mock response.
+  // Simple messages arrive as a plain string; tool_result turns arrive as
+  // an array of blocks — in that case we look at the most recent text block.
+  const lastUserMsg = [...params.messages].reverse().find(m => m.role === "user");
+  const rawContent = lastUserMsg?.content ?? "";
+  const textContent =
+    typeof rawContent === "string"
+      ? rawContent
+      : (rawContent as any[]).find((b: any) => b.type === "text")?.text ?? "";
+
+  if (textContent.includes("abort_sleep_test")) {
+    return makeSleepToolUseStream();
+  }
+
+  return makePongStream();
 };
 
 // ---------------------------------------------------------------------------
