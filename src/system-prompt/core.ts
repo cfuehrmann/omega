@@ -90,6 +90,11 @@ Discuss design with the user before implementing non-trivial changes.
 If the user raises a design question mid-implementation, stop and discuss
 before continuing.
 
+## Before starting work
+
+Before starting any new work, run \`git status\`. If there is uncommitted work,
+commit it (or explicitly confirm with the user) before proceeding.
+
 ## Testing
 
 Prefer tests that exercise real behaviour end-to-end over pure unit tests
