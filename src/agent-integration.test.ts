@@ -914,56 +914,33 @@ describe("Agent — verbatim history (no turn compaction)", () => {
 // ---------------------------------------------------------------------------
 
 describe("slash commands", () => {
-  it.concurrent("/sonnet switches to sonnet model", async () => {
+  it.concurrent("any slash command is rejected as unknown", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);
     disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/sonnet");
-    const mc = events.find((e) => e.type === "model_changed") as any;
-    expect(mc).toBeDefined();
-    expect(mc.model).toBe("claude-sonnet-4-6");
+    for (const cmd of ["/sonnet", "/opus", "/codex", "/help", "/anthropic"]) {
+      const events = await collectEvents(agent, cmd);
+      const err = events.find((e) => e.type === "agent_error") as any;
+      expect(err).toBeDefined();
+    }
+  });
+});
+
+describe("model switching via setModel()", () => {
+  it.concurrent("setModel() emits and persists model_changed", async () => {
+    const { agent, dispose } = await makeTestAgent(undefined);
+    disposeAll.push(dispose);
+    const ev = agent.setModel("claude-opus-4-6");
+    expect(ev.type).toBe("model_changed");
+    expect((ev as any).model).toBe("claude-opus-4-6");
+    expect(agent.getActiveModel()).toBe("claude-opus-4-6");
+  });
+
+  it.concurrent("setModel() switches back", async () => {
+    const { agent, dispose } = await makeTestAgent(undefined);
+    disposeAll.push(dispose);
+    agent.setModel("claude-opus-4-6");
+    agent.setModel("claude-sonnet-4-6");
     expect(agent.getActiveModel()).toBe("claude-sonnet-4-6");
-  });
-
-  it.concurrent("/opus switches to opus model", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/opus");
-    const mc = events.find((e) => e.type === "model_changed") as any;
-    expect(mc).toBeDefined();
-    expect(mc.model).toBe("claude-opus-4-6");
-    expect(agent.getActiveModel()).toBe("claude-opus-4-6");
-  });
-
-  it.concurrent("/codex is rejected as unknown", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/codex");
-    const err = events.find((e) => e.type === "agent_error") as any;
-    expect(err).toBeDefined();
-  });
-
-  it.concurrent("/help is rejected as unknown (operator asks the LLM instead)", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/help");
-    const err = events.find((e) => e.type === "agent_error") as any;
-    expect(err).toBeDefined();
-  });
-
-  it.concurrent("old /anthropic command is rejected as unknown", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    const events = await collectEvents(agent, "/anthropic");
-    const err = events.find((e) => e.type === "agent_error") as any;
-    expect(err).toBeDefined();
-  });
-
-  it.concurrent("/sonnet followed by /opus changes active model", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    await collectEvents(agent, "/sonnet");
-    await collectEvents(agent, "/opus");
-    expect(agent.getActiveModel()).toBe("claude-opus-4-6");
   });
 });
 

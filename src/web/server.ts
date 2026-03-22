@@ -6,13 +6,19 @@
  * over the same socket.
  *
  * Protocol (client → server):
- *   { type: "message", content: string }   — send a user prompt
- *   { type: "abort" }                       — abort the current turn
+ *   { type: "message", content: string }            — send a user prompt
+ *   { type: "abort" }                               — abort the current turn
+ *   { type: "set_model", model: string }            — switch LLM model
+ *   { type: "set_auth_mode", mode: string }         — switch auth mode
+ *   { type: "submit_oauth_code", code: string }     — complete OAuth flow
+ *   { type: "cancel_oauth" }                        — cancel OAuth flow
  *
  * Protocol (server → client):
  *   All OmegaEvent shapes from events.ts, JSON-serialised.
  *   Extra: { type: "connected" }            — sent on WebSocket open
- *          { type: "auth", mode: string }   — auth result
+ *          { type: "auth", mode: string }   — auth mode at session start
+ *          { type: "oauth_url", url: string } — user must open URL + paste code
+ *          { type: "oauth_cancelled" }      — OAuth flow cancelled
  *
  * Persistence: identical to the terminal UI. Agent writes context.jsonl and
  * events.jsonl into .omega/sessions/<timestamp>/. History replay on reconnect
@@ -198,6 +204,8 @@ interface Session {
   ws: ServerWebSocket<unknown>;
   abortController: AbortController | null;
   isStreaming: boolean;
+  /** Pending OAuth code exchange — set while the re-auth overlay is open. */
+  pendingOAuthExchange?: (codeWithState: string) => Promise<import("../events.js").AuthModeChangedEvent>;
 }
 
 let activeSession: Session | null = null;
@@ -272,6 +280,79 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
       .catch((err: any) => {
         send(session.ws, { type: "auth", mode: `error: ${err.message}` });
       });
+    return;
+  }
+
+  if (msg.type === "set_model") {
+    if (session.isStreaming) {
+      sendTransportError(session.ws, "Cannot switch model during an active turn", "handleMessage");
+      return;
+    }
+    const model: string = String(msg.model ?? "");
+    if (model !== "claude-sonnet-4-6" && model !== "claude-opus-4-6") {
+      send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Unknown model: ${model}` });
+      return;
+    }
+    const ev = persistentAgent.setModel(model);
+    send(session.ws, ev);
+    return;
+  }
+
+  if (msg.type === "set_auth_mode") {
+    if (session.isStreaming) {
+      sendTransportError(session.ws, "Cannot switch auth mode during an active turn", "handleMessage");
+      return;
+    }
+    const mode: string = String(msg.mode ?? "");
+    if (mode === "api-key") {
+      try {
+        const ev = await persistentAgent.switchToApiKey();
+        send(session.ws, ev);
+      } catch (err: any) {
+        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: err.message });
+      }
+    } else if (mode === "claude-max") {
+      try {
+        const result = await persistentAgent.requestClaudeMaxSwitch();
+        if (result.kind === "switched") {
+          send(session.ws, result.event);
+        } else {
+          session.pendingOAuthExchange = result.complete;
+          send(session.ws, { type: "oauth_url", url: result.url });
+        }
+      } catch (err: any) {
+        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: err.message });
+      }
+    } else {
+      send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Unknown auth mode: ${mode}` });
+    }
+    return;
+  }
+
+  if (msg.type === "submit_oauth_code") {
+    if (!session.pendingOAuthExchange) {
+      sendTransportError(session.ws, "No pending OAuth exchange", "handleMessage");
+      return;
+    }
+    const code: string = String(msg.code ?? "").trim();
+    if (!code) {
+      send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: "No code provided." });
+      return;
+    }
+    const exchange = session.pendingOAuthExchange;
+    session.pendingOAuthExchange = undefined;
+    try {
+      const ev = await exchange(code);
+      send(session.ws, ev);
+    } catch (err: any) {
+      send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `OAuth failed: ${err.message}` });
+    }
+    return;
+  }
+
+  if (msg.type === "cancel_oauth") {
+    session.pendingOAuthExchange = undefined;
+    send(session.ws, { type: "oauth_cancelled" });
     return;
   }
 

@@ -1,7 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
-import { getAuthToken, forceRefreshToken } from "./auth.js";
+import {
+  getAuthToken,
+  forceRefreshToken,
+  readAuthConfig,
+  writeAuthConfig,
+  startOAuthFlow,
+  type AuthMode,
+} from "./auth.js";
+import type { AuthModeChangedEvent } from "./events.js";
 
 import {
   readSystemPromptAppend,
@@ -445,57 +453,191 @@ export class Agent {
     }
   }
 
-  async init(): Promise<string> {
-    // Auth flow (matching pi-ai's anthropic.js):
-    // OAuth via claude.ai → access_token (sk-ant-oat-...)
-    // Pass as authToken (Bearer auth) with Claude Code beta headers.
-    // The API requires claude-code-20250219 + oauth-2025-04-20 betas.
-    const accessToken = await getAuthToken();
-    if (accessToken) {
-      this.client = new Anthropic({
-        apiKey: null as any,
-        authToken: accessToken,
-        defaultHeaders: {
-          accept: "application/json",
-          "anthropic-dangerous-direct-browser-access": "true",
-          "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-          "user-agent": "claude-cli/2.1.2 (external, cli)",
-          "x-app": "cli",
-        },
-      });
-      this.authMode = "oauth";
-      if (!this.sessionStartLogged) {
-        this.sessionStartLogged = true;
-        this.logEvent({
-          type: "session_start",
-          ts: new Date().toISOString(),
-          sessionId: this.sessionId,
-          model: this.activeModel,
-          authMode: "claude-max",
-          systemPrompt: this.buildSystemPrompt(),
-        });
+  async init(): Promise<AuthMode> {
+    // In tests: skip config file and OAuth network calls entirely.
+    if (process.env.OMEGA_TEST === "1") {
+      if (process.env.ANTHROPIC_API_KEY) {
+        this.client = new Anthropic();
+        this.authMode = "api-key";
+        await this.logSessionStart("api-key");
+        return "api-key";
       }
-      return "Claude Max";
-    } else if (process.env.ANTHROPIC_API_KEY) {
-      this.client = new Anthropic();
+      // Mock provider — no real API calls, auth doesn't matter.
       this.authMode = "api-key";
-      if (!this.sessionStartLogged) {
-        this.sessionStartLogged = true;
-        this.logEvent({
-          type: "session_start",
-          ts: new Date().toISOString(),
-          sessionId: this.sessionId,
-          model: this.activeModel,
-          authMode: "api-key",
-          systemPrompt: this.buildSystemPrompt(),
-        });
+      return "api-key";
+    }
+
+    // Read the persisted auth mode preference.
+    let config = await readAuthConfig();
+
+    if (!config) {
+      // First run: auto-detect and persist.
+      const auth = await getAuthToken();
+      if (auth.kind === "ok") {
+        await writeAuthConfig("claude-max");
+        config = { authMode: "claude-max" };
+      } else if (process.env.ANTHROPIC_API_KEY) {
+        // OAuth broken or absent but API key available — default to api-key.
+        await writeAuthConfig("api-key");
+        config = { authMode: "api-key" };
+      } else {
+        throw new Error(
+          "No authentication configured. Use the auth dropdown to sign in with Claude Max, or set ANTHROPIC_API_KEY.",
+        );
       }
-      return "api-key (pay-per-token ⚠)";
+    }
+
+    if (config.authMode === "claude-max") {
+      return await this.initClaudeMax();
     } else {
+      return await this.initApiKey();
+    }
+  }
+
+  private async initClaudeMax(): Promise<AuthMode> {
+    const auth = await getAuthToken();
+    if (auth.kind === "refresh_failed") {
       throw new Error(
-        "No authentication found. Run `bun run src/login.ts` to authenticate with Claude Max, or set ANTHROPIC_API_KEY.",
+        "Claude Max session expired. Use the auth dropdown to re-authenticate.",
       );
     }
+    if (auth.kind === "no_token") {
+      throw new Error(
+        "Claude Max not configured. Use the auth dropdown to sign in.",
+      );
+    }
+    this.client = this.makeOAuthClient(auth.token);
+    this.authMode = "oauth";
+    await this.logSessionStart("claude-max");
+    return "claude-max";
+  }
+
+  private async initApiKey(): Promise<AuthMode> {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error(
+        "API key mode: ANTHROPIC_API_KEY is not set in the environment.",
+      );
+    }
+    this.client = new Anthropic();
+    this.authMode = "api-key";
+    await this.logSessionStart("api-key");
+    return "api-key";
+  }
+
+  private makeOAuthClient(token: string): Anthropic {
+    return new Anthropic({
+      apiKey: null as any,
+      authToken: token,
+      defaultHeaders: {
+        accept: "application/json",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+        "user-agent": "claude-cli/2.1.2 (external, cli)",
+        "x-app": "cli",
+      },
+    });
+  }
+
+  private async logSessionStart(authMode: AuthMode): Promise<void> {
+    if (!this.sessionStartLogged) {
+      this.sessionStartLogged = true;
+      await this.logEvent({
+        type: "session_start",
+        ts: new Date().toISOString(),
+        sessionId: this.sessionId,
+        model: this.activeModel,
+        authMode,
+        systemPrompt: this.buildSystemPrompt(),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auth mode and model switching (called by server to handle WS messages)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Switch to API key mode. Throws if ANTHROPIC_API_KEY is not set.
+   * Returns the persisted auth_mode_changed event.
+   */
+  async switchToApiKey(): Promise<AuthModeChangedEvent> {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY is not set in the environment.");
+    }
+    await writeAuthConfig("api-key");
+    this.client = new Anthropic();
+    this.authMode = "api-key";
+    const ev: AuthModeChangedEvent = {
+      type: "auth_mode_changed",
+      ts: new Date().toISOString(),
+      authMode: "api-key",
+    };
+    this.logEvent(ev);
+    return ev;
+  }
+
+  /**
+   * Request a switch to Claude Max mode.
+   *
+   * If a valid OAuth token already exists, switches immediately and returns
+   * { kind: "switched", event }.
+   *
+   * If no valid token exists (never logged in, or refresh token expired),
+   * starts the PKCE authorization flow and returns
+   * { kind: "needs_oauth", url, complete } — the caller should show the URL
+   * to the user and call complete(codeWithState) once they paste it back.
+   */
+  async requestClaudeMaxSwitch(): Promise<
+    | { kind: "switched"; event: AuthModeChangedEvent }
+    | { kind: "needs_oauth"; url: string; complete: (codeWithState: string) => Promise<AuthModeChangedEvent> }
+  > {
+    const auth = await getAuthToken();
+    if (auth.kind === "ok") {
+      await writeAuthConfig("claude-max");
+      this.client = this.makeOAuthClient(auth.token);
+      this.authMode = "oauth";
+      const ev: AuthModeChangedEvent = {
+        type: "auth_mode_changed",
+        ts: new Date().toISOString(),
+        authMode: "claude-max",
+      };
+      this.logEvent(ev);
+      return { kind: "switched", event: ev };
+    }
+
+    const { url, exchangeCode } = await startOAuthFlow();
+    const complete = async (codeWithState: string): Promise<AuthModeChangedEvent> => {
+      await exchangeCode(codeWithState);
+      const fresh = await getAuthToken();
+      if (fresh.kind !== "ok") {
+        throw new Error("Token exchange succeeded but token is unreadable.");
+      }
+      await writeAuthConfig("claude-max");
+      this.client = this.makeOAuthClient(fresh.token);
+      this.authMode = "oauth";
+      const ev: AuthModeChangedEvent = {
+        type: "auth_mode_changed",
+        ts: new Date().toISOString(),
+        authMode: "claude-max",
+      };
+      this.logEvent(ev);
+      return ev;
+    };
+    return { kind: "needs_oauth", url, complete };
+  }
+
+  /**
+   * Switch the active model. Returns the persisted model_changed event.
+   */
+  setModel(model: string): OmegaEvent {
+    this.activeModel = model;
+    const ev: OmegaEvent = {
+      type: "model_changed",
+      ts: new Date().toISOString(),
+      model,
+    };
+    this.logEvent(ev);
+    return ev;
   }
 
   /** Build the system prompt from all parts. */
@@ -524,17 +666,7 @@ export class Agent {
     if (this.authMode !== "oauth") return false; // nothing to refresh for API keys
     const newToken = await forceRefreshToken();
     if (!newToken) return false;
-    this.client = new Anthropic({
-      apiKey: null as any,
-      authToken: newToken,
-      defaultHeaders: {
-        accept: "application/json",
-        "anthropic-dangerous-direct-browser-access": "true",
-        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-        "user-agent": "claude-cli/2.1.2 (external, cli)",
-        "x-app": "cli",
-      },
-    });
+    this.client = this.makeOAuthClient(newToken);
     this.logEvent({ type: "oauth_refreshed", ts: new Date().toISOString() });
     return true;
   }
@@ -583,32 +715,11 @@ export class Agent {
     signal?: AbortSignal,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     if (userMessage.startsWith("/")) {
-      const cmd = userMessage.trim().toLowerCase();
-      if (cmd === "/sonnet") {
-        this.activeModel = "claude-sonnet-4-6";
-        const ev: OmegaEvent = {
-          type: "model_changed",
-          ts: new Date().toISOString(),
-          model: "claude-sonnet-4-6",
-        };
-        this.logEvent(ev);
-        yield ev;
-      } else if (cmd === "/opus") {
-        this.activeModel = "claude-opus-4-6";
-        const ev: OmegaEvent = {
-          type: "model_changed",
-          ts: new Date().toISOString(),
-          model: "claude-opus-4-6",
-        };
-        this.logEvent(ev);
-        yield ev;
-      } else {
-        yield {
-          type: "agent_error",
-          ts: new Date().toISOString(),
-          error: `Unknown command: ${userMessage}`,
-        };
-      }
+      yield {
+        type: "agent_error",
+        ts: new Date().toISOString(),
+        error: `Unknown command: ${userMessage}`,
+      };
       return;
     }
 

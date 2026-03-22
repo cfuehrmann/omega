@@ -800,9 +800,24 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     case "auth":
     case "reset_done":
     case "session_info":
+    case "oauth_url":
+    case "oauth_cancelled":
     // thinking is a streaming-only signal — never pushed into turn.events
     case "thinking":
       return null;
+
+    case "auth_mode_changed": {
+      const body = `→ ${e.authMode}`;
+      return (
+        <div class="block info">
+          <div class="block-label-row">
+            <span class="block-label">auth mode changed</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "auth_mode_changed", ts, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
+        </div>
+      );
+    }
 
     default:
       // Compile-time exhaustiveness guard: TypeScript errors here if any
@@ -864,21 +879,112 @@ function FreeView(props: {
 }
 
 // ---------------------------------------------------------------------------
-// Session bar — always-visible sticky line showing the current session dir
+// Session bar — always-visible sticky line showing the current session dir,
+// auth mode selector, and model selector.
 // ---------------------------------------------------------------------------
 
 function SessionBar() {
   const activeModel = (): string =>
-    state.liveTurn !== null ? state.liveModel : (state.lastTurnEnd?.model ?? "");
+    state.liveTurn !== null ? state.liveModel : (state.lastTurnEnd?.model ?? state.liveModel);
+
+  const disabled = () => state.streaming;
+
+  const handleAuthChange = (e: Event) => {
+    const mode = (e.currentTarget as HTMLSelectElement).value;
+    sendToServer({ type: "set_auth_mode", mode });
+  };
+
+  const handleModelChange = (e: Event) => {
+    const model = (e.currentTarget as HTMLSelectElement).value;
+    sendToServer({ type: "set_model", model });
+  };
 
   return (
     <Show when={state.sessionDir}>
       <div class="session-bar">
         <span class="session-bar-label">session:</span>
         <span class="session-bar-dir">{state.sessionDir}</span>
-        <Show when={activeModel()}>
-          <span class="session-bar-provider-model">{activeModel()}</span>
-        </Show>
+        <div class="session-bar-selects">
+          <Show when={state.authMode === "claude-max" || state.authMode === "api-key"}>
+            <select
+              class="session-bar-select"
+              disabled={disabled()}
+              value={state.authMode}
+              onChange={handleAuthChange}
+            >
+              <option value="claude-max">Claude Max</option>
+              <option value="api-key">API Key</option>
+            </select>
+          </Show>
+          <Show when={activeModel()}>
+            <select
+              class="session-bar-select"
+              disabled={disabled()}
+              value={activeModel()}
+              onChange={handleModelChange}
+            >
+              <option value="claude-sonnet-4-6">sonnet</option>
+              <option value="claude-opus-4-6">opus</option>
+            </select>
+          </Show>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OAuth re-authentication overlay
+// ---------------------------------------------------------------------------
+
+function OAuthOverlay() {
+  const [code, setCode] = createSignal("");
+
+  const submit = () => {
+    const trimmed = code().trim();
+    if (trimmed) {
+      sendToServer({ type: "submit_oauth_code", code: trimmed });
+      setCode("");
+    }
+  };
+
+  const cancel = () => {
+    sendToServer({ type: "cancel_oauth" });
+    setCode("");
+  };
+
+  return (
+    <Show when={state.oauthUrl}>
+      <div class="oauth-overlay">
+        <div class="oauth-dialog">
+          <p class="oauth-title">Authenticate with Claude Max</p>
+          <ol class="oauth-steps">
+            <li>
+              <a class="oauth-link" href={state.oauthUrl!} target="_blank" rel="noopener noreferrer">
+                Open authorization page ↗
+              </a>
+            </li>
+            <li>Sign in with your Claude Max account and authorize Omega.</li>
+            <li>
+              <span>Paste the code from the browser URL bar:</span>
+              <div class="oauth-code-row">
+                <input
+                  type="text"
+                  class="oauth-code-input"
+                  placeholder="code#state"
+                  value={code()}
+                  onInput={(e) => setCode(e.currentTarget.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                  autofocus
+                />
+                <button class="oauth-submit-btn" onClick={submit} disabled={!code().trim()}>
+                  Submit
+                </button>
+              </div>
+            </li>
+          </ol>
+          <button class="oauth-cancel-btn" onClick={cancel}>Cancel</button>
+        </div>
       </div>
     </Show>
   );
@@ -1253,6 +1359,7 @@ export function App() {
       <StickyMetricsBar />
       <StatusDot />
       <InputArea />
+      <OAuthOverlay />
     </div>
   );
 }

@@ -42,14 +42,13 @@ every session start. It also contains operational policies worth reading: test
 commands, testing philosophy, the contract authority hierarchy, and
 agent-specific constraints.
 
-## Slash commands
+## Controls
 
-| Command    | Effect                                                                 |
-| ---------- | ---------------------------------------------------------------------- |
-| `/sonnet`  | Anthropic `claude-sonnet-4-6` (default)                                |
-| `/opus`    | Anthropic `claude-opus-4-6`                                            |
-| `/codex`   | OpenAI `gpt-5.2-codex`                                                 |
-| `/compact` | Collapse history head into an LLM summary, keep last 10 turns verbatim |
+| Where         | Control                | Effect                                          |
+| ------------- | ---------------------- | ----------------------------------------------- |
+| Session bar   | Auth mode dropdown     | Switch between Claude Max and API Key           |
+| Session bar   | Model dropdown         | Switch between `claude-sonnet-4-6` and `claude-opus-4-6` |
+| Slash command | `/compact`             | Collapse history head into an LLM summary, keep last 10 turns verbatim |
 
 ## Git discipline
 

@@ -39,6 +39,9 @@ export type WsEvent =
   | { type: "llm_call"; ts?: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestBytes?: number; requestSummary?: Record<string, unknown> }
   | { type: "llm_retry"; ts?: string; attempt: number; waitMs: number; error: string }
   | { type: "model_changed"; ts?: string; model: string }
+  | { type: "auth_mode_changed"; ts?: string; authMode: string }
+  | { type: "oauth_url"; url: string }
+  | { type: "oauth_cancelled" }
   | { type: "oauth_token_expired"; ts?: string; attempt: number; httpStatus?: number }
   | { type: "oauth_refreshed"; ts?: string }
   | { type: "compacted"; ts?: string; usage: unknown }
@@ -146,6 +149,8 @@ interface AppState {
   /** True while an llm_retry backoff is in progress (clears on llm_response / turn end). */
   retrying: boolean;
   authMode: string;
+  /** Set while the OAuth re-auth overlay is open. Cleared on auth_mode_changed or oauth_cancelled. */
+  oauthUrl: string | null;
   /** Flat event log — mirrors events.jsonl. Primary source of truth for the UI. */
   events: WsEvent[];
   /** Ephemeral accumulated streaming text (not in events; cleared on llm_response). */
@@ -187,6 +192,7 @@ const [state, setState] = createStore<AppState>({
   streaming: false,
   retrying: false,
   authMode: "",
+  oauthUrl: null,
   events: [],
   streamingText: "",
   streamingThinking: "",
@@ -477,6 +483,7 @@ export function dispatch(event: WsEvent): void {
       let replaySessionDurations: DurationMetrics = zeroDurations();
       let replayCompactionTotals: StickyMetrics = zeroMetrics();
       let replayLiveModel = "";
+      let replayAuthMode = "";
       let replayLiveDurations: DurationMetrics = zeroDurations();
       let replayStreaming = false;
 
@@ -489,6 +496,11 @@ export function dispatch(event: WsEvent): void {
 
         if (e.type === "session_start") {
           replayLiveModel = e.model;
+          replayAuthMode = e.authMode;
+        }
+
+        if (e.type === "auth_mode_changed") {
+          replayAuthMode = e.authMode;
         }
 
         if (e.type === "llm_call") {
@@ -540,7 +552,8 @@ export function dispatch(event: WsEvent): void {
         setState("events", replayEvents);
         setState("streamingText", "");
         setState("streamingThinking", "");
-        setState("authMode", "");
+        setState("authMode", replayAuthMode);
+        setState("oauthUrl", null);
         setState("streaming", false);
         setState("connected", true);
         setState("retryCount", 0);
@@ -556,6 +569,19 @@ export function dispatch(event: WsEvent): void {
 
     case "auth":
       setState("authMode", event.mode);
+      break;
+
+    case "auth_mode_changed":
+      setState("authMode", event.authMode);
+      setState("oauthUrl", null);
+      break;
+
+    case "oauth_url":
+      setState("oauthUrl", event.url);
+      break;
+
+    case "oauth_cancelled":
+      setState("oauthUrl", null);
       break;
 
     case "session_info":
@@ -576,6 +602,7 @@ export function dispatch(event: WsEvent): void {
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
       setState("liveModel", "");
+      setState("oauthUrl", null);
       break;
 
     case "user_message":

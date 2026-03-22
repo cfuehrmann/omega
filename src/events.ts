@@ -248,11 +248,18 @@ export interface LlmRetryEvent {
 
 
 
-/** The operator switched the active model via a slash command. */
+/** The operator switched the active model. */
 export interface ModelChangedEvent {
   type: "model_changed";
   ts: string;
   model: string;
+}
+
+/** The operator switched the auth mode (claude-max ↔ api-key). */
+export interface AuthModeChangedEvent {
+  type: "auth_mode_changed";
+  ts: string;
+  authMode: "claude-max" | "api-key";
 }
 
 /**
@@ -307,4 +314,5 @@ export type OmegaEvent =
   | OauthTokenExpiredEvent
   | LlmRetryEvent
   | ModelChangedEvent
+  | AuthModeChangedEvent
   | TransportErrorEvent;

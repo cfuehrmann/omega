@@ -55,7 +55,7 @@ both streamed from `agent.ts` and persisted to `events.jsonl`.
 `turn_interrupted`, `compact_user_start`, `compact_user_done`,
 `compact_user_error`, `compact_auto_start`, `compact_auto_done`,
 `compact_auto_error`, `oauth_refreshed`, `oauth_token_expired`, `llm_retry`,
-`model_changed`. All carry ISO `ts` timestamp. No `status` variant.
+`model_changed`, `auth_mode_changed`. All carry ISO `ts` timestamp. No `status` variant.
 
 Streaming text fragments are a `StreamSignal` (`{ type: "text", text: string }`)
 — explicitly outside the persistence boundary by design.
@@ -76,7 +76,8 @@ record.
 
 `connected`, `disconnected`, `history`, `auth`, `turn_ready`, `reset_done`,
 `user_message`, `text`, `tool_call`, `tool_result`, `llm_response`,
-`model_changed`, `oauth_token_expired`, `oauth_refreshed`, `llm_retry`,
+`model_changed`, `auth_mode_changed`, `oauth_url`, `oauth_cancelled`,
+`oauth_token_expired`, `oauth_refreshed`, `llm_retry`,
 `compact_user_start`, `compact_user_done`, `compact_user_error`,
 `compact_auto_start`, `compact_auto_done`, `compact_auto_error`, `llm_call`,
 `turn_end`, `llm_error`, `agent_error`, `transport_error`
