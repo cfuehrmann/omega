@@ -1085,3 +1085,194 @@ describe("Agent — session_start dedup on reconnect", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUG-2 guard — dangling tool_use from interrupted previous session
+// ---------------------------------------------------------------------------
+
+describe("Agent — BUG-2 guard: dangling tool_use repair", () => {
+  it.concurrent(
+    "injects synthetic tool_result before user message when context has a dangling tool_use",
+    async () => {
+      // Track the messages the mock provider receives so we can verify the
+      // context is valid (no dangling tool_use block without a tool_result).
+      let capturedMessages: any[] | null = null;
+
+      const mockProvider: StreamProvider = async (params) => {
+        capturedMessages = params.messages as any[];
+        return makeMockStream(textStreamEvents("All good!"), textMessage("All good!"));
+      };
+
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+
+      // Simulate a crashed previous turn: inject an assistant message with a
+      // dangling tool_use directly into the in-memory context (bypassing the
+      // normal sendMessage flow, as would happen after a browser refresh where
+      // the old generator was still running when the tool result never arrived).
+      const history = (agent as any).compactedContextHistory as any[];
+      const hashes = (agent as any).compactedContextHashes as string[];
+      history.push({ role: "user", content: "please run git rebase" });
+      history.push({
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_dangling_001",
+            name: "run_command",
+            input: { command: "git rebase --continue" },
+          },
+        ],
+      });
+      hashes.push("fake-user-hash");
+      hashes.push("fake-assistant-hash");
+
+      // Now send a new message (simulating the user's action after browser refresh).
+      const events = await collectEvents(agent, "what happened?");
+
+      // The BUG-2 guard must have emitted a synthetic tool_result event.
+      const toolResultEvents = events.filter((e) => e.type === "tool_result") as any[];
+      expect(toolResultEvents).toHaveLength(1);
+      expect(toolResultEvents[0].id).toBe("toolu_dangling_001");
+      expect(toolResultEvents[0].name).toBe("run_command");
+      expect(toolResultEvents[0].isError).toBe(true);
+      expect(toolResultEvents[0].output).toContain("[not executed:");
+
+      // The synthetic tool_result must appear BEFORE the user_message event.
+      const toolResultIdx = events.findIndex((e) => e.type === "tool_result");
+      const userMsgIdx = events.findIndex((e) => e.type === "user_message");
+      expect(toolResultIdx).toBeGreaterThanOrEqual(0);
+      expect(userMsgIdx).toBeGreaterThanOrEqual(0);
+      expect(toolResultIdx).toBeLessThan(userMsgIdx);
+
+      // The LLM must have received a valid message sequence: the last three
+      // messages should be assistant(tool_use), user(tool_result), user(text).
+      expect(capturedMessages).not.toBeNull();
+      const msgs = capturedMessages!;
+      expect(msgs.length).toBeGreaterThanOrEqual(3);
+      const last3 = msgs.slice(-3);
+
+      // assistant message contains the tool_use
+      expect(last3[0].role).toBe("assistant");
+      const assistantContent = Array.isArray(last3[0].content) ? last3[0].content : [];
+      expect(assistantContent.some((b: any) => b.type === "tool_use")).toBe(true);
+
+      // synthetic tool_result message
+      expect(last3[1].role).toBe("user");
+      const toolResultContent = Array.isArray(last3[1].content) ? last3[1].content : [];
+      expect(toolResultContent.some((b: any) => b.type === "tool_result")).toBe(true);
+
+      // new user text message (content may be wrapped by addCacheControlToLastMessage)
+      expect(last3[2].role).toBe("user");
+      const rawContent = last3[2].content;
+      const userText =
+        typeof rawContent === "string"
+          ? rawContent
+          : Array.isArray(rawContent)
+            ? (rawContent as any[]).map((b: any) => b.text ?? "").join("")
+            : "";
+      expect(userText).toBe("what happened?");
+
+      // Turn must complete successfully (no API error).
+      const lastEvent = events[events.length - 1];
+      expect(lastEvent?.type).toBe("turn_end");
+    },
+  );
+
+  it.concurrent(
+    "does NOT fire guard when context already has a proper tool_result",
+    async () => {
+      let callCount = 0;
+      const mockProvider: StreamProvider = async () => {
+        callCount++;
+        return makeMockStream(textStreamEvents("done"), textMessage("done"));
+      };
+
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+
+      // Properly balanced history: tool_use followed by tool_result.
+      const history = (agent as any).compactedContextHistory as any[];
+      const hashes = (agent as any).compactedContextHashes as string[];
+      history.push({ role: "user", content: "run something" });
+      history.push({
+        role: "assistant",
+        content: [{ type: "tool_use", id: "toolu_ok", name: "run_command", input: { command: "ls" } }],
+      });
+      history.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_ok", content: "file.txt", is_error: false }],
+      });
+      hashes.push("h1", "h2", "h3");
+
+      const events = await collectEvents(agent, "next step");
+
+      // No synthetic tool_result should have been emitted — the guard should not fire.
+      const syntheticEvents = events.filter((e) => e.type === "tool_result");
+      expect(syntheticEvents).toHaveLength(0);
+
+      // Turn completes normally.
+      const lastEvent = events[events.length - 1];
+      expect(lastEvent?.type).toBe("turn_end");
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Abort during tool execution
+// ---------------------------------------------------------------------------
+
+describe("Agent.sendMessage — abort during tool execution", () => {
+  it.concurrent(
+    "emits tool_result and turn_interrupted(aborted) when abort fires after tool_call but before loop continues",
+    async () => {
+      // First LLM call returns a tool_use; second would return text (but must
+      // never be reached because the abort fires after the tool_call is emitted
+      // and before we try to continue the loop with a second LLM call.
+      let callCount = 0;
+      const mockProvider: StreamProvider = async () => {
+        callCount++;
+        if (callCount === 1) {
+          return makeMockStream(
+            toolUseStreamEvents("run_command"),
+            // Use a real shell command with a tiny delay so the abort has time
+            // to be registered before the tool completes and the check fires.
+            toolUseMessage("toolu_abort_test", "run_command", { command: "sleep 0.05" }),
+          );
+        }
+        // Should never reach here
+        return makeMockStream(textStreamEvents("should not appear"), textMessage("should not appear"));
+      };
+
+      const controller = new AbortController();
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+
+      const events: (OmegaEvent | StreamSignal)[] = [];
+      for await (const ev of agent.sendMessage("run something", async () => true, controller.signal)) {
+        events.push(ev);
+        // Fire abort immediately after the tool_call is dispatched.
+        // At this point the tool is executing (sleep 0.05); the abort will
+        // be detected after Promise.all resolves.
+        if (ev.type === "tool_call") {
+          controller.abort();
+        }
+      }
+
+      // Should have a tool_call event (tool was dispatched)
+      expect(events.some((e) => e.type === "tool_call")).toBe(true);
+
+      // Should have a tool_result event (tool ran and result was recorded)
+      expect(events.some((e) => e.type === "tool_result")).toBe(true);
+
+      // Should have turn_interrupted with reason "aborted" — NOT turn_end
+      const interrupted = events.find((e) => e.type === "turn_interrupted") as any;
+      expect(interrupted).toBeDefined();
+      expect(interrupted?.reason).toBe("aborted");
+      expect(events.some((e) => e.type === "turn_end")).toBe(false);
+
+      // Second LLM call must NOT have happened (abort fired before loop continued)
+      expect(callCount).toBe(1);
+    },
+  );
+});

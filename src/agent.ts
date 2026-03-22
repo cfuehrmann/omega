@@ -336,6 +336,17 @@ export class Agent {
   private readonly streamProvider: StreamProvider | undefined;
 
   /**
+   * Monotonically increasing counter, incremented at the start of every
+   * sendMessage call. Each generator captures its own value at birth; after
+   * every `await` that may block (tool execution), it compares its value
+   * against the current counter. If they diverge, a newer sendMessage has
+   * started (browser refresh / second message while a tool was running) and
+   * this generator has been superseded — it exits silently so the new call's
+   * BUG-2 guard can own context repairs.
+   */
+  private activeGeneration = 0;
+
+  /**
    * Production: new Agent()
    *   — uses real Anthropic client, context appended to .omega/sessions/<ts>/context.jsonl
    * Test: new Agent(mockProvider, contextFile, eventsFile)
@@ -599,6 +610,59 @@ export class Agent {
         };
       }
       return;
+    }
+
+    // Capture this call's generation so we can detect if a newer sendMessage
+    // starts while we are blocked inside tool execution (see activeGeneration).
+    const myGeneration = ++this.activeGeneration;
+
+    // --- BUG-2 guard: dangling tool_use from interrupted previous turn ---
+    // If the last message in compactedContextHistory is an assistant message
+    // containing tool_use blocks with no following tool_result (happens when
+    // the browser refreshes while a tool is executing — a new WS session
+    // starts, the old generator is still awaiting the subprocess, and the user
+    // types a new message before the tool finishes), the next API call would
+    // return 400 "tool_use without tool_result".  Fix: synthesise error
+    // tool_result entries, append them before the user message, and yield
+    // events so the log and UI reflect the repair.
+    {
+      const last =
+        this.compactedContextHistory[this.compactedContextHistory.length - 1];
+      if (last?.role === "assistant") {
+        const blocks = Array.isArray(last.content)
+          ? (last.content as any[])
+          : [];
+        const danglingUses = blocks.filter((b: any) => b.type === "tool_use");
+        if (danglingUses.length > 0) {
+          const syntheticResults: Anthropic.ToolResultBlockParam[] =
+            danglingUses.map((b: any) => ({
+              type: "tool_result" as const,
+              tool_use_id: b.id,
+              content:
+                "[not executed: the session was interrupted before this tool call completed]",
+              is_error: true,
+            }));
+          const syntheticHash = await this.appendToHistory({
+            role: "user",
+            content: syntheticResults,
+          });
+          for (const toolUse of danglingUses) {
+            const syntheticEv: OmegaEvent = {
+              type: "tool_result",
+              ts: new Date().toISOString(),
+              id: toolUse.id,
+              name: toolUse.name,
+              isError: true,
+              durationMs: 0,
+              output:
+                "[not executed: the session was interrupted before this tool call completed]",
+              contextHash: syntheticHash,
+            };
+            await this.logEvent(syntheticEv);
+            yield syntheticEv;
+          }
+        }
+      }
     }
 
     await this.appendToHistory({ role: "user", content: userMessage });
@@ -1064,6 +1128,57 @@ export class Agent {
             executeTool(toolUse.name, toolUse.input),
           ),
         );
+
+        // --- Superseded-generator guard ---
+        // A newer sendMessage call has started (browser refresh or new message
+        // arrived while we were blocked on tool execution). Exit silently
+        // without touching context — the new call's BUG-2 guard owns repairs.
+        if (this.activeGeneration !== myGeneration) {
+          return;
+        }
+
+        // --- Abort-after-tool-execution guard ---
+        // The user pressed Abort while the tool was running. The tools have
+        // already executed (side-effects are done), so record the real results
+        // to keep context valid, then close the turn cleanly. Without this,
+        // the loop would continue to the next LLM call, ignoring the abort.
+        if (signal?.aborted) {
+          const abortResults: Anthropic.ToolResultBlockParam[] =
+            toolUseBlocks.map((toolUse, i) => ({
+              type: "tool_result" as const,
+              tool_use_id: toolUse.id,
+              content: results[i]!.output,
+              is_error: results[i]!.isError,
+            }));
+          const abortResultHash = await this.appendToHistory({
+            role: "user",
+            content: abortResults,
+          });
+          for (let i = 0; i < toolUseBlocks.length; i++) {
+            const toolUse = toolUseBlocks[i]!;
+            const result = results[i]!;
+            const abortResultEvent: OmegaEvent = {
+              type: "tool_result",
+              ts: new Date().toISOString(),
+              id: toolUse.id,
+              name: toolUse.name,
+              isError: result.isError,
+              durationMs: result.durationMs,
+              output: result.output,
+              contextHash: abortResultHash,
+            };
+            this.logEvent(abortResultEvent);
+            yield abortResultEvent;
+          }
+          const abortInterruptEv: OmegaEvent = {
+            type: "turn_interrupted",
+            ts: new Date().toISOString(),
+            reason: "aborted",
+          };
+          this.logEvent(abortInterruptEv);
+          yield abortInterruptEv;
+          return;
+        }
 
         for (let i = 0; i < toolUseBlocks.length; i++) {
           const toolUse = toolUseBlocks[i]!;
