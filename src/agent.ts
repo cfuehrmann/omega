@@ -216,6 +216,10 @@ export function isRetryable(err: any): boolean {
  *  - 401 authentication_error: token expired (normal session timeout)
  *  - 403 permission_error with "revoked": token was explicitly revoked
  *    (e.g. the user re-authenticated in another session)
+ *
+ * NOT matched: "OAuth authentication is currently not supported" — that is a
+ * server-side rejection (known Anthropic intermittent issue, also seen in
+ * Claude Code), not a stale token; refreshing the token cannot fix it.
  */
 export function isAuthExpired(err: any): boolean {
   if (!err) return false;
@@ -223,6 +227,9 @@ export function isAuthExpired(err: any): boolean {
   const msg: string =
     typeof err.message === "string" ? err.message : JSON.stringify(err);
   if (status === 401) {
+    // "OAuth authentication is currently not supported" is a server-side
+    // rejection, not a token expiry — a refresh cannot fix it.
+    if (msg.includes("currently not supported")) return false;
     return (
       msg.includes("authentication_error") ||
       msg.includes("OAuth token has expired")
@@ -236,6 +243,21 @@ export function isAuthExpired(err: any): boolean {
     );
   }
   return false;
+}
+
+/**
+ * Returns true when the Anthropic API responds with 401 "OAuth authentication
+ * is currently not supported." — a known intermittent server-side issue that
+ * cannot be fixed by refreshing the token.
+ */
+function isOAuthNotSupported(err: any): boolean {
+  if (!err) return false;
+  const msg: string =
+    typeof err.message === "string" ? err.message : JSON.stringify(err);
+  return (
+    (err.status ?? err.statusCode) === 401 &&
+    msg.includes("currently not supported")
+  );
 }
 
 // --- Context window management ---
@@ -982,7 +1004,7 @@ export class Agent {
                 type: "agent_error",
                 ts: new Date().toISOString(),
                 error:
-                  "OAuth token expired and refresh failed. Run `bun run src/login.ts` to re-authenticate.",
+                  `OAuth refresh failed: ${err.message ?? String(err)} — run \`bun run src/login.ts\` to re-authenticate.`,
               };
               this.logEvent(authFailEv);
               yield authFailEv;
@@ -1038,6 +1060,20 @@ export class Agent {
               };
               this.logEvent(overflowEv);
               yield overflowEv;
+            } else if (isOAuthNotSupported(err)) {
+              // Known intermittent Anthropic issue — the server rejects OAuth
+              // outright (also seen in claude-code/issues/5893). Not a stale
+              // token; refreshing cannot fix it. Give an actionable message.
+              const oauthRejectedEv: OmegaEvent = {
+                type: "agent_error",
+                ts: new Date().toISOString(),
+                error:
+                  "Anthropic rejected OAuth authentication ('OAuth authentication is currently not supported'). " +
+                  "This is a known intermittent server-side issue — try sending your message again shortly, " +
+                  "or switch to API key mode.",
+              };
+              this.logEvent(oauthRejectedEv);
+              yield oauthRejectedEv;
             } else if (isRetryable(err)) {
               const rateLimitEv: OmegaEvent = {
                 type: "agent_error",
