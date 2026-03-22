@@ -956,16 +956,6 @@ function SessionBar() {
 function ClaudeMaxDialog() {
   const [code, setCode] = createSignal("");
 
-  // Auto-close when the server confirms an immediate switch (valid token
-  // already cached — no OAuth URL ever arrives).
-  createEffect((prevMode: string) => {
-    const mode = state.authMode;
-    if (mode !== prevMode && mode === "claude-max") {
-      setClaudeMaxDialogOpen(false);
-    }
-    return mode;
-  }, state.authMode);
-
   const show = () => claudeMaxDialogOpen() || !!state.oauthUrl;
 
   const submit = () => {
@@ -974,6 +964,7 @@ function ClaudeMaxDialog() {
       sendToServer({ type: "submit_oauth_code", code: trimmed });
       setCode("");
     }
+    dispatch({ type: "oauth_cancelled" }); // clear state.oauthUrl so the dialog closes
     setClaudeMaxDialogOpen(false);
   };
 
