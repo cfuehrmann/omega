@@ -60,18 +60,16 @@ function charCount(value: unknown): number {
  * with compact descriptors so the shape is clear without the walls of text.
  */
 function elideAnthropicRequest(req: {
-  model: string;
-  max_tokens: number;
   system: unknown;
   tools: unknown[];
   messages: unknown[];
+  [key: string]: unknown;
 }): Record<string, unknown> {
   const systemChars = charCount(req.system);
   const systemBlocks = Array.isArray(req.system) ? req.system.length : 1;
   const msgChars = JSON.stringify(req.messages).length;
   return {
-    model: req.model,
-    max_tokens: req.max_tokens,
+    ...req,
     system: `[${systemBlocks} block${systemBlocks !== 1 ? "s" : ""}, ${systemChars} chars]`,
     tools: (req.tools as any[]).map((t: any) => ({
       name: t.name,
@@ -679,15 +677,29 @@ export class Agent {
       // contextHashes: all hashes in order, one per message in compactedContextHistory.
       const contextHashes = [...this.compactedContextHashes];
 
+      // Build the full request params once — used for both the audit event and
+      // each retry attempt. Defined here so the llm_call summary reflects the
+      // exact payload sent to the API (pass-through, not a whitelist).
+      const streamParams = {
+        model: activeModel,
+        max_tokens: config.maxOutputTokens,
+        system: systemBlocks,
+        tools: cachedTools,
+        messages: cachedMessages,
+        betas: ["compact-2026-01-12"],
+        context_management: {
+          edits: [
+            {
+              type: "compact_20260112",
+              trigger: { type: "input_tokens", value: 150_000 },
+            },
+          ],
+        },
+        thinking: { type: "adaptive" as const },
+      };
+
       // Emit llm_call with a persisted elided request summary.
       {
-        const request = {
-          model: activeModel,
-          max_tokens: config.maxOutputTokens,
-          system: systemBlocks,
-          tools: cachedTools,
-          messages: [...cachedMessages],
-        };
         const llmCallEv: OmegaEvent = {
           type: "llm_call",
           ts: new Date().toISOString(),
@@ -697,8 +709,8 @@ export class Agent {
           contextHashes,
           cacheBreakpointIndex:
             contextHashes.length > 0 ? contextHashes.length - 1 : null,
-          requestBytes: JSON.stringify(request).length,
-          requestSummary: elideAnthropicRequest(request),
+          requestBytes: JSON.stringify(streamParams).length,
+          requestSummary: elideAnthropicRequest(streamParams),
         };
         this.logEvent(llmCallEv);
         yield llmCallEv;
@@ -713,23 +725,6 @@ export class Agent {
           assembledText = "";
           assembledThinking = "";
           inThinkingBlock = false;
-          const streamParams = {
-            model: activeModel,
-            max_tokens: config.maxOutputTokens,
-            system: systemBlocks,
-            tools: cachedTools,
-            messages: cachedMessages,
-            betas: ["compact-2026-01-12"],
-            context_management: {
-              edits: [
-                {
-                  type: "compact_20260112",
-                  trigger: { type: "input_tokens", value: 50_000 },
-                },
-              ],
-            },
-            thinking: { type: "adaptive" as const },
-          };
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
             : this.client.beta.messages.stream(streamParams as any);

@@ -540,6 +540,19 @@ describe("llm_call event", () => {
     expect(e.requestSummary.messages).toMatch(/1 message/);
   });
 
+  it.concurrent("llm_call requestSummary includes all top-level request fields (pass-through)", async () => {
+    const mockProvider: StreamProvider = async () =>
+      makeMockStream(textStreamEvents("hello"), textMessage("hello"));
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hi");
+    const e = events.find((e) => e.type === "llm_call") as any;
+    // thinking and betas must appear — they are part of the actual API payload
+    expect(e.requestSummary.thinking).toEqual({ type: "adaptive" });
+    expect(Array.isArray(e.requestSummary.betas)).toBe(true);
+    expect(e.requestSummary.context_management).toBeDefined();
+  });
+
   it.concurrent("emits llm_call once per round-trip in a tool loop", async () => {
     // First call: tool_use; second call: text response
     let callCount = 0;
