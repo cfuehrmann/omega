@@ -437,9 +437,12 @@ export const toolDefinitions: Anthropic.Tool[] = [
     description:
       "Start a long-running process in the background and return immediately. " +
       "stdout and stderr are redirected to a temporary log file. " +
-      "Returns { pid, logFile } — use read_file on logFile to inspect output, " +
-      "and kill_process(pid) to stop the process when done. " +
-      "Use this for dev servers, file watchers, or any 'start → inspect → stop' workflow.",
+      "Returns { pid, logFile }. " +
+      "Use wait_process(pid) to block until the process finishes and get the exit code. " +
+      "Use read_file on logFile (with offset/limit for large output) and grep_files to inspect output. " +
+      "Use kill_process(pid) to stop the process early. " +
+      "Use this for any slow command — test suites, builds, dev servers, file watchers — " +
+      "so you can continue doing useful work in the same turn instead of blocking.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -453,6 +456,28 @@ export const toolDefinitions: Anthropic.Tool[] = [
         },
       },
       required: ["command"],
+    },
+  },
+  {
+    name: "wait_process",
+    description:
+      "Wait for a background process started with run_background to finish. " +
+      "Blocks until the process exits or timeoutMs is reached (default 60000 ms). " +
+      "Returns { pid, exitCode, signal, timedOut }. " +
+      "Use this to synchronise before reading the logFile from run_background.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pid: {
+          type: "number",
+          description: "Process ID returned by run_background",
+        },
+        timeoutMs: {
+          type: "number",
+          description: "Maximum milliseconds to wait (optional, default 60000)",
+        },
+      },
+      required: ["pid"],
     },
   },
   {
@@ -802,6 +827,13 @@ async function executeFindFiles(input: {
   return `${truncated}\n\n[truncated: showing ${maxResults} of ${lines.length} results]`;
 }
 
+// Map from PID to ChildProcess for wait_process support.
+// Populated by executeRunBackground; entries are removed by executeWaitProcess
+// once it has observed the exit. If wait_process is never called the entry
+// lingers for the session lifetime — that is acceptable because background
+// process count per session is small in practice.
+const backgroundProcesses = new Map<number, ReturnType<typeof spawn>>();
+
 async function executeRunBackground(input: {
   command: string;
   cwd?: string;
@@ -826,7 +858,67 @@ async function executeRunBackground(input: {
     throw new Error("Failed to spawn background process");
   }
 
+  // Track so wait_process can observe the exit event and retrieve the exit code.
+  backgroundProcesses.set(proc.pid, proc);
+
   return JSON.stringify({ pid: proc.pid, logFile });
+}
+
+async function executeWaitProcess(input: {
+  pid: number;
+  timeoutMs?: number;
+}): Promise<string> {
+  const { pid, timeoutMs = 60_000 } = input;
+  const child = backgroundProcesses.get(pid);
+
+  if (!child) {
+    // Not in our map — poll with signal 0 until the OS reports the PID is gone.
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch (err: any) {
+        if (err.code === "ESRCH") {
+          return JSON.stringify({
+            pid,
+            timedOut: false,
+            exitCode: null,
+            note: "exit code unavailable (process not tracked by run_background)",
+          });
+        }
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return JSON.stringify({ pid, timedOut: true });
+  }
+
+  // Already exited? exitCode is set by Node once the process has finished.
+  if (child.exitCode !== null || child.signalCode !== null) {
+    backgroundProcesses.delete(pid);
+    return JSON.stringify({
+      pid,
+      timedOut: false,
+      exitCode: child.exitCode,
+      signal: child.signalCode ?? null,
+    });
+  }
+
+  // Wait for exit with timeout.
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.removeListener("exit", onExit);
+      resolve(JSON.stringify({ pid, timedOut: true }));
+    }, timeoutMs);
+
+    const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
+      clearTimeout(timer);
+      backgroundProcesses.delete(pid);
+      resolve(JSON.stringify({ pid, timedOut: false, exitCode: code, signal: sig }));
+    };
+
+    child.once("exit", onExit);
+  });
 }
 
 function executeKillProcess(input: {
@@ -906,6 +998,9 @@ export async function executeTool(
       case "run_background":
         output = await executeRunBackground(input);
         break;
+      case "wait_process":
+        output = await executeWaitProcess(input);
+        break;
       case "kill_process":
         output = executeKillProcess(input);
         break;
@@ -971,6 +1066,11 @@ export function formatToolCall(name: string, input: any): string {
     }
     case "run_background":
       return `run_background: ${input.command}`;
+    case "wait_process": {
+      let s = `wait_process: pid ${input.pid}`;
+      if (input.timeoutMs) s += ` (timeout ${input.timeoutMs}ms)`;
+      return s;
+    }
     case "kill_process": {
       let s = `kill_process: pid ${input.pid}`;
       if (input.signal) s += ` (${input.signal})`;

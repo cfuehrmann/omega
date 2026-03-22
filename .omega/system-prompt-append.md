@@ -39,6 +39,14 @@ All development work goes on `develop`. Merge to `main` when stable.
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
 - `bun test src/foo.test.ts` — single file, preferred while iterating
 - `just test-browser` — Playwright suite only (builds web client first)
+- `just test-browser-log` — builds frontend (~30 s), then runs Playwright with
+  `--reporter=list`, saving full output to `test-output/playwright-<timestamp>.log`
+  and printing the path. Because it is slow, prefer
+  `run_background("just test-browser-log")` so you can continue working while it
+  runs; then `wait_process(pid)` to synchronise. Read the background `logFile` to
+  find the playwright log path, then inspect that log with `read_file` / `grep_files`
+  (use `offset`/`limit` to paginate). The playwright log persists in `test-output/` —
+  never re-run just to see more output.
 
 `just web-build` bundles the Vite/SolidJS web client into `src/web/public/`. It
 is not a general project build — backend/agent TypeScript is run directly by

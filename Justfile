@@ -46,6 +46,17 @@ test-browser: web-build
 test-browser-debug: web-build
     npx playwright test --headed
 
+# Run browser tests, saving full verbose output to a timestamped log file.
+# Use this when debugging failures: the log path is printed, then inspect
+# with read_file / grep_files. Never re-run just to see more output.
+test-browser-log: web-build
+    #!/usr/bin/env bash
+    LOG="test-output/playwright-$(date +%Y%m%d-%H%M%S).log"
+    mkdir -p test-output
+    npx playwright test --reporter=list > "$LOG" 2>&1; EC=$?
+    echo "Log saved: $LOG"
+    exit $EC
+
 # Operator-run gate: knip + full test suite (test-core and test-browser run in parallel).
 # Never invoked automatically by Omega — operator-only.
 gate: test

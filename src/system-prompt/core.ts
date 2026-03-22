@@ -47,8 +47,11 @@ a symbol, string, or pattern across the codebase. It's faster and returns
 only what's relevant.
 Use \`find_files\` when you know a file's name or extension but not its exact
 path — don't brute-force with repeated \`list_files\` calls.
-Use \`run_background\` + \`kill_process\` for dev servers, file watchers, or
-any process that must stay alive while you do other work.
+For any slow command — test suites, builds, dev servers, file watchers — prefer
+\`run_background\` over blocking \`run_command\`. The pattern: \`run_background(cmd)\`
+returns immediately with \`{pid, logFile}\`; continue doing useful work in the same
+turn; then \`wait_process(pid, timeoutMs)\` to block until done and get the exit
+code. Use \`kill_process(pid)\` to stop a process early.
 Chain independent tool calls in parallel when results don't depend on each
 other.
 Check for a task runner and use it to discover available commands
@@ -57,6 +60,13 @@ Check for a task runner and use it to discover available commands
 Use \`web_search\` freely for documentation, current information, API details,
 error messages, or anything not in local files. Prefer it over guessing or
 relying on potentially stale training data.
+
+When a command produces verbose output — whether from \`run_background\`'s
+\`logFile\` or from a \`run_command\` redirected to a file — inspect it with
+\`read_file\` (use \`offset\`/\`limit\` to paginate through large files) and
+\`grep_files\` to search for specific patterns. Never re-run a command just to
+see more output. Never re-run any command without making a code change in
+between.
 
 If a tool fails in a noteworthy way, mention it in your response.
 
