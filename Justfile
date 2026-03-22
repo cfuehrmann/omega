@@ -63,8 +63,7 @@ typecheck:
     bunx tsc -p src/web/client/tsconfig.json --noEmit
     bunx tsc -p e2e/tsconfig.json --noEmit
 
-# Operator-run gate: typecheck + knip + full test suite (test-core and test-browser run in parallel).
-# Never invoked automatically by Omega — operator-only.
+# Full quality gate: typecheck + full test suite + knip. Run before every commit.
 gate: typecheck test
     bunx knip
 

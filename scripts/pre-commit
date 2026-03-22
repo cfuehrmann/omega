@@ -1,9 +1,8 @@
 #!/bin/sh
-# Pre-commit hook: run unit tests before every commit.
+# Pre-commit hook: run the full quality gate before every commit.
 # Install via: just install-hooks
 #
-# Aborts the commit if any test fails.
-# Does NOT run browser tests (use `just gate` for the full suite).
+# Aborts the commit if anything fails.
 
 # ---------------------------------------------------------------------------
 # Guard: catch bare `new Agent()` with no arguments in test files.
@@ -23,19 +22,19 @@ fi
 echo "✅  No unsafe Agent construction."
 
 # ---------------------------------------------------------------------------
-# Run unit tests.
+# Run the full gate: typecheck + all tests (unit + browser) + knip.
 # ---------------------------------------------------------------------------
-echo "Running bun test --bail (pre-commit gate)..."
-bun test --bail
+echo "Running just gate..."
+just gate
 status=$?
 
 if [ $status -ne 0 ]; then
   echo ""
-  echo "❌  Tests failed — commit aborted."
-  echo "    Fix the failing tests, then commit again."
+  echo "❌  Gate failed — commit aborted."
+  echo "    Fix the failures, then commit again."
   echo "    To skip this check (emergency only): git commit --no-verify"
   exit 1
 fi
 
-echo "✅  Tests passed."
+echo "✅  Gate passed."
 exit 0
