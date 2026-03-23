@@ -1,13 +1,17 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomBytes, createHash } from "node:crypto";
+import { createServer } from "node:http";
 
-// OAuth configuration for Claude Max — endpoints verified against Claude Code source.
+// OAuth configuration for Claude Max.
+// redirect_uri must be localhost — platform.claude.com/oauth/code/callback is
+// no longer accepted by Anthropic's token endpoint (returns 429 indefinitely).
 const OAUTH_CONFIG = {
   clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   authorizeUrl: "https://claude.ai/oauth/authorize",
   tokenUrl: "https://platform.claude.com/v1/oauth/token",
-  redirectUri: "https://platform.claude.com/oauth/code/callback",
+  callbackPort: 53692,
+  get redirectUri() { return `http://localhost:${this.callbackPort}/callback`; },
   scopes: "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers",
 };
 
@@ -91,7 +95,6 @@ async function refreshToken(token: TokenData): Promise<TokenData | null> {
         grant_type: "refresh_token",
         client_id: OAUTH_CONFIG.clientId,
         refresh_token: token.refresh_token,
-        scope: OAUTH_CONFIG.scopes,
       }),
     });
 
@@ -176,21 +179,27 @@ function generatePKCE(): { verifier: string; challenge: string } {
 /**
  * Start the OAuth authorization code flow with PKCE.
  *
- * Returns the authorization URL and an `exchangeCode` function to call
- * once the user has authorized and pasted back the `code#state` string
- * from the redirect URL.
+ * Spins up a local HTTP server on port 53692 to capture the redirect
+ * automatically — no manual code pasting required.
+ *
+ * Returns:
+ *   url      — open this in the browser
+ *   complete — call immediately; resolves when the token is saved
+ *   cancel   — call to abort (shuts down the local server)
  */
 export async function startOAuthFlow(): Promise<{
   url: string;
-  exchangeCode: (codeWithState: string) => Promise<void>;
+  complete: () => Promise<void>;
+  cancel: () => void;
 }> {
   const { verifier, challenge } = generatePKCE();
+  const redirectUri = OAUTH_CONFIG.redirectUri;
 
   const params = new URLSearchParams({
     code: "true",
     client_id: OAUTH_CONFIG.clientId,
     response_type: "code",
-    redirect_uri: OAUTH_CONFIG.redirectUri,
+    redirect_uri: redirectUri,
     scope: OAUTH_CONFIG.scopes,
     code_challenge: challenge,
     code_challenge_method: "S256",
@@ -199,37 +208,92 @@ export async function startOAuthFlow(): Promise<{
 
   const url = `${OAUTH_CONFIG.authorizeUrl}?${params}`;
 
-  const exchangeCode = async (codeWithState: string): Promise<void> => {
-    const parts = codeWithState.split("#");
-    const code = parts[0];
-    const state = parts[1];
+  // Promise that resolves when the browser hits the callback URL.
+  let resolveCallback!: (params: { code: string; state: string }) => void;
+  let rejectCallback!: (err: Error) => void;
+  const callbackPromise = new Promise<{ code: string; state: string }>((res, rej) => {
+    resolveCallback = res;
+    rejectCallback = rej;
+  });
 
-    const resp = await fetch(OAUTH_CONFIG.tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "authorization_code",
-        client_id: OAUTH_CONFIG.clientId,
-        code,
-        state,
-        redirect_uri: OAUTH_CONFIG.redirectUri,
-        code_verifier: verifier,
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`Token exchange failed (${resp.status}): ${text}`);
+  const server = createServer((req, res) => {
+    const reqUrl = new URL(req.url ?? "/", `http://localhost:${OAUTH_CONFIG.callbackPort}`);
+    if (reqUrl.pathname !== "/callback") {
+      res.writeHead(404); res.end(); return;
     }
+    const code  = reqUrl.searchParams.get("code");
+    const state = reqUrl.searchParams.get("state");
+    const error = reqUrl.searchParams.get("error");
+    if (error) {
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end("<html><body><h2>Authorization failed. You can close this tab.</h2></body></html>");
+      rejectCallback(new Error(`Authorization error: ${error}`));
+      return;
+    }
+    if (!code || !state) {
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end("<html><body><h2>Missing code or state. You can close this tab.</h2></body></html>");
+      rejectCallback(new Error("Missing code or state in callback"));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<html><body><h2>Authorized &#8212; you can close this tab.</h2></body></html>");
+    resolveCallback({ code, state });
+  });
 
-    const data = (await resp.json()) as any;
-    const token: TokenData = {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_at: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
-    };
-    await saveToken(token);
+  await new Promise<void>((res, rej) => {
+    server.on("error", rej);
+    server.listen(OAUTH_CONFIG.callbackPort, "127.0.0.1", res);
+  });
+
+  const cancel = () => {
+    server.close();
+    rejectCallback(new Error("OAuth cancelled"));
   };
 
-  return { url, exchangeCode };
+  const complete = async (): Promise<void> => {
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    const timer = setTimeout(() => {
+      server.close();
+      rejectCallback(new Error("OAuth timed out after 5 minutes"));
+    }, TIMEOUT_MS);
+
+    try {
+      const { code, state } = await callbackPromise;
+      clearTimeout(timer);
+      server.close();
+
+      const resp = await fetch(OAUTH_CONFIG.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "authorization_code",
+          client_id: OAUTH_CONFIG.clientId,
+          code,
+          state,
+          redirect_uri: redirectUri,
+          code_verifier: verifier,
+        }),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Token exchange failed (${resp.status}): ${text}`);
+      }
+
+      const data = (await resp.json()) as any;
+      const token: TokenData = {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
+      };
+      await saveToken(token);
+    } catch (err) {
+      clearTimeout(timer);
+      server.close();
+      throw err;
+    }
+  };
+
+  return { url, complete, cancel };
 }

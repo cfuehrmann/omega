@@ -218,8 +218,7 @@ export function isRetryable(err: any): boolean {
  *    (e.g. the user re-authenticated in another session)
  *
  * NOT matched: "OAuth authentication is currently not supported" — that is a
- * server-side rejection (known Anthropic intermittent issue, also seen in
- * Claude Code), not a stale token; refreshing the token cannot fix it.
+ * server-side rejection, not a stale token; refreshing the token cannot fix it.
  */
 export function isAuthExpired(err: any): boolean {
   if (!err) return false;
@@ -247,8 +246,7 @@ export function isAuthExpired(err: any): boolean {
 
 /**
  * Returns true when the Anthropic API responds with 401 "OAuth authentication
- * is currently not supported." — a known intermittent server-side issue that
- * cannot be fixed by refreshing the token.
+ * is currently not supported." — cannot be fixed by refreshing the token.
  */
 function isOAuthNotSupported(err: any): boolean {
   if (!err) return false;
@@ -607,18 +605,21 @@ export class Agent {
    *
    * If a valid OAuth token already exists, switches immediately and returns
    * Starts the PKCE authorization flow and returns
-   * { kind: "needs_oauth", url, complete } — the caller should show the URL
-   * to the user and call complete(codeWithState) once they paste it back.
+   * { kind: "needs_oauth", url, complete, cancel } — show the URL to the user;
+   * complete() resolves automatically when the localhost callback is received.
    */
-  async requestClaudeMaxSwitch(): Promise<
-    { kind: "needs_oauth"; url: string; complete: (codeWithState: string) => Promise<AuthModeChangedEvent> }
-  > {
+  async requestClaudeMaxSwitch(): Promise<{
+    kind: "needs_oauth";
+    url: string;
+    complete: () => Promise<AuthModeChangedEvent>;
+    cancel: () => void;
+  }> {
     // Always start a fresh OAuth flow. The user is explicitly requesting
     // Claude Max authentication — never silently reuse a cached token that
     // may be stale or invalid.
-    const { url, exchangeCode } = await startOAuthFlow();
-    const complete = async (codeWithState: string): Promise<AuthModeChangedEvent> => {
-      await exchangeCode(codeWithState);
+    const { url, complete: waitForCallback, cancel } = await startOAuthFlow();
+    const complete = async (): Promise<AuthModeChangedEvent> => {
+      await waitForCallback();
       const fresh = await getAuthToken();
       if (fresh.kind !== "ok") {
         throw new Error("Token exchange succeeded but token is unreadable.");
@@ -634,7 +635,7 @@ export class Agent {
       this.logEvent(ev);
       return ev;
     };
-    return { kind: "needs_oauth", url, complete };
+    return { kind: "needs_oauth", url, complete, cancel };
   }
 
   /**
@@ -1050,16 +1051,15 @@ export class Agent {
               this.logEvent(overflowEv);
               yield overflowEv;
             } else if (isOAuthNotSupported(err)) {
-              // Known intermittent Anthropic issue — the server rejects OAuth
-              // outright (also seen in claude-code/issues/5893). Not a stale
-              // token; refreshing cannot fix it. Give an actionable message.
+              // The Anthropic API returned 401 "OAuth authentication is
+              // currently not supported." Not a stale token; refreshing
+              // cannot fix it.
               const oauthRejectedEv: OmegaEvent = {
                 type: "agent_error",
                 ts: new Date().toISOString(),
                 error:
-                  "Anthropic rejected OAuth authentication ('OAuth authentication is currently not supported'). " +
-                  "This is a known intermittent server-side issue — try sending your message again shortly, " +
-                  "or switch to API key mode.",
+                  "Anthropic API returned: \"OAuth authentication is currently not supported.\" " +
+                  "Try switching to API key mode.",
               };
               this.logEvent(oauthRejectedEv);
               yield oauthRejectedEv;

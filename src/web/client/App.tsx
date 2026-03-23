@@ -954,26 +954,21 @@ function SessionBar() {
 // ---------------------------------------------------------------------------
 
 function ClaudeMaxDialog() {
-  const [code, setCode] = createSignal("");
-
   const show = () => claudeMaxDialogOpen() || !!state.oauthUrl;
 
-  const submit = () => {
-    const trimmed = code().trim();
-    if (trimmed) {
-      sendToServer({ type: "submit_oauth_code", code: trimmed });
-      setCode("");
-    }
-    dispatch({ type: "oauth_cancelled" }); // clear state.oauthUrl so the dialog closes
+  const cancel = () => {
+    dispatch({ type: "oauth_cancelled" });
+    sendToServer({ type: "cancel_oauth" });
     setClaudeMaxDialogOpen(false);
   };
 
-  const cancel = () => {
-    dispatch({ type: "oauth_cancelled" }); // clear state.oauthUrl immediately
-    sendToServer({ type: "cancel_oauth" });
-    setCode("");
-    setClaudeMaxDialogOpen(false);
-  };
+  // Close automatically when the server confirms auth_mode_changed
+  // (store sets oauthUrl → null; we also clear claudeMaxDialogOpen).
+  createEffect(() => {
+    if (claudeMaxDialogOpen() && state.authMode === "claude-max" && !state.oauthUrl) {
+      setClaudeMaxDialogOpen(false);
+    }
+  });
 
   return (
     <Show when={show()}>
@@ -997,26 +992,7 @@ function ClaudeMaxDialog() {
               </Show>
             </li>
             <li>Sign in with your Claude Max account and authorize Omega.</li>
-            <li>
-              <span>Paste the code from the browser URL bar:</span>
-              <div class="oauth-code-row">
-                <input
-                  type="text"
-                  class="oauth-code-input"
-                  placeholder="code#state"
-                  value={code()}
-                  onInput={(e) => setCode(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submit();
-                    if (e.key === "Escape") cancel();
-                  }}
-                  autofocus
-                />
-                <button class="oauth-submit-btn" onClick={submit} disabled={!code().trim()}>
-                  Submit
-                </button>
-              </div>
-            </li>
+            <li><span class="oauth-waiting">Waiting for authorization…</span></li>
           </ol>
           <button class="oauth-cancel-btn" onClick={cancel}>Cancel</button>
         </div>
