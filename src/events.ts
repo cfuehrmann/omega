@@ -222,20 +222,6 @@ export interface CompactedEvent {
   usage: unknown;
 }
 
-/** OAuth token was successfully refreshed mid-session. */
-export interface OauthRefreshedEvent {
-  type: "oauth_refreshed";
-  ts: string;
-}
-
-/** OAuth token expired, triggering a refresh attempt. */
-export interface OauthTokenExpiredEvent {
-  type: "oauth_token_expired";
-  ts: string;
-  attempt: number;
-  httpStatus?: number;
-}
-
 /** LLM provider call retried after a transient error. */
 export interface LlmRetryEvent {
   type: "llm_retry";
@@ -253,13 +239,6 @@ export interface ModelChangedEvent {
   type: "model_changed";
   ts: string;
   model: string;
-}
-
-/** The operator switched the auth mode (claude-max ↔ api-key). */
-export interface AuthModeChangedEvent {
-  type: "auth_mode_changed";
-  ts: string;
-  authMode: "claude-max" | "api-key";
 }
 
 /**
@@ -310,9 +289,6 @@ export type OmegaEvent =
   | AgentErrorEvent
   | TurnInterruptedEvent
   | CompactedEvent
-  | OauthRefreshedEvent
-  | OauthTokenExpiredEvent
   | LlmRetryEvent
   | ModelChangedEvent
-  | AuthModeChangedEvent
   | TransportErrorEvent;

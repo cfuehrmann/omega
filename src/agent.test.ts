@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { isAutoApproved, isRetryable, isAuthExpired, isContextTooLong } from "./agent.js";
+import { isAutoApproved, isRetryable, isContextTooLong } from "./agent.js";
 // isAutoApproved is kept exported for logging purposes; it always returns true.
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -80,9 +80,6 @@ describe("isRetryable", () => {
   });
 
   it("does NOT retry on 429 'Extra usage is required for long context requests'", () => {
-    // Claude Max OAuth returns 429 with this message when the prompt exceeds
-    // the context window for the account tier. Retrying with the same payload
-    // is futile — treat as non-retryable so we fall through to graceful handling.
     const longContextErr = Object.assign(
       new Error("429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Extra usage is required for long context requests.\"}}"),
       { status: 429 }
@@ -117,53 +114,7 @@ describe("isContextTooLong", () => {
   });
 });
 
-// --- Auth expiry detection ---
 
-describe("isAuthExpired", () => {
-  it("returns true for 401 with authentication_error in message", () => {
-    const err: any = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}');
-    err.status = 401;
-    expect(isAuthExpired(err)).toBe(true);
-  });
-
-  it("returns true for 401 with 'OAuth token has expired' in message", () => {
-    const err: any = new Error("OAuth token has expired. Please obtain a new token.");
-    err.status = 401;
-    expect(isAuthExpired(err)).toBe(true);
-  });
-
-  it("returns true for 403 permission_error with 'revoked' in message", () => {
-    const err: any = new Error('403 {"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked. Please obtain a new token."}}');
-    err.status = 403;
-    expect(isAuthExpired(err)).toBe(true);
-  });
-
-  it("returns true for 403 with 'OAuth token has been revoked' text", () => {
-    const err: any = new Error("OAuth token has been revoked. Please obtain a new token.");
-    err.status = 403;
-    expect(isAuthExpired(err)).toBe(true);
-  });
-
-  it("returns false for 403 without revoked/auth keyword", () => {
-    const err: any = new Error("Forbidden: insufficient permissions");
-    err.status = 403;
-    expect(isAuthExpired(err)).toBe(false);
-  });
-
-  it("returns false for 429 (rate limit)", () => {
-    expect(isAuthExpired({ status: 429 })).toBe(false);
-  });
-
-  it("returns false for null", () => {
-    expect(isAuthExpired(null)).toBe(false);
-  });
-
-  it("returns false for 401 without auth_error keyword", () => {
-    const err: any = new Error("Not found");
-    err.status = 401;
-    expect(isAuthExpired(err)).toBe(false);
-  });
-});
 
 
 

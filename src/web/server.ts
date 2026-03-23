@@ -9,15 +9,10 @@
  *   { type: "message", content: string }            — send a user prompt
  *   { type: "abort" }                               — abort the current turn
  *   { type: "set_model", model: string }            — switch LLM model
- *   { type: "set_auth_mode", mode: string }         — switch auth mode
- *   { type: "cancel_oauth" }                        — cancel OAuth flow
  *
  * Protocol (server → client):
  *   All OmegaEvent shapes from events.ts, JSON-serialised.
  *   Extra: { type: "connected" }            — sent on WebSocket open
- *          { type: "auth", mode: string }   — auth mode at session start
- *          { type: "oauth_url", url: string } — open in browser; completes automatically
- *          { type: "oauth_cancelled" }      — OAuth flow cancelled
  *
  * Persistence: identical to the terminal UI. Agent writes context.jsonl and
  * events.jsonl into .omega/sessions/<timestamp>/. History replay on reconnect
@@ -203,8 +198,6 @@ interface Session {
   ws: ServerWebSocket<unknown>;
   abortController: AbortController | null;
   isStreaming: boolean;
-  /** Cancel function for the in-progress OAuth flow, if any. */
-  pendingOAuthCancel?: () => void;
 }
 
 let activeSession: Session | null = null;
@@ -272,12 +265,9 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     });
 
     persistentAgent.init()
-      .then(mode => {
-        send(session.ws, { type: "auth", mode });
-        return persistentAgent.loadSystemPromptAppend().catch(() => {});
-      })
+      .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
       .catch((err: any) => {
-        send(session.ws, { type: "auth", mode: `error: ${err.message}` });
+        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err.message}` });
       });
     return;
   }
@@ -294,50 +284,6 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     }
     const ev = persistentAgent.setModel(model);
     send(session.ws, ev);
-    return;
-  }
-
-  if (msg.type === "set_auth_mode") {
-    if (session.isStreaming) {
-      sendTransportError(session.ws, "Cannot switch auth mode during an active turn", "handleMessage");
-      return;
-    }
-    const mode: string = String(msg.mode ?? "");
-    if (mode === "api-key") {
-      try {
-        const ev = await persistentAgent.switchToApiKey();
-        send(session.ws, ev);
-      } catch (err: any) {
-        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: err.message });
-      }
-    } else if (mode === "claude-max") {
-      try {
-        const result = await persistentAgent.requestClaudeMaxSwitch();
-        session.pendingOAuthCancel = result.cancel;
-        send(session.ws, { type: "oauth_url", url: result.url });
-        // complete() waits for the localhost callback and does the exchange.
-        result.complete().then(ev => {
-          session.pendingOAuthCancel = undefined;
-          send(session.ws, ev);
-        }).catch((err: any) => {
-          session.pendingOAuthCancel = undefined;
-          if (err?.message !== "OAuth cancelled") {
-            send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `OAuth failed: ${err.message}` });
-          }
-        });
-      } catch (err: any) {
-        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: err.message });
-      }
-    } else {
-      send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Unknown auth mode: ${mode}` });
-    }
-    return;
-  }
-
-  if (msg.type === "cancel_oauth") {
-    session.pendingOAuthCancel?.();
-    session.pendingOAuthCancel = undefined;
-    send(session.ws, { type: "oauth_cancelled" });
     return;
   }
 
@@ -450,12 +396,9 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         });
 
         persistentAgent.init()
-          .then(mode => {
-            send(ws, { type: "auth", mode });
-            return persistentAgent.loadSystemPromptAppend().catch(() => {});
-          })
+          .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
           .catch((err: any) => {
-            send(ws, { type: "auth", mode: `error: ${err.message}` });
+            send(ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err.message}` });
           });
       },
 

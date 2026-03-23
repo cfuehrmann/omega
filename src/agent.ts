@@ -1,15 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
-import {
-  getAuthToken,
-  forceRefreshToken,
-  readAuthConfig,
-  writeAuthConfig,
-  startOAuthFlow,
-  type AuthMode,
-} from "./auth.js";
-import type { AuthModeChangedEvent } from "./events.js";
 
 import {
   readSystemPromptAppend,
@@ -169,11 +160,8 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Returns true if the error is a "context too long" refusal from Claude Max's
- * OAuth endpoint. Claude Max returns 429 (not 400) with the message
- * "Extra usage is required for long context requests." when the prompt exceeds
- * the context window allowed for the account tier. Retrying with the same
- * payload is futile — this must be treated as non-retryable.
+ * Returns true if the error is a "context too long" 429 from the API.
+ * Retrying with the same payload is futile — treat as non-retryable.
  */
 export function isContextTooLong(err: any): boolean {
   if (!err) return false;
@@ -187,8 +175,7 @@ export function isContextTooLong(err: any): boolean {
 
 export function isRetryable(err: any): boolean {
   if (!err) return false;
-  // A 429 from Claude Max meaning "prompt too long for your tier" is NOT transient.
-  // Exclude it before the blanket status check so we don't retry fruitlessly.
+  // A 429 meaning "prompt too long" is NOT transient — don't retry fruitlessly.
   if (isContextTooLong(err)) return false;
   const status = err.status ?? err.statusCode;
   if (status === 429 || status === 529 || status === 500 || status === 503)
@@ -208,54 +195,6 @@ export function isRetryable(err: any): boolean {
     if (msg.includes("ECONNRESET")) return true;
   }
   return false;
-}
-
-/**
- * Returns true if the error is an OAuth token auth failure that can be
- * recovered by refreshing the token. Covers two cases:
- *  - 401 authentication_error: token expired (normal session timeout)
- *  - 403 permission_error with "revoked": token was explicitly revoked
- *    (e.g. the user re-authenticated in another session)
- *
- * NOT matched: "OAuth authentication is currently not supported" — that is a
- * server-side rejection, not a stale token; refreshing the token cannot fix it.
- */
-export function isAuthExpired(err: any): boolean {
-  if (!err) return false;
-  const status = err.status ?? err.statusCode;
-  const msg: string =
-    typeof err.message === "string" ? err.message : JSON.stringify(err);
-  if (status === 401) {
-    // "OAuth authentication is currently not supported" is a server-side
-    // rejection, not a token expiry — a refresh cannot fix it.
-    if (msg.includes("currently not supported")) return false;
-    return (
-      msg.includes("authentication_error") ||
-      msg.includes("OAuth token has expired")
-    );
-  }
-  if (status === 403) {
-    // Anthropic 403 body: {"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked..."}}
-    return (
-      msg.includes("revoked") &&
-      (msg.includes("permission_error") || msg.includes("OAuth token"))
-    );
-  }
-  return false;
-}
-
-/**
- * Returns true when the Anthropic API responds with 401 "OAuth authentication
- * is currently not supported." — cannot be fixed by refreshing the token.
- */
-function isOAuthNotSupported(err: any): boolean {
-  if (!err) return false;
-  const msg: string =
-    typeof err.message === "string" ? err.message : JSON.stringify(err);
-  return (
-    (err.status ?? err.statusCode) === 401 &&
-    msg.includes("currently not supported")
-  );
 }
 
 // --- Context window management ---
@@ -337,7 +276,6 @@ export class Agent {
   public sessionCacheCreationTokens = 0;
   public sessionCacheReadTokens = 0;
 
-  private authMode: "api-key" | "oauth" = "api-key";
   private activeModel: string = config.model;
   /** True once session_start has been logged — prevents duplicate on reconnect. */
   private sessionStartLogged = false;
@@ -473,96 +411,13 @@ export class Agent {
     }
   }
 
-  async init(): Promise<AuthMode> {
-    // In tests: skip config file and OAuth network calls entirely.
-    if (process.env.OMEGA_TEST === "1") {
-      if (process.env.ANTHROPIC_API_KEY) {
-        this.client = new Anthropic();
-        this.authMode = "api-key";
-        await this.logSessionStart("api-key");
-        return "api-key";
-      }
-      // Mock provider — no real API calls, auth doesn't matter.
-      this.authMode = "api-key";
-      return "api-key";
-    }
-
-    // Read the persisted auth mode preference.
-    let config = await readAuthConfig();
-
-    if (!config) {
-      // First run: auto-detect and persist.
-      const auth = await getAuthToken();
-      if (auth.kind === "ok") {
-        await writeAuthConfig("claude-max");
-        config = { authMode: "claude-max" };
-      } else if (process.env.ANTHROPIC_API_KEY) {
-        // OAuth broken or absent but API key available — default to api-key.
-        await writeAuthConfig("api-key");
-        config = { authMode: "api-key" };
-      } else {
-        throw new Error(
-          "No authentication configured. Use the auth dropdown to sign in with Claude Max, or set ANTHROPIC_API_KEY.",
-        );
-      }
-    }
-
-    if (config.authMode === "claude-max") {
-      return await this.initClaudeMax();
-    } else {
-      return await this.initApiKey();
-    }
-  }
-
-  private async initClaudeMax(): Promise<AuthMode> {
-    const auth = await getAuthToken();
-    if (auth.kind === "refresh_failed") {
+  async init(): Promise<void> {
+    if (!process.env.OMEGA_TEST && !process.env.ANTHROPIC_API_KEY) {
       throw new Error(
-        "Claude Max session expired. Use the auth dropdown to re-authenticate.",
-      );
-    }
-    if (auth.kind === "no_token") {
-      throw new Error(
-        "Claude Max not configured. Use the auth dropdown to sign in.",
-      );
-    }
-    this.client = this.makeOAuthClient(auth.token);
-    this.authMode = "oauth";
-    await this.logSessionStart("claude-max");
-    return "claude-max";
-  }
-
-  private async initApiKey(): Promise<AuthMode> {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error(
-        "API key mode: ANTHROPIC_API_KEY is not set in the environment.",
+        "ANTHROPIC_API_KEY is not set. Set it in the environment to use Omega.",
       );
     }
     this.client = new Anthropic();
-    this.authMode = "api-key";
-    await this.logSessionStart("api-key");
-    return "api-key";
-  }
-
-  private makeOAuthClient(token: string): Anthropic {
-    return new Anthropic({
-      apiKey: null as any,
-      authToken: token,
-      // ?beta=true is required for Anthropic's backend to accept OAuth bearer
-      // tokens — without it the API returns 401 "OAuth authentication is
-      // currently not supported."  (Observed in Claude Code network traffic.)
-      defaultQuery: { beta: "true" },
-      defaultHeaders: {
-        accept: "application/json",
-        "anthropic-dangerous-direct-browser-access": "true",
-        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-        "user-agent": "claude-cli/2.1.2 (external, cli)",
-        "x-app": "cli",
-      },
-    });
-  }
-
-  private async logSessionStart(authMode: AuthMode): Promise<void> {
     if (!this.sessionStartLogged) {
       this.sessionStartLogged = true;
       await this.logEvent({
@@ -570,72 +425,10 @@ export class Agent {
         ts: new Date().toISOString(),
         sessionId: this.sessionId,
         model: this.activeModel,
-        authMode,
+        authMode: "api-key",
         systemPrompt: this.buildSystemPrompt(),
       });
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Auth mode and model switching (called by server to handle WS messages)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Switch to API key mode. Throws if ANTHROPIC_API_KEY is not set.
-   * Returns the persisted auth_mode_changed event.
-   */
-  async switchToApiKey(): Promise<AuthModeChangedEvent> {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY is not set in the environment.");
-    }
-    await writeAuthConfig("api-key");
-    this.client = new Anthropic();
-    this.authMode = "api-key";
-    const ev: AuthModeChangedEvent = {
-      type: "auth_mode_changed",
-      ts: new Date().toISOString(),
-      authMode: "api-key",
-    };
-    this.logEvent(ev);
-    return ev;
-  }
-
-  /**
-   * Request a switch to Claude Max mode.
-   *
-   * If a valid OAuth token already exists, switches immediately and returns
-   * Starts the PKCE authorization flow and returns
-   * { kind: "needs_oauth", url, complete, cancel } — show the URL to the user;
-   * complete() resolves automatically when the localhost callback is received.
-   */
-  async requestClaudeMaxSwitch(): Promise<{
-    kind: "needs_oauth";
-    url: string;
-    complete: () => Promise<AuthModeChangedEvent>;
-    cancel: () => void;
-  }> {
-    // Always start a fresh OAuth flow. The user is explicitly requesting
-    // Claude Max authentication — never silently reuse a cached token that
-    // may be stale or invalid.
-    const { url, complete: waitForCallback, cancel } = await startOAuthFlow();
-    const complete = async (): Promise<AuthModeChangedEvent> => {
-      await waitForCallback();
-      const fresh = await getAuthToken();
-      if (fresh.kind !== "ok") {
-        throw new Error("Token exchange succeeded but token is unreadable.");
-      }
-      await writeAuthConfig("claude-max");
-      this.client = this.makeOAuthClient(fresh.token);
-      this.authMode = "oauth";
-      const ev: AuthModeChangedEvent = {
-        type: "auth_mode_changed",
-        ts: new Date().toISOString(),
-        authMode: "claude-max",
-      };
-      this.logEvent(ev);
-      return ev;
-    };
-    return { kind: "needs_oauth", url, complete, cancel };
   }
 
   /**
@@ -661,26 +454,8 @@ export class Agent {
     });
   }
 
-  getAuthMode(): string {
-    return this.authMode;
-  }
-
   getActiveModel(): string {
     return this.activeModel;
-  }
-
-  /**
-   * Force-refresh the OAuth token and reinitialize the Anthropic client.
-   * Call this after receiving a 401 authentication_error mid-session.
-   * Returns true if reinit succeeded, false if refresh failed.
-   */
-  async reinitAuth(): Promise<boolean> {
-    if (this.authMode !== "oauth") return false; // nothing to refresh for API keys
-    const newToken = await forceRefreshToken();
-    if (!newToken) return false;
-    this.client = this.makeOAuthClient(newToken);
-    this.logEvent({ type: "oauth_refreshed", ts: new Date().toISOString() });
-    return true;
   }
 
   getCompactedContextHistory(): readonly Anthropic.MessageParam[] {
@@ -965,49 +740,7 @@ export class Agent {
         } catch (err: any) {
           lastError = err;
 
-          if (isAuthExpired(err) && attempt === 0) {
-            // OAuth token expired or revoked mid-session — try to refresh and retry once
-            const expiredEv: OmegaEvent = {
-              type: "oauth_token_expired",
-              ts: new Date().toISOString(),
-              attempt: attempt + 1,
-              httpStatus: err.status ?? err.statusCode,
-            };
-            this.logEvent(expiredEv);
-            yield expiredEv;
-            const reauthed = await this.reinitAuth();
-            if (reauthed) {
-              // reinitAuth already logs oauth_refreshed; yield it for the UI too
-              yield { type: "oauth_refreshed", ts: new Date().toISOString() };
-              // Loop continues — the next iteration will use the fresh client
-            } else {
-              const llmErrEv: OmegaEvent = {
-                type: "llm_error",
-                ts: new Date().toISOString(),
-                url: "https://api.anthropic.com/v1/messages",
-                error: err.message ?? String(err),
-                httpStatus: err.status ?? err.statusCode,
-              };
-              this.logEvent(llmErrEv);
-              yield llmErrEv;
-              const authFailEv: OmegaEvent = {
-                type: "agent_error",
-                ts: new Date().toISOString(),
-                error:
-                  `OAuth refresh failed: ${err.message ?? String(err)} — run \`bun run src/login.ts\` to re-authenticate.`,
-              };
-              this.logEvent(authFailEv);
-              yield authFailEv;
-              const oauthInterruptEv: OmegaEvent = {
-                type: "turn_interrupted",
-                ts: new Date().toISOString(),
-                reason: "error",
-              };
-              this.logEvent(oauthInterruptEv);
-              yield oauthInterruptEv;
-              return;
-            }
-          } else if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
+          if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(
               err,
               attempt,
@@ -1050,19 +783,6 @@ export class Agent {
               };
               this.logEvent(overflowEv);
               yield overflowEv;
-            } else if (isOAuthNotSupported(err)) {
-              // The Anthropic API returned 401 "OAuth authentication is
-              // currently not supported." Not a stale token; refreshing
-              // cannot fix it.
-              const oauthRejectedEv: OmegaEvent = {
-                type: "agent_error",
-                ts: new Date().toISOString(),
-                error:
-                  "Anthropic API returned: \"OAuth authentication is currently not supported.\" " +
-                  "Try switching to API key mode.",
-              };
-              this.logEvent(oauthRejectedEv);
-              yield oauthRejectedEv;
             } else if (isRetryable(err)) {
               const rateLimitEv: OmegaEvent = {
                 type: "agent_error",
