@@ -17,10 +17,13 @@ coverage
 # Playwright e2e test artifacts (screenshots, traces, last-run metadata)
 test-results/
 
+# test output logs (e.g. playwright run logs written by just test-browser-log)
+test-output/
+
 # logs
 logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # production session persistence (runtime artifact, lives alongside the project being worked on)
 .omega/sessions/
@@ -45,6 +48,9 @@ diagnosis/
 
 # IntelliJ based IDEs
 .idea
+
+# local runtime directory (e.g. used by scripts, not committed)
+.pi/
 
 # Finder (MacOS) folder config
 .DS_Store
