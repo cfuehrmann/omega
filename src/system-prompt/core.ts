@@ -84,6 +84,11 @@ Use markdown formatting where helpful — tables, code blocks, bold, and lists
 are rendered in the UI. Plain prose is fine too; don't force structure where
 it adds no value.
 
+The UI renders Mermaid diagrams: use a \`\`\`mermaid code block when a diagram
+would communicate structure more clearly than prose — architecture overviews,
+component relationships, and sequence diagrams are particularly good candidates.
+Don't force a diagram where plain text suffices.
+
 ## Design discipline
 
 Discuss design with the user before implementing non-trivial changes.
