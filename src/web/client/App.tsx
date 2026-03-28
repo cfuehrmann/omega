@@ -74,6 +74,7 @@ function addCopyButton(pre: HTMLPreElement, textToCopy: string): void {
 /**
  * Post-process all `<pre>` blocks inside a rendered markdown container:
  * add copy buttons and apply diff colouring where applicable.
+ * Mermaid blocks are marked `.mermaid-pending` for async rendering.
  * Idempotent — skips blocks already marked with `data-enhanced`.
  */
 function enhanceCodeBlocks(container: HTMLElement): void {
@@ -85,6 +86,14 @@ function enhanceCodeBlocks(container: HTMLElement): void {
     // Capture raw text before any DOM transformation
     const textToCopy = code?.textContent ?? pre.textContent ?? "";
 
+    if (code?.className.includes("language-mermaid")) {
+      // Copy button and SVG will be added to a wrapper by renderMermaidBlocks.
+      // Store the source so the wrapper can copy it.
+      pre.dataset.mermaidSource = textToCopy;
+      pre.classList.add("mermaid-pending");
+      return;
+    }
+
     addCopyButton(pre, textToCopy);
 
     if (code) {
@@ -94,6 +103,76 @@ function enhanceCodeBlocks(container: HTMLElement): void {
       }
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Mermaid — lazy-loaded, rendered async after markdown settles
+// ---------------------------------------------------------------------------
+
+let _mermaid: typeof import("mermaid").default | null = null;
+let _mermaidInitialised = false;
+let _mermaidCounter = 0;
+
+async function getMermaid(): Promise<typeof import("mermaid").default> {
+  if (!_mermaid) {
+    const mod = await import("mermaid");
+    _mermaid = mod.default;
+  }
+  if (!_mermaidInitialised) {
+    _mermaid.initialize({ startOnLoad: false, theme: "dark" });
+    _mermaidInitialised = true;
+  }
+  return _mermaid;
+}
+
+/**
+ * Find all `.mermaid-pending` `<pre>` elements inside `container`, render
+ * each as an SVG diagram, and replace them with a wrapper div that carries
+ * the diagram (or an error notice + raw source on failure) and a copy button.
+ */
+async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
+  const blocks = Array.from(
+    container.querySelectorAll<HTMLPreElement>("pre.mermaid-pending"),
+  );
+  if (blocks.length === 0) return;
+
+  // Remove class synchronously before any await so concurrent calls
+  // cannot pick up the same elements.
+  blocks.forEach(pre => pre.classList.remove("mermaid-pending"));
+
+  const mermaid = await getMermaid();
+
+  for (const pre of blocks) {
+    const source = pre.dataset.mermaidSource ?? pre.textContent ?? "";
+    const id = `mermaid-svg-${++_mermaidCounter}`;
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "mermaid-wrapper";
+
+    // Copy button on the wrapper (copies the raw source text)
+    addCopyButton(wrapper as unknown as HTMLPreElement, source);
+
+    try {
+      const { svg } = await mermaid.render(id, source);
+      const diagram = document.createElement("div");
+      diagram.className = "mermaid-diagram";
+      diagram.innerHTML = svg;
+      wrapper.appendChild(diagram);
+    } catch (err) {
+      wrapper.classList.add("mermaid-error");
+      const notice = document.createElement("div");
+      notice.className = "mermaid-error-notice";
+      notice.textContent = `⚠ Mermaid error: ${err instanceof Error ? err.message : String(err)}`;
+      wrapper.appendChild(notice);
+      // Show the raw source so the user can read/fix it
+      const sourcePre = document.createElement("pre");
+      sourcePre.className = "mermaid-source";
+      sourcePre.textContent = source;
+      wrapper.appendChild(sourcePre);
+    }
+
+    pre.replaceWith(wrapper);
+  }
 }
 
 /**
@@ -198,6 +277,7 @@ function MdBody(props: { text: string }) {
   createEffect(() => {
     ref.innerHTML = renderMarkdown(props.text);
     enhanceCodeBlocks(ref);
+    void renderMermaidBlocks(ref);
   });
   return <div class="block-body md-body" ref={ref} />;
 }

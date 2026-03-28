@@ -912,6 +912,57 @@ html, body, #root {
 .md-body strong { color: var(--ctp-text); }
 .md-body em { color: var(--ctp-subtext1); }
 
+/* ── Mermaid diagram wrapper ── */
+
+.mermaid-wrapper {
+  position: relative;
+  margin: 0 0 8px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--ctp-mantle);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Show the copy button on hover (mirrors .md-body pre:hover rule) */
+.mermaid-wrapper:hover .code-copy-btn { opacity: 1; }
+
+.mermaid-diagram {
+  width: 100%;
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+}
+
+/* Let the SVG scale to the container but not exceed it */
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-error-notice {
+  font-size: 12px;
+  color: var(--red);
+  margin-bottom: 8px;
+  align-self: flex-start;
+}
+
+.mermaid-source {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--ctp-subtext1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  align-self: flex-start;
+  width: 100%;
+}
+
 /* ── Render error boundary ── */
 .render-error {
   background: color-mix(in srgb, var(--ctp-red) 8%, var(--bg));
