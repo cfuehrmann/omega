@@ -24,7 +24,7 @@ afterEach(async () => {
 
 describe("appendContextMessage", () => {
   it("creates the file and writes one message as JSONL with hash and ts", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     await appendContextMessage(msg, contextFile);
 
     const raw = await readFile(contextFile, "utf-8");
@@ -41,7 +41,7 @@ describe("appendContextMessage", () => {
   });
 
   it("returns the hash of the stored record", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     const hash = await appendContextMessage(msg, contextFile);
     expect(typeof hash).toBe("string");
     expect(hash).toHaveLength(8);
@@ -53,8 +53,8 @@ describe("appendContextMessage", () => {
   });
 
   it("appends a second message on a new line", async () => {
-    const msg1: Anthropic.MessageParam = { role: "user", content: "hello" };
-    const msg2: Anthropic.MessageParam = {
+    const msg1: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
+    const msg2: Anthropic.Beta.Messages.BetaMessageParam = {
       role: "assistant",
       content: [{ type: "text", text: "world" }],
     };
@@ -74,7 +74,7 @@ describe("appendContextMessage", () => {
   });
 
   it("round-trips complex content (tool use blocks)", async () => {
-    const msg: Anthropic.MessageParam = {
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = {
       role: "assistant",
       content: [
         { type: "text", text: "Let me check that." },
@@ -100,7 +100,7 @@ describe("appendContextMessage", () => {
   });
 
   it("identical content at different times produces different hashes (ts prevents collision)", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "ok" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "ok" };
     // Small delay to ensure different ts values
     const hash1 = await appendContextMessage(msg, contextFile);
     await new Promise(r => setTimeout(r, 5));
@@ -110,7 +110,7 @@ describe("appendContextMessage", () => {
   });
 
   it("returns the hash even when filePath is null (no file written)", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     const hash = await appendContextMessage(msg, null);
     expect(typeof hash).toBe("string");
     expect(hash).toHaveLength(8);
@@ -124,7 +124,7 @@ describe("appendContextMessage", () => {
 
 describe("buildContextRecord", () => {
   it("returns a record with hash, ts, role, and content", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     const record = await buildContextRecord(msg);
     expect(record.role).toBe("user");
     expect(record.content).toBe("hello");
@@ -135,7 +135,7 @@ describe("buildContextRecord", () => {
   });
 
   it("hash matches the sha256 of { ts, role, content } without hash", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "test" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "test" };
     const record = await buildContextRecord(msg);
     // Recompute manually
     const input = JSON.stringify({ ts: record.ts, role: record.role, content: record.content });
@@ -149,7 +149,7 @@ describe("buildContextRecord", () => {
   });
 
   it("two calls to buildContextRecord produce different hashes (different ts)", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "ok" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "ok" };
     const r1 = await buildContextRecord(msg);
     await new Promise(r => setTimeout(r, 5));
     const r2 = await buildContextRecord(msg);
@@ -157,7 +157,7 @@ describe("buildContextRecord", () => {
   });
 
   it("does not write any file", async () => {
-    const msg: Anthropic.MessageParam = { role: "user", content: "hello" };
+    const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     await buildContextRecord(msg);
     expect(existsSync(contextFile)).toBe(false);
   });

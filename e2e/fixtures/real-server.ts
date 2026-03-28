@@ -24,7 +24,7 @@ const CTRL_PORT = 3004;
 // Mock StreamProvider — routes by trigger message content
 // ---------------------------------------------------------------------------
 
-function makeMockStream(events: any[], message: Anthropic.Message) {
+function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const e of events) yield e;
@@ -34,7 +34,7 @@ function makeMockStream(events: any[], message: Anthropic.Message) {
 }
 
 function makePongStream() {
-  const message: Anthropic.Message = {
+  const message: Anthropic.Beta.Messages.BetaMessage = {
     id: "msg_test",
     type: "message",
     role: "assistant",
@@ -43,7 +43,8 @@ function makePongStream() {
     content: [{ type: "text", text: "pong", citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+    context_management: null,
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
   const events = [
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -61,16 +62,17 @@ function makePongStream() {
  */
 function makeSleepToolUseStream() {
   const TOOL_ID = "toolu_sleep_abort_test";
-  const message: Anthropic.Message = {
+  const message: Anthropic.Beta.Messages.BetaMessage = {
     id: "msg_sleep_test",
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
     container: null,
-    content: [{ type: "tool_use", id: TOOL_ID, name: "run_command", input: { command: "sleep 10" } } as any],
+    content: [{ type: "tool_use", id: TOOL_ID, name: "run_command", input: { command: "sleep 10" }, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
-    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+    context_management: null,
+    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
   const events = [
     { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: TOOL_ID, name: "run_command" } },

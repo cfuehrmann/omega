@@ -26,7 +26,7 @@ afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
  * `events` is the sequence of raw stream events to yield.
  * `message` is what finalMessage() resolves to.
  */
-function makeMockStream(events: any[], message: Anthropic.Message) {
+function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const e of events) yield e;
@@ -35,8 +35,8 @@ function makeMockStream(events: any[], message: Anthropic.Message) {
   };
 }
 
-/** Minimal Anthropic.Message for a plain text response. */
-function textMessage(text: string): Anthropic.Message {
+/** Minimal BetaMessage for a plain text response. */
+function textMessage(text: string): Anthropic.Beta.Messages.BetaMessage {
   return {
     id: "msg_test",
     type: "message",
@@ -46,7 +46,8 @@ function textMessage(text: string): Anthropic.Message {
     content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+    context_management: null,
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
 }
 
@@ -61,12 +62,12 @@ function textStreamEvents(text: string): any[] {
   ];
 }
 
-/** Minimal Anthropic.Message for a tool_use response. */
+/** Minimal BetaMessage for a tool_use response. */
 function toolUseMessage(
   toolId: string,
   toolName: string,
   toolInput: any
-): Anthropic.Message {
+): Anthropic.Beta.Messages.BetaMessage {
   return {
     id: "msg_tool",
     type: "message",
@@ -76,7 +77,8 @@ function toolUseMessage(
     content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
-    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+    context_management: null,
+    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
 }
 
@@ -273,7 +275,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     expect(calls.length).toBeGreaterThanOrEqual(2);
 
     // Second call's messages should contain tool_result
-    const secondMessages = calls[1].messages as Anthropic.MessageParam[];
+    const secondMessages = calls[1].messages as Anthropic.Beta.Messages.BetaMessageParam[];
     const toolResultMsg = secondMessages.find(
       (m) => Array.isArray(m.content) &&
         m.content.some((b: any) => b.type === "tool_result")
@@ -309,7 +311,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 
   it.concurrent("executes multiple tools in parallel (both tool_call events before any tool_result)", async () => {
     // Build a response with two tool_use blocks (list_files + list_files)
-    const twoToolMessage: Anthropic.Message = {
+    const twoToolMessage: Anthropic.Beta.Messages.BetaMessage = {
       id: "msg_two_tools",
       type: "message",
       role: "assistant",
@@ -321,7 +323,8 @@ describe("Agent.sendMessage — tool call loop", () => {
       ],
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+      context_management: null,
+      usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
     };
     const twoToolStreamEvents: any[] = [
       { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tA", name: "list_files" } },

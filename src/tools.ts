@@ -209,7 +209,7 @@ async function executeFetchUrl(input: { url: string }): Promise<string> {
 }
 
 // Tool definitions for the Anthropic API
-export const toolDefinitions: Anthropic.Tool[] = [
+export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
   {
     name: "read_file",
     description:

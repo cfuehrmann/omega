@@ -24,7 +24,7 @@ import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./events.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeMockStream(events: any[], message: Anthropic.Message) {
+function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const e of events) yield e;
@@ -33,7 +33,7 @@ function makeMockStream(events: any[], message: Anthropic.Message) {
   };
 }
 
-function textMessage(text: string): Anthropic.Message {
+function textMessage(text: string): Anthropic.Beta.Messages.BetaMessage {
   return {
     id: "msg_test",
     type: "message",
@@ -43,7 +43,8 @@ function textMessage(text: string): Anthropic.Message {
     content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+    context_management: null,
+    usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
 }
 
@@ -57,7 +58,7 @@ function textStreamEvents(text: string): any[] {
   ];
 }
 
-function toolUseMessage(toolId: string, toolName: string, toolInput: any): Anthropic.Message {
+function toolUseMessage(toolId: string, toolName: string, toolInput: any): Anthropic.Beta.Messages.BetaMessage {
   return {
     id: "msg_tool",
     type: "message",
@@ -67,7 +68,8 @@ function toolUseMessage(toolId: string, toolName: string, toolInput: any): Anthr
     content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
-    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, server_tool_use: null, service_tier: null },
+    context_management: null,
+    usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
 }
 

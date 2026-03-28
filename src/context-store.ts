@@ -55,7 +55,7 @@ export interface ContextRecord {
   ts: string;
   /** Original MessageParam fields. */
   role: "user" | "assistant";
-  content: Anthropic.MessageParam["content"];
+  content: Anthropic.Beta.Messages.BetaMessageParam["content"];
 }
 
 /**
@@ -67,7 +67,7 @@ export interface ContextRecord {
  * collisions between identical messages sent at different times.
  */
 export async function buildContextRecord(
-  msg: Anthropic.MessageParam
+  msg: Anthropic.Beta.Messages.BetaMessageParam
 ): Promise<ContextRecord> {
   const ts = new Date().toISOString();
   const recordWithoutHash = { ts, role: msg.role, content: msg.content };
@@ -88,7 +88,7 @@ export async function buildContextRecord(
  * reference it in `llm_call` events without re-reading the file.
  */
 export async function appendContextMessage(
-  msg: Anthropic.MessageParam,
+  msg: Anthropic.Beta.Messages.BetaMessageParam,
   filePath: string | null = DEFAULT_CONTEXT_FILE
 ): Promise<string> {
   const record = await buildContextRecord(msg);

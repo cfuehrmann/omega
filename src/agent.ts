@@ -20,23 +20,7 @@ export interface TurnMetrics {
   cacheReadTokens?: number;
 }
 
-interface ModelResponse {
-  id?: string;
-  model?: string;
-  type?: string;
-  role?: string;
-  content: Anthropic.ContentBlock[];
-  stop_reason?: string | null;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number | null;
-    cache_read_input_tokens?: number | null;
-    service_tier?: string | null;
-    /** Present when server-side compaction fires — breakdown per iteration. */
-    iterations?: unknown[] | null;
-  };
-}
+
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
 
@@ -84,7 +68,7 @@ function elideAnthropicRequest(req: {
  * Build a persisted elided summary of an Anthropic response.
  * Omits content (lives in context.jsonl); keeps all envelope fields verbatim.
  */
-function elideAnthropicResponse(resp: ModelResponse): Record<string, unknown> {
+function elideAnthropicResponse(resp: Anthropic.Beta.Messages.BetaMessage): Record<string, unknown> {
   return {
     id: resp.id,
     type: resp.type,
@@ -113,18 +97,18 @@ export function isAutoApproved(_toolName: string, _toolInput: any): boolean {
  * ≥4096 prefix tokens before caching activates.
  */
 function addCacheControlToLastMessage(
-  messages: Anthropic.MessageParam[],
-): Anthropic.MessageParam[] {
+  messages: Anthropic.Beta.Messages.BetaMessageParam[],
+): Anthropic.Beta.Messages.BetaMessageParam[] {
   if (messages.length === 0) return messages;
   const result = [...messages];
   const last = result[result.length - 1]!;
 
   // Normalise content to an array of blocks
-  let blocks: Anthropic.ContentBlockParam[];
+  let blocks: Anthropic.Beta.Messages.BetaContentBlockParam[];
   if (typeof last.content === "string") {
     blocks = [{ type: "text" as const, text: last.content }];
   } else if (Array.isArray(last.content)) {
-    blocks = [...(last.content as Anthropic.ContentBlockParam[])];
+    blocks = [...(last.content as Anthropic.Beta.Messages.BetaContentBlockParam[])];
   } else {
     return result; // unexpected shape — leave untouched
   }
@@ -135,7 +119,7 @@ function addCacheControlToLastMessage(
   blocks[blocks.length - 1] = {
     ...blocks[blocks.length - 1],
     cache_control: { type: "ephemeral" },
-  } as any;
+  } as Anthropic.Beta.Messages.BetaContentBlockParam;
 
   result[result.length - 1] = { ...last, content: blocks };
   return result;
@@ -247,28 +231,16 @@ export function processStreamEvents(
  * NOTE: This type is referenced by name in .omega/system-prompt-append.md.
  * If you rename it, update that file too.
  */
-export type StreamProvider = (params: {
-  model: string;
-  max_tokens: number;
-  system: string | Anthropic.TextBlockParam[];
-  tools: Anthropic.Tool[];
-  messages: Anthropic.MessageParam[];
-  /** Beta headers to include with this request (e.g. compact-2026-01-12). */
-  betas?: string[];
-  /** Server-side context management directives (e.g. compaction). */
-  context_management?: Record<string, unknown>;
-  /** Enable extended thinking. When set, the model reasons before responding. */
-  thinking?: { type: "adaptive" };
-}) => Promise<{
+export type StreamProvider = (
+  params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+) => Promise<{
   [Symbol.asyncIterator](): AsyncIterator<any>;
-  finalMessage(): Promise<
-    Anthropic.Message | Anthropic.Beta.Messages.BetaMessage
-  >;
+  finalMessage(): Promise<Anthropic.Beta.Messages.BetaMessage>;
 }>;
 
 export class Agent {
   private client: Anthropic;
-  private compactedContextHistory: Anthropic.MessageParam[] = [];
+  private compactedContextHistory: Anthropic.Beta.Messages.BetaMessageParam[] = [];
   /** Parallel to compactedContextHistory — stores the 8-char content hash of each stored record. */
   private compactedContextHashes: string[] = [];
   public sessionInputTokens = 0;
@@ -393,7 +365,7 @@ export class Agent {
    * Append a message to compactedContextHistory, compute and store its content hash,
    * and fire-and-forget the context file write. Returns the hash.
    */
-  private async appendToHistory(msg: Anthropic.MessageParam): Promise<string> {
+  private async appendToHistory(msg: Anthropic.Beta.Messages.BetaMessageParam): Promise<string> {
     this.compactedContextHistory.push(msg);
     // Compute hash (needed for contextHashes) — file write is fire-and-forget
     if (this.contextFile !== null) {
@@ -458,7 +430,7 @@ export class Agent {
     return this.activeModel;
   }
 
-  getCompactedContextHistory(): readonly Anthropic.MessageParam[] {
+  getCompactedContextHistory(): readonly Anthropic.Beta.Messages.BetaMessageParam[] {
     return this.compactedContextHistory;
   }
 
@@ -474,7 +446,7 @@ export class Agent {
   private getStreamProvider(): StreamProvider {
     if (this.streamProvider) return this.streamProvider;
     const client = this.client;
-    return async (params) => client.beta.messages.stream(params as any);
+    return async (params) => client.beta.messages.stream(params);
   }
 
   /**
@@ -532,7 +504,7 @@ export class Agent {
           : [];
         const danglingUses = blocks.filter((b: any) => b.type === "tool_use");
         if (danglingUses.length > 0) {
-          const syntheticResults: Anthropic.ToolResultBlockParam[] =
+          const syntheticResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] =
             danglingUses.map((b: any) => ({
               type: "tool_result" as const,
               tool_use_id: b.id,
@@ -606,7 +578,7 @@ export class Agent {
       // Anthropic's infrastructure uses for client identification — matching the pattern
       // used by Claude Code.  It must come before the cached prompt block.
       const billingHeaderText = `x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;`;
-      const systemBlocks: Anthropic.TextBlockParam[] = [
+      const systemBlocks: Anthropic.Beta.Messages.BetaTextBlockParam[] = [
         {
           type: "text",
           text: billingHeaderText,
@@ -618,13 +590,13 @@ export class Agent {
           cache_control: { type: "ephemeral" },
         },
       ];
-      const cachedTools: Anthropic.Tool[] =
+      const cachedTools: Anthropic.Beta.Messages.BetaTool[] =
         toolDefinitions.length > 0
           ? [
               ...toolDefinitions.slice(0, -1),
               {
-                ...(toolDefinitions[toolDefinitions.length - 1] as any),
-                cache_control: { type: "ephemeral" },
+                ...toolDefinitions[toolDefinitions.length - 1]!,
+                cache_control: { type: "ephemeral" as const },
               },
             ]
           : toolDefinitions;
@@ -650,8 +622,8 @@ export class Agent {
         context_management: {
           edits: [
             {
-              type: "compact_20260112",
-              trigger: { type: "input_tokens", value: 150_000 },
+              type: "compact_20260112" as const,
+              trigger: { type: "input_tokens" as const, value: 150_000 },
             },
           ],
         },
@@ -676,7 +648,7 @@ export class Agent {
       }
 
       // Call API with retry
-      let response: ModelResponse | null = null;
+      let response: Anthropic.Beta.Messages.BetaMessage | null = null;
       let lastError: any = null;
 
       for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
@@ -686,7 +658,7 @@ export class Agent {
           inThinkingBlock = false;
           const stream = this.streamProvider
             ? await this.streamProvider(streamParams)
-            : this.client.beta.messages.stream(streamParams as any);
+            : this.client.beta.messages.stream(streamParams);
 
           let aborted = false;
           for await (const event of stream) {
@@ -734,7 +706,7 @@ export class Agent {
             return;
           }
 
-          response = (await stream.finalMessage()) as unknown as ModelResponse;
+          response = await stream.finalMessage();
           lastError = null;
           break;
         } catch (err: any) {
@@ -901,7 +873,7 @@ export class Agent {
 
       // Process tool calls if any
       const toolUseBlocks = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+        (b): b is Anthropic.Beta.Messages.BetaToolUseBlock => b.type === "tool_use",
       );
 
       // --- BUG-1 guard: max_tokens mid-tool-call ---
@@ -916,7 +888,7 @@ export class Agent {
       // continueLoop = true), but the context is well-formed and the next user
       // message will succeed.
       if (toolUseBlocks.length > 0 && response.stop_reason === "max_tokens") {
-        const syntheticResults: Anthropic.ToolResultBlockParam[] =
+        const syntheticResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] =
           toolUseBlocks.map((b) => ({
             type: "tool_result" as const,
             tool_use_id: b.id,
@@ -960,7 +932,7 @@ export class Agent {
       }
 
       if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        const toolResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] = [];
 
         // Emit all tool_call events first, then execute all tools in parallel,
         // then emit all tool_result events. This reduces wall-clock latency when
@@ -1001,7 +973,7 @@ export class Agent {
         // to keep context valid, then close the turn cleanly. Without this,
         // the loop would continue to the next LLM call, ignoring the abort.
         if (signal?.aborted) {
-          const abortResults: Anthropic.ToolResultBlockParam[] =
+          const abortResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] =
             toolUseBlocks.map((toolUse, i) => ({
               type: "tool_result" as const,
               tool_use_id: toolUse.id,

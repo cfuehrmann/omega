@@ -272,7 +272,7 @@ describe("Agent — adaptive thinking", () => {
     const TOOL_USE_ID = "tool-use-1";
     const FINAL_TEXT = "Done.";
 
-    let capturedSecondCallMessages: Anthropic.MessageParam[] | undefined;
+    let capturedSecondCallMessages: Anthropic.Beta.Messages.BetaMessageParam[] | undefined;
     let callCount = 0;
 
     const provider: StreamProvider = async (params) => {
