@@ -101,8 +101,17 @@ function serveStatic(pathname: string): Response | null {
   if (!existsSync(fullPath)) return null;
   const ext = fullPath.match(/(\.[^.]+)$/)?.[1] ?? ".html";
   const mime = MIME[ext] ?? "application/octet-stream";
+  // HTML: always revalidate so browsers pick up new asset hashes after a build.
+  // Hashed assets (/assets/...): immutable — content hash guarantees freshness.
+  const isHtml = ext === ".html";
+  const isHashedAsset = pathname.startsWith("/assets/");
+  const cacheControl = isHtml
+    ? "no-cache"
+    : isHashedAsset
+      ? "public, max-age=31536000, immutable"
+      : "no-cache";
   return new Response(readFileSync(fullPath), {
-    headers: { "Content-Type": mime },
+    headers: { "Content-Type": mime, "Cache-Control": cacheControl },
   });
 }
 
