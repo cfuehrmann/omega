@@ -806,7 +806,62 @@ html, body, #root {
   overflow-x: auto;
   margin: 0 0 8px 0;
   white-space: pre;
+  position: relative;
 }
+
+/* ── Copy button (shown on pre:hover) ── */
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: var(--ctp-surface1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 10px;
+  padding: 2px 7px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+  line-height: 1.4;
+}
+.md-body pre:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover {
+  border-color: var(--ctp-subtext1);
+  color: var(--ctp-text);
+}
+
+/* ── Diff rendering ── */
+
+/* A diff-block pre hands its padding to the individual line spans */
+.md-body pre.diff-block {
+  padding: 0;
+}
+.md-body pre.diff-block code {
+  display: block;
+  padding: 8px 0;
+}
+
+.diff-add, .diff-del, .diff-hunk, .diff-file, .diff-ctx {
+  display: block;
+  padding: 0 12px;
+}
+/* Right-pad the copy button column so text doesn't underlap it */
+.md-body pre.diff-block .code-copy-btn {
+  top: 4px;
+}
+.diff-add  {
+  background: color-mix(in srgb, var(--ctp-green) 13%, transparent);
+  color: var(--ctp-green);
+}
+.diff-del  {
+  background: color-mix(in srgb, var(--ctp-red) 13%, transparent);
+  color: var(--ctp-red);
+}
+.diff-hunk { color: var(--ctp-sapphire); opacity: 0.85; }
+.diff-file { color: var(--ctp-mauve); }
+.diff-ctx  { color: var(--ctp-subtext1); }
 .md-body pre code {
   background: none;
   padding: 0;

@@ -14,6 +14,88 @@ function renderMarkdown(text: string): string {
   return marked.parse(text) as string;
 }
 
+/** Escape text for safe insertion into innerHTML. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Transform a diff/patch code block into line-coloured spans.
+ * Each line becomes a `display: block` span so backgrounds span full width.
+ * The `<pre>` receives the `diff-block` class, which removes its padding;
+ * each span carries horizontal padding instead.
+ */
+function renderDiff(pre: HTMLPreElement, code: HTMLElement): void {
+  const lines = (code.textContent ?? "").split("\n");
+  // Drop the trailing empty entry from the final newline
+  if (lines[lines.length - 1] === "") lines.pop();
+
+  const html = lines.map(line => {
+    const esc = escapeHtml(line);
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      return `<span class="diff-file">${esc}</span>`;
+    } else if (line.startsWith("+")) {
+      return `<span class="diff-add">${esc}</span>`;
+    } else if (line.startsWith("-")) {
+      return `<span class="diff-del">${esc}</span>`;
+    } else if (line.startsWith("@@")) {
+      return `<span class="diff-hunk">${esc}</span>`;
+    } else {
+      return `<span class="diff-ctx">${esc}</span>`;
+    }
+  }).join(""); // display:block handles line breaks; no separator needed
+
+  code.innerHTML = html;
+  pre.classList.add("diff-block");
+}
+
+/** Inject a copy button into a `<pre>` that copies the given text on click. */
+function addCopyButton(pre: HTMLPreElement, textToCopy: string): void {
+  const btn = document.createElement("button");
+  btn.className = "code-copy-btn";
+  btn.textContent = "copy";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      btn.textContent = "✓";
+      setTimeout(() => { btn.textContent = "copy"; }, 1500);
+    }).catch(() => {
+      btn.textContent = "err";
+      setTimeout(() => { btn.textContent = "copy"; }, 1500);
+    });
+  });
+  pre.appendChild(btn);
+}
+
+/**
+ * Post-process all `<pre>` blocks inside a rendered markdown container:
+ * add copy buttons and apply diff colouring where applicable.
+ * Idempotent — skips blocks already marked with `data-enhanced`.
+ */
+function enhanceCodeBlocks(container: HTMLElement): void {
+  container.querySelectorAll<HTMLPreElement>("pre").forEach(pre => {
+    if (pre.dataset.enhanced) return;
+    pre.dataset.enhanced = "1";
+
+    const code = pre.querySelector("code");
+    // Capture raw text before any DOM transformation
+    const textToCopy = code?.textContent ?? pre.textContent ?? "";
+
+    addCopyButton(pre, textToCopy);
+
+    if (code) {
+      const cls = code.className;
+      if (cls.includes("language-diff") || cls.includes("language-patch")) {
+        renderDiff(pre, code);
+      }
+    }
+  });
+}
+
 /**
  * Format a duration in milliseconds for display.
  * < 1000ms → "NNNms", ≥ 1000ms → "N.Ns" (one decimal place).
@@ -100,6 +182,24 @@ function sendToServer(msg: object) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
+}
+
+// ---------------------------------------------------------------------------
+// MdBody — renders settled markdown with copy buttons and diff colouring
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders markdown text to HTML and post-processes code blocks.
+ * Uses createEffect so SolidJS tracks `props.text` as a reactive dependency;
+ * DOM updates happen in the same microtask frame as the signal change.
+ */
+function MdBody(props: { text: string }) {
+  let ref!: HTMLDivElement;
+  createEffect(() => {
+    ref.innerHTML = renderMarkdown(props.text);
+    enhanceCodeBlocks(ref);
+  });
+  return <div class="block-body md-body" ref={ref} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -649,7 +749,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
             </div>
           </div>
           <Show when={e.text}>
-            <div class="block-body md-body" innerHTML={renderMarkdown(e.text!)} />
+            <MdBody text={e.text!} />
           </Show>
         </div>
       );
