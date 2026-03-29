@@ -242,9 +242,9 @@ function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context
 }
 
 async function handleMessage(session: Session, data: string, streamProvider?: StreamProvider): Promise<void> {
-  let msg: any;
+  let msg: Record<string, unknown>;
   try {
-    msg = JSON.parse(data);
+    msg = JSON.parse(data) as Record<string, unknown>;
   } catch {
     sendTransportError(session.ws, "Invalid JSON from client", "handleMessage");
     return;

@@ -1,4 +1,5 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
+import type { JSX } from "solid-js";
 import { state, dispatch, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
 import { marked } from "marked";
 
@@ -53,8 +54,8 @@ function renderDiff(pre: HTMLPreElement, code: HTMLElement): void {
   pre.classList.add("diff-block");
 }
 
-/** Inject a copy button into a `<pre>` that copies the given text on click. */
-function addCopyButton(pre: HTMLPreElement, textToCopy: string): void {
+/** Inject a copy button into an element that copies the given text on click. */
+function addCopyButton(pre: HTMLElement, textToCopy: string): void {
   const btn = document.createElement("button");
   btn.className = "code-copy-btn";
   btn.textContent = "copy";
@@ -150,7 +151,7 @@ async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
     wrapper.className = "mermaid-wrapper";
 
     // Copy button on the wrapper (copies the raw source text)
-    addCopyButton(wrapper as unknown as HTMLPreElement, source);
+    addCopyButton(wrapper, source);
 
     try {
       const { svg } = await mermaid.render(id, source);
@@ -381,16 +382,20 @@ function setToolModal(d: ToolDetail | null) {
 function closeModal() { setActiveModal(null); }
 
 /** Render a context record's content array (or string) as a readable string. */
-function renderContent(content: any): string {
+function renderContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content.map((block: any) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "tool_use") return `[tool_use: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`;
-      if (block.type === "tool_result") {
-        const out = Array.isArray(block.content)
-          ? block.content.map((c: any) => c.text ?? JSON.stringify(c)).join("\n")
-          : String(block.content ?? "");
+    return content.map((block) => {
+      const b = block as Record<string, unknown>;
+      if (b.type === "text") return String(b.text ?? "");
+      if (b.type === "tool_use") return `[tool_use: ${String(b.name ?? "")}]\n${JSON.stringify(b.input, null, 2)}`;
+      if (b.type === "tool_result") {
+        const out = Array.isArray(b.content)
+          ? b.content.map((c) => {
+              const cr = c as Record<string, unknown>;
+              return cr.text != null ? String(cr.text) : JSON.stringify(c);
+            }).join("\n")
+          : String(b.content ?? "");
         return `[tool_result]\n${out}`;
       }
       return JSON.stringify(block, null, 2);
@@ -399,7 +404,7 @@ function renderContent(content: any): string {
   return JSON.stringify(content, null, 2);
 }
 
-function ModalShell(props: { title: string; cls: string; children: any }) {
+function ModalShell(props: { title: string; cls: string; children: JSX.Element }) {
   return (
     <div class="modal-backdrop">
       <div class={`modal ${props.cls}`}>
@@ -502,7 +507,7 @@ function ActiveModal() {
               if (!hashParam) return [];
               const res = await fetch(`/context?hashes=${encodeURIComponent(hashParam)}`);
               if (!res.ok) return [];
-              return res.json() as Promise<Array<{ hash: string; ts?: string; role: string; content: any }>>;
+              return res.json() as Promise<Array<{ hash: string; ts?: string; role: string; content: unknown }>>;
             },
           );
 
