@@ -14,9 +14,10 @@
 import { z } from "zod";
 import type { ContextRecord } from "./context-store.js";
 import { ISOTimestampSchema } from "./iso-timestamp.js";
+import { ContextHashSchema } from "./context-hash.js";
 
 export const ContextRecordSchema = z.object({
-  hash: z.string(),
+  hash: ContextHashSchema,
   time: ISOTimestampSchema,
   role: z.enum(["user", "assistant"]),
   /**

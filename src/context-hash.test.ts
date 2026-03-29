@@ -8,7 +8,7 @@
  * - Chaotic scenarios:
  *   - Identical message content → different hashes (time prevents collision)
  *   - Tool loop: each llm_call's contextHashes grows correctly
- * - All hashes are 8-char hex (no placeholders)
+ * - All hashes are 12-char hex (no placeholders)
  */
 
 import { describe, it, expect } from "bun:test";
@@ -119,7 +119,7 @@ function readEventLines(file: string): OmegaEvent[] {
 // ---------------------------------------------------------------------------
 
 describe("context.jsonl record shape", () => {
-  it.concurrent("each written record has hash (8 hex chars), time, role, and content", async () => {
+  it.concurrent("each written record has hash (12 hex chars), time, role, and content", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
@@ -133,8 +133,8 @@ describe("context.jsonl record shape", () => {
 
     for (const record of records) {
       expect(typeof record.hash).toBe("string");
-      expect(record.hash).toHaveLength(8);
-      expect(/^[0-9a-f]{8}$/.test(record.hash)).toBe(true);
+      expect(record.hash).toHaveLength(12);
+      expect(/^[0-9a-f]{12}$/.test(record.hash)).toBe(true);
       expect(typeof record.time).toBe("string");
       expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(record.role === "user" || record.role === "assistant").toBe(true);
@@ -208,8 +208,8 @@ describe("llm_call contextHashes in events.jsonl", () => {
     expect(Array.isArray(llmCall.contextHashes)).toBe(true);
     // Only the user message was in compactedContextHistory when the first call was made
     expect(llmCall.contextHashes).toHaveLength(1);
-    expect(llmCall.contextHashes[0]!).toHaveLength(8);
-    expect(/^[0-9a-f]{8}$/.test(llmCall.contextHashes[0]!)).toBe(true);
+    expect(llmCall.contextHashes[0]!).toHaveLength(12);
+    expect(/^[0-9a-f]{12}$/.test(llmCall.contextHashes[0]!)).toBe(true);
   });
 
   it.concurrent("contextHashes match the hash field of the corresponding context.jsonl records", async () => {
@@ -282,11 +282,11 @@ describe("llm_call contextHashes in events.jsonl", () => {
     // Second call: 3 messages (turn1 user, turn1 asst, turn2 user)
     expect(llmCalls[1]!.contextHashes).toHaveLength(3);
 
-    // All hashes must be 8-char hex
+    // All hashes must be 12-char hex
     for (const llmCall of llmCalls) {
       for (const h of llmCall.contextHashes) {
-        expect(h).toHaveLength(8);
-        expect(/^[0-9a-f]{8}$/.test(h)).toBe(true);
+        expect(h).toHaveLength(12);
+        expect(/^[0-9a-f]{12}$/.test(h)).toBe(true);
       }
     }
   });
@@ -359,7 +359,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
 // ---------------------------------------------------------------------------
 
 describe("no placeholder hashes", () => {
-  it.concurrent("all contextHashes are 8-char hex strings (no '????????' placeholders)", async () => {
+  it.concurrent("all contextHashes are 12-char hex strings (no '????????????' placeholders)", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = async () => {
@@ -377,8 +377,8 @@ describe("no placeholder hashes", () => {
 
     for (const llmCall of llmCalls) {
       for (const hash of llmCall.contextHashes) {
-        expect(hash).not.toBe("????????");
-        expect(/^[0-9a-f]{8}$/.test(hash)).toBe(true);
+        expect(hash).not.toBe("????????????");
+        expect(/^[0-9a-f]{12}$/.test(hash)).toBe(true);
       }
     }
   });
@@ -452,9 +452,9 @@ describe("[SCHEMA] llm_response has no content field", () => {
     expect(llmResponses.length).toBeGreaterThan(0);
 
     for (const llmResponse of llmResponses) {
-      // contextHash must be an 8-char hex string
+      // contextHash must be an 12-char hex string
       expect(typeof llmResponse.contextHash).toBe("string");
-      expect(/^[0-9a-f]{8}$/.test(llmResponse.contextHash)).toBe(true);
+      expect(/^[0-9a-f]{12}$/.test(llmResponse.contextHash)).toBe(true);
       // it must match an assistant record in context.jsonl
       const match = contextRecords.find(r => r.hash === llmResponse.contextHash);
       expect(match).toBeDefined();
@@ -513,9 +513,9 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     expect(toolCalls.length).toBe(1);
     const tc = toolCalls[0]!;
 
-    // contextHash must be an 8-char hex string
+    // contextHash must be an 12-char hex string
     expect(typeof tc.contextHash).toBe("string");
-    expect(/^[0-9a-f]{8}$/.test(tc.contextHash!)).toBe(true);
+    expect(/^[0-9a-f]{12}$/.test(tc.contextHash!)).toBe(true);
 
     // Must point to the assistant message (index 1: user, assistant, user(tool_result))
     const assistantRecord = contextRecords.find(r => r.role === "assistant");
@@ -543,9 +543,9 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     expect(toolResults.length).toBe(1);
     const tr = toolResults[0]!;
 
-    // contextHash must be an 8-char hex string
+    // contextHash must be an 12-char hex string
     expect(typeof tr.contextHash).toBe("string");
-    expect(/^[0-9a-f]{8}$/.test(tr.contextHash!)).toBe(true);
+    expect(/^[0-9a-f]{12}$/.test(tr.contextHash!)).toBe(true);
 
     // Must point to the user message containing the tool_result block
     // That's the third context record: user(original), assistant(tool_use), user(tool_result)

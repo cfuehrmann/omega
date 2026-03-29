@@ -17,6 +17,7 @@
 
 
 import type { ISOTimestamp } from "./iso-timestamp.js";
+import type { ContextHash } from "./context-hash.js";
 
 // ---------------------------------------------------------------------------
 // StreamSignal — ephemeral, never persisted
@@ -89,11 +90,11 @@ export interface LlmCallEvent {
   url: string;
   model: string;
   /**
-   * Ordered SHA-256 hashes (8 hex chars each) of every MessageParam in the
+   * Ordered hashes (12 lowercase hex chars each) of every MessageParam in the
    * `buildSentContext()` view actually sent with this call. Cross-references
    * entries in `context.jsonl`. Reflects the truncated view, not the full log.
    */
-  contextHashes: string[];
+  contextHashes: ContextHash[];
   /**
    * Index (0-based) of the message in the sent context that received the
    * `cache_control: { type: "ephemeral" }` breakpoint for Anthropic prompt
@@ -134,7 +135,7 @@ export interface LlmResponseEvent {
    * this response. Content is intentionally omitted from the event itself;
    * look it up via this hash.
    */
-  contextHash: string;
+  contextHash: ContextHash;
   /**
    * The full assembled assistant text for this response, if any.
    * Absent for tool-only responses (stop_reason "tool_use" with no text block).
@@ -167,7 +168,7 @@ export interface ToolCallEvent {
   /** Tool input parameters. */
   input: unknown;
   /** Hash of the assistant context.jsonl record containing this tool_use block. */
-  contextHash: string;
+  contextHash: ContextHash;
 }
 
 /** The result of a tool invocation. */
@@ -181,7 +182,7 @@ export interface ToolResultEvent {
   /** Full text output of the tool. */
   output: string;
   /** Hash of the user context.jsonl record containing this tool_result block. */
-  contextHash: string;
+  contextHash: ContextHash;
 }
 
 /** Per-turn token and cache metrics, attached to TurnEndEvent. */

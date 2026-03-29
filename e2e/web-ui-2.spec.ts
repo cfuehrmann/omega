@@ -145,7 +145,7 @@ test("tool_result event shows result block", async ({ page, server }) => {
     id: "tc-001",
     name: "read_file",
     input: { path: "src/agent.ts" },
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
   await server.sendEvent({
     type: "tool_result",
@@ -154,7 +154,7 @@ test("tool_result event shows result block", async ({ page, server }) => {
     isError: false,
     durationMs: 1,
     output: "file contents here",
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
 
   const resultBlock = page.locator(".block.result");
@@ -175,7 +175,7 @@ test("tool_result with is_error shows error styling", async ({ page, server }) =
     isError: true,
     durationMs: 1,
     output: "command not found",
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
 
   await expect(page.locator(".block.result.result-error")).toBeVisible({ timeout: 3000 });
@@ -247,7 +247,7 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     id: "tc-003",
     name: "read_file",
     input: { path: "README.md" },
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
   await server.sendEvent({
     type: "tool_result",
@@ -256,7 +256,7 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     isError: false,
     durationMs: 1,
     output: "readme contents",
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
   await server.sendEvent({
     type: "turn_end",
@@ -296,7 +296,7 @@ test("assistant text survives page reload (history replay)", async ({ page, serv
     type: "llm_response",
     stopReason: "end_turn",
     usage: { input_tokens: 5, output_tokens: 5 },
-    contextHash: "ab12cd34",
+    contextHash: "ab12cd34ef56",
     text: "I am alive.",
   });
   await server.sendEvent({

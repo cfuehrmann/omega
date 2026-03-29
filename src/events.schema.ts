@@ -14,6 +14,7 @@
 import { z } from "zod";
 import type { OmegaEvent } from "./events.js";
 import { ISOTimestampSchema } from "./iso-timestamp.js";
+import { ContextHashSchema } from "./context-hash.js";
 
 // ---------------------------------------------------------------------------
 // Shared sub-schemas
@@ -70,7 +71,7 @@ const LlmCallSchema = z.object({
   time: ISOTimestampSchema,
   url: z.string(),
   model: z.string(),
-  contextHashes: z.array(z.string()),
+  contextHashes: z.array(ContextHashSchema),
   cacheBreakpointIndex: z.number().int().nullable(),
   requestBytes: z.number().int(),
   requestSummary: z.record(z.string(), z.unknown()).optional(),
@@ -81,7 +82,7 @@ const LlmResponseSchema = z.object({
   time: ISOTimestampSchema,
   stopReason: z.string(),
   usage: LlmResponseUsageSchema,
-  contextHash: z.string(),
+  contextHash: ContextHashSchema,
   text: z.string().optional(),
   thinking: z.string().optional(),
   streamingStart: ISOTimestampSchema.optional(),
@@ -94,7 +95,7 @@ const ToolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
   input: z.unknown(),
-  contextHash: z.string(),
+  contextHash: ContextHashSchema,
 });
 
 const ToolResultSchema = z.object({
@@ -105,7 +106,7 @@ const ToolResultSchema = z.object({
   isError: z.boolean(),
   durationMs: z.number().int(),
   output: z.string(),
-  contextHash: z.string(),
+  contextHash: ContextHashSchema,
 });
 
 const TurnEndSchema = z.object({

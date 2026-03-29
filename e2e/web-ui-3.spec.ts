@@ -67,7 +67,7 @@ test("history replay shows session_start block before the first turn", async ({ 
   await server.loadFixture([
     JSON.stringify({ type: "session_start", time: "2026-01-15T10:00:00.000Z", sessionId: "", authMode: "api-key", model: "claude-sonnet-4-6", systemPrompt: "You are Omega." }),
     JSON.stringify({ type: "user_message", time: "2026-01-15T10:00:01.000Z", content: "hello" }),
-    JSON.stringify({ type: "llm_response", time: "2026-01-15T10:00:02.000Z", stopReason: "end_turn", usage: { input_tokens: 5, output_tokens: 3 }, contextHash: "ab12cd34", text: "hi there" }),
+    JSON.stringify({ type: "llm_response", time: "2026-01-15T10:00:02.000Z", stopReason: "end_turn", usage: { input_tokens: 5, output_tokens: 3 }, contextHash: "ab12cd34ef56", text: "hi there" }),
     JSON.stringify({ type: "turn_end", time: "2026-01-15T10:00:02.001Z", metrics: { inputTokens: 5, outputTokens: 3 } }),
   ]);
 

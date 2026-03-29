@@ -15,6 +15,7 @@ import { join } from "path";
 import { appendEvent } from "./event-store.js";
 import { OmegaEventSchema } from "./events.schema.js";
 import { iso } from "./iso-timestamp.js";
+import { asHash } from "./context-hash.js";
 import type {
   OmegaEvent,
   UserMessageEvent,
@@ -96,7 +97,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("llm_call", async () => {
-    const e: LlmCallEvent = { type: "llm_call", time: iso("2025-01-01T00:00:00.000Z"), url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc12345", "def67890", "11223344"], cacheBreakpointIndex: 2, requestBytes: 1024 };
+    const e: LlmCallEvent = { type: "llm_call", time: iso("2025-01-01T00:00:00.000Z"), url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: [asHash("abc123456789"), asHash("def678901234"), asHash("112233445566")], cacheBreakpointIndex: 2, requestBytes: 1024 };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);
@@ -108,7 +109,7 @@ describe("OmegaEvent round-trip serialisation", () => {
       time: iso("2025-01-01T00:00:00.000Z"),
       stopReason: "end_turn",
       usage: { input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 50 },
-      contextHash: "ab12cd34",
+      contextHash: asHash("ab12cd34ef56"),
     };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
@@ -116,14 +117,14 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("tool_call", async () => {
-    const e: ToolCallEvent = { type: "tool_call", time: iso("2025-01-01T00:00:00.000Z"), id: "tool_abc", name: "read_file", input: { path: "src/foo.ts" }, contextHash: "ab12cd34" };
+    const e: ToolCallEvent = { type: "tool_call", time: iso("2025-01-01T00:00:00.000Z"), id: "tool_abc", name: "read_file", input: { path: "src/foo.ts" }, contextHash: asHash("ab12cd34ef56") };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);
   });
 
   it("tool_result", async () => {
-    const e: ToolResultEvent = { type: "tool_result", time: iso("2025-01-01T00:00:00.000Z"), id: "tool_abc", name: "read_file", isError: false, durationMs: 12, output: "file contents here", contextHash: "ef56ab78" };
+    const e: ToolResultEvent = { type: "tool_result", time: iso("2025-01-01T00:00:00.000Z"), id: "tool_abc", name: "read_file", isError: false, durationMs: 12, output: "file contents here", contextHash: asHash("ef56ab78cd90") };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

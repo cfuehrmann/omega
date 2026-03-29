@@ -9,6 +9,7 @@ import {
 } from "./system-prompt/append.js";
 import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
+import type { ContextHash } from "./context-hash.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
 import { type ISOTimestamp, now } from "./iso-timestamp.js";
@@ -258,8 +259,8 @@ export type StreamProvider = (
 export class Agent {
   private client: Anthropic;
   private compactedContextHistory: Anthropic.Beta.Messages.BetaMessageParam[] = [];
-  /** Parallel to compactedContextHistory — stores the 8-char content hash of each stored record. */
-  private compactedContextHashes: string[] = [];
+  /** Parallel to compactedContextHistory — stores the 12-char random hash of each stored record. */
+  private compactedContextHashes: ContextHash[] = [];
   public sessionInputTokens = 0;
   public sessionOutputTokens = 0;
   public sessionCacheCreationTokens = 0;
@@ -380,7 +381,7 @@ export class Agent {
    * Append a message to compactedContextHistory, compute and store its content hash,
    * and fire-and-forget the context file write. Returns the hash.
    */
-  private async appendToHistory(msg: Anthropic.Beta.Messages.BetaMessageParam): Promise<string> {
+  private async appendToHistory(msg: Anthropic.Beta.Messages.BetaMessageParam): Promise<ContextHash> {
     this.compactedContextHistory.push(msg);
     // Compute hash (needed for contextHashes) — file write is fire-and-forget
     if (this.contextFile !== null) {
@@ -392,7 +393,7 @@ export class Agent {
       return hash;
     } else {
       // No file write, but still need a hash for contextHashes cross-referencing
-      const record = await buildContextRecord(msg);
+      const record = buildContextRecord(msg);
       this.compactedContextHashes.push(record.hash);
       return record.hash;
     }
@@ -454,7 +455,7 @@ export class Agent {
   }
 
   /** Exposed for testing only — allows verification that the hashes array stays in sync. */
-  getCompactedContextHashes(): readonly string[] {
+  getCompactedContextHashes(): readonly ContextHash[] {
     return this.compactedContextHashes;
   }
 
@@ -626,7 +627,7 @@ export class Agent {
       const cachedMessages = addCacheControlToLastMessage(sentContext);
 
       // contextHashes: all hashes in order, one per message in compactedContextHistory.
-      const contextHashes = [...this.compactedContextHashes];
+      const contextHashes: ContextHash[] = [...this.compactedContextHashes];
 
       // Build the full request params once — used for both the audit event and
       // each retry attempt. Defined here so the llm_call summary reflects the

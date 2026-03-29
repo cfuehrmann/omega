@@ -35,7 +35,8 @@ describe("appendContextMessage", () => {
     expect(record.role).toBe("user");
     expect(record.content).toBe("hello");
     expect(typeof record.hash).toBe("string");
-    expect(record.hash).toHaveLength(8);
+    expect(record.hash).toHaveLength(12);
+    expect(record.hash).toMatch(/^[0-9a-f]{12}$/);
     expect(typeof record.time).toBe("string");
     expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
@@ -44,7 +45,7 @@ describe("appendContextMessage", () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     const hash = await appendContextMessage(msg, contextFile);
     expect(typeof hash).toBe("string");
-    expect(hash).toHaveLength(8);
+    expect(hash).toHaveLength(12);
 
     // The returned hash must match what's in the file
     const raw = await readFile(contextFile, "utf-8");
@@ -99,13 +100,11 @@ describe("appendContextMessage", () => {
     expect(blocks[1].name).toBe("read_file");
   });
 
-  it("identical content at different times produces different hashes (time prevents collision)", async () => {
+  it("two calls with identical content produce different hashes (random, not content-based)", async () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "ok" };
-    // Small delay to ensure different time values
     const hash1 = await appendContextMessage(msg, contextFile);
-    await new Promise(r => setTimeout(r, 5));
     const hash2 = await appendContextMessage(msg, contextFile);
-    // Different timestamps → different hashes
+    // Hashes are random — collision probability is negligible (2^48 space)
     expect(hash1).not.toBe(hash2);
   });
 
@@ -113,7 +112,7 @@ describe("appendContextMessage", () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     const hash = await appendContextMessage(msg, null);
     expect(typeof hash).toBe("string");
-    expect(hash).toHaveLength(8);
+    expect(hash).toHaveLength(12);
     expect(existsSync(contextFile)).toBe(false);
   });
 });
@@ -123,42 +122,36 @@ describe("appendContextMessage", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildContextRecord", () => {
-  it("returns a record with hash, time, role, and content", async () => {
+  it("returns a record with hash, time, role, and content", () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
-    const record = await buildContextRecord(msg);
+    const record = buildContextRecord(msg);
     expect(record.role).toBe("user");
     expect(record.content).toBe("hello");
     expect(typeof record.hash).toBe("string");
-    expect(record.hash).toHaveLength(8);
+    expect(record.hash).toHaveLength(12);
+    expect(record.hash).toMatch(/^[0-9a-f]{12}$/);
     expect(typeof record.time).toBe("string");
     expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("hash matches the sha256 of { time, role, content } without hash", async () => {
+  it("hash is 12 lowercase hex chars (6 random bytes)", () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "test" };
-    const record = await buildContextRecord(msg);
-    // Recompute manually
-    const input = JSON.stringify({ time: record.time, role: record.role, content: record.content });
-    const data = new TextEncoder().encode(input);
-    const buf = await crypto.subtle.digest("SHA-256", data);
-    const expectedHex = Array.from(new Uint8Array(buf))
-      .map(b => b.toString(16).padStart(2, "0"))
-      .join("")
-      .slice(0, 8);
-    expect(record.hash).toBe(expectedHex);
+    const record = buildContextRecord(msg);
+    // 12 hex chars = 6 bytes of random data
+    expect(record.hash).toMatch(/^[0-9a-f]{12}$/);
   });
 
-  it("two calls to buildContextRecord produce different hashes (different time)", async () => {
+  it("two calls to buildContextRecord produce different hashes (random)", () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "ok" };
-    const r1 = await buildContextRecord(msg);
-    await new Promise(r => setTimeout(r, 5));
-    const r2 = await buildContextRecord(msg);
+    const r1 = buildContextRecord(msg);
+    const r2 = buildContextRecord(msg);
+    // Hashes are random — collision probability is negligible
     expect(r1.hash).not.toBe(r2.hash);
   });
 
-  it("does not write any file", async () => {
+  it("does not write any file", () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
-    await buildContextRecord(msg);
+    buildContextRecord(msg);
     expect(existsSync(contextFile)).toBe(false);
   });
 });

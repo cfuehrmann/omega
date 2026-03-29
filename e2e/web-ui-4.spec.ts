@@ -14,7 +14,7 @@ async function sendLlmResponse(server: any, text: string) {
   await server.sendEvent({
     type: "llm_response",
     stopReason: "end_turn",
-    contextHash: "abcd1234",
+    contextHash: "abcd1234ef56",
     usage: { input_tokens: 10, output_tokens: 5 },
     text,
   });

@@ -140,7 +140,7 @@ test("tool_call event shows tool block", async ({ page, server }) => {
     id: "tc-001",
     name: "read_file",
     input: { path: "src/agent.ts" },
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
 
   const toolBlock = page.locator(".block.tool");
@@ -208,7 +208,7 @@ test("llm_response event shows an api-response block", async ({ page, server }) 
     type: "llm_response",
     stopReason: "end_turn",
     usage: { input_tokens: 100, output_tokens: 50 },
-    contextHash: "",
+    contextHash: "abcdef123456",
   });
 
   const block = page.locator(".block.api-response");

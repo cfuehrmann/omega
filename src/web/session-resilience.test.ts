@@ -88,7 +88,7 @@ describe("shouldLogEvent", () => {
   });
 
   it("allows tool_result events", () => {
-    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", output: "", isError: false, durationMs: 0, contextHash: "ab12cd34" })).toBe(true);
+    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", output: "", isError: false, durationMs: 0, contextHash: "ab12cd34ef56" })).toBe(true);
   });
 
   it("allows model_changed events", () => {
@@ -173,7 +173,7 @@ describe("store history replay — open turn recovery", () => {
       events: [
         { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", systemPrompt: "..." } as any,
         { type: "user_message", content: "ping" },
-        { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
+        { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362aabb"], cacheBreakpointIndex: 0 } as any,
         { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" }, text: "pong" } as any,
         { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, cacheCreationTokens: 320, cacheReadTokens: 3318 } } as any,
         { type: "server_stopped", outcome: "clean" } as any,
@@ -243,7 +243,7 @@ describe("store retrying state", () => {
       type: "llm_response",
       stopReason: "end_turn",
       usage: { input_tokens: 5, output_tokens: 2 },
-      contextHash: "ab12cd34",
+      contextHash: "ab12cd34ef56",
     } as any);
     expect(state.retrying).toBe(false);
   });
