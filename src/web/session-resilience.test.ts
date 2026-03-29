@@ -117,8 +117,8 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", content: "hello" },
-        { type: "turn_end", metrics: { inputTokens: 10, outputTokens: 5 } },
+        { type: "user_message", ts: "", content: "hello" },
+        { type: "turn_end", ts: "", metrics: { inputTokens: 10, outputTokens: 5 } },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -128,8 +128,8 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", content: "hello" },
-        { type: "turn_interrupted" },
+        { type: "user_message", ts: "", content: "hello" },
+        { type: "turn_interrupted", ts: "" },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -140,7 +140,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", content: "hello" },
+        { type: "user_message", ts: "", content: "hello" },
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
         // NO turn_end — simulates a crash mid-turn
       ],
@@ -152,7 +152,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", content: "hello" },
+        { type: "user_message", ts: "", content: "hello" },
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
       ],
     });

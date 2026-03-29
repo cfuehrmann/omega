@@ -10,18 +10,9 @@ import {
 import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index.js";
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
-import type { OmegaEvent, StreamSignal } from "./events.js";
+import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
 
 // --- Types ---
-
-export interface TurnMetrics {
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-}
-
-
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
 

@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import type { OmegaEvent, StreamSignal, TurnMetrics, StreamProvider } from "./agent.js";
+import type { OmegaEvent, StreamSignal, StreamProvider } from "./agent.js";
+import type { TurnMetrics } from "./events.js";
 import { makeTestAgent, type TestAgent } from "./test-utils.js";
 
 // ---------------------------------------------------------------------------

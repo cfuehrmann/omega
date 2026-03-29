@@ -14,7 +14,7 @@
  * fragments). The `sendMessage` generator yields `OmegaEvent | StreamSignal`.
  */
 
-import type { TurnMetrics } from "./agent.js";
+
 
 // ---------------------------------------------------------------------------
 // StreamSignal — ephemeral, never persisted
@@ -166,6 +166,14 @@ export interface ToolResultEvent {
   output: string;
   /** Hash of the user context.jsonl record containing this tool_result block. */
   contextHash: string;
+}
+
+/** Per-turn token and cache metrics, attached to TurnEndEvent. */
+export interface TurnMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 /** End of a user turn — aggregate metrics. */

@@ -15,6 +15,7 @@
 
 import { batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
+import type { OmegaEvent } from "../../events";
 
 // ---------------------------------------------------------------------------
 // Types mirroring src/agent.ts AgentEvent (subset we care about for display)
@@ -23,7 +24,7 @@ import { createStore, produce } from "solid-js/store";
 export type WsEvent =
   | { type: "connected" }
   | { type: "disconnected" }
-  | { type: "history"; events: WsEvent[] }
+  | { type: "history"; events: OmegaEvent[] }
   | { type: "reset_done" }
   | { type: "session_info"; dir: string }
   | { type: "user_message"; ts?: string; content: string }
@@ -502,7 +503,7 @@ export function dispatch(event: WsEvent): void {
           replayLastTurnEnd = {
             metrics: sm,
             durations: sd,
-            model: e.model ?? replayLiveModel,
+            model: replayLiveModel,
           };
           replaySessionTotals = addMetrics(replaySessionTotals, sm);
           replaySessionDurations = addDurations(replaySessionDurations, sd);
