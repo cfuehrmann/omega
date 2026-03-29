@@ -22,6 +22,9 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
 
+    // TS 6.0: types now defaults to [] — explicitly include @types/bun
+    "types": ["bun"],
+
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,

@@ -4,7 +4,9 @@
     "lib": ["ESNext", "DOM"],
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
-    "noEmit": true
+    "noEmit": true,
+    // TS 6.0: noUncheckedSideEffectImports defaults to true; CSS imports are bundler-handled
+    "noUncheckedSideEffectImports": false
   },
   "include": ["."],
   // Override parent's exclude — this tsconfig IS the src/web/client check.
