@@ -1,0 +1,102 @@
+/**
+ * Zod input schemas for every tool Omega exposes.
+ *
+ * Each schema serves two purposes:
+ *   1. Runtime validation — `XxxSchema.parse(input)` in `executeTool` validates
+ *      the JSON the LLM sends before the execute function touches it.
+ *   2. JSON Schema generation — `toToolInputSchema(XxxSchema)` produces the
+ *      `input_schema` object for the Anthropic API tool definition, replacing
+ *      hand-written JSON Schema objects and keeping the two in sync.
+ *
+ * The `toToolInputSchema` helper uses `{ io: "input" }` so Zod does NOT emit
+ * `additionalProperties: false` (preserving backward-compatible tool definitions)
+ * and then strips Zod's top-level `$schema` key so the output matches the plain
+ * `{ type: "object", properties: {...}, required: [...] }` shape the API expects.
+ */
+
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a Zod object schema to the JSON Schema shape required by Anthropic's
+ * `input_schema` field.  Descriptions attached via `.describe()` are preserved.
+ */
+export function toToolInputSchema(schema: z.ZodObject<z.ZodRawShape>): Record<string, unknown> {
+  const js = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+  delete js["$schema"];
+  return js;
+}
+
+// ---------------------------------------------------------------------------
+// Tool input schemas
+// ---------------------------------------------------------------------------
+
+export const ReadFileSchema = z.object({
+  path:   z.string().describe("Path to the file (absolute or relative to cwd)"),
+  offset: z.number().optional().describe("Starting line number (1-indexed, optional)"),
+  limit:  z.number().optional().describe("Maximum number of lines to read (optional)"),
+});
+
+export const WriteFileSchema = z.object({
+  path:    z.string().describe("Path to the file (absolute or relative to cwd)"),
+  content: z.string().describe("Content to write to the file"),
+});
+
+export const RunCommandSchema = z.object({
+  command: z.string().describe("The shell command to execute"),
+  timeout: z.number().optional().describe("Timeout in seconds (optional, default 30)"),
+});
+
+export const EditFileSchema = z.object({
+  path:     z.string().describe("Path to the file (absolute or relative to cwd)"),
+  old_text: z.string().describe("Exact text to find (must match exactly, must appear once)"),
+  new_text: z.string().describe("Text to replace old_text with"),
+});
+
+export const ListFilesSchema = z.object({
+  path:      z.string().describe("Directory path (absolute or relative to cwd)"),
+  recursive: z.boolean().optional().describe("List recursively (optional, default false)"),
+});
+
+export const WebSearchSchema = z.object({
+  query: z.string().describe("The search query"),
+});
+
+export const FetchUrlSchema = z.object({
+  url: z.string().describe("The URL to fetch (must be http or https)"),
+});
+
+export const GrepFilesSchema = z.object({
+  pattern:       z.string().describe("Regex or literal string to search for"),
+  path:          z.string().describe("Directory (or file) path to search in"),
+  file_glob:     z.string().optional().describe("Optional glob to restrict which files are searched (e.g. '*.ts')"),
+  context_lines: z.number().optional().describe("Number of context lines to include before and after each match (optional)"),
+  case_sensitive: z.boolean().optional().describe("If true, match is case-sensitive. Default: false (case-insensitive)"),
+  max_results:   z.number().optional().describe("Maximum number of match lines to return (default 200)"),
+});
+
+export const FindFilesSchema = z.object({
+  pattern:     z.string().describe("Glob or regex pattern to match against file/directory names"),
+  path:        z.string().describe("Root directory to search in"),
+  type:        z.string().optional().describe("Filter by entry type: 'f' (files), 'd' (directories), 'l' (symlinks). Omit for all."),
+  hidden:      z.boolean().optional().describe("Include hidden files and .gitignore'd paths (default false)"),
+  max_results: z.number().optional().describe("Maximum number of results to return (default 200)"),
+});
+
+export const RunBackgroundSchema = z.object({
+  command: z.string().describe("Shell command to run in the background"),
+  cwd:     z.string().optional().describe("Working directory for the process (optional, defaults to cwd)"),
+});
+
+export const WaitProcessSchema = z.object({
+  pid:       z.number().describe("Process ID returned by run_background"),
+  timeoutMs: z.number().optional().describe("Maximum milliseconds to wait (optional, default 60000)"),
+});
+
+export const KillProcessSchema = z.object({
+  pid:    z.number().describe("Process ID returned by run_background"),
+  signal: z.string().optional().describe("Signal to send (optional, default SIGTERM). E.g. SIGTERM, SIGKILL, SIGINT."),
+});

@@ -172,7 +172,9 @@ describe("executeTool: run_command", () => {
   it("errors when command is missing", async () => {
     const result = await executeTool("run_command", {});
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Missing required field: command");
+    // Zod validation error — message contains the field name and expected type
+    expect(result.output).toMatch(/command/i);
+    expect(result.output).toMatch(/string/i);
   });
 });
 

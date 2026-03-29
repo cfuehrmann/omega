@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
+import { readEnvPositiveInt } from "./env.js";
 
 import {
   readSystemPromptAppend,
@@ -277,13 +278,9 @@ export class Agent {
   private sessionStartLogged = false;
 
   public readonly sessionId: string;
-  private readonly retryBaseMs = Number(
-    process.env.OMEGA_RETRY_BASE_MS ?? 1000,
-  );
-  private readonly retryMaxMs = Number(process.env.OMEGA_RETRY_MAX_MS ?? 60000);
-  private readonly retryMaxAttempts = Number(
-    process.env.OMEGA_RETRY_ATTEMPTS ?? 5,
-  );
+  private readonly retryBaseMs     = readEnvPositiveInt("OMEGA_RETRY_BASE_MS",  1000);
+  private readonly retryMaxMs      = readEnvPositiveInt("OMEGA_RETRY_MAX_MS",  60000);
+  private readonly retryMaxAttempts = readEnvPositiveInt("OMEGA_RETRY_ATTEMPTS",   5);
 
   /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly contextFile: string | null | undefined;

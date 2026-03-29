@@ -2,8 +2,24 @@ import { readFile, writeFile, readdir, stat } from "fs/promises";
 import { join, relative } from "path";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
+import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config";
+import {
+  toToolInputSchema,
+  ReadFileSchema,
+  WriteFileSchema,
+  RunCommandSchema,
+  EditFileSchema,
+  ListFilesSchema,
+  WebSearchSchema,
+  FetchUrlSchema,
+  GrepFilesSchema,
+  FindFilesSchema,
+  RunBackgroundSchema,
+  WaitProcessSchema,
+  KillProcessSchema,
+} from "./tools.schema.js";
 
 // ---------------------------------------------------------------------------
 // Web search (DuckDuckGo) + URL fetch helpers
@@ -215,24 +231,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Read the contents of a file. Returns the file content as text. " +
       "For large files, use offset and limit to read a specific line range.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        path: {
-          type: "string",
-          description: "Path to the file (absolute or relative to cwd)",
-        },
-        offset: {
-          type: "number",
-          description: "Starting line number (1-indexed, optional)",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum number of lines to read (optional)",
-        },
-      },
-      required: ["path"],
-    },
+    input_schema: toToolInputSchema(ReadFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "write_file",
@@ -243,20 +242,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Files longer than ~500 lines or ~20 000 characters risk being cut off mid-write. " +
       "For large new files write a skeleton first, then extend with edit_file. " +
       "For large existing files always prefer edit_file over a full rewrite.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        path: {
-          type: "string",
-          description: "Path to the file (absolute or relative to cwd)",
-        },
-        content: {
-          type: "string",
-          description: "Content to write to the file",
-        },
-      },
-      required: ["path", "content"],
-    },
+    input_schema: toToolInputSchema(WriteFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "run_command",
@@ -264,20 +250,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Execute a shell command and return its stdout, stderr, and exit code. " +
       "The command runs in the current working directory. " +
       "Use timeout to limit long-running commands.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        command: {
-          type: "string",
-          description: "The shell command to execute",
-        },
-        timeout: {
-          type: "number",
-          description: "Timeout in seconds (optional, default 30)",
-        },
-      },
-      required: ["command"],
-    },
+    input_schema: toToolInputSchema(RunCommandSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "edit_file",
@@ -286,60 +259,21 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "(including whitespace and indentation). Use this for surgical edits " +
       "instead of rewriting entire files with write_file. The old_text must " +
       "appear exactly once in the file.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        path: {
-          type: "string",
-          description: "Path to the file (absolute or relative to cwd)",
-        },
-        old_text: {
-          type: "string",
-          description: "Exact text to find (must match exactly, must appear once)",
-        },
-        new_text: {
-          type: "string",
-          description: "Text to replace old_text with",
-        },
-      },
-      required: ["path", "old_text", "new_text"],
-    },
+    input_schema: toToolInputSchema(EditFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "list_files",
     description:
       "List files and directories. Returns names with '/' suffix for directories. " +
       "Use recursive to list the full tree (up to 1000 entries).",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        path: {
-          type: "string",
-          description: "Directory path (absolute or relative to cwd)",
-        },
-        recursive: {
-          type: "boolean",
-          description: "List recursively (optional, default false)",
-        },
-      },
-      required: ["path"],
-    },
+    input_schema: toToolInputSchema(ListFilesSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "web_search",
     description:
       "Search the web using Brave Search (or DuckDuckGo as fallback). Returns titles, URLs, and snippets for the top results. " +
       "Use this to look up documentation, current information, or anything not in local files.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        query: {
-          type: "string",
-          description: "The search query",
-        },
-      },
-      required: ["query"],
-    },
+    input_schema: toToolInputSchema(WebSearchSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "fetch_url",
@@ -348,16 +282,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "HTML pages are converted to readable text (tags stripped). " +
       "Content is truncated at 20000 characters. Use this to read documentation, " +
       "articles, or any web page.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        url: {
-          type: "string",
-          description: "The URL to fetch (must be http or https)",
-        },
-      },
-      required: ["url"],
-    },
+    input_schema: toToolInputSchema(FetchUrlSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "grep_files",
@@ -366,36 +291,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Returns structured file:line:text matches, capped at max_results (default 200). " +
       "Use this to find all occurrences of a symbol, string, or regex across the codebase " +
       "instead of reading files speculatively. Chain with read_file to inspect context.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        pattern: {
-          type: "string",
-          description: "Regex or literal string to search for",
-        },
-        path: {
-          type: "string",
-          description: "Directory (or file) path to search in",
-        },
-        file_glob: {
-          type: "string",
-          description: "Optional glob to restrict which files are searched (e.g. '*.ts')",
-        },
-        context_lines: {
-          type: "number",
-          description: "Number of context lines to include before and after each match (optional)",
-        },
-        case_sensitive: {
-          type: "boolean",
-          description: "If true, match is case-sensitive. Default: false (case-insensitive)",
-        },
-        max_results: {
-          type: "number",
-          description: "Maximum number of match lines to return (default 200)",
-        },
-      },
-      required: ["pattern", "path"],
-    },
+    input_schema: toToolInputSchema(GrepFilesSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "find_files",
@@ -405,32 +301,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Use this to locate files when you know the name or extension but not the exact path. " +
       "Ignores hidden files and .gitignore'd paths by default (set hidden=true to include them). " +
       "Chain with read_file or grep_files to inspect contents.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        pattern: {
-          type: "string",
-          description: "Glob or regex pattern to match against file/directory names",
-        },
-        path: {
-          type: "string",
-          description: "Root directory to search in",
-        },
-        type: {
-          type: "string",
-          description: "Filter by entry type: 'f' (files), 'd' (directories), 'l' (symlinks). Omit for all.",
-        },
-        hidden: {
-          type: "boolean",
-          description: "Include hidden files and .gitignore'd paths (default false)",
-        },
-        max_results: {
-          type: "number",
-          description: "Maximum number of results to return (default 200)",
-        },
-      },
-      required: ["pattern", "path"],
-    },
+    input_schema: toToolInputSchema(FindFilesSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "run_background",
@@ -443,20 +314,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Use kill_process(pid) to stop the process early. " +
       "Use this for any slow command — test suites, builds, dev servers, file watchers — " +
       "so you can continue doing useful work in the same turn instead of blocking.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        command: {
-          type: "string",
-          description: "Shell command to run in the background",
-        },
-        cwd: {
-          type: "string",
-          description: "Working directory for the process (optional, defaults to cwd)",
-        },
-      },
-      required: ["command"],
-    },
+    input_schema: toToolInputSchema(RunBackgroundSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "wait_process",
@@ -465,20 +323,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Blocks until the process exits or timeoutMs is reached (default 60000 ms). " +
       "Returns { pid, exitCode, signal, timedOut }. " +
       "Use this to synchronise before reading the logFile from run_background.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        pid: {
-          type: "number",
-          description: "Process ID returned by run_background",
-        },
-        timeoutMs: {
-          type: "number",
-          description: "Maximum milliseconds to wait (optional, default 60000)",
-        },
-      },
-      required: ["pid"],
-    },
+    input_schema: toToolInputSchema(WaitProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "kill_process",
@@ -486,20 +331,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Send a signal to a background process started with run_background. " +
       "Returns a status message. Handles already-exited processes gracefully. " +
       "Default signal is SIGTERM (graceful shutdown); use SIGKILL to force.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        pid: {
-          type: "number",
-          description: "Process ID returned by run_background",
-        },
-        signal: {
-          type: "string",
-          description: "Signal to send (optional, default SIGTERM). E.g. SIGTERM, SIGKILL, SIGINT.",
-        },
-      },
-      required: ["pid"],
-    },
+    input_schema: toToolInputSchema(KillProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
 ];
 
@@ -955,26 +787,6 @@ function executeKillProcess(input: {
   }
 }
 
-function validateToolInput(name: string, input: Record<string, unknown>): void {
-  const tool = toolDefinitions.find((t) => t.name === name);
-  if (!tool) return;
-  const schema = (tool as any).input_schema;
-  if (!schema) return;
-
-  const required: string[] = schema.required ?? [];
-  const props: Record<string, any> = schema.properties ?? {};
-
-  for (const key of required) {
-    if (input == null || input[key] == null) {
-      throw new Error(`Missing required field: ${key}`);
-    }
-    const expectedType = props[key]?.type;
-    if (expectedType && typeof input[key] !== expectedType) {
-      throw new Error(`Invalid type for ${key}: expected ${expectedType}`);
-    }
-  }
-}
-
 export async function executeTool(
   name: string,
   input: any,
@@ -982,45 +794,43 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const startTime = performance.now();
   try {
-    validateToolInput(name, input);
-
     let output: string;
     switch (name) {
       case "read_file":
-        output = await executeReadFile(input);
+        output = await executeReadFile(ReadFileSchema.parse(input));
         break;
       case "write_file":
-        output = await executeWriteFile(input);
+        output = await executeWriteFile(WriteFileSchema.parse(input));
         break;
       case "edit_file":
-        output = await executeEditFile(input);
+        output = await executeEditFile(EditFileSchema.parse(input));
         break;
       case "run_command":
-        output = await executeRunCommand(input, signal);
+        output = await executeRunCommand(RunCommandSchema.parse(input), signal);
         break;
       case "list_files":
-        output = await executeListFiles(input);
+        output = await executeListFiles(ListFilesSchema.parse(input));
         break;
       case "web_search":
-        output = await executeWebSearch(input);
+        output = await executeWebSearch(WebSearchSchema.parse(input));
         break;
       case "fetch_url":
-        output = await executeFetchUrl(input);
+        output = await executeFetchUrl(FetchUrlSchema.parse(input));
         break;
       case "grep_files":
-        output = await executeGrepFiles(input);
+        output = await executeGrepFiles(GrepFilesSchema.parse(input));
         break;
       case "find_files":
-        output = await executeFindFiles(input);
+        output = await executeFindFiles(FindFilesSchema.parse(input));
         break;
       case "run_background":
-        output = await executeRunBackground(input);
+        output = await executeRunBackground(RunBackgroundSchema.parse(input));
         break;
       case "wait_process":
-        output = await executeWaitProcess(input);
+        output = await executeWaitProcess(WaitProcessSchema.parse(input));
         break;
       case "kill_process":
-        output = executeKillProcess(input);
+        output = executeKillProcess(KillProcessSchema.parse(input));
         break;
       default:
         return {
@@ -1040,8 +850,11 @@ export async function executeTool(
       durationMs: performance.now() - startTime,
     };
   } catch (err: unknown) {
+    const msg = err instanceof z.ZodError
+      ? z.prettifyError(err)
+      : err instanceof Error ? err.message : String(err);
     return {
-      output: `Error: ${err instanceof Error ? err.message : String(err)}`,
+      output: `Error: ${msg}`,
       isError: true,
       durationMs: performance.now() - startTime,
     };

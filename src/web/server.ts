@@ -22,6 +22,7 @@
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
+import { z } from "zod";
 import type { ServerWebSocket } from "bun";
 import { Agent, type StreamProvider, type OmegaEvent } from "../agent.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
@@ -29,23 +30,26 @@ import { appendEvent } from "../event-store.js";
 import type { ContextRecord } from "../context-store.js";
 import { OmegaEventSchema } from "../events.schema.js";
 import { ContextRecordSchema } from "../context-store.schema.js";
+import { readEnvPort } from "../env.js";
 
 // ---------------------------------------------------------------------------
 // Port resolution: --port flag > PORT env > 3000
 // ---------------------------------------------------------------------------
 
+const PortNumber = z.coerce.number().int().min(1).max(65535);
+
 function resolvePort(): number {
   const flagIdx = process.argv.indexOf("--port");
   if (flagIdx !== -1) {
     const val = process.argv[flagIdx + 1];
-    const n = Number(val);
-    if (!val || isNaN(n) || !Number.isInteger(n) || n < 1 || n > 65535) {
+    const parsed = PortNumber.safeParse(val);
+    if (!parsed.success) {
       console.error(`Error: --port requires a valid port number (got: ${val ?? "(nothing)"})`);
       process.exit(1);
     }
-    return n;
+    return parsed.data;
   }
-  return Number(process.env.PORT ?? 3000);
+  return readEnvPort(3000);
 }
 
 const PORT = resolvePort();
