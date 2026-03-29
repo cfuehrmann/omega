@@ -219,9 +219,9 @@ function addDurations(a: DurationMetrics, b: DurationMetrics): DurationMetrics {
  * Parse an ISO timestamp string to milliseconds-since-epoch.
  * Returns NaN if absent or unparseable (callers must guard).
  */
-function tsMs(ts: string | undefined): number {
-  if (!ts) return NaN;
-  return new Date(ts).getTime();
+function tsMs(time: string | undefined): number {
+  if (!time) return NaN;
+  return new Date(time).getTime();
 }
 
 /**
@@ -242,7 +242,7 @@ function findCurrentTurnStart(events: ServerMessage[]): number {
 /**
  * Compute DurationMetrics by walking a completed turn's event list.
  *
- * Safe for replay: uses only .ts fields from persisted events, never Date.now().
+ * Safe for replay: uses only .time fields from persisted events, never Date.now().
  */
 export function computeDurations(events: ServerMessage[]): DurationMetrics {
   let llmMs = 0;
@@ -261,7 +261,7 @@ export function computeDurations(events: ServerMessage[]): DurationMetrics {
   for (const e of events) {
     switch (e.type) {
       case "user_message":
-        userMessageTs = tsMs(e.ts);
+        userMessageTs = tsMs(e.time);
         break;
 
       case "llm_call": {
@@ -275,13 +275,13 @@ export function computeDurations(events: ServerMessage[]): DurationMetrics {
         batchMinCallTs = Infinity;
         batchMaxResultTs = -Infinity;
 
-        pendingLlmCallTs = tsMs(e.ts);
+        pendingLlmCallTs = tsMs(e.time);
         break;
       }
 
       case "llm_response": {
         if (pendingLlmCallTs !== null) {
-          const respTs = tsMs(e.ts);
+          const respTs = tsMs(e.time);
           if (!isNaN(respTs) && !isNaN(pendingLlmCallTs)) {
             llmMs += respTs - pendingLlmCallTs;
           }
@@ -297,7 +297,7 @@ export function computeDurations(events: ServerMessage[]): DurationMetrics {
 
       case "tool_call": {
         if (inToolBatch) {
-          const t = tsMs(e.ts);
+          const t = tsMs(e.time);
           if (!isNaN(t)) {
             batchHasCall = true;
             if (t < batchMinCallTs) batchMinCallTs = t;
@@ -308,7 +308,7 @@ export function computeDurations(events: ServerMessage[]): DurationMetrics {
 
       case "tool_result": {
         if (inToolBatch) {
-          const t = tsMs(e.ts);
+          const t = tsMs(e.time);
           if (!isNaN(t)) {
             batchHasResult = true;
             if (t > batchMaxResultTs) batchMaxResultTs = t;
@@ -325,7 +325,7 @@ export function computeDurations(events: ServerMessage[]): DurationMetrics {
         inToolBatch = false;
 
         if (userMessageTs !== null) {
-          const endTs = tsMs(e.ts);
+          const endTs = tsMs(e.time);
           if (!isNaN(endTs) && !isNaN(userMessageTs)) {
             turnMs = endTs - userMessageTs;
           }
@@ -368,13 +368,13 @@ export function computeLiveDurations(events: ServerMessage[]): DurationMetrics {
         batchMinCallTs = Infinity;
         batchMaxResultTs = -Infinity;
 
-        pendingLlmCallTs = tsMs(e.ts);
+        pendingLlmCallTs = tsMs(e.time);
         break;
       }
 
       case "llm_response": {
         if (pendingLlmCallTs !== null) {
-          const respTs = tsMs(e.ts);
+          const respTs = tsMs(e.time);
           if (!isNaN(respTs) && !isNaN(pendingLlmCallTs)) {
             llmMs += respTs - pendingLlmCallTs;
           }
@@ -391,7 +391,7 @@ export function computeLiveDurations(events: ServerMessage[]): DurationMetrics {
       case "tool_call": {
         if (inToolBatch) {
           batchCallIds.add(e.id);
-          const t = tsMs(e.ts);
+          const t = tsMs(e.time);
           if (!isNaN(t) && t < batchMinCallTs) batchMinCallTs = t;
         }
         break;
@@ -400,7 +400,7 @@ export function computeLiveDurations(events: ServerMessage[]): DurationMetrics {
       case "tool_result": {
         if (inToolBatch) {
           batchResultIds.add(e.id);
-          const t = tsMs(e.ts);
+          const t = tsMs(e.time);
           if (!isNaN(t) && t > batchMaxResultTs) batchMaxResultTs = t;
 
           if (batchCallIds.size > 0 && batchCallIds.size === batchResultIds.size) {
@@ -518,7 +518,7 @@ export function dispatch(event: ServerMessage): void {
       // the server didn't close the turn (defensive). Append a synthetic
       // turn_interrupted so the UI is never left stuck in streaming state.
       const replayEvents: ServerMessage[] = replayStreaming && currentTurnStartIdx >= 0
-        ? [...rawEvents, { type: "turn_interrupted" as const, ts: "" }]
+        ? [...rawEvents, { type: "turn_interrupted" as const, time: "" }]
         : rawEvents;
 
       if (replayStreaming && currentTurnStartIdx >= 0) {

@@ -204,12 +204,12 @@ function exhaustiveCheck(x: never): null {
 
 /**
  * Format an ISO timestamp string to local date + time with millisecond
- * precision: "YYYY-MM-DD HH:mm:ss.mmm". Returns "" when ts is absent.
+ * precision: "YYYY-MM-DD HH:mm:ss.mmm". Returns "" when time is absent.
  */
-function formatTs(ts: string | undefined): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (isNaN(d.getTime())) return ts; // fallback: show raw string
+function formatTs(time: string | undefined): string {
+  if (!time) return "";
+  const d = new Date(time);
+  if (isNaN(d.getTime())) return time; // fallback: show raw string
   const pad = (n: number, w = 2) => String(n).padStart(w, "0");
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
@@ -319,7 +319,7 @@ function firstLine(s: string): string {
 
 interface ToolDetail {
   name: string;
-  ts?: string;
+  time?: string;
   input: unknown;
   output: string;
   isError: boolean;
@@ -327,7 +327,7 @@ interface ToolDetail {
 }
 
 interface LlmCallDetail {
-  ts?: string;
+  time?: string;
   url: string;
   model: string;
   contextHashes: string[];
@@ -340,7 +340,7 @@ interface LlmCallDetail {
 }
 
 interface LlmResponseDetail {
-  ts?: string;
+  time?: string;
   streamingStart?: string;
   stopReason: string;
   usage: {
@@ -359,7 +359,7 @@ interface LlmResponseDetail {
 
 interface BlockDetail {
   label: string;
-  ts?: string;
+  time?: string;
   streamingStart?: string;
   body: string;
 }
@@ -460,8 +460,8 @@ function ActiveModal() {
               <Show when={d.streamingStart}>
                 <div class="modal-section-label">streaming start: {formatTs(d.streamingStart)}</div>
               </Show>
-              <Show when={d.ts}>
-                <div class="modal-section-label">time: {formatTs(d.ts)}</div>
+              <Show when={d.time}>
+                <div class="modal-section-label">time: {formatTs(d.time)}</div>
               </Show>
               <div class="modal-section-label">content</div>
               <pre class="modal-body">{d.body}</pre>
@@ -472,8 +472,8 @@ function ActiveModal() {
           const d = modal.detail;
           return (
             <ModalShell title={`tool › ${d.name}`} cls="tool-modal">
-              <Show when={d.ts}>
-                <div class="modal-section-label">{formatTs(d.ts)}</div>
+              <Show when={d.time}>
+                <div class="modal-section-label">{formatTs(d.time)}</div>
               </Show>
               <div class="modal-section-label">input</div>
               <pre class="modal-body">{
@@ -506,14 +506,14 @@ function ActiveModal() {
               if (!hashParam) return [];
               const res = await fetch(`/context?hashes=${encodeURIComponent(hashParam)}`);
               if (!res.ok) return [];
-              return res.json() as Promise<Array<{ hash: string; ts?: string; role: string; content: unknown }>>;
+              return res.json() as Promise<Array<{ hash: string; time?: string; role: string; content: unknown }>>;
             },
           );
 
           return (
             <ModalShell title={`${d.source ?? "llm_call"} › messages`} cls="llm-call-modal">
-              <Show when={d.ts}>
-                <div class="modal-section-label">{formatTs(d.ts)}</div>
+              <Show when={d.time}>
+                <div class="modal-section-label">{formatTs(d.time)}</div>
               </Show>
               <div class="modal-section-label">{d.contextHashes.length} messages · +{deltaCount} new</div>
 
@@ -535,7 +535,7 @@ function ActiveModal() {
                       return (
                         <>
                           <div class={`llm-call-msg llm-call-msg-${rec.role}`}>
-                            <span class="llm-call-msg-role">{rec.role}<span class="llm-call-msg-ts">{rec.ts ? "  " + formatTs(rec.ts) : ""}</span></span>
+                            <span class="llm-call-msg-role">{rec.role}<span class="llm-call-msg-ts">{rec.time ? "  " + formatTs(rec.time) : ""}</span></span>
                             <pre class="llm-call-msg-body">{renderContent(rec.content)}</pre>
                           </div>
                           <Show when={showSeparator}>
@@ -562,8 +562,8 @@ function ActiveModal() {
 
           return (
             <ModalShell title="llm_call › payload" cls="llm-call-modal">
-              <Show when={d.ts}>
-                <div class="modal-section-label">{formatTs(d.ts)}</div>
+              <Show when={d.time}>
+                <div class="modal-section-label">{formatTs(d.time)}</div>
               </Show>
               <div class="modal-section-label">{d.url}</div>
               <div class="modal-section-label">{d.contextHashes.length} messages · +{deltaCount} new</div>
@@ -592,7 +592,7 @@ function ActiveModal() {
         const openMessages = () => setActiveModal({
           kind: "llm_call_messages",
           detail: {
-            ts: d.ts,
+            time: d.time,
             url: "",
             model: "",
             contextHashes: d.allContextHashes,
@@ -607,8 +607,8 @@ function ActiveModal() {
             <Show when={d.streamingStart}>
               <div class="modal-section-label">streaming start: {formatTs(d.streamingStart)}</div>
             </Show>
-            <Show when={d.ts}>
-              <div class="modal-section-label">time: {formatTs(d.ts)}</div>
+            <Show when={d.time}>
+              <div class="modal-section-label">time: {formatTs(d.time)}</div>
             </Show>
             <div class="modal-section-label">{usageParts}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>  <button class="llm-legend-btn" onClick={openMessages} title="View as messages">messages (+1)</button></div>
             <div class="modal-section-label">payload</div>
@@ -627,7 +627,7 @@ function ActiveModal() {
 
 function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; allLlmCalls: Array<ServerMessage & { type: "llm_call" }> }) {
   const e = props.event;
-  const ts = "ts" in e ? (e as { ts?: string }).ts : undefined;
+  const time = "time" in e ? (e as { time?: string }).time : undefined;
   const streamingStart = "streamingStart" in e ? (e as { streamingStart?: string }).streamingStart : undefined;
 
   // Exhaustive switch over ServerMessage — every variant must have a case.
@@ -639,7 +639,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block user">
           <div class="block-label-row">
             <span class="block-label">user_message</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "user_message", ts, body: e.content } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "user_message", time, body: e.content } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{e.content}</div>
         </div>
@@ -650,7 +650,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block assist">
           <div class="block-label-row">
             <span class="block-label">assistant_text</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "assistant_text", ts, streamingStart, body: e.text } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "assistant_text", time, streamingStart, body: e.text } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{e.text}</div>
         </div>
@@ -674,7 +674,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         const r = result();
         setToolModal({
           name: e.name,
-          ts,
+          time,
           input: e.input,
           output: r ? r.output : "(not yet available)",
           isError: r ? r.isError : false,
@@ -703,7 +703,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       const openModal = () => {
         setToolModal({
           name: e.name,
-          ts,
+          time,
           input: call ? call.input : null,
           output: e.output,
           isError: e.isError,
@@ -727,7 +727,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block status">
           <div class="block-label-row">
             <span class="block-label">model_changed</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "model_changed", ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "model_changed", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -740,7 +740,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block status">
           <div class="block-label-row">
             <span class="block-label">compacted</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compacted", ts, body: JSON.stringify(e.usage, null, 2) } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compacted", time, body: JSON.stringify(e.usage, null, 2) } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -755,7 +755,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       const deltaCount = e.contextHashes.length - previousLength;
 
       const detail = {
-        ts,
+        time,
         url: e.url,
         model: e.model,
         contextHashes: e.contextHashes,
@@ -791,7 +791,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       const openPayload = () => setActiveModal({
         kind: "llm_response",
         detail: {
-          ts,
+          time,
           streamingStart: e.streamingStart,
           stopReason: e.stopReason,
           usage: e.usage,
@@ -804,7 +804,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       const openMessages = () => setActiveModal({
         kind: "llm_call_messages",
         detail: {
-          ts,
+          time,
           url: "",
           model: "",
           contextHashes: allContextHashes,
@@ -816,7 +816,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         kind: "block",
         detail: {
           label: "thinking",
-          ts,
+          time,
           body: e.thinking ?? "",
         },
       });
@@ -849,7 +849,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block footer">
           <div class="block-label-row">
             <span class="block-label">turn_end</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_end", ts, body: line } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_end", time, body: line } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{line}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
         </div>
@@ -862,7 +862,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block error-b">
           <div class="block-label-row">
             <span class="block-label">api error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "api error", ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "api error", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -875,7 +875,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block error-b">
           <div class="block-label-row">
             <span class="block-label">error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "agent_error", ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "agent_error", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -888,7 +888,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block error-b">
           <div class="block-label-row">
             <span class="block-label">transport_error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "transport_error", ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "transport_error", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -905,7 +905,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block interrupt">
           <div class="block-label-row">
             <span>{label}</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_interrupted", ts, body: label + (reason ? ` (reason: ${reason})` : "") } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_interrupted", time, body: label + (reason ? ` (reason: ${reason})` : "") } })} title="Details">⤢</button>
           </div>
         </div>
       );
@@ -917,7 +917,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block info">
           <div class="block-label-row">
             <span class="block-label">llm retry (attempt {e.attempt})</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `llm retry (attempt ${e.attempt})`, ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `llm retry (attempt ${e.attempt})`, time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -930,7 +930,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block info">
           <div class="block-label-row">
             <span class="block-label">session start</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_start", ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_start", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -952,7 +952,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block info">
           <div class="block-label-row">
             <span class="block-label">server stopped</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "server_stopped", ts, body } })} title="Details">⤢</button>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "server_stopped", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>

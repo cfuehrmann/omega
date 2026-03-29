@@ -33,10 +33,10 @@ describe("computeDurations — LLM time", () => {
 
   it("measures a single llm_call → llm_response pair", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 100), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 1100), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
-      { type: "turn_end", ts: ms(BASE, 1200), metrics: { inputTokens: 10, outputTokens: 5 } },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 100), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 1100), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "turn_end", time: ms(BASE, 1200), metrics: { inputTokens: 10, outputTokens: 5 } },
     ];
     const d = computeDurations(events);
     expect(d.llmMs).toBe(1000);
@@ -44,16 +44,16 @@ describe("computeDurations — LLM time", () => {
 
   it("sums multiple llm call durations across a tool loop", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
       // First LLM call: 500ms
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
-      { type: "tool_call", ts: ms(BASE, 500), id: "t1", name: "read_file", input: {}, contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 800), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "tool_call", time: ms(BASE, 500), id: "t1", name: "read_file", input: {}, contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 800), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
       // Second LLM call: 700ms
-      { type: "llm_call", ts: ms(BASE, 900), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 1600), stopReason: "end_turn", usage: { input_tokens: 15, output_tokens: 8 }, contextHash: "def" },
-      { type: "turn_end", ts: ms(BASE, 1700), metrics: { inputTokens: 25, outputTokens: 13 } },
+      { type: "llm_call", time: ms(BASE, 900), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 1600), stopReason: "end_turn", usage: { input_tokens: 15, output_tokens: 8 }, contextHash: "def" },
+      { type: "turn_end", time: ms(BASE, 1700), metrics: { inputTokens: 25, outputTokens: 13 } },
     ];
     const d = computeDurations(events);
     expect(d.llmMs).toBe(500 + 700); // 1200
@@ -63,15 +63,15 @@ describe("computeDurations — LLM time", () => {
 describe("computeDurations — tool time", () => {
   it("measures a single tool batch (one tool)", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
       // tool call at 500, result at 900 → span = 400ms
-      { type: "tool_call", ts: ms(BASE, 500), id: "t1", name: "run_command", input: {}, contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 900), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "ok", contextHash: "" },
-      { type: "llm_call", ts: ms(BASE, 950), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 1400), stopReason: "end_turn", usage: { input_tokens: 15, output_tokens: 8 }, contextHash: "def" },
-      { type: "turn_end", ts: ms(BASE, 1500), metrics: { inputTokens: 25, outputTokens: 13 } },
+      { type: "tool_call", time: ms(BASE, 500), id: "t1", name: "run_command", input: {}, contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 900), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "ok", contextHash: "" },
+      { type: "llm_call", time: ms(BASE, 950), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 1400), stopReason: "end_turn", usage: { input_tokens: 15, output_tokens: 8 }, contextHash: "def" },
+      { type: "turn_end", time: ms(BASE, 1500), metrics: { inputTokens: 25, outputTokens: 13 } },
     ];
     const d = computeDurations(events);
     expect(d.toolMs).toBe(400);
@@ -79,18 +79,18 @@ describe("computeDurations — tool time", () => {
 
   it("measures a parallel batch: span = max(result.ts) − min(call.ts)", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 200), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 200), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
       // Two parallel tool calls, first call at 200, second call at 210
       // Results come back at 600 and 800 → span = 800 − 200 = 600ms
-      { type: "tool_call", ts: ms(BASE, 200), id: "t1", name: "run_command", input: {}, contextHash: "" },
-      { type: "tool_call", ts: ms(BASE, 210), id: "t2", name: "read_file", input: {}, contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 600), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "a", contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 800), id: "t2", name: "read_file", isError: false, durationMs: 590, output: "b", contextHash: "" },
-      { type: "llm_call", ts: ms(BASE, 850), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 1500), stopReason: "end_turn", usage: { input_tokens: 20, output_tokens: 10 }, contextHash: "def" },
-      { type: "turn_end", ts: ms(BASE, 1600), metrics: { inputTokens: 30, outputTokens: 15 } },
+      { type: "tool_call", time: ms(BASE, 200), id: "t1", name: "run_command", input: {}, contextHash: "" },
+      { type: "tool_call", time: ms(BASE, 210), id: "t2", name: "read_file", input: {}, contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 600), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "a", contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 800), id: "t2", name: "read_file", isError: false, durationMs: 590, output: "b", contextHash: "" },
+      { type: "llm_call", time: ms(BASE, 850), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 1500), stopReason: "end_turn", usage: { input_tokens: 20, output_tokens: 10 }, contextHash: "def" },
+      { type: "turn_end", time: ms(BASE, 1600), metrics: { inputTokens: 30, outputTokens: 15 } },
     ];
     const d = computeDurations(events);
     expect(d.toolMs).toBe(600); // 800 − 200
@@ -98,20 +98,20 @@ describe("computeDurations — tool time", () => {
 
   it("sums tool spans across multiple batches", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
       // Batch 1: 300ms span
-      { type: "tool_call", ts: ms(BASE, 100), id: "t1", name: "read_file", input: {}, contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
-      { type: "llm_call", ts: ms(BASE, 420), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 700), stopReason: "tool_use", usage: { input_tokens: 8, output_tokens: 3 }, contextHash: "b" },
+      { type: "tool_call", time: ms(BASE, 100), id: "t1", name: "read_file", input: {}, contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
+      { type: "llm_call", time: ms(BASE, 420), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 700), stopReason: "tool_use", usage: { input_tokens: 8, output_tokens: 3 }, contextHash: "b" },
       // Batch 2: 200ms span
-      { type: "tool_call", ts: ms(BASE, 700), id: "t2", name: "write_file", input: {}, contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 900), id: "t2", name: "write_file", isError: false, durationMs: 200, output: "ok", contextHash: "" },
-      { type: "llm_call", ts: ms(BASE, 920), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 1200), stopReason: "end_turn", usage: { input_tokens: 12, output_tokens: 6 }, contextHash: "c" },
-      { type: "turn_end", ts: ms(BASE, 1300), metrics: { inputTokens: 25, outputTokens: 11 } },
+      { type: "tool_call", time: ms(BASE, 700), id: "t2", name: "write_file", input: {}, contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 900), id: "t2", name: "write_file", isError: false, durationMs: 200, output: "ok", contextHash: "" },
+      { type: "llm_call", time: ms(BASE, 920), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 1200), stopReason: "end_turn", usage: { input_tokens: 12, output_tokens: 6 }, contextHash: "c" },
+      { type: "turn_end", time: ms(BASE, 1300), metrics: { inputTokens: 25, outputTokens: 11 } },
     ];
     const d = computeDurations(events);
     expect(d.toolMs).toBe(300 + 200); // 500
@@ -119,10 +119,10 @@ describe("computeDurations — tool time", () => {
 
   it("returns 0 toolMs when no tool calls were made", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 800), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
-      { type: "turn_end", ts: ms(BASE, 900), metrics: { inputTokens: 10, outputTokens: 5 } },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 800), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "turn_end", time: ms(BASE, 900), metrics: { inputTokens: 10, outputTokens: 5 } },
     ];
     const d = computeDurations(events);
     expect(d.toolMs).toBe(0);
@@ -132,10 +132,10 @@ describe("computeDurations — tool time", () => {
 describe("computeDurations — turn time", () => {
   it("measures turn_end.ts − user_message.ts", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
-      { type: "turn_end", ts: ms(BASE, 1000), metrics: { inputTokens: 10, outputTokens: 5 } },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "turn_end", time: ms(BASE, 1000), metrics: { inputTokens: 10, outputTokens: 5 } },
     ];
     const d = computeDurations(events);
     expect(d.turnMs).toBe(1000);
@@ -143,9 +143,9 @@ describe("computeDurations — turn time", () => {
 
   it("returns 0 turnMs when turn_end is absent", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
       // No turn_end
     ];
     const d = computeDurations(events);
@@ -160,9 +160,9 @@ describe("computeDurations — turn time", () => {
 describe("computeLiveDurations — LLM time", () => {
   it("accumulates llmMs as each llm_response arrives", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 600), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 600), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
     ];
     const d = computeLiveDurations(events);
     expect(d.llmMs).toBe(600);
@@ -173,13 +173,13 @@ describe("computeLiveDurations — LLM time", () => {
 describe("computeLiveDurations — tool time", () => {
   it("flushes a batch as soon as all results arrive", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 200), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
-      { type: "tool_call", ts: ms(BASE, 200), id: "t1", name: "read_file", input: {}, contextHash: "" },
-      { type: "tool_call", ts: ms(BASE, 205), id: "t2", name: "write_file", input: {}, contextHash: "" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 200), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
+      { type: "tool_call", time: ms(BASE, 200), id: "t1", name: "read_file", input: {}, contextHash: "" },
+      { type: "tool_call", time: ms(BASE, 205), id: "t2", name: "write_file", input: {}, contextHash: "" },
       // Only first result in — batch not yet complete
-      { type: "tool_result", ts: ms(BASE, 500), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 500), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
     ];
     // After only t1 result, toolMs should still be 0 (batch not complete)
     const d1 = computeLiveDurations(events);
@@ -188,7 +188,7 @@ describe("computeLiveDurations — tool time", () => {
     // Now t2 result arrives — batch complete: 700 − 200 = 500ms
     const events2: ServerMessage[] = [
       ...events,
-      { type: "tool_result", ts: ms(BASE, 700), id: "t2", name: "write_file", isError: false, durationMs: 495, output: "ok", contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 700), id: "t2", name: "write_file", isError: false, durationMs: 495, output: "ok", contextHash: "" },
     ];
     const d2 = computeLiveDurations(events2);
     expect(d2.toolMs).toBe(500); // 700 − 200
@@ -196,14 +196,14 @@ describe("computeLiveDurations — tool time", () => {
 
   it("does not double-count a batch after it has been flushed", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
-      { type: "tool_call", ts: ms(BASE, 100), id: "t1", name: "read_file", input: {}, contextHash: "" },
-      { type: "tool_result", ts: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
+      { type: "tool_call", time: ms(BASE, 100), id: "t1", name: "read_file", input: {}, contextHash: "" },
+      { type: "tool_result", time: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: "" },
       // Second LLM call starts — this resets the batch window
-      { type: "llm_call", ts: ms(BASE, 450), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "b" },
+      { type: "llm_call", time: ms(BASE, 450), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "b" },
     ];
     const d = computeLiveDurations(events);
     // toolMs = 300 (only the first batch)
@@ -214,9 +214,9 @@ describe("computeLiveDurations — tool time", () => {
 
   it("always returns turnMs = 0", () => {
     const events: ServerMessage[] = [
-      { type: "user_message", ts: ms(BASE, 0), content: "hi" },
-      { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
-      { type: "llm_response", ts: ms(BASE, 500), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
+      { type: "user_message", time: ms(BASE, 0), content: "hi" },
+      { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
+      { type: "llm_response", time: ms(BASE, 500), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
     ];
     const d = computeLiveDurations(events);
     expect(d.turnMs).toBe(0);

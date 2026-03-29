@@ -16,7 +16,7 @@ import type { ContextRecord } from "./context-store.js";
 
 export const ContextRecordSchema = z.object({
   hash: z.string(),
-  ts: z.string(),
+  time: z.string(),
   role: z.enum(["user", "assistant"]),
   /**
    * Validates that content is a string or array; the inner block types are

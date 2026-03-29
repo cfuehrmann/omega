@@ -41,7 +41,7 @@ export type StreamSignal = TextSignal | ThinkingSignal;
 /** The session started (first event in every session). */
 export interface SessionStartEvent {
   type: "session_start";
-  ts: string;
+  time: string;
   sessionId: string;
   model: string;
   authMode: string;
@@ -55,7 +55,7 @@ export interface SessionStartEvent {
  */
 export interface ServerStartedEvent {
   type: "server_started";
-  ts: string;
+  time: string;
 }
 
 /**
@@ -66,7 +66,7 @@ export interface ServerStartedEvent {
  */
 export interface ServerStoppedEvent {
   type: "server_stopped";
-  ts: string;
+  time: string;
   /** "clean" = normal shutdown; "error" = stopped due to a hard error. */
   outcome: "clean" | "error";
   /** Human-readable reason, e.g. the error message on "error" outcome. */
@@ -76,14 +76,14 @@ export interface ServerStoppedEvent {
 /** A user message submitted to the agent. */
 export interface UserMessageEvent {
   type: "user_message";
-  ts: string;
+  time: string;
   content: string;
 }
 
 /** An outgoing API call to an LLM. */
 export interface LlmCallEvent {
   type: "llm_call";
-  ts: string;
+  time: string;
   url: string;
   model: string;
   /**
@@ -115,7 +115,7 @@ export interface LlmCallEvent {
 /** An LLM response received by the agent. */
 export interface LlmResponseEvent {
   type: "llm_response";
-  ts: string;
+  time: string;
   stopReason: string;
   usage: {
     input_tokens: number;
@@ -159,7 +159,7 @@ export interface LlmResponseEvent {
 /** A tool invocation by the agent. */
 export interface ToolCallEvent {
   type: "tool_call";
-  ts: string;
+  time: string;
   id: string;
   name: string;
   /** Tool input parameters. */
@@ -171,7 +171,7 @@ export interface ToolCallEvent {
 /** The result of a tool invocation. */
 export interface ToolResultEvent {
   type: "tool_result";
-  ts: string;
+  time: string;
   id: string;
   name: string;
   isError: boolean;
@@ -193,14 +193,14 @@ export interface TurnMetrics {
 /** End of a user turn — aggregate metrics. */
 export interface TurnEndEvent {
   type: "turn_end";
-  ts: string;
+  time: string;
   metrics: TurnMetrics;
 }
 
 /** A non-retryable LLM provider call error. */
 export interface LlmErrorEvent {
   type: "llm_error";
-  ts: string;
+  time: string;
   url: string;
   error: string;
   httpStatus?: number;
@@ -209,14 +209,14 @@ export interface LlmErrorEvent {
 /** A generic agent-level error (slash-command failures, etc.). */
 export interface AgentErrorEvent {
   type: "agent_error";
-  ts: string;
+  time: string;
   error: string;
 }
 
 /** The user interrupted an in-flight turn, or the turn ended due to an error. */
 export interface TurnInterruptedEvent {
   type: "turn_interrupted";
-  ts: string;
+  time: string;
   /**
    * Why the turn ended without a normal turn_end:
    * - "aborted"  — user pressed Abort
@@ -234,7 +234,7 @@ export interface TurnInterruptedEvent {
  */
 export interface CompactedEvent {
   type: "compacted";
-  ts: string;
+  time: string;
   /**
    * Full usage object from the API response. When compaction fires,
    * usage.iterations is an array with one compaction entry and one message
@@ -247,7 +247,7 @@ export interface CompactedEvent {
 /** LLM provider call retried after a transient error. */
 export interface LlmRetryEvent {
   type: "llm_retry";
-  ts: string;
+  time: string;
   attempt: number;
   httpStatus?: number;
   waitMs: number;
@@ -259,7 +259,7 @@ export interface LlmRetryEvent {
 /** The operator switched the active model. */
 export interface ModelChangedEvent {
   type: "model_changed";
-  ts: string;
+  time: string;
   model: string;
 }
 
@@ -283,7 +283,7 @@ export interface ModelChangedEvent {
  */
 export interface TransportErrorEvent {
   type: "transport_error";
-  ts: string;
+  time: string;
   error: string;
   context?: string;
 }

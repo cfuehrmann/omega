@@ -2,11 +2,11 @@
  * Tests for Step 3e-iii — FK/PK content-addressed context log.
  *
  * Covers:
- * - context.jsonl entries carry `hash` and `ts` fields
+ * - context.jsonl entries carry `hash` and `time` fields
  * - llm_call events carry `contextHashes: string[]`
  * - Hashes match every message in compactedContextHistory (no trimming)
  * - Chaotic scenarios:
- *   - Identical message content → different hashes (ts prevents collision)
+ *   - Identical message content → different hashes (time prevents collision)
  *   - Tool loop: each llm_call's contextHashes grows correctly
  * - All hashes are 8-char hex (no placeholders)
  */
@@ -119,7 +119,7 @@ function readEventLines(file: string): OmegaEvent[] {
 // ---------------------------------------------------------------------------
 
 describe("context.jsonl record shape", () => {
-  it.concurrent("each written record has hash (8 hex chars), ts, role, and content", async () => {
+  it.concurrent("each written record has hash (8 hex chars), time, role, and content", async () => {
 
     const mockProvider: StreamProvider = async () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
@@ -135,8 +135,8 @@ describe("context.jsonl record shape", () => {
       expect(typeof record.hash).toBe("string");
       expect(record.hash).toHaveLength(8);
       expect(/^[0-9a-f]{8}$/.test(record.hash)).toBe(true);
-      expect(typeof record.ts).toBe("string");
-      expect(record.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(typeof record.time).toBe("string");
+      expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(record.role === "user" || record.role === "assistant").toBe(true);
       expect(record.content).toBeDefined();
     }
@@ -159,7 +159,7 @@ describe("context.jsonl record shape", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Identical message content → different hashes (ts prevents collision)
+// Identical message content → different hashes (time prevents collision)
 // ---------------------------------------------------------------------------
 
 describe("hash uniqueness — identical content, different times", () => {
@@ -174,7 +174,7 @@ describe("hash uniqueness — identical content, different times", () => {
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     // Send the same message twice
     await collectEvents(agent, "ok");
-    await new Promise(r => setTimeout(r, 10)); // ensure ts differs
+    await new Promise(r => setTimeout(r, 10)); // ensure time differs
     await collectEvents(agent, "ok");
     await Bun.sleep(50);
 

@@ -11,7 +11,7 @@
  *   - normal turns (no compaction block) do NOT emit compacted event
  *   - the turn continues normally after compaction (tool_use → tool_result cycle works)
  *   - compacted event appears before llm_response in the event stream
- *   - compacted event carries a ts field
+ *   - compacted event carries a time field
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
@@ -144,7 +144,7 @@ describe("server-side compaction — compacted event emitted", () => {
 });
 
 describe("server-side compaction — compacted event fields", () => {
-  it("compacted event carries a ts field", async () => {
+  it("compacted event carries a time field", async () => {
     const provider: StreamProvider = async () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
@@ -156,8 +156,8 @@ describe("server-side compaction — compacted event fields", () => {
     const events = await collectEvents(agent, "hello");
     const ev = events.find(e => e.type === "compacted") as any;
     expect(ev).toBeDefined();
-    expect(typeof ev.ts).toBe("string");
-    expect(ev.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(typeof ev.time).toBe("string");
+    expect(ev.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("compacted event preserves the full usage object verbatim", async () => {

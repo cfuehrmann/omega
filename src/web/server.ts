@@ -158,7 +158,7 @@ export function closeOpenTurn(log: object[]): object[] {
     const t = (entry as { type: string }).type;
     if (t === "turn_end" || t === "turn_interrupted") return log;
     if (t === "user_message") {
-      return [...log, { type: "turn_interrupted", ts: new Date().toISOString() }];
+      return [...log, { type: "turn_interrupted", time: new Date().toISOString() }];
     }
   }
   return log;
@@ -235,7 +235,7 @@ function send(ws: ServerWebSocket<unknown>, event: object): void {
 function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context?: string): void {
   const event = {
     type: "transport_error" as const,
-    ts: new Date().toISOString(),
+    time: new Date().toISOString(),
     error,
     ...(context !== undefined ? { context } : {}),
   };
@@ -282,7 +282,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     persistentAgent.init()
       .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
       .catch((err: unknown) => {
-        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
+        send(session.ws, { type: "agent_error", time: new Date().toISOString(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
       });
     return;
   }
@@ -408,7 +408,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         persistentAgent.init()
           .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
           .catch((err: unknown) => {
-            send(ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
+            send(ws, { type: "agent_error", time: new Date().toISOString(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
           });
       },
 

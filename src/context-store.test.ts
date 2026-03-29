@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 describe("appendContextMessage", () => {
-  it("creates the file and writes one message as JSONL with hash and ts", async () => {
+  it("creates the file and writes one message as JSONL with hash and time", async () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     await appendContextMessage(msg, contextFile);
 
@@ -31,13 +31,13 @@ describe("appendContextMessage", () => {
     const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(1);
     const record: ContextRecord = JSON.parse(lines[0]!);
-    // Must have the original fields plus hash and ts
+    // Must have the original fields plus hash and time
     expect(record.role).toBe("user");
     expect(record.content).toBe("hello");
     expect(typeof record.hash).toBe("string");
     expect(record.hash).toHaveLength(8);
-    expect(typeof record.ts).toBe("string");
-    expect(record.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(typeof record.time).toBe("string");
+    expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("returns the hash of the stored record", async () => {
@@ -99,9 +99,9 @@ describe("appendContextMessage", () => {
     expect(blocks[1].name).toBe("read_file");
   });
 
-  it("identical content at different times produces different hashes (ts prevents collision)", async () => {
+  it("identical content at different times produces different hashes (time prevents collision)", async () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "ok" };
-    // Small delay to ensure different ts values
+    // Small delay to ensure different time values
     const hash1 = await appendContextMessage(msg, contextFile);
     await new Promise(r => setTimeout(r, 5));
     const hash2 = await appendContextMessage(msg, contextFile);
@@ -123,22 +123,22 @@ describe("appendContextMessage", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildContextRecord", () => {
-  it("returns a record with hash, ts, role, and content", async () => {
+  it("returns a record with hash, time, role, and content", async () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "hello" };
     const record = await buildContextRecord(msg);
     expect(record.role).toBe("user");
     expect(record.content).toBe("hello");
     expect(typeof record.hash).toBe("string");
     expect(record.hash).toHaveLength(8);
-    expect(typeof record.ts).toBe("string");
-    expect(record.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(typeof record.time).toBe("string");
+    expect(record.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("hash matches the sha256 of { ts, role, content } without hash", async () => {
+  it("hash matches the sha256 of { time, role, content } without hash", async () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "test" };
     const record = await buildContextRecord(msg);
     // Recompute manually
-    const input = JSON.stringify({ ts: record.ts, role: record.role, content: record.content });
+    const input = JSON.stringify({ time: record.time, role: record.role, content: record.content });
     const data = new TextEncoder().encode(input);
     const buf = await crypto.subtle.digest("SHA-256", data);
     const expectedHex = Array.from(new Uint8Array(buf))
@@ -148,7 +148,7 @@ describe("buildContextRecord", () => {
     expect(record.hash).toBe(expectedHex);
   });
 
-  it("two calls to buildContextRecord produce different hashes (different ts)", async () => {
+  it("two calls to buildContextRecord produce different hashes (different time)", async () => {
     const msg: Anthropic.Beta.Messages.BetaMessageParam = { role: "user", content: "ok" };
     const r1 = await buildContextRecord(msg);
     await new Promise(r => setTimeout(r, 5));

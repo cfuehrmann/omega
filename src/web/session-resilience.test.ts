@@ -45,7 +45,7 @@ describe("closeOpenTurn", () => {
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
     expect(result[result.length - 1]).toMatchObject({ type: "turn_interrupted" });
-    expect(typeof (result[result.length - 1] as any).ts).toBe("string");
+    expect(typeof (result[result.length - 1] as any).time).toBe("string");
   });
 
   it("handles multiple turns: only patches the open last turn", () => {
@@ -58,7 +58,7 @@ describe("closeOpenTurn", () => {
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
     expect(result[result.length - 1]).toMatchObject({ type: "turn_interrupted" });
-    expect(typeof (result[result.length - 1] as any).ts).toBe("string");
+    expect(typeof (result[result.length - 1] as any).time).toBe("string");
   });
 
   it("does not mutate the original array", () => {
@@ -119,8 +119,8 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", ts: "", content: "hello" },
-        { type: "turn_end", ts: "", metrics: { inputTokens: 10, outputTokens: 5 } },
+        { type: "user_message", time: "", content: "hello" },
+        { type: "turn_end", time: "", metrics: { inputTokens: 10, outputTokens: 5 } },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -130,8 +130,8 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", ts: "", content: "hello" },
-        { type: "turn_interrupted", ts: "" },
+        { type: "user_message", time: "", content: "hello" },
+        { type: "turn_interrupted", time: "" },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -142,7 +142,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", ts: "", content: "hello" },
+        { type: "user_message", time: "", content: "hello" },
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
         // NO turn_end — simulates a crash mid-turn
       ],
@@ -154,7 +154,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", ts: "", content: "hello" },
+        { type: "user_message", time: "", content: "hello" },
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
       ],
     });

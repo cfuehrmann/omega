@@ -3,11 +3,11 @@
  *
  * Writes each MessageParam to a JSONL file as it is pushed to the agent's
  * history. Each record is augmented with:
- *   - `ts`   — ISO timestamp of when the message was appended
+ *   - `time` — ISO timestamp of when the message was appended
  *   - `hash` — SHA-256(JSON of stored record) truncated to 8 hex chars,
  *              serving as a content-addressed primary key.
  *
- * The hash is computed from the full stored record (including `ts`) so
+ * The hash is computed from the full stored record (including `time`) so
  * that identical message content sent at different times gets different
  * hashes. This is the "view hash" used by `llm_call` events to cross-
  * reference which messages were actually sent to the LLM.
@@ -52,7 +52,7 @@ export interface ContextRecord {
   /** Content-addressed primary key: SHA-256(JSON of this record) truncated to 8 hex chars. */
   hash: string;
   /** ISO timestamp when this message was appended. */
-  ts: string;
+  time: string;
   /** Original MessageParam fields. */
   role: "user" | "assistant";
   content: Anthropic.Beta.Messages.BetaMessageParam["content"];
@@ -63,14 +63,14 @@ export interface ContextRecord {
  * write it to disk. This lets the caller get the hash synchronously (after
  * awaiting the hash computation) while deferring or skipping the I/O.
  *
- * Hash input: JSON of `{ ts, role, content }`. Including `ts` prevents
+ * Hash input: JSON of `{ time, role, content }`. Including `time` prevents
  * collisions between identical messages sent at different times.
  */
 export async function buildContextRecord(
   msg: Anthropic.Beta.Messages.BetaMessageParam
 ): Promise<ContextRecord> {
-  const ts = new Date().toISOString();
-  const recordWithoutHash = { ts, role: msg.role, content: msg.content };
+  const time = new Date().toISOString();
+  const recordWithoutHash = { time, role: msg.role, content: msg.content };
   const hash = await sha256hex8(JSON.stringify(recordWithoutHash));
   return { hash, ...recordWithoutHash };
 }
@@ -80,9 +80,9 @@ export async function buildContextRecord(
  * Creates the file (and parent directories) if they don't exist.
  * Pass `null` to disable the write (used when running in test mode).
  *
- * Since Step 3e-iii the written record is augmented with `ts` and `hash`
+ * Since Step 3e-iii the written record is augmented with `time` and `hash`
  * fields. The hash is computed from the full JSON of the record (including
- * `ts`) so identical content sent at different times gets different hashes.
+ * `time`) so identical content sent at different times gets different hashes.
  *
  * Returns the 8-char hex hash of the stored record so the caller can
  * reference it in `llm_call` events without re-reading the file.

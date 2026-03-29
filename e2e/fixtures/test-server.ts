@@ -214,10 +214,10 @@ Bun.serve({
 
     if (req.method === "POST" && url.pathname === "/control/send") {
       const body = await req.json() as { event: Record<string, unknown> };
-      // Ensure every event has a ts field — tests focus on semantics, not timestamps.
-      // This mirrors what the real agent does: every emitted OmegaEvent has a ts.
+      // Ensure every event has a time field — tests focus on semantics, not timestamps.
+      // This mirrors what the real agent does: every emitted OmegaEvent has a time.
       const event: Record<string, unknown> = {
-        ts: new Date().toISOString(),
+        time: new Date().toISOString(),
         ...body.event,
       };
       // Persist to disk (same filter the real server uses), then forward to browser
