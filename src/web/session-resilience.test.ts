@@ -100,8 +100,8 @@ describe("shouldLogEvent", () => {
     expect(shouldLogEvent({ type: "text", text: "Hello" })).toBe(false);
   });
 
-  it("EXCLUDES connected events (already excluded)", () => {
-    expect(shouldLogEvent({ type: "connected" })).toBe(false);
+  it("EXCLUDES ready events (already excluded)", () => {
+    expect(shouldLogEvent({ type: "ready" })).toBe(false);
   });
 
 
@@ -212,7 +212,7 @@ describe("store retrying state", () => {
   // Reset to a known baseline before each test
   function startTurn() {
     dispatch({ type: "history", events: [] });          // clear store
-    dispatch({ type: "connected" });
+    dispatch({ type: "ready" });
     dispatch({ type: "user_message", content: "hi" } as any);
   }
 

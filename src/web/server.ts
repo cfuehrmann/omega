@@ -9,7 +9,7 @@
  *
  * Protocol (server → client):
  *   All OmegaEvent shapes from events.ts, JSON-serialised.
- *   Extra: { type: "connected" }            — sent on WebSocket open
+ *   Extra: { type: "ready" }               — sent after history replay batch
  *
  * Persistence: identical to the terminal UI. Agent writes context.jsonl and
  * events.jsonl into .omega/sessions/<timestamp>/. History replay on reconnect
@@ -127,10 +127,10 @@ function serveStatic(pathname: string): Response | null {
 
 /**
  * Events that should not be replayed to a reconnecting browser.
- *   connected — synthesised from WebSocket open; meaningless to replay
+ *   ready     — server-sent after history batch; meaningless to replay
  *   text      — streaming text fragments; assembled response is in context.jsonl
  */
-const REPLAY_EXCLUDE = new Set(["connected", "text"]);
+const REPLAY_EXCLUDE = new Set(["ready", "text"]);
 
 /**
  * Returns true if the event should be included in history replay.
@@ -402,7 +402,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
           if (replayEvents.length > 0) {
             ws.send(JSON.stringify({ type: "history", events: replayEvents }));
           }
-          ws.send(JSON.stringify({ type: "connected" }));
+          ws.send(JSON.stringify({ type: "ready" }));
         });
 
         persistentAgent.init()

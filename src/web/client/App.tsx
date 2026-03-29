@@ -962,7 +962,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     // Web-protocol-only events — handled by dispatch(), never appear in turn.events.
     // Listed here to satisfy the exhaustive check.
     case "connecting":
-    case "connected":
+    case "ready":
     case "history":
     case "reset_done":
     case "session_info":

@@ -156,7 +156,7 @@ Bun.serve({
         if (replay.length > 0) {
           ws.send(JSON.stringify({ type: "history", events: replay }));
         }
-        ws.send(JSON.stringify({ type: "connected" }));
+        ws.send(JSON.stringify({ type: "ready" }));
       });
     },
     message(ws, data) {

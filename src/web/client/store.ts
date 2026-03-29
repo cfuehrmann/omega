@@ -25,7 +25,7 @@ export type WsEvent =
   | OmegaEvent
   | StreamSignal
   | { type: "connecting" }   // client-synthesized on ws.onopen (socket up, awaiting history)
-  | { type: "connected" }    // server-sent after session_info + history batch (fully ready)
+  | { type: "ready" }        // server-sent after session_info + history batch (fully ready)
   | { type: "history"; events: OmegaEvent[] }
   | { type: "reset_done" }
   | { type: "session_info"; dir: string };
@@ -442,7 +442,7 @@ export function dispatch(event: WsEvent): void {
       setState("connected", false);
       break;
 
-    case "connected":
+    case "ready":
       setState("connecting", false);
       setState("connected", true);
       setState("streaming", false);

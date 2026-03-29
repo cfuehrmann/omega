@@ -31,7 +31,7 @@ test("heading 'Ω Omega' is visible", async ({ page, server }) => {
 
 test("shows 'ready' status after connecting to server", async ({ page, server }) => {
   await page.goto("/");
-  // Server sends `connected` event on WS open → state.connected = true
+  // Server sends `ready` event after history batch → state.connected = true
   await expect(page.locator(".status-label")).toHaveText("ready", { timeout: 5000 });
 });
 
