@@ -1,6 +1,7 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import type { JSX } from "solid-js";
 import { state, dispatch, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
+import type { ClientMessage, OmegaModel } from "../protocol";
 import { marked } from "marked";
 
 // Configure marked: GFM (tables, strikethrough), no raw HTML passthrough.
@@ -258,7 +259,7 @@ function connect() {
   };
 }
 
-function sendToServer(msg: object) {
+function sendToServer(msg: ClientMessage) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
@@ -1033,7 +1034,7 @@ function SessionBar() {
   const disabled = () => state.streaming;
 
   const handleModelChange = (e: Event) => {
-    const model = (e.currentTarget as HTMLSelectElement).value;
+    const model = (e.currentTarget as HTMLSelectElement).value as OmegaModel;
     sendToServer({ type: "set_model", model });
   };
 

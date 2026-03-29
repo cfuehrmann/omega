@@ -5,10 +5,7 @@
  * objects as JSON over a WebSocket connection. Accepts user messages back
  * over the same socket.
  *
- * Protocol (client → server):
- *   { type: "message", content: string }            — send a user prompt
- *   { type: "abort" }                               — abort the current turn
- *   { type: "set_model", model: string }            — switch LLM model
+ * Protocol (client → server):  see src/web/protocol.ts (ClientMessageSchema)
  *
  * Protocol (server → client):
  *   All OmegaEvent shapes from events.ts, JSON-serialised.
@@ -31,6 +28,7 @@ import type { ContextRecord } from "../context-store.js";
 import { OmegaEventSchema } from "../events.schema.js";
 import { ContextRecordSchema } from "../context-store.schema.js";
 import { readEnvPort } from "../env.js";
+import { ClientMessageSchema, type ClientMessage } from "./protocol.js";
 
 // ---------------------------------------------------------------------------
 // Port resolution: --port flag > PORT env > 3000
@@ -246,11 +244,12 @@ function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context
 }
 
 async function handleMessage(session: Session, data: string, streamProvider?: StreamProvider): Promise<void> {
-  let msg: Record<string, unknown>;
+  let msg: ClientMessage;
   try {
-    msg = JSON.parse(data) as Record<string, unknown>;
-  } catch {
-    sendTransportError(session.ws, "Invalid JSON from client", "handleMessage");
+    msg = ClientMessageSchema.parse(JSON.parse(data));
+  } catch (err) {
+    const detail = err instanceof z.ZodError ? z.prettifyError(err) : "Invalid JSON from client";
+    sendTransportError(session.ws, detail, "handleMessage");
     return;
   }
 
@@ -293,12 +292,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
       sendTransportError(session.ws, "Cannot switch model during an active turn", "handleMessage");
       return;
     }
-    const model: string = String(msg.model ?? "");
-    if (model !== "claude-sonnet-4-6" && model !== "claude-opus-4-6") {
-      send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Unknown model: ${model}` });
-      return;
-    }
-    const ev = persistentAgent.setModel(model);
+    const ev = persistentAgent.setModel(msg.model);
     send(session.ws, ev);
     return;
   }
@@ -308,7 +302,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
       sendTransportError(session.ws, "Turn already in progress", "handleMessage");
       return;
     }
-    const content: string = String(msg.content ?? "").trim();
+    const content = msg.content.trim();
     if (!content) return;
 
     session.isStreaming = true;
