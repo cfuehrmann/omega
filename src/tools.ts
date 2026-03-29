@@ -894,8 +894,8 @@ async function executeWaitProcess(input: {
     while (Date.now() < deadline) {
       try {
         process.kill(pid, 0);
-      } catch (err: any) {
-        if (err.code === "ESRCH") {
+      } catch (err: unknown) {
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
           return JSON.stringify({
             pid,
             timedOut: false,
@@ -946,9 +946,9 @@ function executeKillProcess(input: {
   try {
     process.kill(input.pid, sig);
     return `Sent ${sig} to pid ${input.pid}`;
-  } catch (err: any) {
+  } catch (err: unknown) {
     // ESRCH = no such process (already dead)
-    if (err.code === "ESRCH") {
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
       return `pid ${input.pid} already exited (no such process)`;
     }
     throw err;
@@ -1039,9 +1039,9 @@ export async function executeTool(
       isError: false,
       durationMs: performance.now() - startTime,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
-      output: `Error: ${err.message}`,
+      output: `Error: ${err instanceof Error ? err.message : String(err)}`,
       isError: true,
       durationMs: performance.now() - startTime,
     };

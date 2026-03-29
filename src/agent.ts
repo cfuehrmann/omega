@@ -144,28 +144,52 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
+ * Extract HTTP status code and message from an unknown thrown value.
+ * Used in the API retry/error-handling catch block so we can avoid
+ * repeated casts when accessing these common error fields.
+ */
+function errFields(err: unknown): { httpStatus: number | undefined; message: string } {
+  if (err !== null && typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    const httpStatus =
+      typeof e.status === "number" ? e.status :
+      typeof e.statusCode === "number" ? e.statusCode :
+      undefined;
+    const message = typeof e.message === "string" ? e.message : String(err);
+    return { httpStatus, message };
+  }
+  return { httpStatus: undefined, message: String(err) };
+}
+
+/**
  * Returns true if the error is a "context too long" 429 from the API.
  * Retrying with the same payload is futile — treat as non-retryable.
  */
-export function isContextTooLong(err: any): boolean {
-  if (!err) return false;
-  const status = err.status ?? err.statusCode;
+export function isContextTooLong(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const e = err as Record<string, unknown>;
+  const status =
+    typeof e.status === "number" ? e.status :
+    typeof e.statusCode === "number" ? e.statusCode :
+    undefined;
   if (status !== 429) return false;
-  if (typeof err.message !== "string") return false;
-  return err.message.includes(
-    "Extra usage is required for long context requests",
-  );
+  if (typeof e.message !== "string") return false;
+  return e.message.includes("Extra usage is required for long context requests");
 }
 
-export function isRetryable(err: any): boolean {
-  if (!err) return false;
+export function isRetryable(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
   // A 429 meaning "prompt too long" is NOT transient — don't retry fruitlessly.
   if (isContextTooLong(err)) return false;
-  const status = err.status ?? err.statusCode;
+  const e = err as Record<string, unknown>;
+  const status =
+    typeof e.status === "number" ? e.status :
+    typeof e.statusCode === "number" ? e.statusCode :
+    undefined;
   if (status === 429 || status === 529 || status === 500 || status === 503)
     return true;
-  if (typeof err.message === "string") {
-    const msg: string = err.message;
+  if (typeof e.message === "string") {
+    const msg = e.message;
     // The Anthropic SDK throws this when the server restarts a stream mid-flight
     // (a new message_start arrives before message_stop). No HTTP status code —
     // it's thrown internally by MessageStream. Treat as transient and retry.
@@ -187,7 +211,7 @@ export function isRetryable(err: any): boolean {
 // recent N turns.
 
 function getAnthropicRetryDelayMs(
-  _err: any,
+  _err: unknown,
   attempt: number,
   baseMs: number,
   maxMs: number,
@@ -649,7 +673,7 @@ export class Agent {
 
       // Call API with retry
       let response: Anthropic.Beta.Messages.BetaMessage | null = null;
-      let lastError: any = null;
+      let lastError: unknown = null;
 
       for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
         try {
@@ -709,8 +733,9 @@ export class Agent {
           response = await stream.finalMessage();
           lastError = null;
           break;
-        } catch (err: any) {
+        } catch (err: unknown) {
           lastError = err;
+          const { httpStatus, message } = errFields(err);
 
           if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
             const waitMs = getAnthropicRetryDelayMs(
@@ -723,9 +748,9 @@ export class Agent {
               type: "llm_retry",
               ts: new Date().toISOString(),
               attempt: attempt + 1,
-              httpStatus: err.status ?? err.statusCode,
+              httpStatus,
               waitMs,
-              error: err.message,
+              error: message,
             };
             this.logEvent(retryEv);
             yield retryEv;
@@ -734,16 +759,14 @@ export class Agent {
             // Non-retryable error (includes prompt-too-long — no retry, no trimming).
             // Write a diagnostic snapshot so the next session has hard data.
             const isContextOverflow =
-              (err.status === 400 &&
-                typeof err.message === "string" &&
-                err.message.includes("prompt is too long")) ||
+              (httpStatus === 400 && message.includes("prompt is too long")) ||
               isContextTooLong(err);
             const llmErrEv: OmegaEvent = {
               type: "llm_error",
               ts: new Date().toISOString(),
               url: "https://api.anthropic.com/v1/messages",
-              error: err.message ?? String(err),
-              httpStatus: err.status ?? err.statusCode,
+              error: message,
+              httpStatus,
             };
             this.logEvent(llmErrEv);
             yield llmErrEv;
@@ -767,7 +790,7 @@ export class Agent {
               const apiErrEv: OmegaEvent = {
                 type: "agent_error",
                 ts: new Date().toISOString(),
-                error: `API error: ${err.message ?? err}`,
+                error: `API error: ${message}`,
               };
               this.logEvent(apiErrEv);
               yield apiErrEv;

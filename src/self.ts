@@ -128,25 +128,25 @@ export async function commitOrRevert(
         commitHash,
         testOutput,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         success: false,
         testsPassed: true,
         committed: false,
         testOutput,
-        revertReason: `Git commit failed: ${err.message}`,
+        revertReason: `Git commit failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
   } else {
     try {
       gitRevert(dir);
-    } catch (revertErr: any) {
+    } catch (revertErr: unknown) {
       return {
         success: false,
         testsPassed: false,
         committed: false,
         testOutput,
-        revertReason: `Tests failed AND git revert failed: ${revertErr.message}`,
+        revertReason: `Tests failed AND git revert failed: ${revertErr instanceof Error ? revertErr.message : String(revertErr)}`,
       };
     }
     return {

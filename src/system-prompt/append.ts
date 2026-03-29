@@ -44,8 +44,8 @@ export async function readSystemPromptAppend(
 ): Promise<string | null> {
   try {
     return await readFile(path, "utf-8");
-  } catch (err: any) {
-    if (err.code === "ENOENT") return null;
+  } catch (err: unknown) {
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
 }

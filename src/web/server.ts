@@ -278,8 +278,8 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
 
     persistentAgent.init()
       .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
-      .catch((err: any) => {
-        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err.message}` });
+      .catch((err: unknown) => {
+        send(session.ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
       });
     return;
   }
@@ -320,8 +320,8 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
       )) {
         send(ws, event);
       }
-    } catch (err: any) {
-      sendTransportError(ws, err.message ?? String(err), "handleMessage");
+    } catch (err: unknown) {
+      sendTransportError(ws, err instanceof Error ? err.message : String(err), "handleMessage");
     } finally {
       session.isStreaming = false;
       session.abortController = null;
@@ -409,14 +409,14 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
 
         persistentAgent.init()
           .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
-          .catch((err: any) => {
-            send(ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err.message}` });
+          .catch((err: unknown) => {
+            send(ws, { type: "agent_error", ts: new Date().toISOString(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
           });
       },
 
       message(ws, data) {
         if (activeSession?.ws !== ws) return;
-        handleMessage(activeSession, String(data), opts.streamProvider).catch((err: any) => {
+        handleMessage(activeSession, String(data), opts.streamProvider).catch((err: unknown) => {
           sendTransportError(ws, String(err), "websocket_message_handler");
         });
       },
@@ -428,8 +428,8 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
       },
     },
     });
-  } catch (err: any) {
-    const msg: string = err?.message ?? String(err);
+  } catch (err: unknown) {
+    const msg: string = err instanceof Error ? err.message : String(err);
     if (msg.toLowerCase().includes("address already in use")) {
       console.error(`Error: port ${PORT} is already in use. Choose a different port with --port <n>.`);
     } else {
