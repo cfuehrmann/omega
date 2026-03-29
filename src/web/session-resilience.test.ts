@@ -10,6 +10,7 @@
 import { describe, it, expect } from "bun:test";
 import { closeOpenTurn, shouldLogEvent } from "./server.js";
 import { dispatch, state, computeRenderGroups } from "./client/state.js";
+import { now } from "../iso-timestamp.js";
 
 // ---------------------------------------------------------------------------
 // closeOpenTurn
@@ -119,8 +120,8 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", time: "", content: "hello" },
-        { type: "turn_end", time: "", metrics: { inputTokens: 10, outputTokens: 5 } },
+        { type: "user_message", time: now(), content: "hello" },
+        { type: "turn_end", time: now(), metrics: { inputTokens: 10, outputTokens: 5 } },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -130,8 +131,8 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", time: "", content: "hello" },
-        { type: "turn_interrupted", time: "" },
+        { type: "user_message", time: now(), content: "hello" },
+        { type: "turn_interrupted", time: now() },
       ],
     });
     expect(state.streaming).toBe(false);
@@ -142,7 +143,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", time: "", content: "hello" },
+        { type: "user_message", time: now(), content: "hello" },
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
         // NO turn_end — simulates a crash mid-turn
       ],
@@ -154,7 +155,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "user_message", time: "", content: "hello" },
+        { type: "user_message", time: now(), content: "hello" },
         { type: "model_changed", model: "claude-sonnet-4-6" } as any,
       ],
     });

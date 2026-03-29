@@ -8,13 +8,14 @@
 import { describe, it, expect } from "bun:test";
 import { computeDurations, computeLiveDurations } from "./state.js";
 import type { ServerMessage } from "../protocol.js";
+import { type ISOTimestamp, iso } from "../../iso-timestamp.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ms(base: number, offsetMs: number): string {
-  return new Date(base + offsetMs).toISOString();
+function ms(base: number, offsetMs: number): ISOTimestamp {
+  return iso(new Date(base + offsetMs).toISOString());
 }
 
 const BASE = 1_700_000_000_000; // arbitrary fixed epoch
@@ -77,7 +78,7 @@ describe("computeDurations — tool time", () => {
     expect(d.toolMs).toBe(400);
   });
 
-  it("measures a parallel batch: span = max(result.ts) − min(call.ts)", () => {
+  it("measures a parallel batch: span = max(result.time) − min(call.time)", () => {
     const events: ServerMessage[] = [
       { type: "user_message", time: ms(BASE, 0), content: "hi" },
       { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
@@ -130,7 +131,7 @@ describe("computeDurations — tool time", () => {
 });
 
 describe("computeDurations — turn time", () => {
-  it("measures turn_end.ts − user_message.ts", () => {
+  it("measures turn_end.time − user_message.time", () => {
     const events: ServerMessage[] = [
       { type: "user_message", time: ms(BASE, 0), content: "hi" },
       { type: "llm_call", time: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },

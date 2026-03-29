@@ -13,10 +13,11 @@
 
 import { z } from "zod";
 import type { ContextRecord } from "./context-store.js";
+import { ISOTimestampSchema } from "./iso-timestamp.js";
 
 export const ContextRecordSchema = z.object({
   hash: z.string(),
-  time: z.string().datetime(),
+  time: ISOTimestampSchema,
   role: z.enum(["user", "assistant"]),
   /**
    * Validates that content is a string or array; the inner block types are

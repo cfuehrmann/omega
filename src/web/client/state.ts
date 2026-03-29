@@ -17,6 +17,7 @@
 import { batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import type { ServerMessage } from "../protocol";
+import { now } from "../../iso-timestamp.js";
 
 // ---------------------------------------------------------------------------
 // Render groups — derived from the flat event list at render time
@@ -518,7 +519,7 @@ export function dispatch(event: ServerMessage): void {
       // the server didn't close the turn (defensive). Append a synthetic
       // turn_interrupted so the UI is never left stuck in streaming state.
       const replayEvents: ServerMessage[] = replayStreaming && currentTurnStartIdx >= 0
-        ? [...rawEvents, { type: "turn_interrupted" as const, time: "" }]
+        ? [...rawEvents, { type: "turn_interrupted" as const, time: now() }]
         : rawEvents;
 
       if (replayStreaming && currentTurnStartIdx >= 0) {

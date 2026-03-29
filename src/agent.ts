@@ -11,6 +11,7 @@ import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
+import { now } from "./iso-timestamp.js";
 
 // --- Types ---
 
@@ -369,7 +370,7 @@ export class Agent {
   ): Promise<void> {
     await this.logEvent({
       type: "server_stopped",
-      time: new Date().toISOString(),
+      time: now(),
       outcome,
       ...(reason ? { reason } : {}),
     });
@@ -406,13 +407,13 @@ export class Agent {
     this.client = new Anthropic();
     if (!this.serverStartLogged) {
       this.serverStartLogged = true;
-      await this.logEvent({ type: "server_started", time: new Date().toISOString() });
+      await this.logEvent({ type: "server_started", time: now() });
     }
     if (!this.sessionStartLogged) {
       this.sessionStartLogged = true;
       await this.logEvent({
         type: "session_start",
-        time: new Date().toISOString(),
+        time: now(),
         sessionId: this.sessionId,
         model: this.activeModel,
         authMode: "api-key",
@@ -428,7 +429,7 @@ export class Agent {
     this.activeModel = model;
     const ev: OmegaEvent = {
       type: "model_changed",
-      time: new Date().toISOString(),
+      time: now(),
       model,
     };
     this.logEvent(ev);
@@ -494,7 +495,7 @@ export class Agent {
     if (userMessage.startsWith("/")) {
       yield {
         type: "agent_error",
-        time: new Date().toISOString(),
+        time: now(),
         error: `Unknown command: ${userMessage}`,
       };
       return;
@@ -537,7 +538,7 @@ export class Agent {
           for (const toolUse of danglingUses) {
             const syntheticEv: OmegaEvent = {
               type: "tool_result",
-              time: new Date().toISOString(),
+              time: now(),
               id: toolUse.id,
               name: toolUse.name,
               isError: true,
@@ -556,7 +557,7 @@ export class Agent {
     await this.appendToHistory({ role: "user", content: userMessage });
     const userMessageEvent: OmegaEvent = {
       type: "user_message",
-      time: new Date().toISOString(),
+      time: now(),
       content: userMessage,
     };
     this.logEvent(userMessageEvent);
@@ -652,7 +653,7 @@ export class Agent {
       {
         const llmCallEv: OmegaEvent = {
           type: "llm_call",
-          time: new Date().toISOString(),
+          time: now(),
           url: "https://api.anthropic.com/v1/messages",
           model: activeModel,
           contextHashes,
@@ -716,7 +717,7 @@ export class Agent {
             // The user message stays — it was real input.
             const interruptEv: OmegaEvent = {
               type: "turn_interrupted",
-              time: new Date().toISOString(),
+              time: now(),
               reason: "aborted",
             };
             this.logEvent(interruptEv);
@@ -740,7 +741,7 @@ export class Agent {
             );
             const retryEv: OmegaEvent = {
               type: "llm_retry",
-              time: new Date().toISOString(),
+              time: now(),
               attempt: attempt + 1,
               httpStatus,
               waitMs,
@@ -757,7 +758,7 @@ export class Agent {
               isContextTooLong(err);
             const llmErrEv: OmegaEvent = {
               type: "llm_error",
-              time: new Date().toISOString(),
+              time: now(),
               url: "https://api.anthropic.com/v1/messages",
               error: message,
               httpStatus,
@@ -767,7 +768,7 @@ export class Agent {
             if (isContextOverflow) {
               const overflowEv: OmegaEvent = {
                 type: "agent_error",
-                time: new Date().toISOString(),
+                time: now(),
                 error: "Context too large to send. Start a fresh focused turn.",
               };
               this.logEvent(overflowEv);
@@ -775,7 +776,7 @@ export class Agent {
             } else if (isRetryable(err)) {
               const rateLimitEv: OmegaEvent = {
                 type: "agent_error",
-                time: new Date().toISOString(),
+                time: now(),
                 error: "Anthropic rate limit. Try again shortly.",
               };
               this.logEvent(rateLimitEv);
@@ -783,7 +784,7 @@ export class Agent {
             } else {
               const apiErrEv: OmegaEvent = {
                 type: "agent_error",
-                time: new Date().toISOString(),
+                time: now(),
                 error: `API error: ${message}`,
               };
               this.logEvent(apiErrEv);
@@ -791,7 +792,7 @@ export class Agent {
             }
             const terminalInterruptEv: OmegaEvent = {
               type: "turn_interrupted",
-              time: new Date().toISOString(),
+              time: now(),
               reason: "error",
             };
             this.logEvent(terminalInterruptEv);
@@ -845,7 +846,7 @@ export class Agent {
         // Emit a compacted event — full usage object preserved verbatim.
         const compactedEv: OmegaEvent = {
           type: "compacted",
-          time: new Date().toISOString(),
+          time: now(),
           usage: response.usage,
         };
         await this.logEvent(compactedEv);
@@ -861,7 +862,7 @@ export class Agent {
       });
       const llmResponseEvent: OmegaEvent = {
         type: "llm_response",
-        time: new Date().toISOString(),
+        time: now(),
         stopReason: response.stop_reason ?? "unknown",
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
@@ -919,7 +920,7 @@ export class Agent {
         for (const toolUse of toolUseBlocks) {
           const syntheticResultEvent: OmegaEvent = {
             type: "tool_result",
-            time: new Date().toISOString(),
+            time: now(),
             id: toolUse.id,
             name: toolUse.name,
             isError: true,
@@ -940,7 +941,7 @@ export class Agent {
           `The session context is intact — retry with a smaller approach.`;
         const truncErrEvent: OmegaEvent = {
           type: "agent_error",
-          time: new Date().toISOString(),
+          time: now(),
           error: truncErr,
         };
         await this.logEvent(truncErrEvent);
@@ -957,7 +958,7 @@ export class Agent {
         for (const toolUse of toolUseBlocks) {
           const toolCallEvent: OmegaEvent = {
             type: "tool_call",
-            time: new Date().toISOString(),
+            time: now(),
             id: toolUse.id,
             name: toolUse.name,
             input: toolUse.input,
@@ -1006,7 +1007,7 @@ export class Agent {
             const result = results[i]!;
             const abortResultEvent: OmegaEvent = {
               type: "tool_result",
-              time: new Date().toISOString(),
+              time: now(),
               id: toolUse.id,
               name: toolUse.name,
               isError: result.isError,
@@ -1019,7 +1020,7 @@ export class Agent {
           }
           const abortInterruptEv: OmegaEvent = {
             type: "turn_interrupted",
-            time: new Date().toISOString(),
+            time: now(),
             reason: "aborted",
           };
           this.logEvent(abortInterruptEv);
@@ -1049,7 +1050,7 @@ export class Agent {
           const result = results[i]!;
           const toolResultEvent: OmegaEvent = {
             type: "tool_result",
-            time: new Date().toISOString(),
+            time: now(),
             id: toolUse.id,
             name: toolUse.name,
             isError: result.isError,
@@ -1073,7 +1074,7 @@ export class Agent {
     };
     const turnEndEvent: OmegaEvent = {
       type: "turn_end",
-      time: new Date().toISOString(),
+      time: now(),
       metrics: turnEndMetrics,
     };
     this.logEvent(turnEndEvent);

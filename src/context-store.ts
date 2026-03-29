@@ -20,6 +20,7 @@ import { appendFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { assertNotProductionPath } from "./test-guard.js";
 import type Anthropic from "@anthropic-ai/sdk";
+import { type ISOTimestamp, now } from "./iso-timestamp.js";
 
 /** Default path for the context JSONL file. Relative to cwd (SESSION-2). */
 const DEFAULT_CONTEXT_FILE = ".omega/sessions/context.jsonl";
@@ -52,7 +53,7 @@ export interface ContextRecord {
   /** Content-addressed primary key: SHA-256(JSON of this record) truncated to 8 hex chars. */
   hash: string;
   /** ISO timestamp when this message was appended. */
-  time: string;
+  time: ISOTimestamp;
   /** Original MessageParam fields. */
   role: "user" | "assistant";
   content: Anthropic.Beta.Messages.BetaMessageParam["content"];
@@ -69,7 +70,7 @@ export interface ContextRecord {
 export async function buildContextRecord(
   msg: Anthropic.Beta.Messages.BetaMessageParam
 ): Promise<ContextRecord> {
-  const time = new Date().toISOString();
+  const time = now();
   const recordWithoutHash = { time, role: msg.role, content: msg.content };
   const hash = await sha256hex8(JSON.stringify(recordWithoutHash));
   return { hash, ...recordWithoutHash };
