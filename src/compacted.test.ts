@@ -17,6 +17,7 @@
 import { describe, it, expect, afterAll } from "bun:test";
 import type { StreamProvider, OmegaEvent, StreamSignal } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
+import { OmegaEventSchema } from "./events.schema.js";
 import { readFileSync, existsSync } from "fs";
 
 // ---------------------------------------------------------------------------
@@ -109,7 +110,7 @@ function readEventsFile(path: string): OmegaEvent[] {
   return readFileSync(path, "utf-8")
     .split("\n")
     .filter(Boolean)
-    .map(line => JSON.parse(line) as OmegaEvent);
+    .map(line => OmegaEventSchema.parse(JSON.parse(line)));
 }
 
 // ---------------------------------------------------------------------------

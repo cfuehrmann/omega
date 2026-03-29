@@ -23,10 +23,12 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import { readFile } from "fs/promises";
 import type { ServerWebSocket } from "bun";
-import { Agent, type StreamProvider } from "../agent.js";
+import { Agent, type StreamProvider, type OmegaEvent } from "../agent.js";
 import { makeSessionDir, type SessionPaths } from "../session-dir.js";
 import { appendEvent } from "../event-store.js";
 import type { ContextRecord } from "../context-store.js";
+import { OmegaEventSchema } from "../events.schema.js";
+import { ContextRecordSchema } from "../context-store.schema.js";
 
 // ---------------------------------------------------------------------------
 // Port resolution: --port flag > PORT env > 3000
@@ -85,13 +87,15 @@ async function lookupContextRecords(
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      try {
-        const rec = JSON.parse(trimmed) as ContextRecord;
-        if (hashSet.has(rec.hash)) map.set(rec.hash, rec);
-      } catch { /* skip malformed lines */ }
+      let raw: unknown;
+      try { raw = JSON.parse(trimmed); } catch { continue; }
+      const result = ContextRecordSchema.safeParse(raw);
+      if (result.success && hashSet.has(result.data.hash)) {
+        map.set(result.data.hash, result.data);
+      }
     }
   } catch { /* file unreadable */ }
-  return hashes.map(h => map.get(h)).filter(Boolean) as ContextRecord[];
+  return hashes.flatMap(h => { const r = map.get(h); return r ? [r] : []; });
 }
 
 function serveStatic(pathname: string): Response | null {
@@ -132,8 +136,7 @@ const REPLAY_EXCLUDE = new Set(["connected", "text"]);
  * text fragments and transient transport signals are excluded.
  */
 export function shouldLogEvent(event: object): boolean {
-  const t = (event as any).type as string;
-  return !REPLAY_EXCLUDE.has(t);
+  return "type" in event && !REPLAY_EXCLUDE.has((event as { type: string }).type);
 }
 
 /**
@@ -148,7 +151,9 @@ export function shouldLogEvent(event: object): boolean {
  */
 export function closeOpenTurn(log: object[]): object[] {
   for (let i = log.length - 1; i >= 0; i--) {
-    const t = (log[i] as any).type as string;
+    const entry = log[i]!;
+    if (!("type" in entry)) continue;
+    const t = (entry as { type: string }).type;
     if (t === "turn_end" || t === "turn_interrupted") return log;
     if (t === "user_message") {
       return [...log, { type: "turn_interrupted" }];
@@ -170,16 +175,14 @@ async function loadReplayEvents(eventsFile: string): Promise<object[]> {
   if (!existsSync(eventsFile)) return [];
   try {
     const text = await readFile(eventsFile, "utf-8");
-    const events: object[] = [];
+    const events: OmegaEvent[] = [];
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      try {
-        const e = JSON.parse(trimmed);
-        if (shouldLogEvent(e)) events.push(e);
-      } catch {
-        // skip malformed lines
-      }
+      let raw: unknown;
+      try { raw = JSON.parse(trimmed); } catch { continue; }
+      const result = OmegaEventSchema.safeParse(raw);
+      if (result.success && shouldLogEvent(result.data)) events.push(result.data);
     }
     return closeOpenTurn(events);
   } catch {

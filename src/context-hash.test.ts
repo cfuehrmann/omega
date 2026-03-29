@@ -18,6 +18,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
 import type { ContextRecord } from "./context-store.js";
+import { ContextRecordSchema } from "./context-store.schema.js";
+import { OmegaEventSchema } from "./events.schema.js";
 import type { LlmCallEvent, ToolCallEvent, ToolResultEvent } from "./events.js";
 
 // ---------------------------------------------------------------------------
@@ -99,15 +101,15 @@ function readContextRecords(file: string): ContextRecord[] {
   return readFileSync(file, "utf-8")
     .split("\n")
     .filter(Boolean)
-    .map(l => JSON.parse(l) as ContextRecord);
+    .map(l => ContextRecordSchema.parse(JSON.parse(l)));
 }
 
-function readEventLines(file: string): any[] {
+function readEventLines(file: string): OmegaEvent[] {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf-8")
     .split("\n")
     .filter(Boolean)
-    .map(l => JSON.parse(l));
+    .map(l => OmegaEventSchema.parse(JSON.parse(l)));
 }
 
 

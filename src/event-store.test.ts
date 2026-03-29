@@ -13,6 +13,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { appendEvent } from "./event-store.js";
+import { OmegaEventSchema } from "./events.schema.js";
 import type {
   OmegaEvent,
   UserMessageEvent,
@@ -37,7 +38,7 @@ function readEvents(file: string): OmegaEvent[] {
   return readFileSync(file, "utf-8")
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as OmegaEvent);
+    .map((line) => OmegaEventSchema.parse(JSON.parse(line)));
 }
 
 // ---------------------------------------------------------------------------
