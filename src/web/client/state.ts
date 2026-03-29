@@ -1,12 +1,13 @@
 /**
- * Application store — flat WsEvent[] state model.
+ * Application state — flat ServerMessage[] state model.
  *
- * The primary data structure is a flat `events: WsEvent[]` array that mirrors
- * the structure of events.jsonl. Turn grouping is a *rendering concern*,
- * derived by `computeRenderGroups()` at render time rather than baked into
- * the store shape. This means events that don't belong to any turn
- * (session_start, server_started, server_stopped, future inter-turn events) are naturally
- * first-class citizens — they just sit in the flat array where they belong.
+ * The primary data structure is a flat `events: ServerMessage[]` array that
+ * mirrors the structure of events.jsonl. Turn grouping is a *rendering
+ * concern*, derived by `computeRenderGroups()` at render time rather than
+ * baked into the state shape. This means events that don't belong to any turn
+ * (session_start, server_started, server_stopped, future inter-turn events)
+ * are naturally first-class citizens — they just sit in the flat array where
+ * they belong.
  *
  * Ephemeral streaming signals (text/thinking fragments) are never persisted
  * and never pushed into `events`; they accumulate in `streamingText` /
@@ -15,20 +16,7 @@
 
 import { batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { OmegaEvent, StreamSignal } from "../../events";
-
-// ---------------------------------------------------------------------------
-// Types mirroring src/agent.ts AgentEvent (subset we care about for display)
-// ---------------------------------------------------------------------------
-
-export type WsEvent =
-  | OmegaEvent
-  | StreamSignal
-  | { type: "connecting" }   // client-synthesized on ws.onopen (socket up, awaiting history)
-  | { type: "ready" }        // server-sent after session_info + history batch (fully ready)
-  | { type: "history"; events: OmegaEvent[] }
-  | { type: "reset_done" }
-  | { type: "session_info"; dir: string };
+import type { ServerMessage } from "../protocol";
 
 // ---------------------------------------------------------------------------
 // Render groups — derived from the flat event list at render time
@@ -42,8 +30,8 @@ export type WsEvent =
  *    ending with turn_end or turn_interrupted.
  */
 export type RenderGroup =
-  | { kind: "free"; events: WsEvent[] }
-  | { kind: "turn"; events: WsEvent[]; done: boolean };
+  | { kind: "free"; events: ServerMessage[] }
+  | { kind: "turn"; events: ServerMessage[]; done: boolean };
 
 /**
  * Derive render groups from a flat event list.
@@ -52,10 +40,10 @@ export type RenderGroup =
  * turn_interrupted and before the next user_message), form "free" groups.
  * Each user_message starts a new "turn" group.
  */
-export function computeRenderGroups(events: WsEvent[]): RenderGroup[] {
+export function computeRenderGroups(events: ServerMessage[]): RenderGroup[] {
   const groups: RenderGroup[] = [];
   let currentTurnIdx = -1; // index into groups[] of the active turn group
-  let freeEvents: WsEvent[] = [];
+  let freeEvents: ServerMessage[] = [];
 
   const flushFree = () => {
     if (freeEvents.length > 0) {
@@ -87,7 +75,7 @@ export function computeRenderGroups(events: WsEvent[]): RenderGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Metrics and duration types (unchanged)
+// Metrics and duration types
 // ---------------------------------------------------------------------------
 
 /** Aggregated metrics shown in the sticky footer bar. */
@@ -123,14 +111,14 @@ interface LastTurnInfo {
 }
 
 interface AppState {
-  /** Socket is open but server has not yet sent the post-history "connected" signal. */
+  /** Socket is open but server has not yet sent the post-history "ready" signal. */
   connecting: boolean;
   connected: boolean;
   streaming: boolean;
   /** True while an llm_retry backoff is in progress (clears on llm_response / turn end). */
   retrying: boolean;
   /** Flat event log — mirrors events.jsonl. Primary source of truth for the UI. */
-  events: WsEvent[];
+  events: ServerMessage[];
   /** Ephemeral accumulated streaming text (not in events; cleared on llm_response). */
   streamingText: string;
   /** Ephemeral accumulated streaming thinking (not in events; cleared on llm_response). */
@@ -158,7 +146,7 @@ interface AppState {
 }
 
 // ---------------------------------------------------------------------------
-// Store
+// State
 // ---------------------------------------------------------------------------
 
 export const zeroMetrics = (): StickyMetrics => ({
@@ -188,7 +176,7 @@ export { state };
 
 /** Extract a StickyMetrics snapshot from a turn_end event's metrics field.
  *  requestBytes is not in turn_end — pass it in separately (summed from llm_call events). */
-function metricsFromTurnEnd(e: WsEvent & { type: "turn_end" }, requestBytes: number): StickyMetrics {
+function metricsFromTurnEnd(e: ServerMessage & { type: "turn_end" }, requestBytes: number): StickyMetrics {
   const m = e.metrics;
   return {
     freshInTokens:  m.inputTokens,
@@ -200,7 +188,7 @@ function metricsFromTurnEnd(e: WsEvent & { type: "turn_end" }, requestBytes: num
 }
 
 /** Sum requestBytes from all llm_call events in an event list. */
-function sumRequestBytes(events: WsEvent[]): number {
+function sumRequestBytes(events: ServerMessage[]): number {
   let total = 0;
   for (const e of events) {
     if (e.type === "llm_call") total += e.requestBytes ?? 0;
@@ -240,7 +228,7 @@ function tsMs(ts: string | undefined): number {
  * Find the index of the most recent user_message in an event list.
  * Returns 0 as a fallback if none found.
  */
-function findCurrentTurnStart(events: WsEvent[]): number {
+function findCurrentTurnStart(events: ServerMessage[]): number {
   for (let i = events.length - 1; i >= 0; i--) {
     if (events[i]!.type === "user_message") return i;
   }
@@ -248,7 +236,7 @@ function findCurrentTurnStart(events: WsEvent[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Duration computation helpers (unchanged — operate on event slices)
+// Duration computation helpers (operate on event slices)
 // ---------------------------------------------------------------------------
 
 /**
@@ -256,7 +244,7 @@ function findCurrentTurnStart(events: WsEvent[]): number {
  *
  * Safe for replay: uses only .ts fields from persisted events, never Date.now().
  */
-export function computeDurations(events: WsEvent[]): DurationMetrics {
+export function computeDurations(events: ServerMessage[]): DurationMetrics {
   let llmMs = 0;
   let toolMs = 0;
   let turnMs = 0;
@@ -356,7 +344,7 @@ export function computeDurations(events: WsEvent[]): DurationMetrics {
 /**
  * Compute live (in-progress) duration metrics from a partial turn's event list.
  */
-export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
+export function computeLiveDurations(events: ServerMessage[]): DurationMetrics {
   let llmMs = 0;
   let toolMs = 0;
 
@@ -435,13 +423,33 @@ export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
   return { llmMs, toolMs, turnMs: 0 };
 }
 
-export function dispatch(event: WsEvent): void {
-  switch (event.type) {
-    case "connecting":
-      setState("connecting", true);
-      setState("connected", false);
-      break;
+// ---------------------------------------------------------------------------
+// State update functions
+// ---------------------------------------------------------------------------
 
+/**
+ * Call from ws.onopen. Sets the connecting state (socket open, awaiting
+ * history from server). Not a server message — the connection is not yet
+ * ready when onopen fires.
+ */
+export function setConnecting(): void {
+  setState("connecting", true);
+  setState("connected", false);
+}
+
+/**
+ * Call from ws.onclose. Not a server message — the connection is already
+ * gone when onclose fires.
+ */
+export function handleDisconnect(): void {
+  setState("connecting", false);
+  setState("connected", false);
+  setState("streaming", false);
+  setState("retryCount", r => r + 1);
+}
+
+export function dispatch(event: ServerMessage): void {
+  switch (event.type) {
     case "ready":
       setState("connecting", false);
       setState("connected", true);
@@ -509,7 +517,7 @@ export function dispatch(event: WsEvent): void {
       // Secondary crash recovery: if still marked streaming after all events,
       // the server didn't close the turn (defensive). Append a synthetic
       // turn_interrupted so the UI is never left stuck in streaming state.
-      const replayEvents = replayStreaming && currentTurnStartIdx >= 0
+      const replayEvents: ServerMessage[] = replayStreaming && currentTurnStartIdx >= 0
         ? [...rawEvents, { type: "turn_interrupted" as const, ts: "" }]
         : rawEvents;
 
@@ -676,15 +684,4 @@ export function dispatch(event: WsEvent): void {
       setState(produce(s => { s.events.push(event); }));
       break;
   }
-}
-
-/**
- * Call from ws.onclose. Not a WsEvent because the server can never send it —
- * the connection is already gone when onclose fires.
- */
-export function handleDisconnect(): void {
-  setState("connecting", false);
-  setState("connected", false);
-  setState("streaming", false);
-  setState("retryCount", r => r + 1);
 }

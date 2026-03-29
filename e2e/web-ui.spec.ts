@@ -140,6 +140,7 @@ test("tool_call event shows tool block", async ({ page, server }) => {
     id: "tc-001",
     name: "read_file",
     input: { path: "src/agent.ts" },
+    contextHash: "",
   });
 
   const toolBlock = page.locator(".block.tool");
@@ -186,12 +187,11 @@ test("llm_call event shows an api-call block", async ({ page, server }) => {
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
     type: "llm_call",
-    llmCallNumber: 1,
-    provider: "anthropic",
     url: "https://api.anthropic.com/v1/messages",
     model: "claude-sonnet-4-6",
     contextHashes: [],
-    request: { model: "claude-sonnet-4-6", max_tokens: 8192 },
+    cacheBreakpointIndex: null,
+    requestBytes: 0,
   });
 
   const block = page.locator(".block.api-call");
@@ -208,7 +208,7 @@ test("llm_response event shows an api-response block", async ({ page, server }) 
     type: "llm_response",
     stopReason: "end_turn",
     usage: { input_tokens: 100, output_tokens: 50 },
-    content: [],
+    contextHash: "",
   });
 
   const block = page.locator(".block.api-response");

@@ -158,7 +158,7 @@ export function closeOpenTurn(log: object[]): object[] {
     const t = (entry as { type: string }).type;
     if (t === "turn_end" || t === "turn_interrupted") return log;
     if (t === "user_message") {
-      return [...log, { type: "turn_interrupted" }];
+      return [...log, { type: "turn_interrupted", ts: new Date().toISOString() }];
     }
   }
   return log;

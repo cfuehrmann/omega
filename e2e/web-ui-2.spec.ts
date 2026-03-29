@@ -145,6 +145,7 @@ test("tool_result event shows result block", async ({ page, server }) => {
     id: "tc-001",
     name: "read_file",
     input: { path: "src/agent.ts" },
+    contextHash: "",
   });
   await server.sendEvent({
     type: "tool_result",
@@ -153,6 +154,7 @@ test("tool_result event shows result block", async ({ page, server }) => {
     isError: false,
     durationMs: 1,
     output: "file contents here",
+    contextHash: "",
   });
 
   const resultBlock = page.locator(".block.result");
@@ -173,6 +175,7 @@ test("tool_result with is_error shows error styling", async ({ page, server }) =
     isError: true,
     durationMs: 1,
     output: "command not found",
+    contextHash: "",
   });
 
   await expect(page.locator(".block.result.result-error")).toBeVisible({ timeout: 3000 });
@@ -244,6 +247,7 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     id: "tc-003",
     name: "read_file",
     input: { path: "README.md" },
+    contextHash: "",
   });
   await server.sendEvent({
     type: "tool_result",
@@ -252,6 +256,7 @@ test("tool_call survives page reload (history replay)", async ({ page, server })
     isError: false,
     durationMs: 1,
     output: "readme contents",
+    contextHash: "",
   });
   await server.sendEvent({
     type: "turn_end",

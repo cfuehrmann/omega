@@ -34,6 +34,7 @@ import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
 import { appendEvent } from "../../src/event-store.js";
 import { makeSessionDir, TEST_SESSIONS_ROOT, type SessionPaths } from "../../src/session-dir.js";
 import type { OmegaEvent } from "../../src/events.js";
+import { OmegaEventSchema } from "../../src/events.schema.js";
 
 const MAIN_PORT = 3001;
 const CTRL_PORT = 3002;
@@ -107,13 +108,14 @@ async function loadReplayEvents(): Promise<object[]> {
   if (!existsSync(eventsFile)) return [];
   try {
     const text = await readFile(eventsFile, "utf-8");
-    const events: object[] = [];
+    const events: OmegaEvent[] = [];
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        const e = JSON.parse(trimmed);
-        if (shouldLogEvent(e)) events.push(e);
+        const raw = JSON.parse(trimmed);
+        const result = OmegaEventSchema.safeParse(raw);
+        if (result.success && shouldLogEvent(result.data)) events.push(result.data);
       } catch { /* skip malformed lines */ }
     }
     return closeOpenTurn(events);
@@ -211,12 +213,17 @@ Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/control/send") {
-      const body = await req.json() as { event: object };
-      const event = body.event;
+      const body = await req.json() as { event: Record<string, unknown> };
+      // Ensure every event has a ts field — tests focus on semantics, not timestamps.
+      // This mirrors what the real agent does: every emitted OmegaEvent has a ts.
+      const event: Record<string, unknown> = {
+        ts: new Date().toISOString(),
+        ...body.event,
+      };
       // Persist to disk (same filter the real server uses), then forward to browser
       if (shouldLogEvent(event)) {
         // appendEvent strips UI-only fields before writing
-        await appendEvent(event as OmegaEvent, sessionPaths.eventsFile);
+        await appendEvent(event as unknown as OmegaEvent, sessionPaths.eventsFile);
       }
       sendWs(event);
       return new Response("ok");

@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { computeDurations, computeLiveDurations } from "./store.js";
-import type { WsEvent } from "./store.js";
+import { computeDurations, computeLiveDurations } from "./state.js";
+import type { ServerMessage } from "../protocol.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,7 +32,7 @@ describe("computeDurations — LLM time", () => {
   });
 
   it("measures a single llm_call → llm_response pair", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 100), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 1100), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -43,7 +43,7 @@ describe("computeDurations — LLM time", () => {
   });
 
   it("sums multiple llm call durations across a tool loop", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       // First LLM call: 500ms
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
@@ -62,7 +62,7 @@ describe("computeDurations — LLM time", () => {
 
 describe("computeDurations — tool time", () => {
   it("measures a single tool batch (one tool)", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -78,7 +78,7 @@ describe("computeDurations — tool time", () => {
   });
 
   it("measures a parallel batch: span = max(result.ts) − min(call.ts)", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 200), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -97,7 +97,7 @@ describe("computeDurations — tool time", () => {
   });
 
   it("sums tool spans across multiple batches", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
@@ -118,7 +118,7 @@ describe("computeDurations — tool time", () => {
   });
 
   it("returns 0 toolMs when no tool calls were made", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 800), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -131,7 +131,7 @@ describe("computeDurations — tool time", () => {
 
 describe("computeDurations — turn time", () => {
   it("measures turn_end.ts − user_message.ts", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -142,7 +142,7 @@ describe("computeDurations — turn time", () => {
   });
 
   it("returns 0 turnMs when turn_end is absent", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 50), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -159,7 +159,7 @@ describe("computeDurations — turn time", () => {
 
 describe("computeLiveDurations — LLM time", () => {
   it("accumulates llmMs as each llm_response arrives", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 600), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },
@@ -172,7 +172,7 @@ describe("computeLiveDurations — LLM time", () => {
 
 describe("computeLiveDurations — tool time", () => {
   it("flushes a batch as soon as all results arrive", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 200), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
@@ -186,7 +186,7 @@ describe("computeLiveDurations — tool time", () => {
     expect(d1.toolMs).toBe(0);
 
     // Now t2 result arrives — batch complete: 700 − 200 = 500ms
-    const events2: WsEvent[] = [
+    const events2: ServerMessage[] = [
       ...events,
       { type: "tool_result", ts: ms(BASE, 700), id: "t2", name: "write_file", isError: false, durationMs: 495, output: "ok", contextHash: "" },
     ];
@@ -195,7 +195,7 @@ describe("computeLiveDurations — tool time", () => {
   });
 
   it("does not double-count a batch after it has been flushed", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: "a" },
@@ -213,7 +213,7 @@ describe("computeLiveDurations — tool time", () => {
   });
 
   it("always returns turnMs = 0", () => {
-    const events: WsEvent[] = [
+    const events: ServerMessage[] = [
       { type: "user_message", ts: ms(BASE, 0), content: "hi" },
       { type: "llm_call", ts: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", ts: ms(BASE, 500), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: "abc" },

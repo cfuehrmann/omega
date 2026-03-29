@@ -1,7 +1,7 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import type { JSX } from "solid-js";
-import { state, dispatch, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
-import type { ClientMessage, OmegaModel } from "../protocol";
+import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
+import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel } from "../protocol";
 import { marked } from "marked";
 
 // Configure marked: GFM (tables, strikethrough), no raw HTML passthrough.
@@ -196,9 +196,9 @@ function formatKb(bytes: number, perCall = false): string {
   return perCall ? `${kb.toFixed(2)} KB` : `${kb.toFixed(1)} KB`;
 }
 
-/** Compile-time exhaustiveness guard for WsEvent switch in EventBlock. */
+/** Compile-time exhaustiveness guard for ServerMessage switch in EventBlock. */
 function exhaustiveCheck(x: never): null {
-  console.warn("Unhandled WsEvent type:", (x as any).type);
+  console.warn("Unhandled ServerMessage type:", (x as any).type);
   return null;
 }
 
@@ -238,7 +238,7 @@ function connect() {
 
   ws.onopen = () => {
     connectAttempts = 0;
-    dispatch({ type: "connecting" });
+    setConnecting();
   };
 
   ws.onerror = () => {
@@ -246,8 +246,8 @@ function connect() {
   };
 
   ws.onmessage = (e) => {
-    let event: WsEvent;
-    try { event = JSON.parse(e.data as string); } catch { return; }
+    let event: ServerMessage;
+    try { event = ServerMessageSchema.parse(JSON.parse(e.data as string)); } catch { return; }
     dispatch(event);
   };
 
@@ -625,13 +625,13 @@ function ActiveModal() {
 // ---------------------------------------------------------------------------
 
 
-function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls: Array<WsEvent & { type: "llm_call" }> }) {
+function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; allLlmCalls: Array<ServerMessage & { type: "llm_call" }> }) {
   const e = props.event;
   const ts = "ts" in e ? (e as { ts?: string }).ts : undefined;
   const streamingStart = "streamingStart" in e ? (e as { streamingStart?: string }).streamingStart : undefined;
 
-  // Exhaustive switch over WsEvent — every variant must have a case.
-  // Compile-time guard: if a new WsEvent variant is added without a render
+  // Exhaustive switch over ServerMessage — every variant must have a case.
+  // Compile-time guard: if a new ServerMessage variant is added without a render
   // case, TypeScript will error on the exhaustiveCheck(e) call in default.
   switch (e.type) {
     case "user_message":
@@ -666,7 +666,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       // Find the matching tool_result in the same turn by id
       const result = createMemo(() =>
         props.turnEvents.find(
-          (ev): ev is WsEvent & { type: "tool_result" } =>
+          (ev): ev is ServerMessage & { type: "tool_result" } =>
             ev.type === "tool_result" && ev.id === e.id
         )
       );
@@ -697,7 +697,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       const shortId = (id: string) => id.length <= 6 ? id : `…${id.slice(-6)}`;
       // Find matching tool_call for the modal
       const call = props.turnEvents.find(
-        (ev): ev is WsEvent & { type: "tool_call" } =>
+        (ev): ev is ServerMessage & { type: "tool_call" } =>
           ev.type === "tool_call" && ev.id === e.id
       );
       const openModal = () => {
@@ -782,7 +782,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       // Find the preceding llm_call in this turn to get its contextHashes.
       const precedingCall = [...props.turnEvents]
         .reverse()
-        .find((ev): ev is WsEvent & { type: "llm_call" } => ev.type === "llm_call");
+        .find((ev): ev is ServerMessage & { type: "llm_call" } => ev.type === "llm_call");
       const allContextHashes = [
         ...(precedingCall?.contextHashes ?? []),
         e.contextHash,
@@ -959,9 +959,8 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       );
     }
 
-    // Web-protocol-only events — handled by dispatch(), never appear in turn.events.
+    // Protocol envelope events — handled by dispatch(), never appear in turn.events.
     // Listed here to satisfy the exhaustive check.
-    case "connecting":
     case "ready":
     case "history":
     case "reset_done":
@@ -972,7 +971,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
 
     default:
       // Compile-time exhaustiveness guard: TypeScript errors here if any
-      // WsEvent variant is missing from the cases above.
+      // ServerMessage variant is missing from the cases above.
       return exhaustiveCheck(e);
   }
 }
@@ -980,7 +979,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
 function TurnView(props: {
   group: RenderGroup & { kind: "turn" };
   isLast: boolean;
-  allLlmCalls: Array<WsEvent & { type: "llm_call" }>;
+  allLlmCalls: Array<ServerMessage & { type: "llm_call" }>;
 }) {
   return (
     <div class="turn">
@@ -1020,7 +1019,7 @@ function TurnView(props: {
 
 function FreeView(props: {
   group: RenderGroup & { kind: "free" };
-  allLlmCalls: Array<WsEvent & { type: "llm_call" }>;
+  allLlmCalls: Array<ServerMessage & { type: "llm_call" }>;
 }) {
   return (
     <For each={props.group.events}>{(event) => (
@@ -1365,7 +1364,7 @@ export function App() {
   // These memos are created once at component-init time (correct SolidJS pattern).
   const renderGroups = createMemo(() => computeRenderGroups(state.events));
   const allLlmCalls = createMemo(() =>
-    state.events.filter((ev): ev is WsEvent & { type: "llm_call" } => ev.type === "llm_call")
+    state.events.filter((ev): ev is ServerMessage & { type: "llm_call" } => ev.type === "llm_call")
   );
 
   // Start WebSocket on mount, clean up on unmount

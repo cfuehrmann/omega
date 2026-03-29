@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "bun:test";
 import { closeOpenTurn, shouldLogEvent } from "./server.js";
-import { dispatch, state, computeRenderGroups } from "./client/store.js";
+import { dispatch, state, computeRenderGroups } from "./client/state.js";
 
 // ---------------------------------------------------------------------------
 // closeOpenTurn
@@ -44,7 +44,8 @@ describe("closeOpenTurn", () => {
     ];
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
-    expect(result[result.length - 1]).toEqual({ type: "turn_interrupted" });
+    expect(result[result.length - 1]).toMatchObject({ type: "turn_interrupted" });
+    expect(typeof (result[result.length - 1] as any).ts).toBe("string");
   });
 
   it("handles multiple turns: only patches the open last turn", () => {
@@ -56,7 +57,8 @@ describe("closeOpenTurn", () => {
     ];
     const result = closeOpenTurn(log);
     expect(result).toHaveLength(log.length + 1);
-    expect(result[result.length - 1]).toEqual({ type: "turn_interrupted" });
+    expect(result[result.length - 1]).toMatchObject({ type: "turn_interrupted" });
+    expect(typeof (result[result.length - 1] as any).ts).toBe("string");
   });
 
   it("does not mutate the original array", () => {
