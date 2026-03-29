@@ -465,7 +465,7 @@ export function dispatch(event: WsEvent): void {
       // Rebuild all state from the flat event log sent by the server.
       // The server runs closeOpenTurn() before sending, so any open turn
       // already has a synthetic turn_interrupted appended.
-      const rawEvents = event.events as WsEvent[];
+      const rawEvents = event.events;
 
       let replayLastTurnEnd: LastTurnInfo | null = null;
       let replaySessionTotals: StickyMetrics = zeroMetrics();

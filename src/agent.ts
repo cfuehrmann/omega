@@ -83,7 +83,7 @@ function elideAnthropicResponse(resp: Anthropic.Beta.Messages.BetaMessage): Reco
 // --- Auto-approve logic ---
 
 /** Always returns true — everything is auto-approved. No allowlist. */
-export function isAutoApproved(_toolName: string, _toolInput: any): boolean {
+export function isAutoApproved(_toolName: string, _toolInput: unknown): boolean {
   return true;
 }
 
@@ -494,7 +494,7 @@ export class Agent {
 
   async *sendMessage(
     userMessage: string,
-    _confirmTool: (name: string, input: any) => Promise<boolean>,
+    _confirmTool: (name: string, input: unknown) => Promise<boolean>,
     signal?: AbortSignal,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     if (userMessage.startsWith("/")) {

@@ -955,7 +955,7 @@ function executeKillProcess(input: {
   }
 }
 
-function validateToolInput(name: string, input: any): void {
+function validateToolInput(name: string, input: Record<string, unknown>): void {
   const tool = toolDefinitions.find((t) => t.name === name);
   if (!tool) return;
   const schema = (tool as any).input_schema;

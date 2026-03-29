@@ -32,9 +32,9 @@ const UI_ONLY_FIELDS: Record<string, string[]> = {};
  * Returns a plain object safe to JSON.stringify into events.jsonl.
  */
 function toPersistedEvent(event: OmegaEvent): object {
-  const uiOnly = UI_ONLY_FIELDS[(event as any).type] ?? [];
+  const uiOnly = UI_ONLY_FIELDS[event.type] ?? [];
   if (uiOnly.length === 0) return event;
-  const copy: any = { ...event };
+  const copy: Record<string, unknown> = { ...event };
   for (const field of uiOnly) {
     delete copy[field];
   }

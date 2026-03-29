@@ -623,8 +623,8 @@ function ActiveModal() {
 
 function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls: Array<WsEvent & { type: "llm_call" }> }) {
   const e = props.event;
-  const ts = (e as any).ts as string | undefined;
-  const streamingStart = (e as any).streamingStart as string | undefined;
+  const ts = "ts" in e ? (e as { ts?: string }).ts : undefined;
+  const streamingStart = "streamingStart" in e ? (e as { streamingStart?: string }).streamingStart : undefined;
 
   // Exhaustive switch over WsEvent — every variant must have a case.
   // Compile-time guard: if a new WsEvent variant is added without a render
@@ -663,7 +663,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       const result = createMemo(() =>
         props.turnEvents.find(
           (ev): ev is WsEvent & { type: "tool_result" } =>
-            ev.type === "tool_result" && (ev as any).id === e.id
+            ev.type === "tool_result" && ev.id === e.id
         )
       );
       const openModal = () => {
@@ -694,7 +694,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       // Find matching tool_call for the modal
       const call = props.turnEvents.find(
         (ev): ev is WsEvent & { type: "tool_call" } =>
-          ev.type === "tool_call" && (ev as any).id === e.id
+          ev.type === "tool_call" && ev.id === e.id
       );
       const openModal = () => {
         setToolModal({
@@ -892,7 +892,7 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
     }
 
     case "turn_interrupted": {
-      const reason = (e as any).reason as "aborted" | "error" | undefined;
+      const reason = e.reason;
       const label =
         reason === "aborted" ? "⊘ Aborted"
         : reason === "error"   ? "⊘ Failed"
