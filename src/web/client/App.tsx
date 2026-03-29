@@ -1,6 +1,6 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import type { JSX } from "solid-js";
-import { state, dispatch, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
+import { state, dispatch, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type WsEvent, type StickyMetrics, type DurationMetrics } from "./store";
 import type { ClientMessage, OmegaModel } from "../protocol";
 import { marked } from "marked";
 
@@ -238,23 +238,21 @@ function connect() {
 
   ws.onopen = () => {
     connectAttempts = 0;
-    dispatch({ type: "connected" });
+    dispatch({ type: "connecting" });
   };
 
   ws.onerror = () => {
-    // onclose fires right after onerror — let onclose handle the dispatch
+    // onclose fires right after onerror — let onclose handle the state update
   };
 
   ws.onmessage = (e) => {
     let event: WsEvent;
     try { event = JSON.parse(e.data as string); } catch { return; }
-    // Skip redundant server-sent "connected" — we already handled it in onopen
-    if (event.type === "connected") return;
     dispatch(event);
   };
 
   ws.onclose = () => {
-    dispatch({ type: "disconnected" });
+    handleDisconnect();
     reconnectTimer = setTimeout(connect, 2000);
   };
 }
@@ -939,13 +937,22 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
       );
     }
 
-    case "session_end": {
+    case "server_started":
+      return (
+        <div class="block info">
+          <div class="block-label-row">
+            <span class="block-label">server started</span>
+          </div>
+        </div>
+      );
+
+    case "server_stopped": {
       const body = `${e.outcome}${e.reason ? ` — ${e.reason}` : ""}`;
       return (
         <div class="block info">
           <div class="block-label-row">
-            <span class="block-label">session end</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_end", ts, body } })} title="Details">⤢</button>
+            <span class="block-label">server stopped</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "server_stopped", ts, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -954,8 +961,8 @@ function EventBlock(props: { event: WsEvent; turnEvents: WsEvent[]; allLlmCalls:
 
     // Web-protocol-only events — handled by dispatch(), never appear in turn.events.
     // Listed here to satisfy the exhaustive check.
+    case "connecting":
     case "connected":
-    case "disconnected":
     case "history":
     case "reset_done":
     case "session_info":
@@ -1322,14 +1329,16 @@ function ReconnectBanner() {
 
 function StatusDot() {
   const cls = () =>
-    !state.connected ? "dot error"
+    state.connecting   ? "dot connecting"
+    : !state.connected ? "dot error"
     : state.streaming  ? "dot streaming"
     : "dot connected";
 
   const label = () =>
-    !state.connected  ? "disconnected"
-    : state.retrying  ? "retrying…"
-    : state.streaming ? "streaming…"
+    state.connecting                      ? (state.retryCount > 0 ? "reconnecting…" : "connecting…")
+    : !state.connected                    ? "disconnected"
+    : state.retrying                      ? "retrying…"
+    : state.streaming                     ? "streaming…"
     : "ready";
 
   return (
@@ -1361,8 +1370,9 @@ export function App() {
 
   // Start WebSocket on mount, clean up on unmount
   onMount(() => {
-    // Expose dispatch for e2e tests (harmless in production)
+    // Expose dispatch + handleDisconnect for e2e tests (harmless in production)
     (window as any).__omegaDispatch = dispatch;
+    (window as any).__omegaHandleDisconnect = handleDisconnect;
     connect();
   });
   onCleanup(() => {

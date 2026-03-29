@@ -173,7 +173,7 @@ describe("store history replay — open turn recovery", () => {
         { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362"], cacheBreakpointIndex: 0 } as any,
         { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" }, text: "pong" } as any,
         { type: "turn_end", metrics: { inputTokens: 3, outputTokens: 5, cacheCreationTokens: 320, cacheReadTokens: 3318 } } as any,
-        { type: "session_end", outcome: "clean" } as any,
+        { type: "server_stopped", outcome: "clean" } as any,
       ],
     });
 
@@ -197,10 +197,10 @@ describe("store history replay — open turn recovery", () => {
     expect(groups[0]!.kind).toBe("free");
     expect(groups[0]!.events[0]!.type).toBe("session_start");
 
-    // session_end should appear as a free group after the turn
+    // server_stopped should appear as a free group after the turn
     const lastGroup = groups[groups.length - 1]!;
     expect(lastGroup.kind).toBe("free");
-    expect(lastGroup.events[0]!.type).toBe("session_end");
+    expect(lastGroup.events[0]!.type).toBe("server_stopped");
   });
 });
 

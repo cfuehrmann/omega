@@ -2,7 +2,7 @@
  * Omega Web UI — pre/inter-turn event rendering tests (Playwright).
  *
  * Covers the structural gap where events that don't belong to any turn
- * (session_start, session_end, and future inter-turn events) must still
+ * (session_start, server_started, server_stopped, and future inter-turn events) must still
  * appear in the feed.
  *
  * Tests marked RED will fail before the flat-store refactoring and pass after.
@@ -35,11 +35,10 @@ test("session_start event renders as info block even before any turn", async ({ 
 });
 
 // ---------------------------------------------------------------------------
-// session_end renders after a completed turn
-// GREEN before refactoring (appendEvent appends to last turn) — keeps working after
+// server_stopped renders after a completed turn
 // ---------------------------------------------------------------------------
 
-test("session_end event renders as info block in the feed", async ({ page, server }) => {
+test("server_stopped event renders as info block in the feed", async ({ page, server }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
@@ -48,11 +47,11 @@ test("session_end event renders as info block in the feed", async ({ page, serve
     type: "turn_end",
     metrics: { inputTokens: 5, outputTokens: 3 },
   });
-  await server.sendEvent({ type: "session_end", outcome: "clean" });
+  await server.sendEvent({ type: "server_stopped", outcome: "clean" });
 
-  // session_end should render as an info block
+  // server_stopped should render as an info block
   const infoBlocks = page.locator(".block.info");
-  await expect(infoBlocks.filter({ hasText: "session end" })).toBeVisible({ timeout: 3000 });
+  await expect(infoBlocks.filter({ hasText: "server stopped" })).toBeVisible({ timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------

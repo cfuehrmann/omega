@@ -5,7 +5,7 @@
  * the structure of events.jsonl. Turn grouping is a *rendering concern*,
  * derived by `computeRenderGroups()` at render time rather than baked into
  * the store shape. This means events that don't belong to any turn
- * (session_start, session_end, future inter-turn events) are naturally
+ * (session_start, server_started, server_stopped, future inter-turn events) are naturally
  * first-class citizens — they just sit in the flat array where they belong.
  *
  * Ephemeral streaming signals (text/thinking fragments) are never persisted
@@ -24,8 +24,8 @@ import type { OmegaEvent, StreamSignal } from "../../events";
 export type WsEvent =
   | OmegaEvent
   | StreamSignal
-  | { type: "connected" }
-  | { type: "disconnected" }
+  | { type: "connecting" }   // client-synthesized on ws.onopen (socket up, awaiting history)
+  | { type: "connected" }    // server-sent after session_info + history batch (fully ready)
   | { type: "history"; events: OmegaEvent[] }
   | { type: "reset_done" }
   | { type: "session_info"; dir: string };
@@ -123,6 +123,8 @@ interface LastTurnInfo {
 }
 
 interface AppState {
+  /** Socket is open but server has not yet sent the post-history "connected" signal. */
+  connecting: boolean;
   connected: boolean;
   streaming: boolean;
   /** True while an llm_retry backoff is in progress (clears on llm_response / turn end). */
@@ -164,6 +166,7 @@ export const zeroMetrics = (): StickyMetrics => ({
 });
 
 const [state, setState] = createStore<AppState>({
+  connecting: false,
   connected: false,
   streaming: false,
   retrying: false,
@@ -434,16 +437,16 @@ export function computeLiveDurations(events: WsEvent[]): DurationMetrics {
 
 export function dispatch(event: WsEvent): void {
   switch (event.type) {
+    case "connecting":
+      setState("connecting", true);
+      setState("connected", false);
+      break;
+
     case "connected":
+      setState("connecting", false);
       setState("connected", true);
       setState("streaming", false);
       setState("retryCount", 0);
-      break;
-
-    case "disconnected":
-      setState("connected", false);
-      setState("streaming", false);
-      setState("retryCount", r => r + 1);
       break;
 
     case "history": {
@@ -662,7 +665,8 @@ export function dispatch(event: WsEvent): void {
       setState("retrying", true);
       break;
 
-    case "session_end":
+    case "server_started":
+    case "server_stopped":
     case "tool_call":
     case "model_changed":
     case "compacted":
@@ -672,4 +676,15 @@ export function dispatch(event: WsEvent): void {
       setState(produce(s => { s.events.push(event); }));
       break;
   }
+}
+
+/**
+ * Call from ws.onclose. Not a WsEvent because the server can never send it —
+ * the connection is already gone when onclose fires.
+ */
+export function handleDisconnect(): void {
+  setState("connecting", false);
+  setState("connected", false);
+  setState("streaming", false);
+  setState("retryCount", r => r + 1);
 }

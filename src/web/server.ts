@@ -346,9 +346,9 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
     currentSessionPaths.eventsFile,
   );
 
-  // Graceful shutdown: mirrors terminal app — emit session_end then exit
+  // Graceful shutdown: emit server_stopped then exit
   const handleShutdown = () => {
-    persistentAgent.emitSessionEnd("clean")
+    persistentAgent.emitServerStopped("clean")
       .catch(() => {})
       .finally(() => process.exit(0));
   };

@@ -265,6 +265,8 @@ export class Agent {
   public sessionCacheReadTokens = 0;
 
   private activeModel: string = config.model;
+  /** True once server_started has been logged — prevents duplicate on reconnect. */
+  private serverStartLogged = false;
   /** True once session_start has been logged — prevents duplicate on reconnect. */
   private sessionStartLogged = false;
 
@@ -357,16 +359,16 @@ export class Agent {
   }
 
   /**
-   * Write a session_end event and await the flush.
+   * Write a server_stopped event and await the flush.
    * Call this at clean shutdown before process.exit().
-   * A crash/SIGKILL will leave no session_end — that absence is the crash signal.
+   * A crash/SIGKILL will leave no server_stopped — that absence is the crash signal.
    */
-  async emitSessionEnd(
+  async emitServerStopped(
     outcome: "clean" | "error",
     reason?: string,
   ): Promise<void> {
     await this.logEvent({
-      type: "session_end",
+      type: "server_stopped",
       ts: new Date().toISOString(),
       outcome,
       ...(reason ? { reason } : {}),
@@ -402,6 +404,10 @@ export class Agent {
       );
     }
     this.client = new Anthropic();
+    if (!this.serverStartLogged) {
+      this.serverStartLogged = true;
+      await this.logEvent({ type: "server_started", ts: new Date().toISOString() });
+    }
     if (!this.sessionStartLogged) {
       this.sessionStartLogged = true;
       await this.logEvent({

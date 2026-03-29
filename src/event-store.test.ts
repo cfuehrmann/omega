@@ -26,6 +26,8 @@ import type {
   TurnInterruptedEvent,
   CompactedEvent,
   SessionStartEvent,
+  ServerStartedEvent,
+  ServerStoppedEvent,
   LlmCallEvent,
   TransportErrorEvent,
 } from "./events.js";
@@ -59,6 +61,27 @@ describe("OmegaEvent round-trip serialisation", () => {
 
   it("session_start", async () => {
     const e: SessionStartEvent = { type: "session_start", ts: "2025-01-01T00:00:00.000Z", sessionId: "abc123", model: "claude-sonnet-4-6", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
+  it("server_started", async () => {
+    const e: ServerStartedEvent = { type: "server_started", ts: "2025-01-01T00:00:00.000Z" };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
+  it("server_stopped (clean)", async () => {
+    const e: ServerStoppedEvent = { type: "server_stopped", ts: "2025-01-01T00:00:00.000Z", outcome: "clean" };
+    await appendEvent(e, testFile);
+    const [read] = readEvents(testFile);
+    expect(read).toEqual(e);
+  });
+
+  it("server_stopped (error with reason)", async () => {
+    const e: ServerStoppedEvent = { type: "server_stopped", ts: "2025-01-01T00:00:00.000Z", outcome: "error", reason: "unhandled exception" };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

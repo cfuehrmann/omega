@@ -49,11 +49,25 @@ export interface SessionStartEvent {
   systemPrompt: string;
 }
 
-/** The session ended cleanly. Absence of this event means the session crashed. */
-export interface SessionEndEvent {
-  type: "session_end";
+/**
+ * The server process started. Emitted on every server start, including future
+ * resumptions of an existing session. Pairs with server_stopped.
+ */
+export interface ServerStartedEvent {
+  type: "server_started";
   ts: string;
-  /** "clean" = normal shutdown; "error" = session ended due to a hard error. */
+}
+
+/**
+ * The server process stopped cleanly. Pairs with server_started.
+ * Absence of this event after server_started means the process crashed.
+ * Note: does NOT imply the session ended — sessions may be resumed across
+ * server restarts in the future.
+ */
+export interface ServerStoppedEvent {
+  type: "server_stopped";
+  ts: string;
+  /** "clean" = normal shutdown; "error" = stopped due to a hard error. */
   outcome: "clean" | "error";
   /** Human-readable reason, e.g. the error message on "error" outcome. */
   reason?: string;
@@ -286,7 +300,8 @@ export interface TransportErrorEvent {
 
 export type OmegaEvent =
   | SessionStartEvent
-  | SessionEndEvent
+  | ServerStartedEvent
+  | ServerStoppedEvent
   | UserMessageEvent
   | LlmCallEvent
   | LlmResponseEvent

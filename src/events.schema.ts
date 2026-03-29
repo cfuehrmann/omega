@@ -46,8 +46,13 @@ const SessionStartSchema = z.object({
   systemPrompt: z.string(),
 });
 
-const SessionEndSchema = z.object({
-  type: z.literal("session_end"),
+const ServerStartedSchema = z.object({
+  type: z.literal("server_started"),
+  ts: z.string(),
+});
+
+const ServerStoppedSchema = z.object({
+  type: z.literal("server_stopped"),
   ts: z.string(),
   outcome: z.enum(["clean", "error"]),
   reason: z.string().optional(),
@@ -179,7 +184,8 @@ const TransportErrorSchema = z.object({
  */
 export const OmegaEventSchema = z.discriminatedUnion("type", [
   SessionStartSchema,
-  SessionEndSchema,
+  ServerStartedSchema,
+  ServerStoppedSchema,
   UserMessageSchema,
   LlmCallSchema,
   LlmResponseSchema,

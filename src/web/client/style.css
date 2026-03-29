@@ -308,9 +308,10 @@ html, body, #root {
   background: var(--dim);
   flex-shrink: 0;
 }
-.dot.connected { background: var(--green); }
-.dot.streaming { background: var(--yellow); animation: pulse 1s infinite; }
-.dot.error     { background: var(--red); }
+.dot.connecting { background: var(--yellow); }
+.dot.connected  { background: var(--green); }
+.dot.streaming  { background: var(--yellow); animation: pulse 1s infinite; }
+.dot.error      { background: var(--red); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }

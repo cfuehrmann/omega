@@ -348,14 +348,14 @@ test("reconnect banner appears after repeated connection failures", async ({ pag
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
-  // Simulate 2 rapid disconnects by driving the store dispatch directly.
-  // (We can't kill the actual WS server cleanly in tests, so we inject
-  // disconnected events via the __omegaDispatch handle exposed by App.)
+  // Simulate 2 rapid disconnects by driving the store directly.
+  // (We can't kill the actual WS server cleanly in tests, so we call
+  // handleDisconnect via the __omegaHandleDisconnect handle exposed by App.)
   await page.evaluate(() => {
-    const dispatch = (window as any).__omegaDispatch;
-    if (dispatch) {
-      dispatch({ type: "disconnected" });
-      dispatch({ type: "disconnected" });
+    const handleDisconnect = (window as any).__omegaHandleDisconnect;
+    if (handleDisconnect) {
+      handleDisconnect();
+      handleDisconnect();
     }
   });
 
