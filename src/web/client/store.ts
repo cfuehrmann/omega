@@ -15,36 +15,20 @@
 
 import { batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { OmegaEvent } from "../../events";
+import type { OmegaEvent, StreamSignal } from "../../events";
 
 // ---------------------------------------------------------------------------
 // Types mirroring src/agent.ts AgentEvent (subset we care about for display)
 // ---------------------------------------------------------------------------
 
 export type WsEvent =
+  | OmegaEvent
+  | StreamSignal
   | { type: "connected" }
   | { type: "disconnected" }
   | { type: "history"; events: OmegaEvent[] }
   | { type: "reset_done" }
-  | { type: "session_info"; dir: string }
-  | { type: "user_message"; ts?: string; content: string }
-  | { type: "text"; ts?: string; streamingStart?: string; text: string }
-  | { type: "thinking"; ts?: string; text: string }
-  // OmegaEvent variants (persisted names are authoritative — see plan/dev-policy.md)
-  | { type: "session_start"; ts?: string; authMode: string; model: string; systemPrompt: string }
-  | { type: "session_end"; ts?: string; outcome: "clean" | "error"; reason?: string }
-  | { type: "tool_call"; ts?: string; id: string; name: string; input: unknown }
-  | { type: "tool_result"; ts?: string; id: string; name: string; isError: boolean; durationMs: number; output: string }
-  | { type: "llm_response"; ts?: string; stopReason: string; usage: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; service_tier?: string | null }; contextHash: string; text?: string; thinking?: string; streamingStart?: string; responseSummary?: Record<string, unknown> }
-  | { type: "llm_call"; ts?: string; url: string; model: string; contextHashes: string[]; cacheBreakpointIndex: number | null; requestBytes?: number; requestSummary?: Record<string, unknown> }
-  | { type: "llm_retry"; ts?: string; attempt: number; waitMs: number; error: string }
-  | { type: "model_changed"; ts?: string; model: string }
-  | { type: "compacted"; ts?: string; usage: unknown }
-  | { type: "turn_end"; ts?: string; model?: string; metrics: { inputTokens: number; outputTokens: number; cacheCreationTokens?: number; cacheReadTokens?: number } }
-  | { type: "llm_error"; ts?: string; error: string }
-  | { type: "agent_error"; ts?: string; error: string }
-  | { type: "transport_error"; ts?: string; error: string; context?: string }
-  | { type: "turn_interrupted"; ts?: string; reason?: "aborted" | "error" };
+  | { type: "session_info"; dir: string };
 
 // ---------------------------------------------------------------------------
 // Render groups — derived from the flat event list at render time
@@ -523,7 +507,7 @@ export function dispatch(event: WsEvent): void {
       // the server didn't close the turn (defensive). Append a synthetic
       // turn_interrupted so the UI is never left stuck in streaming state.
       const replayEvents = replayStreaming && currentTurnStartIdx >= 0
-        ? [...rawEvents, { type: "turn_interrupted" as const }]
+        ? [...rawEvents, { type: "turn_interrupted" as const, ts: "" }]
         : rawEvents;
 
       if (replayStreaming && currentTurnStartIdx >= 0) {
@@ -605,7 +589,7 @@ export function dispatch(event: WsEvent): void {
       const currentTurnEvents = allEvents.slice(turnStart);
       const sd = computeDurations(currentTurnEvents);
       const sm = metricsFromTurnEnd(event, sumRequestBytes(currentTurnEvents));
-      setState("lastTurnEnd", { metrics: sm, durations: sd, model: event.model ?? state.liveModel });
+      setState("lastTurnEnd", { metrics: sm, durations: sd, model: state.liveModel });
       setState("sessionTotals", prev => addMetrics(prev, sm));
       setState("sessionDurations", prev => addDurations(prev, sd));
       setState("liveTurn", null);
