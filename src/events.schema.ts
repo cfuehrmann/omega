@@ -39,7 +39,7 @@ const LlmResponseUsageSchema = z.object({
 
 const SessionStartSchema = z.object({
   type: z.literal("session_start"),
-  time: z.string(),
+  time: z.string().datetime(),
   sessionId: z.string(),
   model: z.string(),
   authMode: z.string(),
@@ -48,25 +48,25 @@ const SessionStartSchema = z.object({
 
 const ServerStartedSchema = z.object({
   type: z.literal("server_started"),
-  time: z.string(),
+  time: z.string().datetime(),
 });
 
 const ServerStoppedSchema = z.object({
   type: z.literal("server_stopped"),
-  time: z.string(),
+  time: z.string().datetime(),
   outcome: z.enum(["clean", "error"]),
   reason: z.string().optional(),
 });
 
 const UserMessageSchema = z.object({
   type: z.literal("user_message"),
-  time: z.string(),
+  time: z.string().datetime(),
   content: z.string(),
 });
 
 const LlmCallSchema = z.object({
   type: z.literal("llm_call"),
-  time: z.string(),
+  time: z.string().datetime(),
   url: z.string(),
   model: z.string(),
   contextHashes: z.array(z.string()),
@@ -77,7 +77,7 @@ const LlmCallSchema = z.object({
 
 const LlmResponseSchema = z.object({
   type: z.literal("llm_response"),
-  time: z.string(),
+  time: z.string().datetime(),
   stopReason: z.string(),
   usage: LlmResponseUsageSchema,
   contextHash: z.string(),
@@ -89,7 +89,7 @@ const LlmResponseSchema = z.object({
 
 const ToolCallSchema = z.object({
   type: z.literal("tool_call"),
-  time: z.string(),
+  time: z.string().datetime(),
   id: z.string(),
   name: z.string(),
   input: z.unknown(),
@@ -98,7 +98,7 @@ const ToolCallSchema = z.object({
 
 const ToolResultSchema = z.object({
   type: z.literal("tool_result"),
-  time: z.string(),
+  time: z.string().datetime(),
   id: z.string(),
   name: z.string(),
   isError: z.boolean(),
@@ -109,13 +109,13 @@ const ToolResultSchema = z.object({
 
 const TurnEndSchema = z.object({
   type: z.literal("turn_end"),
-  time: z.string(),
+  time: z.string().datetime(),
   metrics: TurnMetricsSchema,
 });
 
 const LlmErrorSchema = z.object({
   type: z.literal("llm_error"),
-  time: z.string(),
+  time: z.string().datetime(),
   url: z.string(),
   error: z.string(),
   httpStatus: z.number().optional(),
@@ -123,26 +123,26 @@ const LlmErrorSchema = z.object({
 
 const AgentErrorSchema = z.object({
   type: z.literal("agent_error"),
-  time: z.string(),
+  time: z.string().datetime(),
   error: z.string(),
 });
 
 const TurnInterruptedSchema = z.object({
   type: z.literal("turn_interrupted"),
-  time: z.string(),
+  time: z.string().datetime(),
   reason: z.enum(["aborted", "error"]).optional(),
 });
 
 const CompactedSchema = z.object({
   type: z.literal("compacted"),
-  time: z.string(),
+  time: z.string().datetime(),
   // usage is the raw Anthropic usage object — not further constrained
   usage: z.unknown(),
 });
 
 const LlmRetrySchema = z.object({
   type: z.literal("llm_retry"),
-  time: z.string(),
+  time: z.string().datetime(),
   attempt: z.number(),
   httpStatus: z.number().optional(),
   waitMs: z.number(),
@@ -151,13 +151,13 @@ const LlmRetrySchema = z.object({
 
 const ModelChangedSchema = z.object({
   type: z.literal("model_changed"),
-  time: z.string(),
+  time: z.string().datetime(),
   model: z.string(),
 });
 
 const TransportErrorSchema = z.object({
   type: z.literal("transport_error"),
-  time: z.string(),
+  time: z.string().datetime(),
   error: z.string(),
   context: z.string().optional(),
 });
