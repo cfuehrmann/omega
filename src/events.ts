@@ -148,7 +148,7 @@ export interface LlmResponseEvent {
    */
   thinking?: string;
   /** ISO timestamp of the first streaming text delta — when text visibly began arriving. */
-  streamingStart?: string;
+  streamingStart?: ISOTimestamp;
   /**
    * Elided summary of the provider response envelope. The content field is
    * omitted (it lives in context.jsonl via contextHash); all other envelope

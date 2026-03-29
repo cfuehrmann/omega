@@ -836,7 +836,7 @@ export async function executeTool(
         return {
           output: `Unknown tool: ${name}`,
           isError: true,
-          durationMs: performance.now() - startTime,
+          durationMs: Math.round(performance.now() - startTime),
         };
     }
     const MAX_TOOL_OUTPUT_CHARS = 100_000;
@@ -847,7 +847,7 @@ export async function executeTool(
     return {
       output,
       isError: false,
-      durationMs: performance.now() - startTime,
+      durationMs: Math.round(performance.now() - startTime),
     };
   } catch (err: unknown) {
     const msg = err instanceof z.ZodError
@@ -856,7 +856,7 @@ export async function executeTool(
     return {
       output: `Error: ${msg}`,
       isError: true,
-      durationMs: performance.now() - startTime,
+      durationMs: Math.round(performance.now() - startTime),
     };
   }
 }

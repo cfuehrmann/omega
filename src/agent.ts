@@ -11,7 +11,7 @@ import { buildSystemPrompt as assembleSystemPrompt } from "./system-prompt/index
 import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
-import { now } from "./iso-timestamp.js";
+import { type ISOTimestamp, now } from "./iso-timestamp.js";
 
 // --- Types ---
 
@@ -700,7 +700,7 @@ export class Agent {
             } else if (event.type === "content_block_delta") {
               if (event.delta.type === "text_delta") {
                 if (assembledTextTs === null)
-                  assembledTextTs = new Date().toISOString();
+                  assembledTextTs = now();
                 assembledText += event.delta.text;
                 yield { type: "text", text: event.delta.text };
               } else if (event.delta.type === "thinking_delta") {
@@ -877,7 +877,8 @@ export class Agent {
         ...(assembledText
           ? {
               text: assembledText,
-              streamingStart: assembledTextTs ?? undefined,
+              // Cast needed: TypeScript widens branded types in conditional spreads.
+              streamingStart: (assembledTextTs ?? undefined) as ISOTimestamp | undefined,
             }
           : {}),
         ...(assembledThinking ? { thinking: assembledThinking } : {}),

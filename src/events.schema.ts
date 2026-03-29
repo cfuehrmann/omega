@@ -20,17 +20,17 @@ import { ISOTimestampSchema } from "./iso-timestamp.js";
 // ---------------------------------------------------------------------------
 
 const TurnMetricsSchema = z.object({
-  inputTokens: z.number(),
-  outputTokens: z.number(),
-  cacheCreationTokens: z.number().optional(),
-  cacheReadTokens: z.number().optional(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  cacheCreationTokens: z.number().int().optional(),
+  cacheReadTokens: z.number().int().optional(),
 });
 
 const LlmResponseUsageSchema = z.object({
-  input_tokens: z.number(),
-  output_tokens: z.number(),
-  cache_creation_input_tokens: z.number().nullable().optional(),
-  cache_read_input_tokens: z.number().nullable().optional(),
+  input_tokens: z.number().int(),
+  output_tokens: z.number().int(),
+  cache_creation_input_tokens: z.number().int().nullable().optional(),
+  cache_read_input_tokens: z.number().int().nullable().optional(),
   service_tier: z.string().nullable().optional(),
 });
 
@@ -71,8 +71,8 @@ const LlmCallSchema = z.object({
   url: z.string(),
   model: z.string(),
   contextHashes: z.array(z.string()),
-  cacheBreakpointIndex: z.number().nullable(),
-  requestBytes: z.number(),
+  cacheBreakpointIndex: z.number().int().nullable(),
+  requestBytes: z.number().int(),
   requestSummary: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -84,7 +84,7 @@ const LlmResponseSchema = z.object({
   contextHash: z.string(),
   text: z.string().optional(),
   thinking: z.string().optional(),
-  streamingStart: z.string().optional(),
+  streamingStart: ISOTimestampSchema.optional(),
   responseSummary: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -103,7 +103,7 @@ const ToolResultSchema = z.object({
   id: z.string(),
   name: z.string(),
   isError: z.boolean(),
-  durationMs: z.number(),
+  durationMs: z.number().int(),
   output: z.string(),
   contextHash: z.string(),
 });
@@ -119,7 +119,7 @@ const LlmErrorSchema = z.object({
   time: ISOTimestampSchema,
   url: z.string(),
   error: z.string(),
-  httpStatus: z.number().optional(),
+  httpStatus: z.number().int().min(100).max(599).optional(),
 });
 
 const AgentErrorSchema = z.object({
@@ -144,9 +144,9 @@ const CompactedSchema = z.object({
 const LlmRetrySchema = z.object({
   type: z.literal("llm_retry"),
   time: ISOTimestampSchema,
-  attempt: z.number(),
-  httpStatus: z.number().optional(),
-  waitMs: z.number(),
+  attempt: z.number().int(),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+  waitMs: z.number().int(),
   error: z.string(),
 });
 
