@@ -1291,8 +1291,8 @@ function InputRow() {
           value={activeModel()}
           onChange={handleModelChange}
         >
-          <option value="claude-sonnet-4-6">sonnet</option>
-          <option value="claude-opus-4-6">opus</option>
+          <option value="claude-sonnet-4-6">Sonnet</option>
+          <option value="claude-opus-4-6">Opus</option>
         </select>
       </Show>
       <div class="textarea-wrap">
