@@ -1044,6 +1044,12 @@ function handleModelChange(e: Event) {
   sendToServer({ type: "set_model", model });
 }
 
+function newSession() {
+  if (!state.connected || state.streaming) return;
+  if (!confirm("Start a new session? This will clear all history.")) return;
+  sendToServer({ type: "reset" });
+}
+
 // ---------------------------------------------------------------------------
 // Sticky metrics bar (per-turn + session totals)
 // ---------------------------------------------------------------------------
@@ -1178,16 +1184,13 @@ function BottomPanel() {
           <div class="bottom-panel-session">
             <span class="bp-label">session</span>
             <span class="bp-dir">{state.sessionDir}</span>
-            <Show when={activeModel()}>
-              <select
-                class="bp-select"
-                disabled={state.streaming}
-                value={activeModel()}
-                onChange={handleModelChange}
-              >
-                <option value="claude-sonnet-4-6">sonnet</option>
-                <option value="claude-opus-4-6">opus</option>
-              </select>
+            <Show when={state.events.length > 0}>
+              <button
+                class="new-session-btn"
+                disabled={state.streaming || !state.connected}
+                onClick={newSession}
+                title="Start a new session (clears history)"
+              >＋ New</button>
             </Show>
           </div>
         </Show>
@@ -1245,12 +1248,6 @@ function InputRow() {
     sendToServer({ type: "abort" });
   }
 
-  function newSession() {
-    if (!state.connected || state.streaming) return;
-    if (!confirm("Start a new session? This will clear all history.")) return;
-    sendToServer({ type: "reset" });
-  }
-
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1283,9 +1280,20 @@ function InputRow() {
           class={omegaClass()}
           onClick={() => setPanelOpen(o => !o)}
           title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
-        >Ω</button>
+        >Ω {panelOpen() ? "▾" : "▸"}</button>
         <span class="status-label">{statusLabel()}</span>
       </div>
+      <Show when={activeModel()}>
+        <select
+          class="model-select-inline"
+          disabled={state.streaming}
+          value={activeModel()}
+          onChange={handleModelChange}
+        >
+          <option value="claude-sonnet-4-6">sonnet</option>
+          <option value="claude-opus-4-6">opus</option>
+        </select>
+      </Show>
       <div class="textarea-wrap">
         <textarea
           ref={textareaRef}
@@ -1299,16 +1307,7 @@ function InputRow() {
       </div>
       <Show when={state.streaming}
         fallback={
-          <div class="btn-group">
-            <button class="send-btn" onClick={send} disabled={!state.connected}>
-              Send
-            </button>
-            <Show when={state.connected && state.events.length > 0}>
-              <button class="new-session-btn" onClick={newSession} title="Start a new session (clears history)">
-                ＋ New
-              </button>
-            </Show>
-          </div>
+          <button class="send-btn" onClick={send} disabled={!state.connected}>Send</button>
         }
       >
         <button class="abort-btn" onClick={abort}>Abort</button>

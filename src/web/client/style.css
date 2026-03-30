@@ -82,6 +82,7 @@ html, body, #root {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable; /* reserve scrollbar lane so it never overlaps block borders */
   padding: 10px 0;
   display: flex;
   flex-direction: column;
@@ -242,22 +243,6 @@ html, body, #root {
   min-width: 0;
 }
 
-.bp-select {
-  font-size: 13px;
-  color: var(--dim);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 4px;
-  cursor: pointer;
-  appearance: auto;
-  flex-shrink: 0;
-}
-
-.bp-select:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 
 /* ── Metrics table (inside bottom panel) ── */
 .metrics-table {
@@ -314,22 +299,24 @@ html, body, #root {
 /* ── Ω button (status indicator + panel toggle, left of textarea) ── */
 .omega-btn {
   background: none;
-  border: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   font-family: var(--font);
-  font-size: 22px;
+  font-size: 18px;
   font-weight: bold;
   line-height: 1;
   cursor: pointer;
-  padding: 2px 4px;
-  transition: color 0.2s, opacity 0.2s;
+  padding: 3px 7px;
+  transition: color 0.2s, border-color 0.2s, opacity 0.2s;
   flex-shrink: 0;
   user-select: none;
+  white-space: nowrap;
 }
-.omega-btn.omega-ready      { color: var(--green); }
-.omega-btn.omega-streaming  { color: var(--yellow); animation: pulse 1s infinite; }
-.omega-btn.omega-connecting { color: var(--yellow); }
-.omega-btn.omega-error      { color: var(--red); }
-.omega-btn:hover            { opacity: 0.7; }
+.omega-btn.omega-ready      { color: var(--green);  border-color: color-mix(in srgb, var(--green) 35%, var(--border)); }
+.omega-btn.omega-streaming  { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); animation: pulse 1s infinite; }
+.omega-btn.omega-connecting { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); }
+.omega-btn.omega-error      { color: var(--red);    border-color: color-mix(in srgb, var(--red) 35%, var(--border)); }
+.omega-btn:hover            { opacity: 0.75; }
 
 /* ── Status row (Ω button + label, left of textarea) ── */
 .status-row {
@@ -402,12 +389,6 @@ html, body, #root {
 .abort-btn { background: var(--red);  color: var(--ctp-crust); }
 .send-btn:disabled { opacity: 0.4; cursor: default; }
 
-.btn-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-self: flex-end;
-}
 
 .new-session-btn {
   padding: 0 10px;
@@ -419,9 +400,29 @@ html, body, #root {
   font-size: 12px;
   cursor: pointer;
   height: 24px;
+  flex-shrink: 0;
   transition: opacity 0.15s, border-color 0.15s;
 }
-.new-session-btn:hover { border-color: var(--red); color: var(--red); }
+.new-session-btn:hover        { border-color: var(--red); color: var(--red); }
+.new-session-btn:disabled     { opacity: 0.4; cursor: default; }
+
+/* Model selector sitting in the input row between Ω and the textarea */
+.model-select-inline {
+  font-size: 13px;
+  color: var(--dim);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 6px;
+  cursor: pointer;
+  appearance: auto;
+  flex-shrink: 0;
+  align-self: flex-end;
+  height: 38px;
+  transition: border-color 0.15s;
+}
+.model-select-inline:disabled { opacity: 0.5; cursor: default; }
+.model-select-inline:focus    { outline: none; border-color: var(--user); }
 
 /* ── Tool block header row ── */
 .block-label-row {
