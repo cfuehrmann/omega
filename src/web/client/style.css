@@ -82,8 +82,8 @@ html, body, #root {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-gutter: stable; /* reserve scrollbar lane so it never overlaps block borders */
-  padding: 10px 0;
+  /* padding-right keeps block right-borders clear of overlay scrollbars (Brave/Linux/macOS) */
+  padding: 10px 14px 10px 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -306,8 +306,11 @@ html, body, #root {
   font-weight: bold;
   line-height: 1;
   cursor: pointer;
-  padding: 3px 7px;
-  transition: color 0.2s, border-color 0.2s, opacity 0.2s;
+  height: 38px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.2s, border-color 0.2s, background 0.15s, opacity 0.2s;
   flex-shrink: 0;
   user-select: none;
   white-space: nowrap;
@@ -316,25 +319,18 @@ html, body, #root {
 .omega-btn.omega-streaming  { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); animation: pulse 1s infinite; }
 .omega-btn.omega-connecting { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); }
 .omega-btn.omega-error      { color: var(--red);    border-color: color-mix(in srgb, var(--red) 35%, var(--border)); }
+.omega-btn.omega-open       { background: var(--bg3); }
 .omega-btn:hover            { opacity: 0.75; }
 
-/* ── Status row (Ω button + label, left of textarea) ── */
+/* ── Status row — thin wrapper kept for e2e test selectors ── */
 .status-row {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
   flex-shrink: 0;
   align-self: flex-end;
-  padding-bottom: 2px;
 }
 
+/* Status label: hidden visually; kept in DOM for e2e assertions */
 .status-label {
-  font-size: 11px;
-  color: var(--dim);
-  opacity: 0.7;
-  white-space: nowrap;
-  line-height: 1;
+  display: none;
 }
 
 /* ── Input row ── */

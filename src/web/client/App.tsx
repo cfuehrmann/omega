@@ -1259,10 +1259,11 @@ function InputRow() {
   // Include legacy "dot connected/streaming/…" classes so existing e2e tests
   // that wait on `.dot.connected` continue to work without changes.
   const omegaClass = () =>
-    state.connecting   ? "omega-btn omega-connecting dot connecting"
-    : !state.connected ? "omega-btn omega-error dot error"
-    : state.streaming  ? "omega-btn omega-streaming dot streaming"
-    : "omega-btn omega-ready dot connected";
+    (state.connecting   ? "omega-btn omega-connecting dot connecting"
+    : !state.connected  ? "omega-btn omega-error dot error"
+    : state.streaming   ? "omega-btn omega-streaming dot streaming"
+    : "omega-btn omega-ready dot connected")
+    + (panelOpen() ? " omega-open" : "");
 
   const statusLabel = () =>
     state.connecting  ? (state.retryCount > 0 ? "reconnecting…" : "connecting…")
@@ -1280,7 +1281,7 @@ function InputRow() {
           class={omegaClass()}
           onClick={() => setPanelOpen(o => !o)}
           title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
-        >Ω {panelOpen() ? "▾" : "▸"}</button>
+        >Ω</button>
         <span class="status-label">{statusLabel()}</span>
       </div>
       <Show when={activeModel()}>
