@@ -643,7 +643,7 @@ export class Agent {
           edits: [
             {
               type: "compact_20260112" as const,
-              trigger: { type: "input_tokens" as const, value: 150_000 },
+              trigger: { type: "input_tokens" as const, value: config.autoCompactThreshold },
             },
           ],
         },

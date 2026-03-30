@@ -20,7 +20,7 @@ rotation machinery.
 - **History** — `compactedContextHistory` grows verbatim across turns. Sent
   in full to each LLM provider call — no mid-turn trimming. `/compact`
   summarises the head and keeps the last 10 turns verbatim. Auto-compact fires
-  when `lastPromptTokens` exceeds `AUTO_COMPACT_THRESHOLD = 100_000`.
+  when `input_tokens` exceeds `config.autoCompactThreshold = 750_000`.
 - **Current turn** — always verbatim, never compacted mid-turn.
 - Hard message cap: 100 messages. Token budget: 100k.
 
