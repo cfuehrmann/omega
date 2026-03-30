@@ -68,14 +68,15 @@ test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly"
   await expect(page.locator(".block.interrupt")).toContainText("Aborted", { timeout: 3000 });
 });
 
-test("session dir shown in session bar persists after reload", async ({ page }) => {
+test("session dir shown in bottom panel persists after reload", async ({ page }) => {
   await page.goto("/");
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
-  // The session bar should show a path
-  const sessionBar = page.locator(".session-bar");
-  await expect(sessionBar).toBeVisible({ timeout: 3000 });
-  const dirBefore = await page.locator(".session-bar-dir").textContent();
+  // Open the bottom panel (Ω button) to reveal session info
+  await page.locator(".omega-btn").click();
+  const sessionPanel = page.locator(".bottom-panel-session");
+  await expect(sessionPanel).toBeVisible({ timeout: 3000 });
+  const dirBefore = await page.locator(".bp-dir").textContent();
   expect(dirBefore).toBeTruthy();
 
   // Send a message and wait for completion — use .first() in case a previous
@@ -88,6 +89,9 @@ test("session dir shown in session bar persists after reload", async ({ page }) 
   await page.reload();
   await page.locator(".dot.connected").waitFor({ timeout: 5000 });
 
-  const dirAfter = await page.locator(".session-bar-dir").textContent();
+  // Re-open the panel after reload (panel state is not persisted)
+  await page.locator(".omega-btn").click();
+  await page.locator(".bottom-panel-session").waitFor({ timeout: 3000 });
+  const dirAfter = await page.locator(".bp-dir").textContent();
   expect(dirAfter).toBe(dirBefore);
 });

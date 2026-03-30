@@ -20,9 +20,9 @@ test("page title is 'Omega'", async ({ page, server }) => {
   await expect(page).toHaveTitle(/Omega/i);
 });
 
-test("heading 'Ω Omega' is visible", async ({ page, server }) => {
+test("Ω button is visible", async ({ page, server }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /Omega/i })).toBeVisible();
+  await expect(page.locator(".omega-btn")).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------

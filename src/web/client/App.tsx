@@ -373,6 +373,7 @@ type ModalContent =
 
 const [activeModal, setActiveModal] = createSignal<ModalContent | null>(null);
 const [legendOpen, setLegendOpen] = createSignal(false);
+const [panelOpen, setPanelOpen] = createSignal(false);
 
 function setToolModal(d: ToolDetail | null) {
   setActiveModal(d ? { kind: "tool", detail: d } : null);
@@ -1033,38 +1034,14 @@ function FreeView(props: {
 // and model selector.
 // ---------------------------------------------------------------------------
 
-function SessionBar() {
-  const activeModel = (): string =>
-    state.liveTurn !== null ? state.liveModel : (state.lastTurnEnd?.model ?? state.liveModel);
+// Module-level helpers used by BottomPanel and InputRow
+function activeModel(): string {
+  return state.liveTurn !== null ? state.liveModel : (state.lastTurnEnd?.model ?? state.liveModel);
+}
 
-  const disabled = () => state.streaming;
-
-  const handleModelChange = (e: Event) => {
-    const model = (e.currentTarget as HTMLSelectElement).value as OmegaModel;
-    sendToServer({ type: "set_model", model });
-  };
-
-  return (
-    <Show when={state.sessionDir}>
-      <div class="session-bar">
-        <span class="session-bar-label">session:</span>
-        <span class="session-bar-dir">{state.sessionDir}</span>
-        <div class="session-bar-selects">
-          <Show when={activeModel()}>
-            <select
-              class="session-bar-select"
-              disabled={disabled()}
-              value={activeModel()}
-              onChange={handleModelChange}
-            >
-              <option value="claude-sonnet-4-6">sonnet</option>
-              <option value="claude-opus-4-6">opus</option>
-            </select>
-          </Show>
-        </div>
-      </div>
-    </Show>
-  );
+function handleModelChange(e: Event) {
+  const model = (e.currentTarget as HTMLSelectElement).value as OmegaModel;
+  sendToServer({ type: "set_model", model });
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,21 +1049,17 @@ function SessionBar() {
 // ---------------------------------------------------------------------------
 
 
-function StickyMetricsBar() {
-  // Show if we have a live turn in progress OR a completed turn to display.
-  const visible = () => state.liveTurn !== null || state.lastTurnEnd !== null;
+// ---------------------------------------------------------------------------
+// MetricsTable — renders the token/duration table, used inside BottomPanel
+// ---------------------------------------------------------------------------
 
-  // During a live turn, use the live accumulator; otherwise fall back to lastTurnEnd.
+function MetricsTable() {
   const turnMetrics = (): StickyMetrics =>
     state.liveTurn ?? state.lastTurnEnd?.metrics ?? zeroMetrics();
 
-  // Duration for the turn row:
-  //   - live turn → liveDurations (llmMs/toolMs tick up; turnMs=0 until turn_end)
-  //   - completed turn → lastTurnEnd.durations (all three fields set)
   const turnDurations = (): DurationMetrics =>
     state.liveTurn !== null ? state.liveDurations : (state.lastTurnEnd?.durations ?? zeroDurations());
 
-  // Session row tokens: completed-turns total + live turn + compaction totals.
   const sessMetrics = (): StickyMetrics => {
     const base = state.sessionTotals;
     const live = state.liveTurn;
@@ -1100,7 +1073,6 @@ function StickyMetricsBar() {
     };
   };
 
-  // Session row durations: completed-turns total + live turn durations.
   const sessDurations = (): DurationMetrics => {
     const base = state.sessionDurations;
     const live = state.liveDurations;
@@ -1111,12 +1083,6 @@ function StickyMetricsBar() {
     };
   };
 
-  // ---------------------------------------------------------------------------
-  // Column definitions — fixed schema, each column always present.
-  // Value functions receive the metrics/durations for that row.
-  // gap=true adds extra left padding to visually separate groups.
-  // ---------------------------------------------------------------------------
-
   interface ColDef {
     label: string;
     gap: boolean;
@@ -1125,46 +1091,16 @@ function StickyMetricsBar() {
     sessVal:    (m: StickyMetrics, d: DurationMetrics) => string;
   }
 
-  const tokenCols = (): ColDef[] => [
+  const allCols = (): ColDef[] => [
     { label: "in (uncached)",    gap: false, turnVal: (m) => String(m.freshInTokens), compactVal: (m) => String(m.freshInTokens), sessVal: (m) => String(m.freshInTokens) },
     { label: "in (cache write)", gap: false, turnVal: (m) => String(m.writeInTokens), compactVal: (m) => String(m.writeInTokens), sessVal: (m) => String(m.writeInTokens) },
     { label: "in (cache read)",  gap: false, turnVal: (m) => String(m.readInTokens),  compactVal: (m) => String(m.readInTokens),  sessVal: (m) => String(m.readInTokens) },
     { label: "out",              gap: true,  turnVal: (m) => String(m.outTokens),     compactVal: (m) => String(m.outTokens),     sessVal: (m) => String(m.outTokens) },
+    { label: "request size",     gap: true,  turnVal: (m) => formatKb(m.requestBytes), compactVal: (_m) => "—", sessVal: (m) => formatKb(m.requestBytes) },
+    { label: "llm",              gap: true,  turnVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",  compactVal: (_m) => "—", sessVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—" },
+    { label: "tools",            gap: false, turnVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—", compactVal: (_m) => "—", sessVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—" },
+    { label: "total",            gap: false, turnVal: (_m, d, isLive) => (!isLive && d.turnMs > 0) ? formatDuration(d.turnMs) : "—", compactVal: (_m) => "—", sessVal: (_m, _d) => "—" },
   ];
-
-  // Fixed non-token columns always shown
-  const fixedCols = (): ColDef[] => [
-    {
-      label: "request size",
-      gap: true,
-      turnVal:    (m) => formatKb(m.requestBytes),
-      compactVal: (_m) => "—",
-      sessVal:    (m) => formatKb(m.requestBytes),
-    },
-    {
-      label: "llm",
-      gap: true,
-      turnVal:    (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",
-      compactVal: (_m) => "—",
-      sessVal:    (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",
-    },
-    {
-      label: "tools",
-      gap: false,
-      turnVal:    (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—",
-      compactVal: (_m) => "—",
-      sessVal:    (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—",
-    },
-    {
-      label: "total",
-      gap: false,
-      turnVal:    (_m, d, isLive) => (!isLive && d.turnMs > 0) ? formatDuration(d.turnMs) : "—",
-      compactVal: (_m) => "—",
-      sessVal:    (_m, _d) => "—",
-    },
-  ];
-
-  const allCols = (): ColDef[] => [...tokenCols(), ...fixedCols()];
 
   const showCompact = () =>
     state.compactionTotals.outTokens > 0 ||
@@ -1173,60 +1109,91 @@ function StickyMetricsBar() {
     state.compactionTotals.readInTokens > 0;
 
   return (
-    <Show when={visible()}>
-      <div class="sticky-metrics-wrap">
-        <table class="sticky-metrics">
-          <thead>
-            <tr>
-              <th class="sm-row-label sm-header-cell"></th>
-              <For each={allCols()}>
-                {(col) => (
-                  <th class={`sm-header-cell${col.gap ? " sm-col-gap" : ""}`}>{col.label}</th>
-                )}
-              </For>
-              <th class="sm-legend-cell sm-header-cell">
-                <button class="sm-legend-toggle" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="sm-row-label">turn</td>
-              <For each={allCols()}>
-                {(col) => (
-                  <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
-                    {col.turnVal(turnMetrics(), turnDurations(), state.liveTurn !== null)}
-                  </td>
-                )}
-              </For>
-              <td />
-            </tr>
-            <Show when={showCompact()}>
-              <tr>
-                <td class="sm-row-label">compact</td>
-                <For each={allCols()}>
-                  {(col) => (
-                    <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
-                      {col.compactVal(state.compactionTotals)}
-                    </td>
-                  )}
-                </For>
-                <td />
-              </tr>
+    <table class="metrics-table">
+      <thead>
+        <tr>
+          <th class="sm-row-label sm-header-cell"></th>
+          <For each={allCols()}>
+            {(col) => (
+              <th class={`sm-header-cell${col.gap ? " sm-col-gap" : ""}`}>{col.label}</th>
+            )}
+          </For>
+          <th class="sm-legend-cell sm-header-cell">
+            <button class="sm-legend-toggle" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="sm-row-label">turn</td>
+          <For each={allCols()}>
+            {(col) => (
+              <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
+                {col.turnVal(turnMetrics(), turnDurations(), state.liveTurn !== null)}
+              </td>
+            )}
+          </For>
+          <td />
+        </tr>
+        <Show when={showCompact()}>
+          <tr>
+            <td class="sm-row-label">compact</td>
+            <For each={allCols()}>
+              {(col) => (
+                <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
+                  {col.compactVal(state.compactionTotals)}
+                </td>
+              )}
+            </For>
+            <td />
+          </tr>
+        </Show>
+        <tr>
+          <td class="sm-row-label">session</td>
+          <For each={allCols()}>
+            {(col) => (
+              <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
+                {col.sessVal(sessMetrics(), sessDurations())}
+              </td>
+            )}
+          </For>
+          <td />
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BottomPanel — collapsible panel (session info + metrics), toggled by Ω
+// ---------------------------------------------------------------------------
+
+function BottomPanel() {
+  const hasMetrics = () => state.liveTurn !== null || state.lastTurnEnd !== null;
+
+  return (
+    <Show when={panelOpen()}>
+      <div class="bottom-panel">
+        <Show when={state.sessionDir}>
+          <div class="bottom-panel-session">
+            <span class="bp-label">session</span>
+            <span class="bp-dir">{state.sessionDir}</span>
+            <Show when={activeModel()}>
+              <select
+                class="bp-select"
+                disabled={state.streaming}
+                value={activeModel()}
+                onChange={handleModelChange}
+              >
+                <option value="claude-sonnet-4-6">sonnet</option>
+                <option value="claude-opus-4-6">opus</option>
+              </select>
             </Show>
-            <tr>
-              <td class="sm-row-label">session</td>
-              <For each={allCols()}>
-                {(col) => (
-                  <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
-                    {col.sessVal(sessMetrics(), sessDurations())}
-                  </td>
-                )}
-              </For>
-              <td />
-            </tr>
-          </tbody>
-        </table>
+          </div>
+        </Show>
+        <Show when={hasMetrics()}>
+          <MetricsTable />
+        </Show>
       </div>
     </Show>
   );
@@ -1236,14 +1203,34 @@ function StickyMetricsBar() {
 // Input
 // ---------------------------------------------------------------------------
 
-function InputArea() {
+// ---------------------------------------------------------------------------
+// Reconnection banner
+// ---------------------------------------------------------------------------
+
+function ReconnectBanner() {
+  return (
+    <Show when={!state.connected && state.retryCount >= 2}>
+      <div class="reconnect-banner">
+        ⚠ Cannot reach server — retrying… (attempt {state.retryCount})
+        <br />
+        Run <code>just server</code> in a terminal, then this page will reconnect automatically.
+      </div>
+    </Show>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// InputRow — textarea + Ω toggle button (left) + send/abort/new (right)
+// ---------------------------------------------------------------------------
+
+function InputRow() {
   let textareaRef!: HTMLTextAreaElement;
 
   const [inputValue, setInputValue] = createSignal("");
 
   function autoResize() {
     textareaRef.style.height = "auto";
-    textareaRef.style.height = Math.min(textareaRef.scrollHeight, 200) + "px";
+    textareaRef.style.height = Math.min(textareaRef.scrollHeight, 240) + "px";
   }
 
   function send() {
@@ -1272,8 +1259,33 @@ function InputArea() {
     setTimeout(autoResize, 0);
   }
 
+  // Include legacy "dot connected/streaming/…" classes so existing e2e tests
+  // that wait on `.dot.connected` continue to work without changes.
+  const omegaClass = () =>
+    state.connecting   ? "omega-btn omega-connecting dot connecting"
+    : !state.connected ? "omega-btn omega-error dot error"
+    : state.streaming  ? "omega-btn omega-streaming dot streaming"
+    : "omega-btn omega-ready dot connected";
+
+  const statusLabel = () =>
+    state.connecting  ? (state.retryCount > 0 ? "reconnecting…" : "connecting…")
+    : !state.connected ? "disconnected"
+    : state.retrying   ? "retrying…"
+    : state.streaming  ? "streaming…"
+    : "ready";
+
   return (
-    <div class="input-area">
+    <div class="input-row">
+      {/* .status-row wrapper keeps legacy e2e selector ".status-row" working
+          for tests that assert the status label text. */}
+      <div class="status-row">
+        <button
+          class={omegaClass()}
+          onClick={() => setPanelOpen(o => !o)}
+          title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
+        >Ω</button>
+        <span class="status-label">{statusLabel()}</span>
+      </div>
       <div class="textarea-wrap">
         <textarea
           ref={textareaRef}
@@ -1301,50 +1313,6 @@ function InputArea() {
       >
         <button class="abort-btn" onClick={abort}>Abort</button>
       </Show>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Reconnection banner
-// ---------------------------------------------------------------------------
-
-function ReconnectBanner() {
-  // Show after 2+ consecutive disconnects (i.e. at least one retry has failed)
-  return (
-    <Show when={!state.connected && state.retryCount >= 2}>
-      <div class="reconnect-banner">
-        ⚠ Cannot reach server — retrying… (attempt {state.retryCount})
-        <br />
-        Run <code>just server</code> in a terminal, then this page will reconnect automatically.
-      </div>
-    </Show>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Header / status
-// ---------------------------------------------------------------------------
-
-function StatusDot() {
-  const cls = () =>
-    state.connecting   ? "dot connecting"
-    : !state.connected ? "dot error"
-    : state.streaming  ? "dot streaming"
-    : "dot connected";
-
-  const label = () =>
-    state.connecting                      ? (state.retryCount > 0 ? "reconnecting…" : "connecting…")
-    : !state.connected                    ? "disconnected"
-    : state.retrying                      ? "retrying…"
-    : state.streaming                     ? "streaming…"
-    : "ready";
-
-  return (
-    <div class="status-row">
-      <span class={cls()} />
-      <h1>Ω Omega</h1>
-      <span class="status-label">{label()}</span>
     </div>
   );
 }
@@ -1411,7 +1379,6 @@ export function App() {
     <div class="app">
       <TokenLegend />
       <ActiveModal />
-      <ReconnectBanner />
       <div class="feed-wrapper">
         <div class="feed" ref={feedRef} onScroll={onFeedScroll}>
           <ErrorBoundary fallback={(err) => (
@@ -1435,11 +1402,9 @@ export function App() {
           </button>
         </Show>
       </div>
-      <SessionBar />
-      <StickyMetricsBar />
-      <StatusDot />
-      <InputArea />
-
+      <ReconnectBanner />
+      <BottomPanel />
+      <InputRow />
     </div>
   );
 }
