@@ -57,6 +57,15 @@ test-browser-log: web-build
     echo "Log saved: $LOG"
     exit $EC
 
+# Run targeted Playwright tests without rebuilding the web client.
+# Use when the build is already current (e.g. you ran just web-build recently).
+# Accepts any Playwright CLI arguments: file paths, --grep patterns, etc.
+# Examples:
+#   just e2e e2e/web-ui-mermaid.spec.ts
+#   just e2e --grep "reconnect"
+e2e *args:
+    npx playwright test {{args}}
+
 # Type-check all TypeScript (three passes: backend/tests, web client, e2e).
 typecheck:
     bunx tsc --noEmit

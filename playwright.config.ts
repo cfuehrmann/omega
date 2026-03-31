@@ -26,6 +26,9 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: "list",
+  timeout: 15000,         // per-test cap; keeps cascading failures from dragging on
+  globalTimeout: 300000,  // full-suite backstop: 5 minutes
+  maxFailures: 1,         // stop after first failure — failures tend to cascade
 
   projects: [
     // -----------------------------------------------------------------------

@@ -33,12 +33,21 @@ All development work goes on `develop`. Merge to `main` when stable.
 
 ### Testing
 
-- `just gate` — **run before every commit** — full suite + knip
+- `just gate` — full suite + knip. **The gate runs automatically as the
+  pre-commit hook — do not run it separately before committing.** Just use
+  `git commit` and let the hook do it. If you have already run `just gate`
+  explicitly and it passed, use `git commit --no-verify` to avoid the redundant
+  re-run.
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
 - `bun test src/foo.test.ts` — single file, preferred while iterating
-- `just test-browser` — Playwright suite only (builds web client first)
+- `just test-browser` — full Playwright suite (builds web client first, ~30 s)
+- `just e2e [args]` — **targeted Playwright run, no rebuild.** Use when
+  iterating on specific UI behaviour and the build is already current. Accepts
+  any Playwright CLI args — file paths, `--grep` patterns, etc. Examples:
+  `just e2e e2e/web-ui-mermaid.spec.ts`, `just e2e --grep "reconnect"`.
+  Run `just web-build` first if frontend source has changed since the last build.
 - `just test-browser-log` — builds frontend (~30 s), then runs Playwright with
   `--reporter=list`, saving full output to `test-output/playwright-<timestamp>.log`
   and printing the path. Because it is slow, prefer
