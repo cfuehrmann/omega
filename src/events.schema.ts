@@ -149,6 +149,8 @@ const LlmRetrySchema = z.object({
   httpStatus: z.number().int().min(100).max(599).optional(),
   waitMs: z.number().int(),
   error: z.string(),
+  retryAt: ISOTimestampSchema.optional(),
+  errorBody: z.unknown().optional(),
 });
 
 const ModelChangedSchema = z.object({

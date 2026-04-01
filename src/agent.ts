@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
-import { readEnvPositiveInt } from "./env.js";
+import { readEnvPositiveInt, readEnvOptionalPositiveInt } from "./env.js";
 
 import {
   readSystemPromptAppend,
@@ -156,6 +156,21 @@ function errFields(err: unknown): { httpStatus: number | undefined; message: str
 }
 
 /**
+ * Extract the structured error body from an Anthropic SDK error object.
+ * The SDK stores the parsed JSON response body in `.error` (when available).
+ * Returns undefined for pure network/SDK errors that carry no body.
+ */
+function extractErrorBody(err: unknown): unknown {
+  if (err !== null && typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    if ("error" in e && e.error !== null && typeof e.error === "object") {
+      return e.error;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Returns true if the error is a "context too long" 429 from the API.
  * Retrying with the same payload is futile — treat as non-retryable.
  */
@@ -273,9 +288,15 @@ export class Agent {
   private sessionStartLogged = false;
 
   public readonly sessionId: string;
-  private readonly retryBaseMs     = readEnvPositiveInt("OMEGA_RETRY_BASE_MS",  1000);
-  private readonly retryMaxMs      = readEnvPositiveInt("OMEGA_RETRY_MAX_MS",  60000);
-  private readonly retryMaxAttempts = readEnvPositiveInt("OMEGA_RETRY_ATTEMPTS",   5);
+  private readonly retryBaseMs      = readEnvPositiveInt("OMEGA_RETRY_BASE_MS",  1000);
+  private readonly retryMaxMs       = readEnvPositiveInt("OMEGA_RETRY_MAX_MS",  60000);
+  /**
+   * Hard cap on retry attempts. `undefined` (the default) means retry
+   * indefinitely — the intended production behaviour for overload / transient
+   * errors. Set `OMEGA_RETRY_ATTEMPTS=N` in tests to get fast termination.
+   */
+  private readonly retryMaxAttempts: number | undefined =
+    readEnvOptionalPositiveInt("OMEGA_RETRY_ATTEMPTS");
 
   /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly contextFile: string | null | undefined;
@@ -667,13 +688,15 @@ export class Agent {
         yield llmCallEv;
       }
 
-      // Call API with retry
+      // Call API with retry (indefinite by default; capped by OMEGA_RETRY_ATTEMPTS in tests).
       let response: Anthropic.Beta.Messages.BetaMessage | null = null;
-      let lastError: unknown = null;
 
-      for (let attempt = 0; attempt < this.retryMaxAttempts; attempt++) {
+      for (let attempt = 0; ; attempt++) {
         try {
+          // Reset per-attempt accumulators so a retry starts with a clean slate.
+          // The server will re-stream the full response from the beginning.
           assembledText = "";
+          assembledTextTs = null;
           assembledThinking = "";
           inThinkingBlock = false;
           const stream = this.streamProvider
@@ -727,32 +750,38 @@ export class Agent {
           }
 
           response = await stream.finalMessage();
-          lastError = null;
-          break;
+          break; // success — exit retry loop
         } catch (err: unknown) {
-          lastError = err;
           const { httpStatus, message } = errFields(err);
+          const maxAttempts = this.retryMaxAttempts;
+          const exhausted = maxAttempts !== undefined && attempt >= maxAttempts - 1;
 
-          if (isRetryable(err) && attempt < this.retryMaxAttempts - 1) {
+          if (isRetryable(err) && !exhausted) {
+            // Transient error — emit retry event and wait, then loop again.
             const waitMs = getAnthropicRetryDelayMs(
               err,
               attempt,
               this.retryBaseMs,
               this.retryMaxMs,
             );
+            const retryAt = new Date(Date.now() + waitMs).toISOString() as ISOTimestamp;
             const retryEv: OmegaEvent = {
               type: "llm_retry",
               time: now(),
               attempt: attempt + 1,
               httpStatus,
               waitMs,
+              retryAt,
+              errorBody: extractErrorBody(err),
               error: message,
             };
             this.logEvent(retryEv);
             yield retryEv;
             await sleep(waitMs, signal);
+            // continue loop — attempt++ will happen at the top
           } else {
-            // Non-retryable error (includes prompt-too-long — no retry, no trimming).
+            // Non-retryable error (includes prompt-too-long — no retry, no trimming),
+            // or retries exhausted (only when OMEGA_RETRY_ATTEMPTS cap is set).
             // Write a diagnostic snapshot so the next session has hard data.
             const isContextOverflow =
               (httpStatus === 400 && message.includes("prompt is too long")) ||
@@ -775,6 +804,7 @@ export class Agent {
               this.logEvent(overflowEv);
               yield overflowEv;
             } else if (isRetryable(err)) {
+              // Retryable but exhausted (OMEGA_RETRY_ATTEMPTS cap hit).
               const rateLimitEv: OmegaEvent = {
                 type: "agent_error",
                 time: now(),
@@ -803,12 +833,10 @@ export class Agent {
         }
       }
 
-      // Every code path in the retry loop either sets `response` (via break) or
-      // calls return (terminal error paths). The `!response` guard below is
-      // therefore unreachable in practice, but kept as a defensive assertion so
-      // a future refactor doesn't silently produce a null-deref.
+      // Every code path above either sets `response` (via break) or returns
+      // early (terminal error paths). The guard below is unreachable in practice
+      // but kept as a defensive assertion against future refactor bugs.
       if (!response) {
-        // Should never happen: indicates a logic error in the retry loop above.
         throw new Error("BUG: retry loop exited without response or return");
       }
 

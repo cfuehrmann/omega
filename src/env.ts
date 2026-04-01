@@ -34,6 +34,24 @@ export function readEnvPositiveInt(name: string, defaultVal: number): number {
 }
 
 /**
+ * Read a positive-integer environment variable.
+ * Returns `undefined` when the variable is absent or empty (caller treats
+ * undefined as "no limit" / "use default logic").
+ * Throws a descriptive error when present but not a positive integer.
+ */
+export function readEnvOptionalPositiveInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return undefined;
+  const result = PositiveInt.safeParse(raw);
+  if (!result.success) {
+    throw new Error(
+      `Invalid env var ${name}: expected a positive integer, got "${raw}"`,
+    );
+  }
+  return result.data;
+}
+
+/**
  * Read the PORT environment variable.
  * Returns `defaultVal` when absent or empty.
  * Throws when present but outside the valid port range (1–65535).

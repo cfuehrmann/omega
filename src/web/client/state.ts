@@ -670,7 +670,15 @@ export function dispatch(event: ServerMessage): void {
     }
 
     case "llm_retry":
-      setState(produce(s => { s.events.push(event); }));
+      setState(produce(s => {
+        s.events.push(event);
+        // Clear any partial streaming content accumulated before the error.
+        // Without this, the user sees a frozen thinking/text block with a
+        // blinking cursor and no indication that a retry is in progress.
+        // Fresh content will start accumulating again when the retry fires.
+        s.streamingText = "";
+        s.streamingThinking = "";
+      }));
       setState("retrying", true);
       break;
 

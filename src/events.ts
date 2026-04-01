@@ -251,10 +251,22 @@ export interface CompactedEvent {
 export interface LlmRetryEvent {
   type: "llm_retry";
   time: ISOTimestamp;
+  /** Retry attempt number, 1-based (first retry = 1). */
   attempt: number;
   httpStatus?: number;
+  /** Milliseconds to wait before the next attempt. */
   waitMs: number;
+  /** Human-readable error message from the provider. */
   error: string;
+  /** ISO timestamp of when the next attempt will be made (time + waitMs). */
+  retryAt?: ISOTimestamp;
+  /**
+   * Full structured error body from the provider (e.g. Anthropic's
+   * `{ type, error: { type, message } }` envelope), preserved verbatim
+   * for post-mortem inspection. Absent when the error has no body
+   * (pure network / SDK errors).
+   */
+  errorBody?: unknown;
 }
 
 

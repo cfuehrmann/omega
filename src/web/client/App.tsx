@@ -913,14 +913,23 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     }
 
     case "llm_retry": {
-      const body = e.error;
+      const statusStr = e.httpStatus ? `HTTP ${e.httpStatus}` : "network error";
+      const waitSec = (e.waitMs / 1000).toFixed(1);
+      const retryAtStr = e.retryAt ? formatTs(e.retryAt) : undefined;
+      const headline = `${statusStr} · retrying in ${waitSec}s${retryAtStr ? ` → ${retryAtStr}` : ""}`;
+      const bodyFull = e.errorBody != null
+        ? `${e.error}\n\n${JSON.stringify(e.errorBody, null, 2)}`
+        : e.error;
       return (
-        <div class="block info">
+        <div class="block retry">
           <div class="block-label-row">
-            <span class="block-label">llm retry (attempt {e.attempt})</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `llm retry (attempt ${e.attempt})`, time, body } })} title="Details">⤢</button>
+            <span class="block-label">⟳ retry · attempt {e.attempt}</span>
+            <div class="block-btn-group">
+              <span class="block-retry-meta">{headline}</span>
+              <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: `retry · attempt ${e.attempt}`, time, body: bodyFull } })} title="Full error details">⤢</button>
+            </div>
           </div>
-          <div class="block-body">{body}</div>
+          <div class="block-body">{e.error}</div>
         </div>
       );
     }
@@ -1261,6 +1270,7 @@ function InputRow() {
   const omegaClass = () =>
     (state.connecting   ? "omega-btn omega-connecting dot connecting"
     : !state.connected  ? "omega-btn omega-error dot error"
+    : state.retrying    ? "omega-btn omega-retrying dot streaming"
     : state.streaming   ? "omega-btn omega-streaming dot streaming"
     : "omega-btn omega-ready dot connected")
     + (panelOpen() ? " omega-open" : "");
