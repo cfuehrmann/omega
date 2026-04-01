@@ -930,23 +930,33 @@ export class Agent {
         (b): b is Anthropic.Beta.Messages.BetaToolUseBlock => b.type === "tool_use",
       );
 
-      // --- BUG-1 guard: max_tokens mid-tool-call ---
-      // If the LLM was cut off by max_tokens while emitting tool_use blocks, the
-      // assistant message (already appended to compactedContextHistory above) contains
-      // dangling tool_use blocks with no matching tool_result. Anthropic rejects
-      // this with a 400 on the very next API call, permanently bricking the session.
+      // --- BUG-1 guard: output truncation mid-tool-call ---
+      // If the LLM was cut off while emitting tool_use blocks — either because the
+      // output token budget was exhausted (max_tokens) or the model context window
+      // was full (model_context_window_exceeded) — the assistant message (already
+      // appended to compactedContextHistory above) contains dangling tool_use blocks
+      // with no matching tool_result. Anthropic rejects this with a 400 on the very
+      // next API call, permanently bricking the session.
       //
       // Fix: synthesise error tool_result entries for every dangling tool_use,
       // append them to history immediately, emit tool_result events, and then
       // emit an agent_error explaining what happened. The turn ends here (no
       // continueLoop = true), but the context is well-formed and the next user
       // message will succeed.
-      if (toolUseBlocks.length > 0 && response.stop_reason === "max_tokens") {
+      if (
+        toolUseBlocks.length > 0 &&
+        (response.stop_reason === "max_tokens" ||
+          response.stop_reason === "model_context_window_exceeded")
+      ) {
+        const isContextWindowStop =
+          response.stop_reason === "model_context_window_exceeded";
         const syntheticResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] =
           toolUseBlocks.map((b) => ({
             type: "tool_result" as const,
             tool_use_id: b.id,
-            content: `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
+            content: isContextWindowStop
+              ? `[not executed: model context window exceeded while generating this tool call's arguments — start a fresh focused session or let auto-compaction reduce the context]`
+              : `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
             is_error: true,
           }));
         const syntheticResultHash = await this.appendToHistory({
@@ -961,20 +971,25 @@ export class Agent {
             name: toolUse.name,
             isError: true,
             durationMs: 0,
-            output:
-              "[not executed: max_tokens stop — output budget exhausted while generating tool call arguments]",
+            output: isContextWindowStop
+              ? "[not executed: model context window exceeded while generating tool call arguments]"
+              : "[not executed: max_tokens stop — output budget exhausted while generating tool call arguments]",
             contextHash: syntheticResultHash,
           };
           this.logEvent(syntheticResultEvent);
           yield syntheticResultEvent;
         }
         const toolNames = toolUseBlocks.map((b) => b.name).join(", ");
-        const truncErr =
-          `Output budget exhausted (max_tokens) while generating tool call input for [${toolNames}] — the tool was not executed. ` +
-          `This means the tool call arguments alone exceeded the ${config.maxOutputTokens}-token output budget. ` +
-          `To avoid this: break large write_file calls into a skeleton + edit_file extensions; ` +
-          `never attempt to write a file longer than ~500 lines in a single write_file call. ` +
-          `The session context is intact — retry with a smaller approach.`;
+        const truncErr = isContextWindowStop
+          ? `Context window exceeded while generating tool call input for [${toolNames}] — the tool was not executed. ` +
+            `The model ran out of context window while generating the tool arguments. ` +
+            `Start a fresh session or let auto-compaction reduce the context. ` +
+            `The session context is intact.`
+          : `Output budget exhausted (max_tokens) while generating tool call input for [${toolNames}] — the tool was not executed. ` +
+            `This means the tool call arguments alone exceeded the ${config.maxOutputTokens}-token output budget. ` +
+            `To avoid this: break large write_file calls into a skeleton + edit_file extensions; ` +
+            `never attempt to write a file longer than ~500 lines in a single write_file call. ` +
+            `The session context is intact — retry with a smaller approach.`;
         const truncErrEvent: OmegaEvent = {
           type: "agent_error",
           time: now(),
@@ -983,6 +998,39 @@ export class Agent {
         await this.logEvent(truncErrEvent);
         yield truncErrEvent;
         // Do NOT set continueLoop = true — turn ends here.
+      }
+
+      // Warn when model context window was exceeded on a non-tool response.
+      // The reply above may be truncated; the session context is intact and a
+      // fresh session (or letting auto-compaction run) is the recommended next step.
+      if (
+        toolUseBlocks.length === 0 &&
+        response.stop_reason === "model_context_window_exceeded"
+      ) {
+        const ctxWindowEv: OmegaEvent = {
+          type: "agent_error",
+          time: now(),
+          error:
+            "Response truncated: model context window exceeded. " +
+            "The reply above may be incomplete. " +
+            "Consider starting a fresh session.",
+        };
+        await this.logEvent(ctxWindowEv);
+        yield ctxWindowEv;
+      }
+
+      // Warn when Claude refused the request (safety filter).
+      // The session context is intact; the user can try rephrasing.
+      if (response.stop_reason === "refusal") {
+        const refusalEv: OmegaEvent = {
+          type: "agent_error",
+          time: now(),
+          error:
+            "Claude refused this request (safety filter). " +
+            "The session is intact — try rephrasing.",
+        };
+        await this.logEvent(refusalEv);
+        yield refusalEv;
       }
 
       if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {

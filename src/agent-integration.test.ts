@@ -1256,3 +1256,234 @@ describe("Agent.sendMessage — abort during tool execution", () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// Stop-reason handling — model_context_window_exceeded and refusal
+// ---------------------------------------------------------------------------
+
+describe("Agent.sendMessage — stop reason handling", () => {
+  // Helper: minimal BetaMessage with an arbitrary stop_reason and tool_use content
+  function truncatedToolUseMessage(
+    stopReason: string,
+  ): Anthropic.Beta.Messages.BetaMessage {
+    return {
+      id: "msg_truncated",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-6",
+      container: null,
+      content: [
+        {
+          type: "tool_use",
+          id: "t_trunc",
+          name: "write_file",
+          input: { path: "big.ts", content: "..." },
+          caller: { type: "direct" },
+        },
+      ],
+      stop_reason: stopReason as any,
+      stop_sequence: null,
+      context_management: null,
+      usage: {
+        input_tokens: 900000,
+        output_tokens: 30000,
+        cache_creation: null,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        inference_geo: null,
+        iterations: null,
+        server_tool_use: null,
+        service_tier: null,
+        speed: null,
+      },
+    };
+  }
+
+  // Helper: minimal BetaMessage with text content and an arbitrary stop_reason
+  function truncatedTextMessage(
+    text: string,
+    stopReason: string,
+  ): Anthropic.Beta.Messages.BetaMessage {
+    return {
+      id: "msg_truncated_text",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-6",
+      container: null,
+      content: [{ type: "text", text, citations: null }],
+      stop_reason: stopReason as any,
+      stop_sequence: null,
+      context_management: null,
+      usage: {
+        input_tokens: 900000,
+        output_tokens: 30000,
+        cache_creation: null,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        inference_geo: null,
+        iterations: null,
+        server_tool_use: null,
+        service_tier: null,
+        speed: null,
+      },
+    };
+  }
+
+  // Helper: stream events for a response that stops mid-text with a given stop_reason
+  function truncatedTextStreamEvents(text: string, stopReason: string): any[] {
+    return [
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: stopReason }, usage: { output_tokens: 30000 } },
+      { type: "message_stop" },
+    ];
+  }
+
+  // --- BUG-1 guard: model_context_window_exceeded mid-tool-call (red-green) ---
+
+  it.concurrent(
+    "BUG-1 guard: synthesises error tool_result and emits agent_error when model_context_window_exceeded stops mid-tool-call",
+    async () => {
+      // This is the red→green test: without the fix the session would be bricked
+      // because the assistant message would contain a dangling tool_use block,
+      // and the next API call would return 400 "tool_use without tool_result".
+      let call = 0;
+      const mockProvider: StreamProvider = async () => {
+        call++;
+        if (call === 1) {
+          return makeMockStream(
+            [
+              {
+                type: "message_delta",
+                delta: { stop_reason: "model_context_window_exceeded" },
+                usage: { output_tokens: 30000 },
+              },
+              { type: "message_stop" },
+            ],
+            truncatedToolUseMessage("model_context_window_exceeded"),
+          );
+        }
+        // Second call: proves context is valid (no 400 error)
+        return makeMockStream(textStreamEvents("recovered"), textMessage("recovered"));
+      };
+
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+
+      const events1 = await collectEvents(agent, "do something big");
+
+      // Synthetic tool_result must have been emitted (context repair)
+      const toolResultEvents = events1.filter((e) => e.type === "tool_result") as any[];
+      expect(toolResultEvents).toHaveLength(1);
+      expect(toolResultEvents[0].id).toBe("t_trunc");
+      expect(toolResultEvents[0].isError).toBe(true);
+      expect(toolResultEvents[0].output).toContain("context window exceeded");
+
+      // agent_error must have been emitted with context-window specific message
+      const errorEvents1 = events1.filter((e) => e.type === "agent_error") as any[];
+      expect(errorEvents1).toHaveLength(1);
+      expect(errorEvents1[0].error).toContain("Context window exceeded");
+
+      // Turn must end normally (no turn_interrupted)
+      expect(events1[events1.length - 1]?.type).toBe("turn_end");
+
+      // Context history: last message must be the synthetic tool_result (user role),
+      // not a dangling assistant tool_use — so the next API call won't get a 400.
+      const history = agent.getCompactedContextHistory();
+      expect(history[history.length - 1]?.role).toBe("user");
+
+      // Verify the session is not bricked: second message succeeds without a 400
+      const events2 = await collectEvents(agent, "try again");
+      expect(events2[events2.length - 1]?.type).toBe("turn_end");
+      expect(call).toBe(2);
+    },
+  );
+
+  // --- model_context_window_exceeded on a non-tool text response ---
+
+  it.concurrent(
+    "emits agent_error when model_context_window_exceeded on a plain text response",
+    async () => {
+      const partialText = "Here is a very long answer that got cut off...";
+      const mockProvider: StreamProvider = async () =>
+        makeMockStream(
+          truncatedTextStreamEvents(partialText, "model_context_window_exceeded"),
+          truncatedTextMessage(partialText, "model_context_window_exceeded"),
+        );
+
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+      const events = await collectEvents(agent, "explain everything");
+
+      // Must emit an agent_error warning about the truncation
+      const errorEvents = events.filter((e) => e.type === "agent_error") as any[];
+      expect(errorEvents).toHaveLength(1);
+      expect(errorEvents[0].error).toContain("context window exceeded");
+
+      // llm_response stopReason must reflect the API's stop reason
+      const llmResp = events.find((e) => e.type === "llm_response") as any;
+      expect(llmResp?.stopReason).toBe("model_context_window_exceeded");
+
+      // Turn ends normally — context is intact, no turn_interrupted
+      expect(events[events.length - 1]?.type).toBe("turn_end");
+      expect(events.some((e) => e.type === "turn_interrupted")).toBe(false);
+    },
+  );
+
+  // --- refusal ---
+
+  it.concurrent(
+    "emits agent_error when Claude refuses a request (stop_reason: refusal)",
+    async () => {
+      const refusalMessage: Anthropic.Beta.Messages.BetaMessage = {
+        id: "msg_refusal",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        container: null,
+        content: [],
+        stop_reason: "refusal" as any,
+        stop_sequence: null,
+        context_management: null,
+        usage: {
+          input_tokens: 50,
+          output_tokens: 3,
+          cache_creation: null,
+          cache_creation_input_tokens: null,
+          cache_read_input_tokens: null,
+          inference_geo: null,
+          iterations: null,
+          server_tool_use: null,
+          service_tier: null,
+          speed: null,
+        },
+      };
+      const mockProvider: StreamProvider = async () =>
+        makeMockStream(
+          [
+            { type: "message_delta", delta: { stop_reason: "refusal" }, usage: { output_tokens: 3 } },
+            { type: "message_stop" },
+          ],
+          refusalMessage,
+        );
+
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+      const events = await collectEvents(agent, "do something unsafe");
+
+      // Must emit an agent_error about the refusal
+      const errorEvents = events.filter((e) => e.type === "agent_error") as any[];
+      expect(errorEvents).toHaveLength(1);
+      expect(errorEvents[0].error).toContain("refused");
+
+      // llm_response stopReason reflects the refusal
+      const llmResp = events.find((e) => e.type === "llm_response") as any;
+      expect(llmResp?.stopReason).toBe("refusal");
+
+      // Turn ends normally — session is intact, no turn_interrupted
+      expect(events[events.length - 1]?.type).toBe("turn_end");
+      expect(events.some((e) => e.type === "turn_interrupted")).toBe(false);
+    },
+  );
+});
