@@ -39,22 +39,9 @@ test("crash recovery: page reload after open turn shows turn_interrupted", async
   // UI must NOT be stuck in streaming state
   await expect(page.locator(".dot.connected")).toBeVisible({ timeout: 3000 });
   await expect(page.locator(".send-btn")).toBeVisible({ timeout: 3000 });
+  await expect(page.locator(".status-label")).toHaveText("ready", { timeout: 3000 });
   // Interrupted marker should be visible
   await expect(page.locator(".block.interrupt")).toBeVisible({ timeout: 3000 });
-});
-
-test("crash recovery: UI is not stuck streaming after open-turn replay", async ({ page, server }) => {
-  await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-
-  await server.sendEvent({ type: "user_message", content: "crash test" });
-  // No turn_end
-
-  await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-
-  // After replay the status must say "ready", not "streaming…"
-  await expect(page.locator(".status-label")).toHaveText("ready", { timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------

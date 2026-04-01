@@ -70,25 +70,4 @@ test("recorded session replays all blocks after page reload", async ({
   await expect(page.locator(".render-error")).toHaveCount(0);
 });
 
-test("recorded session shows no render-error boundary", async ({
-  page,
-  server,
-}) => {
-  // Specifically targets the bug where missing llm_call.request crashed rendering
-  await page.goto("/");
-  await expect(page.locator(".status-label")).toHaveText("ready");
 
-  const lines = loadFixtureLines();
-  await server.loadFixture(lines);
-  await page.reload();
-
-  // Give the UI a moment to fully render
-  await page.waitForTimeout(500);
-
-  // The ErrorBoundary fallback should never appear
-  await expect(page.locator(".render-error")).toHaveCount(0);
-
-  // And the feed should have content (not blank)
-  const blocks = page.locator(".feed .block");
-  expect(await blocks.count()).toBeGreaterThan(0);
-});

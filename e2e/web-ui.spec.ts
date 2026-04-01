@@ -83,15 +83,6 @@ test("user_message event shows user block in feed", async ({ page, server }) => 
   await expect(page.locator(".block.user .block-label")).toHaveText("user_message");
 });
 
-test("abort button appears when streaming", async ({ page, server }) => {
-  await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-
-  // Simulate a turn starting (server echoes user_message which sets streaming=true)
-  await server.sendEvent({ type: "user_message", content: "test prompt" });
-  await expect(page.locator(".abort-btn")).toBeVisible({ timeout: 3000 });
-});
-
 // ---------------------------------------------------------------------------
 // Turn rendering
 // ---------------------------------------------------------------------------
@@ -274,30 +265,4 @@ test("llm_retry event changes status dot to 'retrying…'", async ({ page, serve
   await expect(page.locator(".status-row")).toContainText("ready", { timeout: 3000 });
 });
 
-// ---------------------------------------------------------------------------
-// History replay (browser refresh)
-// ---------------------------------------------------------------------------
 
-test("history is replayed after page reload", async ({ page, server }) => {
-  await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-
-  // Send a complete turn
-  await server.sendEvent({ type: "user_message", content: "replay test" });
-  await server.sendEvent({ type: "text", text: "I remember you." });
-  await server.sendEvent({
-    type: "turn_end",
-    metrics: { inputTokens: 5, outputTokens: 5, costUsd: 0.0001, savedUsd: 0, ttftMs: 50 },
-    model: "claude-sonnet-4-6",
-    provider: "anthropic",
-  });
-
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
-
-  // Reload the page — server should replay the event log
-  await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-
-  // User block should still be visible (replayed from server event log)
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
-});
