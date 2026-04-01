@@ -17,6 +17,22 @@ function overloadError() {
   return err;
 }
 
+/**
+ * Simulates the error shape the Anthropic SDK throws when an overload arrives
+ * as an SSE stream 'error' event (HTTP 200 body) rather than as an HTTP 529.
+ * In that case streaming.js:63 calls:
+ *   new APIError(undefined, parsedBody, undefined, headers)
+ * so .status is undefined and .message is JSON.stringify(parsedBody).
+ * Bug: this was not retried — session 2026-04-01T16-02-14-529-87454cef.
+ */
+function sseOverloadError() {
+  const body = { type: "error", error: { details: null, type: "overloaded_error", message: "Overloaded" }, request_id: "req_test" };
+  const err: any = new Error(JSON.stringify(body));
+  // status is intentionally absent (undefined) — this is the bug-triggering shape
+  err.error = body;
+  return err;
+}
+
 async function collectEvents(agent: Agent, message: string, signal?: AbortSignal): Promise<(OmegaEvent | StreamSignal)[]> {
   const events: (OmegaEvent | StreamSignal)[] = [];
   for await (const event of agent.sendMessage(message, async () => true, signal)) {
@@ -122,6 +138,44 @@ describe("overload (529) — indefinite retry", () => {
     expect(retries[2].attempt).toBe(3);
 
     // Turn ended cleanly (turn_end, not turn_interrupted)
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_end");
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("SSE-stream overload (status=undefined) retries and eventually succeeds", async () => {
+    // Regression test for session 2026-04-01T16-02-14-529-87454cef.
+    // The SDK throws APIError(undefined, body) for SSE stream error events;
+    // isRetryable must recognise "overloaded_error" in the body even without a
+    // numeric .status.
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+    // No OMEGA_RETRY_ATTEMPTS cap — production default (infinite).
+
+    let callCount = 0;
+    const failTimes = 2;
+    const successStream = makeSuccessProvider();
+    const mockProvider: StreamProvider = async (params) => {
+      callCount++;
+      if (callCount <= failTimes) throw sseOverloadError();
+      return successStream(params);
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    expect(callCount).toBe(failTimes + 1);
+
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries.length).toBe(failTimes);
+
+    // httpStatus is undefined for this error shape
+    expect(retries[0].httpStatus).toBeUndefined();
+
+    // Turn ends cleanly
     const last = events[events.length - 1] as any;
     expect(last.type).toBe("turn_end");
 

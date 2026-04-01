@@ -210,6 +210,12 @@ export function isRetryable(err: unknown): boolean {
     if (msg.includes("socket connection was closed unexpectedly")) return true;
     // Node/Bun also surfaces TCP resets as ECONNRESET via fetch().
     if (msg.includes("ECONNRESET")) return true;
+    // The Anthropic SDK throws APIError(undefined, parsedBody, undefined, headers)
+    // when an overload arrives as an SSE stream 'error' event rather than as an
+    // HTTP 529 status code (streaming.js:63). In that case .status is undefined
+    // and .message is JSON.stringify(parsedBody), which contains "overloaded_error".
+    // Seen in session 2026-04-01T16-02-14-529-87454cef.
+    if (msg.includes("overloaded_error")) return true;
   }
   return false;
 }

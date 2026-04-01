@@ -53,11 +53,6 @@ describe("isRetryable", () => {
   });
 
   it("retries on SDK stream ordering error (message_start before message_stop)", () => {
-    // The Anthropic SDK throws this from within the stream iterator when the
-    // server restarts a stream mid-flight. It has no HTTP status code — it's
-    // a plain AnthropicError thrown by MessageStream.#accumulateMessage().
-    // We must treat it as retryable so the agent retries instead of surfacing
-    // a hard error to the user.
     const sdkStreamError = new Error(
       'Unexpected event order, got message_start before receiving "message_stop"'
     );
@@ -77,6 +72,23 @@ describe("isRetryable", () => {
   it("retries on ECONNRESET fetch error", () => {
     const resetErr = new Error("fetch failed: read ECONNRESET");
     expect(isRetryable(resetErr)).toBe(true);
+  });
+
+  it("retries on SSE-stream overload — status=undefined, body contains overloaded_error", () => {
+    // When the Anthropic API delivers a 529 overload *as an SSE stream error
+    // event* (rather than as an HTTP-level 529 status), the SDK throws:
+    //   new APIError(undefined, parsedBody, undefined, headers)
+    // which has .status=undefined and .message=JSON.stringify(parsedBody).
+    // isRetryable must catch this via the body/message rather than the status.
+    // Bug reproduced in session 2026-04-01T16-02-14-529-87454cef.
+    const sseOverloadErr = Object.assign(
+      new Error('{"type":"error","error":{"details":null,"type":"overloaded_error","message":"Overloaded"},"request_id":"req_011CZdMFPu4gDnTXTxq63PZw"}'),
+      {
+        status: undefined,
+        error: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+      }
+    );
+    expect(isRetryable(sseOverloadErr)).toBe(true);
   });
 
   it("does NOT retry on 429 'Extra usage is required for long context requests'", () => {
