@@ -81,11 +81,13 @@ describe("overload (529) — indefinite retry", () => {
         type: "message",
         role: "assistant",
         model: "claude-sonnet-4-6",
-        content: [{ type: "text", text: "done" }],
+        container: null,
+        context_management: null,
+        content: [{ type: "text", text: "done", citations: null }],
         stop_reason: "end_turn",
         stop_sequence: null,
         usage: { input_tokens: 10, output_tokens: 1 },
-      }),
+      } as any),
     });
   }
 
@@ -255,11 +257,13 @@ describe("mid-stream retry", () => {
           type: "message",
           role: "assistant",
           model: "claude-sonnet-4-6",
-          content: [{ type: "text", text: "done" }],
+          container: null,
+          context_management: null,
+          content: [{ type: "text", text: "done", citations: null }],
           stop_reason: "end_turn",
           stop_sequence: null,
           usage: { input_tokens: 10, output_tokens: 1 },
-        }),
+        } as any),
       };
     };
   }
@@ -418,11 +422,13 @@ describe("mid-stream retry", () => {
           type: "message",
           role: "assistant",
           model: "claude-sonnet-4-6",
-          content: [{ type: "text", text: "done" }],
+          container: null,
+          context_management: null,
+          content: [{ type: "text", text: "done", citations: null }],
           stop_reason: "end_turn",
           stop_sequence: null,
           usage: { input_tokens: 10, output_tokens: 1 },
-        }),
+        } as any),
       };
     };
 

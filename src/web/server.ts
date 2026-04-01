@@ -78,7 +78,7 @@ const MIME: Record<string, string> = {
  * Read context.jsonl and return the records whose hash appears in the
  * requested set, preserving the order of the requested hashes array.
  */
-async function lookupContextRecords(
+export async function lookupContextRecords(
   contextFile: string,
   hashes: string[],
 ): Promise<ContextRecord[]> {
