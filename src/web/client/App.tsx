@@ -53,12 +53,15 @@ function renderDiff(pre: HTMLPreElement, code: HTMLElement): void {
 
   code.innerHTML = html;
   pre.classList.add("diff-block");
+  pre.setAttribute("data-testid", "diff-block");
 }
 
 /** Inject a copy button into an element that copies the given text on click. */
 function addCopyButton(pre: HTMLElement, textToCopy: string): void {
   const btn = document.createElement("button");
   btn.className = "code-copy-btn";
+  btn.setAttribute("data-testid", "code-copy-btn");
+  btn.setAttribute("aria-label", "copy code");
   btn.textContent = "copy";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -150,6 +153,7 @@ async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
 
     const wrapper = document.createElement("div");
     wrapper.className = "mermaid-wrapper";
+    wrapper.setAttribute("data-testid", "mermaid-wrapper");
 
     // Copy button on the wrapper (copies the raw source text)
     addCopyButton(wrapper, source);
@@ -158,17 +162,20 @@ async function renderMermaidBlocks(container: HTMLElement): Promise<void> {
       const { svg } = await mermaid.render(id, source);
       const diagram = document.createElement("div");
       diagram.className = "mermaid-diagram";
+      diagram.setAttribute("data-testid", "mermaid-diagram");
       diagram.innerHTML = svg;
       wrapper.appendChild(diagram);
     } catch (err) {
       wrapper.classList.add("mermaid-error");
       const notice = document.createElement("div");
       notice.className = "mermaid-error-notice";
+      notice.setAttribute("data-testid", "mermaid-error-notice");
       notice.textContent = `⚠ Mermaid error: ${err instanceof Error ? err.message : String(err)}`;
       wrapper.appendChild(notice);
       // Show the raw source so the user can read/fix it
       const sourcePre = document.createElement("pre");
       sourcePre.className = "mermaid-source";
+      sourcePre.setAttribute("data-testid", "mermaid-source");
       sourcePre.textContent = source;
       wrapper.appendChild(sourcePre);
     }
@@ -279,7 +286,7 @@ function MdBody(props: { text: string }) {
     enhanceCodeBlocks(ref);
     void renderMermaidBlocks(ref);
   });
-  return <div class="block-body md-body" ref={ref} />;
+  return <div class="block-body md-body" data-testid="md-body" ref={ref} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -404,10 +411,10 @@ function renderContent(content: unknown): string {
   return JSON.stringify(content, null, 2);
 }
 
-function ModalShell(props: { title: string; cls: string; children: JSX.Element }) {
+function ModalShell(props: { title: string; cls: string; testId?: string; children: JSX.Element }) {
   return (
     <div class="modal-backdrop">
-      <div class={`modal ${props.cls}`}>
+      <div class={`modal ${props.cls}`} data-testid={props.testId}>
         <div class="modal-header">
           <span class="modal-title">{props.title}</span>
           <button class="modal-close" onClick={closeModal}>✕ close</button>
@@ -512,7 +519,7 @@ function ActiveModal() {
           );
 
           return (
-            <ModalShell title={`${d.source ?? "llm_call"} › messages`} cls="llm-call-modal">
+            <ModalShell title={`${d.source ?? "llm_call"} › messages`} cls="llm-call-modal" testId="llm-call-modal">
               <Show when={d.time}>
                 <div class="modal-section-label">{formatTs(d.time)}</div>
               </Show>
@@ -536,8 +543,8 @@ function ActiveModal() {
                       return (
                         <>
                           <div class={`llm-call-msg llm-call-msg-${rec.role}`}>
-                            <span class="llm-call-msg-role">{rec.role}<span class="llm-call-msg-ts">{rec.time ? "  " + formatTs(rec.time) : ""}</span></span>
-                            <pre class="llm-call-msg-body">{renderContent(rec.content)}</pre>
+                            <span class="llm-call-msg-role" data-testid="llm-call-msg-role">{rec.role}<span class="llm-call-msg-ts">{rec.time ? "  " + formatTs(rec.time) : ""}</span></span>
+                            <pre class="llm-call-msg-body" data-testid="llm-call-msg-body">{renderContent(rec.content)}</pre>
                           </div>
                           <Show when={showSeparator}>
                             <div class="llm-call-separator">── already in context ──</div>
@@ -637,7 +644,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
   switch (e.type) {
     case "user_message":
       return (
-        <div class="block user">
+        <div class="block user" data-testid="block-user">
           <div class="block-label-row">
             <span class="block-label">user_message</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "user_message", time, body: e.content } })} title="Details">⤢</button>
@@ -648,7 +655,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
 
     case "text":
       return (
-        <div class="block assist">
+        <div class="block assist" data-testid="block-llm-response">
           <div class="block-label-row">
             <span class="block-label">assistant_text</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "assistant_text", time, streamingStart, body: e.text } })} title="Details">⤢</button>
@@ -683,7 +690,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         });
       };
       return (
-        <div class="block tool">
+        <div class="block tool" data-testid="block-tool">
           <div class="block-label-row">
             <span class="block-label">tool_call › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
@@ -712,7 +719,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         });
       };
       return (
-        <div class={`block result${e.isError ? " result-error" : ""}`}>
+        <div class={`block result${e.isError ? " result-error" : ""}`} data-testid="block-result" data-error={e.isError ? "true" : undefined}>
           <div class="block-label-row">
             <span class="block-label">tool_result › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
@@ -725,7 +732,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "model_changed": {
       const body = `Switched to ${e.model}`;
       return (
-        <div class="block status">
+        <div class="block status" data-testid="block-status">
           <div class="block-label-row">
             <span class="block-label">model_changed</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "model_changed", time, body } })} title="Details">⤢</button>
@@ -738,7 +745,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "compacted": {
       const body = "Context compacted by server.";
       return (
-        <div class="block status">
+        <div class="block status" data-testid="block-status">
           <div class="block-label-row">
             <span class="block-label">compacted</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "compacted", time, body: JSON.stringify(e.usage, null, 2) } })} title="Details">⤢</button>
@@ -767,7 +774,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       const openMessages = () => setActiveModal({ kind: "llm_call_messages", detail });
       const openRaw      = () => setActiveModal({ kind: "llm_call_raw",      detail });
       return (
-        <div class="block api-call">
+        <div class="block api-call" data-testid="block-llm-call">
           <div class="block-label-row">
             <span class="block-label">llm_call</span>
             <div class="block-btn-group">
@@ -822,7 +829,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         },
       });
       return (
-        <div class="block api-response">
+        <div class="block api-response" data-testid="block-llm-response">
           <div class="block-label-row">
             <span class="block-label">llm_response<span class="block-label-meta">{e.stopReason}</span></span>
             <div class="block-btn-group">
@@ -847,7 +854,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         : "";
       const line = `in (uncached): ${m.inputTokens}${cacheDetail}  out: ${m.outputTokens}`;
       return (
-        <div class="block footer">
+        <div class="block footer" data-testid="block-turn-end">
           <div class="block-label-row">
             <span class="block-label">turn_end</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_end", time, body: line } })} title="Details">⤢</button>
@@ -860,7 +867,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "llm_error": {
       const body = e.error;
       return (
-        <div class="block error-b">
+        <div class="block error-b" data-testid="block-error">
           <div class="block-label-row">
             <span class="block-label">api error</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "api error", time, body } })} title="Details">⤢</button>
@@ -873,7 +880,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "agent_error": {
       const body = e.error;
       return (
-        <div class="block error-b">
+        <div class="block error-b" data-testid="block-error">
           <div class="block-label-row">
             <span class="block-label">error</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "agent_error", time, body } })} title="Details">⤢</button>
@@ -886,7 +893,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "transport_error": {
       const body = e.error;
       return (
-        <div class="block error-b">
+        <div class="block error-b" data-testid="block-error">
           <div class="block-label-row">
             <span class="block-label">transport_error</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "transport_error", time, body } })} title="Details">⤢</button>
@@ -903,7 +910,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         : reason === "error"   ? "⊘ Failed"
         :                        "⊘ Interrupted";
       return (
-        <div class="block interrupt">
+        <div class="block interrupt" data-testid="block-interrupt">
           <div class="block-label-row">
             <span>{label}</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_interrupted", time, body: label + (reason ? ` (reason: ${reason})` : "") } })} title="Details">⤢</button>
@@ -921,7 +928,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         ? `${e.error}\n\n${JSON.stringify(e.errorBody, null, 2)}`
         : e.error;
       return (
-        <div class="block retry">
+        <div class="block retry" data-testid="block-retry">
           <div class="block-label-row">
             <span class="block-label">⟳ retry · attempt {e.attempt}</span>
             <div class="block-btn-group">
@@ -949,7 +956,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "session_start": {
       const body = `${e.authMode} · ${e.model}`;
       return (
-        <div class="block info">
+        <div class="block info" data-testid="block-info">
           <div class="block-label-row">
             <span class="block-label">session start</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_start", time, body } })} title="Details">⤢</button>
@@ -961,7 +968,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
 
     case "server_started":
       return (
-        <div class="block info">
+        <div class="block info" data-testid="block-info">
           <div class="block-label-row">
             <span class="block-label">server started</span>
           </div>
@@ -971,7 +978,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "server_stopped": {
       const body = `${e.outcome}${e.reason ? ` — ${e.reason}` : ""}`;
       return (
-        <div class="block info">
+        <div class="block info" data-testid="block-info">
           <div class="block-label-row">
             <span class="block-label">server stopped</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "server_stopped", time, body } })} title="Details">⤢</button>
@@ -1014,7 +1021,7 @@ function TurnView(props: {
           visible (matching old behaviour). The text is cleared on the *next*
           user_message so it never bleeds into a following turn. */}
       <Show when={props.isLast && state.streamingThinking}>
-        <div class="block thinking streaming">
+        <div class="block thinking streaming" data-testid="block-thinking">
           <div class="block-label-row">
             <span class="block-label">thinking</span>
           </div>
@@ -1025,7 +1032,7 @@ function TurnView(props: {
         </div>
       </Show>
       <Show when={props.isLast && state.streamingText}>
-        <div class="block api-response streaming">
+        <div class="block api-response streaming" data-testid="block-llm-response">
           <div class="block-label-row">
             <span class="block-label">llm_response</span>
           </div>
@@ -1202,9 +1209,9 @@ function BottomPanel() {
     <Show when={panelOpen()}>
       <div class="bottom-panel">
         <Show when={state.sessionDir}>
-          <div class="bottom-panel-session">
+          <div class="bottom-panel-session" data-testid="session-panel">
             <span class="bp-label">session</span>
-            <span class="bp-dir">{state.sessionDir}</span>
+            <span class="bp-dir" data-testid="session-dir">{state.sessionDir}</span>
             <Show when={state.events.length > 0}>
               <button
                 class="new-session-btn"
@@ -1234,7 +1241,7 @@ function BottomPanel() {
 function ReconnectBanner() {
   return (
     <Show when={!state.connected && state.retryCount >= 2}>
-      <div class="reconnect-banner">
+      <div class="reconnect-banner" data-testid="reconnect-banner">
         ⚠ Cannot reach server — retrying… (attempt {state.retryCount})
         <br />
         Run <code>just server</code> in a terminal, then this page will reconnect automatically.
@@ -1277,15 +1284,20 @@ function InputRow() {
     setTimeout(autoResize, 0);
   }
 
-  // Include legacy "dot connected/streaming/…" classes so existing e2e tests
-  // that wait on `.dot.connected` continue to work without changes.
   const omegaClass = () =>
-    (state.connecting   ? "omega-btn omega-connecting dot connecting"
-    : !state.connected  ? "omega-btn omega-error dot error"
-    : state.retrying    ? "omega-btn omega-retrying dot streaming"
-    : state.streaming   ? "omega-btn omega-streaming dot streaming"
-    : "omega-btn omega-ready dot connected")
+    (state.connecting   ? "omega-btn omega-connecting"
+    : !state.connected  ? "omega-btn omega-error"
+    : state.retrying    ? "omega-btn omega-retrying"
+    : state.streaming   ? "omega-btn omega-streaming"
+    : "omega-btn omega-ready")
     + (panelOpen() ? " omega-open" : "");
+
+  const omegaStatus = () =>
+    state.connecting  ? "connecting"
+    : !state.connected ? "disconnected"
+    : state.retrying   ? "retrying"
+    : state.streaming  ? "streaming"
+    : "connected";
 
   const statusLabel = () =>
     state.connecting  ? (state.retryCount > 0 ? "reconnecting…" : "connecting…")
@@ -1296,15 +1308,15 @@ function InputRow() {
 
   return (
     <div class="input-row">
-      {/* .status-row wrapper keeps legacy e2e selector ".status-row" working
-          for tests that assert the status label text. */}
-      <div class="status-row">
+      <div class="status-row" data-testid="status-row">
         <button
           class={omegaClass()}
+          data-testid="omega-btn"
+          data-status={omegaStatus()}
           onClick={() => setPanelOpen(o => !o)}
           title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
         >Ω</button>
-        <span class="status-label">{statusLabel()}</span>
+        <span class="status-label" data-testid="status-label">{statusLabel()}</span>
       </div>
       <Show when={activeModel()}>
         <select
@@ -1402,9 +1414,9 @@ export function App() {
       <TokenLegend />
       <ActiveModal />
       <div class="feed-wrapper">
-        <div class="feed" ref={feedRef} onScroll={onFeedScroll}>
+        <div class="feed" data-testid="feed" ref={feedRef} onScroll={onFeedScroll}>
           <ErrorBoundary fallback={(err) => (
-            <div class="render-error">
+            <div class="render-error" data-testid="render-error">
               <strong>Render error</strong>
               <pre>{err?.message ?? String(err)}</pre>
             </div>

@@ -19,13 +19,17 @@
 
 import { test, expect } from "./fixtures/index.js";
 
+// Shorthand for waiting until the Ω button is in "connected" state.
+const connectedDot = (page: import("@playwright/test").Page) =>
+  page.locator('[data-testid="omega-btn"][data-status="connected"]');
+
 // ---------------------------------------------------------------------------
 // Disk snapshot: each event is persisted after turn_end
 // ---------------------------------------------------------------------------
 
 test("incremental save: each turn_end persists immediately to disk", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // Turn 1
   await server.sendEvent({ type: "user_message", content: "first question" });
@@ -47,7 +51,7 @@ test("incremental save: each turn_end persists immediately to disk", async ({ pa
     provider: "anthropic",
   });
 
-  await expect(page.locator(".block.user")).toHaveCount(2, { timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toHaveCount(2, { timeout: 3000 });
 
   // Check disk contents — both turns should be persisted
   const persisted = await server.diskSnapshot() as object[];
@@ -62,7 +66,7 @@ test("incremental save: each turn_end persists immediately to disk", async ({ pa
 
 test("persistence file contains events in correct order", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "order-test" });
   await server.sendEvent({ type: "text", text: "response" });
@@ -93,7 +97,7 @@ test("persistence file contains events in correct order", async ({ page, server 
 
 test("history survives a simulated server restart (save + load cycle)", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "persist me" });
   await server.sendEvent({ type: "text", text: "I will survive." });
@@ -103,7 +107,7 @@ test("history survives a simulated server restart (save + load cycle)", async ({
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
 
   // Simulate clean shutdown: flush in-memory log to disk
   await server.save();
@@ -119,25 +123,25 @@ test("history survives a simulated server restart (save + load cycle)", async ({
 
   // Browser reconnects — server replays the loaded log
   await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // After replay, the user block is visible.
   // The assistant text block is NOT replayed — text events are ephemeral
   // streaming fragments that are never persisted (same as events.jsonl).
   // The turn_end footer block IS replayed, confirming the turn completed.
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".block.footer")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-turn-end")).toBeVisible({ timeout: 3000 });
 });
 
 test("after load, reset clears both memory and disk", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "temporary" });
   await server.sendEvent({ type: "turn_end",
     metrics: { inputTokens: 5, outputTokens: 2, costUsd: 0, savedUsd: 0, ttftMs: 10 },
     model: "claude-sonnet-4-6", provider: "anthropic" });
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
 
   // Save to disk then reset (reset should clear disk too)
   await server.save();
@@ -149,6 +153,6 @@ test("after load, reset clears both memory and disk", async ({ page, server }) =
 
   // Page reload should show empty state
   await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
-  await expect(page.locator(".block.user")).not.toBeVisible({ timeout: 2000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
+  await expect(page.getByTestId("block-user")).not.toBeVisible({ timeout: 2000 });
 });

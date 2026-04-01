@@ -32,7 +32,7 @@ test("llm_call messages modal fetches /context and renders records", async ({ pa
   });
 
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await page.locator('[data-testid="omega-btn"][data-status="connected"]').waitFor({ timeout: 5000 });
 
   // Send a turn with an llm_call carrying two context hashes.
   await server.sendEvent({ type: "user_message", content: "hi" });
@@ -46,12 +46,12 @@ test("llm_call messages modal fetches /context and renders records", async ({ pa
   });
 
   // Click the "messages" button on the llm_call block.
-  const messagesBtn = page.locator(".block.api-call .block-expand-btn", { hasText: /^messages/ });
+  const messagesBtn = page.getByTestId("block-llm-call").getByRole("button", { name: /^messages/ });
   await expect(messagesBtn).toBeVisible({ timeout: 3000 });
   await messagesBtn.click();
 
   // Modal must open.
-  const modal = page.locator(".llm-call-modal");
+  const modal = page.getByTestId("llm-call-modal");
   await expect(modal).toBeVisible({ timeout: 3000 });
 
   // The /context endpoint must have been called with both hashes.
@@ -59,7 +59,7 @@ test("llm_call messages modal fetches /context and renders records", async ({ pa
   expect(requestedHashes).toContain(HASH_2);
 
   // Both messages must appear in the modal (rendered newest-first).
-  const bodies = page.locator(".llm-call-msg-body");
+  const bodies = page.getByTestId("llm-call-msg-body");
   await expect(bodies).toHaveCount(2, { timeout: 3000 });
 
   // Newest record (HASH_2 — assistant) is rendered first.
@@ -67,7 +67,7 @@ test("llm_call messages modal fetches /context and renders records", async ({ pa
   await expect(bodies.nth(1)).toHaveText("What is 2+2?");
 
   // Role labels are present.
-  const roles = page.locator(".llm-call-msg-role");
+  const roles = page.getByTestId("llm-call-msg-role");
   await expect(roles.nth(0)).toContainText("assistant");
   await expect(roles.nth(1)).toContainText("user");
 });

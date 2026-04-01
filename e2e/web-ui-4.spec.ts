@@ -20,31 +20,35 @@ async function sendLlmResponse(server: any, text: string) {
   });
 }
 
+// Shorthand for waiting until the Ω button is in "connected" state.
+const connectedDot = (page: import("@playwright/test").Page) =>
+  page.locator('[data-testid="omega-btn"][data-status="connected"]');
+
 // ---------------------------------------------------------------------------
 // Copy button
 // ---------------------------------------------------------------------------
 
 test("copy button is present in the DOM for a fenced code block", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```\nconsole.log('hello');\n```");
 
   // Button exists in the DOM (opacity:0 until hover)
-  await expect(page.locator(".code-copy-btn")).toBeAttached({ timeout: 3000 });
+  await expect(page.getByTestId("code-copy-btn")).toBeAttached({ timeout: 3000 });
 });
 
 test("copy button is visible on hover", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```\nconsole.log('hello');\n```");
 
-  const pre = page.locator(".md-body pre");
+  const pre = page.locator('[data-testid="md-body"] pre');
   await pre.waitFor({ timeout: 3000 });
   await pre.hover();
 
-  await expect(page.locator(".code-copy-btn")).toBeVisible({ timeout: 2000 });
+  await expect(page.getByTestId("code-copy-btn")).toBeVisible({ timeout: 2000 });
 });
 
 test("copy button shows feedback after click", async ({ page, server }) => {
@@ -57,15 +61,15 @@ test("copy button shows feedback after click", async ({ page, server }) => {
   });
 
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```\nconsole.log('hello');\n```");
 
-  const pre = page.locator(".md-body pre");
+  const pre = page.locator('[data-testid="md-body"] pre');
   await pre.waitFor({ timeout: 3000 });
   await pre.hover();
 
-  const btn = page.locator(".code-copy-btn");
+  const btn = page.getByTestId("code-copy-btn");
   await expect(btn).toBeVisible({ timeout: 2000 });
   await btn.click();
 
@@ -75,11 +79,11 @@ test("copy button shows feedback after click", async ({ page, server }) => {
 
 test("multiple code blocks each get their own copy button", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```\nfirst\n```\n\nsome text\n\n```\nsecond\n```");
 
-  await expect(page.locator(".code-copy-btn")).toHaveCount(2, { timeout: 3000 });
+  await expect(page.getByTestId("code-copy-btn")).toHaveCount(2, { timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -88,7 +92,7 @@ test("multiple code blocks each get their own copy button", async ({ page, serve
 
 test("diff block: added lines get .diff-add class", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n+ added line\n```");
 
@@ -98,7 +102,7 @@ test("diff block: added lines get .diff-add class", async ({ page, server }) => 
 
 test("diff block: removed lines get .diff-del class", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n- removed line\n```");
 
@@ -108,7 +112,7 @@ test("diff block: removed lines get .diff-del class", async ({ page, server }) =
 
 test("diff block: hunk headers get .diff-hunk class", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n@@ -1,3 +1,4 @@\n```");
 
@@ -118,7 +122,7 @@ test("diff block: hunk headers get .diff-hunk class", async ({ page, server }) =
 
 test("diff block: file headers get .diff-file class", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n--- a/foo.ts\n+++ b/foo.ts\n```");
 
@@ -127,7 +131,7 @@ test("diff block: file headers get .diff-file class", async ({ page, server }) =
 
 test("diff block: context lines get .diff-ctx class", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n  unchanged line\n```");
 
@@ -137,28 +141,28 @@ test("diff block: context lines get .diff-ctx class", async ({ page, server }) =
 
 test("diff block: pre gets diff-block class", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n+ added\n- removed\n```");
 
-  await expect(page.locator(".md-body pre.diff-block")).toBeAttached({ timeout: 3000 });
+  await expect(page.locator('[data-testid="md-body"] [data-testid="diff-block"]')).toBeAttached({ timeout: 3000 });
 });
 
 test("diff block: copy button still present alongside diff colouring", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```diff\n+ added\n- removed\n```");
 
-  // Both the diff class and the copy button should exist on the same pre
-  const pre = page.locator(".md-body pre.diff-block");
+  // Both the diff block and the copy button should be present in the same pre
+  const pre = page.locator('[data-testid="md-body"] [data-testid="diff-block"]');
   await pre.waitFor({ timeout: 3000 });
-  await expect(pre.locator(".code-copy-btn")).toBeAttached();
+  await expect(pre.getByTestId("code-copy-btn")).toBeAttached();
 });
 
 test("patch language tag also triggers diff rendering", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await sendLlmResponse(server, "```patch\n+ added\n```");
 

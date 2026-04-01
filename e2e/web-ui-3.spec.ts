@@ -10,6 +10,10 @@
 
 import { test, expect } from "./fixtures/index.js";
 
+// Shorthand for waiting until the Ω button is in "connected" state.
+const connectedDot = (page: import("@playwright/test").Page) =>
+  page.locator('[data-testid="omega-btn"][data-status="connected"]');
+
 // ---------------------------------------------------------------------------
 // session_start renders even before any turn exists
 // RED before flat-store refactoring (appendEvent is a no-op when turns=[])
@@ -17,7 +21,7 @@ import { test, expect } from "./fixtures/index.js";
 
 test("session_start event renders as info block even before any turn", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // Send session_start with no user_message before or after
   await server.sendEvent({
@@ -29,7 +33,7 @@ test("session_start event renders as info block even before any turn", async ({ 
   });
 
   // The info block should be visible in the feed
-  const infoBlock = page.locator(".block.info");
+  const infoBlock = page.getByTestId("block-info");
   await expect(infoBlock).toBeVisible({ timeout: 3000 });
   await expect(infoBlock).toContainText("claude-sonnet-4-6");
 });
@@ -40,7 +44,7 @@ test("session_start event renders as info block even before any turn", async ({ 
 
 test("server_stopped event renders as info block in the feed", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   await server.sendEvent({
@@ -50,7 +54,7 @@ test("server_stopped event renders as info block in the feed", async ({ page, se
   await server.sendEvent({ type: "server_stopped", outcome: "clean" });
 
   // server_stopped should render as an info block
-  const infoBlocks = page.locator(".block.info");
+  const infoBlocks = page.getByTestId("block-info");
   await expect(infoBlocks.filter({ hasText: "server stopped" })).toBeVisible({ timeout: 3000 });
 });
 
@@ -61,7 +65,7 @@ test("server_stopped event renders as info block in the feed", async ({ page, se
 
 test("history replay shows session_start block before the first turn", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // Write fixture with session_start before any user_message
   await server.loadFixture([
@@ -72,16 +76,16 @@ test("history replay shows session_start block before the first turn", async ({ 
   ]);
 
   await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
-  const feed = page.locator(".feed");
+  const feed = page.getByTestId("feed");
 
   // session_start block must be visible
-  const infoBlocks = feed.locator(".block.info");
+  const infoBlocks = feed.getByTestId("block-info");
   await expect(infoBlocks.filter({ hasText: "claude-sonnet-4-6" })).toBeVisible({ timeout: 3000 });
 
   // The turn must also be visible
-  await expect(feed.locator(".block.user")).toBeVisible({ timeout: 3000 });
+  await expect(feed.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -91,7 +95,7 @@ test("history replay shows session_start block before the first turn", async ({ 
 
 test("session_start block appears before the first user_message block", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.loadFixture([
     JSON.stringify({ type: "session_start", time: "2026-01-15T10:00:00.000Z", sessionId: "", authMode: "api-key", model: "claude-sonnet-4-6", systemPrompt: "You are Omega." }),
@@ -100,10 +104,11 @@ test("session_start block appears before the first user_message block", async ({
   ]);
 
   await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
-  const feed = page.locator(".feed");
-  const blocks = feed.locator(".block");
+  const feed = page.getByTestId("feed");
+  // Select all blocks by their data-testid prefix
+  const blocks = feed.locator("[data-testid^='block-']");
 
   // Get all blocks and check ordering: session_start (info) must come before user block
   const count = await blocks.count();
@@ -114,10 +119,10 @@ test("session_start block appears before the first user_message block", async ({
   let userMessageIdx = -1;
   for (let i = 0; i < count; i++) {
     const block = blocks.nth(i);
-    const cls = await block.getAttribute("class") ?? "";
+    const testId = await block.getAttribute("data-testid") ?? "";
     const text = await block.textContent() ?? "";
-    if (cls.includes("info") && text.includes("claude-sonnet-4-6")) sessionStartIdx = i;
-    if (cls.includes("user")) userMessageIdx = i;
+    if (testId === "block-info" && text.includes("claude-sonnet-4-6")) sessionStartIdx = i;
+    if (testId === "block-user") userMessageIdx = i;
   }
 
   expect(sessionStartIdx).toBeGreaterThanOrEqual(0); // session_start must render

@@ -31,7 +31,7 @@ test("recorded session replays all blocks after page reload", async ({
 }) => {
   // 1. Navigate to the app first (establishes WebSocket)
   await page.goto("/");
-  await expect(page.locator(".status-label")).toHaveText("ready");
+  await expect(page.getByTestId("status-label")).toHaveText("ready");
 
   // 2. Write the fixture directly to the session's events.jsonl
   const lines = loadFixtureLines();
@@ -41,33 +41,31 @@ test("recorded session replays all blocks after page reload", async ({
   await page.reload();
 
   // Wait for the feed to populate (connected + history replayed)
-  const feed = page.locator(".feed");
+  const feed = page.getByTestId("feed");
 
   // Wait for the feed to be populated after history replay
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await page.locator('[data-testid="omega-btn"][data-status="connected"]').waitFor({ timeout: 5000 });
 
   // 5. Assert we see the expected blocks from both turns
 
   // Two user_message blocks (one per turn) — with their text visible
-  const userBlocks = feed.locator(".block.user");
+  const userBlocks = feed.getByTestId("block-user");
   await expect(userBlocks).toHaveCount(2);
   await expect(userBlocks.first()).toContainText("ping");
   await expect(userBlocks.nth(1)).toContainText("list the files");
 
   // Turn 1: assistant "pong" — text is now in the llm_response block
-  await expect(feed.locator(".block.api-response").first()).toContainText("pong");
+  await expect(feed.getByTestId("block-llm-response").first()).toContainText("pong");
 
   // Turn 2: tool_call block with tool name, then assistant text with file listing
-  await expect(feed.locator(".block.tool").first()).toContainText("list_files");
+  await expect(feed.getByTestId("block-tool").first()).toContainText("list_files");
   // The fixture has 3 llm_response events total (1 in turn 1, 2 in turn 2)
-  await expect(feed.locator(".block.api-response").nth(2)).toContainText("README.md");
+  await expect(feed.getByTestId("block-llm-response").nth(2)).toContainText("README.md");
 
   // Both turns should have footer blocks (turn_end)
-  const footers = feed.locator(".block.footer");
+  const footers = feed.getByTestId("block-turn-end");
   await expect(footers).toHaveCount(2);
 
   // 6. No render errors — the ErrorBoundary should NOT be visible
-  await expect(page.locator(".render-error")).toHaveCount(0);
+  await expect(page.getByTestId("render-error")).toHaveCount(0);
 });
-
-

@@ -15,13 +15,17 @@
 
 import { test, expect } from "./fixtures/index.js";
 
+// Shorthand for waiting until the Ω button is in "connected" state.
+const connectedDot = (page: import("@playwright/test").Page) =>
+  page.locator('[data-testid="omega-btn"][data-status="connected"]');
+
 // ---------------------------------------------------------------------------
 // On reconnect, server reuses the existing session (does NOT create new agent)
 // ---------------------------------------------------------------------------
 
 test("reconnecting does not create a new agent — browser sees existing history", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // Simulate a completed turn in the current session
   await server.sendEvent({ type: "user_message", content: "initial message" });
@@ -32,21 +36,21 @@ test("reconnecting does not create a new agent — browser sees existing history
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
 
   // Get the agent ID before reload
   const agentIdBefore = await server.agentId();
 
   // Browser reload — reconnects to the same server
   await page.reload();
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // Agent ID must not change — same session
   const agentIdAfter = await server.agentId();
   expect(agentIdAfter).toBe(agentIdBefore);
 
   // History should still be visible (replayed from event log)
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -55,7 +59,7 @@ test("reconnecting does not create a new agent — browser sees existing history
 
 test("reset message creates a new agent and clears history", async ({ page, server }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   // Simulate a completed turn
   await server.sendEvent({ type: "user_message", content: "old session content" });
@@ -66,7 +70,7 @@ test("reset message creates a new agent and clears history", async ({ page, serv
     model: "claude-sonnet-4-6",
     provider: "anthropic",
   });
-  await expect(page.locator(".block.user")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("block-user")).toBeVisible({ timeout: 3000 });
 
   const agentIdBefore = await server.agentId();
 
@@ -79,7 +83,7 @@ test("reset message creates a new agent and clears history", async ({ page, serv
 
   // Server should acknowledge with a reset_done event
   // Wait for the UI to show empty state (no user blocks)
-  await expect(page.locator(".block.user")).not.toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("block-user")).not.toBeVisible({ timeout: 5000 });
 
   // Agent ID must have changed — new session created
   const agentIdAfter = await server.agentId();
@@ -92,14 +96,14 @@ test("reset message creates a new agent and clears history", async ({ page, serv
 
 test("opening a second connection reuses the same agent (not a new one)", async ({ page, server, context }) => {
   await page.goto("/");
-  await page.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page).waitFor({ timeout: 5000 });
 
   const agentIdFirst = await server.agentId();
 
   // Open a second browser tab
   const page2 = await context.newPage();
   await page2.goto("/");
-  await page2.locator(".dot.connected").waitFor({ timeout: 5000 });
+  await connectedDot(page2).waitFor({ timeout: 5000 });
 
   // Agent should still be the same
   const agentIdSecond = await server.agentId();
