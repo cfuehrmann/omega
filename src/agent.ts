@@ -12,7 +12,7 @@ import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import type { ContextHash } from "./context-hash.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
-import { type ISOTimestamp, now } from "./iso-timestamp.js";
+import { type ISOTimestamp, now, fromDate } from "./iso-timestamp.js";
 
 // --- Types ---
 
@@ -600,7 +600,7 @@ export class Agent {
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
       let assembledText = "";
-      let assembledTextTs: string | null = null;
+      let assembledTextTs: ISOTimestamp | null = null;
       let assembledThinking = "";
       /** True when we are inside a thinking block (between block_start and block_stop). */
       let inThinkingBlock = false;
@@ -764,7 +764,7 @@ export class Agent {
               this.retryBaseMs,
               this.retryMaxMs,
             );
-            const retryAt = new Date(Date.now() + waitMs).toISOString() as ISOTimestamp;
+            const retryAt = fromDate(new Date(Date.now() + waitMs));
             // assembledThinking / assembledText still hold whatever streamed
             // before the error — they are reset at the top of the next attempt.
             // Capture them now so the fragment is persisted in the event and
@@ -913,8 +913,7 @@ export class Agent {
         ...(assembledText
           ? {
               text: assembledText,
-              // Cast needed: TypeScript widens branded types in conditional spreads.
-              streamingStart: (assembledTextTs ?? undefined) as ISOTimestamp | undefined,
+              streamingStart: assembledTextTs ?? undefined,
             }
           : {}),
         ...(assembledThinking ? { thinking: assembledThinking } : {}),

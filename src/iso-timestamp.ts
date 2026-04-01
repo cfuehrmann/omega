@@ -32,6 +32,14 @@ export function now(): ISOTimestamp {
 }
 
 /**
+ * Converts an arbitrary Date to an ISOTimestamp.
+ * Use this when the timestamp is not "now" — e.g. a computed future instant.
+ */
+export function fromDate(d: Date): ISOTimestamp {
+  return d.toISOString() as ISOTimestamp;
+}
+
+/**
  * Type-asserts a known-valid ISO string literal as ISOTimestamp.
  *
  * Intended for test fixtures and static constants where the string is
