@@ -851,6 +851,9 @@ html, body, #root {
 
 .mermaid-diagram svg text[fill="#444444"] {
   fill: #1e53a0 !important;
+}
+
+.mermaid-diagram svg .edgeLabel text[fill="#444444"] {
   stroke: rgba(255, 255, 255, 0.85);
   stroke-width: 2px;
   paint-order: stroke fill;
