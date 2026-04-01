@@ -35,9 +35,7 @@ All development work goes on `develop`. Merge to `main` when stable.
 
 - `just gate` — full suite + knip. **The gate runs automatically as the
   pre-commit hook — do not run it separately before committing.** Just use
-  `git commit` and let the hook do it. If you have already run `just gate`
-  explicitly and it passed, use `git commit --no-verify` to avoid the redundant
-  re-run.
+  `git commit` and let the hook do it.
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
