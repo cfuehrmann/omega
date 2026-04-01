@@ -151,6 +151,8 @@ const LlmRetrySchema = z.object({
   error: z.string(),
   retryAt: ISOTimestampSchema.optional(),
   errorBody: z.unknown().optional(),
+  thinkingFragment: z.string().optional(),
+  textFragment: z.string().optional(),
 });
 
 const ModelChangedSchema = z.object({

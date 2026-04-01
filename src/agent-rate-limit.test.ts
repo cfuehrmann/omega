@@ -199,19 +199,42 @@ describe("overload (529) — indefinite retry", () => {
 // ---------------------------------------------------------------------------
 
 describe("mid-stream retry", () => {
-  /** Build a provider that throws mid-stream on the first N calls. */
-  function makePartialThenSuccessProvider(failCount: number): StreamProvider {
+  const THINKING_BEFORE_ERROR = "Let me think carefully about this problem…";
+  const TEXT_BEFORE_ERROR     = "I was about to say something when";
+
+  /**
+   * Build a provider that emits partial content then throws on the first N
+   * calls, then succeeds. The partial content is configurable so tests can
+   * verify both thinking and text fragments independently.
+   */
+  function makePartialThenSuccessProvider(
+    failCount: number,
+    opts: { thinkingBeforeError?: string; textBeforeError?: string } = {},
+  ): StreamProvider {
     let calls = 0;
 
     return async () => {
       const attempt = ++calls;
       if (attempt <= failCount) {
-        // Emit a partial thinking delta, then throw
+        const events: any[] = [];
+
+        if (opts.thinkingBeforeError) {
+          events.push(
+            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: opts.thinkingBeforeError } },
+          );
+        }
+        if (opts.textBeforeError) {
+          const idx = opts.thinkingBeforeError ? 1 : 0;
+          events.push(
+            { type: "content_block_start", index: idx, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: idx, delta: { type: "text_delta", text: opts.textBeforeError } },
+          );
+        }
+
         return {
           async *[Symbol.asyncIterator]() {
-            yield { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } };
-            yield { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "partial…" } };
-            // Simulate 529 mid-stream (the Anthropic SDK would throw here)
+            for (const e of events) yield e;
             throw overloadError();
           },
           finalMessage: async () => { throw overloadError(); },
@@ -241,31 +264,181 @@ describe("mid-stream retry", () => {
     };
   }
 
-  it("recovers cleanly when 529 fires mid-thinking-stream", async () => {
+  it("thinkingFragment captured when 529 fires mid-thinking-stream", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "2";
 
-    const mockProvider = makePartialThenSuccessProvider(1); // fail once, succeed second
-
-    const { agent, dispose } = await makeTestAgent(mockProvider);
+    const provider = makePartialThenSuccessProvider(1, {
+      thinkingBeforeError: THINKING_BEFORE_ERROR,
+    });
+    const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
 
-    // One retry event emitted
-    const retries = events.filter(e => e.type === "llm_retry");
-    expect(retries.length).toBe(1);
+    const retry = events.find(e => e.type === "llm_retry") as any;
+    expect(retry).toBeDefined();
+    expect(retry.thinkingFragment).toBe(THINKING_BEFORE_ERROR);
+    expect(retry.textFragment).toBeUndefined();
 
-    // Turn ended cleanly
+    // Turn ended cleanly; final response carries only post-retry content
     const last = events[events.length - 1] as any;
     expect(last.type).toBe("turn_end");
-
-    // The thinking signals from the aborted stream AND the successful retry
-    // are both in the event list (both are StreamSignals, which accumulate
-    // but are cleared in the UI on llm_retry).  The llm_response.text
-    // contains only the final successful response.
     const llmResponse = events.find(e => e.type === "llm_response") as any;
-    expect(llmResponse).toBeDefined();
     expect(llmResponse.text).toBe("done");
+    // No thinking in the successful response (mock doesn't emit thinking on retry)
+    expect(llmResponse.thinking).toBeUndefined();
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("textFragment captured when 529 fires mid-text-stream", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+
+    const provider = makePartialThenSuccessProvider(1, {
+      textBeforeError: TEXT_BEFORE_ERROR,
+    });
+    const { agent, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    const retry = events.find(e => e.type === "llm_retry") as any;
+    expect(retry).toBeDefined();
+    expect(retry.textFragment).toBe(TEXT_BEFORE_ERROR);
+    expect(retry.thinkingFragment).toBeUndefined();
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("both fragments captured when 529 fires after thinking and partial text", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+
+    const provider = makePartialThenSuccessProvider(1, {
+      thinkingBeforeError: THINKING_BEFORE_ERROR,
+      textBeforeError:     TEXT_BEFORE_ERROR,
+    });
+    const { agent, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    const retry = events.find(e => e.type === "llm_retry") as any;
+    expect(retry.thinkingFragment).toBe(THINKING_BEFORE_ERROR);
+    expect(retry.textFragment).toBe(TEXT_BEFORE_ERROR);
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("fragments absent when 529 fires before any content arrives", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+    process.env.OMEGA_RETRY_ATTEMPTS = "2";
+
+    // Provider always fails before yielding anything
+    const provider: StreamProvider = async () => { throw overloadError(); };
+    const { agent, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    const retry = events.find(e => e.type === "llm_retry") as any;
+    expect(retry).toBeDefined();
+    expect(retry.thinkingFragment).toBeUndefined();
+    expect(retry.textFragment).toBeUndefined();
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+    delete process.env.OMEGA_RETRY_ATTEMPTS;
+  });
+
+  it("fragments survive events.jsonl round-trip", async () => {
+    const { readFileSync } = await import("fs");
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+
+    const provider = makePartialThenSuccessProvider(1, {
+      thinkingBeforeError: THINKING_BEFORE_ERROR,
+      textBeforeError:     TEXT_BEFORE_ERROR,
+    });
+    const { agent, eventsFile, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+    await collectEvents(agent, "hello");
+
+    const lines = readFileSync(eventsFile, "utf-8")
+      .split("\n")
+      .filter(l => l.trim());
+    const retryLine = lines.find(l => {
+      try { return JSON.parse(l).type === "llm_retry"; } catch { return false; }
+    });
+    expect(retryLine).toBeDefined();
+    const parsed = JSON.parse(retryLine!);
+    expect(parsed.thinkingFragment).toBe(THINKING_BEFORE_ERROR);
+    expect(parsed.textFragment).toBe(TEXT_BEFORE_ERROR);
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("context is clean after mid-stream retry — no partial thinking in subsequent API call", async () => {
+    // Verifies that assembledThinking/assembledText from a failed stream
+    // never reach compactedContextHistory or the next API call's messages.
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+
+    let capturedMessages: any[] | undefined;
+    let callCount = 0;
+
+    const provider: StreamProvider = async (params) => {
+      callCount++;
+      if (callCount === 1) {
+        // First call: yield partial thinking, then throw
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } };
+            yield { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: THINKING_BEFORE_ERROR } };
+            throw overloadError();
+          },
+          finalMessage: async () => { throw overloadError(); },
+        };
+      }
+      // Retry: capture the messages to verify they don't contain the fragment
+      capturedMessages = params.messages as any[];
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+          yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
+          yield { type: "content_block_stop", index: 0 };
+          yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } };
+          yield { type: "message_stop" };
+        },
+        finalMessage: async () => ({
+          id: "msg_retry_ok",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 1 },
+        }),
+      };
+    };
+
+    const { agent, dispose } = await makeTestAgent(provider);
+    disposeAll.push(dispose);
+    await collectEvents(agent, "hello");
+
+    expect(callCount).toBe(2);
+    expect(capturedMessages).toBeDefined();
+    // The retry must send exactly the same messages as the first call (user
+    // message only — no partial assistant turn contaminating context).
+    const assistantMsgs = capturedMessages!.filter((m: any) => m.role === "assistant");
+    expect(assistantMsgs.length).toBe(0);
+    // And the partial thinking string must not appear anywhere in the payload
+    const payloadStr = JSON.stringify(capturedMessages);
+    expect(payloadStr).not.toContain(THINKING_BEFORE_ERROR);
 
     delete process.env.OMEGA_RETRY_BASE_MS;
     delete process.env.OMEGA_RETRY_MAX_MS;

@@ -481,6 +481,33 @@ html, body, #root {
   letter-spacing: 0;
 }
 
+/* Partial streaming content captured before a mid-stream retry */
+.retry-fragment {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid currentColor;
+  opacity: 0.65;
+}
+
+.retry-fragment-label {
+  display: block;
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.7;
+  margin-bottom: 3px;
+  letter-spacing: 0.3px;
+}
+
+.retry-fragment-body {
+  font-family: var(--font);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
 .llm-legend-btn {
   cursor: pointer;
   opacity: 0.55;

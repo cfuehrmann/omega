@@ -765,6 +765,11 @@ export class Agent {
               this.retryMaxMs,
             );
             const retryAt = new Date(Date.now() + waitMs).toISOString() as ISOTimestamp;
+            // assembledThinking / assembledText still hold whatever streamed
+            // before the error — they are reset at the top of the next attempt.
+            // Capture them now so the fragment is persisted in the event and
+            // survives page reload. They never reach the LLM; only the signed
+            // thinking blocks in a successful finalMessage() do.
             const retryEv: OmegaEvent = {
               type: "llm_retry",
               time: now(),
@@ -774,6 +779,8 @@ export class Agent {
               retryAt,
               errorBody: extractErrorBody(err),
               error: message,
+              ...(assembledThinking ? { thinkingFragment: assembledThinking } : {}),
+              ...(assembledText     ? { textFragment:     assembledText     } : {}),
             };
             this.logEvent(retryEv);
             yield retryEv;

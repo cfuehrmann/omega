@@ -930,6 +930,18 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
             </div>
           </div>
           <div class="block-body">{e.error}</div>
+          <Show when={e.thinkingFragment}>
+            <div class="retry-fragment">
+              <span class="retry-fragment-label">thinking before interruption</span>
+              <pre class="retry-fragment-body">{e.thinkingFragment}</pre>
+            </div>
+          </Show>
+          <Show when={e.textFragment}>
+            <div class="retry-fragment">
+              <span class="retry-fragment-label">text before interruption</span>
+              <pre class="retry-fragment-body">{e.textFragment}</pre>
+            </div>
+          </Show>
         </div>
       );
     }

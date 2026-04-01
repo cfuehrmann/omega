@@ -267,6 +267,20 @@ export interface LlmRetryEvent {
    * (pure network / SDK errors).
    */
   errorBody?: unknown;
+  /**
+   * Partial thinking content that had accumulated in the stream before
+   * the error fired. Absent when no thinking deltas arrived before the
+   * interruption. Persisted so the fragment is visible after page reload.
+   * Never sent to the LLM — only the signed thinking blocks in the
+   * successful response's `content` array ever reach the API.
+   */
+  thinkingFragment?: string;
+  /**
+   * Partial text content that had accumulated in the stream before the
+   * error fired. Absent when no text deltas arrived before the
+   * interruption. Same lifecycle as thinkingFragment.
+   */
+  textFragment?: string;
 }
 
 
