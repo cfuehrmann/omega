@@ -89,6 +89,17 @@ would communicate structure more clearly than prose — architecture overviews,
 component relationships, and sequence diagrams are particularly good candidates.
 Don't force a diagram where plain text suffices.
 
+For C4 diagrams specifically:
+- Keep element descriptions to ≤ 6 words; move detail to prose. For anything
+  longer, use \`<br/>\` to force a line break within the description string —
+  the renderer splits on it even though automatic word-wrap is broken in
+  Mermaid's C4 implementation:
+    Component(foo, "Name", "Tech", "First line.<br/>Second line.")
+- Always add \`UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")\` on
+  diagrams that contain boundaries. This prevents dagre from spreading shapes
+  so wide that arrows route across boxes.
+- Do not add \`UpdateRelStyle\` calls — CSS handles relationship colours globally.
+
 ## Design discipline
 
 Discuss design with the user before implementing non-trivial changes.

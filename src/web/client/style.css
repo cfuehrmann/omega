@@ -828,6 +828,40 @@ html, body, #root {
 .md-body strong { color: var(--ctp-text); }
 .md-body em     { color: var(--ctp-subtext1); }
 
+/* ── C4 diagram: relationship lines, arrowheads, and labels
+   Mermaid's C4 renderer hardcodes all of these to #444444 / black regardless
+   of theme. We fix contrast and readability on both dark and light backgrounds
+   using a two-layer approach: a coloured core + a contrasting outline/halo.
+
+   Lines / curves  →  blue core  +  white drop-shadow halo
+   Label text      →  blue fill  +  white stroke (paint-order: stroke fill puts
+                       the stroke behind the fill, acting as an inline outline)
+   Arrowhead paths →  blue fill  +  white stroke outline
+
+   On a dark background the white layer is what you see first; on a light
+   background it disappears into the page and the blue core carries the contrast.
+── */
+
+.mermaid-diagram svg line[stroke="#444444"],
+.mermaid-diagram svg path[stroke="#444444"] {
+  stroke: #4a8bd6 !important;
+  stroke-width: 1.5px !important;
+  filter: drop-shadow(0 0 2.5px rgba(255, 255, 255, 0.9));
+}
+
+.mermaid-diagram svg text[fill="#444444"] {
+  fill: #1e53a0 !important;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2px;
+  paint-order: stroke fill;
+}
+
+.mermaid-diagram svg defs marker path {
+  fill: #4a8bd6 !important;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1px;
+}
+
 /* ── Mermaid diagram wrapper ── */
 .mermaid-wrapper {
   position: relative;
