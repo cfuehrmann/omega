@@ -84,7 +84,7 @@ function makeSleepToolUseStream() {
   return makeMockStream(events, message);
 }
 
-const mockStreamProvider: StreamProvider = async (params) => {
+const mockStreamProvider: StreamProvider = (params) => {
   // Inspect the last user message to route to the right mock response.
   // Simple messages arrive as a plain string; tool_result turns arrive as
   // an array of blocks — in that case we look at the most recent text block.

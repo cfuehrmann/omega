@@ -24,7 +24,7 @@ function makeStreamProvider(overrides: {
   captureFirstParams?: (p: any) => void;
 }): StreamProvider {
   let callCount = 0;
-  return async (params) => {
+  return (params) => {
     callCount++;
     if (callCount === 1) overrides.captureFirstParams?.(params);
     overrides.captureParams?.(params);

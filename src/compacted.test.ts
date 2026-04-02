@@ -119,7 +119,7 @@ function readEventsFile(path: string): OmegaEvent[] {
 
 describe("server-side compaction — compacted event emitted", () => {
   it("emits a compacted event when response contains a compaction block", async () => {
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("Summary of prior work.", "Got it!"),
         compactionMessage("Summary of prior work.", "Got it!"),
@@ -133,7 +133,7 @@ describe("server-side compaction — compacted event emitted", () => {
   });
 
   it("does NOT emit compacted event on a normal (non-compacting) response", async () => {
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(textStreamEvents("hello back"), textMessage("hello back"));
     const { agent, dispose } = await makeTestAgent(provider);
     afterAll(dispose);
@@ -145,7 +145,7 @@ describe("server-side compaction — compacted event emitted", () => {
 
 describe("server-side compaction — compacted event fields", () => {
   it("compacted event carries a time field", async () => {
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
         compactionMessage("summary", "reply"),
@@ -172,7 +172,7 @@ describe("server-side compaction — compacted event fields", () => {
         { type: "message", input_tokens: 500, output_tokens: 50 },
       ],
     };
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
         compactionMessage("summary", "reply", { iterations: usage.iterations }),
@@ -187,7 +187,7 @@ describe("server-side compaction — compacted event fields", () => {
   });
 
   it("compacted event usage preserved even without iterations (no compaction in this call)", async () => {
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
         compactionMessage("summary", "reply"),
@@ -203,7 +203,7 @@ describe("server-side compaction — compacted event fields", () => {
 
 describe("server-side compaction — event ordering", () => {
   it("compacted appears before llm_response in the stream", async () => {
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
         compactionMessage("summary", "reply"),
@@ -223,7 +223,7 @@ describe("server-side compaction — history pruning", () => {
   it("compactedContextHistory is cleared before the compacting assistant message is appended", async () => {
     // Seed two prior turns, then trigger compaction on the third message.
     let call = 0;
-    const provider: StreamProvider = async () => {
+    const provider: StreamProvider = () => {
       call++;
       if (call <= 2) {
         return makeMockStream(textStreamEvents(`reply ${call}`), textMessage(`reply ${call}`));
@@ -256,7 +256,7 @@ describe("server-side compaction — history pruning", () => {
 
   it("compactedContextHashes length matches compactedContextHistory length after compaction", async () => {
     let call = 0;
-    const provider: StreamProvider = async () => {
+    const provider: StreamProvider = () => {
       call++;
       if (call <= 2) {
         return makeMockStream(textStreamEvents(`reply ${call}`), textMessage(`reply ${call}`));
@@ -280,7 +280,7 @@ describe("server-side compaction — history pruning", () => {
 
   it("agent can continue sending messages after compaction", async () => {
     let call = 0;
-    const provider: StreamProvider = async () => {
+    const provider: StreamProvider = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -304,7 +304,7 @@ describe("server-side compaction — history pruning", () => {
 
   it("history grows correctly after compaction + one more turn", async () => {
     let call = 0;
-    const provider: StreamProvider = async () => {
+    const provider: StreamProvider = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -330,7 +330,7 @@ describe("server-side compaction — history pruning", () => {
 
 describe("server-side compaction — persistence", () => {
   it("compacted event is written to events.jsonl", async () => {
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
         compactionMessage("summary", "reply"),
@@ -350,7 +350,7 @@ describe("server-side compaction — persistence", () => {
       { type: "compaction", input_tokens: 80000, output_tokens: 300 },
       { type: "message", input_tokens: 500, output_tokens: 50 },
     ];
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
         compactionMessage("summary", "reply", { iterations }),

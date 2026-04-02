@@ -19,7 +19,7 @@ afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("Agent fallback", () => {
   it("emits api_error on rate limit", async () => {
-    const mockProvider: StreamProvider = async () => {
+    const mockProvider: StreamProvider = () => {
       throw makeRateLimitError();
     };
 

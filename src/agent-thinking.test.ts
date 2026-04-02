@@ -152,7 +152,7 @@ describe("Agent — adaptive thinking", () => {
     const thinking = "Let me reason about this carefully.";
     const text = "Here is my answer.";
 
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         thinkingThenTextStreamEvents(thinking, text),
         thinkingThenTextMessage(thinking, text)
@@ -175,7 +175,7 @@ describe("Agent — adaptive thinking", () => {
     const thinking = "I need to think carefully before answering.";
     const text = "The answer is 42.";
 
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         thinkingThenTextStreamEvents(thinking, text),
         thinkingThenTextMessage(thinking, text)
@@ -197,7 +197,7 @@ describe("Agent — adaptive thinking", () => {
   it("thinking field absent when no thinking blocks present", async () => {
     const text = "Plain response without thinking.";
 
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         [
           { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -235,7 +235,7 @@ describe("Agent — adaptive thinking", () => {
     const thinking2 = "Second reasoning block.";
     const text = "Final answer.";
 
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         twoThinkingBlocksStreamEvents(thinking1, thinking2, text),
         {
@@ -275,7 +275,7 @@ describe("Agent — adaptive thinking", () => {
     let capturedSecondCallMessages: Anthropic.Beta.Messages.BetaMessageParam[] | undefined;
     let callCount = 0;
 
-    const provider: StreamProvider = async (params) => {
+    const provider: StreamProvider = (params) => {
       callCount++;
 
       if (callCount === 1) {
@@ -367,7 +367,7 @@ describe("Agent — adaptive thinking", () => {
     const thinking = "Round-trip thinking content.";
     const text = "Round-trip response.";
 
-    const provider: StreamProvider = async () =>
+    const provider: StreamProvider = () =>
       makeMockStream(
         thinkingThenTextStreamEvents(thinking, text),
         thinkingThenTextMessage(thinking, text)

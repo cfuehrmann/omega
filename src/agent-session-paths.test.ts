@@ -29,7 +29,7 @@ function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMess
 }
 
 function textStreamProvider(text: string): StreamProvider {
-  return async () => makeMockStream(
+  return () => makeMockStream(
     [
       { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },

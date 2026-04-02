@@ -54,7 +54,7 @@ describe("rate limit backoff", () => {
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
-    const mockProvider: StreamProvider = async () => {
+    const mockProvider: StreamProvider = () => {
       throw rateLimitError();
     };
 
@@ -84,7 +84,7 @@ describe("rate limit backoff", () => {
 describe("overload (529) — indefinite retry", () => {
   /** Build a minimal successful stream mock (text-only, no tool use). */
   function makeSuccessProvider(): StreamProvider {
-    return async () => ({
+    return () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
@@ -116,7 +116,7 @@ describe("overload (529) — indefinite retry", () => {
     const failTimes = 3; // fail 3 times, then succeed
 
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = async (params) => {
+    const mockProvider: StreamProvider = (params) => {
       callCount++;
       if (callCount <= failTimes) throw overloadError();
       return successStream(params);
@@ -157,7 +157,7 @@ describe("overload (529) — indefinite retry", () => {
     let callCount = 0;
     const failTimes = 2;
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = async (params) => {
+    const mockProvider: StreamProvider = (params) => {
       callCount++;
       if (callCount <= failTimes) throw sseOverloadError();
       return successStream(params);
@@ -188,7 +188,7 @@ describe("overload (529) — indefinite retry", () => {
     process.env.OMEGA_RETRY_MAX_MS = "5";
     process.env.OMEGA_RETRY_ATTEMPTS = "2"; // cap so test terminates quickly
 
-    const mockProvider: StreamProvider = async () => {
+    const mockProvider: StreamProvider = () => {
       throw overloadError();
     };
 
@@ -224,7 +224,7 @@ describe("overload (529) — indefinite retry", () => {
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
-    const mockProvider: StreamProvider = async () => {
+    const mockProvider: StreamProvider = () => {
       throw overloadError();
     };
 
@@ -269,7 +269,7 @@ describe("mid-stream retry", () => {
   ): StreamProvider {
     let calls = 0;
 
-    return async () => {
+    return () => {
       const attempt = ++calls;
       if (attempt <= failCount) {
         const events: any[] = [];
@@ -396,7 +396,7 @@ describe("mid-stream retry", () => {
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
     // Provider always fails before yielding anything
-    const provider: StreamProvider = async () => { throw overloadError(); };
+    const provider: StreamProvider = () => { throw overloadError(); };
     const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
@@ -448,7 +448,7 @@ describe("mid-stream retry", () => {
     let capturedMessages: any[] | undefined;
     let callCount = 0;
 
-    const provider: StreamProvider = async (params) => {
+    const provider: StreamProvider = (params) => {
       callCount++;
       if (callCount === 1) {
         // First call: yield partial thinking, then throw
@@ -519,7 +519,7 @@ describe("context overflow (prompt too long)", () => {
   it("emits llm_error + actionable agent_error — no retry", async () => {
     let callCount = 0;
 
-    const mockProvider: StreamProvider = async () => {
+    const mockProvider: StreamProvider = () => {
       callCount++;
       throw promptTooLongError();
     };
@@ -549,7 +549,7 @@ describe("context overflow (prompt too long)", () => {
       return err;
     }
 
-    const mockProvider: StreamProvider = async () => {
+    const mockProvider: StreamProvider = () => {
       throw contextTooLongError();
     };
 

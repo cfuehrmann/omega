@@ -264,6 +264,9 @@ export function processStreamEvents(
  * (or a mock in tests) and returns an object with an async iterator of
  * raw stream events and a finalMessage() method.
  *
+ * The return type mirrors the real Anthropic SDK: `client.beta.messages.stream()`
+ * returns a BetaMessageStream synchronously — no Promise wrapper.
+ *
  * By accepting a StreamProvider in the constructor, the Agent can be
  * tested without hitting the real LLM provider API.
  *
@@ -272,10 +275,10 @@ export function processStreamEvents(
  */
 export type StreamProvider = (
   params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-) => Promise<{
+) => {
   [Symbol.asyncIterator](): AsyncIterator<any>;
   finalMessage(): Promise<Anthropic.Beta.Messages.BetaMessage>;
-}>;
+};
 
 export class Agent {
   private client: Anthropic;
@@ -493,7 +496,7 @@ export class Agent {
   private getStreamProvider(): StreamProvider {
     if (this.streamProvider) return this.streamProvider;
     const client = this.client;
-    return async (params) => client.beta.messages.stream(params);
+    return (params) => client.beta.messages.stream(params);
   }
 
   /**
@@ -705,9 +708,7 @@ export class Agent {
           assembledTextTs = null;
           assembledThinking = "";
           inThinkingBlock = false;
-          const stream = this.streamProvider
-            ? await this.streamProvider(streamParams)
-            : this.client.beta.messages.stream(streamParams);
+          const stream = this.getStreamProvider()(streamParams);
 
           let aborted = false;
           for await (const event of stream) {

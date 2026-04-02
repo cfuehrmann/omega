@@ -30,7 +30,7 @@ function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0
     context_management: null,
     usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
-  return async (_params) => ({
+  return (_params) => ({
     async *[Symbol.asyncIterator]() {
       yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
       yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
