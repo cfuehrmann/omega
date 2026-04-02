@@ -11,5 +11,5 @@
   ],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": ["src/web/vite.config.ts"],
-  "ignoreDependencies": ["vite-plugin-solid"]
+  "ignoreDependencies": ["vite-plugin-solid", "@typescript/native-preview"]
 }

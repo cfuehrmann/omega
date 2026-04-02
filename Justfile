@@ -66,11 +66,20 @@ test-browser-log: web-build
 e2e *args:
     npx playwright test {{args}}
 
-# Type-check all TypeScript (three passes: backend/tests, web client, e2e).
+# Type-check all TypeScript (three passes in parallel: backend/tests, web client, e2e).
 typecheck:
-    bunx tsc --noEmit
-    bunx tsc -p src/web/client/tsconfig.json --noEmit
-    bunx tsc -p e2e/tsconfig.json --noEmit
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OUT1=$(mktemp); OUT2=$(mktemp); OUT3=$(mktemp)
+    bunx tsgo --noEmit >"$OUT1" 2>&1 & PID1=$!
+    bunx tsgo -p src/web/client/tsconfig.json --noEmit >"$OUT2" 2>&1 & PID2=$!
+    bunx tsgo -p e2e/tsconfig.json --noEmit >"$OUT3" 2>&1 & PID3=$!
+    EC=0
+    wait $PID1 || { cat "$OUT1"; EC=1; }
+    wait $PID2 || { cat "$OUT2"; EC=1; }
+    wait $PID3 || { cat "$OUT3"; EC=1; }
+    rm -f "$OUT1" "$OUT2" "$OUT3"
+    exit $EC
 
 # Full quality gate: typecheck + full test suite + knip. Run before every commit.
 gate: typecheck test
