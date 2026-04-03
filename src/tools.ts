@@ -238,7 +238,8 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Wait for a background process started with run_background to finish. " +
       "Blocks until the process exits or timeoutMs is reached (default 60000 ms). " +
       "Returns { pid, exitCode, signal, timedOut }. " +
-      "Use this to synchronise before reading the logFile from run_background.",
+      "Use this to synchronise before reading the logFile from run_background. " +
+      "The pid parameter must be a number, not a string.",
     input_schema: toToolInputSchema(WaitProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -476,6 +477,7 @@ async function executeGrepFiles(input: {
       ...(caseSensitive ? ["--case-sensitive"] : ["--ignore-case"]),
       ...(input.file_glob ? ["--glob", input.file_glob] : []),
       ...(input.context_lines ? ["--context", String(input.context_lines)] : []),
+      "--", // end of flags — prevents patterns like --color from being parsed as flags
       input.pattern,
       input.path,
     ];
@@ -486,6 +488,7 @@ async function executeGrepFiles(input: {
       ...(caseSensitive ? [] : ["-i"]),
       ...(input.file_glob ? [`--include=${input.file_glob}`] : []),
       ...(input.context_lines ? [`-C${input.context_lines}`] : []),
+      "--", // end of flags
       input.pattern,
       input.path,
     ];
