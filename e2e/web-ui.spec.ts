@@ -136,7 +136,7 @@ test("tool_call event shows tool block", async ({ page, server }) => {
 
   const toolBlock = page.getByTestId("block-tool");
   await expect(toolBlock).toBeVisible({ timeout: 3000 });
-  await expect(toolBlock.locator(".block-label")).toContainText("read_file");
+  await expect(toolBlock).toContainText("read_file");
 });
 
 // ---------------------------------------------------------------------------

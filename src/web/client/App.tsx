@@ -320,6 +320,44 @@ function firstLine(s: string): string {
   return s.split("\n").find(l => l.trim()) ?? s.slice(0, 80);
 }
 
+/** Extract the primary display argument for a tool call (human-readable, no JSON noise). */
+function primaryArg(name: string, input: unknown): string {
+  if (input == null) return "(none)";
+  const inp = input as Record<string, unknown>;
+  switch (name) {
+    case "read_file":
+    case "write_file":
+    case "edit_file":
+      return String(inp.path ?? "");
+    case "find_files":
+      return String(inp.pattern ?? "");
+    case "run_command":
+    case "run_background":
+      return String(inp.command ?? "");
+    case "grep_files":
+      return `${inp.pattern} @ ${inp.path}`;
+    case "fetch_url":
+      return String(inp.url ?? "");
+    case "web_search":
+      return String(inp.query ?? "");
+    case "wait_process":
+      return `pid ${inp.pid}`;
+    case "wait_for_output":
+      return String(inp.logFile ?? "");
+    case "write_stdin":
+      return String(inp.text ?? "");
+    default:
+      return typeof input === "object" ? JSON.stringify(input) : String(input);
+  }
+}
+
+/** Per-turn sequential number for a tool call (1-based). */
+function toolSeq(turnEvents: ServerMessage[], id: string): number {
+  const calls = turnEvents.filter(ev => ev.type === "tool_call");
+  const idx = calls.findIndex(ev => (ev as { id?: string }).id === id);
+  return idx + 1;
+}
+
 // ---------------------------------------------------------------------------
 // Modals
 // ---------------------------------------------------------------------------
@@ -665,12 +703,8 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
 
     case "tool_call": {
-      const inputPreview = createMemo(() => {
-        if (e.input == null) return "(none)";
-        const s = typeof e.input === "object" ? JSON.stringify(e.input) : String(e.input);
-        return firstLine(s);
-      });
-      const shortId = (id: string) => id.length <= 6 ? id : `…${id.slice(-6)}`;
+      const arg = createMemo(() => primaryArg(e.name, e.input));
+      const seq = createMemo(() => toolSeq(props.turnEvents, e.id));
       // Find the matching tool_result in the same turn by id
       const result = createMemo(() =>
         props.turnEvents.find(
@@ -691,28 +725,36 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       };
       return (
         <div class="block tool" data-testid="block-tool">
-          <div class="block-label-row">
-            <span class="block-label">tool_call › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
+          <div class="block-label-row block-tool-row">
+            <span class="tool-call-content">
+              <span class="tool-seq">·{seq()}</span>
+              <span class="tool-name">{e.name}</span>
+              <span class="tool-arg">{arg()}</span>
+            </span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
-          <div class="block-body block-preview">{inputPreview()}</div>
         </div>
       );
     }
 
     case "tool_result": {
-      const outputPreview = createMemo(() => firstLine(e.output));
-      const shortId = (id: string) => id.length <= 6 ? id : `…${id.slice(-6)}`;
-      // Find matching tool_call for the modal
-      const call = props.turnEvents.find(
-        (ev): ev is ServerMessage & { type: "tool_call" } =>
-          ev.type === "tool_call" && ev.id === e.id
+      // Find matching tool_call for the modal and sequence number
+      const call = createMemo(() =>
+        props.turnEvents.find(
+          (ev): ev is ServerMessage & { type: "tool_call" } =>
+            ev.type === "tool_call" && ev.id === e.id
+        )
       );
+      const seq = createMemo(() => {
+        const c = call();
+        return c ? toolSeq(props.turnEvents, e.id) : 0;
+      });
       const openModal = () => {
+        const c = call();
         setToolModal({
           name: e.name,
           time,
-          input: call ? call.input : null,
+          input: c ? c.input : null,
           output: e.output,
           isError: e.isError,
           durationMs: e.durationMs,
@@ -721,10 +763,10 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class={`block result${e.isError ? " result-error" : ""}`} data-testid="block-result" data-error={e.isError ? "true" : undefined}>
           <div class="block-label-row">
-            <span class="block-label">tool_result › {e.name}<span class="block-id"> [{shortId(e.id)}]</span></span>
+            <span class="block-label">tool_result<span class="tool-seq"> ·{seq()}</span></span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
-          <div class="block-body block-preview">{outputPreview()}</div>
+          <div class="block-body block-preview-result">{e.output}</div>
         </div>
       );
     }

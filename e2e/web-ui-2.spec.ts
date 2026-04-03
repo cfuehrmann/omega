@@ -150,7 +150,7 @@ test("tool_result event shows result block", async ({ page, server }) => {
 
   const resultBlock = page.getByTestId("block-result");
   await expect(resultBlock).toBeVisible({ timeout: 3000 });
-  await expect(resultBlock.locator(".block-label")).toContainText("read_file");
+  await expect(resultBlock.locator(".block-label")).toContainText("tool_result");
   await expect(resultBlock.locator(".block-body")).toContainText("file contents here");
 });
 

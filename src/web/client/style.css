@@ -452,6 +452,51 @@ html, body, #root {
   font-size: 13px;
 }
 
+/* Tool result: up to 2-line preview */
+.block-preview-result {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+/* Tool call: single-line collapsed layout */
+.block-tool-row {
+  margin-bottom: 0; /* no body follows */
+}
+
+.tool-call-content {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-seq {
+  opacity: 0.5;
+  flex-shrink: 0;
+  font-weight: normal;
+  letter-spacing: 0;
+}
+
+.tool-name {
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.tool-arg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+  flex: 1;
+  min-width: 0;
+}
+
 .block-btn-group {
   display: flex;
   gap: 4px;
