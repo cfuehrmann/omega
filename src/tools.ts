@@ -61,14 +61,24 @@ function htmlToText(html: string): string {
   return text;
 }
 
-async function executeBraveSearch(query: string, apiKey: string): Promise<string> {
-  const q = encodeURIComponent(query.trim());
+async function executeWebSearch(input: { query: string }): Promise<string> {
+  if (!input.query || !input.query.trim()) {
+    throw new Error("query is required");
+  }
+  const braveKey = process.env.BRAVE_SEARCH_API_KEY;
+  if (!braveKey) {
+    throw new Error(
+      "BRAVE_SEARCH_API_KEY is not set. Web search requires a Brave Search API key.",
+    );
+  }
+
+  const q = encodeURIComponent(input.query.trim());
   const url = `https://api.search.brave.com/res/v1/web/search?q=${q}&count=10&text_decorations=0&search_lang=en`;
   const res = await fetch(url, {
     headers: {
       "Accept": "application/json",
       "Accept-Encoding": "gzip",
-      "X-Subscription-Token": apiKey,
+      "X-Subscription-Token": braveKey,
     },
     signal: AbortSignal.timeout(10_000),
     ...FETCH_TLS_OPTIONS,
@@ -91,100 +101,6 @@ async function executeBraveSearch(query: string, apiKey: string): Promise<string
   return output.length > FETCH_MAX_CHARS
     ? output.slice(0, FETCH_MAX_CHARS) + "\n[truncated]"
     : output;
-}
-
-async function executeDuckDuckGoSearch(query: string): Promise<string> {
-  const q = encodeURIComponent(query.trim());
-
-  // DuckDuckGo Instant Answer API — no API key required
-  const apiUrl = `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
-  const res = await fetch(apiUrl, {
-    headers: { "User-Agent": "omega-agent/1.0 (terminal AI assistant)" },
-    signal: AbortSignal.timeout(10_000),
-    ...FETCH_TLS_OPTIONS,
-  } as any);
-  if (!res.ok) throw new Error(`DuckDuckGo API error: ${res.status}`);
-
-  const data = await res.json() as any;
-  const lines: string[] = [];
-
-  // Abstract (direct answer)
-  if (data.Abstract) {
-    lines.push(`${data.Abstract}`);
-    if (data.AbstractURL) lines.push(`Source: ${data.AbstractURL}`);
-    lines.push("");
-  }
-
-  // Answer (e.g. calculations, conversions)
-  if (data.Answer) {
-    lines.push(`Answer: ${data.Answer}`);
-    lines.push("");
-  }
-
-  // Related topics
-  const topics: Array<{ Text: string; FirstURL: string }> = data.RelatedTopics ?? [];
-  const results = topics
-    .filter((t) => t.Text && t.FirstURL)
-    .slice(0, 8);
-
-  if (results.length > 0) {
-    lines.push("Results:");
-    for (const r of results) {
-      lines.push(`• ${r.FirstURL}`);
-      lines.push(`  ${r.Text}`);
-    }
-    lines.push("");
-  }
-
-  // If DDG gave us nothing useful, fall back to an HTML scrape
-  if (lines.length === 0) {
-    const htmlUrl = `https://html.duckduckgo.com/html/?q=${q}`;
-    const htmlRes = await fetch(htmlUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-      },
-      signal: AbortSignal.timeout(10_000),
-      ...FETCH_TLS_OPTIONS,
-    } as any);
-    if (!htmlRes.ok) throw new Error(`DuckDuckGo HTML error: ${htmlRes.status}`);
-    const html = await htmlRes.text();
-    const snippetRe = /<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-    const urlRe = /<a[^>]+class="[^"]*result__url[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-    const snippets: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = snippetRe.exec(html)) !== null && snippets.length < 6) {
-      snippets.push(htmlToText(m[1]!));
-    }
-    const urls: string[] = [];
-    while ((m = urlRe.exec(html)) !== null && urls.length < 6) {
-      urls.push(htmlToText(m[1]!).trim());
-    }
-    if (snippets.length > 0) {
-      lines.push("Results:");
-      for (let i = 0; i < snippets.length; i++) {
-        if (urls[i]) lines.push(`• ${urls[i]}`);
-        lines.push(`  ${snippets[i]}`);
-      }
-    } else {
-      lines.push("No results found.");
-    }
-  }
-
-  const output = lines.join("\n");
-  return output.length > FETCH_MAX_CHARS
-    ? output.slice(0, FETCH_MAX_CHARS) + "\n[truncated]"
-    : output;
-}
-
-async function executeWebSearch(input: { query: string }): Promise<string> {
-  if (!input.query || !input.query.trim()) {
-    throw new Error("query is required");
-  }
-  const braveKey = process.env.BRAVE_SEARCH_API_KEY;
-  if (braveKey) {
-    return executeBraveSearch(input.query, braveKey);
-  }
-  return executeDuckDuckGoSearch(input.query);
 }
 
 async function executeFetchUrl(input: { url: string }): Promise<string> {
@@ -271,7 +187,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
   {
     name: "web_search",
     description:
-      "Search the web using Brave Search (or DuckDuckGo as fallback). Returns titles, URLs, and snippets for the top results. " +
+      "Search the web using Brave Search. Returns titles, URLs, and snippets for the top results. " +
       "Use this to look up documentation, current information, or anything not in local files.",
     input_schema: toToolInputSchema(WebSearchSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
