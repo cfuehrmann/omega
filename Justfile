@@ -82,8 +82,19 @@ typecheck:
     exit $EC
 
 # Full quality gate: typecheck + full test suite + knip. Run before every commit.
-gate: typecheck test
-    bunx knip
+# All output is tee'd to test-output/gate-latest.log (overwritten each run).
+# On failure, read that file for the complete trace — no need to re-run.
+# Works identically whether called directly or via the git pre-commit hook.
+gate:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    mkdir -p test-output
+    LOG="test-output/gate-latest.log"
+    {
+        just typecheck
+        just test
+        bunx knip
+    } 2>&1 | tee "$LOG"
 
 # Build the web client (Vite → src/web/public/)
 web-build:
