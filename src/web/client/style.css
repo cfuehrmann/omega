@@ -487,8 +487,6 @@ html, body, #root {
   flex-shrink: 0;
   font-weight: normal;
   letter-spacing: 0;
-  min-width: 1ch;   /* stable width so label doesn't shift when number appears */
-  text-align: right;
 }
 
 .tool-name {

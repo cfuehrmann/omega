@@ -351,12 +351,14 @@ function primaryArg(name: string, input: unknown): string {
   }
 }
 
-/** Sequential number for a tool call within one LLM response batch (1-based). */
-function toolSeq(turnEvents: ServerMessage[], id: string, contextHash: string): number {
+/** Sequential number for a tool call within one LLM response batch (1-based).
+ *  Returns null when the batch has only one call — no number needed. */
+function toolSeq(turnEvents: ServerMessage[], id: string, contextHash: string): number | null {
   const calls = turnEvents.filter(ev =>
     ev.type === "tool_call" &&
     (ev as { contextHash?: string }).contextHash === contextHash
   );
+  if (calls.length <= 1) return null;
   const idx = calls.findIndex(ev => (ev as { id?: string }).id === id);
   return idx + 1;
 }
@@ -730,7 +732,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block tool" data-testid="block-tool">
           <div class="block-label-row block-tool-row">
             <span class="tool-call-content">
-              <span class="tool-seq">{seq()}</span>
+              <Show when={seq() != null}><span class="tool-seq">{seq()}</span></Show>
               <span class="tool-name">{e.name}</span>
               <span class="tool-arg">{arg()}</span>
             </span>
@@ -750,7 +752,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
       const seq = createMemo(() => {
         const c = call();
-        return c ? toolSeq(props.turnEvents, e.id, c.contextHash) : 0;
+        return c ? toolSeq(props.turnEvents, e.id, c.contextHash) : null;
       });
       const openModal = () => {
         const c = call();
@@ -767,7 +769,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class={`block result${e.isError ? " result-error" : ""}`} data-testid="block-result" data-error={e.isError ? "true" : undefined}>
           <div class="block-label-row">
             <span class="tool-result-left">
-              <span class="tool-seq">{seq() > 0 ? seq() : ""}</span>
+              <Show when={seq() != null}><span class="tool-seq">{seq()}</span></Show>
               <span class="block-label">tool_result</span>
             </span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
