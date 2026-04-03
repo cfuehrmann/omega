@@ -36,6 +36,10 @@ All development work goes on `develop`. Merge to `main` when stable.
 - `just gate` — full suite + knip. **The gate runs automatically as the
   pre-commit hook — do not run it separately before committing.** Just use
   `git commit` and let the hook do it.
+  **Gate log:** every run (direct or via `git commit`) writes the complete
+  output to `test-output/gate-latest.log` (overwritten each run). On failure,
+  read that file for the full trace — sections are marked `=== typecheck ===`,
+  `=== test ===`, `=== knip ===`. No need to re-run or pipe through `tail`.
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration

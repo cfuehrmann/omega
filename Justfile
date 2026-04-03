@@ -91,9 +91,13 @@ gate:
     mkdir -p test-output
     LOG="test-output/gate-latest.log"
     {
+        echo "=== typecheck ==="
         just typecheck
+        echo "=== test ==="
         just test
+        echo "=== knip ==="
         bunx knip
+        echo "=== done ==="
     } 2>&1 | tee "$LOG"
 
 # Build the web client (Vite → src/web/public/)
