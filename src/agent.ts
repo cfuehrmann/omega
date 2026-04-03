@@ -1039,11 +1039,7 @@ export class Agent {
       }
 
       if (toolUseBlocks.length > 0 && response.stop_reason === "tool_use") {
-        const toolResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] = [];
-
-        // Emit all tool_call events first, then execute all tools in parallel,
-        // then emit all tool_result events. This reduces wall-clock latency when
-        // the model returns multiple tool_use blocks in one response.
+        // Emit all tool_call events first.
         for (const toolUse of toolUseBlocks) {
           const toolCallEvent: OmegaEvent = {
             type: "tool_call",
@@ -1057,85 +1053,22 @@ export class Agent {
           yield toolCallEvent;
         }
 
-        // Execute all tools concurrently.
+        // Execute all tools concurrently, yielding each tool_result event as
+        // its tool completes rather than waiting for the slowest one.
         // Pass signal so blocking tools (e.g. run_command) can be killed
         // immediately when the user presses Abort.
-        const results = await Promise.all(
-          toolUseBlocks.map((toolUse) =>
-            executeTool(toolUse.name, toolUse.input, signal),
-          ),
+        const promises = toolUseBlocks.map((toolUse, i) =>
+          executeTool(toolUse.name, toolUse.input, signal)
+            .then(result => ({ i, result })),
         );
+        const pending = [...promises];
+        const results: ToolResult[] = new Array(toolUseBlocks.length);
 
-        // --- Superseded-generator guard ---
-        // A newer sendMessage call has started (browser refresh or new message
-        // arrived while we were blocked on tool execution). Exit silently
-        // without touching context — the new call's BUG-2 guard owns repairs.
-        if (this.activeGeneration !== myGeneration) {
-          return;
-        }
-
-        // --- Abort-after-tool-execution guard ---
-        // The user pressed Abort while the tool was running. The tools have
-        // already executed (side-effects are done), so record the real results
-        // to keep context valid, then close the turn cleanly. Without this,
-        // the loop would continue to the next LLM call, ignoring the abort.
-        if (signal?.aborted) {
-          const abortResults: Anthropic.Beta.Messages.BetaToolResultBlockParam[] =
-            toolUseBlocks.map((toolUse, i) => ({
-              type: "tool_result" as const,
-              tool_use_id: toolUse.id,
-              content: results[i]!.output,
-              is_error: results[i]!.isError,
-            }));
-          await this.appendToHistory({
-            role: "user",
-            content: abortResults,
-          });
-          for (let i = 0; i < toolUseBlocks.length; i++) {
-            const toolUse = toolUseBlocks[i]!;
-            const result = results[i]!;
-            const abortResultEvent: OmegaEvent = {
-              type: "tool_result",
-              time: now(),
-              id: toolUse.id,
-              name: toolUse.name,
-              isError: result.isError,
-              durationMs: result.durationMs,
-              output: result.output,
-            };
-            this.logEvent(abortResultEvent);
-            yield abortResultEvent;
-          }
-          const abortInterruptEv: OmegaEvent = {
-            type: "turn_interrupted",
-            time: now(),
-            reason: "aborted",
-          };
-          this.logEvent(abortInterruptEv);
-          yield abortInterruptEv;
-          return;
-        }
-
-        for (let i = 0; i < toolUseBlocks.length; i++) {
+        while (pending.length > 0) {
+          const { i, result } = await Promise.race(pending);
+          pending.splice(pending.indexOf(promises[i]!), 1);
+          results[i] = result;
           const toolUse = toolUseBlocks[i]!;
-          const result = results[i]!;
-
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
-            content: result.output,
-            is_error: result.isError,
-          });
-        }
-
-        // Add tool results to history
-        await this.appendToHistory({
-          role: "user",
-          content: toolResults,
-        });
-        for (let i = 0; i < toolUseBlocks.length; i++) {
-          const toolUse = toolUseBlocks[i]!;
-          const result = results[i]!;
           const toolResultEvent: OmegaEvent = {
             type: "tool_result",
             time: now(),
@@ -1148,6 +1081,51 @@ export class Agent {
           this.logEvent(toolResultEvent);
           yield toolResultEvent;
         }
+
+        // --- Superseded-generator guard ---
+        // A newer sendMessage call has started (browser refresh or new message
+        // arrived while we were blocked on tool execution). Exit silently
+        // without touching context — the new call's BUG-2 guard owns repairs.
+        if (this.activeGeneration !== myGeneration) {
+          return;
+        }
+
+        // --- Abort-after-tool-execution guard ---
+        // The user pressed Abort while the tool was running. The tools have
+        // already executed (side-effects are done), so record the real results
+        // to keep context valid, then close the turn cleanly. tool_result
+        // events were already emitted above; just append to history and signal
+        // the interruption.
+        if (signal?.aborted) {
+          await this.appendToHistory({
+            role: "user",
+            content: toolUseBlocks.map((toolUse, i) => ({
+              type: "tool_result" as const,
+              tool_use_id: toolUse.id,
+              content: results[i]!.output,
+              is_error: results[i]!.isError,
+            })),
+          });
+          const abortInterruptEv: OmegaEvent = {
+            type: "turn_interrupted",
+            time: now(),
+            reason: "aborted",
+          };
+          this.logEvent(abortInterruptEv);
+          yield abortInterruptEv;
+          return;
+        }
+
+        // Add tool results to history
+        await this.appendToHistory({
+          role: "user",
+          content: toolUseBlocks.map((toolUse, i) => ({
+            type: "tool_result" as const,
+            tool_use_id: toolUse.id,
+            content: results[i]!.output,
+            is_error: results[i]!.isError,
+          })),
+        });
         continueLoop = true;
       }
     }
