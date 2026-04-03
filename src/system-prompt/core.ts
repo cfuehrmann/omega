@@ -52,6 +52,9 @@ For any slow command — test suites, builds, dev servers, file watchers — pre
 returns immediately with \`{pid, logFile}\`; continue doing useful work in the same
 turn; then \`wait_process(pid, timeoutMs)\` to block until done and get the exit
 code. Use \`kill_process(pid)\` to stop a process early.
+To wait for a background process to become ready (e.g. a dev server), use
+\`wait_for_output(logFile, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
+It returns as soon as the pattern appears in the log (or on timeout).
 Chain independent tool calls in parallel when results don't depend on each
 other.
 Check for a task runner and use it to discover available commands

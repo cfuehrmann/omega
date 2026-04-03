@@ -100,3 +100,10 @@ export const KillProcessSchema = z.object({
   pid:    z.number().describe("Process ID returned by run_background"),
   signal: z.string().optional().describe("Signal to send (optional, default SIGTERM). E.g. SIGTERM, SIGKILL, SIGINT."),
 });
+
+export const WaitForOutputSchema = z.object({
+  logFile:   z.string().describe("Path to the log file to monitor — the logFile value returned by run_background."),
+  timeoutMs: z.number().describe("Maximum milliseconds to wait before giving up and returning whatever the log contains."),
+  pattern:   z.string().optional().describe("Return as soon as this string appears anywhere in the log (e.g. 'listening on', 'ready', 'Server started')."),
+  minBytes:  z.number().optional().describe("Return as soon as the log reaches this many bytes. Useful when you don't know the ready signal but want to wait for meaningful output."),
+});

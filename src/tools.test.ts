@@ -819,3 +819,127 @@ describe("executeTool: wait_process", () => {
     expect(s).toBe("wait_process: pid 12345 (timeout 30000ms)");
   });
 });
+
+// --- executeTool: wait_for_output ---
+
+describe("executeTool: wait_for_output", () => {
+  it("returns immediately when pattern appears in log", async () => {
+    // Start a background process that writes a known pattern after a short delay
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 0.1 && echo 'Server listening on port 3001'",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+      pattern: "listening on port",
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.matched).toBe(true);
+    expect(r.timedOut).toBe(false);
+    expect(r.output).toContain("listening on port");
+  });
+
+  it("returns when minBytes threshold is reached", async () => {
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 0.1 && printf 'x%.0s' {1..100}",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+      minBytes: 50,
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.minBytesReached).toBe(true);
+    expect(r.timedOut).toBe(false);
+    expect(r.output.length).toBeGreaterThanOrEqual(50);
+  });
+
+  it("returns on any output when neither pattern nor minBytes given", async () => {
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 0.1 && echo hello",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.minBytesReached).toBe(true);
+    expect(r.timedOut).toBe(false);
+    expect(r.output).toContain("hello");
+  });
+
+  it("times out and returns whatever is in the log", async () => {
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 10 && echo never",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 300,
+      pattern: "never",
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.timedOut).toBe(true);
+    expect(r.matched).toBe(false);
+  });
+
+  it("pattern fires before minBytes when both given (or semantics)", async () => {
+    // Pattern 'ready' appears quickly; minBytes=10000 would take much longer
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 0.1 && echo ready",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+      pattern: "ready",
+      minBytes: 10000,
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.matched).toBe(true);
+    expect(r.timedOut).toBe(false);
+  });
+
+  it("handles log file that does not exist yet", async () => {
+    const nonExistent = "/tmp/omega-test-nonexistent-" + Date.now() + ".log";
+    const result = await executeTool("wait_for_output", {
+      logFile: nonExistent,
+      timeoutMs: 300,
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.timedOut).toBe(true);
+    expect(r.output).toBe("");
+  });
+
+  it("formatToolCall formats wait_for_output", () => {
+    const s = formatToolCall("wait_for_output", {
+      logFile: "/tmp/omega-bg-123.log",
+      timeoutMs: 5000,
+      pattern: "ready",
+    });
+    expect(s).toBe('wait_for_output: /tmp/omega-bg-123.log (timeout 5000ms) pattern="ready"');
+  });
+
+  it("formatToolCall formats wait_for_output with minBytes", () => {
+    const s = formatToolCall("wait_for_output", {
+      logFile: "/tmp/omega-bg-123.log",
+      timeoutMs: 5000,
+      minBytes: 100,
+    });
+    expect(s).toBe("wait_for_output: /tmp/omega-bg-123.log (timeout 5000ms) minBytes=100");
+  });
+});

@@ -19,6 +19,7 @@ import {
   RunBackgroundSchema,
   WaitProcessSchema,
   KillProcessSchema,
+  WaitForOutputSchema,
 } from "./tools.schema.js";
 
 // ---------------------------------------------------------------------------
@@ -249,6 +250,17 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Returns a status message. Handles already-exited processes gracefully. " +
       "Default signal is SIGTERM (graceful shutdown); use SIGKILL to force.",
     input_schema: toToolInputSchema(KillProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
+  },
+  {
+    name: "wait_for_output",
+    description:
+      "Poll a background-process log file until a condition is met, then return the log contents. " +
+      "Returns when the FIRST of these occurs: (1) pattern appears in the log, " +
+      "(2) log reaches minBytes in size, or (3) timeoutMs elapses. " +
+      "If neither pattern nor minBytes is given, returns as soon as any output appears. " +
+      "Returns { output, matched, minBytesReached, timedOut }. " +
+      "Use this after run_background instead of sleep + tail to wait for a server or process to become ready.",
+    input_schema: toToolInputSchema(WaitForOutputSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
 ];
 
@@ -706,6 +718,45 @@ function executeKillProcess(input: {
   }
 }
 
+async function executeWaitForOutput(input: {
+  logFile: string;
+  timeoutMs: number;
+  pattern?: string;
+  minBytes?: number;
+}): Promise<string> {
+  const { logFile, timeoutMs, pattern, minBytes } = input;
+  const deadline = Date.now() + timeoutMs;
+  const POLL_MS = 200;
+
+  // Determine which conditions are active.
+  // If neither pattern nor minBytes is given, trigger on any output (minBytes = 1).
+  const hasPattern  = pattern  !== undefined;
+  const hasMinBytes = minBytes !== undefined;
+  const effectiveMinBytes = hasMinBytes ? minBytes! : (hasPattern ? null : 1);
+
+  const read = async (): Promise<string> => {
+    try { return await readFile(logFile, "utf-8"); }
+    catch { return ""; }
+  };
+
+  while (Date.now() < deadline) {
+    const content = await read();
+
+    if (hasPattern && content.includes(pattern!)) {
+      return JSON.stringify({ output: content, matched: true,  minBytesReached: false, timedOut: false });
+    }
+    if (effectiveMinBytes !== null && content.length >= effectiveMinBytes) {
+      return JSON.stringify({ output: content, matched: false, minBytesReached: true,  timedOut: false });
+    }
+
+    await new Promise((r) => setTimeout(r, POLL_MS));
+  }
+
+  // Timed out — return whatever is in the log
+  const content = await read();
+  return JSON.stringify({ output: content, matched: false, minBytesReached: false, timedOut: true });
+}
+
 export async function executeTool(
   name: string,
   input: any,
@@ -750,6 +801,9 @@ export async function executeTool(
         break;
       case "kill_process":
         output = executeKillProcess(KillProcessSchema.parse(input));
+        break;
+      case "wait_for_output":
+        output = await executeWaitForOutput(WaitForOutputSchema.parse(input));
         break;
       default:
         return {
@@ -824,6 +878,12 @@ export function formatToolCall(name: string, input: any): string {
     case "kill_process": {
       let s = `kill_process: pid ${input.pid}`;
       if (input.signal) s += ` (${input.signal})`;
+      return s;
+    }
+    case "wait_for_output": {
+      let s = `wait_for_output: ${input.logFile} (timeout ${input.timeoutMs}ms)`;
+      if (input.pattern)  s += ` pattern="${input.pattern}"`;
+      if (input.minBytes) s += ` minBytes=${input.minBytes}`;
       return s;
     }
     default:
