@@ -24,6 +24,12 @@ echo "✅  No unsafe Agent construction."
 # ---------------------------------------------------------------------------
 # Run the full gate: typecheck + all tests (unit + browser) + knip.
 # ---------------------------------------------------------------------------
+# Clear git plumbing variables that git sets when running hooks with -a.
+# Without this, GIT_INDEX_FILE points to the parent commit's index lock,
+# and any git commands run by tests (e.g. in isolated temp repos) would
+# write into that lock file, corrupting the staged index.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE
+
 echo "Running just gate..."
 just gate
 status=$?

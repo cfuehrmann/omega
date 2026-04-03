@@ -18,8 +18,8 @@ import {
   FindFilesSchema,
   RunBackgroundSchema,
   WaitProcessSchema,
-  KillProcessSchema,
   WaitForOutputSchema,
+  WriteStdinSchema,
 } from "./tools.schema.js";
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ async function executeWebSearch(input: { query: string }): Promise<string> {
     : output;
 }
 
-async function executeFetchUrl(input: { url: string }): Promise<string> {
+async function executeFetchUrl(input: { url: string; offset?: number }): Promise<string> {
   if (!input.url || !input.url.trim()) throw new Error("url is required");
 
   // Basic URL validation
@@ -135,10 +135,20 @@ async function executeFetchUrl(input: { url: string }): Promise<string> {
   const body = await res.text();
   const text = isHtml ? htmlToText(body) : body;
 
-  if (text.length > FETCH_URL_MAX_CHARS) {
-    return text.slice(0, FETCH_URL_MAX_CHARS) + `\n\n[Truncated at ${FETCH_URL_MAX_CHARS} chars. Full page is ${text.length} chars.]`;
+  const startChar = input.offset ?? 0;
+
+  if (startChar > 0 && startChar >= text.length) {
+    return `[No more content. Total page length: ${text.length} chars.]`;
   }
-  return text;
+
+  const window = text.slice(startChar, startChar + FETCH_URL_MAX_CHARS);
+  const endChar = startChar + window.length;
+
+  if (endChar < text.length) {
+    return window + `\n\n[Showing chars ${startChar}–${endChar} of ${text.length}. Fetch again with offset=${endChar} to continue.]`;
+  }
+
+  return window;
 }
 
 // Tool definitions for the Anthropic API
@@ -197,8 +207,10 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Fetch the content of a URL and return it as plain text. " +
       "HTML pages are converted to readable text (tags stripped). " +
-      "Content is truncated at 20000 characters. Use this to read documentation, " +
-      "articles, or any web page.",
+      "Returns up to 20000 characters starting at the optional char offset. " +
+      "When a page is cut off, the response footer shows the total length and " +
+      "the next offset — call again with that offset to page through. " +
+      "Use this to read documentation, articles, or any web page.",
     input_schema: toToolInputSchema(FetchUrlSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -228,7 +240,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Returns { pid, logFile }. " +
       "Use wait_process(pid) to block until the process finishes and get the exit code. " +
       "Use read_file on logFile (with offset/limit for large output) and grep_files to inspect output. " +
-      "Use kill_process(pid) to stop the process early. " +
+      "Use run_command(\"kill <pid>\") to stop the process early. " +
       "Use this for any slow command — test suites, builds, dev servers, file watchers — " +
       "so you can continue doing useful work in the same turn instead of blocking.",
     input_schema: toToolInputSchema(RunBackgroundSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
@@ -244,14 +256,6 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     input_schema: toToolInputSchema(WaitProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
-    name: "kill_process",
-    description:
-      "Send a signal to a background process started with run_background. " +
-      "Returns a status message. Handles already-exited processes gracefully. " +
-      "Default signal is SIGTERM (graceful shutdown); use SIGKILL to force.",
-    input_schema: toToolInputSchema(KillProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
-  },
-  {
     name: "wait_for_output",
     description:
       "Poll a background-process log file until a condition is met, then return the log contents. " +
@@ -261,6 +265,17 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Returns { output, matched, minBytesReached, timedOut }. " +
       "Use this after run_background instead of sleep + tail to wait for a server or process to become ready.",
     input_schema: toToolInputSchema(WaitForOutputSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
+  },
+  {
+    name: "write_stdin",
+    description:
+      "Write text to the stdin of a background process started with run_background. " +
+      "Use this to answer interactive prompts (e.g. y/n confirmations, passwords, menu choices). " +
+      "Include a newline ('\\n') at the end of text to submit a line-based prompt. " +
+      "Set end_stdin=true to close stdin after writing, signalling EOF to the process " +
+      "(required for programs like cat that read until end of input). " +
+      "Returns an error if the pid is not a tracked background process or stdin is already closed.",
+    input_schema: toToolInputSchema(WriteStdinSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
 ];
 
@@ -626,7 +641,7 @@ async function executeRunBackground(input: {
   const fd = fh.fd;
 
   const proc = spawn("bash", ["-c", input.command], {
-    stdio: ["ignore", fd, fd],
+    stdio: ["pipe", fd, fd],
     detached: true,
     cwd: input.cwd,
   });
@@ -701,23 +716,6 @@ async function executeWaitProcess(input: {
   });
 }
 
-function executeKillProcess(input: {
-  pid: number;
-  signal?: string;
-}): string {
-  const sig = (input.signal ?? "SIGTERM") as NodeJS.Signals;
-  try {
-    process.kill(input.pid, sig);
-    return `Sent ${sig} to pid ${input.pid}`;
-  } catch (err: unknown) {
-    // ESRCH = no such process (already dead)
-    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
-      return `pid ${input.pid} already exited (no such process)`;
-    }
-    throw err;
-  }
-}
-
 async function executeWaitForOutput(input: {
   logFile: string;
   timeoutMs: number;
@@ -755,6 +753,44 @@ async function executeWaitForOutput(input: {
   // Timed out — return whatever is in the log
   const content = await read();
   return JSON.stringify({ output: content, matched: false, minBytesReached: false, timedOut: true });
+}
+
+async function executeWriteStdin(input: {
+  pid: number;
+  text: string;
+  end_stdin?: boolean;
+}): Promise<string> {
+  const { pid, text, end_stdin = false } = input;
+  const child = backgroundProcesses.get(pid);
+
+  if (!child) {
+    throw new Error(
+      `No tracked process with pid ${pid}. Only processes started with run_background can receive stdin.`,
+    );
+  }
+
+  const stdin = child.stdin;
+  if (!stdin) {
+    throw new Error(`Process ${pid} has no writable stdin.`);
+  }
+
+  if (stdin.writableEnded || stdin.destroyed) {
+    throw new Error(`stdin for pid ${pid} is already closed.`);
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    stdin.write(text, (err: Error | null | undefined) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
+  if (end_stdin) {
+    stdin.end();
+    return `Wrote ${text.length} chars to stdin of pid ${pid} and closed stdin (EOF)`;
+  }
+
+  return `Wrote ${text.length} chars to stdin of pid ${pid}`;
 }
 
 export async function executeTool(
@@ -799,11 +835,11 @@ export async function executeTool(
       case "wait_process":
         output = await executeWaitProcess(WaitProcessSchema.parse(input));
         break;
-      case "kill_process":
-        output = executeKillProcess(KillProcessSchema.parse(input));
-        break;
       case "wait_for_output":
         output = await executeWaitForOutput(WaitForOutputSchema.parse(input));
+        break;
+      case "write_stdin":
+        output = await executeWriteStdin(WriteStdinSchema.parse(input));
         break;
       default:
         return {
@@ -856,8 +892,11 @@ export function formatToolCall(name: string, input: any): string {
     }
     case "web_search":
       return `web_search: ${input.query}`;
-    case "fetch_url":
-      return `fetch_url: ${input.url}`;
+    case "fetch_url": {
+      let s = `fetch_url: ${input.url}`;
+      if (input.offset) s += ` (offset ${input.offset})`;
+      return s;
+    }
     case "grep_files": {
       let s = `grep_files: ${input.pattern} in ${input.path}`;
       if (input.file_glob) s += ` [${input.file_glob}]`;
@@ -875,15 +914,15 @@ export function formatToolCall(name: string, input: any): string {
       if (input.timeoutMs) s += ` (timeout ${input.timeoutMs}ms)`;
       return s;
     }
-    case "kill_process": {
-      let s = `kill_process: pid ${input.pid}`;
-      if (input.signal) s += ` (${input.signal})`;
-      return s;
-    }
     case "wait_for_output": {
       let s = `wait_for_output: ${input.logFile} (timeout ${input.timeoutMs}ms)`;
       if (input.pattern)  s += ` pattern="${input.pattern}"`;
       if (input.minBytes) s += ` minBytes=${input.minBytes}`;
+      return s;
+    }
+    case "write_stdin": {
+      let s = `write_stdin: pid ${input.pid} (${input.text?.length ?? 0} chars)`;
+      if (input.end_stdin) s += " [close stdin]";
       return s;
     }
     default:

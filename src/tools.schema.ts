@@ -66,7 +66,8 @@ export const WebSearchSchema = z.object({
 });
 
 export const FetchUrlSchema = z.object({
-  url: z.string().describe("The URL to fetch (must be http or https)"),
+  url:    z.string().describe("The URL to fetch (must be http or https)"),
+  offset: z.number().optional().describe("Character offset to start reading from (optional, default 0). Use the value from the previous response footer to page through content longer than 20000 chars."),
 });
 
 export const GrepFilesSchema = z.object({
@@ -96,14 +97,15 @@ export const WaitProcessSchema = z.object({
   timeoutMs: z.number().optional().describe("Maximum milliseconds to wait (optional, default 60000)"),
 });
 
-export const KillProcessSchema = z.object({
-  pid:    z.number().describe("Process ID returned by run_background"),
-  signal: z.string().optional().describe("Signal to send (optional, default SIGTERM). E.g. SIGTERM, SIGKILL, SIGINT."),
-});
-
 export const WaitForOutputSchema = z.object({
   logFile:   z.string().describe("Path to the log file to monitor — the logFile value returned by run_background."),
   timeoutMs: z.number().describe("Maximum milliseconds to wait before giving up and returning whatever the log contains."),
   pattern:   z.string().optional().describe("Return as soon as this string appears anywhere in the log (e.g. 'listening on', 'ready', 'Server started')."),
   minBytes:  z.number().optional().describe("Return as soon as the log reaches this many bytes. Useful when you don't know the ready signal but want to wait for meaningful output."),
+});
+
+export const WriteStdinSchema = z.object({
+  pid:       z.number().describe("Process ID returned by run_background."),
+  text:      z.string().describe("Text to write to the process stdin. Include a newline ('\\n') to submit a line-based prompt."),
+  end_stdin: z.boolean().optional().describe("If true, close stdin after writing, signalling EOF to the process. Required for programs that read until end-of-input (e.g. cat). Default false."),
 });

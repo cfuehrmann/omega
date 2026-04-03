@@ -383,11 +383,41 @@ describe("executeTool: fetch_url", () => {
     expect(result.isError).toBe(true);
   }, 15_000);
 
-  it("formatToolCall formats fetch_url", () => {
+  it("formatToolCall formats fetch_url without offset", () => {
     expect(formatToolCall("fetch_url", { url: "https://example.com" })).toBe(
       "fetch_url: https://example.com"
     );
   });
+
+  it("formatToolCall formats fetch_url with offset", () => {
+    expect(formatToolCall("fetch_url", { url: "https://example.com", offset: 5000 })).toBe(
+      "fetch_url: https://example.com (offset 5000)"
+    );
+  });
+
+  it("offset=0 returns the same content as no offset", async () => {
+    const [r1, r2] = await Promise.all([
+      executeTool("fetch_url", { url: "https://example.com" }),
+      executeTool("fetch_url", { url: "https://example.com", offset: 0 }),
+    ]);
+    expect(r1.isError).toBe(false);
+    expect(r2.isError).toBe(false);
+    expect(r1.output).toBe(r2.output);
+  }, 15_000);
+
+  it("offset skips the leading characters", async () => {
+    const r = await executeTool("fetch_url", { url: "https://example.com", offset: 10 });
+    expect(r.isError).toBe(false);
+    // The full page starts with "Example Domain" (or similar); offset=10 skips the first 10 chars
+    const full = await executeTool("fetch_url", { url: "https://example.com" });
+    expect(r.output).toBe(full.output.slice(10));
+  }, 15_000);
+
+  it("offset beyond page length returns a no-more-content message", async () => {
+    const r = await executeTool("fetch_url", { url: "https://example.com", offset: 999_999 });
+    expect(r.isError).toBe(false);
+    expect(r.output).toContain("No more content");
+  }, 15_000);
 });
 
 // --- executeTool: grep_files ---
@@ -687,59 +717,6 @@ describe("executeTool: run_background", () => {
   });
 });
 
-// --- executeTool: kill_process ---
-
-describe("executeTool: kill_process", () => {
-  it("kills a running process and reports success", async () => {
-    // Start a background process
-    const bgResult = await executeTool("run_background", { command: "sleep 30" });
-    expect(bgResult.isError).toBe(false);
-    const { pid } = JSON.parse(bgResult.output);
-
-    // Kill it
-    const killResult = await executeTool("kill_process", { pid });
-    expect(killResult.isError).toBe(false);
-    expect(killResult.output).toContain(String(pid));
-  });
-
-  it("handles already-dead process gracefully", async () => {
-    // Start a fast process that will exit quickly
-    const bgResult = await executeTool("run_background", { command: "sleep 0" });
-    expect(bgResult.isError).toBe(false);
-    const { pid } = JSON.parse(bgResult.output);
-    // Wait for it to die
-    await new Promise(r => setTimeout(r, 300));
-    // Try to kill the dead process — should not error
-    const killResult = await executeTool("kill_process", { pid });
-    expect(killResult.isError).toBe(false);
-    expect(killResult.output).toMatch(/already exited|no such process|not running/i);
-  });
-
-  it("returns error when pid is missing", async () => {
-    const result = await executeTool("kill_process", {});
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("pid");
-  });
-
-  it("supports custom signal", async () => {
-    const bgResult = await executeTool("run_background", { command: "sleep 30" });
-    const { pid } = JSON.parse(bgResult.output);
-    const killResult = await executeTool("kill_process", { pid, signal: "SIGKILL" });
-    expect(killResult.isError).toBe(false);
-    expect(killResult.output).toContain(String(pid));
-  });
-
-  it("formatToolCall formats kill_process", () => {
-    const s = formatToolCall("kill_process", { pid: 12345 });
-    expect(s).toBe("kill_process: pid 12345");
-  });
-
-  it("formatToolCall formats kill_process with signal", () => {
-    const s = formatToolCall("kill_process", { pid: 12345, signal: "SIGKILL" });
-    expect(s).toBe("kill_process: pid 12345 (SIGKILL)");
-  });
-});
-
 // --- executeTool: wait_process ---
 
 describe("executeTool: wait_process", () => {
@@ -796,7 +773,7 @@ describe("executeTool: wait_process", () => {
     expect(result.pid).toBe(pid);
 
     // Clean up
-    await executeTool("kill_process", { pid });
+    process.kill(pid, "SIGKILL");
   });
 
   it("returns gracefully for an unknown PID that is already gone", async () => {
@@ -941,5 +918,88 @@ describe("executeTool: wait_for_output", () => {
       minBytes: 100,
     });
     expect(s).toBe("wait_for_output: /tmp/omega-bg-123.log (timeout 5000ms) minBytes=100");
+  });
+});
+
+// --- executeTool: write_stdin ---
+
+describe("executeTool: write_stdin", () => {
+  it("writes a line to a process that reads stdin", async () => {
+    const bgResult = await executeTool("run_background", {
+      command: "read line; echo got:$line",
+    });
+    expect(bgResult.isError).toBe(false);
+    const { pid, logFile } = JSON.parse(bgResult.output);
+
+    const writeResult = await executeTool("write_stdin", { pid, text: "hello\n" });
+    expect(writeResult.isError).toBe(false);
+    expect(writeResult.output).toContain(String(pid));
+
+    await executeTool("wait_process", { pid, timeoutMs: 3000 });
+
+    const { readFile: rf } = await import("fs/promises");
+    const log = await rf(logFile, "utf-8");
+    expect(log).toContain("got:hello");
+  });
+
+  it("closes stdin with end_stdin=true causing cat to exit", async () => {
+    const bgResult = await executeTool("run_background", { command: "cat" });
+    expect(bgResult.isError).toBe(false);
+    const { pid, logFile } = JSON.parse(bgResult.output);
+
+    const writeResult = await executeTool("write_stdin", {
+      pid,
+      text: "hello world\n",
+      end_stdin: true,
+    });
+    expect(writeResult.isError).toBe(false);
+    expect(writeResult.output).toContain("closed stdin");
+
+    // cat exits once stdin is closed (EOF)
+    const waitResult = await executeTool("wait_process", { pid, timeoutMs: 3000 });
+    expect(waitResult.isError).toBe(false);
+    const r = JSON.parse(waitResult.output);
+    expect(r.timedOut).toBe(false);
+
+    const { readFile: rf } = await import("fs/promises");
+    const log = await rf(logFile, "utf-8");
+    expect(log).toContain("hello world");
+  });
+
+  it("returns error for unknown pid", async () => {
+    const result = await executeTool("write_stdin", { pid: 999_999_999, text: "hi\n" });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("999999999");
+  });
+
+  it("returns error when stdin is already closed", async () => {
+    const bgResult = await executeTool("run_background", { command: "cat" });
+    const { pid } = JSON.parse(bgResult.output);
+
+    // Close stdin on first call
+    await executeTool("write_stdin", { pid, text: "", end_stdin: true });
+
+    // Second call should fail
+    const result = await executeTool("write_stdin", { pid, text: "more\n" });
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatch(/already closed/i);
+
+    try { process.kill(pid, "SIGKILL"); } catch {}
+  });
+
+  it("returns error when pid is missing", async () => {
+    const result = await executeTool("write_stdin", { text: "hello\n" });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("pid");
+  });
+
+  it("formatToolCall formats write_stdin", () => {
+    const s = formatToolCall("write_stdin", { pid: 12345, text: "yes\n" });
+    expect(s).toBe("write_stdin: pid 12345 (4 chars)");
+  });
+
+  it("formatToolCall formats write_stdin with end_stdin", () => {
+    const s = formatToolCall("write_stdin", { pid: 12345, text: "yes\n", end_stdin: true });
+    expect(s).toBe("write_stdin: pid 12345 (4 chars) [close stdin]");
   });
 });

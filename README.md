@@ -53,11 +53,12 @@ agent-specific constraints.
 ## Git discipline
 
 - Active branch: `develop`. Merge to `main` when stable.
-- **Run `just gate` before every commit.** Gate = full test suite + knip.
-  The gate always writes its complete output to `test-output/gate-latest.log`
-  (overwritten each run). The pre-commit hook runs the same gate, so `git commit`
-  failures produce the same log. On failure, read `test-output/gate-latest.log`
-  for the full trace — no need to re-run or pipe through `tail`.
+- **The gate runs automatically as the pre-commit hook.** Always commit with
+  `git commit -am "..."` — the `-a` flag stages all tracked changes so the
+  hook actually runs (bare `git commit` exits 1 before the hook if nothing
+  is staged). Exit code 0 = committed and gate passed. Non-zero = read the
+  tail of the background log first; only open `test-output/gate-latest.log`
+  when that tail confirms the gate ran and failed (it is stale otherwise).
 - Push to origin at least every 3 commits.
 - Never commit red code.
 

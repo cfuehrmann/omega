@@ -51,10 +51,13 @@ For any slow command — test suites, builds, dev servers, file watchers — pre
 \`run_background\` over blocking \`run_command\`. The pattern: \`run_background(cmd)\`
 returns immediately with \`{pid, logFile}\`; continue doing useful work in the same
 turn; then \`wait_process(pid, timeoutMs)\` to block until done and get the exit
-code. Use \`kill_process(pid)\` to stop a process early.
+code.
 To wait for a background process to become ready (e.g. a dev server), use
 \`wait_for_output(logFile, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
 It returns as soon as the pattern appears in the log (or on timeout).
+If a background process prompts for interactive input, use
+\`write_stdin(pid, text)\` to respond (include \\n to submit a line). Pass
+\`end_stdin=true\` to signal EOF after writing.
 Chain independent tool calls in parallel when results don't depend on each
 other.
 Check for a task runner and use it to discover available commands
@@ -63,6 +66,8 @@ Check for a task runner and use it to discover available commands
 Use \`web_search\` freely for documentation, current information, API details,
 error messages, or anything not in local files. Prefer it over guessing or
 relying on potentially stale training data.
+\`fetch_url\` returns up to 20 000 characters at a time; pass \`offset\` to
+page through longer content — the response footer shows the next offset.
 
 When a command produces verbose output — whether from \`run_background\`'s
 \`logFile\` or from a \`run_command\` redirected to a file — inspect it with

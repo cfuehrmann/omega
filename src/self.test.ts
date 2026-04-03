@@ -15,7 +15,14 @@ const TMP_REPO = "/tmp/omega-self-test-repo";
 const SHELL = "/usr/bin/bash";
 
 function sh(cmd: string, cwd: string): string {
-  const r = spawnSync(SHELL, ["-c", cmd], { cwd, encoding: "utf-8" });
+  // Clear git plumbing variables so commands run in the isolated temp repo
+  // are not affected by GIT_INDEX_FILE or GIT_DIR from the parent process
+  // (e.g. when this test suite runs inside a git pre-commit hook).
+  const env = { ...process.env };
+  delete env["GIT_INDEX_FILE"];
+  delete env["GIT_DIR"];
+  delete env["GIT_WORK_TREE"];
+  const r = spawnSync(SHELL, ["-c", cmd], { cwd, encoding: "utf-8", env });
   if (r.status !== 0) {
     throw new Error(`Command failed (${cmd}): ${r.stderr}`);
   }
