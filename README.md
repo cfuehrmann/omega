@@ -54,11 +54,12 @@ agent-specific constraints.
 
 - Active branch: `develop`. Merge to `main` when stable.
 - **The gate runs automatically as the pre-commit hook.** Always commit with
-  `git commit -am "..."` — the `-a` flag stages all tracked changes so the
-  hook actually runs (bare `git commit` exits 1 before the hook if nothing
-  is staged). Exit code 0 = committed and gate passed. Non-zero = read the
-  tail of the background log first; only open `test-output/gate-latest.log`
-  when that tail confirms the gate ran and failed (it is stale otherwise).
+  `git add -A && git commit -m "..."` — `git add -A` stages everything (new,
+  modified, deleted) so the hook actually runs. Do not use `git commit -a`:
+  it silently skips new untracked files. Exit code 0 = committed and gate
+  passed. Non-zero = read the tail of the background log first; only open
+  `test-output/gate-latest.log` when that tail confirms the gate ran and
+  failed (it is stale otherwise).
 - Push to origin at least every 3 commits.
 - Never commit red code.
 

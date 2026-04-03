@@ -35,9 +35,10 @@ All development work goes on `develop`. Merge to `main` when stable.
 
 - `just gate` — full suite + knip. **The gate runs automatically as the
   pre-commit hook — do not run it separately before committing.** Always
-  commit with `git commit -am "..."` — the `-a` flag stages all tracked
-  changes, ensuring the hook actually runs (bare `git commit` exits 1
-  before the hook if nothing is staged, giving a false failure signal).
+  commit with `git add -A && git commit -m "..."` — `git add -A` stages
+  everything (new, modified, deleted), ensuring the hook actually runs.
+  Do not use `git commit -a`: it silently skips new untracked files.
+  Bare `git commit` with nothing staged exits 1 before the hook fires.
   **Exit code is the primary signal:** 0 = committed, gate passed — done,
   no log reading needed. Non-zero = read the tail of the `run_background`
   log file first (`tail -20 <logFile>`); it is always fresh for that run
