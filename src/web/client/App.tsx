@@ -351,9 +351,12 @@ function primaryArg(name: string, input: unknown): string {
   }
 }
 
-/** Per-turn sequential number for a tool call (1-based). */
-function toolSeq(turnEvents: ServerMessage[], id: string): number {
-  const calls = turnEvents.filter(ev => ev.type === "tool_call");
+/** Sequential number for a tool call within one LLM response batch (1-based). */
+function toolSeq(turnEvents: ServerMessage[], id: string, contextHash: string): number {
+  const calls = turnEvents.filter(ev =>
+    ev.type === "tool_call" &&
+    (ev as { contextHash?: string }).contextHash === contextHash
+  );
   const idx = calls.findIndex(ev => (ev as { id?: string }).id === id);
   return idx + 1;
 }
@@ -704,7 +707,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
 
     case "tool_call": {
       const arg = createMemo(() => primaryArg(e.name, e.input));
-      const seq = createMemo(() => toolSeq(props.turnEvents, e.id));
+      const seq = createMemo(() => toolSeq(props.turnEvents, e.id, e.contextHash));
       // Find the matching tool_result in the same turn by id
       const result = createMemo(() =>
         props.turnEvents.find(
@@ -747,7 +750,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
       const seq = createMemo(() => {
         const c = call();
-        return c ? toolSeq(props.turnEvents, e.id) : 0;
+        return c ? toolSeq(props.turnEvents, e.id, c.contextHash) : 0;
       });
       const openModal = () => {
         const c = call();
