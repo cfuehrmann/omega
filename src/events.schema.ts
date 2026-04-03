@@ -106,7 +106,6 @@ const ToolResultSchema = z.object({
   isError: z.boolean(),
   durationMs: z.number().int(),
   output: z.string(),
-  contextHash: ContextHashSchema,
 });
 
 const TurnEndSchema = z.object({

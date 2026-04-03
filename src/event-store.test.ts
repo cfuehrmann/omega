@@ -124,7 +124,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("tool_result", async () => {
-    const e: ToolResultEvent = { type: "tool_result", time: iso("2025-01-01T00:00:00.000Z"), id: "tool_abc", name: "read_file", isError: false, durationMs: 12, output: "file contents here", contextHash: asHash("ef56ab78cd90") };
+    const e: ToolResultEvent = { type: "tool_result", time: iso("2025-01-01T00:00:00.000Z"), id: "tool_abc", name: "read_file", isError: false, durationMs: 12, output: "file contents here" };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

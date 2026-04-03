@@ -487,12 +487,12 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
 // ---------------------------------------------------------------------------
 // [SCHEMA] tool_call carries contextHash pointing to the assistant context record
-// [SCHEMA] tool_result carries contextHash pointing to the user context record
+// [SCHEMA] tool_result does NOT carry contextHash — it is not needed
 // [SCHEMA] tool_call carries input field — persisted directly in events.jsonl
 // [SCHEMA] tool_result carries output field — persisted directly in events.jsonl
 // ---------------------------------------------------------------------------
 
-describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
+describe("[SCHEMA] tool_call and tool_result fields", () => {
   it.concurrent("tool_call event carries contextHash matching the assistant context.jsonl record", async () => {
 
     let call = 0;
@@ -523,7 +523,7 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
     expect(tc.contextHash).toBe(assistantRecord!.hash);
   });
 
-  it.concurrent("tool_result event carries contextHash matching the user tool_result context.jsonl record", async () => {
+  it.concurrent("tool_result event does not carry contextHash", async () => {
 
     let call = 0;
     const mockProvider: StreamProvider = () => {
@@ -532,28 +532,15 @@ describe("[SCHEMA] tool_call and tool_result contextHash FK", () => {
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
     };
 
-    const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
+    const { agent, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
     await Bun.sleep(50);
 
-    const contextRecords = readContextRecords(contextFile);
     const allEvents = readEventLines(eventsFile);
     const toolResults = allEvents.filter(e => e.type === "tool_result") as ToolResultEvent[];
 
     expect(toolResults.length).toBe(1);
-    const tr = toolResults[0]!;
-
-    // contextHash must be an 12-char hex string
-    expect(typeof tr.contextHash).toBe("string");
-    expect(/^[0-9a-f]{12}$/.test(tr.contextHash!)).toBe(true);
-
-    // Must point to the user message containing the tool_result block
-    // That's the third context record: user(original), assistant(tool_use), user(tool_result)
-    const toolResultRecord = contextRecords.find(
-      r => r.role === "user" && Array.isArray(r.content) && (r.content as any[]).some((b: any) => b.type === "tool_result")
-    );
-    expect(toolResultRecord).toBeDefined();
-    expect(tr.contextHash).toBe(toolResultRecord!.hash);
+    expect("contextHash" in toolResults[0]!).toBe(false);
   });
 
   it.concurrent("tool_call event has input field persisted in events.jsonl", async () => {

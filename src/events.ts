@@ -181,8 +181,6 @@ export interface ToolResultEvent {
   durationMs: number;
   /** Full text output of the tool. */
   output: string;
-  /** Hash of the user context.jsonl record containing this tool_result block. */
-  contextHash: ContextHash;
 }
 
 /** Per-turn token and cache metrics, attached to TurnEndEvent. */

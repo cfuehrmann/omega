@@ -562,7 +562,7 @@ export class Agent {
                 "[not executed: the session was interrupted before this tool call completed]",
               is_error: true,
             }));
-          const syntheticHash = await this.appendToHistory({
+          await this.appendToHistory({
             role: "user",
             content: syntheticResults,
           });
@@ -576,7 +576,6 @@ export class Agent {
               durationMs: 0,
               output:
                 "[not executed: the session was interrupted before this tool call completed]",
-              contextHash: syntheticHash,
             };
             await this.logEvent(syntheticEv);
             yield syntheticEv;
@@ -966,7 +965,7 @@ export class Agent {
               : `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
             is_error: true,
           }));
-        const syntheticResultHash = await this.appendToHistory({
+        await this.appendToHistory({
           role: "user",
           content: syntheticResults,
         });
@@ -981,7 +980,6 @@ export class Agent {
             output: isContextWindowStop
               ? "[not executed: model context window exceeded while generating tool call arguments]"
               : "[not executed: max_tokens stop — output budget exhausted while generating tool call arguments]",
-            contextHash: syntheticResultHash,
           };
           this.logEvent(syntheticResultEvent);
           yield syntheticResultEvent;
@@ -1089,7 +1087,7 @@ export class Agent {
               content: results[i]!.output,
               is_error: results[i]!.isError,
             }));
-          const abortResultHash = await this.appendToHistory({
+          await this.appendToHistory({
             role: "user",
             content: abortResults,
           });
@@ -1104,7 +1102,6 @@ export class Agent {
               isError: result.isError,
               durationMs: result.durationMs,
               output: result.output,
-              contextHash: abortResultHash,
             };
             this.logEvent(abortResultEvent);
             yield abortResultEvent;
@@ -1131,8 +1128,8 @@ export class Agent {
           });
         }
 
-        // Add tool results to history; capture hash for tool_result events
-        const toolResultHash = await this.appendToHistory({
+        // Add tool results to history
+        await this.appendToHistory({
           role: "user",
           content: toolResults,
         });
@@ -1147,7 +1144,6 @@ export class Agent {
             isError: result.isError,
             durationMs: result.durationMs,
             output: result.output,
-            contextHash: toolResultHash,
           };
           this.logEvent(toolResultEvent);
           yield toolResultEvent;

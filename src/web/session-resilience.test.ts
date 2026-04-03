@@ -88,7 +88,7 @@ describe("shouldLogEvent", () => {
   });
 
   it("allows tool_result events", () => {
-    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", output: "", isError: false, durationMs: 0, contextHash: "ab12cd34ef56" })).toBe(true);
+    expect(shouldLogEvent({ type: "tool_result", id: "x", name: "read_file", output: "", isError: false, durationMs: 0 })).toBe(true);
   });
 
   it("allows model_changed events", () => {

@@ -51,7 +51,7 @@ describe("computeDurations — LLM time", () => {
       { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: asHash("abcdef123456") },
       { type: "tool_call", time: ms(BASE, 500), id: "t1", name: "read_file", input: {}, contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 800), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 800), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x"},
       // Second LLM call: 700ms
       { type: "llm_call", time: ms(BASE, 900), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 1600), stopReason: "end_turn", usage: { input_tokens: 15, output_tokens: 8 }, contextHash: asHash("def000000000") },
@@ -70,7 +70,7 @@ describe("computeDurations — tool time", () => {
       { type: "llm_response", time: ms(BASE, 500), stopReason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: asHash("abcdef123456") },
       // tool call at 500, result at 900 → span = 400ms
       { type: "tool_call", time: ms(BASE, 500), id: "t1", name: "run_command", input: {}, contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 900), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "ok", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 900), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "ok"},
       { type: "llm_call", time: ms(BASE, 950), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 1400), stopReason: "end_turn", usage: { input_tokens: 15, output_tokens: 8 }, contextHash: asHash("def000000000") },
       { type: "turn_end", time: ms(BASE, 1500), metrics: { inputTokens: 25, outputTokens: 13 } },
@@ -88,8 +88,8 @@ describe("computeDurations — tool time", () => {
       // Results come back at 600 and 800 → span = 800 − 200 = 600ms
       { type: "tool_call", time: ms(BASE, 200), id: "t1", name: "run_command", input: {}, contextHash: asHash("000000000000") },
       { type: "tool_call", time: ms(BASE, 210), id: "t2", name: "read_file", input: {}, contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 600), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "a", contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 800), id: "t2", name: "read_file", isError: false, durationMs: 590, output: "b", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 600), id: "t1", name: "run_command", isError: false, durationMs: 400, output: "a"},
+      { type: "tool_result", time: ms(BASE, 800), id: "t2", name: "read_file", isError: false, durationMs: 590, output: "b"},
       { type: "llm_call", time: ms(BASE, 850), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 1500), stopReason: "end_turn", usage: { input_tokens: 20, output_tokens: 10 }, contextHash: asHash("def000000000") },
       { type: "turn_end", time: ms(BASE, 1600), metrics: { inputTokens: 30, outputTokens: 15 } },
@@ -105,12 +105,12 @@ describe("computeDurations — tool time", () => {
       { type: "llm_response", time: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: asHash("aaaaaaaaaaaa") },
       // Batch 1: 300ms span
       { type: "tool_call", time: ms(BASE, 100), id: "t1", name: "read_file", input: {}, contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x"},
       { type: "llm_call", time: ms(BASE, 420), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 700), stopReason: "tool_use", usage: { input_tokens: 8, output_tokens: 3 }, contextHash: asHash("bbbbbbbbbbbb") },
       // Batch 2: 200ms span
       { type: "tool_call", time: ms(BASE, 700), id: "t2", name: "write_file", input: {}, contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 900), id: "t2", name: "write_file", isError: false, durationMs: 200, output: "ok", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 900), id: "t2", name: "write_file", isError: false, durationMs: 200, output: "ok"},
       { type: "llm_call", time: ms(BASE, 920), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 1200), stopReason: "end_turn", usage: { input_tokens: 12, output_tokens: 6 }, contextHash: asHash("cccccccccccc") },
       { type: "turn_end", time: ms(BASE, 1300), metrics: { inputTokens: 25, outputTokens: 11 } },
@@ -181,7 +181,7 @@ describe("computeLiveDurations — tool time", () => {
       { type: "tool_call", time: ms(BASE, 200), id: "t1", name: "read_file", input: {}, contextHash: asHash("000000000000") },
       { type: "tool_call", time: ms(BASE, 205), id: "t2", name: "write_file", input: {}, contextHash: asHash("000000000000") },
       // Only first result in — batch not yet complete
-      { type: "tool_result", time: ms(BASE, 500), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 500), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x"},
     ];
     // After only t1 result, toolMs should still be 0 (batch not complete)
     const d1 = computeLiveDurations(events);
@@ -190,7 +190,7 @@ describe("computeLiveDurations — tool time", () => {
     // Now t2 result arrives — batch complete: 700 − 200 = 500ms
     const events2: ServerMessage[] = [
       ...events,
-      { type: "tool_result", time: ms(BASE, 700), id: "t2", name: "write_file", isError: false, durationMs: 495, output: "ok", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 700), id: "t2", name: "write_file", isError: false, durationMs: 495, output: "ok"},
     ];
     const d2 = computeLiveDurations(events2);
     expect(d2.toolMs).toBe(500); // 700 − 200
@@ -202,7 +202,7 @@ describe("computeLiveDurations — tool time", () => {
       { type: "llm_call", time: ms(BASE, 0), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 100), stopReason: "tool_use", usage: { input_tokens: 5, output_tokens: 2 }, contextHash: asHash("aaaaaaaaaaaa") },
       { type: "tool_call", time: ms(BASE, 100), id: "t1", name: "read_file", input: {}, contextHash: asHash("000000000000") },
-      { type: "tool_result", time: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x", contextHash: asHash("000000000000") },
+      { type: "tool_result", time: ms(BASE, 400), id: "t1", name: "read_file", isError: false, durationMs: 300, output: "x"},
       // Second LLM call starts — this resets the batch window
       { type: "llm_call", time: ms(BASE, 450), url: "", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 0 },
       { type: "llm_response", time: ms(BASE, 900), stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 }, contextHash: asHash("bbbbbbbbbbbb") },
