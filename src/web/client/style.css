@@ -476,11 +476,19 @@ html, body, #root {
   min-width: 0;
 }
 
+.tool-result-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .tool-seq {
   opacity: 0.5;
   flex-shrink: 0;
   font-weight: normal;
   letter-spacing: 0;
+  min-width: 1ch;   /* stable width so label doesn't shift when number appears */
+  text-align: right;
 }
 
 .tool-name {

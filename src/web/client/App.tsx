@@ -730,7 +730,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block tool" data-testid="block-tool">
           <div class="block-label-row block-tool-row">
             <span class="tool-call-content">
-              <span class="tool-seq">·{seq()}</span>
+              <span class="tool-seq">{seq()}</span>
               <span class="tool-name">{e.name}</span>
               <span class="tool-arg">{arg()}</span>
             </span>
@@ -766,7 +766,10 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class={`block result${e.isError ? " result-error" : ""}`} data-testid="block-result" data-error={e.isError ? "true" : undefined}>
           <div class="block-label-row">
-            <span class="block-label">tool_result<span class="tool-seq"> ·{seq()}</span></span>
+            <span class="tool-result-left">
+              <span class="tool-seq">{seq() > 0 ? seq() : ""}</span>
+              <span class="block-label">tool_result</span>
+            </span>
             <button class="block-expand-btn" onClick={openModal} title="View full input/output">⤢</button>
           </div>
           <div class="block-body block-preview-result">{e.output}</div>
