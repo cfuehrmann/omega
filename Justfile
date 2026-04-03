@@ -11,16 +11,21 @@
 
 # Run all tests in parallel: web-build first, then test-core and test-browser concurrently.
 # Outputs are captured and printed sequentially (core first, then browser) for readability.
+# set -e is intentionally absent: exit codes are captured explicitly so the cat calls
+# always run and gate-latest.log always contains the full test output on failure.
 test:
     #!/usr/bin/env bash
-    set -euo pipefail
-    cd src/web && npx vite build
+    set -uo pipefail
+    cd src/web && npx vite build || exit $?
     cd ../..
     CORE_OUT=$(mktemp); BROWSER_OUT=$(mktemp)
     bun test >"$CORE_OUT" 2>&1 & CORE_PID=$!
-    npx playwright test >"$BROWSER_OUT" 2>&1; BROWSER_EXIT=$?
-    wait $CORE_PID; CORE_EXIT=$?
-    cat "$CORE_OUT"; cat "$BROWSER_OUT"
+    npx playwright test >"$BROWSER_OUT" 2>&1 && BROWSER_EXIT=0 || BROWSER_EXIT=$?
+    wait $CORE_PID && CORE_EXIT=0 || CORE_EXIT=$?
+    echo "=== bun test ==="
+    cat "$CORE_OUT"
+    echo "=== playwright ==="
+    cat "$BROWSER_OUT"
     rm -f "$CORE_OUT" "$BROWSER_OUT"
     exit $(( CORE_EXIT || BROWSER_EXIT ))
 
