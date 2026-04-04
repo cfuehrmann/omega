@@ -125,6 +125,8 @@ html, body, #root {
 
 /* ── Block color variants ── */
 .block.user    { border-color: var(--user);   color: var(--user);   }
+.block.user .block-label-row { align-items: baseline; margin-bottom: 0; }
+.user-msg-body { flex: 1; margin-left: 8px; white-space: pre-wrap; word-break: break-word; }
 .block.assist  { border-color: var(--border);                        }
 
 .block.tool    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }

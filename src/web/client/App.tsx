@@ -663,9 +663,9 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block user" data-testid="block-user">
           <div class="block-label-row">
             <span class="block-label">user_message</span>
+            <span class="user-msg-body">{e.content}</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "user_message", time, body: e.content } })} title="Details">⤢</button>
           </div>
-          <div class="block-body">{e.content}</div>
         </div>
       );
 
