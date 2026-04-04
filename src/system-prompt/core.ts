@@ -47,11 +47,12 @@ a symbol, string, or pattern across the codebase. It's faster and returns
 only what's relevant.
 Use \`find_files\` when you know a file's name or extension but not its exact
 path — don't brute-force with repeated \`list_files\` calls.
-For any slow command — test suites, builds, dev servers, file watchers — prefer
-\`run_background\` over blocking \`run_command\`. The pattern: \`run_background(cmd)\`
-returns immediately with \`{pid, logFile}\`; continue doing useful work in the same
-turn; then \`wait_process(pid, timeoutMs)\` to block until done and get the exit
-code.
+Use \`run_command\` for builds, test suites, commits, and any finite command.
+The default timeout is 120 s; pass a higher \`timeout\` (e.g. 300) for commands
+you expect to take longer. Reserve \`run_background\` for processes that must
+stay alive indefinitely (dev servers, file watchers) — not for commands you
+simply wait on, since each \`run_background\` + \`wait_process\` round-trip costs
+an extra LLM call for no benefit.
 To wait for a background process to become ready (e.g. a dev server), use
 \`wait_for_output(logFile, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
 It returns as soon as the pattern appears in the log (or on timeout).

@@ -40,13 +40,10 @@ All development work goes on `develop`. Merge to `main` when stable.
   Do not use `git commit -a`: it silently skips new untracked files.
   Bare `git commit` with nothing staged exits 1 before the hook fires.
   **Exit code is the primary signal:** 0 = committed, gate passed — done,
-  no log reading needed. Non-zero = read the tail of the `run_background`
-  log file first (`tail -20 <logFile>`); it is always fresh for that run
-  and shows both hook output and any git-level errors. Only open
-  `test-output/gate-latest.log` when the tail confirms the gate ran and
-  failed — sections are marked `=== typecheck ===`, `=== test ===`,
-  `=== knip ===`. Never read `gate-latest.log` when the tail shows no gate
-  output: the file is stale from a prior run.
+  no log reading needed. Non-zero = the stderr/stdout in the `run_command`
+  result shows what happened. Only open `test-output/gate-latest.log` when
+  you need the full gate output — sections are marked
+  `=== typecheck ===`, `=== test ===`, `=== knip ===`.
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
@@ -59,12 +56,10 @@ All development work goes on `develop`. Merge to `main` when stable.
   Run `just web-build` first if frontend source has changed since the last build.
 - `just test-browser-log` — builds frontend (~30 s), then runs Playwright with
   `--reporter=list`, saving full output to `test-output/playwright-<timestamp>.log`
-  and printing the path. Because it is slow, prefer
-  `run_background("just test-browser-log")` so you can continue working while it
-  runs; then `wait_process(pid)` to synchronise. Read the background `logFile` to
-  find the playwright log path, then inspect that log with `read_file` / `grep_files`
-  (use `offset`/`limit` to paginate). The playwright log persists in `test-output/` —
-  never re-run just to see more output.
+  and printing the path. Use `run_command("just test-browser-log", { timeout: 120 })`.
+  The stdout shows the playwright log path — inspect that log with `read_file` /
+  `grep_files` (use `offset`/`limit` to paginate). The playwright log persists in
+  `test-output/` — never re-run just to see more output.
 
 `just web-build` bundles the Vite/SolidJS web client into `src/web/public/`. It
 is not a general project build — backend/agent TypeScript is run directly by

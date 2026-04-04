@@ -176,7 +176,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Execute a shell command and return its stdout, stderr, and exit code. " +
       "The command runs in the current working directory. " +
-      "Use timeout to limit long-running commands.",
+      "The default timeout is 120 s — pass a higher value for very slow commands.",
     input_schema: toToolInputSchema(RunCommandSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -241,8 +241,9 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Use wait_process(pid) to block until the process finishes and get the exit code. " +
       "Use read_file on logFile (with offset/limit for large output) and grep_files to inspect output. " +
       "Use run_command(\"kill <pid>\") to stop the process early. " +
-      "Use this for any slow command — test suites, builds, dev servers, file watchers — " +
-      "so you can continue doing useful work in the same turn instead of blocking.",
+      "Reserve this for processes that must stay alive indefinitely " +
+      "(dev servers, file watchers, interactive processes that need write_stdin). " +
+      "For finite commands (builds, test suites, commits), prefer run_command with a sufficient timeout.",
     input_schema: toToolInputSchema(RunBackgroundSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -374,7 +375,7 @@ function executeRunCommand(
   input: { command: string; timeout?: number },
   signal?: AbortSignal,
 ): Promise<string> {
-  const timeoutMs = (input.timeout ?? 30) * 1000;
+  const timeoutMs = (input.timeout ?? 120) * 1000;
 
   return new Promise((resolve) => {
     let stdout = "";

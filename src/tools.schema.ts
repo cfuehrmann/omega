@@ -47,7 +47,7 @@ export const WriteFileSchema = z.object({
 
 export const RunCommandSchema = z.object({
   command: z.string().describe("The shell command to execute"),
-  timeout: z.number().optional().describe("Timeout in seconds (optional, default 30)"),
+  timeout: z.number().optional().describe("Timeout in seconds (optional, default 120)"),
 });
 
 export const EditFileSchema = z.object({
