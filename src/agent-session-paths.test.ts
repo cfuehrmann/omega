@@ -61,7 +61,7 @@ describe("Agent session path routing", () => {
 
     await agent.init();
     for await (const _ of agent.sendMessage("hi", async () => true)) { /* drain */ }
-    await Bun.sleep(50); // let fire-and-forget logEvent writes settle
+    await agent.flushEventLog();
 
     expect(existsSync(eventsFile)).toBe(true);
     const content = readFileSync(eventsFile, "utf-8").trim();
@@ -82,7 +82,7 @@ describe("Agent session path routing", () => {
 
     await agent.init();
     for await (const _ of agent.sendMessage("hello", async () => true)) { /* drain */ }
-    await Bun.sleep(50); // let fire-and-forget logEvent writes settle
+    await agent.flushEventLog();
 
     const lines = readFileSync(eventsFile, "utf-8")
       .split("\n")
@@ -106,7 +106,7 @@ describe("Agent session path routing", () => {
 
     await agent.init();
     for await (const _ of agent.sendMessage("context check", async () => true)) { /* drain */ }
-    await Bun.sleep(50); // let fire-and-forget writes settle
+    await agent.flushEventLog();
 
     expect(existsSync(contextFile)).toBe(true);
     const content = readFileSync(contextFile, "utf-8").trim();
@@ -130,7 +130,7 @@ describe("Agent session path routing", () => {
     // by checking both files receive content after a turn.
     await agent.init();
     for await (const _ of agent.sendMessage("test", async () => true)) { /* drain */ }
-    await Bun.sleep(50); // let fire-and-forget writes settle
+    await agent.flushEventLog();
 
     const eventsContent = readFileSync(eventsFile, "utf-8").trim();
     const contextContent = readFileSync(contextFile, "utf-8").trim();

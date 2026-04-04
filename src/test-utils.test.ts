@@ -87,7 +87,7 @@ describe("makeTestAgent", () => {
     const { agent, contextFile, eventsFile, dispose } = await makeTestAgent(makeMinimalProvider("safe"));
     disposeAll.push(dispose);
     for await (const _ of agent.sendMessage("test", async () => true)) { /* drain */ }
-    await Bun.sleep(50); // let fire-and-forget writes settle
+    await agent.flushEventLog();
     expect(existsSync(contextFile)).toBe(true);
     expect(existsSync(eventsFile)).toBe(true);
   });

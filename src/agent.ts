@@ -390,6 +390,11 @@ export class Agent {
     return this.logQueue;
   }
 
+  /** Wait for all queued logEvent writes to complete. */
+  async flushEventLog(): Promise<void> {
+    await this.logQueue;
+  }
+
   /**
    * Write a server_stopped event and await the flush.
    * Call this at clean shutdown before process.exit().

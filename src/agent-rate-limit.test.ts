@@ -231,6 +231,7 @@ describe("overload (529) — indefinite retry", () => {
     const { agent, eventsFile, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
     await collectEvents(agent, "hello");
+    await agent.flushEventLog();
 
     const lines = readFileSync(eventsFile, "utf-8")
       .split("\n")
@@ -423,6 +424,7 @@ describe("mid-stream retry", () => {
     const { agent, eventsFile, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     await collectEvents(agent, "hello");
+    await agent.flushEventLog();
 
     const lines = readFileSync(eventsFile, "utf-8")
       .split("\n")

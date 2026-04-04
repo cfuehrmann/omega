@@ -126,7 +126,7 @@ describe("context.jsonl record shape", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
-    await Bun.sleep(50); // let fire-and-forget writes settle
+    await agent.flushEventLog();
 
     const records = readContextRecords(contextFile);
     expect(records.length).toBeGreaterThanOrEqual(2); // user + assistant
