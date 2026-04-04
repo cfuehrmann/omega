@@ -293,7 +293,7 @@ export class Agent {
   private activeModel: string = config.model;
   /** True once server_started has been logged — prevents duplicate on reconnect. */
   private serverStartLogged = false;
-  /** True once session_start has been logged — prevents duplicate on reconnect. */
+  /** True once session_started has been logged — prevents duplicate on reconnect. */
   private sessionStartLogged = false;
 
   public readonly sessionId: string;
@@ -448,7 +448,7 @@ export class Agent {
     if (!this.sessionStartLogged) {
       this.sessionStartLogged = true;
       await this.logEvent({
-        type: "session_start",
+        type: "session_started",
         time: now(),
         sessionId: this.sessionId,
         model: this.activeModel,

@@ -27,7 +27,7 @@ import type {
   AgentErrorEvent,
   TurnInterruptedEvent,
   CompactedEvent,
-  SessionStartEvent,
+  SessionStartedEvent,
   ServerStartedEvent,
   ServerStoppedEvent,
   LlmCallEvent,
@@ -61,8 +61,8 @@ describe("OmegaEvent round-trip serialisation", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it("session_start", async () => {
-    const e: SessionStartEvent = { type: "session_start", time: iso("2025-01-01T00:00:00.000Z"), sessionId: "abc123", model: "claude-sonnet-4-6", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
+  it("session_started", async () => {
+    const e: SessionStartedEvent = { type: "session_started", time: iso("2025-01-01T00:00:00.000Z"), sessionId: "abc123", model: "claude-sonnet-4-6", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

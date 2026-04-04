@@ -1041,11 +1041,11 @@ describe("Agent — llm_response text field", () => {
 });
 
 // ---------------------------------------------------------------------------
-// session_start dedup — not re-emitted on reconnect
+// session_started dedup — not re-emitted on reconnect
 // ---------------------------------------------------------------------------
 
-describe("Agent — session_start dedup on reconnect", () => {
-  it.concurrent("init() logs session_start only once even if called multiple times", async () => {
+describe("Agent — session_started dedup on reconnect", () => {
+  it.concurrent("init() logs session_started only once even if called multiple times", async () => {
     const { readFile } = await import("fs/promises");
     const origKey = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = "test-key-dummy";
@@ -1057,7 +1057,7 @@ describe("Agent — session_start dedup on reconnect", () => {
       await agent.init();
       const raw = await readFile(eventsFile, "utf-8");
       const lines = raw.trim().split("\n").map(l => JSON.parse(l));
-      const starts = lines.filter((e: any) => e.type === "session_start");
+      const starts = lines.filter((e: any) => e.type === "session_started");
       expect(starts.length).toBe(1);
     } finally {
       if (origKey === undefined) delete process.env.ANTHROPIC_API_KEY;

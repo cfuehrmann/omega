@@ -5,7 +5,7 @@
  * mirrors the structure of events.jsonl. Turn grouping is a *rendering
  * concern*, derived by `computeRenderGroups()` at render time rather than
  * baked into the state shape. This means events that don't belong to any turn
- * (session_start, server_started, server_stopped, future inter-turn events)
+ * (session_started, server_started, server_stopped, future inter-turn events)
  * are naturally first-class citizens — they just sit in the flat array where
  * they belong.
  *
@@ -140,7 +140,7 @@ interface AppState {
    * Live duration accumulation for the current in-progress turn.
    */
   liveDurations: DurationMetrics;
-  /** Model for the current/last turn (set from llm_call or session_start). */
+  /** Model for the current/last turn (set from llm_call or session_started). */
   liveModel: string;
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
@@ -479,7 +479,7 @@ export function dispatch(event: ServerMessage): void {
       for (let i = 0; i < rawEvents.length; i++) {
         const e = rawEvents[i]!;
 
-        if (e.type === "session_start") {
+        if (e.type === "session_started") {
           replayLiveModel = e.model;
         }
 
@@ -644,7 +644,7 @@ export function dispatch(event: ServerMessage): void {
       break;
     }
 
-    case "session_start": {
+    case "session_started": {
       setState(produce(s => { s.events.push(event); }));
       setState("liveModel", event.model);
       break;

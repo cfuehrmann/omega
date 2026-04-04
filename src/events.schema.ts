@@ -40,7 +40,7 @@ const LlmResponseUsageSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const SessionStartSchema = z.object({
-  type: z.literal("session_start"),
+  type: z.literal("session_started"),
   time: ISOTimestampSchema,
   sessionId: z.string(),
   model: z.string(),

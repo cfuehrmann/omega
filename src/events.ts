@@ -42,8 +42,8 @@ export type StreamSignal = TextSignal | ThinkingSignal;
 // ---------------------------------------------------------------------------
 
 /** The session started (first event in every session). */
-export interface SessionStartEvent {
-  type: "session_start";
+export interface SessionStartedEvent {
+  type: "session_started";
   time: ISOTimestamp;
   sessionId: string;
   model: string;
@@ -326,7 +326,7 @@ export interface TransportErrorEvent {
 // ---------------------------------------------------------------------------
 
 export type OmegaEvent =
-  | SessionStartEvent
+  | SessionStartedEvent
   | ServerStartedEvent
   | ServerStoppedEvent
   | UserMessageEvent

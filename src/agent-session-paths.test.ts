@@ -93,7 +93,7 @@ describe("Agent session path routing", () => {
     const types = events.map((e: any) => e.type);
 
     // Every session must have at least these events
-    expect(types).toContain("session_start");
+    expect(types).toContain("session_started");
     expect(types).toContain("user_message");
     expect(types).toContain("llm_call");
     expect(types).toContain("llm_response");

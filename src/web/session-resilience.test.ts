@@ -171,7 +171,7 @@ describe("store history replay — open turn recovery", () => {
     dispatch({
       type: "history",
       events: [
-        { type: "session_start", authMode: "claude-max", model: "claude-sonnet-4-6", systemPrompt: "..." } as any,
+        { type: "session_started", authMode: "claude-max", model: "claude-sonnet-4-6", systemPrompt: "..." } as any,
         { type: "user_message", content: "ping" },
         { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["5fce3362aabb"], cacheBreakpointIndex: 0 } as any,
         { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 3, output_tokens: 5, cache_creation_input_tokens: 320, cache_read_input_tokens: 3318, service_tier: "standard" }, text: "pong" } as any,
@@ -196,9 +196,9 @@ describe("store history replay — open turn recovery", () => {
     expect(llmResponse).toBeDefined();
     expect(llmResponse.text).toBe("pong");
 
-    // session_start should appear as a free group before the turn
+    // session_started should appear as a free group before the turn
     expect(groups[0]!.kind).toBe("free");
-    expect(groups[0]!.events[0]!.type).toBe("session_start");
+    expect(groups[0]!.events[0]!.type).toBe("session_started");
 
     // server_stopped should appear as a free group after the turn
     const lastGroup = groups[groups.length - 1]!;
