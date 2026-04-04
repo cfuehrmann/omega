@@ -142,6 +142,8 @@ interface AppState {
   liveDurations: DurationMetrics;
   /** Model for the current/last turn (set from llm_call or session_started). */
   liveModel: string;
+  /** Current thinking effort level (set by session_info and effort_changed events). */
+  liveEffort: string;
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
 }
@@ -170,6 +172,7 @@ const [state, setState] = createStore<AppState>({
   liveTurn: null,
   liveDurations: zeroDurations(),
   liveModel: "",
+  liveEffort: "high",
   sessionDir: "",
 });
 
@@ -548,6 +551,7 @@ export function dispatch(event: ServerMessage): void {
     case "session_info":
       setState("sessionDir", event.dir);
       setState("liveModel", event.model);
+      setState("liveEffort", event.effort);
       break;
 
     case "reset_done":
@@ -564,6 +568,7 @@ export function dispatch(event: ServerMessage): void {
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
       setState("liveModel", "");
+      setState("liveEffort", "high");
       break;
 
     case "user_message":
@@ -681,6 +686,11 @@ export function dispatch(event: ServerMessage): void {
         s.streamingThinking = "";
       }));
       setState("retrying", true);
+      break;
+
+    case "effort_changed":
+      setState(produce(s => { s.events.push(event); }));
+      setState("liveEffort", event.effort);
       break;
 
     case "server_started":

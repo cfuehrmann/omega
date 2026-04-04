@@ -160,6 +160,12 @@ const ModelChangedSchema = z.object({
   model: z.string(),
 });
 
+const EffortChangedSchema = z.object({
+  type: z.literal("effort_changed"),
+  time: ISOTimestampSchema,
+  effort: z.string(),
+});
+
 const TransportErrorSchema = z.object({
   type: z.literal("transport_error"),
   time: ISOTimestampSchema,
@@ -203,5 +209,6 @@ export const OmegaEventSchema = z.discriminatedUnion("type", [
   CompactedSchema,
   LlmRetrySchema,
   ModelChangedSchema,
+  EffortChangedSchema,
   TransportErrorSchema,
 ]) satisfies z.ZodType<OmegaEvent>;

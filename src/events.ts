@@ -290,6 +290,13 @@ export interface ModelChangedEvent {
   model: string;
 }
 
+/** The operator changed the thinking effort level. */
+export interface EffortChangedEvent {
+  type: "effort_changed";
+  time: ISOTimestamp;
+  effort: string;
+}
+
 /**
  * A transport-layer error emitted by the web server.
  *
@@ -341,4 +348,5 @@ export type OmegaEvent =
   | CompactedEvent
   | LlmRetryEvent
   | ModelChangedEvent
+  | EffortChangedEvent
   | TransportErrorEvent;

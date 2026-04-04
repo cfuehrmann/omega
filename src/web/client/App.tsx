@@ -1,7 +1,7 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import type { JSX } from "solid-js";
 import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
-import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel } from "../protocol";
+import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel, type OmegaEffort } from "../protocol";
 import { primaryToolArg } from "../../tools.schema.js";
 import { marked } from "marked";
 
@@ -765,6 +765,19 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
     }
 
+    case "effort_changed": {
+      const body = `Effort set to ${e.effort}`;
+      return (
+        <div class="block status" data-testid="block-status">
+          <div class="block-label-row">
+            <span class="block-label">effort_changed</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "effort_changed", time, body } })} title="Details">⤢</button>
+          </div>
+          <div class="block-body">{body}</div>
+        </div>
+      );
+    }
+
     case "compacted": {
       const body = "Context compacted by server.";
       return (
@@ -1095,6 +1108,15 @@ function handleModelChange(e: Event) {
   sendToServer({ type: "set_model", model });
 }
 
+function activeEffort(): string {
+  return state.liveEffort;
+}
+
+function handleEffortChange(e: Event) {
+  const effort = (e.currentTarget as HTMLSelectElement).value as OmegaEffort;
+  sendToServer({ type: "set_effort", effort });
+}
+
 function newSession() {
   if (!state.connected || state.streaming) return;
   if (!confirm("Start a new session? This will clear all history.")) return;
@@ -1350,6 +1372,17 @@ function InputRow() {
         >
           <option value="claude-sonnet-4-6">Sonnet</option>
           <option value="claude-opus-4-6">Opus</option>
+        </select>
+        <select
+          class="model-select-inline"
+          disabled={state.streaming}
+          value={activeEffort()}
+          onChange={handleEffortChange}
+        >
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High (default)</option>
+          <option value="max" disabled={activeModel() !== "claude-opus-4-6"}>Max</option>
         </select>
       </Show>
       <div class="textarea-wrap">

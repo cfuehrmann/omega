@@ -291,6 +291,7 @@ export class Agent {
   public sessionCacheReadTokens = 0;
 
   private activeModel: string = config.model;
+  private activeEffort: string = "high";
   /** True once server_started has been logged — prevents duplicate on reconnect. */
   private serverStartLogged = false;
   /** True once session_started has been logged — prevents duplicate on reconnect. */
@@ -483,6 +484,24 @@ export class Agent {
 
   getActiveModel(): string {
     return this.activeModel;
+  }
+
+  /**
+   * Switch the thinking effort level. Returns the persisted effort_changed event.
+   */
+  setEffort(effort: string): OmegaEvent {
+    this.activeEffort = effort;
+    const ev: OmegaEvent = {
+      type: "effort_changed",
+      time: now(),
+      effort,
+    };
+    this.logEvent(ev);
+    return ev;
+  }
+
+  getActiveEffort(): string {
+    return this.activeEffort;
   }
 
   getCompactedContextHistory(): readonly Anthropic.Beta.Messages.BetaMessageParam[] {
@@ -682,6 +701,12 @@ export class Agent {
           ],
         },
         thinking: { type: "adaptive" as const },
+        output_config: {
+          // "max" effort is only supported on claude-opus-4-6; cap to "high" for all other models.
+          effort: (this.activeEffort === "max" && activeModel !== "claude-opus-4-6"
+            ? "high"
+            : this.activeEffort) as "low" | "medium" | "high" | "max",
+        },
       };
 
       // Emit llm_call with a persisted elided request summary.

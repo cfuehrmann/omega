@@ -275,7 +275,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     // After the await we're outside the auto-corked message callback —
     // cork explicitly so all three frames are batched reliably.
     session.ws.cork(() => {
-      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel() }));
+      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort() }));
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
     });
@@ -294,6 +294,22 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
       return;
     }
     const ev = persistentAgent.setModel(msg.model);
+    send(session.ws, ev);
+    // "max" effort is only valid on Opus. If the user switches to Sonnet while
+    // effort is "max", auto-reset to "high" so the UI stays consistent.
+    if (msg.model !== "claude-opus-4-6" && persistentAgent.getActiveEffort() === "max") {
+      const effortEv = persistentAgent.setEffort("high");
+      send(session.ws, effortEv);
+    }
+    return;
+  }
+
+  if (msg.type === "set_effort") {
+    if (session.isStreaming) {
+      sendTransportError(session.ws, "Cannot change effort during an active turn", "handleMessage");
+      return;
+    }
+    const ev = persistentAgent.setEffort(msg.effort);
     send(session.ws, ev);
     return;
   }
@@ -399,7 +415,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         // must cork explicitly (Bun docs: "use cork in async functions").
         const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
         ws.cork(() => {
-          ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel() }));
+          ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort() }));
           if (replayEvents.length > 0) {
             ws.send(JSON.stringify({ type: "history", events: replayEvents }));
           }
