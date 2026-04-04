@@ -55,7 +55,7 @@ test("server_stopped event renders as info block in the feed", async ({ page, se
 
   // server_stopped should render as an info block
   const infoBlocks = page.getByTestId("block-info");
-  await expect(infoBlocks.filter({ hasText: "server stopped" })).toBeVisible({ timeout: 3000 });
+  await expect(infoBlocks.filter({ hasText: "server_stopped" })).toBeVisible({ timeout: 3000 });
 });
 
 // ---------------------------------------------------------------------------

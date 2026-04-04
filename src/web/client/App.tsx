@@ -892,8 +892,8 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class="block error-b" data-testid="block-error">
           <div class="block-label-row">
-            <span class="block-label">api error</span>
-            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "api error", time, body } })} title="Details">⤢</button>
+            <span class="block-label">llm_error</span>
+            <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "llm_error", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
         </div>
@@ -905,7 +905,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class="block error-b" data-testid="block-error">
           <div class="block-label-row">
-            <span class="block-label">error</span>
+            <span class="block-label">agent_error</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "agent_error", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
@@ -981,7 +981,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class="block info" data-testid="block-info">
           <div class="block-label-row">
-            <span class="block-label">session start</span>
+            <span class="block-label">session_start</span>
             <span class="user-msg-body">{body}</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "session_start", time, body } })} title="Details">⤢</button>
           </div>
@@ -993,7 +993,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class="block info" data-testid="block-info">
           <div class="block-label-row">
-            <span class="block-label">server started</span>
+            <span class="block-label">server_started</span>
           </div>
         </div>
       );
@@ -1003,7 +1003,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class="block info" data-testid="block-info">
           <div class="block-label-row">
-            <span class="block-label">server stopped</span>
+            <span class="block-label">server_stopped</span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "server_stopped", time, body } })} title="Details">⤢</button>
           </div>
           <div class="block-body">{body}</div>
