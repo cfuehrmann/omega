@@ -693,10 +693,14 @@ export function dispatch(event: ServerMessage): void {
       setState("liveEffort", event.effort);
       break;
 
+    case "model_changed":
+      setState(produce(s => { s.events.push(event); }));
+      setState("liveModel", event.model);
+      break;
+
     case "server_started":
     case "server_stopped":
     case "tool_call":
-    case "model_changed":
     case "compacted":
     case "llm_error":
     case "agent_error":
