@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { executeTool, formatToolCall } from "./tools.js";
+import { primaryToolArg } from "./tools.schema.js";
 
 // ---------------------------------------------------------------------------
 // Unit tests for tools.ts
@@ -924,5 +925,58 @@ describe("executeTool: write_stdin", () => {
   it("formatToolCall formats write_stdin with end_stdin", () => {
     const s = formatToolCall("write_stdin", { pid: 12345, text: "yes\n", end_stdin: true });
     expect(s).toBe("write_stdin: pid 12345 (4 chars) [close stdin]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// primaryToolArg (shared display helper from tools.schema.ts)
+// ---------------------------------------------------------------------------
+
+describe("primaryToolArg", () => {
+  it("extracts path for file tools", () => {
+    expect(primaryToolArg("read_file", { path: "src/agent.ts" })).toBe("src/agent.ts");
+    expect(primaryToolArg("write_file", { path: "out.txt", content: "hi" })).toBe("out.txt");
+    expect(primaryToolArg("edit_file", { path: "f.ts", old_text: "a", new_text: "b" })).toBe("f.ts");
+  });
+
+  it("extracts path for list_files", () => {
+    expect(primaryToolArg("list_files", { path: "src/" })).toBe("src/");
+  });
+
+  it("extracts pattern for find_files", () => {
+    expect(primaryToolArg("find_files", { pattern: "*.ts", path: "." })).toBe("*.ts");
+  });
+
+  it("extracts command for run_command and run_background", () => {
+    expect(primaryToolArg("run_command", { command: "ls -la" })).toBe("ls -la");
+    expect(primaryToolArg("run_background", { command: "npm start" })).toBe("npm start");
+  });
+
+  it("extracts pattern @ path for grep_files", () => {
+    expect(primaryToolArg("grep_files", { pattern: "TODO", path: "src/" })).toBe("TODO @ src/");
+  });
+
+  it("extracts url for fetch_url", () => {
+    expect(primaryToolArg("fetch_url", { url: "https://example.com" })).toBe("https://example.com");
+  });
+
+  it("extracts query for web_search", () => {
+    expect(primaryToolArg("web_search", { query: "bun test" })).toBe("bun test");
+  });
+
+  it("extracts logFile for wait_for_output", () => {
+    expect(primaryToolArg("wait_for_output", { logFile: "/tmp/bg.log", timeoutMs: 5000 })).toBe("/tmp/bg.log");
+  });
+
+  it("extracts text for write_stdin", () => {
+    expect(primaryToolArg("write_stdin", { pid: 123, text: "yes\n" })).toBe("yes\n");
+  });
+
+  it("falls back to JSON for unknown tools", () => {
+    expect(primaryToolArg("mystery_tool", { x: 1 })).toBe('{"x":1}');
+  });
+
+  it("returns (none) for null input", () => {
+    expect(primaryToolArg("read_file", null)).toBe("(none)");
   });
 });

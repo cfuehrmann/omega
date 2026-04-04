@@ -2,6 +2,7 @@ import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMoun
 import type { JSX } from "solid-js";
 import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
 import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel } from "../protocol";
+import { primaryToolArg } from "../../tools.schema.js";
 import { marked } from "marked";
 
 // Configure marked: GFM (tables, strikethrough), no raw HTML passthrough.
@@ -320,36 +321,8 @@ function firstLine(s: string): string {
   return s.split("\n").find(l => l.trim()) ?? s.slice(0, 80);
 }
 
-/** Extract the primary display argument for a tool call (human-readable, no JSON noise). */
-function primaryArg(name: string, input: unknown): string {
-  if (input == null) return "(none)";
-  const inp = input as Record<string, unknown>;
-  switch (name) {
-    case "read_file":
-    case "write_file":
-    case "edit_file":
-      return String(inp.path ?? "");
-    case "find_files":
-      return String(inp.pattern ?? "");
-    case "run_command":
-    case "run_background":
-      return String(inp.command ?? "");
-    case "grep_files":
-      return `${inp.pattern} @ ${inp.path}`;
-    case "fetch_url":
-      return String(inp.url ?? "");
-    case "web_search":
-      return String(inp.query ?? "");
-    case "wait_process":
-      return `pid ${inp.pid}`;
-    case "wait_for_output":
-      return String(inp.logFile ?? "");
-    case "write_stdin":
-      return String(inp.text ?? "");
-    default:
-      return typeof input === "object" ? JSON.stringify(input) : String(input);
-  }
-}
+// primaryToolArg is imported from tools.schema.ts — single source of
+// tool-name-to-display-arg mapping shared with the terminal formatter.
 
 /** Sequential number for a tool call within one LLM response batch (1-based).
  *  Returns null when the batch has only one call — no number needed. */
@@ -708,7 +681,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
 
     case "tool_call": {
-      const arg = createMemo(() => primaryArg(e.name, e.input));
+      const arg = createMemo(() => primaryToolArg(e.name, e.input));
       const seq = createMemo(() => toolSeq(props.turnEvents, e.id, e.contextHash));
       // Find the matching tool_result in the same turn by id
       const result = createMemo(() =>

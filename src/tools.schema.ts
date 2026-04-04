@@ -104,3 +104,45 @@ export const WriteStdinSchema = z.object({
   text:      z.string().describe("Text to write to the process stdin. Include a newline ('\\n') to submit a line-based prompt."),
   end_stdin: z.boolean().optional().describe("If true, close stdin after writing, signalling EOF to the process. Required for programs that read until end-of-input (e.g. cat). Default false."),
 });
+
+// ---------------------------------------------------------------------------
+// Display helper — shared by terminal (tools.ts) and web (App.tsx)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the primary human-readable argument for a tool call.
+ *
+ * Returns the single most important display value — file path, command,
+ * search query, etc. — without extra details like byte counts or flags.
+ * Used by both the terminal `formatToolCall` and the web UI to avoid
+ * duplicating tool-name knowledge.
+ */
+export function primaryToolArg(name: string, input: unknown): string {
+  if (input == null) return "(none)";
+  const inp = input as Record<string, unknown>;
+  switch (name) {
+    case "read_file":
+    case "write_file":
+    case "edit_file":
+      return String(inp.path ?? "");
+    case "list_files":
+      return String(inp.path ?? "");
+    case "find_files":
+      return String(inp.pattern ?? "");
+    case "run_command":
+    case "run_background":
+      return String(inp.command ?? "");
+    case "grep_files":
+      return `${inp.pattern} @ ${inp.path}`;
+    case "fetch_url":
+      return String(inp.url ?? "");
+    case "web_search":
+      return String(inp.query ?? "");
+    case "wait_for_output":
+      return String(inp.logFile ?? "");
+    case "write_stdin":
+      return String(inp.text ?? "");
+    default:
+      return typeof input === "object" ? JSON.stringify(input) : String(input);
+  }
+}
