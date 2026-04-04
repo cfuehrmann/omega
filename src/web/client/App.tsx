@@ -1382,7 +1382,9 @@ function InputRow() {
           <option value="low">Low</option>
           <option value="medium">Medium</option>
           <option value="high">High (default)</option>
-          <option value="max" disabled={activeModel() !== "claude-opus-4-6"}>Max</option>
+          <Show when={activeModel() === "claude-opus-4-6"}>
+            <option value="max">Max</option>
+          </Show>
         </select>
       </Show>
       <div class="textarea-wrap">
