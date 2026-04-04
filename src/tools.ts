@@ -17,7 +17,6 @@ import {
   GrepFilesSchema,
   FindFilesSchema,
   RunBackgroundSchema,
-  WaitProcessSchema,
   WaitForOutputSchema,
   WriteStdinSchema,
 } from "./tools.schema.js";
@@ -238,23 +237,12 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Start a long-running process in the background and return immediately. " +
       "stdout and stderr are redirected to a temporary log file. " +
       "Returns { pid, logFile }. " +
-      "Use wait_process(pid) to block until the process finishes and get the exit code. " +
       "Use read_file on logFile (with offset/limit for large output) and grep_files to inspect output. " +
       "Use run_command(\"kill <pid>\") to stop the process early. " +
       "Reserve this for processes that must stay alive indefinitely " +
       "(dev servers, file watchers, interactive processes that need write_stdin). " +
       "For finite commands (builds, test suites, commits), prefer run_command with a sufficient timeout.",
     input_schema: toToolInputSchema(RunBackgroundSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
-  },
-  {
-    name: "wait_process",
-    description:
-      "Wait for a background process started with run_background to finish. " +
-      "Blocks until the process exits or timeoutMs is reached (default 60000 ms). " +
-      "Returns { pid, exitCode, signal, timedOut }. " +
-      "Use this to synchronise before reading the logFile from run_background. " +
-      "The pid parameter must be a number, not a string.",
-    input_schema: toToolInputSchema(WaitProcessSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
     name: "wait_for_output",
@@ -623,11 +611,9 @@ async function executeFindFiles(input: {
   return `${truncated}\n\n[truncated: showing ${maxResults} of ${lines.length} results]`;
 }
 
-// Map from PID to ChildProcess for wait_process support.
-// Populated by executeRunBackground; entries are removed by executeWaitProcess
-// once it has observed the exit. If wait_process is never called the entry
-// lingers for the session lifetime — that is acceptable because background
-// process count per session is small in practice.
+// Map from PID to ChildProcess, used by write_stdin to find the process's
+// stdin.  Populated by executeRunBackground; entries linger for the session
+// lifetime — acceptable because background process count per session is small.
 const backgroundProcesses = new Map<number, ReturnType<typeof spawn>>();
 
 async function executeRunBackground(input: {
@@ -654,67 +640,10 @@ async function executeRunBackground(input: {
     throw new Error("Failed to spawn background process");
   }
 
-  // Track so wait_process can observe the exit event and retrieve the exit code.
+  // Track so write_stdin can find the process's stdin.
   backgroundProcesses.set(proc.pid, proc);
 
   return JSON.stringify({ pid: proc.pid, logFile });
-}
-
-async function executeWaitProcess(input: {
-  pid: number;
-  timeoutMs?: number;
-}): Promise<string> {
-  const { pid, timeoutMs = 60_000 } = input;
-  const child = backgroundProcesses.get(pid);
-
-  if (!child) {
-    // Not in our map — poll with signal 0 until the OS reports the PID is gone.
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(pid, 0);
-      } catch (err: unknown) {
-        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ESRCH") {
-          return JSON.stringify({
-            pid,
-            timedOut: false,
-            exitCode: null,
-            note: "exit code unavailable (process not tracked by run_background)",
-          });
-        }
-        throw err;
-      }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    return JSON.stringify({ pid, timedOut: true });
-  }
-
-  // Already exited? exitCode is set by Node once the process has finished.
-  if (child.exitCode !== null || child.signalCode !== null) {
-    backgroundProcesses.delete(pid);
-    return JSON.stringify({
-      pid,
-      timedOut: false,
-      exitCode: child.exitCode,
-      signal: child.signalCode ?? null,
-    });
-  }
-
-  // Wait for exit with timeout.
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      child.removeListener("exit", onExit);
-      resolve(JSON.stringify({ pid, timedOut: true }));
-    }, timeoutMs);
-
-    const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
-      clearTimeout(timer);
-      backgroundProcesses.delete(pid);
-      resolve(JSON.stringify({ pid, timedOut: false, exitCode: code, signal: sig }));
-    };
-
-    child.once("exit", onExit);
-  });
 }
 
 async function executeWaitForOutput(input: {
@@ -833,9 +762,6 @@ export async function executeTool(
       case "run_background":
         output = await executeRunBackground(RunBackgroundSchema.parse(input));
         break;
-      case "wait_process":
-        output = await executeWaitProcess(WaitProcessSchema.parse(input));
-        break;
       case "wait_for_output":
         output = await executeWaitForOutput(WaitForOutputSchema.parse(input));
         break;
@@ -910,11 +836,6 @@ export function formatToolCall(name: string, input: any): string {
     }
     case "run_background":
       return `run_background: ${input.command}`;
-    case "wait_process": {
-      let s = `wait_process: pid ${input.pid}`;
-      if (input.timeoutMs) s += ` (timeout ${input.timeoutMs}ms)`;
-      return s;
-    }
     case "wait_for_output": {
       let s = `wait_for_output: ${input.logFile} (timeout ${input.timeoutMs}ms)`;
       if (input.pattern)  s += ` pattern="${input.pattern}"`;

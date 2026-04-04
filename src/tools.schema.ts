@@ -92,11 +92,6 @@ export const RunBackgroundSchema = z.object({
   cwd:     z.string().optional().describe("Working directory for the process (optional, defaults to cwd)"),
 });
 
-export const WaitProcessSchema = z.object({
-  pid:       z.number().describe("Process ID returned by run_background"),
-  timeoutMs: z.number().optional().describe("Maximum milliseconds to wait (optional, default 60000)"),
-});
-
 export const WaitForOutputSchema = z.object({
   logFile:   z.string().describe("Path to the log file to monitor — the logFile value returned by run_background."),
   timeoutMs: z.number().describe("Maximum milliseconds to wait before giving up and returning whatever the log contains."),

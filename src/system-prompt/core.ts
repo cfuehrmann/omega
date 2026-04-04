@@ -50,9 +50,7 @@ path — don't brute-force with repeated \`list_files\` calls.
 Use \`run_command\` for builds, test suites, commits, and any finite command.
 The default timeout is 120 s; pass a higher \`timeout\` (e.g. 300) for commands
 you expect to take longer. Reserve \`run_background\` for processes that must
-stay alive indefinitely (dev servers, file watchers) — not for commands you
-simply wait on, since each \`run_background\` + \`wait_process\` round-trip costs
-an extra LLM call for no benefit.
+stay alive indefinitely (dev servers, file watchers).
 To wait for a background process to become ready (e.g. a dev server), use
 \`wait_for_output(logFile, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
 It returns as soon as the pattern appears in the log (or on timeout).

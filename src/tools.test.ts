@@ -717,86 +717,6 @@ describe("executeTool: run_background", () => {
   });
 });
 
-// --- executeTool: wait_process ---
-
-describe("executeTool: wait_process", () => {
-  it("returns exitCode 0 when process exits cleanly", async () => {
-    const bgResult = await executeTool("run_background", { command: "exit 0" });
-    expect(bgResult.isError).toBe(false);
-    const { pid } = JSON.parse(bgResult.output);
-
-    const waitResult = await executeTool("wait_process", { pid, timeoutMs: 5000 });
-    expect(waitResult.isError).toBe(false);
-    const result = JSON.parse(waitResult.output);
-    expect(result.timedOut).toBe(false);
-    expect(result.exitCode).toBe(0);
-    expect(result.pid).toBe(pid);
-  });
-
-  it("returns non-zero exitCode when process fails", async () => {
-    const bgResult = await executeTool("run_background", { command: "exit 42" });
-    expect(bgResult.isError).toBe(false);
-    const { pid } = JSON.parse(bgResult.output);
-
-    const waitResult = await executeTool("wait_process", { pid, timeoutMs: 5000 });
-    expect(waitResult.isError).toBe(false);
-    const result = JSON.parse(waitResult.output);
-    expect(result.timedOut).toBe(false);
-    expect(result.exitCode).toBe(42);
-  });
-
-  it("returns exitCode correctly when process has already exited before wait_process is called", async () => {
-    const bgResult = await executeTool("run_background", { command: "exit 0" });
-    expect(bgResult.isError).toBe(false);
-    const { pid } = JSON.parse(bgResult.output);
-
-    // Wait long enough for the process to naturally finish
-    await new Promise((r) => setTimeout(r, 500));
-
-    const waitResult = await executeTool("wait_process", { pid, timeoutMs: 5000 });
-    expect(waitResult.isError).toBe(false);
-    const result = JSON.parse(waitResult.output);
-    expect(result.timedOut).toBe(false);
-    // exitCode is 0 (already exited, tracked) or null (already exited, untracked after cleanup)
-    expect(result.pid).toBe(pid);
-  });
-
-  it("times out when process runs longer than timeoutMs", async () => {
-    const bgResult = await executeTool("run_background", { command: "sleep 30" });
-    expect(bgResult.isError).toBe(false);
-    const { pid } = JSON.parse(bgResult.output);
-
-    const waitResult = await executeTool("wait_process", { pid, timeoutMs: 200 });
-    expect(waitResult.isError).toBe(false);
-    const result = JSON.parse(waitResult.output);
-    expect(result.timedOut).toBe(true);
-    expect(result.pid).toBe(pid);
-
-    // Clean up
-    process.kill(pid, "SIGKILL");
-  });
-
-  it("returns gracefully for an unknown PID that is already gone", async () => {
-    // Use a PID that almost certainly doesn't exist
-    const fakePid = 999999999;
-    const waitResult = await executeTool("wait_process", { pid: fakePid, timeoutMs: 500 });
-    expect(waitResult.isError).toBe(false);
-    const result = JSON.parse(waitResult.output);
-    expect(result.timedOut).toBe(false);
-    expect(result.pid).toBe(fakePid);
-  });
-
-  it("formatToolCall formats wait_process without timeout", () => {
-    const s = formatToolCall("wait_process", { pid: 12345 });
-    expect(s).toBe("wait_process: pid 12345");
-  });
-
-  it("formatToolCall formats wait_process with timeout", () => {
-    const s = formatToolCall("wait_process", { pid: 12345, timeoutMs: 30000 });
-    expect(s).toBe("wait_process: pid 12345 (timeout 30000ms)");
-  });
-});
-
 // --- executeTool: wait_for_output ---
 
 describe("executeTool: wait_for_output", () => {
@@ -935,11 +855,14 @@ describe("executeTool: write_stdin", () => {
     expect(writeResult.isError).toBe(false);
     expect(writeResult.output).toContain(String(pid));
 
-    await executeTool("wait_process", { pid, timeoutMs: 3000 });
-
-    const { readFile: rf } = await import("fs/promises");
-    const log = await rf(logFile, "utf-8");
-    expect(log).toContain("got:hello");
+    const waitResult = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+      pattern: "got:hello",
+    });
+    expect(waitResult.isError).toBe(false);
+    const r = JSON.parse(waitResult.output);
+    expect(r.matched).toBe(true);
   });
 
   it("closes stdin with end_stdin=true causing cat to exit", async () => {
@@ -955,15 +878,15 @@ describe("executeTool: write_stdin", () => {
     expect(writeResult.isError).toBe(false);
     expect(writeResult.output).toContain("closed stdin");
 
-    // cat exits once stdin is closed (EOF)
-    const waitResult = await executeTool("wait_process", { pid, timeoutMs: 3000 });
+    // cat exits once stdin is closed (EOF) — wait for its output in the log
+    const waitResult = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+      pattern: "hello world",
+    });
     expect(waitResult.isError).toBe(false);
     const r = JSON.parse(waitResult.output);
-    expect(r.timedOut).toBe(false);
-
-    const { readFile: rf } = await import("fs/promises");
-    const log = await rf(logFile, "utf-8");
-    expect(log).toContain("hello world");
+    expect(r.matched).toBe(true);
   });
 
   it("returns error for unknown pid", async () => {
