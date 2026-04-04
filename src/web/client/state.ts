@@ -547,6 +547,7 @@ export function dispatch(event: ServerMessage): void {
 
     case "session_info":
       setState("sessionDir", event.dir);
+      setState("liveModel", event.model);
       break;
 
     case "reset_done":

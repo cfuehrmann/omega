@@ -57,7 +57,7 @@ const StreamSignalSchema = z.discriminatedUnion("type", [
 const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready") }),
   z.object({ type: z.literal("reset_done") }),
-  z.object({ type: z.literal("session_info"), dir: z.string() }),
+  z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string() }),
   z.object({ type: z.literal("history"),      events: z.array(OmegaEventSchema) }),
 ]);
 
@@ -75,6 +75,6 @@ export const ServerMessageSchema = z.union([
   OmegaEventSchema,
   StreamSignalSchema,
   ProtocolEnvelopeSchema,
-]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string } | { type: "history"; events: OmegaEvent[] }>;
+]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string; model: string } | { type: "history"; events: OmegaEvent[] }>;
 
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
