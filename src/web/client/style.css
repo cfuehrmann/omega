@@ -492,7 +492,9 @@ html, body, #root {
 }
 
 .tool-name {
+  font-size: 13px;
   font-weight: bold;
+  letter-spacing: 0.5px;
   flex-shrink: 0;
 }
 
