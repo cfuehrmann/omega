@@ -880,9 +880,9 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         <div class="block footer" data-testid="block-turn-end">
           <div class="block-label-row">
             <span class="block-label">turn_end</span>
+            <span class="turn-end-line">{line}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></span>
             <button class="block-expand-btn" onClick={() => setActiveModal({ kind: "block", detail: { label: "turn_end", time, body: line } })} title="Details">⤢</button>
           </div>
-          <div class="block-body">{line}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button></div>
         </div>
       );
     }
