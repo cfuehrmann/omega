@@ -10,10 +10,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { readSystemPromptAppend, writeSystemPromptAppend, systemPromptAppendPath } from "./system-prompt/append.js";
-import { Agent, type StreamProvider } from "./agent.js";
-import { makeTestAgent } from "./test-utils.js";
-import { corePrompt } from "./system-prompt/core.js";
+import { readSystemPromptAppend, writeSystemPromptAppend, systemPromptAppendPath } from "./append.js";
+import { Agent, type StreamProvider } from "../agent.js";
+import { makeTestAgent } from "../test-utils.js";
+import { corePrompt } from "./core.js";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
