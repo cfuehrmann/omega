@@ -1384,8 +1384,10 @@ function InputRow() {
           onChange={handleEffortChange}
         >
           <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High (default)</option>
+          <option value="medium">
+            {activeModel() === "claude-opus-4-6" ? "Medium" : "Medium (recommended)"}
+          </option>
+          <option value="high">High (API default)</option>
           <Show when={activeModel() === "claude-opus-4-6"}>
             <option value="max">Max</option>
           </Show>
