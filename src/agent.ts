@@ -327,7 +327,7 @@ export class Agent {
    * against the current counter. If they diverge, a newer sendMessage has
    * started (browser refresh / second message while a tool was running) and
    * this generator has been superseded — it exits silently so the new call's
-   * BUG-2 guard can own context repairs.
+   * interrupted-session guard can own context repairs.
    */
   private activeGeneration = 0;
 
@@ -560,7 +560,7 @@ export class Agent {
     // starts while we are blocked inside tool execution (see activeGeneration).
     const myGeneration = ++this.activeGeneration;
 
-    // --- BUG-2 guard: dangling tool_use from interrupted previous turn ---
+    // --- Interrupted-session guard: dangling tool_use from interrupted previous turn ---
     // If the last message in compactedContextHistory is an assistant message
     // containing tool_use blocks with no following tool_result (happens when
     // the browser refreshes while a tool is executing — a new WS session
@@ -966,7 +966,7 @@ export class Agent {
         (b): b is Anthropic.Beta.Messages.BetaToolUseBlock => b.type === "tool_use",
       );
 
-      // --- BUG-1 guard: output truncation mid-tool-call ---
+      // --- Output-cutoff guard: output truncation mid-tool-call ---
       // If the LLM was cut off while emitting tool_use blocks — either because the
       // output token budget was exhausted (max_tokens) or the model context window
       // was full (model_context_window_exceeded) — the assistant message (already
@@ -1115,7 +1115,7 @@ export class Agent {
         // --- Superseded-generator guard ---
         // A newer sendMessage call has started (browser refresh or new message
         // arrived while we were blocked on tool execution). Exit silently
-        // without touching context — the new call's BUG-2 guard owns repairs.
+        // without touching context — the new call's interrupted-session guard owns repairs.
         if (this.activeGeneration !== myGeneration) {
           return;
         }

@@ -1067,10 +1067,10 @@ describe("Agent — session_started dedup on reconnect", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BUG-2 guard — dangling tool_use from interrupted previous session
+// Interrupted-session guard — dangling tool_use from interrupted previous session
 // ---------------------------------------------------------------------------
 
-describe("Agent — BUG-2 guard: dangling tool_use repair", () => {
+describe("Agent — interrupted-session guard: dangling tool_use repair", () => {
   it.concurrent(
     "injects synthetic tool_result before user message when context has a dangling tool_use",
     async () => {
@@ -1110,7 +1110,7 @@ describe("Agent — BUG-2 guard: dangling tool_use repair", () => {
       // Now send a new message (simulating the user's action after browser refresh).
       const events = await collectEvents(agent, "what happened?");
 
-      // The BUG-2 guard must have emitted a synthetic tool_result event.
+      // The interrupted-session guard must have emitted a synthetic tool_result event.
       const toolResultEvents = events.filter((e) => e.type === "tool_result") as any[];
       expect(toolResultEvents).toHaveLength(1);
       expect(toolResultEvents[0].id).toBe("toolu_dangling_001");
@@ -1340,10 +1340,10 @@ describe("Agent.sendMessage — stop reason handling", () => {
     ];
   }
 
-  // --- BUG-1 guard: model_context_window_exceeded mid-tool-call (red-green) ---
+  // --- Output-cutoff guard: model_context_window_exceeded mid-tool-call (red-green) ---
 
   it.concurrent(
-    "BUG-1 guard: synthesises error tool_result and emits agent_error when model_context_window_exceeded stops mid-tool-call",
+    "output-cutoff guard: synthesises error tool_result and emits agent_error when model_context_window_exceeded stops mid-tool-call",
     async () => {
       // This is the red→green test: without the fix the session would be bricked
       // because the assistant message would contain a dangling tool_use block,
