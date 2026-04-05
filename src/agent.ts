@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { config } from "./config.js";
+import { config, maxOutputTokensForModel } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { readEnvPositiveInt, readEnvOptionalPositiveInt } from "./env.js";
 
@@ -477,7 +477,7 @@ export class Agent {
   buildSystemPrompt(): string {
     return assembleSystemPrompt({
       cwd: process.cwd(),
-      maxOutputTokens: config.maxOutputTokens,
+      maxOutputTokens: maxOutputTokensForModel(this.activeModel),
       appendContent: this.systemPromptAppendContent,
     });
   }
@@ -687,7 +687,7 @@ export class Agent {
       // exact payload sent to the API (pass-through, not a whitelist).
       const streamParams = {
         model: activeModel,
-        max_tokens: config.maxOutputTokens,
+        max_tokens: maxOutputTokensForModel(activeModel),
         system: systemBlocks,
         tools: cachedTools,
         messages: cachedMessages,
@@ -992,7 +992,7 @@ export class Agent {
             tool_use_id: b.id,
             content: isContextWindowStop
               ? `[not executed: model context window exceeded while generating this tool call's arguments — start a fresh focused session or let auto-compaction reduce the context]`
-              : `[not executed: max_tokens stop — output budget (${config.maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
+              : `[not executed: max_tokens stop — output budget (${maxOutputTokensForModel(activeModel)} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
             is_error: true,
           }));
         await this.appendToHistory({
@@ -1021,7 +1021,7 @@ export class Agent {
             `Start a fresh session or let auto-compaction reduce the context. ` +
             `The session context is intact.`
           : `Output budget exhausted (max_tokens) while generating tool call input for [${toolNames}] — the tool was not executed. ` +
-            `This means the tool call arguments alone exceeded the ${config.maxOutputTokens}-token output budget. ` +
+            `This means the tool call arguments alone exceeded the ${maxOutputTokensForModel(activeModel)}-token output budget. ` +
             `To avoid this: break large write_file calls into a skeleton + edit_file extensions; ` +
             `never attempt to write a file longer than ~500 lines in a single write_file call. ` +
             `The session context is intact — retry with a smaller approach.`;

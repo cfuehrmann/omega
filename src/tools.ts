@@ -4,7 +4,6 @@ import { spawn } from "child_process";
 import { tmpdir } from "os";
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
-import { config } from "./config";
 import {
   toToolInputSchema,
   ReadFileSchema,
@@ -25,16 +24,83 @@ import {
 // Web search (DuckDuckGo) + URL fetch helpers
 // ---------------------------------------------------------------------------
 
-const FETCH_MAX_CHARS = 8_000;
+/**
+ * Maximum characters returned by a single web_search call.
+ * 10 results × ~200–500 chars each typically yields ≈ 2–5 k chars;
+ * 8 000 provides comfortable headroom without flooding the context window.
+ */
+const WEB_SEARCH_MAX_CHARS = 8_000;
+
+/**
+ * Characters returned per fetch_url window. Balances readability (a full
+ * section of a doc page) against context size. The agent can paginate with
+ * the offset parameter when more content is needed.
+ */
 const FETCH_URL_MAX_CHARS = 20_000;
+
+/**
+ * HTTP timeout for Brave Search API requests. 10 s is generous for a JSON
+ * search endpoint; failing fast avoids blocking the agent turn on a slow
+ * external service.
+ */
 const WEB_SEARCH_TIMEOUT_MS = 10_000;
+
+/**
+ * HTTP timeout for fetch_url requests. Slightly longer than the search
+ * timeout to accommodate slow or large pages (heavy documentation sites,
+ * GitHub blobs, etc.).
+ */
 const FETCH_URL_TIMEOUT_MS = 15_000;
+
+/**
+ * Maximum lines returned by read_file before truncation. 2 000 lines covers
+ * the vast majority of source files; larger files should be read in sections
+ * via offset/limit.
+ */
 const READ_FILE_MAX_LINES = 2_000;
+
+/**
+ * Maximum bytes returned by read_file before truncation. Byte-level fallback
+ * for files where line count is low but content is dense (e.g. minified JS).
+ * 50 KB comfortably fits within the context window as a single read.
+ */
 const READ_FILE_MAX_BYTES = 50_000;
+
+/**
+ * Maximum directory entries returned by list_files (flat or recursive).
+ * 1 000 covers even large monorepos at a single level; prevents accidental
+ * full-tree dumps of enormous repositories.
+ */
 const LIST_FILES_MAX_ENTRIES = 1_000;
+
+/**
+ * Default run_command timeout in seconds. 120 s covers the vast majority of
+ * build commands, test suites, and CLI tools. The caller can pass a higher
+ * value for known long-running commands (e.g. a slow integration test suite).
+ */
 const RUN_COMMAND_DEFAULT_TIMEOUT_S = 120;
+
+/**
+ * Per-stream stdout/stderr cap for run_command before killing the process.
+ * 100 KB is ample for typical tool output while preventing runaway commands
+ * from filling the context window. Matched by MAX_TOOL_OUTPUT_CHARS.
+ */
 const RUN_COMMAND_OUTPUT_CAP_BYTES = 100_000;
+
+/**
+ * Polling interval for wait_for_output. 200 ms gives prompt detection of
+ * log output without busy-polling. Fine-grained enough for dev-server
+ * readiness checks while adding at most one poll-cycle of extra latency.
+ */
 const WAIT_FOR_OUTPUT_POLL_MS = 200;
+
+/**
+ * Universal ceiling on the characters returned by any single tool call.
+ * Prevents unexpectedly large outputs (e.g. an offset-less read_file on a
+ * 1 MB file) from consuming the full context window. Matched to
+ * RUN_COMMAND_OUTPUT_CAP_BYTES so the live cap and the final catch-all cap
+ * are consistent.
+ */
 const MAX_TOOL_OUTPUT_CHARS = 100_000;
 
 /**
@@ -107,8 +173,8 @@ async function executeWebSearch(input: { query: string }): Promise<string> {
     if (r.description) lines.push(`  ${r.description}`);
   }
   const output = lines.join("\n");
-  return output.length > FETCH_MAX_CHARS
-    ? output.slice(0, FETCH_MAX_CHARS) + "\n[truncated]"
+  return output.length > WEB_SEARCH_MAX_CHARS
+    ? output.slice(0, WEB_SEARCH_MAX_CHARS) + "\n[truncated]"
     : output;
 }
 
@@ -173,7 +239,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Write content to a file. Creates the file if it doesn't exist, " +
       "overwrites if it does. Creates parent directories as needed. " +
-      `WARNING: file content is generated inside the output token budget (${config.maxOutputTokens} tokens). ` +
+      "WARNING: file content is generated inside the output token budget. " +
       "Files longer than ~500 lines or ~20 000 characters risk being cut off mid-write. " +
       "For large new files write a skeleton first, then extend with edit_file. " +
       "For large existing files always prefer edit_file over a full rewrite.",
