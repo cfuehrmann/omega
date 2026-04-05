@@ -299,7 +299,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     // "max" effort is only valid on Opus. If the user switches to Sonnet while
     // effort is "max", auto-reset to "high" so the UI stays consistent.
     if (msg.model !== "claude-opus-4-6" && persistentAgent.getActiveEffort() === "max") {
-      const effortEv = persistentAgent.setEffort("high");
+      const effortEv = persistentAgent.setEffort("medium");
       send(session.ws, effortEv);
     }
     return;

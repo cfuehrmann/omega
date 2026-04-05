@@ -174,7 +174,7 @@ const [state, setState] = createStore<AppState>({
   liveTurn: null,
   liveDurations: zeroDurations(),
   liveModel: "",
-  liveEffort: "high",
+  liveEffort: "medium",
   sessionDir: "",
   cwd: "",
 });
@@ -572,7 +572,7 @@ export function dispatch(event: ServerMessage): void {
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
       setState("liveModel", "");
-      setState("liveEffort", "high");
+      setState("liveEffort", "medium");
       break;
 
     case "user_message":

@@ -319,7 +319,7 @@ export class Agent {
   public sessionCacheReadTokens = 0;
 
   private activeModel: string = config.model;
-  private activeEffort: string = "high";
+  private activeEffort: string = "medium";
   /** True once server_started has been logged — prevents duplicate on reconnect. */
   private serverStartLogged = false;
   /** True once session_started has been logged — prevents duplicate on reconnect. */
