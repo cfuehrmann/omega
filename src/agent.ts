@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { config, maxOutputTokensForModel } from "./config.js";
+import { config, maxOutputTokensForModel, COMPACTION_INSTRUCTIONS } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { readEnvPositiveInt, readEnvOptionalPositiveInt } from "./env.js";
 
@@ -726,6 +726,7 @@ export class Agent {
             {
               type: "compact_20260112" as const,
               trigger: { type: "input_tokens" as const, value: config.autoCompactThreshold },
+              instructions: COMPACTION_INSTRUCTIONS,
             },
           ],
         },

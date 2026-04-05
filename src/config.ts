@@ -117,3 +117,49 @@ const MODEL_MAX_OUTPUT_TOKENS_FALLBACK = 64_000;
 export function maxOutputTokensForModel(model: string): number {
   return MODEL_MAX_OUTPUT_TOKENS[model] ?? MODEL_MAX_OUTPUT_TOKENS_FALLBACK;
 }
+
+// ---------------------------------------------------------------------------
+// Compaction instructions
+// ---------------------------------------------------------------------------
+
+/**
+ * Custom summarisation prompt sent as context_management.edits[0].instructions.
+ * Completely replaces Anthropic's default prompt when set.
+ *
+ * The opening two sentences are Anthropic's own default — kept verbatim because
+ * they correctly orient the model to its role as summariser of its own prior
+ * transcript. The remainder adds coding-session-specific guidance derived from
+ * analysing real Omega compaction summaries: the default prompt produces good
+ * output but tends toward activity-log narration rather than state snapshots,
+ * and doesn't explicitly ask for learnings or current constant values.
+ */
+export const COMPACTION_INSTRUCTIONS = `\
+You have written a partial transcript for the initial task above. Please write \
+a summary of the transcript. The purpose of this summary is to provide \
+continuity so you can continue to make progress towards solving the task in a \
+future context, where the raw history above may not be accessible and will be \
+replaced with this summary.
+
+For a coding session, focus especially on what a developer would need to \
+continue the work:
+
+1. **Current state** (snapshot, not narrative): what is true *right now* — \
+which files were changed and how they currently stand, what \
+constants/config values are currently set to, which plan items are done \
+vs. pending.
+
+2. **Next step**: the single most important thing to do next, as specifically \
+as possible (e.g. exact file, function, test name).
+
+3. **Key decisions**: conclusions that should not be re-litigated — design \
+choices made, approaches confirmed or rejected, and *why*.
+
+4. **Learnings / what not to do**: anything tried that failed and why, so the \
+same dead ends are not re-explored.
+
+5. **Technical anchors**: specific file paths, function/type/constant names, \
+commit hashes, and test names relevant to continuing the work. Prefer \
+current values over historical change narratives.
+
+You must wrap your summary in a <summary></summary> block.\
+`;
