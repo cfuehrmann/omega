@@ -298,8 +298,8 @@ export class Agent {
   private sessionStartLogged = false;
 
   public readonly sessionId: string;
-  private readonly retryBaseMs      = readEnvPositiveInt("OMEGA_RETRY_BASE_MS",  1000);
-  private readonly retryMaxMs       = readEnvPositiveInt("OMEGA_RETRY_MAX_MS",  60000);
+  private readonly retryBaseMs      = readEnvPositiveInt("OMEGA_RETRY_BASE_MS",  config.retryBaseMs);
+  private readonly retryMaxMs       = readEnvPositiveInt("OMEGA_RETRY_MAX_MS",  config.retryMaxMs);
   /**
    * Hard cap on retry attempts. `undefined` (the default) means retry
    * indefinitely — the intended production behaviour for overload / transient

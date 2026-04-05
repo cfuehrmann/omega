@@ -28,6 +28,7 @@ import type { ContextRecord } from "../context-store.js";
 import { OmegaEventSchema } from "../events.schema.js";
 import { ContextRecordSchema } from "../context-store.schema.js";
 import { readEnvPort } from "../env.js";
+import { config } from "../config.js";
 import { ClientMessageSchema, type ClientMessage } from "./protocol.js";
 import { now } from "../iso-timestamp.js";
 

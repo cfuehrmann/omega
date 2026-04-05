@@ -27,6 +27,15 @@ import {
 
 const FETCH_MAX_CHARS = 8_000;
 const FETCH_URL_MAX_CHARS = 20_000;
+const WEB_SEARCH_TIMEOUT_MS = 10_000;
+const FETCH_URL_TIMEOUT_MS = 15_000;
+const READ_FILE_MAX_LINES = 2_000;
+const READ_FILE_MAX_BYTES = 50_000;
+const LIST_FILES_MAX_ENTRIES = 1_000;
+const RUN_COMMAND_DEFAULT_TIMEOUT_S = 120;
+const RUN_COMMAND_OUTPUT_CAP_BYTES = 100_000;
+const WAIT_FOR_OUTPUT_POLL_MS = 200;
+const MAX_TOOL_OUTPUT_CHARS = 100_000;
 
 /**
  * Bun's TLS implementation may not trust the system CA bundle on some machines.
@@ -122,7 +131,7 @@ async function executeFetchUrl(input: { url: string; offset?: number }): Promise
       "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
     ...FETCH_TLS_OPTIONS,
   } as any);
 
@@ -206,7 +215,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Fetch the content of a URL and return it as plain text. " +
       "HTML pages are converted to readable text (tags stripped). " +
-      "Returns up to 20000 characters starting at the optional char offset. " +
+      `Returns up to ${FETCH_URL_MAX_CHARS} characters starting at the optional char offset. ` +
       "When a page is cut off, the response footer shows the total length and " +
       "the next offset — call again with that offset to page through. " +
       "Use this to read documentation, articles, or any web page.",
@@ -677,7 +686,7 @@ async function executeWaitForOutput(input: {
       return JSON.stringify({ output: content, matched: false, minBytesReached: true,  timedOut: false });
     }
 
-    await new Promise((r) => setTimeout(r, POLL_MS));
+    await new Promise((r) => setTimeout(r, WAIT_FOR_OUTPUT_POLL_MS));
   }
 
   // Timed out — return whatever is in the log
