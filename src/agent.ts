@@ -474,10 +474,10 @@ export class Agent {
   }
 
   /** Build the system prompt from all parts. */
-  buildSystemPrompt(): string {
+  buildSystemPrompt(maxOutputTokens?: number): string {
     return assembleSystemPrompt({
       cwd: process.cwd(),
-      maxOutputTokens: maxOutputTokensForModel(this.activeModel),
+      maxOutputTokens: maxOutputTokens ?? maxOutputTokensForModel(this.activeModel),
       appendContent: this.systemPromptAppendContent,
     });
   }
@@ -637,10 +637,11 @@ export class Agent {
       /** True when we are inside a thinking block (between block_start and block_stop). */
       let inThinkingBlock = false;
 
-      // Build system prompt (core instructions + system-prompt-append if loaded).
-      const systemPrompt = this.buildSystemPrompt();
-
       activeModel = this.activeModel;
+      const maxOutputTokens = maxOutputTokensForModel(activeModel);
+
+      // Build system prompt (core instructions + system-prompt-append if loaded).
+      const systemPrompt = this.buildSystemPrompt(maxOutputTokens);
 
       // Build cached system blocks and cached tools for Anthropic prompt caching.
       // The system prompt is split into blocks with cache_control on the last block,
@@ -687,7 +688,7 @@ export class Agent {
       // exact payload sent to the API (pass-through, not a whitelist).
       const streamParams = {
         model: activeModel,
-        max_tokens: maxOutputTokensForModel(activeModel),
+        max_tokens: maxOutputTokens,
         system: systemBlocks,
         tools: cachedTools,
         messages: cachedMessages,
@@ -992,7 +993,7 @@ export class Agent {
             tool_use_id: b.id,
             content: isContextWindowStop
               ? `[not executed: model context window exceeded while generating this tool call's arguments — start a fresh focused session or let auto-compaction reduce the context]`
-              : `[not executed: max_tokens stop — output budget (${maxOutputTokensForModel(activeModel)} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
+              : `[not executed: max_tokens stop — output budget (${maxOutputTokens} tokens) was exhausted while generating this tool call's arguments — retry with a smaller write_file or use edit_file instead]`,
             is_error: true,
           }));
         await this.appendToHistory({
@@ -1021,7 +1022,7 @@ export class Agent {
             `Start a fresh session or let auto-compaction reduce the context. ` +
             `The session context is intact.`
           : `Output budget exhausted (max_tokens) while generating tool call input for [${toolNames}] — the tool was not executed. ` +
-            `This means the tool call arguments alone exceeded the ${maxOutputTokensForModel(activeModel)}-token output budget. ` +
+            `This means the tool call arguments alone exceeded the ${maxOutputTokens}-token output budget. ` +
             `To avoid this: break large write_file calls into a skeleton + edit_file extensions; ` +
             `never attempt to write a file longer than ~500 lines in a single write_file call. ` +
             `The session context is intact — retry with a smaller approach.`;
