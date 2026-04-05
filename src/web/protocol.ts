@@ -61,7 +61,7 @@ const StreamSignalSchema = z.discriminatedUnion("type", [
 const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready") }),
   z.object({ type: z.literal("reset_done") }),
-  z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string(), effort: z.string() }),
+  z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string(), effort: z.string(), cwd: z.string() }),
   z.object({ type: z.literal("history"),      events: z.array(OmegaEventSchema) }),
 ]);
 

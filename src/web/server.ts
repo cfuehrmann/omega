@@ -275,7 +275,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     // After the await we're outside the auto-corked message callback —
     // cork explicitly so all three frames are batched reliably.
     session.ws.cork(() => {
-      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort() }));
+      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort(), cwd: process.cwd() }));
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
     });
@@ -415,7 +415,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         // must cork explicitly (Bun docs: "use cork in async functions").
         const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
         ws.cork(() => {
-          ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort() }));
+          ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort(), cwd: process.cwd() }));
           if (replayEvents.length > 0) {
             ws.send(JSON.stringify({ type: "history", events: replayEvents }));
           }

@@ -146,6 +146,8 @@ interface AppState {
   liveEffort: string;
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
+  /** Working directory Omega was launched from (set by session_info from server). */
+  cwd: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +176,7 @@ const [state, setState] = createStore<AppState>({
   liveModel: "",
   liveEffort: "high",
   sessionDir: "",
+  cwd: "",
 });
 
 export { state };
@@ -552,6 +555,7 @@ export function dispatch(event: ServerMessage): void {
       setState("sessionDir", event.dir);
       setState("liveModel", event.model);
       setState("liveEffort", event.effort);
+      setState("cwd", event.cwd);
       break;
 
     case "reset_done":

@@ -1255,6 +1255,10 @@ function BottomPanel() {
       <div class="bottom-panel">
         <Show when={state.sessionDir}>
           <div class="bottom-panel-session" data-testid="session-panel">
+            <Show when={state.cwd}>
+              <span class="bp-label">cwd</span>
+              <span class="bp-dir" data-testid="cwd-dir">{state.cwd}</span>
+            </Show>
             <span class="bp-label">session</span>
             <span class="bp-dir" data-testid="session-dir">{state.sessionDir}</span>
             <Show when={state.events.length > 0}>
