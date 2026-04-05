@@ -508,6 +508,125 @@ describe("mid-stream retry", () => {
 });
 
 // ---------------------------------------------------------------------------
+// retry-after header: authoritative wait time overrides exponential backoff
+// ---------------------------------------------------------------------------
+
+describe("retry-after header", () => {
+  /** Shared success stream used across tests in this describe block. */
+  function makeSuccessProvider(): StreamProvider {
+    return () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
+        yield { type: "content_block_stop", index: 0 };
+        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } };
+        yield { type: "message_stop" };
+      },
+      finalMessage: async () => ({
+        id: "msg_ok", type: "message", role: "assistant", model: "claude-sonnet-4-6",
+        container: null, context_management: null,
+        content: [{ type: "text", text: "done", citations: null }],
+        stop_reason: "end_turn", stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      } as any),
+    });
+  }
+
+  it("uses retry-after header value instead of exponential backoff", async () => {
+    // Set a very high base to prove exponential backoff is NOT used.
+    // If the header is ignored, waitMs would be ~10 000 ms; with it, 1 ms.
+    process.env.OMEGA_RETRY_BASE_MS = "10000";
+    process.env.OMEGA_RETRY_MAX_MS = "10000";
+
+    let callCount = 0;
+    const successStream = makeSuccessProvider();
+    const mockProvider: StreamProvider = (params) => {
+      callCount++;
+      if (callCount === 1) {
+        const err: any = new Error("429 rate limited");
+        err.status = 429;
+        err.headers = new Headers({ "retry-after": "0.001" }); // 1 ms
+        throw err;
+      }
+      return successStream(params);
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    expect(callCount).toBe(2);
+
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries).toHaveLength(1);
+
+    // waitMs must come from the header (1 ms), not from our backoff (10 000 ms).
+    expect(retries[0].waitMs).toBe(1);
+
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_end");
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("fractional retry-after seconds are rounded up to whole milliseconds", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "10000";
+    process.env.OMEGA_RETRY_MAX_MS = "10000";
+
+    let callCount = 0;
+    const successStream = makeSuccessProvider();
+    const mockProvider: StreamProvider = (params) => {
+      callCount++;
+      if (callCount === 1) {
+        const err: any = new Error("429 rate limited");
+        err.status = 429;
+        err.headers = new Headers({ "retry-after": "0.0005" }); // 0.5 ms → ceil → 1 ms
+        throw err;
+      }
+      return successStream(params);
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries[0].waitMs).toBe(1); // Math.ceil(0.5) = 1
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("falls back to exponential backoff when no retry-after header is present", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "5000";
+    process.env.OMEGA_RETRY_ATTEMPTS = "2"; // cap so test terminates quickly
+
+    const mockProvider: StreamProvider = () => {
+      const err: any = new Error("429 rate limited");
+      err.status = 429;
+      // no .headers — must fall back to backoff
+      throw err;
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries.length).toBeGreaterThan(0);
+    // waitMs must be from backoff (≥ 1 ms, but well below 10 000)
+    expect(retries[0].waitMs).toBeGreaterThan(0);
+    expect(retries[0].waitMs).toBeLessThan(10_000);
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+    delete process.env.OMEGA_RETRY_ATTEMPTS;
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Context overflow: errors out immediately, no retry
 // ---------------------------------------------------------------------------
 

@@ -225,12 +225,40 @@ export function isRetryable(err: unknown): boolean {
 // Always preserves the first user message (the original task) and the most
 // recent N turns.
 
+/**
+ * Extract the retry-after delay from an API error's response headers.
+ * The Anthropic API includes a `retry-after` header on 429 responses
+ * specifying the exact number of seconds to wait before retrying.
+ * Returns milliseconds, or undefined if absent or unparseable.
+ */
+function getRetryAfterMs(err: unknown): number | undefined {
+  if (err === null || typeof err !== "object") return undefined;
+  const headers = (err as Record<string, unknown>).headers;
+  if (headers == null || typeof (headers as any).get !== "function") return undefined;
+  const raw = (headers as { get(name: string): string | null }).get("retry-after");
+  if (!raw) return undefined;
+  const seconds = parseFloat(raw);
+  if (!isNaN(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  return undefined;
+}
+
+/**
+ * Calculate how many milliseconds to wait before the next retry.
+ * Prefers the API's own retry-after header value when present — that is the
+ * authoritative signal for how long the rate-limit window takes to reset.
+ * Falls back to capped exponential backoff with ±10 % jitter otherwise.
+ */
 function getAnthropicRetryDelayMs(
-  _err: unknown,
+  err: unknown,
   attempt: number,
   baseMs: number,
   maxMs: number,
 ): number {
+  // Use the API's own retry-after header when present.
+  const retryAfterMs = getRetryAfterMs(err);
+  if (retryAfterMs !== undefined) return retryAfterMs;
+
+  // Fall back to capped exponential backoff with ±10 % jitter.
   const jitter = Math.random() * 0.2 + 0.9; // 0.9–1.1
   const delay = baseMs * Math.pow(2, attempt) * jitter;
   return Math.min(Math.round(delay), maxMs);
