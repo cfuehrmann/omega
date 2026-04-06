@@ -257,6 +257,19 @@ function connect() {
     let event: ServerMessage;
     try { event = ServerMessageSchema.parse(JSON.parse(e.data as string)); } catch { return; }
     dispatch(event);
+
+    // Session picker integration: close modal on successful resume, refresh on delete
+    if (event.type === "ready" && resumingDir()) {
+      setResumingDir(null);
+      setSessionPickerOpen(false);
+    }
+    if (event.type === "session_deleted") {
+      // Remove the deleted session from the list by triggering a re-fetch
+      // The picker's createResource re-fetches when sessionPickerOpen changes,
+      // so we toggle it off/on. Simpler: just close and reopen isn't great UX.
+      // Instead, we'll handle it by filtering the current list client-side.
+      _onSessionDeleted(event.sessionDir);
+    }
   };
 
   ws.onclose = () => {
@@ -1054,6 +1067,8 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "history":
     case "reset_done":
     case "session_info":
+    case "resuming_session":
+    case "session_deleted":
     // thinking is a streaming-only signal — never pushed into turn.events
     case "thinking":
       return null;
@@ -1285,8 +1300,16 @@ interface SessionItem {
 
 const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
 
+// State for session resumption progress
+const [resumingDir, setResumingDir] = createSignal<string | null>(null);
+// Track deleted session dirs so the picker can filter them out client-side
+const [deletedSessions, setDeletedSessions] = createSignal<Set<string>>(new Set());
+function _onSessionDeleted(dir: string) {
+  setDeletedSessions(prev => { const next = new Set(prev); next.add(dir); return next; });
+}
+
 function SessionPickerModal() {
-  const [sessions] = createResource<SessionItem[], boolean>(
+  const [sessions, { refetch }] = createResource<SessionItem[], boolean>(
     () => sessionPickerOpen(),
     async (open: boolean) => {
       if (!open) return [];
@@ -1296,9 +1319,35 @@ function SessionPickerModal() {
     },
   );
 
+  const [searchQuery, setSearchQuery] = createSignal("");
+
+  const filteredSessions = createMemo(() => {
+    const all = sessions() ?? [];
+    const deleted = deletedSessions();
+    const withoutDeleted = deleted.size > 0 ? all.filter(s => !deleted.has(s.dir)) : all;
+    const q = searchQuery().toLowerCase().trim();
+    if (!q) return withoutDeleted;
+    return withoutDeleted.filter(s =>
+      (s.name ?? "").toLowerCase().includes(q) ||
+      (s.description ?? "").toLowerCase().includes(q) ||
+      s.dir.toLowerCase().includes(q)
+    );
+  });
+
   function resume(dir: string) {
+    setResumingDir(dir);
     sendToServer({ type: "resume_session", sessionDir: dir });
-    setSessionPickerOpen(false);
+    // Modal stays open — will be closed when `ready` arrives (see dispatch handler)
+  }
+
+  function cancelResume() {
+    sendToServer({ type: "abort" });
+    setResumingDir(null);
+  }
+
+  function deleteSession(dir: string, e: MouseEvent) {
+    e.stopPropagation(); // Don't trigger resume
+    sendToServer({ type: "delete_session", sessionDir: dir });
   }
 
   function formatActivity(iso: string): string {
@@ -1311,42 +1360,67 @@ function SessionPickerModal() {
 
   return (
     <Show when={sessionPickerOpen()}>
-      <div class="modal-backdrop" onClick={() => setSessionPickerOpen(false)}>
+      <div class="modal-backdrop" onClick={() => { if (!resumingDir()) setSessionPickerOpen(false); }}>
         <div class="modal session-picker-modal" data-testid="session-picker-modal"
              onClick={(e) => e.stopPropagation()}>
           <div class="modal-header">
             <span class="modal-title">Continue a previous session</span>
-            <button class="modal-close" onClick={() => setSessionPickerOpen(false)}>✕ close</button>
+            <button class="modal-close" onClick={() => { setResumingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
           </div>
-          <Show when={sessions.loading}>
-            <div class="session-picker-loading">Loading sessions…</div>
-          </Show>
-          <Show when={!sessions.loading && (sessions() ?? []).length === 0}>
-            <div class="session-picker-loading">No previous sessions found.</div>
-          </Show>
-          <Show when={!sessions.loading && (sessions() ?? []).length > 0}>
-            <div class="session-picker-list" data-testid="session-picker-list">
-              <For each={sessions() ?? []}>
-                {(s) => (
-                  <div class="session-picker-item" data-testid="session-picker-item"
-                       onClick={() => resume(s.dir)}>
-                    <div class="session-picker-name">
-                      {s.name ?? <span class="session-picker-unnamed">(unnamed)</span>}
-                    </div>
-                    <div class="session-picker-meta">
-                      <span class="session-picker-dir">{s.dir}</span>
-                      <span class="session-picker-date">{formatActivity(s.lastActivity)}</span>
-                    </div>
-                    <Show when={s.description}>
-                      <div class="session-picker-desc">{s.description}</div>
-                    </Show>
-                    <Show when={s.continuationOf}>
-                      <div class="session-picker-cont">↩ continues {s.continuationOf}</div>
-                    </Show>
-                  </div>
-                )}
-              </For>
+
+          {/* Resuming state — shown while server processes the resumption */}
+          <Show when={resumingDir()}>
+            <div class="session-picker-resuming" data-testid="session-picker-resuming">
+              <div class="session-picker-resuming-text">Resuming session…</div>
+              <div class="session-picker-resuming-dir">{resumingDir()}</div>
+              <button class="session-picker-cancel" data-testid="session-picker-cancel" onClick={cancelResume}>Cancel</button>
             </div>
+          </Show>
+
+          {/* Normal list state — hidden while resuming */}
+          <Show when={!resumingDir()}>
+            <Show when={sessions.loading}>
+              <div class="session-picker-loading">Loading sessions…</div>
+            </Show>
+            <Show when={!sessions.loading && (sessions() ?? []).length === 0}>
+              <div class="session-picker-loading">No previous sessions found.</div>
+            </Show>
+            <Show when={!sessions.loading && (sessions() ?? []).length > 0}>
+              <input
+                class="session-picker-search"
+                data-testid="session-picker-search"
+                type="text"
+                placeholder="Search sessions…"
+                value={searchQuery()}
+                onInput={(e) => setSearchQuery(e.currentTarget.value)}
+              />
+              <div class="session-picker-list" data-testid="session-picker-list">
+                <For each={filteredSessions()}>
+                  {(s) => (
+                    <div class="session-picker-item" data-testid="session-picker-item"
+                         onClick={() => resume(s.dir)}>
+                      <div class="session-picker-item-header">
+                        <div class="session-picker-name">
+                          {s.name ?? <span class="session-picker-unnamed">(unnamed)</span>}
+                        </div>
+                        <button class="session-picker-delete" data-testid="session-picker-delete"
+                                onClick={(e) => deleteSession(s.dir, e)} title="Delete session">✕</button>
+                      </div>
+                      <div class="session-picker-meta">
+                        <span class="session-picker-dir">{s.dir}</span>
+                        <span class="session-picker-date">{formatActivity(s.lastActivity)}</span>
+                      </div>
+                      <Show when={s.description}>
+                        <div class="session-picker-desc">{s.description}</div>
+                      </Show>
+                      <Show when={s.continuationOf}>
+                        <div class="session-picker-cont">↩ continues {s.continuationOf}</div>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </Show>
         </div>
       </div>

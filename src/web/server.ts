@@ -423,6 +423,9 @@ async function handleMessage(
     session.isStreaming = false;
     session.abortController = null;
 
+    // Immediately signal the client that resumption has started
+    send(session.ws, { type: "resuming_session", sessionDir: msg.sessionDir });
+
     // Create new session dir + agent
     currentSessionPaths = await makeSessionDir();
     persistentAgent = new Agent(
@@ -438,12 +441,18 @@ async function handleMessage(
     const prevEventsFile = join(SESSIONS_ROOT, msg.sessionDir, "events.jsonl");
     const prevEvents = await loadAllEvents(prevEventsFile);
     const basis = extractResumptionBasis(prevEvents);
-    const summary = await summariseForResumption(basis, resumptionProvider);
+    const { summary, description } = await summariseForResumption(basis, resumptionProvider);
 
     // Seed the agent with the summary and record the session_resumed event
     await persistentAgent.seedWithResumptionSummary(summary, msg.sessionDir, basis);
 
-    // Update session.jsonc with the continuationOf link
+    // Write description back to the *source* session's metadata (retroactive labelling)
+    const prevSessionDir = join(SESSIONS_ROOT, msg.sessionDir);
+    if (description) {
+      await updateSessionMetadata(prevSessionDir, { description }).catch(() => {});
+    }
+
+    // Update new session's metadata with the continuationOf link
     await updateSessionMetadata(currentSessionPaths.dir, {
       continuationOf: msg.sessionDir,
     });
@@ -461,6 +470,23 @@ async function handleMessage(
       session.ws.send(JSON.stringify({ type: "history", events: replayEvents }));
       session.ws.send(JSON.stringify({ type: "ready" }));
     });
+    return;
+  }
+
+  if (msg.type === "delete_session") {
+    // Safety: only delete directories matching the session dir pattern
+    if (!SESSION_DIR_RE.test(msg.sessionDir)) {
+      sendTransportError(session.ws, `Invalid session dir: ${msg.sessionDir}`, "handleMessage");
+      return;
+    }
+    const fullDir = join(SESSIONS_ROOT, msg.sessionDir);
+    try {
+      const { rm } = await import("fs/promises");
+      await rm(fullDir, { recursive: true, force: true });
+      send(session.ws, { type: "session_deleted", sessionDir: msg.sessionDir });
+    } catch (err: unknown) {
+      sendTransportError(session.ws, `Delete failed: ${err instanceof Error ? err.message : String(err)}`, "handleMessage");
+    }
     return;
   }
 

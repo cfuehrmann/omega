@@ -359,13 +359,28 @@ describe("summariseForResumption", () => {
     const mockProvider: ResumptionProvider = async () =>
       "<summary>Auth module done. Next: tests.</summary>";
     const result = await summariseForResumption("basis", mockProvider);
-    expect(result).toBe("Auth module done. Next: tests.");
+    expect(result.summary).toBe("Auth module done. Next: tests.");
   });
 
   it("returns full response when no summary tags", async () => {
     const mockProvider: ResumptionProvider = async () => "  plain text  ";
     const result = await summariseForResumption("basis", mockProvider);
-    expect(result).toBe("plain text");
+    expect(result.summary).toBe("plain text");
+  });
+
+  it("extracts description from response when present", async () => {
+    const mockProvider: ResumptionProvider = async () =>
+      "<summary>Auth module done.</summary>\n<description>Added JWT auth and login tests</description>";
+    const result = await summariseForResumption("basis", mockProvider);
+    expect(result.summary).toBe("Auth module done.");
+    expect(result.description).toBe("Added JWT auth and login tests");
+  });
+
+  it("returns undefined description when tag is absent", async () => {
+    const mockProvider: ResumptionProvider = async () =>
+      "<summary>Auth module done.</summary>";
+    const result = await summariseForResumption("basis", mockProvider);
+    expect(result.description).toBeUndefined();
   });
 });
 

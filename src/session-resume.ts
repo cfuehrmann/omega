@@ -61,7 +61,12 @@ same dead ends are not re-explored.
 5. **Technical anchors**: specific file paths, function/type/constant names, \
 commit hashes, and test names relevant to continuing the work.
 
-You must wrap your summary in a <summary></summary> block.\
+You must wrap your summary in a <summary></summary> block.
+
+Additionally, produce a one-line description (max 80 chars) of what the \
+session accomplished, wrapped in a <description></description> block. \
+This is used for display in the session picker — be specific and concrete, \
+not vague. Example: "Added JWT auth middleware and login endpoint tests".\
 `;
 
 /**
@@ -297,20 +302,44 @@ export function extractSummaryFromResponse(responseText: string): string {
   return responseText.trim();
 }
 
+/**
+ * Extract the description text from an LLM response.
+ * Parses the `<description>...</description>` block if present.
+ * Returns undefined if the block is absent.
+ */
+function extractDescriptionFromResponse(responseText: string): string | undefined {
+  const match = responseText.match(/<description>([\s\S]*?)<\/description>/);
+  if (match) return match[1]!.trim().slice(0, 120); // hard cap
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Public: summarisation call
 // ---------------------------------------------------------------------------
 
 /**
+ * Result of a summarisation call — includes the summary and an optional
+ * description extracted from the same LLM response.
+ */
+interface ResumptionResult {
+  summary: string;
+  description?: string;
+}
+
+/**
  * Call the LLM to produce a continuation summary from a basis string.
- * Returns the extracted summary text (inside <summary> tags, or full response).
+ * Returns the extracted summary text (inside <summary> tags, or full response),
+ * plus an optional one-line description for the source session.
  */
 export async function summariseForResumption(
   basis: string,
   provider: ResumptionProvider,
-): Promise<string> {
+): Promise<ResumptionResult> {
   const raw = await provider(RESUMPTION_SUMMARY_INSTRUCTIONS, basis);
-  return extractSummaryFromResponse(raw);
+  return {
+    summary: extractSummaryFromResponse(raw),
+    description: extractDescriptionFromResponse(raw),
+  };
 }
 
 // ---------------------------------------------------------------------------

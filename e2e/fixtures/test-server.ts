@@ -28,13 +28,23 @@
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
-import { readFile, writeFile } from "fs/promises";
+import { readFile, writeFile, readdir, rm, mkdir } from "fs/promises";
 import type { ServerWebSocket } from "bun";
 import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
 import { appendEvent } from "../../src/event-store.js";
-import { makeSessionDir, TEST_SESSIONS_ROOT, type SessionPaths } from "../../src/session-dir.js";
+import {
+  makeSessionDir,
+  readSessionMetadata,
+  writeSessionMetadata,
+  SESSION_DIR_RE,
+  SESSION_METADATA_FILE,
+  TEST_SESSIONS_ROOT,
+  type SessionMetadata,
+  type SessionPaths,
+} from "../../src/session-dir.js";
 import type { OmegaEvent } from "../../src/events.js";
 import { OmegaEventSchema } from "../../src/events.schema.js";
+import { now as isoNow } from "../../src/iso-timestamp.js";
 
 const MAIN_PORT = 3001;
 const CTRL_PORT = 3002;
@@ -81,6 +91,12 @@ function serveStatic(pathname: string): Response | null {
 
 let activeWs: ServerWebSocket<unknown> | null = null;
 const receivedMessages: string[] = [];
+
+/**
+ * Configurable delay (ms) injected into resume_session handling so tests
+ * can observe the "resuming…" state. 0 = instant.
+ */
+let resumeDelayMs = 0;
 
 /**
  * Current session directory paths — created by makeSessionDir() on startup
@@ -135,14 +151,68 @@ function sendWs(event: object): void {
 }
 
 // ---------------------------------------------------------------------------
+// Session listing — mirrors real server's GET /sessions
+// ---------------------------------------------------------------------------
+
+/** Convert a session folder name to an ISO timestamp string. */
+function folderNameToTimestamp(name: string): string {
+  const m = name.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d{3}))?/);
+  if (!m) return name;
+  const [, date, h, min, s, ms] = m;
+  return `${date}T${h}:${min}:${s}${ms ? `.${ms}` : ""}Z`;
+}
+
+interface SessionListItem extends SessionMetadata {
+  dir: string;
+  lastActivity: string;
+}
+
+async function listSessions(): Promise<SessionListItem[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(TEST_SESSIONS_ROOT);
+  } catch {
+    return [];
+  }
+
+  const dirs = entries
+    .filter(e => SESSION_DIR_RE.test(e))
+    .sort()
+    .reverse(); // newest first
+
+  const items: SessionListItem[] = [];
+  for (const dir of dirs) {
+    const fullDir = join(TEST_SESSIONS_ROOT, dir);
+    const meta = await readSessionMetadata(fullDir);
+    items.push({
+      dir,
+      ...(meta.name !== undefined ? { name: meta.name } : {}),
+      ...(meta.description !== undefined ? { description: meta.description } : {}),
+      ...(meta.continuationOf !== undefined ? { continuationOf: meta.continuationOf } : {}),
+      lastActivity: folderNameToTimestamp(dir),
+    });
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
 // Main server (browser-facing)
 // ---------------------------------------------------------------------------
 
 Bun.serve({
   port: MAIN_PORT,
-  fetch(req, srv) {
+  async fetch(req, srv) {
     if (srv.upgrade(req)) return undefined as any;
     const url = new URL(req.url);
+
+    // Session listing: GET /sessions (mirrors real server)
+    if (url.pathname === "/sessions" && req.method === "GET") {
+      const sessions = await listSessions();
+      return new Response(JSON.stringify(sessions), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+      });
+    }
+
     const res = serveStatic(url.pathname);
     if (res) return res;
     return new Response("Not found", { status: 404 });
@@ -155,6 +225,7 @@ Bun.serve({
       // explicitly so the history + connected frames are batched reliably.
       const replay = await loadReplayEvents();
       ws.cork(() => {
+        ws.send(JSON.stringify({ type: "session_info", dir: sessionPaths.dir, model: "claude-sonnet-4-6", effort: "medium", cwd: process.cwd() }));
         if (replay.length > 0) {
           ws.send(JSON.stringify({ type: "history", events: replay }));
         }
@@ -170,10 +241,68 @@ Bun.serve({
         resetState().then(() => {
           // After await (inside .then) — cork explicitly.
           ws.cork(() => {
+            ws.send(JSON.stringify({ type: "session_info", dir: sessionPaths.dir, model: "claude-sonnet-4-6", effort: "medium", cwd: process.cwd() }));
             ws.send(JSON.stringify({ type: "history", events: [] }));
             ws.send(JSON.stringify({ type: "reset_done" }));
           });
         }).catch(() => {});
+        return;
+      }
+
+      if (msg.type === "resume_session") {
+        const dir = msg.sessionDir as string;
+        // Immediately signal that resumption has started
+        ws.send(JSON.stringify({ type: "resuming_session", sessionDir: dir }));
+
+        (async () => {
+          // Simulate the real server's async work with a configurable delay
+          if (resumeDelayMs > 0) {
+            await new Promise(r => setTimeout(r, resumeDelayMs));
+          }
+
+          // Create a new session dir (as the real server does)
+          await resetState();
+          const resumed: OmegaEvent = {
+            type: "session_resumed",
+            time: isoNow(),
+            continuationOf: dir,
+            basis: "(test basis)",
+            summary: "(test summary of previous session)",
+          };
+          await appendEvent(resumed, sessionPaths.eventsFile);
+
+          // Replay events from new session
+          const replay = await loadReplayEvents();
+          ws.cork(() => {
+            ws.send(JSON.stringify({
+              type: "session_info",
+              dir: sessionPaths.dir,
+              model: "claude-sonnet-4-6",
+              effort: "medium",
+              cwd: process.cwd(),
+            }));
+            ws.send(JSON.stringify({ type: "history", events: replay }));
+            ws.send(JSON.stringify({ type: "ready" }));
+          });
+        })().catch(() => {});
+        return;
+      }
+
+      if (msg.type === "delete_session") {
+        const dir = msg.sessionDir as string;
+        // Safety: only delete directories matching the session pattern
+        if (!SESSION_DIR_RE.test(dir)) {
+          ws.send(JSON.stringify({ type: "transport_error", time: new Date().toISOString(), error: `Invalid session dir: ${dir}` }));
+          return;
+        }
+        const fullDir = join(TEST_SESSIONS_ROOT, dir);
+        rm(fullDir, { recursive: true, force: true })
+          .then(() => {
+            ws.send(JSON.stringify({ type: "session_deleted", sessionDir: dir }));
+          })
+          .catch((err: unknown) => {
+            ws.send(JSON.stringify({ type: "transport_error", time: new Date().toISOString(), error: `Delete failed: ${err}` }));
+          });
         return;
       }
 
@@ -232,8 +361,49 @@ Bun.serve({
     if (req.method === "POST" && url.pathname === "/control/reset") {
       receivedMessages.length = 0;
       currentAgentId = 1;
-      // Create a fresh uniquely-named session directory (old one left on disk for inspection)
+      resumeDelayMs = 0;
+      // Wipe ALL test sessions so tests start with a clean slate
+      try {
+        const entries = await readdir(TEST_SESSIONS_ROOT);
+        for (const e of entries) {
+          if (SESSION_DIR_RE.test(e)) {
+            await rm(join(TEST_SESSIONS_ROOT, e), { recursive: true, force: true });
+          }
+        }
+      } catch { /* TEST_SESSIONS_ROOT may not exist yet */ }
+      // Create a fresh uniquely-named session directory for the new session
       sessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
+      return new Response("ok");
+    }
+
+    // Create a past session with metadata + optional events (for session picker tests)
+    if (req.method === "POST" && url.pathname === "/control/create-past-session") {
+      const body = await req.json() as {
+        metadata?: SessionMetadata;
+        events?: Array<Record<string, unknown>>;
+      };
+      const pastPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
+      if (body.metadata) {
+        await writeSessionMetadata(pastPaths.dir, body.metadata);
+      }
+      if (body.events) {
+        for (const event of body.events) {
+          const ev: Record<string, unknown> = {
+            time: new Date().toISOString(),
+            ...event,
+          };
+          await appendEvent(ev as unknown as OmegaEvent, pastPaths.eventsFile);
+        }
+      }
+      return new Response(JSON.stringify({ dir: pastPaths.dir }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Configure the resume delay for testing the "resuming…" state
+    if (req.method === "POST" && url.pathname === "/control/set-resume-delay") {
+      const body = await req.json() as { delayMs: number };
+      resumeDelayMs = body.delayMs;
       return new Response("ok");
     }
 

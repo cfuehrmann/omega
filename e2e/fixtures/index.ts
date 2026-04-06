@@ -30,6 +30,10 @@ export interface ServerHelper {
   agentId(): Promise<number>;
   /** Write raw JSONL lines to the session's events.jsonl (no WebSocket send) */
   loadFixture(lines: string[]): Promise<void>;
+  /** Create a past session with metadata and optional events (for session picker tests) */
+  createPastSession(opts?: { metadata?: Record<string, string>; events?: object[] }): Promise<{ dir: string }>;
+  /** Set the artificial delay (ms) for resume_session handling */
+  setResumeDelay(delayMs: number): Promise<void>;
 }
 
 async function sendEvent(event: object): Promise<void> {
@@ -87,6 +91,23 @@ async function loadFixture(lines: string[]): Promise<void> {
   });
 }
 
+async function createPastSession(opts?: { metadata?: Record<string, string>; events?: object[] }): Promise<{ dir: string }> {
+  const res = await fetch(`${CTRL}/control/create-past-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ metadata: opts?.metadata, events: opts?.events }),
+  });
+  return res.json() as Promise<{ dir: string }>;
+}
+
+async function setResumeDelay(delayMs: number): Promise<void> {
+  await fetch(`${CTRL}/control/set-resume-delay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delayMs }),
+  });
+}
+
 export interface Fixtures {
   server: ServerHelper;
 }
@@ -94,7 +115,7 @@ export interface Fixtures {
 export const test = base.extend<Fixtures>({
   server: async ({}, use) => {
     await reset();
-    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId, loadFixture };
+    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId, loadFixture, createPastSession, setResumeDelay };
     await use(helper);
   },
 });

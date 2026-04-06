@@ -712,5 +712,10 @@ export function dispatch(event: ServerMessage): void {
     case "session_resumed":
       setState(produce(s => { s.events.push(event); }));
       break;
+
+    // Protocol envelopes handled elsewhere — no state update needed
+    case "resuming_session":
+    case "session_deleted":
+      break;
   }
 }

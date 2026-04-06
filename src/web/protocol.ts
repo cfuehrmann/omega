@@ -42,6 +42,11 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
    * (within SESSIONS_ROOT) of the session to continue.
    */
   z.object({ type: z.literal("resume_session"), sessionDir: z.string() }),
+  /**
+   * Delete a session directory. `sessionDir` is the relative folder name
+   * (within SESSIONS_ROOT) to remove.
+   */
+  z.object({ type: z.literal("delete_session"), sessionDir: z.string() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
@@ -68,6 +73,10 @@ const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("reset_done") }),
   z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string(), effort: z.string(), cwd: z.string() }),
   z.object({ type: z.literal("history"),      events: z.array(OmegaEventSchema) }),
+  /** Signals that session resumption has started (async work in progress). */
+  z.object({ type: z.literal("resuming_session"), sessionDir: z.string() }),
+  /** Confirms a session was deleted. */
+  z.object({ type: z.literal("session_deleted"), sessionDir: z.string() }),
 ]);
 
 /**
@@ -84,6 +93,6 @@ export const ServerMessageSchema = z.union([
   OmegaEventSchema,
   StreamSignalSchema,
   ProtocolEnvelopeSchema,
-]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string; model: string; effort: string } | { type: "history"; events: OmegaEvent[] }>;
+]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string; model: string; effort: string } | { type: "history"; events: OmegaEvent[] } | { type: "resuming_session"; sessionDir: string } | { type: "session_deleted"; sessionDir: string }>;
 
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;

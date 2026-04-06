@@ -577,6 +577,115 @@ html, body, #root {
 }
 .llm-legend-btn:hover { opacity: 0.9; }
 
+/* ── Session picker ── */
+.session-picker-modal { max-width: 700px; }
+
+.session-picker-search {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 8px 14px 4px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+}
+.session-picker-search:focus { border-color: var(--ctp-blue); }
+
+.session-picker-list {
+  overflow-y: auto;
+  max-height: 60vh;
+  padding: 4px 0;
+}
+
+.session-picker-item {
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.session-picker-item:hover { background: color-mix(in srgb, var(--ctp-blue) 10%, transparent); }
+
+.session-picker-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-picker-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.session-picker-unnamed { color: var(--dim); font-style: italic; font-weight: normal; }
+
+.session-picker-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+
+.session-picker-desc {
+  font-size: 12px;
+  color: var(--ctp-subtext0);
+  margin-top: 3px;
+}
+
+.session-picker-cont {
+  font-size: 11px;
+  color: var(--ctp-teal);
+  margin-top: 2px;
+}
+
+.session-picker-delete {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+.session-picker-delete:hover { border-color: var(--red); color: var(--red); }
+
+.session-picker-loading {
+  padding: 16px 14px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.session-picker-resuming {
+  padding: 24px 14px;
+  text-align: center;
+}
+.session-picker-resuming-text {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.session-picker-resuming-dir {
+  font-size: 11px;
+  color: var(--dim);
+  margin-bottom: 14px;
+  word-break: break-all;
+}
+.session-picker-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 14px;
+}
+.session-picker-cancel:hover { border-color: var(--red); color: var(--red); }
+
 /* ── Modals ── */
 .modal-backdrop {
   position: fixed;
