@@ -570,6 +570,45 @@ export class Agent {
     }
   }
 
+  /**
+   * Seed this session with a summary of a previous session.
+   *
+   * Call once after `init()` and before any user turns. Logs a
+   * `session_resumed` event (carrying both the basis and the summary for
+   * post-mortem inspection), then injects a synthetic user + assistant
+   * message pair into `compactedContextHistory` so the LLM has the prior
+   * context from the very first turn.
+   */
+  async seedWithResumptionSummary(
+    summary: string,
+    continuationOf: string,
+    basis: string,
+  ): Promise<void> {
+    const ev: OmegaEvent = {
+      type: "session_resumed",
+      time: now(),
+      continuationOf,
+      basis,
+      summary,
+    };
+    await this.logEvent(ev);
+
+    // Inject the summary as an opening message pair so the LLM has full
+    // context from Turn 1 onward. The alternating user/assistant structure
+    // is required by the Anthropic API.
+    await this.appendToHistory({
+      role: "user",
+      content:
+        "The following is context from the previous session to provide continuity:\n\n" +
+        summary,
+    });
+    await this.appendToHistory({
+      role: "assistant",
+      content:
+        "Understood. I have reviewed the context from the previous session and am ready to continue.",
+    });
+  }
+
   async *sendMessage(
     userMessage: string,
     _confirmTool: (name: string, input: unknown) => Promise<boolean>,

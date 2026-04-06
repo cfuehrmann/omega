@@ -18,11 +18,19 @@
 
 import { join } from "path";
 import { readFileSync, existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
 import { z } from "zod";
 import type { ServerWebSocket } from "bun";
 import { Agent, type StreamProvider, type OmegaEvent } from "../agent.js";
-import { makeSessionDir, type SessionPaths } from "../session-dir.js";
+import {
+  makeSessionDir,
+  readSessionMetadata,
+  updateSessionMetadata,
+  SESSIONS_ROOT,
+  SESSION_DIR_RE,
+  type SessionMetadata,
+  type SessionPaths,
+} from "../session-dir.js";
 import { appendEvent } from "../event-store.js";
 import type { ContextRecord } from "../context-store.js";
 import { OmegaEventSchema } from "../events.schema.js";
@@ -31,6 +39,13 @@ import { readEnvPort } from "../env.js";
 import { config } from "../config.js";
 import { ClientMessageSchema, type ClientMessage } from "./protocol.js";
 import { now } from "../iso-timestamp.js";
+import {
+  extractResumptionBasis,
+  summariseForResumption,
+  generateSessionName,
+  makeDefaultResumptionProvider,
+  type ResumptionProvider,
+} from "../session-resume.js";
 
 // ---------------------------------------------------------------------------
 // Port resolution: --port flag > PORT env > 3000
@@ -171,6 +186,30 @@ export function closeOpenTurn(log: object[]): object[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Read all parseable OmegaEvents from an events file (no filtering).
+ * Used to load a previous session for resumption basis extraction.
+ * Returns [] if the file is absent or unreadable.
+ */
+export async function loadAllEvents(eventsFile: string): Promise<OmegaEvent[]> {
+  if (!existsSync(eventsFile)) return [];
+  try {
+    const text = await readFile(eventsFile, "utf-8");
+    const events: OmegaEvent[] = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let raw: unknown;
+      try { raw = JSON.parse(trimmed); } catch { continue; }
+      const result = OmegaEventSchema.safeParse(raw);
+      if (result.success) events.push(result.data);
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Read the current session's events.jsonl and return the subset of events
  * suitable for history replay (excludes streaming text, transient signals).
  * Applies closeOpenTurn so a crashed session doesn't lock the browser UI.
@@ -191,6 +230,86 @@ async function loadReplayEvents(eventsFile: string): Promise<object[]> {
     return closeOpenTurn(events);
   } catch {
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session listing — GET /sessions
+// ---------------------------------------------------------------------------
+
+/** Convert a session folder name to an ISO timestamp string. */
+function folderNameToTimestamp(name: string): string {
+  // "2025-07-11T09-14-22-037-a8c3f1b2" → "2025-07-11T09:14:22.037Z"
+  const m = name.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d{3}))?/);
+  if (!m) return name;
+  const [, date, h, min, s, ms] = m;
+  return `${date}T${h}:${min}:${s}${ms ? `.${ms}` : ""}Z`;
+}
+
+interface SessionListItem extends SessionMetadata {
+  dir: string;
+  lastActivity: string;
+}
+
+async function listSessions(): Promise<SessionListItem[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(SESSIONS_ROOT);
+  } catch {
+    return [];
+  }
+
+  const dirs = entries
+    .filter(e => SESSION_DIR_RE.test(e))
+    .sort()
+    .reverse(); // newest first
+
+  const items: SessionListItem[] = [];
+  for (const dir of dirs) {
+    const fullDir = join(SESSIONS_ROOT, dir);
+    const meta = await readSessionMetadata(fullDir);
+    items.push({
+      dir,
+      ...(meta.name !== undefined ? { name: meta.name } : {}),
+      ...(meta.description !== undefined ? { description: meta.description } : {}),
+      ...(meta.continuationOf !== undefined ? { continuationOf: meta.continuationOf } : {}),
+      lastActivity: folderNameToTimestamp(dir),
+    });
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-naming — fire-and-forget after first turn_end
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-name a session after its first completed turn.
+ * Reads the first user message and first agent text from `turnEvents`,
+ * calls the LLM for a short name, and writes it to session.jsonc.
+ * Only runs if the session has no name yet. Fire-and-forget — errors are
+ * silently swallowed.
+ */
+async function maybeAutoName(
+  sessionDir: string,
+  turnEvents: OmegaEvent[],
+  provider: ResumptionProvider,
+): Promise<void> {
+  // Only name once
+  const existing = await readSessionMetadata(sessionDir);
+  if (existing.name) return;
+
+  const userMsg = turnEvents.find(e => e.type === "user_message");
+  const llmResp = turnEvents.find(e => e.type === "llm_response" && (e as any).text);
+  if (!userMsg || !llmResp) return;
+
+  const name = await generateSessionName(
+    (userMsg as Extract<OmegaEvent, { type: "user_message" }>).content,
+    (llmResp as Extract<OmegaEvent, { type: "llm_response" }>).text ?? "",
+    provider,
+  );
+  if (name) {
+    await updateSessionMetadata(sessionDir, { name });
   }
 }
 
@@ -245,7 +364,12 @@ function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context
   appendEvent(event, currentSessionPaths.eventsFile).catch(() => {});
 }
 
-async function handleMessage(session: Session, data: string, streamProvider?: StreamProvider): Promise<void> {
+async function handleMessage(
+  session: Session,
+  data: string,
+  streamProvider: StreamProvider | undefined,
+  resumptionProvider: ResumptionProvider,
+): Promise<void> {
   let msg: ClientMessage;
   try {
     msg = ClientMessageSchema.parse(JSON.parse(data));
@@ -289,6 +413,57 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     return;
   }
 
+  if (msg.type === "resume_session") {
+    if (session.isStreaming) {
+      sendTransportError(session.ws, "Cannot resume session during an active turn", "handleMessage");
+      return;
+    }
+
+    session.abortController?.abort();
+    session.isStreaming = false;
+    session.abortController = null;
+
+    // Create new session dir + agent
+    currentSessionPaths = await makeSessionDir();
+    persistentAgent = new Agent(
+      streamProvider,
+      currentSessionPaths.contextFile,
+      currentSessionPaths.eventsFile,
+    );
+
+    await persistentAgent.init();
+    await persistentAgent.loadSystemPromptAppend().catch(() => {});
+
+    // Read previous session events and produce a resumption summary
+    const prevEventsFile = join(SESSIONS_ROOT, msg.sessionDir, "events.jsonl");
+    const prevEvents = await loadAllEvents(prevEventsFile);
+    const basis = extractResumptionBasis(prevEvents);
+    const summary = await summariseForResumption(basis, resumptionProvider);
+
+    // Seed the agent with the summary and record the session_resumed event
+    await persistentAgent.seedWithResumptionSummary(summary, msg.sessionDir, basis);
+
+    // Update session.jsonc with the continuationOf link
+    await updateSessionMetadata(currentSessionPaths.dir, {
+      continuationOf: msg.sessionDir,
+    });
+
+    // Send history (includes session_started + session_resumed) then ready
+    const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
+    session.ws.cork(() => {
+      session.ws.send(JSON.stringify({
+        type: "session_info",
+        dir: currentSessionPaths.dir,
+        model: persistentAgent.getActiveModel(),
+        effort: persistentAgent.getActiveEffort(),
+        cwd: process.cwd(),
+      }));
+      session.ws.send(JSON.stringify({ type: "history", events: replayEvents }));
+      session.ws.send(JSON.stringify({ type: "ready" }));
+    });
+    return;
+  }
+
   if (msg.type === "set_model") {
     if (session.isStreaming) {
       sendTransportError(session.ws, "Cannot switch model during an active turn", "handleMessage");
@@ -327,6 +502,7 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
     session.abortController = new AbortController();
     const { ws } = session;
 
+    const turnEvents: OmegaEvent[] = [];
     try {
       const confirmTool = async () => true;
       for await (const event of persistentAgent.sendMessage(
@@ -335,12 +511,18 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
         session.abortController.signal,
       )) {
         send(ws, event);
+        if ("type" in event) turnEvents.push(event as OmegaEvent);
       }
     } catch (err: unknown) {
       sendTransportError(ws, err instanceof Error ? err.message : String(err), "handleMessage");
     } finally {
       session.isStreaming = false;
       session.abortController = null;
+    }
+
+    // Auto-name after first turn_end (fire-and-forget)
+    if (turnEvents.some(e => e.type === "turn_end")) {
+      maybeAutoName(currentSessionPaths.dir, turnEvents, resumptionProvider).catch(() => {});
     }
   }
 }
@@ -352,11 +534,19 @@ async function handleMessage(session: Session, data: string, streamProvider?: St
 export interface WebAppOptions {
   /** Injectable LLM stream provider (used in tests to avoid real API calls). */
   streamProvider?: StreamProvider;
+  /**
+   * Injectable provider for resumption summarisation and auto-naming.
+   * Defaults to a real Anthropic call in production; inject a mock in tests.
+   */
+  resumptionProvider?: ResumptionProvider;
   /** Override the HTTP port (default: resolved from --port flag / PORT env / 3000). */
   port?: number;
 }
 
 export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
+  const resumptionProvider: ResumptionProvider =
+    opts.resumptionProvider ?? makeDefaultResumptionProvider();
+
   currentSessionPaths = await makeSessionDir();
   persistentAgent = new Agent(
     opts.streamProvider,
@@ -381,6 +571,14 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
     async fetch(req, srv) {
       if (srv.upgrade(req, { data: undefined })) return undefined as any;
       const url = new URL(req.url);
+
+      // Session listing: GET /sessions
+      if (url.pathname === "/sessions" && req.method === "GET") {
+        const sessions = await listSessions();
+        return new Response(JSON.stringify(sessions), {
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+        });
+      }
 
       // Context record lookup: GET /context?hashes=abc123,def456,...
       if (url.pathname === "/context" && req.method === "GET") {
@@ -432,7 +630,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
 
       message(ws, data) {
         if (activeSession?.ws !== ws) return;
-        handleMessage(activeSession, String(data), opts.streamProvider).catch((err: unknown) => {
+        handleMessage(activeSession, String(data), opts.streamProvider, resumptionProvider).catch((err: unknown) => {
           sendTransportError(ws, String(err), "websocket_message_handler");
         });
       },

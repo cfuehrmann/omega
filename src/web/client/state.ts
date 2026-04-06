@@ -709,6 +709,7 @@ export function dispatch(event: ServerMessage): void {
     case "llm_error":
     case "agent_error":
     case "transport_error":
+    case "session_resumed":
       setState(produce(s => { s.events.push(event); }));
       break;
   }

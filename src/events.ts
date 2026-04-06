@@ -298,6 +298,35 @@ export interface EffortChangedEvent {
 }
 
 /**
+ * The session was seeded with a summary of a previous session.
+ *
+ * Emitted once at the start of a resumed session, before any user turns.
+ * The `basis` and `summary` fields are both persisted so the quality of
+ * the extraction function can be inspected and improved over time.
+ */
+export interface SessionResumedEvent {
+  type: "session_resumed";
+  time: ISOTimestamp;
+  /**
+   * Relative folder name (within SESSIONS_ROOT) of the session being
+   * continued. Relative for portability — moving the project directory
+   * does not break the lineage chain.
+   */
+  continuationOf: string;
+  /**
+   * The extracted basis text that was sent to the LLM for summarisation.
+   * Persisted so the extraction function's output can be inspected and
+   * iterated on independently of the LLM call.
+   */
+  basis: string;
+  /**
+   * The summary produced by the LLM from the basis. This text is also
+   * injected into the new session's LLM context as the opening message.
+   */
+  summary: string;
+}
+
+/**
  * A transport-layer error emitted by the web server.
  *
  * Distinct from `agent_error` (agent application logic) and `llm_error`
@@ -349,4 +378,5 @@ export type OmegaEvent =
   | LlmRetryEvent
   | ModelChangedEvent
   | EffortChangedEvent
-  | TransportErrorEvent;
+  | TransportErrorEvent
+  | SessionResumedEvent;

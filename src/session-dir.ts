@@ -26,23 +26,102 @@
  *   - `.omega/` namespace leaves room for authored artefacts (e.g. system-prompt-append.md).
  */
 
-import { mkdir, readdir, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 
 /** Root directory for all session folders. Relative to cwd (SESSION-2). */
 export const SESSIONS_ROOT = ".omega/sessions";
 
+// ---------------------------------------------------------------------------
+// Session metadata
+// ---------------------------------------------------------------------------
+
+/** Name of the metadata file inside every session folder. */
+export const SESSION_METADATA_FILE = "session.jsonc";
+
+/**
+ * Metadata for a session. All fields are optional — a session can exist
+ * with no metadata (just an empty `{}`).
+ *
+ * Written as JSONC so humans can add comments when editing manually.
+ * Programmatic writes use plain JSON (a valid subset of JSONC).
+ */
+export interface SessionMetadata {
+  /** Short human-readable label. Not unique — multiple sessions may share a name. */
+  name?: string;
+  /** Free-text description. Searchable. */
+  description?: string;
+  /**
+   * Relative folder name (within SESSIONS_ROOT) of the session this one
+   * continues. Relative for portability — moving the project does not break
+   * the lineage chain.
+   */
+  continuationOf?: string;
+}
+
+/** Strip single-line and block comments for JSONC parsing. */
+function stripJsoncComments(text: string): string {
+  return text
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/**
+ * Read session metadata from `session.jsonc` inside `dir`.
+ * Returns `{}` if the file is absent or unparseable.
+ */
+export async function readSessionMetadata(dir: string): Promise<SessionMetadata> {
+  try {
+    const raw = await readFile(join(dir, SESSION_METADATA_FILE), "utf-8");
+    const parsed = JSON.parse(stripJsoncComments(raw));
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as SessionMetadata;
+    }
+  } catch {
+    // absent or malformed — treat as empty
+  }
+  return {};
+}
+
+/**
+ * Write (overwrite) session metadata to `session.jsonc` inside `dir`.
+ * Only writes the keys that are present in `metadata` — undefined values
+ * are omitted so the file stays minimal.
+ */
+export async function writeSessionMetadata(
+  dir: string,
+  metadata: SessionMetadata,
+): Promise<void> {
+  const clean: Record<string, string> = {};
+  if (metadata.name !== undefined) clean.name = metadata.name;
+  if (metadata.description !== undefined) clean.description = metadata.description;
+  if (metadata.continuationOf !== undefined) clean.continuationOf = metadata.continuationOf;
+  await writeFile(join(dir, SESSION_METADATA_FILE), JSON.stringify(clean, null, 2) + "\n", "utf-8");
+}
+
+/**
+ * Merge `patch` into the existing metadata for `dir`.
+ * Undefined patch values leave the existing field unchanged.
+ */
+export async function updateSessionMetadata(
+  dir: string,
+  patch: Partial<SessionMetadata>,
+): Promise<void> {
+  const existing = await readSessionMetadata(dir);
+  await writeSessionMetadata(dir, { ...existing, ...patch });
+}
+
 /** Root directory for e2e test session folders. Distinct from production sessions. */
 export const TEST_SESSIONS_ROOT = ".omega/test-sessions";
 
 /**
- * Regex matching a session dir name.
+ * Regex matching a session dir name. Exported for use in server.ts session listing.
  * Accepts all three historical formats:
  *   - old:         YYYY-MM-DDTHH-MM-SS                   (second precision, no suffix)
  *   - v2:          YYYY-MM-DDTHH-MM-SS-<hex8>             (second precision + suffix)
  *   - current:     YYYY-MM-DDTHH-MM-SS-mmm-<hex8>         (millisecond precision + suffix)
  */
-const SESSION_DIR_RE =
+export const SESSION_DIR_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-\d{3})?(-[0-9a-f]{8})?$/;
 
 /**
@@ -94,11 +173,11 @@ export async function makeSessionDir(
   await mkdir(dir, { recursive: true });
   const contextFile = join(dir, "context.jsonl");
   const eventsFile = join(dir, "events.jsonl");
-  // Create both files eagerly so the session directory is complete from birth.
-  // A session dir always contains both files — absence is never a valid state.
+  // Create all three files eagerly so the session directory is complete from birth.
   // flag "wx" = create-only (safe if files somehow already exist from a race).
   await writeFile(contextFile, "", { flag: "wx" });
   await writeFile(eventsFile, "", { flag: "wx" });
+  await writeFile(join(dir, SESSION_METADATA_FILE), "{}\n", { flag: "wx" });
   return { dir, contextFile, eventsFile };
 }
 

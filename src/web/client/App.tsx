@@ -1024,6 +1024,30 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
     }
 
+    case "session_resumed": {
+      const label = `↩ continued from ${e.continuationOf}`;
+      const openSummary = () => setActiveModal({
+        kind: "block",
+        detail: { label: "session_resumed · summary", time, body: e.summary },
+      });
+      const openBasis = () => setActiveModal({
+        kind: "block",
+        detail: { label: "session_resumed · basis", time, body: e.basis },
+      });
+      return (
+        <div class="block info" data-testid="block-session-resumed">
+          <div class="block-label-row">
+            <span class="block-label">session_resumed</span>
+            <span class="block-body resumed-label">{label}</span>
+            <div class="block-btn-group">
+              <button class="block-expand-btn" onClick={openSummary} title="View summary">summary</button>
+              <button class="block-expand-btn" onClick={openBasis} title="View basis">basis</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // Protocol envelope events — handled by dispatch(), never appear in turn.events.
     // Listed here to satisfy the exhaustive check.
     case "ready":
@@ -1247,6 +1271,89 @@ function MetricsTable() {
 // BottomPanel — collapsible panel (session info + metrics), toggled by Ω
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Session picker modal
+// ---------------------------------------------------------------------------
+
+interface SessionItem {
+  dir: string;
+  name?: string;
+  description?: string;
+  continuationOf?: string;
+  lastActivity: string;
+}
+
+const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
+
+function SessionPickerModal() {
+  const [sessions] = createResource<SessionItem[], boolean>(
+    () => sessionPickerOpen(),
+    async (open: boolean) => {
+      if (!open) return [];
+      const res = await fetch("/sessions");
+      if (!res.ok) return [];
+      return res.json() as Promise<SessionItem[]>;
+    },
+  );
+
+  function resume(dir: string) {
+    sendToServer({ type: "resume_session", sessionDir: dir });
+    setSessionPickerOpen(false);
+  }
+
+  function formatActivity(iso: string): string {
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString();
+    } catch { return iso; }
+  }
+
+  return (
+    <Show when={sessionPickerOpen()}>
+      <div class="modal-backdrop" onClick={() => setSessionPickerOpen(false)}>
+        <div class="modal session-picker-modal" data-testid="session-picker-modal"
+             onClick={(e) => e.stopPropagation()}>
+          <div class="modal-header">
+            <span class="modal-title">Continue a previous session</span>
+            <button class="modal-close" onClick={() => setSessionPickerOpen(false)}>✕ close</button>
+          </div>
+          <Show when={sessions.loading}>
+            <div class="session-picker-loading">Loading sessions…</div>
+          </Show>
+          <Show when={!sessions.loading && (sessions() ?? []).length === 0}>
+            <div class="session-picker-loading">No previous sessions found.</div>
+          </Show>
+          <Show when={!sessions.loading && (sessions() ?? []).length > 0}>
+            <div class="session-picker-list" data-testid="session-picker-list">
+              <For each={sessions() ?? []}>
+                {(s) => (
+                  <div class="session-picker-item" data-testid="session-picker-item"
+                       onClick={() => resume(s.dir)}>
+                    <div class="session-picker-name">
+                      {s.name ?? <span class="session-picker-unnamed">(unnamed)</span>}
+                    </div>
+                    <div class="session-picker-meta">
+                      <span class="session-picker-dir">{s.dir}</span>
+                      <span class="session-picker-date">{formatActivity(s.lastActivity)}</span>
+                    </div>
+                    <Show when={s.description}>
+                      <div class="session-picker-desc">{s.description}</div>
+                    </Show>
+                    <Show when={s.continuationOf}>
+                      <div class="session-picker-cont">↩ continues {s.continuationOf}</div>
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
 function BottomPanel() {
   const hasMetrics = () => state.liveTurn !== null || state.lastTurnEnd !== null;
 
@@ -1261,6 +1368,12 @@ function BottomPanel() {
             </Show>
             <span class="bp-label">session</span>
             <span class="bp-dir" data-testid="session-dir">{state.sessionDir}</span>
+            <button
+              class="new-session-btn"
+              disabled={state.streaming || !state.connected}
+              onClick={() => setSessionPickerOpen(true)}
+              title="Continue a previous session"
+            >↩ Continue</button>
             <Show when={state.events.length > 0}>
               <button
                 class="new-session-btn"
@@ -1477,6 +1590,7 @@ export function App() {
     <div class="app">
       <TokenLegend />
       <ActiveModal />
+      <SessionPickerModal />
       <div class="feed-wrapper">
         <div class="feed" data-testid="feed" ref={feedRef} onScroll={onFeedScroll}>
           <ErrorBoundary fallback={(err) => (

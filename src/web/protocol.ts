@@ -37,6 +37,11 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("reset") }),
   z.object({ type: z.literal("set_model"), model: OmegaModelSchema }),
   z.object({ type: z.literal("set_effort"), effort: OmegaEffortSchema }),
+  /**
+   * Resume a previous session. `sessionDir` is the relative folder name
+   * (within SESSIONS_ROOT) of the session to continue.
+   */
+  z.object({ type: z.literal("resume_session"), sessionDir: z.string() }),
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

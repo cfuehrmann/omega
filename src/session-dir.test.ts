@@ -6,7 +6,16 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { makeSessionDirName, makeSessionDir, findPreviousEventsFile, SESSIONS_ROOT } from "./session-dir.js";
+import {
+  makeSessionDirName,
+  makeSessionDir,
+  findPreviousEventsFile,
+  readSessionMetadata,
+  writeSessionMetadata,
+  updateSessionMetadata,
+  SESSION_METADATA_FILE,
+  SESSIONS_ROOT,
+} from "./session-dir.js";
 import { existsSync } from "fs";
 
 // ---------------------------------------------------------------------------
@@ -222,5 +231,161 @@ describe("findPreviousEventsFile", () => {
 
   afterEach(async () => {
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session metadata
+// ---------------------------------------------------------------------------
+
+describe("readSessionMetadata", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "omega-meta-test-"));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns empty object when file is absent", async () => {
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta).toEqual({});
+  });
+
+  it("returns empty object when file contains {}", async () => {
+    await writeFile(join(tmpDir, SESSION_METADATA_FILE), "{}\n");
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta).toEqual({});
+  });
+
+  it("reads name, description, and continuationOf", async () => {
+    await writeFile(
+      join(tmpDir, SESSION_METADATA_FILE),
+      JSON.stringify({ name: "jwt login", description: "desc", continuationOf: "old-session" }),
+    );
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("jwt login");
+    expect(meta.description).toBe("desc");
+    expect(meta.continuationOf).toBe("old-session");
+  });
+
+  it("strips single-line JSONC comments", async () => {
+    const jsonc = `{
+  // This is a comment
+  "name": "test session"
+}`;
+    await writeFile(join(tmpDir, SESSION_METADATA_FILE), jsonc);
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("test session");
+  });
+
+  it("strips block JSONC comments", async () => {
+    const jsonc = `{
+  /* Block comment */
+  "name": "block test"
+}`;
+    await writeFile(join(tmpDir, SESSION_METADATA_FILE), jsonc);
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("block test");
+  });
+
+  it("returns empty object for malformed JSON", async () => {
+    await writeFile(join(tmpDir, SESSION_METADATA_FILE), "{ bad json }");
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta).toEqual({});
+  });
+});
+
+describe("writeSessionMetadata", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "omega-meta-test-"));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes and reads back name", async () => {
+    await writeSessionMetadata(tmpDir, { name: "auth tests" });
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("auth tests");
+  });
+
+  it("writes and reads back all three fields", async () => {
+    await writeSessionMetadata(tmpDir, {
+      name: "auth tests",
+      description: "Testing auth",
+      continuationOf: "prev-session",
+    });
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("auth tests");
+    expect(meta.description).toBe("Testing auth");
+    expect(meta.continuationOf).toBe("prev-session");
+  });
+
+  it("omits undefined fields from the written file", async () => {
+    await writeSessionMetadata(tmpDir, { name: "only name" });
+    const raw = await import("fs/promises").then(fs =>
+      fs.readFile(join(tmpDir, SESSION_METADATA_FILE), "utf-8"),
+    );
+    const parsed = JSON.parse(raw);
+    expect(parsed.description).toBeUndefined();
+    expect(parsed.continuationOf).toBeUndefined();
+  });
+});
+
+describe("updateSessionMetadata", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "omega-meta-test-"));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("merges patch with existing metadata", async () => {
+    await writeSessionMetadata(tmpDir, { name: "existing name" });
+    await updateSessionMetadata(tmpDir, { continuationOf: "prev" });
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("existing name");
+    expect(meta.continuationOf).toBe("prev");
+  });
+
+  it("overwrites existing field when patch specifies it", async () => {
+    await writeSessionMetadata(tmpDir, { name: "old name" });
+    await updateSessionMetadata(tmpDir, { name: "new name" });
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("new name");
+  });
+
+  it("works on a dir with no existing metadata file", async () => {
+    await updateSessionMetadata(tmpDir, { name: "fresh" });
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.name).toBe("fresh");
+  });
+});
+
+describe("makeSessionDir — creates session.jsonc", () => {
+  let tempRoot: string;
+
+  beforeEach(async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "omega-session-meta-test-"));
+  });
+  afterEach(async () => {
+    await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it("creates session.jsonc in the new session dir", async () => {
+    const { dir } = await makeSessionDir(new Date(), tempRoot);
+    expect(existsSync(join(dir, SESSION_METADATA_FILE))).toBe(true);
+  });
+
+  it("session.jsonc initially contains empty object", async () => {
+    const { dir } = await makeSessionDir(new Date(), tempRoot);
+    const meta = await readSessionMetadata(dir);
+    expect(meta).toEqual({});
   });
 });
