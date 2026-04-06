@@ -41,6 +41,7 @@ import { ClientMessageSchema, type ClientMessage } from "./protocol.js";
 import { now } from "../iso-timestamp.js";
 import {
   extractResumptionBasis,
+  extractDescriptionFromResponse,
   generateSessionName,
   makeDefaultResumptionProvider,
   type ResumptionProvider,
@@ -440,19 +441,39 @@ async function handleMessage(
     const prevEvents = await loadAllEvents(prevEventsFile);
     const basis = extractResumptionBasis(prevEvents);
 
-    // Perform resumption: logs resuming_session → llm_call → llm_response →
-    // session_resumed (or llm_error on failure). Degrades gracefully on error
-    // so the new session opens without prior context rather than hard-crashing.
+    // Send session_info and the init events (server_started + session_started)
+    // to the client immediately — before the LLM call — so the feed clears and
+    // the new session directory is visible right away.
+    const initEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
+    session.ws.cork(() => {
+      session.ws.send(JSON.stringify({
+        type: "session_info",
+        dir: currentSessionPaths.dir,
+        model: persistentAgent.getActiveModel(),
+        effort: persistentAgent.getActiveEffort(),
+        cwd: process.cwd(),
+      }));
+      session.ws.send(JSON.stringify({ type: "history", events: initEvents }));
+    });
+
+    // Stream resumption events live as they are generated, exactly like a
+    // normal turn. The generator yields: resuming_session → llm_call →
+    // llm_response → session_resumed (or llm_error on failure).
     let description: string | undefined;
     try {
-      ({ description } = await persistentAgent.performResumption(
+      for await (const event of persistentAgent.performResumption(
         basis,
         msg.sessionDir,
         resumptionProvider,
-      ));
+      )) {
+        send(session.ws, event);
+        if (event.type === "llm_response" && event.text) {
+          description = extractDescriptionFromResponse(event.text);
+        }
+      }
     } catch (err: unknown) {
-      // llm_error is already logged inside performResumption.
-      // Surface the failure to the client as a transport error.
+      // llm_error is already logged and sent inside the generator.
+      // Surface the failure to the client as a transport error too.
       sendTransportError(
         session.ws,
         `Session resumption failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -471,20 +492,7 @@ async function handleMessage(
       continuationOf: msg.sessionDir,
     });
 
-    // Send history (includes session_started + resuming_session + llm_call +
-    // llm_response + session_resumed, or llm_error on failure) then ready.
-    const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
-    session.ws.cork(() => {
-      session.ws.send(JSON.stringify({
-        type: "session_info",
-        dir: currentSessionPaths.dir,
-        model: persistentAgent.getActiveModel(),
-        effort: persistentAgent.getActiveEffort(),
-        cwd: process.cwd(),
-      }));
-      session.ws.send(JSON.stringify({ type: "history", events: replayEvents }));
-      session.ws.send(JSON.stringify({ type: "ready" }));
-    });
+    send(session.ws, { type: "ready" });
     return;
   }
 

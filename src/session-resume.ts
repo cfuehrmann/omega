@@ -343,7 +343,7 @@ export function extractSummaryFromResponse(responseText: string): string {
  * Parses the `<description>...</description>` block if present.
  * Returns undefined if the block is absent.
  */
-function extractDescriptionFromResponse(responseText: string): string | undefined {
+export function extractDescriptionFromResponse(responseText: string): string | undefined {
   const match = responseText.match(/<description>([\s\S]*?)<\/description>/);
   if (match) return match[1]!.trim().slice(0, 120); // hard cap
   return undefined;

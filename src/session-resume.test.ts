@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { extractResumptionBasis, extractSummaryFromResponse, summariseForResumption, generateSessionName, RESUMPTION_SUMMARY_INSTRUCTIONS, AUTO_NAME_INSTRUCTIONS, type ResumptionProvider, type ResumptionProviderResult } from "./session-resume.js";
+import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, summariseForResumption, generateSessionName, RESUMPTION_SUMMARY_INSTRUCTIONS, AUTO_NAME_INSTRUCTIONS, type ResumptionProvider, type ResumptionProviderResult } from "./session-resume.js";
 import type { OmegaEvent } from "./events.js";
 import { makeTestAgent } from "./test-utils.js";
 import { OmegaEventSchema } from "./events.schema.js";
@@ -553,7 +553,7 @@ describe("Agent.performResumption", () => {
     const provider: ResumptionProvider = async () =>
       mockResult("<summary>Prior session summary.</summary><description>Did some work</description>");
 
-    await agent.performResumption("the basis text", "2025-01-01T00-00-00-000-aaaaaaaa", provider);
+    for await (const _ of agent.performResumption("the basis text", "2025-01-01T00-00-00-000-aaaaaaaa", provider)) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -578,7 +578,7 @@ describe("Agent.performResumption", () => {
     const provider: ResumptionProvider = async () =>
       mockResult("<summary>Summary.</summary>");
 
-    await agent.performResumption("my basis", "old-session-dir", provider);
+    for await (const _ of agent.performResumption("my basis", "old-session-dir", provider)) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -593,7 +593,7 @@ describe("Agent.performResumption", () => {
     await agent.init();
 
     const provider: ResumptionProvider = async () => mockResult("<summary>S.</summary>");
-    await agent.performResumption("basis", "old-dir", provider);
+    for await (const _ of agent.performResumption("basis", "old-dir", provider)) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -610,7 +610,7 @@ describe("Agent.performResumption", () => {
     await agent.init();
 
     const provider: ResumptionProvider = async () => mockResult("<summary>Done.</summary>");
-    await agent.performResumption("basis", "old-dir", provider);
+    for await (const _ of agent.performResumption("basis", "old-dir", provider)) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -621,7 +621,7 @@ describe("Agent.performResumption", () => {
     expect(typeof ev.contextHash).toBe("string");
   });
 
-  it("returns description extracted from LLM response", async () => {
+  it("llm_response text contains description tag for extraction", async () => {
     const { agent, dispose } = await makeTestAgent();
     afterAll(dispose);
     await agent.init();
@@ -629,17 +629,27 @@ describe("Agent.performResumption", () => {
     const provider: ResumptionProvider = async () =>
       mockResult("<summary>S.</summary><description>Added auth middleware</description>");
 
-    const { description } = await agent.performResumption("basis", "old", provider);
+    let description: string | undefined;
+    for await (const event of agent.performResumption("basis", "old", provider)) {
+      if (event.type === "llm_response" && event.text) {
+        description = extractDescriptionFromResponse(event.text);
+      }
+    }
     expect(description).toBe("Added auth middleware");
   });
 
-  it("returns undefined description when tag absent", async () => {
+  it("description is undefined when tag absent", async () => {
     const { agent, dispose } = await makeTestAgent();
     afterAll(dispose);
     await agent.init();
 
     const provider: ResumptionProvider = async () => mockResult("<summary>S.</summary>");
-    const { description } = await agent.performResumption("basis", "old", provider);
+    let description: string | undefined;
+    for await (const event of agent.performResumption("basis", "old", provider)) {
+      if (event.type === "llm_response" && event.text) {
+        description = extractDescriptionFromResponse(event.text);
+      }
+    }
     expect(description).toBeUndefined();
   });
 
@@ -653,7 +663,7 @@ describe("Agent.performResumption", () => {
     };
 
     await expect(
-      agent.performResumption("basis", "old-dir", provider)
+      (async () => { for await (const _ of agent.performResumption("basis", "old-dir", provider)) {} })()
     ).rejects.toThrow("API timeout");
 
     await agent.flushEventLog();

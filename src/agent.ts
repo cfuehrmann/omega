@@ -588,7 +588,7 @@ export class Agent {
   async seedWithResumptionSummary(
     summary: string,
     continuationOf: string,
-  ): Promise<void> {
+  ): Promise<OmegaEvent> {
     const ev: OmegaEvent = {
       type: "session_resumed",
       time: now(),
@@ -611,47 +611,51 @@ export class Agent {
       content:
         "Understood. I have reviewed the context from the previous session and am ready to continue.",
     });
+    return ev;
   }
 
   /**
    * Perform a full session resumption: extract basis → log events → call LLM
    * → write context records → seed agent with summary.
    *
-   * Logs the event sequence:
+   * Yields each event as it is logged:
    *   resuming_session → llm_call → llm_response → session_resumed
    *
-   * On LLM failure logs `llm_error` instead of `llm_response`/`session_resumed`
+   * On LLM failure yields `llm_error` instead of `llm_response`/`session_resumed`
    * and re-throws so the caller can degrade gracefully.
    *
-   * @returns `description` — the one-line session description extracted from
-   *   the LLM response (for retroactive labelling of the source session), or
-   *   `undefined` if the LLM did not produce one.
+   * The one-line session description (for retroactive labelling of the source
+   * session) is embedded in the yielded `llm_response` event's `text` field
+   * inside a `<description>` tag. Callers that need it can extract it with
+   * `extractDescriptionFromResponse` from session-resume.ts.
    */
-  async performResumption(
+  async *performResumption(
     basis: string,
     continuationOf: string,
     provider: ResumptionProvider,
-  ): Promise<{ description?: string }> {
+  ): AsyncGenerator<OmegaEvent> {
     const RESUMPTION_URL = "https://api.anthropic.com/v1/messages";
 
     // Write the user message (basis) to context.jsonl and record its hash.
     const userMsg = { role: "user" as const, content: basis };
     const userHash = await appendContextMessage(userMsg, this.contextFile);
 
-    // Log resuming_session — marks that resumption has started.
-    await this.logEvent({
+    // Log and yield resuming_session — marks that resumption has started.
+    const resumingEvent: OmegaEvent = {
       type: "resuming_session",
       time: now(),
       continuationOf,
       basis,
-    });
+    };
+    await this.logEvent(resumingEvent);
+    yield resumingEvent;
 
-    // Log llm_call — records what we're about to send.
+    // Log and yield llm_call — records what we're about to send.
     const requestPayload = {
       system: RESUMPTION_SUMMARY_INSTRUCTIONS,
       messages: [{ role: "user", content: basis }],
     };
-    this.logEvent({
+    const llmCallEvent: OmegaEvent = {
       type: "llm_call",
       time: now(),
       url: RESUMPTION_URL,
@@ -663,19 +667,23 @@ export class Agent {
         system: `[resumption_summary_instructions, ${RESUMPTION_SUMMARY_INSTRUCTIONS.length} chars]`,
         messages: `[1 user message, basis ${basis.length} chars]`,
       },
-    });
+    };
+    await this.logEvent(llmCallEvent);
+    yield llmCallEvent;
 
-    // Call the LLM; log llm_error and re-throw on failure.
+    // Call the LLM; log and yield llm_error then re-throw on failure.
     let result: Awaited<ReturnType<typeof summariseForResumption>>;
     try {
       result = await summariseForResumption(basis, provider);
     } catch (err: unknown) {
-      await this.logEvent({
+      const errEvent: OmegaEvent = {
         type: "llm_error",
         time: now(),
         url: RESUMPTION_URL,
         error: err instanceof Error ? err.message : String(err),
-      });
+      };
+      await this.logEvent(errEvent);
+      yield errEvent;
       throw err;
     }
 
@@ -683,20 +691,21 @@ export class Agent {
     const assistantMsg = { role: "assistant" as const, content: result.providerResult.text };
     const assistantHash = await appendContextMessage(assistantMsg, this.contextFile);
 
-    // Log llm_response.
-    await this.logEvent({
+    // Log and yield llm_response.
+    const llmResponseEvent: OmegaEvent = {
       type: "llm_response",
       time: now(),
       stopReason: result.providerResult.stopReason,
       usage: result.providerResult.usage,
       contextHash: assistantHash,
       text: result.providerResult.text,
-    });
+    };
+    await this.logEvent(llmResponseEvent);
+    yield llmResponseEvent;
 
-    // Seed the agent and log session_resumed.
-    await this.seedWithResumptionSummary(result.summary, continuationOf);
-
-    return { description: result.description };
+    // Seed the agent, log session_resumed, and yield it.
+    const sessionResumedEvent = await this.seedWithResumptionSummary(result.summary, continuationOf);
+    yield sessionResumedEvent;
   }
 
   async *sendMessage(
