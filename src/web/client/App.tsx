@@ -1535,6 +1535,7 @@ function BottomPanel() {
             <button
               class="session-trigger-btn"
               data-testid="session-trigger-btn"
+              data-session-dir={state.sessionDir}
               onClick={() => setSessionPickerOpen(true)}
               title="Manage sessions"
             >{state.sessionName || state.sessionDir}</button>
