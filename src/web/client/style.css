@@ -386,28 +386,25 @@ html, body, #root {
 .send-btn:disabled { opacity: 0.4; cursor: default; }
 
 
-/* Session trigger button — replaces old Continue/New buttons in bottom panel */
-.session-trigger-btn {
-  padding: 0 10px;
+/* Sessions button — always-visible button in the input row (left of Ω) */
+.sessions-btn {
+  padding: 0 12px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--bg3);
+  background: none;
   color: var(--dim);
   font-family: var(--font);
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
-  height: 24px;
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: 38px;
+  flex-shrink: 0;
+  align-self: flex-end;
   white-space: nowrap;
   transition: border-color 0.15s, color 0.15s;
 }
-.session-trigger-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.sessions-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
-/* Model selector sitting in the input row between Ω and the textarea */
+/* Model selector sitting in the input row left of the textarea */
 .model-select-inline {
   font-size: 13px;
   color: var(--dim);

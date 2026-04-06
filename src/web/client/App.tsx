@@ -1517,19 +1517,10 @@ function BottomPanel() {
   return (
     <Show when={panelOpen()}>
       <div class="bottom-panel">
-        <Show when={state.sessionDir}>
+        <Show when={state.cwd}>
           <div class="bottom-panel-session" data-testid="session-panel">
-            <Show when={state.cwd}>
-              <span class="bp-label">cwd</span>
-              <span class="bp-dir" data-testid="cwd-dir">{state.cwd}</span>
-            </Show>
-            <button
-              class="session-trigger-btn"
-              data-testid="session-trigger-btn"
-              data-session-dir={state.sessionDir}
-              onClick={() => setSessionPickerOpen(true)}
-              title="Manage sessions"
-            >{state.sessionName || state.sessionDir}</button>
+            <span class="bp-label">cwd</span>
+            <span class="bp-dir" data-testid="cwd-dir">{state.cwd}</span>
           </div>
         </Show>
         <Show when={hasMetrics()}>
@@ -1618,16 +1609,6 @@ function InputRow() {
 
   return (
     <div class="input-row">
-      <div class="status-row" data-testid="status-row">
-        <button
-          class={omegaClass()}
-          data-testid="omega-btn"
-          data-status={omegaStatus()}
-          onClick={() => setPanelOpen(o => !o)}
-          title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
-        >Ω</button>
-        <span class="status-label" data-testid="status-label">{statusLabel()}</span>
-      </div>
       <Show when={activeModel()}>
         <select
           class="model-select-inline"
@@ -1664,6 +1645,23 @@ function InputRow() {
           rows={1}
           disabled={!state.connected}
         />
+      </div>
+      <button
+        class="sessions-btn"
+        data-testid="sessions-btn"
+        data-session-dir={state.sessionDir ?? ""}
+        onClick={() => setSessionPickerOpen(true)}
+        title="Manage sessions"
+      >Sessions</button>
+      <div class="status-row" data-testid="status-row">
+        <button
+          class={omegaClass()}
+          data-testid="omega-btn"
+          data-status={omegaStatus()}
+          onClick={() => setPanelOpen(o => !o)}
+          title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
+        >Ω</button>
+        <span class="status-label" data-testid="status-label">{statusLabel()}</span>
       </div>
       <Show when={state.streaming}
         fallback={

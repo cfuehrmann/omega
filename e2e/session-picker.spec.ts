@@ -12,14 +12,9 @@ import { test, expect } from "./fixtures/index.js";
 const connectedDot = (page: import("@playwright/test").Page) =>
   page.locator('[data-testid="omega-btn"][data-status="connected"]');
 
-/** Open the bottom panel and click the session trigger button to show the session modal. */
+/** Click the always-visible Sessions button to open the session picker modal. */
 async function openSessionPicker(page: import("@playwright/test").Page) {
-  // Open bottom panel by clicking Ω
-  await page.getByTestId("omega-btn").click();
-  // Wait for the session trigger button (requires sessionDir to be set via session_info)
-  const triggerBtn = page.getByTestId("session-trigger-btn");
-  await expect(triggerBtn).toBeVisible({ timeout: 3000 });
-  await triggerBtn.click();
+  await page.getByTestId("sessions-btn").click();
   // Wait for the modal to appear
   await expect(page.getByTestId("session-picker-modal")).toBeVisible({ timeout: 3000 });
 }

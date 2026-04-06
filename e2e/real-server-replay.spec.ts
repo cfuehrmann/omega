@@ -88,17 +88,15 @@ test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly"
   await expect(page.getByTestId("block-interrupt")).toContainText("Aborted", { timeout: 3000 });
 });
 
-test("session dir shown in bottom panel persists after reload", async ({ page }) => {
+test("session dir shown in sessions button persists after reload", async ({ page }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await ensureSession(page);
 
-  // Open the bottom panel (Ω button) to reveal session info
-  await page.getByTestId("omega-btn").click();
-  const sessionPanel = page.getByTestId("session-panel");
-  await expect(sessionPanel).toBeVisible({ timeout: 3000 });
-  // The trigger button carries the session dir as a data attribute (stable across rename/auto-name)
-  const sessionDirBefore = await page.getByTestId("session-trigger-btn").getAttribute("data-session-dir");
+  // The Sessions button carries the session dir as a data attribute (stable across rename/auto-name)
+  const sessionsBtn = page.getByTestId("sessions-btn");
+  await expect(sessionsBtn.getAttribute("data-session-dir")).resolves.toBeTruthy();
+  const sessionDirBefore = await sessionsBtn.getAttribute("data-session-dir");
   expect(sessionDirBefore).toBeTruthy();
 
   // Send a message and wait for completion — use .first() in case a previous
@@ -111,9 +109,11 @@ test("session dir shown in bottom panel persists after reload", async ({ page })
   await page.reload();
   await connectedDot(page).waitFor({ timeout: 5000 });
 
-  // Re-open the panel after reload (panel state is not persisted)
-  await page.getByTestId("omega-btn").click();
-  await page.getByTestId("session-panel").waitFor({ timeout: 3000 });
-  const sessionDirAfter = await page.getByTestId("session-trigger-btn").getAttribute("data-session-dir");
+  // Sessions button is always visible; wait for data-session-dir to be re-populated
+  await expect(async () => {
+    const dir = await page.getByTestId("sessions-btn").getAttribute("data-session-dir");
+    expect(dir).toBeTruthy();
+  }).toPass({ timeout: 5000 });
+  const sessionDirAfter = await page.getByTestId("sessions-btn").getAttribute("data-session-dir");
   expect(sessionDirAfter).toBe(sessionDirBefore);
 });
