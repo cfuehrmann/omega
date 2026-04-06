@@ -1399,7 +1399,15 @@ function SessionPickerModal() {
              onClick={(e) => e.stopPropagation()}>
           <div class="modal-header">
             <span class="modal-title">Sessions</span>
-            <button class="modal-close" onClick={() => { setResumingDir(null); setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
+            <div class="modal-header-btns">
+              <button
+                class="session-picker-new"
+                data-testid="session-picker-new"
+                disabled={!!resumingDir() || state.streaming || !state.connected}
+                onClick={() => { newSession(); setSessionPickerOpen(false); }}
+              >＋ New session</button>
+              <button class="modal-close" onClick={() => { setResumingDir(null); setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
+            </div>
           </div>
 
           {/* Resuming state — shown while server processes the resumption */}
@@ -1413,15 +1421,6 @@ function SessionPickerModal() {
 
           {/* Normal list state — hidden while resuming */}
           <Show when={!resumingDir()}>
-            {/* New session button */}
-            <div class="session-picker-actions">
-              <button
-                class="session-picker-new"
-                data-testid="session-picker-new"
-                disabled={state.streaming || !state.connected}
-                onClick={() => { newSession(); setSessionPickerOpen(false); }}
-              >＋ New session</button>
-            </div>
 
             <Show when={sessions.loading}>
               <div class="session-picker-loading">Loading sessions…</div>

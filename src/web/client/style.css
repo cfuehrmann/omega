@@ -606,12 +606,8 @@ html, body, #root {
   padding: 4px 0;
 }
 
-.session-picker-actions {
-  padding: 8px 14px 4px;
-}
-
 .session-picker-new {
-  padding: 4px 14px;
+  padding: 2px 8px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg3);
@@ -784,6 +780,12 @@ html, body, #root {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.modal-header-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .modal-title {
