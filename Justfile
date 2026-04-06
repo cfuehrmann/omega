@@ -95,6 +95,8 @@ gate:
     set -eo pipefail
     mkdir -p test-output
     LOG="test-output/gate-latest.log"
+    # Snapshot production session count before tests run
+    BEFORE=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
     {
         echo "=== typecheck ==="
         just typecheck
@@ -102,6 +104,15 @@ gate:
         just test
         echo "=== knip ==="
         bunx knip
+        echo "=== session-pollution check ==="
+        AFTER=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
+        if [ "$AFTER" -gt "$BEFORE" ]; then
+            echo "❌  Tests created $(( AFTER - BEFORE )) session(s) in .omega/sessions/ (production)."
+            echo "    Tests must write to .omega/test-sessions/ instead."
+            echo "    Before: $BEFORE  After: $AFTER"
+            exit 1
+        fi
+        echo "✅  No production session pollution ($BEFORE sessions before and after)."
         echo "=== done ==="
     } 2>&1 | tee "$LOG"
 

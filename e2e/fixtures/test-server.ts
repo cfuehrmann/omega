@@ -110,6 +110,9 @@ let resumeDelayMs = 0;
 
 let sessionPaths: SessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
 
+/** Track all session dirs created by this server so reset can clean only those. */
+const ownedSessionDirs: Set<string> = new Set([sessionPaths.dir]);
+
 /**
  * Monotonically increasing agent instance counter.
  * Increments on reset to let tests assert the agent was replaced.
@@ -145,6 +148,7 @@ async function resetState(): Promise<void> {
   currentAgentId += 1;
   // Create a fresh uniquely-named session directory for the next session
   sessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
+  ownedSessionDirs.add(sessionPaths.dir);
 }
 
 function sendWs(event: object): void {
@@ -380,17 +384,15 @@ Bun.serve({
       receivedMessages.length = 0;
       currentAgentId = 1;
       resumeDelayMs = 0;
-      // Wipe ALL test sessions so tests start with a clean slate
-      try {
-        const entries = await readdir(TEST_SESSIONS_ROOT);
-        for (const e of entries) {
-          if (SESSION_DIR_RE.test(e)) {
-            await rm(join(TEST_SESSIONS_ROOT, e), { recursive: true, force: true });
-          }
-        }
-      } catch { /* TEST_SESSIONS_ROOT may not exist yet */ }
+      // Delete only sessions created by this server — not those belonging to
+      // concurrent bun-test agents sharing .omega/test-sessions/.
+      for (const dir of ownedSessionDirs) {
+        await rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+      ownedSessionDirs.clear();
       // Create a fresh uniquely-named session directory for the new session
       sessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
+      ownedSessionDirs.add(sessionPaths.dir);
       return new Response("ok");
     }
 
@@ -401,6 +403,7 @@ Bun.serve({
         events?: Array<Record<string, unknown>>;
       };
       const pastPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
+      ownedSessionDirs.add(pastPaths.dir);
       if (body.metadata) {
         await writeSessionMetadata(pastPaths.dir, body.metadata);
       }
