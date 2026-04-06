@@ -639,21 +639,100 @@ describe("Agent.performResumption", () => {
     expect(description).toBeUndefined();
   });
 
-  it("logs llm_error and re-throws when provider fails", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent(makeFailingStreamProvider("API timeout"));
+  it("logs llm_error and re-throws when provider fails with non-retryable error", async () => {
+    const err: any = new Error("Bad request");
+    err.status = 400;
+    const provider: StreamProvider = () => { throw err; };
+    const { agent, eventsFile, dispose } = await makeTestAgent(provider);
     afterAll(dispose);
     await agent.init();
 
     await expect(
       (async () => { for await (const _ of agent.performResumption("basis", "old-dir")) {} })()
-    ).rejects.toThrow("API timeout");
+    ).rejects.toThrow("Bad request");
 
     await agent.flushEventLog();
     const events = readEventsFile(eventsFile);
     const errEv = events.find(e => e.type === "llm_error") as any;
     expect(errEv).toBeDefined();
-    expect(errEv.error).toContain("API timeout");
+    expect(errEv.error).toContain("Bad request");
     // session_resumed must NOT be present
     expect(events.some(e => e.type === "session_resumed")).toBe(false);
+  });
+
+  it("retries on transient error then succeeds", async () => {
+    const saved = {
+      base: process.env.OMEGA_RETRY_BASE_MS,
+      max: process.env.OMEGA_RETRY_MAX_MS,
+      attempts: process.env.OMEGA_RETRY_ATTEMPTS,
+    };
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "2";
+    process.env.OMEGA_RETRY_ATTEMPTS = "3";
+
+    let attempts = 0;
+    const provider: StreamProvider = () => {
+      attempts++;
+      if (attempts < 3) {
+        const err: any = new Error("overloaded");
+        err.status = 529;
+        throw err;
+      }
+      return makeTextStreamProvider("<summary>Recovered.</summary>")({} as any);
+    };
+
+    const { agent, eventsFile, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+    await agent.init();
+
+    for await (const _ of agent.performResumption("basis", "old-dir")) {}
+
+    // Restore env
+    const restore = (key: string, val: string | undefined) => {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    };
+    restore("OMEGA_RETRY_BASE_MS", saved.base);
+    restore("OMEGA_RETRY_MAX_MS", saved.max);
+    restore("OMEGA_RETRY_ATTEMPTS", saved.attempts);
+
+    await agent.flushEventLog();
+    const events = readEventsFile(eventsFile);
+
+    // Should have retried
+    expect(attempts).toBe(3);
+    const retryEvents = events.filter(e => e.type === "llm_retry");
+    expect(retryEvents.length).toBe(2);
+    // Should have succeeded
+    expect(events.some(e => e.type === "session_resumed")).toBe(true);
+    expect(events.some(e => e.type === "llm_response")).toBe(true);
+  }, 30_000);
+
+  it("respects abort signal during streaming", async () => {
+    const controller = new AbortController();
+    const provider: StreamProvider = () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk1 " } };
+        // Abort fires here
+        await new Promise(r => setTimeout(r, 20));
+        controller.abort();
+        await new Promise(r => setTimeout(r, 20));
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk2" } };
+      },
+      finalMessage: async () => { throw new Error("should not reach finalMessage"); },
+    });
+
+    const { agent, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+    await agent.init();
+
+    const yielded: any[] = [];
+    for await (const event of agent.performResumption("basis", "old", controller.signal)) {
+      yielded.push(event);
+    }
+
+    // Should not throw — abort is a clean return, not a throw
+    // Should NOT have session_resumed (aborted before completion)
+    expect(yielded.some(e => e.type === "session_resumed")).toBe(false);
   });
 });

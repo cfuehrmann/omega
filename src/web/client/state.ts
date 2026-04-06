@@ -707,6 +707,13 @@ export function dispatch(event: ServerMessage): void {
       setState("liveModel", event.model);
       break;
 
+    case "resuming_session":
+      setState(produce(s => { s.events.push(event); }));
+      // Resumption streams an LLM call — lock the UI the same way a turn does.
+      // The subsequent "ready" event (sent after session_resumed) clears it.
+      setState("streaming", true);
+      break;
+
     case "server_started":
     case "server_stopped":
     case "tool_call":
@@ -714,7 +721,6 @@ export function dispatch(event: ServerMessage): void {
     case "llm_error":
     case "agent_error":
     case "transport_error":
-    case "resuming_session":
     case "session_resumed":
       setState(produce(s => { s.events.push(event); }));
       break;

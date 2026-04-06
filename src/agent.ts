@@ -298,6 +298,23 @@ export function processStreamEvents(
   return events;
 }
 
+// --- Shared LLM call result type ---
+
+/**
+ * Discriminated result of `streamLlmCall`. The `yield*` caller inspects `.ok`
+ * to decide what to do next — the generator has already yielded all streaming
+ * events (text/thinking chunks, llm_retry, llm_error) by the time it returns.
+ */
+type LlmStreamResult =
+  | {
+      ok: true;
+      response: Anthropic.Beta.Messages.BetaMessage;
+      assembledText: string;
+      assembledTextTs: ISOTimestamp | null;
+      assembledThinking: string;
+    }
+  | { ok: false; aborted: boolean; error?: unknown };
+
 // --- Agent ---
 
 export class Agent {
@@ -543,6 +560,128 @@ export class Agent {
     return (params) => client.beta.messages.stream(params);
   }
 
+  // -----------------------------------------------------------------------
+  // Shared LLM streaming with retry
+  // -----------------------------------------------------------------------
+
+  /**
+   * Stream an LLM call with automatic retry on transient errors.
+   *
+   * Yields streaming signals (`text`, `thinking`) as chunks arrive, and
+   * `llm_retry` events on transient failures. On terminal error yields
+   * `llm_error` and returns `{ ok: false }`. On abort returns
+   * `{ ok: false, aborted: true }`. On success returns the final response
+   * and the assembled text/thinking.
+   *
+   * Both `sendMessage` and `performResumption` delegate here via `yield*`
+   * so retry/backoff/error-event logic lives in exactly one place.
+   */
+  private async *streamLlmCall(
+    streamParams: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+    opts: { url: string; signal?: AbortSignal },
+  ): AsyncGenerator<OmegaEvent | StreamSignal, LlmStreamResult> {
+    let assembledText = "";
+    let assembledTextTs: ISOTimestamp | null = null;
+    let assembledThinking = "";
+    let inThinkingBlock = false;
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        // Reset per-attempt accumulators so a retry starts with a clean slate.
+        assembledText = "";
+        assembledTextTs = null;
+        assembledThinking = "";
+        inThinkingBlock = false;
+        const stream = this.getStreamProvider()(streamParams);
+
+        let aborted = false;
+        for await (const event of stream) {
+          if (opts.signal?.aborted) {
+            aborted = true;
+            break;
+          }
+          if (event.type === "content_block_start") {
+            if (event.content_block?.type === "thinking") {
+              if (assembledThinking.length > 0) {
+                assembledThinking += "\n\n---\n\n";
+              }
+              inThinkingBlock = true;
+            }
+          } else if (event.type === "content_block_stop") {
+            if (inThinkingBlock) {
+              inThinkingBlock = false;
+            }
+          } else if (event.type === "content_block_delta") {
+            if (event.delta.type === "text_delta") {
+              if (assembledTextTs === null) assembledTextTs = now();
+              assembledText += event.delta.text;
+              yield { type: "text", text: event.delta.text };
+            } else if (event.delta.type === "thinking_delta") {
+              assembledThinking += event.delta.thinking;
+              yield { type: "thinking", text: event.delta.thinking };
+            }
+          }
+          // Compaction content blocks arrive as a single delta (no incremental
+          // streaming). We don't yield them as text — they're structural.
+        }
+
+        if (aborted) {
+          return { ok: false, aborted: true };
+        }
+
+        const response = await stream.finalMessage();
+        return {
+          ok: true,
+          response,
+          assembledText,
+          assembledTextTs,
+          assembledThinking,
+        };
+      } catch (err: unknown) {
+        const { httpStatus, message } = errFields(err);
+        const maxAttempts = this.retryMaxAttempts;
+        const exhausted = maxAttempts !== undefined && attempt >= maxAttempts - 1;
+
+        if (isRetryable(err) && !exhausted) {
+          const waitMs = getAnthropicRetryDelayMs(
+            err,
+            attempt,
+            this.retryBaseMs,
+            this.retryMaxMs,
+          );
+          const retryAt = fromDate(new Date(Date.now() + waitMs));
+          const retryEv: OmegaEvent = {
+            type: "llm_retry",
+            time: now(),
+            attempt: attempt + 1,
+            httpStatus,
+            waitMs,
+            retryAt,
+            errorBody: extractErrorBody(err),
+            error: message,
+            ...(assembledThinking ? { thinkingFragment: assembledThinking } : {}),
+            ...(assembledText     ? { textFragment:     assembledText     } : {}),
+          };
+          this.logEvent(retryEv);
+          yield retryEv;
+          await sleep(waitMs, opts.signal);
+          // continue — attempt++ at loop top
+        } else {
+          const llmErrEv: OmegaEvent = {
+            type: "llm_error",
+            time: now(),
+            url: opts.url,
+            error: message,
+            httpStatus,
+          };
+          this.logEvent(llmErrEv);
+          yield llmErrEv;
+          return { ok: false, aborted: false, error: err };
+        }
+      }
+    }
+  }
+
   /**
    * Load .omega/system-prompt-append.md from disk into memory so it can be
    * injected into the system prompt. Call once at session start, after init().
@@ -618,6 +757,7 @@ export class Agent {
   async *performResumption(
     basis: string,
     continuationOf: string,
+    signal?: AbortSignal,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     const RESUMPTION_URL = "https://api.anthropic.com/v1/messages";
 
@@ -658,62 +798,45 @@ export class Agent {
     await this.logEvent(llmCallEvent);
     yield llmCallEvent;
 
-    // Stream the LLM call — same pattern as sendMessage, yielding text chunks
-    // live so the UI renders the summary as it arrives.
-    let assembledText = "";
-    let assembledTextTs: ISOTimestamp | null = null;
-    let response: Anthropic.Beta.Messages.BetaMessage;
+    // Stream the LLM call with retry — delegates to the shared retry loop.
+    const result: LlmStreamResult = yield* this.streamLlmCall(streamParams, {
+      url: RESUMPTION_URL,
+      signal,
+    });
 
-    try {
-      const stream = this.getStreamProvider()(streamParams);
-      for await (const event of stream) {
-        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-          const chunk: string = event.delta.text;
-          if (assembledTextTs === null) assembledTextTs = now();
-          assembledText += chunk;
-          yield { type: "text" as const, text: chunk };
-        }
-      }
-      response = await stream.finalMessage();
-    } catch (err: unknown) {
-      const errEvent: OmegaEvent = {
-        type: "llm_error",
-        time: now(),
-        url: RESUMPTION_URL,
-        error: err instanceof Error ? err.message : String(err),
-      };
-      await this.logEvent(errEvent);
-      yield errEvent;
-      throw err;
+    if (!result.ok) {
+      // llm_error already yielded by streamLlmCall.
+      if (!result.aborted && result.error) throw result.error;
+      return;
     }
 
     // Write the assistant response to context.jsonl.
-    const assistantMsg = { role: "assistant" as const, content: assembledText };
+    const assistantMsg = { role: "assistant" as const, content: result.assembledText };
     const assistantHash = await appendContextMessage(assistantMsg, this.contextFile);
 
     // Log and yield llm_response.
     const llmResponseEvent: OmegaEvent = {
       type: "llm_response",
       time: now(),
-      stopReason: response.stop_reason ?? "end_turn",
+      stopReason: result.response.stop_reason ?? "end_turn",
       usage: {
-        input_tokens: response.usage.input_tokens ?? 0,
-        output_tokens: response.usage.output_tokens,
-        cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? undefined,
-        cache_read_input_tokens: response.usage.cache_read_input_tokens ?? undefined,
-        service_tier: (response.usage as any).service_tier ?? undefined,
+        input_tokens: result.response.usage.input_tokens ?? 0,
+        output_tokens: result.response.usage.output_tokens,
+        cache_creation_input_tokens: result.response.usage.cache_creation_input_tokens ?? undefined,
+        cache_read_input_tokens: result.response.usage.cache_read_input_tokens ?? undefined,
+        service_tier: (result.response.usage as any).service_tier ?? undefined,
       },
       contextHash: assistantHash,
-      ...(assembledText
-        ? { text: assembledText, streamingStart: assembledTextTs ?? undefined }
+      ...(result.assembledText
+        ? { text: result.assembledText, streamingStart: result.assembledTextTs ?? undefined }
         : {}),
-      responseSummary: elideAnthropicResponse(response),
+      responseSummary: elideAnthropicResponse(result.response),
     };
     await this.logEvent(llmResponseEvent);
     yield llmResponseEvent;
 
     // Seed the agent, log session_resumed, and yield it.
-    const summary = extractSummaryFromResponse(assembledText);
+    const summary = extractSummaryFromResponse(result.assembledText);
     const sessionResumedEvent = await this.seedWithResumptionSummary(summary, continuationOf);
     yield sessionResumedEvent;
   }
@@ -807,11 +930,6 @@ export class Agent {
 
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
-      let assembledText = "";
-      let assembledTextTs: ISOTimestamp | null = null;
-      let assembledThinking = "";
-      /** True when we are inside a thinking block (between block_start and block_stop). */
-      let inThinkingBlock = false;
 
       activeModel = this.activeModel;
       const maxOutputTokens = maxOutputTokensForModel(activeModel);
@@ -904,162 +1022,66 @@ export class Agent {
         yield llmCallEv;
       }
 
-      // Call API with retry (indefinite by default; capped by OMEGA_RETRY_ATTEMPTS in tests).
-      let response: Anthropic.Beta.Messages.BetaMessage | null = null;
+      // Call API with retry — delegates to the shared retry loop.
+      const llmResult: LlmStreamResult = yield* this.streamLlmCall(
+        streamParams,
+        { url: "https://api.anthropic.com/v1/messages", signal },
+      );
 
-      for (let attempt = 0; ; attempt++) {
-        try {
-          // Reset per-attempt accumulators so a retry starts with a clean slate.
-          // The server will re-stream the full response from the beginning.
-          assembledText = "";
-          assembledTextTs = null;
-          assembledThinking = "";
-          inThinkingBlock = false;
-          const stream = this.getStreamProvider()(streamParams);
-
-          let aborted = false;
-          for await (const event of stream) {
-            if (signal?.aborted) {
-              aborted = true;
-              break;
-            }
-            if (event.type === "content_block_start") {
-              if (event.content_block?.type === "thinking") {
-                // If we already have thinking content, insert a divider between blocks.
-                if (assembledThinking.length > 0) {
-                  assembledThinking += "\n\n---\n\n";
-                }
-                inThinkingBlock = true;
-              }
-            } else if (event.type === "content_block_stop") {
-              if (inThinkingBlock) {
-                inThinkingBlock = false;
-              }
-            } else if (event.type === "content_block_delta") {
-              if (event.delta.type === "text_delta") {
-                if (assembledTextTs === null)
-                  assembledTextTs = now();
-                assembledText += event.delta.text;
-                yield { type: "text", text: event.delta.text };
-              } else if (event.delta.type === "thinking_delta") {
-                assembledThinking += event.delta.thinking;
-                yield { type: "thinking", text: event.delta.thinking };
-              }
-            }
-            // Compaction content blocks arrive as a single delta (no incremental
-            // streaming). We don't yield them as text — they're structural.
-          }
-
-          if (aborted) {
-            // Don't add the partial assistant turn to history.
-            // The user message stays — it was real input.
-            const interruptEv: OmegaEvent = {
-              type: "turn_interrupted",
-              time: now(),
-              reason: "aborted",
-            };
-            this.logEvent(interruptEv);
-            yield interruptEv;
-            return;
-          }
-
-          response = await stream.finalMessage();
-          break; // success — exit retry loop
-        } catch (err: unknown) {
-          const { httpStatus, message } = errFields(err);
-          const maxAttempts = this.retryMaxAttempts;
-          const exhausted = maxAttempts !== undefined && attempt >= maxAttempts - 1;
-
-          if (isRetryable(err) && !exhausted) {
-            // Transient error — emit retry event and wait, then loop again.
-            const waitMs = getAnthropicRetryDelayMs(
-              err,
-              attempt,
-              this.retryBaseMs,
-              this.retryMaxMs,
-            );
-            const retryAt = fromDate(new Date(Date.now() + waitMs));
-            // assembledThinking / assembledText still hold whatever streamed
-            // before the error — they are reset at the top of the next attempt.
-            // Capture them now so the fragment is persisted in the event and
-            // survives page reload. They never reach the LLM; only the signed
-            // thinking blocks in a successful finalMessage() do.
-            const retryEv: OmegaEvent = {
-              type: "llm_retry",
-              time: now(),
-              attempt: attempt + 1,
-              httpStatus,
-              waitMs,
-              retryAt,
-              errorBody: extractErrorBody(err),
-              error: message,
-              ...(assembledThinking ? { thinkingFragment: assembledThinking } : {}),
-              ...(assembledText     ? { textFragment:     assembledText     } : {}),
-            };
-            this.logEvent(retryEv);
-            yield retryEv;
-            await sleep(waitMs, signal);
-            // continue loop — attempt++ will happen at the top
-          } else {
-            // Non-retryable error (includes prompt-too-long — no retry, no trimming),
-            // or retries exhausted (only when OMEGA_RETRY_ATTEMPTS cap is set).
-            // Write a diagnostic snapshot so the next session has hard data.
-            const isContextOverflow =
-              (httpStatus === 400 && message.includes("prompt is too long")) ||
-              isContextTooLong(err);
-            const llmErrEv: OmegaEvent = {
-              type: "llm_error",
-              time: now(),
-              url: "https://api.anthropic.com/v1/messages",
-              error: message,
-              httpStatus,
-            };
-            this.logEvent(llmErrEv);
-            yield llmErrEv;
-            if (isContextOverflow) {
-              const overflowEv: OmegaEvent = {
-                type: "agent_error",
-                time: now(),
-                error: "Context too large to send. Start a fresh focused turn.",
-              };
-              this.logEvent(overflowEv);
-              yield overflowEv;
-            } else if (isRetryable(err)) {
-              // Retryable but exhausted (OMEGA_RETRY_ATTEMPTS cap hit).
-              const rateLimitEv: OmegaEvent = {
-                type: "agent_error",
-                time: now(),
-                error: "Anthropic rate limit. Try again shortly.",
-              };
-              this.logEvent(rateLimitEv);
-              yield rateLimitEv;
-            } else {
-              const apiErrEv: OmegaEvent = {
-                type: "agent_error",
-                time: now(),
-                error: `API error: ${message}`,
-              };
-              this.logEvent(apiErrEv);
-              yield apiErrEv;
-            }
-            const terminalInterruptEv: OmegaEvent = {
-              type: "turn_interrupted",
-              time: now(),
-              reason: "error",
-            };
-            this.logEvent(terminalInterruptEv);
-            yield terminalInterruptEv;
-            return;
-          }
+      if (!llmResult.ok) {
+        if (llmResult.aborted) {
+          // Don't add the partial assistant turn to history.
+          const interruptEv: OmegaEvent = {
+            type: "turn_interrupted",
+            time: now(),
+            reason: "aborted",
+          };
+          this.logEvent(interruptEv);
+          yield interruptEv;
+          return;
         }
+        // Terminal error — llm_error already yielded by streamLlmCall.
+        // Classify the error to emit a helpful agent_error before ending the turn.
+        const { httpStatus, message } = errFields(llmResult.error);
+        const isContextOverflow =
+          (httpStatus === 400 && message.includes("prompt is too long")) ||
+          isContextTooLong(llmResult.error);
+        if (isContextOverflow) {
+          const overflowEv: OmegaEvent = {
+            type: "agent_error",
+            time: now(),
+            error: "Context too large to send. Start a fresh focused turn.",
+          };
+          this.logEvent(overflowEv);
+          yield overflowEv;
+        } else if (isRetryable(llmResult.error)) {
+          const rateLimitEv: OmegaEvent = {
+            type: "agent_error",
+            time: now(),
+            error: "Anthropic rate limit. Try again shortly.",
+          };
+          this.logEvent(rateLimitEv);
+          yield rateLimitEv;
+        } else {
+          const apiErrEv: OmegaEvent = {
+            type: "agent_error",
+            time: now(),
+            error: `API error: ${message}`,
+          };
+          this.logEvent(apiErrEv);
+          yield apiErrEv;
+        }
+        const terminalInterruptEv: OmegaEvent = {
+          type: "turn_interrupted",
+          time: now(),
+          reason: "error",
+        };
+        this.logEvent(terminalInterruptEv);
+        yield terminalInterruptEv;
+        return;
       }
 
-      // Every code path above either sets `response` (via break) or returns
-      // early (terminal error paths). The guard below is unreachable in practice
-      // but kept as a defensive assertion against future refactor bugs.
-      if (!response) {
-        throw new Error("BUG: retry loop exited without response or return");
-      }
+      const { response, assembledText, assembledTextTs, assembledThinking } = llmResult;
 
       // Track tokens
       turnInputTokens = response.usage.input_tokens;

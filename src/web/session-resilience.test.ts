@@ -278,3 +278,76 @@ describe("store retrying state", () => {
     expect(state.retrying).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Store: resumption streaming state
+// ---------------------------------------------------------------------------
+
+describe("store resumption streaming state", () => {
+  function resetStore() {
+    dispatch({ type: "history", events: [] });
+    dispatch({ type: "ready" });
+  }
+
+  it("sets streaming=true when resuming_session is dispatched", () => {
+    resetStore();
+    expect(state.streaming).toBe(false);
+    dispatch({
+      type: "resuming_session",
+      time: now(),
+      continuationOf: "2025-01-01T00-00-00-000-aaaaaaaa",
+      basis: "some basis",
+    } as any);
+    expect(state.streaming).toBe(true);
+  });
+
+  it("clears streaming on ready after resumption completes", () => {
+    resetStore();
+    dispatch({
+      type: "resuming_session",
+      time: now(),
+      continuationOf: "2025-01-01T00-00-00-000-aaaaaaaa",
+      basis: "some basis",
+    } as any);
+    expect(state.streaming).toBe(true);
+    // Simulate the events that follow resumption
+    dispatch({
+      type: "llm_call",
+      time: now(),
+      url: "https://api.anthropic.com/v1/messages",
+      model: "claude-sonnet-4-6",
+      contextHashes: ["abc123"],
+      cacheBreakpointIndex: null,
+    } as any);
+    dispatch({
+      type: "llm_response",
+      time: now(),
+      stopReason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      contextHash: "def456",
+    } as any);
+    dispatch({
+      type: "session_resumed",
+      time: now(),
+      continuationOf: "2025-01-01T00-00-00-000-aaaaaaaa",
+      summary: "Prior summary.",
+    } as any);
+    // streaming remains true until ready
+    expect(state.streaming).toBe(true);
+    dispatch({ type: "ready" });
+    expect(state.streaming).toBe(false);
+  });
+
+  it("resuming_session event appears in the events array", () => {
+    resetStore();
+    const before = state.events.length;
+    dispatch({
+      type: "resuming_session",
+      time: now(),
+      continuationOf: "old-dir",
+      basis: "basis text",
+    } as any);
+    expect(state.events.length).toBe(before + 1);
+    expect(state.events[state.events.length - 1]!.type).toBe("resuming_session");
+  });
+});

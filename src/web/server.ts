@@ -459,6 +459,11 @@ async function handleMessage(
       session.ws.send(JSON.stringify({ type: "history", events: initEvents }));
     });
 
+    // Guard against concurrent messages while the resumption LLM call is
+    // in flight — same pattern as the normal turn handler.
+    session.isStreaming = true;
+    session.abortController = new AbortController();
+
     // Stream resumption events live as they are generated, exactly like a
     // normal turn. The generator yields: resuming_session → llm_call →
     // llm_response → session_resumed (or llm_error on failure).
@@ -467,6 +472,7 @@ async function handleMessage(
       for await (const event of persistentAgent.performResumption(
         basis,
         msg.sessionDir,
+        session.abortController.signal,
       )) {
         send(session.ws, event);
         if (event.type === "llm_response" && event.text) {
@@ -481,6 +487,9 @@ async function handleMessage(
         `Session resumption failed: ${err instanceof Error ? err.message : String(err)}`,
         "resume_session",
       );
+    } finally {
+      session.isStreaming = false;
+      session.abortController = null;
     }
 
     // Write description back to the *source* session's metadata (retroactive labelling).
