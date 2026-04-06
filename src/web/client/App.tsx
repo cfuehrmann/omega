@@ -1089,49 +1089,8 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
   }
 }
 
-function TurnView(props: {
-  group: RenderGroup & { kind: "turn" };
-  isLast: boolean;
-  allLlmCalls: Array<ServerMessage & { type: "llm_call" }>;
-}) {
-  return (
-    <div class="turn">
-      <For each={props.group.events}>{(event) => (
-        <EventBlock event={event} turnEvents={props.group.events} allLlmCalls={props.allLlmCalls} />
-      )}</For>
-      {/* Streaming slots: only shown for the last turn (the one currently receiving
-          or that most recently received content). No done-guard — if llm_response
-          never arrives before turn_end, any accumulated streaming text stays
-          visible (matching old behaviour). The text is cleared on the *next*
-          user_message so it never bleeds into a following turn. */}
-      <Show when={props.isLast && state.streamingThinking}>
-        <div class="block thinking streaming" data-testid="block-thinking">
-          <div class="block-label-row">
-            <span class="block-label">thinking</span>
-          </div>
-          <div class="block-body">
-            <pre class="thinking-body">{state.streamingThinking}</pre>
-            <span class="cursor" />
-          </div>
-        </div>
-      </Show>
-      <Show when={props.isLast && state.streamingText}>
-        <div class="block api-response streaming" data-testid="block-llm-response">
-          <div class="block-label-row">
-            <span class="block-label">llm_response</span>
-          </div>
-          <div class="block-body">
-            {state.streamingText}
-            <span class="cursor" />
-          </div>
-        </div>
-      </Show>
-    </div>
-  );
-}
-
-function FreeView(props: {
-  group: RenderGroup & { kind: "free" };
+function GroupView(props: {
+  group: RenderGroup;
   isLast: boolean;
   allLlmCalls: Array<ServerMessage & { type: "llm_call" }>;
 }) {
@@ -1140,13 +1099,18 @@ function FreeView(props: {
       <For each={props.group.events}>{(event) => (
         <EventBlock event={event} turnEvents={props.group.events} allLlmCalls={props.allLlmCalls} />
       )}</For>
+      {/* Streaming slots: only shown for the last group (the one currently receiving
+          or that most recently received content). No done-guard — if llm_response
+          never arrives before turn_end, any accumulated streaming text stays
+          visible (matching old behaviour). The text is cleared on the next
+          user_message so it never bleeds into a following turn. */}
       <Show when={props.isLast && state.streamingThinking}>
         <div class="block thinking streaming" data-testid="block-thinking">
           <div class="block-label-row">
             <span class="block-label">thinking</span>
           </div>
           <div class="block-body">
-            {state.streamingThinking}
+            <pre class="thinking-body">{state.streamingThinking}</pre>
             <span class="cursor" />
           </div>
         </div>
@@ -1771,10 +1735,7 @@ export function App() {
           )}>
             <For each={renderGroups()}>{(group, groupIdx) => {
               const isLast = () => groupIdx() === renderGroups().length - 1;
-              if (group.kind === "turn") {
-                return <TurnView group={group} isLast={isLast()} allLlmCalls={allLlmCalls()} />;
-              }
-              return <FreeView group={group} isLast={isLast()} allLlmCalls={allLlmCalls()} />;
+              return <GroupView group={group} isLast={isLast()} allLlmCalls={allLlmCalls()} />;
             }}</For>
           </ErrorBoundary>
         </div>

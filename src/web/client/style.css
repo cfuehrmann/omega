@@ -90,12 +90,6 @@ html, body, #root {
   min-height: 0;
 }
 
-.turn {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 /* ── Blocks ── */
 .block {
   background: var(--bg2);
