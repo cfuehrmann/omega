@@ -5,27 +5,75 @@
  *   - extractResumptionBasis: empty session, single turn, tool calls, errors,
  *     carry-forward from prior session_resumed, multiple turns
  *   - extractSummaryFromResponse: tag extraction and fallback
- *   - summariseForResumption: calls provider with correct args
  *   - generateSessionName: calls provider, sanitises output
  *   - Agent.seedWithResumptionSummary: emits event, seeds context
+ *   - Agent.performResumption: streaming integration
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, summariseForResumption, generateSessionName, RESUMPTION_SUMMARY_INSTRUCTIONS, AUTO_NAME_INSTRUCTIONS, type ResumptionProvider, type ResumptionProviderResult } from "./session-resume.js";
+import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, generateSessionName, AUTO_NAME_INSTRUCTIONS } from "./session-resume.js";
+import type { StreamProvider } from "./stream-provider.js";
 import type { OmegaEvent } from "./events.js";
 import { makeTestAgent } from "./test-utils.js";
 import { OmegaEventSchema } from "./events.schema.js";
+import { readFileSync, existsSync } from "fs";
 
-/** Build a minimal ResumptionProviderResult for use in mock providers. */
-function mockResult(text: string): ResumptionProviderResult {
-  return {
-    text,
-    model: "claude-sonnet-4-6",
-    stopReason: "end_turn",
-    usage: { input_tokens: 10, output_tokens: 10 },
+// ---------------------------------------------------------------------------
+// StreamProvider mock helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a StreamProvider mock that yields a single text chunk and returns
+ * the given text as the final message. Suitable for performResumption tests.
+ */
+function makeTextStreamProvider(text: string): StreamProvider {
+  return () => ({
+    async *[Symbol.asyncIterator]() {
+      yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
+    },
+    finalMessage: async () => ({
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text }],
+      model: "claude-sonnet-4-6",
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 10 },
+    } as any),
+  });
+}
+
+/**
+ * Build a StreamProvider mock that throws when called.
+ * Suitable for testing error paths in performResumption.
+ */
+function makeFailingStreamProvider(message: string): StreamProvider {
+  return () => { throw new Error(message); };
+}
+
+/**
+ * Build a StreamProvider mock for generateSessionName tests.
+ * Accepts an optional callback to capture the params passed to the provider.
+ */
+function makeNameStreamProvider(text: string, onCall?: (params: any) => void): StreamProvider {
+  return (params) => {
+    onCall?.(params);
+    return {
+      async *[Symbol.asyncIterator]() { /* no chunks needed for naming */ },
+      finalMessage: async () => ({
+        id: "msg_name",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text }],
+        model: "claude-sonnet-4-6",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 5, output_tokens: 3 },
+      } as any),
+    };
   };
 }
-import { readFileSync, existsSync } from "fs";
 
 // ---------------------------------------------------------------------------
 // Minimal event builders
@@ -346,95 +394,31 @@ describe("extractSummaryFromResponse", () => {
 });
 
 // ---------------------------------------------------------------------------
-// summariseForResumption
-// ---------------------------------------------------------------------------
-
-describe("summariseForResumption", () => {
-  it("calls provider with RESUMPTION_SUMMARY_INSTRUCTIONS as system and basis as user content", async () => {
-    let capturedSystem = "";
-    let capturedUser = "";
-    const mockProvider: ResumptionProvider = async (sys, user) => {
-      capturedSystem = sys;
-      capturedUser = user;
-      return mockResult("<summary>mock summary</summary>");
-    };
-    await summariseForResumption("test basis text", mockProvider);
-    expect(capturedSystem).toBe(RESUMPTION_SUMMARY_INSTRUCTIONS);
-    expect(capturedUser).toBe("test basis text");
-  });
-
-  it("returns the extracted summary from the response", async () => {
-    const mockProvider: ResumptionProvider = async () =>
-      mockResult("<summary>Auth module done. Next: tests.</summary>");
-    const result = await summariseForResumption("basis", mockProvider);
-    expect(result.summary).toBe("Auth module done. Next: tests.");
-  });
-
-  it("returns full response when no summary tags", async () => {
-    const mockProvider: ResumptionProvider = async () => mockResult("  plain text  ");
-    const result = await summariseForResumption("basis", mockProvider);
-    expect(result.summary).toBe("plain text");
-  });
-
-  it("extracts description from response when present", async () => {
-    const mockProvider: ResumptionProvider = async () =>
-      mockResult("<summary>Auth module done.</summary>\n<description>Added JWT auth and login tests</description>");
-    const result = await summariseForResumption("basis", mockProvider);
-    expect(result.summary).toBe("Auth module done.");
-    expect(result.description).toBe("Added JWT auth and login tests");
-  });
-
-  it("returns undefined description when tag is absent", async () => {
-    const mockProvider: ResumptionProvider = async () =>
-      mockResult("<summary>Auth module done.</summary>");
-    const result = await summariseForResumption("basis", mockProvider);
-    expect(result.description).toBeUndefined();
-  });
-
-  it("returns providerResult with model, stopReason and usage", async () => {
-    const mockProvider: ResumptionProvider = async () =>
-      mockResult("<summary>Done.</summary>");
-    const result = await summariseForResumption("basis", mockProvider);
-    expect(result.providerResult.model).toBe("claude-sonnet-4-6");
-    expect(result.providerResult.stopReason).toBe("end_turn");
-    expect(result.providerResult.usage.input_tokens).toBe(10);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // generateSessionName
 // ---------------------------------------------------------------------------
 
 describe("generateSessionName", () => {
-  it("calls provider with AUTO_NAME_INSTRUCTIONS and user/agent content", async () => {
-    let capturedSystem = "";
-    let capturedUser = "";
-    const mockProvider: ResumptionProvider = async (sys, user) => {
-      capturedSystem = sys;
-      capturedUser = user;
-      return mockResult("jwt login");
-    };
-    await generateSessionName("Add JWT login", "I'll add JWT login to the app.", mockProvider);
-    expect(capturedSystem).toBe(AUTO_NAME_INSTRUCTIONS);
-    expect(capturedUser).toContain("Add JWT login");
-    expect(capturedUser).toContain("I'll add JWT login to the app.");
+  it("calls provider with AUTO_NAME_INSTRUCTIONS as system and user/agent content", async () => {
+    let capturedParams: any;
+    const provider = makeNameStreamProvider("jwt login", (p) => { capturedParams = p; });
+    await generateSessionName("Add JWT login", "I'll add JWT login to the app.", provider);
+    expect(capturedParams.system).toBe(AUTO_NAME_INSTRUCTIONS);
+    expect(capturedParams.messages[0].content).toContain("Add JWT login");
+    expect(capturedParams.messages[0].content).toContain("I'll add JWT login to the app.");
   });
 
   it("returns sanitised lowercase name", async () => {
-    const mockProvider: ResumptionProvider = async () => mockResult("  JWT Login Endpoint!  ");
-    const result = await generateSessionName("x", "y", mockProvider);
+    const result = await generateSessionName("x", "y", makeNameStreamProvider("  JWT Login Endpoint!  "));
     expect(result).toBe("jwt login endpoint");
   });
 
   it("strips non-alphanumeric chars (except spaces)", async () => {
-    const mockProvider: ResumptionProvider = async () => mockResult("auth-tests: v2.0");
-    const result = await generateSessionName("x", "y", mockProvider);
+    const result = await generateSessionName("x", "y", makeNameStreamProvider("auth-tests: v2.0"));
     expect(result).toBe("authtests v20");
   });
 
   it("truncates very long names to 60 chars", async () => {
-    const mockProvider: ResumptionProvider = async () => mockResult("a".repeat(100));
-    const result = await generateSessionName("x", "y", mockProvider);
+    const result = await generateSessionName("x", "y", makeNameStreamProvider("a".repeat(100)));
     expect(result.length).toBeLessThanOrEqual(60);
   });
 });
@@ -546,14 +530,12 @@ describe("Agent.seedWithResumptionSummary", () => {
 
 describe("Agent.performResumption", () => {
   it("logs resuming_session → llm_call → llm_response → session_resumed on success", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent();
+    const text = "<summary>Prior session summary.</summary><description>Did some work</description>";
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider(text));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () =>
-      mockResult("<summary>Prior session summary.</summary><description>Did some work</description>");
-
-    for await (const _ of agent.performResumption("the basis text", "2025-01-01T00-00-00-000-aaaaaaaa", provider)) {}
+    for await (const _ of agent.performResumption("the basis text", "2025-01-01T00-00-00-000-aaaaaaaa")) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -571,14 +553,11 @@ describe("Agent.performResumption", () => {
   });
 
   it("resuming_session event carries continuationOf and basis", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent();
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>Summary.</summary>"));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () =>
-      mockResult("<summary>Summary.</summary>");
-
-    for await (const _ of agent.performResumption("my basis", "old-session-dir", provider)) {}
+    for await (const _ of agent.performResumption("my basis", "old-session-dir")) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -588,12 +567,11 @@ describe("Agent.performResumption", () => {
   });
 
   it("llm_call event has correct model, contextHashes length and url", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent();
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>S.</summary>"));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () => mockResult("<summary>S.</summary>");
-    for await (const _ of agent.performResumption("basis", "old-dir", provider)) {}
+    for await (const _ of agent.performResumption("basis", "old-dir")) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -605,12 +583,11 @@ describe("Agent.performResumption", () => {
   });
 
   it("llm_response event carries usage and text", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent();
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>Done.</summary>"));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () => mockResult("<summary>Done.</summary>");
-    for await (const _ of agent.performResumption("basis", "old-dir", provider)) {}
+    for await (const _ of agent.performResumption("basis", "old-dir")) {}
     await agent.flushEventLog();
 
     const events = readEventsFile(eventsFile);
@@ -621,16 +598,26 @@ describe("Agent.performResumption", () => {
     expect(typeof ev.contextHash).toBe("string");
   });
 
-  it("llm_response text contains description tag for extraction", async () => {
-    const { agent, dispose } = await makeTestAgent();
+  it("generator yields text chunks as StreamSignals during streaming", async () => {
+    const { agent, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>S.</summary>"));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () =>
-      mockResult("<summary>S.</summary><description>Added auth middleware</description>");
+    const chunks: string[] = [];
+    for await (const event of agent.performResumption("basis", "old")) {
+      if (event.type === "text") chunks.push(event.text);
+    }
+    expect(chunks).toEqual(["<summary>S.</summary>"]);
+  });
+
+  it("llm_response text contains description tag for extraction", async () => {
+    const text = "<summary>S.</summary><description>Added auth middleware</description>";
+    const { agent, dispose } = await makeTestAgent(makeTextStreamProvider(text));
+    afterAll(dispose);
+    await agent.init();
 
     let description: string | undefined;
-    for await (const event of agent.performResumption("basis", "old", provider)) {
+    for await (const event of agent.performResumption("basis", "old")) {
       if (event.type === "llm_response" && event.text) {
         description = extractDescriptionFromResponse(event.text);
       }
@@ -639,13 +626,12 @@ describe("Agent.performResumption", () => {
   });
 
   it("description is undefined when tag absent", async () => {
-    const { agent, dispose } = await makeTestAgent();
+    const { agent, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>S.</summary>"));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () => mockResult("<summary>S.</summary>");
     let description: string | undefined;
-    for await (const event of agent.performResumption("basis", "old", provider)) {
+    for await (const event of agent.performResumption("basis", "old")) {
       if (event.type === "llm_response" && event.text) {
         description = extractDescriptionFromResponse(event.text);
       }
@@ -654,16 +640,12 @@ describe("Agent.performResumption", () => {
   });
 
   it("logs llm_error and re-throws when provider fails", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent();
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeFailingStreamProvider("API timeout"));
     afterAll(dispose);
     await agent.init();
 
-    const provider: ResumptionProvider = async () => {
-      throw new Error("API timeout");
-    };
-
     await expect(
-      (async () => { for await (const _ of agent.performResumption("basis", "old-dir", provider)) {} })()
+      (async () => { for await (const _ of agent.performResumption("basis", "old-dir")) {} })()
     ).rejects.toThrow("API timeout");
 
     await agent.flushEventLog();

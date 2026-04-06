@@ -21,7 +21,7 @@ import { readFileSync, existsSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { z } from "zod";
 import type { ServerWebSocket } from "bun";
-import { Agent, type StreamProvider, type OmegaEvent } from "../agent.js";
+import { Agent, makeDefaultStreamProvider, type StreamProvider, type OmegaEvent } from "../agent.js";
 import {
   makeSessionDir,
   readSessionMetadata,
@@ -43,8 +43,6 @@ import {
   extractResumptionBasis,
   extractDescriptionFromResponse,
   generateSessionName,
-  makeDefaultResumptionProvider,
-  type ResumptionProvider,
 } from "../session-resume.js";
 
 // ---------------------------------------------------------------------------
@@ -293,7 +291,7 @@ async function listSessions(): Promise<SessionListItem[]> {
 async function maybeAutoName(
   sessionDir: string,
   turnEvents: OmegaEvent[],
-  provider: ResumptionProvider,
+  provider: StreamProvider,
   onNamed?: (name: string) => void,
 ): Promise<void> {
   // Only name once
@@ -369,8 +367,7 @@ function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context
 async function handleMessage(
   session: Session,
   data: string,
-  streamProvider: StreamProvider | undefined,
-  resumptionProvider: ResumptionProvider,
+  streamProvider: StreamProvider,
 ): Promise<void> {
   let msg: ClientMessage;
   try {
@@ -464,7 +461,6 @@ async function handleMessage(
       for await (const event of persistentAgent.performResumption(
         basis,
         msg.sessionDir,
-        resumptionProvider,
       )) {
         send(session.ws, event);
         if (event.type === "llm_response" && event.text) {
@@ -586,7 +582,7 @@ async function handleMessage(
 
     // Auto-name after first turn_end (fire-and-forget)
     if (turnEvents.some(e => e.type === "turn_end")) {
-      maybeAutoName(currentSessionPaths.dir, turnEvents, resumptionProvider, (name) => {
+      maybeAutoName(currentSessionPaths.dir, turnEvents, streamProvider, (name) => {
         send(ws, { type: "session_renamed", sessionDir: basename(currentSessionPaths.dir), name });
       }).catch(() => {});
     }
@@ -600,22 +596,19 @@ async function handleMessage(
 export interface WebAppOptions {
   /** Injectable LLM stream provider (used in tests to avoid real API calls). */
   streamProvider?: StreamProvider;
-  /**
-   * Injectable provider for resumption summarisation and auto-naming.
-   * Defaults to a real Anthropic call in production; inject a mock in tests.
-   */
-  resumptionProvider?: ResumptionProvider;
   /** Override the HTTP port (default: resolved from --port flag / PORT env / 3000). */
   port?: number;
 }
 
 export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
-  const resumptionProvider: ResumptionProvider =
-    opts.resumptionProvider ?? makeDefaultResumptionProvider();
+  // Always resolve a concrete stream provider so it can be shared between
+  // the Agent (for normal turns) and auto-naming (for session name generation).
+  const streamProvider: StreamProvider =
+    opts.streamProvider ?? makeDefaultStreamProvider();
 
   currentSessionPaths = await makeSessionDir();
   persistentAgent = new Agent(
-    opts.streamProvider,
+    streamProvider,
     currentSessionPaths.contextFile,
     currentSessionPaths.eventsFile,
   );
@@ -701,7 +694,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
 
       message(ws, data) {
         if (activeSession?.ws !== ws) return;
-        handleMessage(activeSession, String(data), opts.streamProvider, resumptionProvider).catch((err: unknown) => {
+        handleMessage(activeSession, String(data), streamProvider).catch((err: unknown) => {
           sendTransportError(ws, String(err), "websocket_message_handler");
         });
       },

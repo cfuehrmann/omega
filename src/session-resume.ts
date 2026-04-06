@@ -6,10 +6,8 @@
  *   1. Read the previous session's events.jsonl → OmegaEvent[]
  *   2. `extractResumptionBasis(events)` → a structured markdown text
  *      (the "basis") containing only the information relevant for summary.
- *   3. `summariseForResumption(basis, provider)` → a concise summary string.
- *   4. Caller stores the summary in a `session_resumed` event (basis is in
- *      the preceding `resuming_session` event) and seeds the new Agent with
- *      the summary via `seedWithResumptionSummary()`.
+ *   3. `Agent.performResumption()` streams the LLM summarisation, yielding
+ *      live text chunks plus the final `session_resumed` event.
  *
  * The extraction function is the critical path — it determines what the LLM
  * sees and therefore the quality of the summary. It is a pure function so it
@@ -29,6 +27,7 @@
  */
 
 import type { OmegaEvent } from "./events.js";
+import type { StreamProvider } from "./stream-provider.js";
 import { primaryToolArg } from "./tools.schema.js";
 
 // ---------------------------------------------------------------------------
@@ -86,77 +85,8 @@ Rules:
 Respond with ONLY the name — no explanation, no punctuation, nothing else.\
 `;
 
-// ---------------------------------------------------------------------------
-// Injectable provider (real Anthropic call or mock in tests)
-// ---------------------------------------------------------------------------
-
-/**
- * The full result of a ResumptionProvider call.
- * Mirrors the fields needed to log `llm_call` and `llm_response` events.
- */
-export interface ResumptionProviderResult {
-  /** Full LLM response text (may contain <summary> / <description> tags). */
-  text: string;
-  /** Model identifier returned by the API. */
-  model: string;
-  /** Stop reason (e.g. "end_turn"). */
-  stopReason: string;
-  /** Token usage counters from the API response. */
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number | null;
-    cache_read_input_tokens?: number | null;
-    service_tier?: string | null;
-  };
-}
-
-/**
- * A provider that calls an LLM with a system prompt and user content,
- * returning the full response including metadata needed for event logging.
- *
- * The default production implementation calls the Anthropic API directly.
- * Tests inject a mock to avoid real API calls.
- */
-export type ResumptionProvider = (
-  systemPrompt: string,
-  userContent: string,
-) => Promise<ResumptionProviderResult>;
-
-/** The model used for resumption summarisation. */
+/** The model used for resumption summarisation and auto-naming. */
 export const RESUMPTION_MODEL = "claude-sonnet-4-6";
-
-/**
- * Build a ResumptionProvider backed by the Anthropic API.
- * Creates a client using the ANTHROPIC_API_KEY env var.
- */
-export function makeDefaultResumptionProvider(): ResumptionProvider {
-  return async (systemPrompt: string, userContent: string): Promise<ResumptionProviderResult> => {
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic();
-    const response = await client.messages.create({
-      model: RESUMPTION_MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userContent }],
-    });
-    const text = response.content
-      .filter(b => b.type === "text")
-      .map(b => (b as { type: "text"; text: string }).text)
-      .join("");
-    return {
-      text,
-      model: response.model,
-      stopReason: response.stop_reason ?? "end_turn",
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        cache_creation_input_tokens: (response.usage as any).cache_creation_input_tokens ?? null,
-        cache_read_input_tokens: (response.usage as any).cache_read_input_tokens ?? null,
-      },
-    };
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Basis extraction helpers
@@ -350,57 +280,36 @@ export function extractDescriptionFromResponse(responseText: string): string | u
 }
 
 // ---------------------------------------------------------------------------
-// Public: summarisation call
-// ---------------------------------------------------------------------------
-
-/**
- * Result of a summarisation call — includes the extracted summary, optional
- * description, and the raw provider result (for event logging by the caller).
- */
-interface ResumptionResult {
-  summary: string;
-  description?: string;
-  /** Raw provider result — used by the caller to log llm_response. */
-  providerResult: ResumptionProviderResult;
-}
-
-/**
- * Call the LLM to produce a continuation summary from a basis string.
- * Returns the extracted summary text (inside <summary> tags, or full response),
- * an optional one-line description for the source session, and the raw
- * provider result so the caller can log `llm_response` with full metadata.
- */
-export async function summariseForResumption(
-  basis: string,
-  provider: ResumptionProvider,
-): Promise<ResumptionResult> {
-  const providerResult = await provider(RESUMPTION_SUMMARY_INSTRUCTIONS, basis);
-  return {
-    summary: extractSummaryFromResponse(providerResult.text),
-    description: extractDescriptionFromResponse(providerResult.text),
-    providerResult,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Public: auto-naming call
 // ---------------------------------------------------------------------------
 
 /**
  * Call the LLM to produce a short session name from the first user message
- * and the first agent response text.
+ * and the first agent response text. Uses the same StreamProvider as normal
+ * turns — no separate provider abstraction.
  */
 export async function generateSessionName(
   firstUserMessage: string,
   firstAgentResponse: string,
-  provider: ResumptionProvider,
+  provider: StreamProvider,
 ): Promise<string> {
   const userContent =
     `First user message: ${firstUserMessage.slice(0, 300).trim()}\n` +
     `First agent response: ${firstAgentResponse.slice(0, 400).trim()}`;
-  const result = await provider(AUTO_NAME_INSTRUCTIONS, userContent);
+  const stream = provider({
+    model: RESUMPTION_MODEL,
+    max_tokens: 64,
+    system: AUTO_NAME_INSTRUCTIONS,
+    messages: [{ role: "user", content: userContent }],
+  });
+  // We only need the final text — no streaming needed for a short name.
+  const message = await stream.finalMessage();
+  const text = message.content
+    .filter((b: any) => b.type === "text")
+    .map((b: any) => (b as { type: "text"; text: string }).text)
+    .join("");
   // Sanitise: lowercase, collapse whitespace, strip non-word chars
-  return result.text
+  return text
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\s+/g, " ")

@@ -14,15 +14,22 @@ import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
 import { type ISOTimestamp, now, fromDate } from "./iso-timestamp.js";
 import {
-  summariseForResumption,
+  extractSummaryFromResponse,
   RESUMPTION_SUMMARY_INSTRUCTIONS,
   RESUMPTION_MODEL,
-  type ResumptionProvider,
 } from "./session-resume.js";
+import type { StreamProvider } from "./stream-provider.js";
 
 // --- Types ---
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
+export type { StreamProvider } from "./stream-provider.js";
+
+/** Create a StreamProvider backed by the real Anthropic API. */
+export function makeDefaultStreamProvider(): StreamProvider {
+  const client = new Anthropic();
+  return (params) => client.beta.messages.stream(params);
+}
 
 // --- Request / response elision helpers ---
 
@@ -292,27 +299,6 @@ export function processStreamEvents(
 }
 
 // --- Agent ---
-
-/**
- * A StreamProvider is a function that calls the LLM provider API
- * (or a mock in tests) and returns an object with an async iterator of
- * raw stream events and a finalMessage() method.
- *
- * The return type mirrors the real Anthropic SDK: `client.beta.messages.stream()`
- * returns a BetaMessageStream synchronously — no Promise wrapper.
- *
- * By accepting a StreamProvider in the constructor, the Agent can be
- * tested without hitting the real LLM provider API.
- *
- * NOTE: This type is referenced by name in .omega/system-prompt-append.md.
- * If you rename it, update that file too.
- */
-export type StreamProvider = (
-  params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-) => {
-  [Symbol.asyncIterator](): AsyncIterator<any>;
-  finalMessage(): Promise<Anthropic.Beta.Messages.BetaMessage>;
-};
 
 export class Agent {
   private client: Anthropic;
@@ -632,8 +618,7 @@ export class Agent {
   async *performResumption(
     basis: string,
     continuationOf: string,
-    provider: ResumptionProvider,
-  ): AsyncGenerator<OmegaEvent> {
+  ): AsyncGenerator<OmegaEvent | StreamSignal> {
     const RESUMPTION_URL = "https://api.anthropic.com/v1/messages";
 
     // Write the user message (basis) to context.jsonl and record its hash.
@@ -650,10 +635,12 @@ export class Agent {
     await this.logEvent(resumingEvent);
     yield resumingEvent;
 
-    // Log and yield llm_call — records what we're about to send.
-    const requestPayload = {
+    // Build and log llm_call — same params used for the actual stream call.
+    const streamParams = {
+      model: RESUMPTION_MODEL,
+      max_tokens: 4096,
       system: RESUMPTION_SUMMARY_INSTRUCTIONS,
-      messages: [{ role: "user", content: basis }],
+      messages: [{ role: "user" as const, content: basis }],
     };
     const llmCallEvent: OmegaEvent = {
       type: "llm_call",
@@ -662,7 +649,7 @@ export class Agent {
       model: RESUMPTION_MODEL,
       contextHashes: [userHash],
       cacheBreakpointIndex: null,
-      requestBytes: JSON.stringify(requestPayload).length,
+      requestBytes: JSON.stringify(streamParams).length,
       requestSummary: {
         system: `[resumption_summary_instructions, ${RESUMPTION_SUMMARY_INSTRUCTIONS.length} chars]`,
         messages: `[1 user message, basis ${basis.length} chars]`,
@@ -671,10 +658,23 @@ export class Agent {
     await this.logEvent(llmCallEvent);
     yield llmCallEvent;
 
-    // Call the LLM; log and yield llm_error then re-throw on failure.
-    let result: Awaited<ReturnType<typeof summariseForResumption>>;
+    // Stream the LLM call — same pattern as sendMessage, yielding text chunks
+    // live so the UI renders the summary as it arrives.
+    let assembledText = "";
+    let assembledTextTs: ISOTimestamp | null = null;
+    let response: Anthropic.Beta.Messages.BetaMessage;
+
     try {
-      result = await summariseForResumption(basis, provider);
+      const stream = this.getStreamProvider()(streamParams);
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          const chunk: string = event.delta.text;
+          if (assembledTextTs === null) assembledTextTs = now();
+          assembledText += chunk;
+          yield { type: "text" as const, text: chunk };
+        }
+      }
+      response = await stream.finalMessage();
     } catch (err: unknown) {
       const errEvent: OmegaEvent = {
         type: "llm_error",
@@ -688,23 +688,33 @@ export class Agent {
     }
 
     // Write the assistant response to context.jsonl.
-    const assistantMsg = { role: "assistant" as const, content: result.providerResult.text };
+    const assistantMsg = { role: "assistant" as const, content: assembledText };
     const assistantHash = await appendContextMessage(assistantMsg, this.contextFile);
 
     // Log and yield llm_response.
     const llmResponseEvent: OmegaEvent = {
       type: "llm_response",
       time: now(),
-      stopReason: result.providerResult.stopReason,
-      usage: result.providerResult.usage,
+      stopReason: response.stop_reason ?? "end_turn",
+      usage: {
+        input_tokens: response.usage.input_tokens ?? 0,
+        output_tokens: response.usage.output_tokens,
+        cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? undefined,
+        cache_read_input_tokens: response.usage.cache_read_input_tokens ?? undefined,
+        service_tier: (response.usage as any).service_tier ?? undefined,
+      },
       contextHash: assistantHash,
-      text: result.providerResult.text,
+      ...(assembledText
+        ? { text: assembledText, streamingStart: assembledTextTs ?? undefined }
+        : {}),
+      responseSummary: elideAnthropicResponse(response),
     };
     await this.logEvent(llmResponseEvent);
     yield llmResponseEvent;
 
     // Seed the agent, log session_resumed, and yield it.
-    const sessionResumedEvent = await this.seedWithResumptionSummary(result.summary, continuationOf);
+    const summary = extractSummaryFromResponse(assembledText);
+    const sessionResumedEvent = await this.seedWithResumptionSummary(summary, continuationOf);
     yield sessionResumedEvent;
   }
 
