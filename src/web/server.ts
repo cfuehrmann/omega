@@ -324,12 +324,15 @@ async function maybeAutoName(
 // ---------------------------------------------------------------------------
 
 /**
- * The agent is created once at server start and reused across all WebSocket
- * connections. Browser refreshes / reconnects reuse the same agent context.
- * The agent is only replaced when the client sends { type: "reset" }.
+ * The agent is created when the user first creates or resumes a session and
+ * reused across all WebSocket reconnects. Starts as undefined — no session is
+ * created at server startup. The client sees `ready` with no `session_info`
+ * and is forced to choose (new or resume) before any work can begin.
+ *
+ * Replaced when the client sends { type: "reset" } or { type: "resume_session" }.
  */
-let persistentAgent: Agent;
-let currentSessionPaths: SessionPaths;
+let persistentAgent: Agent | undefined;
+let currentSessionPaths: SessionPaths | undefined;
 
 // ---------------------------------------------------------------------------
 // WebSocket session (transport layer — one active WS at a time)
@@ -357,7 +360,7 @@ function send(ws: ServerWebSocket<unknown>, event: object): void {
  *
  * Persistence is best-effort: if the write fails (e.g. because the error IS
  * a file I/O failure) the exception is silently swallowed so the WebSocket
- * send is never blocked.
+ * send is never blocked. If no session is active yet, only the WS send runs.
  */
 function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context?: string): void {
   const event = {
@@ -367,7 +370,9 @@ function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context
     ...(context !== undefined ? { context } : {}),
   };
   send(ws, event);
-  appendEvent(event, currentSessionPaths.eventsFile).catch(() => {});
+  if (currentSessionPaths) {
+    appendEvent(event, currentSessionPaths.eventsFile).catch(() => {});
+  }
 }
 
 async function handleMessage(
@@ -385,7 +390,7 @@ async function handleMessage(
   }
 
   if (msg.type === "abort") {
-    session.abortController?.abort();
+    if (persistentAgent) session.abortController?.abort();
     return;
   }
 
@@ -405,13 +410,13 @@ async function handleMessage(
     // After the await we're outside the auto-corked message callback —
     // cork explicitly so all three frames are batched reliably.
     session.ws.cork(() => {
-      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort(), cwd: process.cwd() }));
+      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths!.dir, model: persistentAgent!.getActiveModel(), effort: persistentAgent!.getActiveEffort(), cwd: process.cwd() }));
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
     });
 
     persistentAgent.init()
-      .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
+      .then(() => persistentAgent!.loadSystemPromptAppend().catch(() => {}))
       .catch((err: unknown) => {
         send(session.ws, { type: "agent_error", time: now(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
       });
@@ -451,9 +456,9 @@ async function handleMessage(
     session.ws.cork(() => {
       session.ws.send(JSON.stringify({
         type: "session_info",
-        dir: currentSessionPaths.dir,
-        model: persistentAgent.getActiveModel(),
-        effort: persistentAgent.getActiveEffort(),
+        dir: currentSessionPaths!.dir,
+        model: persistentAgent!.getActiveModel(),
+        effort: persistentAgent!.getActiveEffort(),
         cwd: process.cwd(),
       }));
       session.ws.send(JSON.stringify({ type: "history", events: initEvents }));
@@ -499,7 +504,7 @@ async function handleMessage(
     }
 
     // Update new session's metadata with the continuationOf link.
-    await updateSessionMetadata(currentSessionPaths.dir, {
+    await updateSessionMetadata(currentSessionPaths!.dir, {
       continuationOf: msg.sessionDir,
     });
 
@@ -540,6 +545,7 @@ async function handleMessage(
   }
 
   if (msg.type === "set_model") {
+    if (!persistentAgent) return; // no session yet
     if (session.isStreaming) {
       sendTransportError(session.ws, "Cannot switch model during an active turn", "handleMessage");
       return;
@@ -556,6 +562,7 @@ async function handleMessage(
   }
 
   if (msg.type === "set_effort") {
+    if (!persistentAgent) return; // no session yet
     if (session.isStreaming) {
       sendTransportError(session.ws, "Cannot change effort during an active turn", "handleMessage");
       return;
@@ -566,6 +573,10 @@ async function handleMessage(
   }
 
   if (msg.type === "message") {
+    if (!persistentAgent || !currentSessionPaths) {
+      sendTransportError(session.ws, "No active session — create or resume a session first", "handleMessage");
+      return;
+    }
     if (session.isStreaming) {
       sendTransportError(session.ws, "Turn already in progress", "handleMessage");
       return;
@@ -597,8 +608,8 @@ async function handleMessage(
 
     // Auto-name after first turn_end (fire-and-forget)
     if (turnEvents.some(e => e.type === "turn_end")) {
-      maybeAutoName(currentSessionPaths.dir, turnEvents, streamProvider, (name) => {
-        send(ws, { type: "session_renamed", sessionDir: basename(currentSessionPaths.dir), name });
+      maybeAutoName(currentSessionPaths!.dir, turnEvents, streamProvider, (name) => {
+        send(ws, { type: "session_renamed", sessionDir: basename(currentSessionPaths!.dir), name });
       }).catch(() => {});
     }
   }
@@ -624,18 +635,19 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
     opts.streamProvider ?? makeDefaultStreamProvider();
 
   activeSessionsRoot = opts.sessionsRoot ?? SESSIONS_ROOT;
-  currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
-  persistentAgent = new Agent(
-    streamProvider,
-    currentSessionPaths.contextFile,
-    currentSessionPaths.eventsFile,
-  );
+  // No session is created at startup — the client is forced to choose (new or
+  // resume) before any work begins. persistentAgent / currentSessionPaths are
+  // set when the user sends { type: "reset" } or { type: "resume_session" }.
 
-  // Graceful shutdown: emit server_stopped then exit
+  // Graceful shutdown: emit server_stopped if a session is active, then exit
   const handleShutdown = () => {
-    persistentAgent.emitServerStopped("clean")
-      .catch(() => {})
-      .finally(() => process.exit(0));
+    if (persistentAgent) {
+      persistentAgent.emitServerStopped("clean")
+        .catch(() => {})
+        .finally(() => process.exit(0));
+    } else {
+      process.exit(0);
+    }
   };
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
@@ -661,7 +673,7 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
       if (url.pathname === "/context" && req.method === "GET") {
         const raw = url.searchParams.get("hashes") ?? "";
         const hashes = raw.split(",").map(h => h.trim()).filter(Boolean);
-        if (hashes.length === 0) {
+        if (hashes.length === 0 || !currentSessionPaths) {
           return new Response(JSON.stringify([]), {
             headers: { "Content-Type": "application/json" },
           });
@@ -686,28 +698,34 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         };
         activeSession = session;
 
-        // Replay past events from events.jsonl — same file Agent writes to.
-        // After the await we're outside the auto-corked open callback, so we
-        // must cork explicitly (Bun docs: "use cork in async functions").
-        const [replayEvents, sessionMeta] = await Promise.all([
-          loadReplayEvents(currentSessionPaths.eventsFile),
-          readSessionMetadata(currentSessionPaths.dir),
-        ]);
-        ws.cork(() => {
-          const sessionInfoMsg: Record<string, unknown> = { type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort(), cwd: process.cwd() };
-          if (sessionMeta.name) sessionInfoMsg.name = sessionMeta.name;
-          ws.send(JSON.stringify(sessionInfoMsg));
-          if (replayEvents.length > 0) {
-            ws.send(JSON.stringify({ type: "history", events: replayEvents }));
-          }
-          ws.send(JSON.stringify({ type: "ready" }));
-        });
-
-        persistentAgent.init()
-          .then(() => persistentAgent.loadSystemPromptAppend().catch(() => {}))
-          .catch((err: unknown) => {
-            send(ws, { type: "agent_error", time: now(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
+        if (currentSessionPaths && persistentAgent) {
+          // Existing session (reconnect after user already chose): replay history.
+          // After the await we're outside the auto-corked open callback, so we
+          // must cork explicitly (Bun docs: "use cork in async functions").
+          const [replayEvents, sessionMeta] = await Promise.all([
+            loadReplayEvents(currentSessionPaths.eventsFile),
+            readSessionMetadata(currentSessionPaths.dir),
+          ]);
+          ws.cork(() => {
+            const sessionInfoMsg: Record<string, unknown> = { type: "session_info", dir: currentSessionPaths!.dir, model: persistentAgent!.getActiveModel(), effort: persistentAgent!.getActiveEffort(), cwd: process.cwd() };
+            if (sessionMeta.name) sessionInfoMsg.name = sessionMeta.name;
+            ws.send(JSON.stringify(sessionInfoMsg));
+            if (replayEvents.length > 0) {
+              ws.send(JSON.stringify({ type: "history", events: replayEvents }));
+            }
+            ws.send(JSON.stringify({ type: "ready" }));
           });
+
+          persistentAgent.init()
+            .then(() => persistentAgent!.loadSystemPromptAppend().catch(() => {}))
+            .catch((err: unknown) => {
+              send(ws, { type: "agent_error", time: now(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
+            });
+        } else {
+          // No session yet — signal ready; client will show the session picker
+          // and force the user to create or resume before any work begins.
+          ws.send(JSON.stringify({ type: "ready" }));
+        }
       },
 
       message(ws, data) {

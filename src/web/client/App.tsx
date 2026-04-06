@@ -1297,6 +1297,13 @@ interface SessionItem {
 
 const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
 
+/**
+ * True when the client is connected but no session has been created or resumed
+ * yet. In this state the session picker is shown automatically and cannot be
+ * dismissed — the user must choose before any work can begin.
+ */
+const needsSessionChoice = () => state.connected && !state.sessionDir;
+
 // Track deleted session dirs so the picker can filter them out client-side
 const [deletedSessions, setDeletedSessions] = createSignal<Set<string>>(new Set());
 function _onSessionDeleted(dir: string) {
@@ -1309,8 +1316,12 @@ function _onSessionRenamed(dir: string, name: string) {
 }
 
 function SessionPickerModal() {
+  // Fetch sessions whenever the modal is open — either because the user opened
+  // it manually OR because there is no active session yet (forced choice).
+  const isOpen = () => sessionPickerOpen() || needsSessionChoice();
+
   const [sessions] = createResource<SessionItem[], boolean>(
-    () => sessionPickerOpen(),
+    isOpen,
     async (open: boolean) => {
       if (!open) return [];
       const res = await fetch("/sessions");
@@ -1383,10 +1394,10 @@ function SessionPickerModal() {
   }
 
   return (
-    <Show when={sessionPickerOpen()}>
-      <div class="modal-backdrop" onClick={() => setSessionPickerOpen(false)}>
-        <div class="modal session-picker-modal" data-testid="session-picker-modal"
-             onClick={(e) => e.stopPropagation()}>
+    <Show when={isOpen()}>
+      {/* Backdrop never closes the modal — clicking outside is intentionally a no-op. */}
+      <div class="modal-backdrop">
+        <div class="modal session-picker-modal" data-testid="session-picker-modal">
           <div class="modal-header">
             <span class="modal-title">Sessions</span>
             <div class="modal-header-btns">
@@ -1396,7 +1407,10 @@ function SessionPickerModal() {
                 disabled={state.streaming || !state.connected}
                 onClick={() => { newSession(); setSessionPickerOpen(false); }}
               >＋ New session</button>
-              <button class="modal-close" onClick={() => { setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
+              {/* Close button hidden when the user must make a choice (no session yet). */}
+              <Show when={!needsSessionChoice()}>
+                <button class="modal-close" onClick={() => { setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
+              </Show>
             </div>
           </div>
 

@@ -20,9 +20,24 @@ import { test, expect } from "@playwright/test";
 const connectedDot = (page: import("@playwright/test").Page) =>
   page.locator('[data-testid="omega-btn"][data-status="connected"]');
 
+/**
+ * If the server has no active session (fresh start), the session picker is
+ * forced open. Click "New session" so the real-server tests can proceed.
+ * No-op when a session already exists (picker is not shown).
+ */
+async function ensureSession(page: import("@playwright/test").Page) {
+  const picker = page.getByTestId("session-picker-modal");
+  if (await picker.isVisible()) {
+    await page.getByTestId("session-picker-new").click();
+    // Wait for the picker to disappear (session_info arrives and sets sessionDir)
+    await expect(picker).not.toBeVisible({ timeout: 5000 });
+  }
+}
+
 test("events persist through the real server and replay after page reload", async ({ page }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
+  await ensureSession(page);
 
   // Send a message through the real agent (uses the mock provider → "pong")
   const textarea = page.locator("textarea");
@@ -56,6 +71,7 @@ test("events persist through the real server and replay after page reload", asyn
 test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly", async ({ page }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
+  await ensureSession(page);
 
   // Send the trigger message — the mock provider returns run_command(sleep 10)
   await page.locator("textarea").fill("abort_sleep_test");
@@ -75,6 +91,7 @@ test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly"
 test("session dir shown in bottom panel persists after reload", async ({ page }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
+  await ensureSession(page);
 
   // Open the bottom panel (Ω button) to reveal session info
   await page.getByTestId("omega-btn").click();
