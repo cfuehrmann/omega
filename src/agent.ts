@@ -16,7 +16,6 @@ import { type ISOTimestamp, now, fromDate } from "./iso-timestamp.js";
 import {
   extractSummaryFromResponse,
   RESUMPTION_SUMMARY_INSTRUCTIONS,
-  RESUMPTION_MODEL,
 } from "./session-resume.js";
 import type { StreamProvider } from "./stream-provider.js";
 
@@ -776,17 +775,25 @@ export class Agent {
     yield resumingEvent;
 
     // Build and log llm_call — same params used for the actual stream call.
+    const resumptionModel = config.resumptionModel;
+    const resumptionEffort = (
+      config.resumptionEffort === "max" && resumptionModel !== "claude-opus-4-6"
+        ? "high"
+        : config.resumptionEffort
+    ) as "low" | "medium" | "high" | "max";
     const streamParams = {
-      model: RESUMPTION_MODEL,
+      model: resumptionModel,
       max_tokens: 4096,
       system: RESUMPTION_SUMMARY_INSTRUCTIONS,
       messages: [{ role: "user" as const, content: basis }],
+      thinking: { type: "adaptive" as const },
+      output_config: { effort: resumptionEffort },
     };
     const llmCallEvent: OmegaEvent = {
       type: "llm_call",
       time: now(),
       url: RESUMPTION_URL,
-      model: RESUMPTION_MODEL,
+      model: resumptionModel,
       contextHashes: [userHash],
       cacheBreakpointIndex: null,
       requestBytes: JSON.stringify(streamParams).length,

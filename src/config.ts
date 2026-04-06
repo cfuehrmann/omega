@@ -72,6 +72,34 @@ export const config = {
   defaultEffort: "medium" as const,
 
   // ---------------------------------------------------------------------------
+  // Session resumption
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Model used for the session-resumption summarisation call.
+   *
+   * Resumption is a reading-comprehension + writing task: the model reads the
+   * previous session's event log and produces a structured summary. It does not
+   * require the deeper reasoning that agentic coding turns demand.
+   *
+   * Sonnet 4.6 is the right choice: fast, cost-effective, and more than capable
+   * for summarisation. Switch to "claude-opus-4-6" only if summary quality is
+   * noticeably poor on very complex or long sessions.
+   */
+  resumptionModel: "claude-sonnet-4-6",
+
+  /**
+   * Thinking effort for the session-resumption summarisation call.
+   * See defaultEffort above for the scale.
+   *
+   * "low" is intentional: summarisation is reading comprehension and structured
+   * writing, not multi-step reasoning. Extended thinking adds negligible quality
+   * improvement while making resumption slower and more expensive. Raise to
+   * "medium" only if summaries omit important information on complex sessions.
+   */
+  resumptionEffort: "low" as "low" | "medium" | "high" | "max",
+
+  // ---------------------------------------------------------------------------
   // Server
   // ---------------------------------------------------------------------------
 

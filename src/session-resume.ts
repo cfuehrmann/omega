@@ -85,8 +85,8 @@ Rules:
 Respond with ONLY the name — no explanation, no punctuation, nothing else.\
 `;
 
-/** The model used for resumption summarisation and auto-naming. */
-export const RESUMPTION_MODEL = "claude-sonnet-4-6";
+/** The model used for auto-naming (generateSessionName). */
+const RESUMPTION_MODEL = "claude-sonnet-4-6";
 
 // ---------------------------------------------------------------------------
 // Basis extraction helpers
