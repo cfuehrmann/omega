@@ -129,11 +129,11 @@ function turnInterrupted(reason?: "aborted" | "error"): OmegaEvent {
   return { type: "turn_interrupted", time: "2025-01-01T00:00:04.000Z" as any, reason };
 }
 
-function sessionResumed(continuationOf: string, summary: string): OmegaEvent {
+function sessionResumed(resumedFrom: string, summary: string): OmegaEvent {
   return {
     type: "session_resumed",
     time: "2025-01-01T00:00:00.000Z" as any,
-    continuationOf,
+    resumedFrom,
     summary,
   };
 }
@@ -449,7 +449,7 @@ describe("Agent.seedWithResumptionSummary", () => {
     const events = readEventsFile(eventsFile);
     const ev = events.find(e => e.type === "session_resumed") as any;
     expect(ev).toBeDefined();
-    expect(ev.continuationOf).toBe("2025-01-01T00-00-00-000-aaaaaaaa");
+    expect(ev.resumedFrom).toBe("2025-01-01T00-00-00-000-aaaaaaaa");
     expect(ev.summary).toBe("The summary text.");
     expect(typeof ev.time).toBe("string");
   });
@@ -552,7 +552,7 @@ describe("Agent.performResumption", () => {
     expect(doneIdx).toBeGreaterThan(respIdx);
   });
 
-  it("resuming_session event carries continuationOf and basis", async () => {
+  it("resuming_session event carries resumedFrom and basis", async () => {
     const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>Summary.</summary>"));
     afterAll(dispose);
     await agent.init();
@@ -562,7 +562,7 @@ describe("Agent.performResumption", () => {
 
     const events = readEventsFile(eventsFile);
     const ev = events.find(e => e.type === "resuming_session") as any;
-    expect(ev.continuationOf).toBe("old-session-dir");
+    expect(ev.resumedFrom).toBe("old-session-dir");
     expect(ev.basis).toBe("my basis");
   });
 

@@ -53,10 +53,10 @@ export interface SessionMetadata {
   description?: string;
   /**
    * Relative folder name (within SESSIONS_ROOT) of the session this one
-   * continues. Relative for portability — moving the project does not break
+   * resumes. Relative for portability — moving the project does not break
    * the lineage chain.
    */
-  continuationOf?: string;
+  resumedFrom?: string;
 }
 
 /** Strip single-line and block comments for JSONC parsing. */
@@ -75,7 +75,13 @@ export async function readSessionMetadata(dir: string): Promise<SessionMetadata>
     const raw = await readFile(join(dir, SESSION_METADATA_FILE), "utf-8");
     const parsed = JSON.parse(stripJsoncComments(raw));
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as SessionMetadata;
+      const meta = parsed as Record<string, unknown>;
+      // Backward compat: remap legacy field name written by older versions.
+      if (!("resumedFrom" in meta) && "continuationOf" in meta) {
+        meta.resumedFrom = meta.continuationOf;
+        delete meta.continuationOf;
+      }
+      return meta as SessionMetadata;
     }
   } catch {
     // absent or malformed — treat as empty
@@ -95,7 +101,7 @@ export async function writeSessionMetadata(
   const clean: Record<string, string> = {};
   if (metadata.name !== undefined) clean.name = metadata.name;
   if (metadata.description !== undefined) clean.description = metadata.description;
-  if (metadata.continuationOf !== undefined) clean.continuationOf = metadata.continuationOf;
+  if (metadata.resumedFrom !== undefined) clean.resumedFrom = metadata.resumedFrom;
   await writeFile(join(dir, SESSION_METADATA_FILE), JSON.stringify(clean, null, 2) + "\n", "utf-8");
 }
 

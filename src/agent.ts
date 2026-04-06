@@ -734,12 +734,12 @@ export class Agent {
    */
   async seedWithResumptionSummary(
     summary: string,
-    continuationOf: string,
+    resumedFrom: string,
   ): Promise<OmegaEvent> {
     const ev: OmegaEvent = {
       type: "session_resumed",
       time: now(),
-      continuationOf,
+      resumedFrom,
       summary,
     };
     await this.logEvent(ev);
@@ -778,7 +778,7 @@ export class Agent {
    */
   async *performResumption(
     basis: string,
-    continuationOf: string,
+    resumedFrom: string,
     signal?: AbortSignal,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     const RESUMPTION_URL = "https://api.anthropic.com/v1/messages";
@@ -791,7 +791,7 @@ export class Agent {
     const resumingEvent: OmegaEvent = {
       type: "resuming_session",
       time: now(),
-      continuationOf,
+      resumedFrom,
       basis,
     };
     await this.logEvent(resumingEvent);
@@ -854,7 +854,7 @@ export class Agent {
 
     // Seed the agent, log session_resumed, and yield it.
     const summary = extractSummaryFromResponse(result.assembledText);
-    const sessionResumedEvent = await this.seedWithResumptionSummary(summary, continuationOf);
+    const sessionResumedEvent = await this.seedWithResumptionSummary(summary, resumedFrom);
     yield sessionResumedEvent;
   }
 

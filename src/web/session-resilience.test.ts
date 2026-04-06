@@ -295,7 +295,7 @@ describe("store resumption streaming state", () => {
     dispatch({
       type: "resuming_session",
       time: now(),
-      continuationOf: "2025-01-01T00-00-00-000-aaaaaaaa",
+      resumedFrom: "2025-01-01T00-00-00-000-aaaaaaaa",
       basis: "some basis",
     } as any);
     expect(state.streaming).toBe(true);
@@ -306,7 +306,7 @@ describe("store resumption streaming state", () => {
     dispatch({
       type: "resuming_session",
       time: now(),
-      continuationOf: "2025-01-01T00-00-00-000-aaaaaaaa",
+      resumedFrom: "2025-01-01T00-00-00-000-aaaaaaaa",
       basis: "some basis",
     } as any);
     expect(state.streaming).toBe(true);
@@ -329,7 +329,7 @@ describe("store resumption streaming state", () => {
     dispatch({
       type: "session_resumed",
       time: now(),
-      continuationOf: "2025-01-01T00-00-00-000-aaaaaaaa",
+      resumedFrom: "2025-01-01T00-00-00-000-aaaaaaaa",
       summary: "Prior summary.",
     } as any);
     // streaming remains true until ready
@@ -344,7 +344,7 @@ describe("store resumption streaming state", () => {
     dispatch({
       type: "resuming_session",
       time: now(),
-      continuationOf: "old-dir",
+      resumedFrom: "old-dir",
       basis: "basis text",
     } as any);
     expect(state.events.length).toBe(before + 1);

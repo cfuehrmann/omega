@@ -676,7 +676,7 @@ html, body, #root {
 }
 
 /* Small action buttons shared style */
-.session-picker-continue,
+.session-picker-resume,
 .session-picker-rename,
 .session-picker-save,
 .session-picker-cancel-rename,
@@ -691,7 +691,7 @@ html, body, #root {
   flex-shrink: 0;
   font-family: var(--font);
 }
-.session-picker-continue:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-resume:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .session-picker-rename:hover   { border-color: var(--dim);      color: var(--text); }
 .session-picker-save:hover     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .session-picker-cancel-rename:hover { border-color: var(--dim); color: var(--text); }

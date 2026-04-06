@@ -33,7 +33,7 @@ import {
 } from "../session-dir.js";
 import { appendEvent } from "../event-store.js";
 import type { ContextRecord } from "../context-store.js";
-import { OmegaEventSchema } from "../events.schema.js";
+import { parseOmegaEvent } from "../events.schema.js";
 import { ContextRecordSchema } from "../context-store.schema.js";
 import { readEnvPort } from "../env.js";
 import { config } from "../config.js";
@@ -204,7 +204,7 @@ export async function loadAllEvents(eventsFile: string): Promise<OmegaEvent[]> {
       if (!trimmed) continue;
       let raw: unknown;
       try { raw = JSON.parse(trimmed); } catch { continue; }
-      const result = OmegaEventSchema.safeParse(raw);
+      const result = parseOmegaEvent(raw);
       if (result.success) events.push(result.data);
     }
     return events;
@@ -228,7 +228,7 @@ async function loadReplayEvents(eventsFile: string): Promise<object[]> {
       if (!trimmed) continue;
       let raw: unknown;
       try { raw = JSON.parse(trimmed); } catch { continue; }
-      const result = OmegaEventSchema.safeParse(raw);
+      const result = parseOmegaEvent(raw);
       if (result.success && shouldLogEvent(result.data)) events.push(result.data);
     }
     return closeOpenTurn(events);
@@ -276,7 +276,7 @@ async function listSessions(): Promise<SessionListItem[]> {
       dir,
       ...(meta.name !== undefined ? { name: meta.name } : {}),
       ...(meta.description !== undefined ? { description: meta.description } : {}),
-      ...(meta.continuationOf !== undefined ? { continuationOf: meta.continuationOf } : {}),
+      ...(meta.resumedFrom !== undefined ? { resumedFrom: meta.resumedFrom } : {}),
       lastActivity: folderNameToTimestamp(dir),
     });
   }
@@ -503,9 +503,9 @@ async function handleMessage(
       await updateSessionMetadata(prevSessionDir, { description }).catch(() => {});
     }
 
-    // Update new session's metadata with the continuationOf link.
+    // Update new session's metadata with the resumedFrom link.
     await updateSessionMetadata(currentSessionPaths!.dir, {
-      continuationOf: msg.sessionDir,
+      resumedFrom: msg.sessionDir,
     });
 
     send(session.ws, { type: "ready" });

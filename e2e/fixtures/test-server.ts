@@ -44,7 +44,7 @@ import {
   type SessionPaths,
 } from "../../src/session-dir.js";
 import type { OmegaEvent } from "../../src/events.js";
-import { OmegaEventSchema } from "../../src/events.schema.js";
+import { parseOmegaEvent } from "../../src/events.schema.js";
 import { now as isoNow } from "../../src/iso-timestamp.js";
 
 const MAIN_PORT = 3001;
@@ -134,7 +134,7 @@ async function loadReplayEvents(): Promise<object[]> {
       if (!trimmed) continue;
       try {
         const raw = JSON.parse(trimmed);
-        const result = OmegaEventSchema.safeParse(raw);
+        const result = parseOmegaEvent(raw);
         if (result.success && shouldLogEvent(result.data)) events.push(result.data);
       } catch { /* skip malformed lines */ }
     }
@@ -193,7 +193,7 @@ async function listSessions(): Promise<SessionListItem[]> {
       dir,
       ...(meta.name !== undefined ? { name: meta.name } : {}),
       ...(meta.description !== undefined ? { description: meta.description } : {}),
-      ...(meta.continuationOf !== undefined ? { continuationOf: meta.continuationOf } : {}),
+      ...(meta.resumedFrom !== undefined ? { resumedFrom: meta.resumedFrom } : {}),
       lastActivity: folderNameToTimestamp(dir),
     });
   }
@@ -270,7 +270,7 @@ Bun.serve({
           const resumed: OmegaEvent = {
             type: "session_resumed",
             time: isoNow(),
-            continuationOf: dir,
+            resumedFrom: dir,
             summary: "(test summary of previous session)",
           };
           await appendEvent(resumed, sessionPaths.eventsFile);

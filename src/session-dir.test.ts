@@ -259,15 +259,25 @@ describe("readSessionMetadata", () => {
     expect(meta).toEqual({});
   });
 
-  it("reads name, description, and continuationOf", async () => {
+  it("reads name, description, and resumedFrom", async () => {
     await writeFile(
       join(tmpDir, SESSION_METADATA_FILE),
-      JSON.stringify({ name: "jwt login", description: "desc", continuationOf: "old-session" }),
+      JSON.stringify({ name: "jwt login", description: "desc", resumedFrom: "old-session" }),
     );
     const meta = await readSessionMetadata(tmpDir);
     expect(meta.name).toBe("jwt login");
     expect(meta.description).toBe("desc");
-    expect(meta.continuationOf).toBe("old-session");
+    expect(meta.resumedFrom).toBe("old-session");
+  });
+
+  it("backward compat: remaps legacy continuationOf to resumedFrom on read", async () => {
+    await writeFile(
+      join(tmpDir, SESSION_METADATA_FILE),
+      JSON.stringify({ name: "old session", continuationOf: "legacy-session" }),
+    );
+    const meta = await readSessionMetadata(tmpDir);
+    expect(meta.resumedFrom).toBe("legacy-session");
+    expect((meta as any).continuationOf).toBeUndefined();
   });
 
   it("strips single-line JSONC comments", async () => {
@@ -317,12 +327,12 @@ describe("writeSessionMetadata", () => {
     await writeSessionMetadata(tmpDir, {
       name: "auth tests",
       description: "Testing auth",
-      continuationOf: "prev-session",
+      resumedFrom: "prev-session",
     });
     const meta = await readSessionMetadata(tmpDir);
     expect(meta.name).toBe("auth tests");
     expect(meta.description).toBe("Testing auth");
-    expect(meta.continuationOf).toBe("prev-session");
+    expect(meta.resumedFrom).toBe("prev-session");
   });
 
   it("omits undefined fields from the written file", async () => {
@@ -332,7 +342,7 @@ describe("writeSessionMetadata", () => {
     );
     const parsed = JSON.parse(raw);
     expect(parsed.description).toBeUndefined();
-    expect(parsed.continuationOf).toBeUndefined();
+    expect(parsed.resumedFrom).toBeUndefined();
   });
 });
 
@@ -348,10 +358,10 @@ describe("updateSessionMetadata", () => {
 
   it("merges patch with existing metadata", async () => {
     await writeSessionMetadata(tmpDir, { name: "existing name" });
-    await updateSessionMetadata(tmpDir, { continuationOf: "prev" });
+    await updateSessionMetadata(tmpDir, { resumedFrom: "prev" });
     const meta = await readSessionMetadata(tmpDir);
     expect(meta.name).toBe("existing name");
-    expect(meta.continuationOf).toBe("prev");
+    expect(meta.resumedFrom).toBe("prev");
   });
 
   it("overwrites existing field when patch specifies it", async () => {

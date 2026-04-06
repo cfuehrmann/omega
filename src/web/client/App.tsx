@@ -1033,7 +1033,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     }
 
     case "resuming_session": {
-      const label = `↩ resuming from ${e.continuationOf}`;
+      const label = `↩ resuming from ${e.resumedFrom}`;
       const openBasis = () => setActiveModal({
         kind: "block",
         detail: { label: "resuming_session · basis", time, body: e.basis },
@@ -1052,7 +1052,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     }
 
     case "session_resumed": {
-      const label = `↩ continued from ${e.continuationOf}`;
+      const label = `↩ resumed from ${e.resumedFrom}`;
       const openSummary = () => setActiveModal({
         kind: "block",
         detail: { label: "session_resumed · summary", time, body: e.summary },
@@ -1291,7 +1291,7 @@ interface SessionItem {
   dir: string;
   name?: string;
   description?: string;
-  continuationOf?: string;
+  resumedFrom?: string;
   lastActivity: string;
 }
 
@@ -1470,9 +1470,9 @@ function SessionPickerModal() {
                             <Show when={isRenaming()}
                               fallback={
                                 <>
-                                  <button class="session-picker-continue" data-testid="session-picker-continue"
+                                  <button class="session-picker-resume" data-testid="session-picker-resume"
                                           onClick={(e) => { e.stopPropagation(); resume(s.dir); }}
-                                          title="Continue this session">Continue</button>
+                                          title="Resume this session">Resume</button>
                                   <button class="session-picker-rename" data-testid="session-picker-rename"
                                           onClick={(e) => startRename(s.dir, s.name, e)}
                                           title="Rename this session">Rename</button>
@@ -1496,8 +1496,8 @@ function SessionPickerModal() {
                         <Show when={s.description}>
                           <div class="session-picker-desc">{s.description}</div>
                         </Show>
-                        <Show when={s.continuationOf}>
-                          <div class="session-picker-cont">↩ continues {s.continuationOf}</div>
+                        <Show when={s.resumedFrom}>
+                          <div class="session-picker-cont">↩ resumed from {s.resumedFrom}</div>
                         </Show>
                       </div>
                     );

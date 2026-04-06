@@ -310,9 +310,9 @@ export interface ResumingSessionEvent {
   time: ISOTimestamp;
   /**
    * Relative folder name (within SESSIONS_ROOT) of the session being
-   * continued. Relative for portability.
+   * resumed. Relative for portability.
    */
-  continuationOf: string;
+  resumedFrom: string;
   /**
    * The extracted basis text that will be sent to the LLM for summarisation.
    */
@@ -331,10 +331,10 @@ export interface SessionResumedEvent {
   time: ISOTimestamp;
   /**
    * Relative folder name (within SESSIONS_ROOT) of the session being
-   * continued. Relative for portability — moving the project directory
+   * resumed. Relative for portability — moving the project directory
    * does not break the lineage chain.
    */
-  continuationOf: string;
+  resumedFrom: string;
   /**
    * The summary produced by the LLM from the basis. This text is also
    * injected into the new session's LLM context as the opening message.

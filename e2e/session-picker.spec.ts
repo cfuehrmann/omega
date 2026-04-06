@@ -20,17 +20,17 @@ async function openSessionPicker(page: import("@playwright/test").Page) {
 }
 
 // ---------------------------------------------------------------------------
-// Session picker displays sessions with name, description, continuationOf
+// Session picker displays sessions with name, description, resumedFrom
 // ---------------------------------------------------------------------------
 
-test("session picker shows name, description, and continuationOf metadata", async ({ page, server }) => {
+test("session picker shows name, description, and resumedFrom metadata", async ({ page, server }) => {
   // Create past sessions with metadata
   await server.createPastSession({
     metadata: { name: "auth refactor", description: "Refactored JWT auth flow" },
     events: [{ type: "user_message", content: "hello" }],
   });
   await server.createPastSession({
-    metadata: { name: "bug fix", continuationOf: "2025-01-01T00-00-00-000-abcdef01" },
+    metadata: { name: "bug fix", resumedFrom: "2025-01-01T00-00-00-000-abcdef01" },
     events: [{ type: "user_message", content: "fix the bug" }],
   });
 
@@ -47,11 +47,11 @@ test("session picker shows name, description, and continuationOf metadata", asyn
   // At least 2 past sessions
   expect(await items.count()).toBeGreaterThanOrEqual(2);
 
-  // Check that name/description/continuationOf are displayed
+  // Check that name/description/resumedFrom are displayed
   await expect(list).toContainText("auth refactor");
   await expect(list).toContainText("Refactored JWT auth flow");
   await expect(list).toContainText("bug fix");
-  await expect(list).toContainText("continues");
+  await expect(list).toContainText("resumed from");
 });
 
 // ---------------------------------------------------------------------------
@@ -135,9 +135,9 @@ test("resuming session closes modal immediately and shows session_resumed in fee
 
   await openSessionPicker(page);
 
-  // Click the Continue button — modal should close immediately
+  // Click the Resume button — modal should close immediately
   await page.getByTestId("session-picker-item").filter({ hasText: "old session" }).first()
-    .getByTestId("session-picker-continue").click();
+    .getByTestId("session-picker-resume").click();
 
   // Modal closes right away without waiting for the server
   await expect(page.getByTestId("session-picker-modal")).not.toBeVisible({ timeout: 2000 });

@@ -176,14 +176,14 @@ const TransportErrorSchema = z.object({
 const ResumingSessionSchema = z.object({
   type: z.literal("resuming_session"),
   time: ISOTimestampSchema,
-  continuationOf: z.string(),
+  resumedFrom: z.string(),
   basis: z.string(),
 });
 
 const SessionResumedSchema = z.object({
   type: z.literal("session_resumed"),
   time: ISOTimestampSchema,
-  continuationOf: z.string(),
+  resumedFrom: z.string(),
   summary: z.string(),
 });
 
@@ -228,3 +228,33 @@ export const OmegaEventSchema = z.discriminatedUnion("type", [
   ResumingSessionSchema,
   SessionResumedSchema,
 ]) satisfies z.ZodType<OmegaEvent>;
+
+// ---------------------------------------------------------------------------
+// Backward-compat persistence helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Remap the legacy `continuationOf` field to `resumedFrom` on raw persisted
+ * event objects so that sessions written by older versions still parse.
+ * This is a no-op for events that already use the new field name.
+ */
+function remapLegacyResumedFrom(raw: unknown): unknown {
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    if (!("resumedFrom" in obj) && "continuationOf" in obj) {
+      return { ...obj, resumedFrom: obj.continuationOf };
+    }
+  }
+  return raw;
+}
+
+/**
+ * Parse a raw value (typically `JSON.parse(line)`) as an `OmegaEvent`,
+ * applying any legacy field remappings first.
+ * Use at persistence read boundaries (disk → memory).
+ */
+export function parseOmegaEvent(
+  raw: unknown,
+): ReturnType<typeof OmegaEventSchema.safeParse> {
+  return OmegaEventSchema.safeParse(remapLegacyResumedFrom(raw));
+}
