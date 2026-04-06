@@ -264,11 +264,10 @@ function connect() {
       setSessionPickerOpen(false);
     }
     if (event.type === "session_deleted") {
-      // Remove the deleted session from the list by triggering a re-fetch
-      // The picker's createResource re-fetches when sessionPickerOpen changes,
-      // so we toggle it off/on. Simpler: just close and reopen isn't great UX.
-      // Instead, we'll handle it by filtering the current list client-side.
       _onSessionDeleted(event.sessionDir);
+    }
+    if (event.type === "session_renamed") {
+      _onSessionRenamed(event.sessionDir, event.name);
     }
   };
 
@@ -1069,6 +1068,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "session_info":
     case "resuming_session":
     case "session_deleted":
+    case "session_renamed":
     // thinking is a streaming-only signal — never pushed into turn.events
     case "thinking":
       return null;
@@ -1158,7 +1158,6 @@ function handleEffortChange(e: Event) {
 
 function newSession() {
   if (!state.connected || state.streaming) return;
-  if (!confirm("Start a new session? This will clear all history.")) return;
   sendToServer({ type: "reset" });
 }
 
@@ -1307,9 +1306,14 @@ const [deletedSessions, setDeletedSessions] = createSignal<Set<string>>(new Set(
 function _onSessionDeleted(dir: string) {
   setDeletedSessions(prev => { const next = new Set(prev); next.add(dir); return next; });
 }
+// Track renamed sessions so the picker can update names client-side
+const [renamedSessions, setRenamedSessions] = createSignal<Map<string, string>>(new Map());
+function _onSessionRenamed(dir: string, name: string) {
+  setRenamedSessions(prev => { const next = new Map(prev); next.set(dir, name); return next; });
+}
 
 function SessionPickerModal() {
-  const [sessions, { refetch }] = createResource<SessionItem[], boolean>(
+  const [sessions] = createResource<SessionItem[], boolean>(
     () => sessionPickerOpen(),
     async (open: boolean) => {
       if (!open) return [];
@@ -1320,14 +1324,25 @@ function SessionPickerModal() {
   );
 
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [renamingDir, setRenamingDir] = createSignal<string | null>(null);
+  const [renameValue, setRenameValue] = createSignal("");
+
+  // The relative dir name of the current session (for marking "current")
+  const currentDirName = () => {
+    const d = state.sessionDir;
+    return d ? (d.split("/").pop() ?? d) : "";
+  };
 
   const filteredSessions = createMemo(() => {
     const all = sessions() ?? [];
     const deleted = deletedSessions();
-    const withoutDeleted = deleted.size > 0 ? all.filter(s => !deleted.has(s.dir)) : all;
+    const renamed = renamedSessions();
+    const patched = all
+      .filter(s => !deleted.has(s.dir))
+      .map(s => renamed.has(s.dir) ? { ...s, name: renamed.get(s.dir) } : s);
     const q = searchQuery().toLowerCase().trim();
-    if (!q) return withoutDeleted;
-    return withoutDeleted.filter(s =>
+    if (!q) return patched;
+    return patched.filter(s =>
       (s.name ?? "").toLowerCase().includes(q) ||
       (s.description ?? "").toLowerCase().includes(q) ||
       s.dir.toLowerCase().includes(q)
@@ -1346,8 +1361,27 @@ function SessionPickerModal() {
   }
 
   function deleteSession(dir: string, e: MouseEvent) {
-    e.stopPropagation(); // Don't trigger resume
+    e.stopPropagation();
     sendToServer({ type: "delete_session", sessionDir: dir });
+  }
+
+  function startRename(dir: string, currentName: string | undefined, e: MouseEvent) {
+    e.stopPropagation();
+    setRenamingDir(dir);
+    setRenameValue(currentName ?? "");
+  }
+
+  function commitRename(dir: string) {
+    const name = renameValue().trim();
+    if (name) {
+      sendToServer({ type: "rename_session", sessionDir: dir, name });
+    }
+    setRenamingDir(null);
+  }
+
+  function cancelRename(e: MouseEvent) {
+    e.stopPropagation();
+    setRenamingDir(null);
   }
 
   function formatActivity(iso: string): string {
@@ -1364,8 +1398,8 @@ function SessionPickerModal() {
         <div class="modal session-picker-modal" data-testid="session-picker-modal"
              onClick={(e) => e.stopPropagation()}>
           <div class="modal-header">
-            <span class="modal-title">Continue a previous session</span>
-            <button class="modal-close" onClick={() => { setResumingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
+            <span class="modal-title">Sessions</span>
+            <button class="modal-close" onClick={() => { setResumingDir(null); setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
           </div>
 
           {/* Resuming state — shown while server processes the resumption */}
@@ -1379,6 +1413,16 @@ function SessionPickerModal() {
 
           {/* Normal list state — hidden while resuming */}
           <Show when={!resumingDir()}>
+            {/* New session button */}
+            <div class="session-picker-actions">
+              <button
+                class="session-picker-new"
+                data-testid="session-picker-new"
+                disabled={state.streaming || !state.connected}
+                onClick={() => { newSession(); setSessionPickerOpen(false); }}
+              >＋ New session</button>
+            </div>
+
             <Show when={sessions.loading}>
               <div class="session-picker-loading">Loading sessions…</div>
             </Show>
@@ -1396,28 +1440,77 @@ function SessionPickerModal() {
               />
               <div class="session-picker-list" data-testid="session-picker-list">
                 <For each={filteredSessions()}>
-                  {(s) => (
-                    <div class="session-picker-item" data-testid="session-picker-item"
-                         onClick={() => resume(s.dir)}>
-                      <div class="session-picker-item-header">
-                        <div class="session-picker-name">
-                          {s.name ?? <span class="session-picker-unnamed">(unnamed)</span>}
+                  {(s) => {
+                    const isCurrent = () => s.dir === currentDirName();
+                    const isRenaming = () => renamingDir() === s.dir;
+                    return (
+                      <div class="session-picker-item" data-testid="session-picker-item"
+                           classList={{ "session-picker-item-current": isCurrent() }}>
+                        <div class="session-picker-item-header">
+                          {/* Name area: inline editor when renaming, display otherwise */}
+                          <Show when={isRenaming()}
+                            fallback={
+                              <div class="session-picker-name">
+                                {s.name ?? <span class="session-picker-unnamed">(unnamed)</span>}
+                                <Show when={isCurrent()}>
+                                  <span class="session-picker-current-badge">current</span>
+                                </Show>
+                              </div>
+                            }
+                          >
+                            <input
+                              class="session-picker-rename-input"
+                              data-testid="session-picker-rename-input"
+                              type="text"
+                              value={renameValue()}
+                              placeholder="Session name…"
+                              onInput={(e) => setRenameValue(e.currentTarget.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") { e.preventDefault(); commitRename(s.dir); }
+                                if (e.key === "Escape") { e.preventDefault(); setRenamingDir(null); }
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              ref={(el) => setTimeout(() => el?.focus(), 0)}
+                            />
+                          </Show>
+
+                          {/* Action buttons */}
+                          <div class="session-picker-item-btns">
+                            <Show when={isRenaming()}
+                              fallback={
+                                <>
+                                  <button class="session-picker-continue" data-testid="session-picker-continue"
+                                          onClick={(e) => { e.stopPropagation(); resume(s.dir); }}
+                                          title="Continue this session">Continue</button>
+                                  <button class="session-picker-rename" data-testid="session-picker-rename"
+                                          onClick={(e) => startRename(s.dir, s.name, e)}
+                                          title="Rename this session">Rename</button>
+                                  <button class="session-picker-delete" data-testid="session-picker-delete"
+                                          onClick={(e) => deleteSession(s.dir, e)} title="Delete session">✕</button>
+                                </>
+                              }
+                            >
+                              <button class="session-picker-save" data-testid="session-picker-save"
+                                      onClick={(e) => { e.stopPropagation(); commitRename(s.dir); }}>Save</button>
+                              <button class="session-picker-cancel-rename" data-testid="session-picker-cancel-rename"
+                                      onClick={cancelRename}>Cancel</button>
+                            </Show>
+                          </div>
                         </div>
-                        <button class="session-picker-delete" data-testid="session-picker-delete"
-                                onClick={(e) => deleteSession(s.dir, e)} title="Delete session">✕</button>
+
+                        <div class="session-picker-meta">
+                          <span class="session-picker-dir">{s.dir}</span>
+                          <span class="session-picker-date">{formatActivity(s.lastActivity)}</span>
+                        </div>
+                        <Show when={s.description}>
+                          <div class="session-picker-desc">{s.description}</div>
+                        </Show>
+                        <Show when={s.continuationOf}>
+                          <div class="session-picker-cont">↩ continues {s.continuationOf}</div>
+                        </Show>
                       </div>
-                      <div class="session-picker-meta">
-                        <span class="session-picker-dir">{s.dir}</span>
-                        <span class="session-picker-date">{formatActivity(s.lastActivity)}</span>
-                      </div>
-                      <Show when={s.description}>
-                        <div class="session-picker-desc">{s.description}</div>
-                      </Show>
-                      <Show when={s.continuationOf}>
-                        <div class="session-picker-cont">↩ continues {s.continuationOf}</div>
-                      </Show>
-                    </div>
-                  )}
+                    );
+                  }}
                 </For>
               </div>
             </Show>
@@ -1440,22 +1533,12 @@ function BottomPanel() {
               <span class="bp-label">cwd</span>
               <span class="bp-dir" data-testid="cwd-dir">{state.cwd}</span>
             </Show>
-            <span class="bp-label">session</span>
-            <span class="bp-dir" data-testid="session-dir">{state.sessionDir}</span>
             <button
-              class="new-session-btn"
-              disabled={state.streaming || !state.connected}
+              class="session-trigger-btn"
+              data-testid="session-trigger-btn"
               onClick={() => setSessionPickerOpen(true)}
-              title="Continue a previous session"
-            >↩ Continue</button>
-            <Show when={state.events.length > 0}>
-              <button
-                class="new-session-btn"
-                disabled={state.streaming || !state.connected}
-                onClick={newSession}
-                title="Start a new session (clears history)"
-              >＋ New</button>
-            </Show>
+              title="Manage sessions"
+            >{state.sessionName || state.sessionDir}</button>
           </div>
         </Show>
         <Show when={hasMetrics()}>

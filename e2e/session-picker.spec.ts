@@ -12,14 +12,14 @@ import { test, expect } from "./fixtures/index.js";
 const connectedDot = (page: import("@playwright/test").Page) =>
   page.locator('[data-testid="omega-btn"][data-status="connected"]');
 
-/** Open the bottom panel and click the "↩ Continue" button to show the session picker. */
+/** Open the bottom panel and click the session trigger button to show the session modal. */
 async function openSessionPicker(page: import("@playwright/test").Page) {
   // Open bottom panel by clicking Ω
   await page.getByTestId("omega-btn").click();
-  // Wait for the "Continue" button to appear (requires sessionDir to be set via session_info)
-  const continueBtn = page.locator("button", { hasText: "Continue" });
-  await expect(continueBtn).toBeVisible({ timeout: 3000 });
-  await continueBtn.click();
+  // Wait for the session trigger button (requires sessionDir to be set via session_info)
+  const triggerBtn = page.getByTestId("session-trigger-btn");
+  await expect(triggerBtn).toBeVisible({ timeout: 3000 });
+  await triggerBtn.click();
   // Wait for the modal to appear
   await expect(page.getByTestId("session-picker-modal")).toBeVisible({ timeout: 3000 });
 }
@@ -145,8 +145,9 @@ test("resuming session shows progress indicator then completes", async ({ page, 
 
   await openSessionPicker(page);
 
-  // Click the first matching session to resume
-  await page.getByTestId("session-picker-item").filter({ hasText: "old session" }).first().click();
+  // Click the Continue button on the matching session
+  await page.getByTestId("session-picker-item").filter({ hasText: "old session" }).first()
+    .getByTestId("session-picker-continue").click();
 
   // Should see a "resuming" indicator within the modal (modal stays open)
   await expect(page.getByTestId("session-picker-modal")).toBeVisible();
@@ -181,8 +182,9 @@ test("aborting a resumption returns to the session list", async ({ page, server 
 
   await openSessionPicker(page);
 
-  // Click the first matching session to resume
-  await page.getByTestId("session-picker-item").filter({ hasText: "slow session" }).first().click();
+  // Click the Continue button on the matching session
+  await page.getByTestId("session-picker-item").filter({ hasText: "slow session" }).first()
+    .getByTestId("session-picker-continue").click();
 
   // Wait for resuming state
   await expect(page.getByTestId("session-picker-resuming")).toBeVisible({ timeout: 2000 });

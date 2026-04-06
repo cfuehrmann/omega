@@ -16,7 +16,7 @@
  * reads events.jsonl from the current session dir — no separate session-store.
  */
 
-import { join } from "path";
+import { join, basename } from "path";
 import { readFileSync, existsSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { z } from "zod";
@@ -294,6 +294,7 @@ async function maybeAutoName(
   sessionDir: string,
   turnEvents: OmegaEvent[],
   provider: ResumptionProvider,
+  onNamed?: (name: string) => void,
 ): Promise<void> {
   // Only name once
   const existing = await readSessionMetadata(sessionDir);
@@ -310,6 +311,7 @@ async function maybeAutoName(
   );
   if (name) {
     await updateSessionMetadata(sessionDir, { name });
+    onNamed?.(name);
   }
 }
 
@@ -490,6 +492,21 @@ async function handleMessage(
     return;
   }
 
+  if (msg.type === "rename_session") {
+    if (!SESSION_DIR_RE.test(msg.sessionDir)) {
+      sendTransportError(session.ws, `Invalid session dir: ${msg.sessionDir}`, "handleMessage");
+      return;
+    }
+    const fullDir = join(SESSIONS_ROOT, msg.sessionDir);
+    try {
+      await updateSessionMetadata(fullDir, { name: msg.name });
+      send(session.ws, { type: "session_renamed", sessionDir: msg.sessionDir, name: msg.name });
+    } catch (err: unknown) {
+      sendTransportError(session.ws, `Rename failed: ${err instanceof Error ? err.message : String(err)}`, "handleMessage");
+    }
+    return;
+  }
+
   if (msg.type === "set_model") {
     if (session.isStreaming) {
       sendTransportError(session.ws, "Cannot switch model during an active turn", "handleMessage");
@@ -548,7 +565,9 @@ async function handleMessage(
 
     // Auto-name after first turn_end (fire-and-forget)
     if (turnEvents.some(e => e.type === "turn_end")) {
-      maybeAutoName(currentSessionPaths.dir, turnEvents, resumptionProvider).catch(() => {});
+      maybeAutoName(currentSessionPaths.dir, turnEvents, resumptionProvider, (name) => {
+        send(ws, { type: "session_renamed", sessionDir: basename(currentSessionPaths.dir), name });
+      }).catch(() => {});
     }
   }
 }
@@ -638,9 +657,14 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         // Replay past events from events.jsonl — same file Agent writes to.
         // After the await we're outside the auto-corked open callback, so we
         // must cork explicitly (Bun docs: "use cork in async functions").
-        const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
+        const [replayEvents, sessionMeta] = await Promise.all([
+          loadReplayEvents(currentSessionPaths.eventsFile),
+          readSessionMetadata(currentSessionPaths.dir),
+        ]);
         ws.cork(() => {
-          ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort(), cwd: process.cwd() }));
+          const sessionInfoMsg: Record<string, unknown> = { type: "session_info", dir: currentSessionPaths.dir, model: persistentAgent.getActiveModel(), effort: persistentAgent.getActiveEffort(), cwd: process.cwd() };
+          if (sessionMeta.name) sessionInfoMsg.name = sessionMeta.name;
+          ws.send(JSON.stringify(sessionInfoMsg));
           if (replayEvents.length > 0) {
             ws.send(JSON.stringify({ type: "history", events: replayEvents }));
           }

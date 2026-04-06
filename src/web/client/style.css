@@ -392,7 +392,8 @@ html, body, #root {
 .send-btn:disabled { opacity: 0.4; cursor: default; }
 
 
-.new-session-btn {
+/* Session trigger button — replaces old Continue/New buttons in bottom panel */
+.session-trigger-btn {
   padding: 0 10px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -402,11 +403,15 @@ html, body, #root {
   font-size: 12px;
   cursor: pointer;
   height: 24px;
-  flex-shrink: 0;
-  transition: opacity 0.15s, border-color 0.15s;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
 }
-.new-session-btn:hover        { border-color: var(--red); color: var(--red); }
-.new-session-btn:disabled     { opacity: 0.4; cursor: default; }
+.session-trigger-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
 /* Model selector sitting in the input row between Ω and the textarea */
 .model-select-inline {
@@ -601,17 +606,36 @@ html, body, #root {
   padding: 4px 0;
 }
 
+.session-picker-actions {
+  padding: 8px 14px 4px;
+}
+
+.session-picker-new {
+  padding: 4px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.session-picker-new:hover        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-new:disabled     { opacity: 0.4; cursor: default; }
+
 .session-picker-item {
   padding: 8px 14px;
-  cursor: pointer;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
 }
-.session-picker-item:hover { background: color-mix(in srgb, var(--ctp-blue) 10%, transparent); }
+.session-picker-item-current {
+  border-left: 3px solid var(--ctp-teal);
+  padding-left: 11px;
+}
 
 .session-picker-item-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
@@ -619,8 +643,30 @@ html, body, #root {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .session-picker-unnamed { color: var(--dim); font-style: italic; font-weight: normal; }
+
+.session-picker-current-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ctp-teal);
+  border: 1px solid var(--ctp-teal);
+  border-radius: 3px;
+  padding: 1px 5px;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.session-picker-item-btns {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
 
 .session-picker-meta {
   display: flex;
@@ -642,6 +688,11 @@ html, body, #root {
   margin-top: 2px;
 }
 
+/* Small action buttons shared style */
+.session-picker-continue,
+.session-picker-rename,
+.session-picker-save,
+.session-picker-cancel-rename,
 .session-picker-delete {
   background: none;
   border: 1px solid transparent;
@@ -649,10 +700,28 @@ html, body, #root {
   color: var(--dim);
   cursor: pointer;
   font-size: 12px;
-  padding: 2px 6px;
+  padding: 2px 7px;
   flex-shrink: 0;
+  font-family: var(--font);
 }
-.session-picker-delete:hover { border-color: var(--red); color: var(--red); }
+.session-picker-continue:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-rename:hover   { border-color: var(--dim);      color: var(--text); }
+.session-picker-save:hover     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-cancel-rename:hover { border-color: var(--dim); color: var(--text); }
+.session-picker-delete:hover   { border-color: var(--red); color: var(--red); }
+
+.session-picker-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--ctp-blue);
+  border-radius: 3px;
+  outline: none;
+}
 
 .session-picker-loading {
   padding: 16px 14px;

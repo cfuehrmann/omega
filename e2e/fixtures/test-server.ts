@@ -36,6 +36,7 @@ import {
   makeSessionDir,
   readSessionMetadata,
   writeSessionMetadata,
+  updateSessionMetadata,
   SESSION_DIR_RE,
   SESSION_METADATA_FILE,
   TEST_SESSIONS_ROOT,
@@ -302,6 +303,24 @@ Bun.serve({
           })
           .catch((err: unknown) => {
             ws.send(JSON.stringify({ type: "transport_error", time: new Date().toISOString(), error: `Delete failed: ${err}` }));
+          });
+        return;
+      }
+
+      if (msg.type === "rename_session") {
+        const dir = msg.sessionDir as string;
+        const name = msg.name as string;
+        if (!SESSION_DIR_RE.test(dir)) {
+          ws.send(JSON.stringify({ type: "transport_error", time: new Date().toISOString(), error: `Invalid session dir: ${dir}` }));
+          return;
+        }
+        const fullDir = join(TEST_SESSIONS_ROOT, dir);
+        updateSessionMetadata(fullDir, { name })
+          .then(() => {
+            ws.send(JSON.stringify({ type: "session_renamed", sessionDir: dir, name }));
+          })
+          .catch((err: unknown) => {
+            ws.send(JSON.stringify({ type: "transport_error", time: new Date().toISOString(), error: `Rename failed: ${err}` }));
           });
         return;
       }

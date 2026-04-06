@@ -146,6 +146,8 @@ interface AppState {
   liveEffort: string;
   /** Session directory path for the current session (set by session_info from server). */
   sessionDir: string;
+  /** Display name for the current session (set by session_info / session_renamed). */
+  sessionName: string;
   /** Working directory Omega was launched from (set by session_info from server). */
   cwd: string;
 }
@@ -176,6 +178,7 @@ const [state, setState] = createStore<AppState>({
   liveModel: "",
   liveEffort: "medium",
   sessionDir: "",
+  sessionName: "",
   cwd: "",
 });
 
@@ -553,6 +556,7 @@ export function dispatch(event: ServerMessage): void {
 
     case "session_info":
       setState("sessionDir", event.dir);
+      setState("sessionName", event.name ?? "");
       setState("liveModel", event.model);
       setState("liveEffort", event.effort);
       setState("cwd", event.cwd);
@@ -573,6 +577,7 @@ export function dispatch(event: ServerMessage): void {
       setState("liveDurations", zeroDurations());
       setState("liveModel", "");
       setState("liveEffort", "medium");
+      setState("sessionName", "");
       break;
 
     case "user_message":
@@ -711,6 +716,14 @@ export function dispatch(event: ServerMessage): void {
     case "transport_error":
     case "session_resumed":
       setState(produce(s => { s.events.push(event); }));
+      break;
+
+    case "session_renamed":
+      // Update the display name if it refers to the current session.
+      // Relative dir comparison: state.sessionDir ends with the folder name.
+      if (state.sessionDir.endsWith("/" + event.sessionDir) || state.sessionDir === event.sessionDir) {
+        setState("sessionName", event.name);
+      }
       break;
 
     // Protocol envelopes handled elsewhere — no state update needed

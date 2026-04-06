@@ -80,8 +80,9 @@ test("session dir shown in bottom panel persists after reload", async ({ page })
   await page.getByTestId("omega-btn").click();
   const sessionPanel = page.getByTestId("session-panel");
   await expect(sessionPanel).toBeVisible({ timeout: 3000 });
-  const dirBefore = await page.getByTestId("session-dir").textContent();
-  expect(dirBefore).toBeTruthy();
+  // The trigger button shows the session name (if set) or the full session dir path
+  const triggerBefore = await page.getByTestId("session-trigger-btn").textContent();
+  expect(triggerBefore).toBeTruthy();
 
   // Send a message and wait for completion — use .first() in case a previous
   // test left a footer block on screen (real server is not reset between tests)
@@ -96,6 +97,6 @@ test("session dir shown in bottom panel persists after reload", async ({ page })
   // Re-open the panel after reload (panel state is not persisted)
   await page.getByTestId("omega-btn").click();
   await page.getByTestId("session-panel").waitFor({ timeout: 3000 });
-  const dirAfter = await page.getByTestId("session-dir").textContent();
-  expect(dirAfter).toBe(dirBefore);
+  const triggerAfter = await page.getByTestId("session-trigger-btn").textContent();
+  expect(triggerAfter).toBe(triggerBefore);
 });
