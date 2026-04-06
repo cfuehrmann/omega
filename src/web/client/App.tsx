@@ -1132,12 +1132,37 @@ function TurnView(props: {
 
 function FreeView(props: {
   group: RenderGroup & { kind: "free" };
+  isLast: boolean;
   allLlmCalls: Array<ServerMessage & { type: "llm_call" }>;
 }) {
   return (
-    <For each={props.group.events}>{(event) => (
-      <EventBlock event={event} turnEvents={[]} allLlmCalls={props.allLlmCalls} />
-    )}</For>
+    <>
+      <For each={props.group.events}>{(event) => (
+        <EventBlock event={event} turnEvents={[]} allLlmCalls={props.allLlmCalls} />
+      )}</For>
+      <Show when={props.isLast && state.streamingThinking}>
+        <div class="block thinking streaming" data-testid="block-thinking">
+          <div class="block-label-row">
+            <span class="block-label">thinking</span>
+          </div>
+          <div class="block-body">
+            {state.streamingThinking}
+            <span class="cursor" />
+          </div>
+        </div>
+      </Show>
+      <Show when={props.isLast && state.streamingText}>
+        <div class="block api-response streaming" data-testid="block-llm-response">
+          <div class="block-label-row">
+            <span class="block-label">llm_response</span>
+          </div>
+          <div class="block-body">
+            {state.streamingText}
+            <span class="cursor" />
+          </div>
+        </div>
+      </Show>
+    </>
   );
 }
 
@@ -1749,7 +1774,7 @@ export function App() {
               if (group.kind === "turn") {
                 return <TurnView group={group} isLast={isLast()} allLlmCalls={allLlmCalls()} />;
               }
-              return <FreeView group={group} allLlmCalls={allLlmCalls()} />;
+              return <FreeView group={group} isLast={isLast()} allLlmCalls={allLlmCalls()} />;
             }}</For>
           </ErrorBoundary>
         </div>
