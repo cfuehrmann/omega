@@ -50,7 +50,7 @@ function charCount(value: unknown): number {
  */
 function elideAnthropicRequest(req: {
   system: unknown;
-  tools: unknown[];
+  tools?: unknown[];
   messages: unknown[];
   [key: string]: unknown;
 }): Record<string, unknown> {
@@ -60,12 +60,16 @@ function elideAnthropicRequest(req: {
   return {
     ...req,
     system: `[${systemBlocks} block${systemBlocks !== 1 ? "s" : ""}, ${systemChars} chars]`,
-    tools: (req.tools as any[]).map((t: any) => ({
-      name: t.name,
-      description: `[${typeof t.description === "string" ? t.description.length : 0} chars]`,
-      input_schema: `[elided]`,
-      ...(t.cache_control ? { cache_control: t.cache_control } : {}),
-    })),
+    ...(req.tools != null
+      ? {
+          tools: (req.tools as any[]).map((t: any) => ({
+            name: t.name,
+            description: `[${typeof t.description === "string" ? t.description.length : 0} chars]`,
+            input_schema: `[elided]`,
+            ...(t.cache_control ? { cache_control: t.cache_control } : {}),
+          })),
+        }
+      : {}),
     messages: `[${req.messages.length} message${req.messages.length !== 1 ? "s" : ""}, ${msgChars} chars]`,
   };
 }
@@ -577,8 +581,27 @@ export class Agent {
    */
   private async *streamLlmCall(
     streamParams: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-    opts: { url: string; signal?: AbortSignal },
+    opts: {
+      url: string;
+      signal?: AbortSignal;
+      contextHashes: ContextHash[];
+      cacheBreakpointIndex: number | null;
+    },
   ): AsyncGenerator<OmegaEvent | StreamSignal, LlmStreamResult> {
+    // Emit llm_call — single place for both turns and resumption.
+    const llmCallEv: OmegaEvent = {
+      type: "llm_call",
+      time: now(),
+      url: opts.url,
+      model: streamParams.model,
+      contextHashes: opts.contextHashes,
+      cacheBreakpointIndex: opts.cacheBreakpointIndex,
+      requestBytes: JSON.stringify(streamParams).length,
+      requestSummary: elideAnthropicRequest(streamParams as any),
+    };
+    this.logEvent(llmCallEv);
+    yield llmCallEv;
+
     let assembledText = "";
     let assembledTextTs: ISOTimestamp | null = null;
     let assembledThinking = "";
@@ -774,7 +797,7 @@ export class Agent {
     await this.logEvent(resumingEvent);
     yield resumingEvent;
 
-    // Build and log llm_call — same params used for the actual stream call.
+    // Build stream params — llm_call event is emitted inside streamLlmCall.
     const resumptionModel = config.resumptionModel;
     const resumptionEffort = (
       config.resumptionEffort === "max" && resumptionModel !== "claude-opus-4-6"
@@ -789,26 +812,13 @@ export class Agent {
       thinking: { type: "adaptive" as const },
       output_config: { effort: resumptionEffort },
     };
-    const llmCallEvent: OmegaEvent = {
-      type: "llm_call",
-      time: now(),
-      url: RESUMPTION_URL,
-      model: resumptionModel,
-      contextHashes: [userHash],
-      cacheBreakpointIndex: null,
-      requestBytes: JSON.stringify(streamParams).length,
-      requestSummary: {
-        system: `[resumption_summary_instructions, ${RESUMPTION_SUMMARY_INSTRUCTIONS.length} chars]`,
-        messages: `[1 user message, basis ${basis.length} chars]`,
-      },
-    };
-    await this.logEvent(llmCallEvent);
-    yield llmCallEvent;
 
     // Stream the LLM call with retry — delegates to the shared retry loop.
     const result: LlmStreamResult = yield* this.streamLlmCall(streamParams, {
       url: RESUMPTION_URL,
       signal,
+      contextHashes: [userHash],
+      cacheBreakpointIndex: null,
     });
 
     if (!result.ok) {
@@ -1012,27 +1022,16 @@ export class Agent {
         },
       };
 
-      // Emit llm_call with a persisted elided request summary.
-      {
-        const llmCallEv: OmegaEvent = {
-          type: "llm_call",
-          time: now(),
+      // Call API with retry — llm_call event is emitted inside streamLlmCall.
+      const llmResult: LlmStreamResult = yield* this.streamLlmCall(
+        streamParams,
+        {
           url: "https://api.anthropic.com/v1/messages",
-          model: activeModel,
+          signal,
           contextHashes,
           cacheBreakpointIndex:
             contextHashes.length > 0 ? contextHashes.length - 1 : null,
-          requestBytes: JSON.stringify(streamParams).length,
-          requestSummary: elideAnthropicRequest(streamParams),
-        };
-        this.logEvent(llmCallEv);
-        yield llmCallEv;
-      }
-
-      // Call API with retry — delegates to the shared retry loop.
-      const llmResult: LlmStreamResult = yield* this.streamLlmCall(
-        streamParams,
-        { url: "https://api.anthropic.com/v1/messages", signal },
+        },
       );
 
       if (!llmResult.ok) {
