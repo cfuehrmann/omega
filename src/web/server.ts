@@ -68,6 +68,12 @@ function resolvePort(): number {
 const PORT = resolvePort();
 const PUBLIC_DIR = join(import.meta.dir, "public");
 
+/**
+ * Active sessions root — set by `runWebApp()` at startup.
+ * Defaults to the production root; tests override via `opts.sessionsRoot`.
+ */
+let activeSessionsRoot: string = SESSIONS_ROOT;
+
 // ---------------------------------------------------------------------------
 // Static file helpers
 // ---------------------------------------------------------------------------
@@ -252,7 +258,7 @@ interface SessionListItem extends SessionMetadata {
 async function listSessions(): Promise<SessionListItem[]> {
   let entries: string[];
   try {
-    entries = await readdir(SESSIONS_ROOT);
+    entries = await readdir(activeSessionsRoot);
   } catch {
     return [];
   }
@@ -264,7 +270,7 @@ async function listSessions(): Promise<SessionListItem[]> {
 
   const items: SessionListItem[] = [];
   for (const dir of dirs) {
-    const fullDir = join(SESSIONS_ROOT, dir);
+    const fullDir = join(activeSessionsRoot, dir);
     const meta = await readSessionMetadata(fullDir);
     items.push({
       dir,
@@ -389,7 +395,7 @@ async function handleMessage(
     session.abortController = null;
 
     // Replace the persistent agent with a fresh one in a new session dir
-    currentSessionPaths = await makeSessionDir();
+    currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
     persistentAgent = new Agent(
       streamProvider,
       currentSessionPaths.contextFile,
@@ -423,7 +429,7 @@ async function handleMessage(
     session.abortController = null;
 
     // Create new session dir + agent
-    currentSessionPaths = await makeSessionDir();
+    currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
     persistentAgent = new Agent(
       streamProvider,
       currentSessionPaths.contextFile,
@@ -434,7 +440,7 @@ async function handleMessage(
     await persistentAgent.loadSystemPromptAppend().catch(() => {});
 
     // Read previous session events and extract the basis for summarisation.
-    const prevEventsFile = join(SESSIONS_ROOT, msg.sessionDir, "events.jsonl");
+    const prevEventsFile = join(activeSessionsRoot, msg.sessionDir, "events.jsonl");
     const prevEvents = await loadAllEvents(prevEventsFile);
     const basis = extractResumptionBasis(prevEvents);
 
@@ -478,7 +484,7 @@ async function handleMessage(
     }
 
     // Write description back to the *source* session's metadata (retroactive labelling).
-    const prevSessionDir = join(SESSIONS_ROOT, msg.sessionDir);
+    const prevSessionDir = join(activeSessionsRoot, msg.sessionDir);
     if (description) {
       await updateSessionMetadata(prevSessionDir, { description }).catch(() => {});
     }
@@ -498,7 +504,7 @@ async function handleMessage(
       sendTransportError(session.ws, `Invalid session dir: ${msg.sessionDir}`, "handleMessage");
       return;
     }
-    const fullDir = join(SESSIONS_ROOT, msg.sessionDir);
+    const fullDir = join(activeSessionsRoot, msg.sessionDir);
     try {
       const { rm } = await import("fs/promises");
       await rm(fullDir, { recursive: true, force: true });
@@ -514,7 +520,7 @@ async function handleMessage(
       sendTransportError(session.ws, `Invalid session dir: ${msg.sessionDir}`, "handleMessage");
       return;
     }
-    const fullDir = join(SESSIONS_ROOT, msg.sessionDir);
+    const fullDir = join(activeSessionsRoot, msg.sessionDir);
     try {
       await updateSessionMetadata(fullDir, { name: msg.name });
       send(session.ws, { type: "session_renamed", sessionDir: msg.sessionDir, name: msg.name });
@@ -598,6 +604,8 @@ export interface WebAppOptions {
   streamProvider?: StreamProvider;
   /** Override the HTTP port (default: resolved from --port flag / PORT env / 3000). */
   port?: number;
+  /** Root directory for session folders (default: `.omega/sessions`). Tests pass `.omega/test-sessions`. */
+  sessionsRoot?: string;
 }
 
 export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
@@ -606,7 +614,8 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
   const streamProvider: StreamProvider =
     opts.streamProvider ?? makeDefaultStreamProvider();
 
-  currentSessionPaths = await makeSessionDir();
+  activeSessionsRoot = opts.sessionsRoot ?? SESSIONS_ROOT;
+  currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
   persistentAgent = new Agent(
     streamProvider,
     currentSessionPaths.contextFile,

@@ -16,6 +16,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { runWebApp } from "../../src/web/server.js";
 import type { StreamProvider } from "../../src/agent.js";
+import { TEST_SESSIONS_ROOT } from "../../src/session-dir.js";
 
 export const REAL_SERVER_PORT = 3003;
 const CTRL_PORT = 3004;
@@ -106,7 +107,7 @@ const mockStreamProvider: StreamProvider = (params) => {
 // Start the real server
 // ---------------------------------------------------------------------------
 
-await runWebApp({ streamProvider: mockStreamProvider, port: REAL_SERVER_PORT });
+await runWebApp({ streamProvider: mockStreamProvider, port: REAL_SERVER_PORT, sessionsRoot: TEST_SESSIONS_ROOT });
 
 // ---------------------------------------------------------------------------
 // Control server — health check only
