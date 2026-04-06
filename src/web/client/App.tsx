@@ -1036,6 +1036,25 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
     }
 
+    case "resuming_session": {
+      const label = `↩ resuming from ${e.continuationOf}`;
+      const openBasis = () => setActiveModal({
+        kind: "block",
+        detail: { label: "resuming_session · basis", time, body: e.basis },
+      });
+      return (
+        <div class="block info" data-testid="block-resuming-session">
+          <div class="block-label-row">
+            <span class="block-label">resuming_session</span>
+            <span class="block-body resumed-label">{label}</span>
+            <div class="block-btn-group">
+              <button class="block-expand-btn" onClick={openBasis} title="View basis">basis</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     case "session_resumed": {
       const label = `↩ continued from ${e.continuationOf}`;
       const openSummary = () => setActiveModal({
@@ -1066,7 +1085,6 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     case "history":
     case "reset_done":
     case "session_info":
-    case "resuming_session":
     case "session_deleted":
     case "session_renamed":
     // thinking is a streaming-only signal — never pushed into turn.events

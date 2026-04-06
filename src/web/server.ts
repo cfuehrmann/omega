@@ -41,7 +41,6 @@ import { ClientMessageSchema, type ClientMessage } from "./protocol.js";
 import { now } from "../iso-timestamp.js";
 import {
   extractResumptionBasis,
-  summariseForResumption,
   generateSessionName,
   makeDefaultResumptionProvider,
   type ResumptionProvider,
@@ -425,9 +424,6 @@ async function handleMessage(
     session.isStreaming = false;
     session.abortController = null;
 
-    // Immediately signal the client that resumption has started
-    send(session.ws, { type: "resuming_session", sessionDir: msg.sessionDir });
-
     // Create new session dir + agent
     currentSessionPaths = await makeSessionDir();
     persistentAgent = new Agent(
@@ -439,27 +435,44 @@ async function handleMessage(
     await persistentAgent.init();
     await persistentAgent.loadSystemPromptAppend().catch(() => {});
 
-    // Read previous session events and produce a resumption summary
+    // Read previous session events and extract the basis for summarisation.
     const prevEventsFile = join(SESSIONS_ROOT, msg.sessionDir, "events.jsonl");
     const prevEvents = await loadAllEvents(prevEventsFile);
     const basis = extractResumptionBasis(prevEvents);
-    const { summary, description } = await summariseForResumption(basis, resumptionProvider);
 
-    // Seed the agent with the summary and record the session_resumed event
-    await persistentAgent.seedWithResumptionSummary(summary, msg.sessionDir, basis);
+    // Perform resumption: logs resuming_session → llm_call → llm_response →
+    // session_resumed (or llm_error on failure). Degrades gracefully on error
+    // so the new session opens without prior context rather than hard-crashing.
+    let description: string | undefined;
+    try {
+      ({ description } = await persistentAgent.performResumption(
+        basis,
+        msg.sessionDir,
+        resumptionProvider,
+      ));
+    } catch (err: unknown) {
+      // llm_error is already logged inside performResumption.
+      // Surface the failure to the client as a transport error.
+      sendTransportError(
+        session.ws,
+        `Session resumption failed: ${err instanceof Error ? err.message : String(err)}`,
+        "resume_session",
+      );
+    }
 
-    // Write description back to the *source* session's metadata (retroactive labelling)
+    // Write description back to the *source* session's metadata (retroactive labelling).
     const prevSessionDir = join(SESSIONS_ROOT, msg.sessionDir);
     if (description) {
       await updateSessionMetadata(prevSessionDir, { description }).catch(() => {});
     }
 
-    // Update new session's metadata with the continuationOf link
+    // Update new session's metadata with the continuationOf link.
     await updateSessionMetadata(currentSessionPaths.dir, {
       continuationOf: msg.sessionDir,
     });
 
-    // Send history (includes session_started + session_resumed) then ready
+    // Send history (includes session_started + resuming_session + llm_call +
+    // llm_response + session_resumed, or llm_error on failure) then ready.
     const replayEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
     session.ws.cork(() => {
       session.ws.send(JSON.stringify({

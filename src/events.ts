@@ -298,9 +298,32 @@ export interface EffortChangedEvent {
 }
 
 /**
+ * Session resumption has started — basis extracted, LLM call about to fire.
+ *
+ * Logged after the new session dir is created and the basis is extracted
+ * from the previous session's events, but before the summarisation LLM call.
+ * Absence of a matching `session_resumed` at a later offset means resumption
+ * was attempted but did not complete (inspect `llm_error` in between).
+ */
+export interface ResumingSessionEvent {
+  type: "resuming_session";
+  time: ISOTimestamp;
+  /**
+   * Relative folder name (within SESSIONS_ROOT) of the session being
+   * continued. Relative for portability.
+   */
+  continuationOf: string;
+  /**
+   * The extracted basis text that will be sent to the LLM for summarisation.
+   */
+  basis: string;
+}
+
+/**
  * The session was seeded with a summary of a previous session.
  *
- * Emitted once at the start of a resumed session, before any user turns.
+ * Emitted once at the start of a resumed session, after the summarisation
+ * LLM call completes successfully and the agent has been seeded.
  * The `basis` and `summary` fields are both persisted so the quality of
  * the extraction function can be inspected and improved over time.
  */
@@ -379,4 +402,5 @@ export type OmegaEvent =
   | ModelChangedEvent
   | EffortChangedEvent
   | TransportErrorEvent
+  | ResumingSessionEvent
   | SessionResumedEvent;

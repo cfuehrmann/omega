@@ -13,6 +13,12 @@ import type { ContextHash } from "./context-hash.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
 import { type ISOTimestamp, now, fromDate } from "./iso-timestamp.js";
+import {
+  summariseForResumption,
+  RESUMPTION_SUMMARY_INSTRUCTIONS,
+  RESUMPTION_MODEL,
+  type ResumptionProvider,
+} from "./session-resume.js";
 
 // --- Types ---
 
@@ -607,6 +613,92 @@ export class Agent {
       content:
         "Understood. I have reviewed the context from the previous session and am ready to continue.",
     });
+  }
+
+  /**
+   * Perform a full session resumption: extract basis → log events → call LLM
+   * → write context records → seed agent with summary.
+   *
+   * Logs the event sequence:
+   *   resuming_session → llm_call → llm_response → session_resumed
+   *
+   * On LLM failure logs `llm_error` instead of `llm_response`/`session_resumed`
+   * and re-throws so the caller can degrade gracefully.
+   *
+   * @returns `description` — the one-line session description extracted from
+   *   the LLM response (for retroactive labelling of the source session), or
+   *   `undefined` if the LLM did not produce one.
+   */
+  async performResumption(
+    basis: string,
+    continuationOf: string,
+    provider: ResumptionProvider,
+  ): Promise<{ description?: string }> {
+    const RESUMPTION_URL = "https://api.anthropic.com/v1/messages";
+
+    // Write the user message (basis) to context.jsonl and record its hash.
+    const userMsg = { role: "user" as const, content: basis };
+    const userHash = await appendContextMessage(userMsg, this.contextFile);
+
+    // Log resuming_session — marks that resumption has started.
+    await this.logEvent({
+      type: "resuming_session",
+      time: now(),
+      continuationOf,
+      basis,
+    });
+
+    // Log llm_call — records what we're about to send.
+    const requestPayload = {
+      system: RESUMPTION_SUMMARY_INSTRUCTIONS,
+      messages: [{ role: "user", content: basis }],
+    };
+    this.logEvent({
+      type: "llm_call",
+      time: now(),
+      url: RESUMPTION_URL,
+      model: RESUMPTION_MODEL,
+      contextHashes: [userHash],
+      cacheBreakpointIndex: null,
+      requestBytes: JSON.stringify(requestPayload).length,
+      requestSummary: {
+        system: `[resumption_summary_instructions, ${RESUMPTION_SUMMARY_INSTRUCTIONS.length} chars]`,
+        messages: `[1 user message, basis ${basis.length} chars]`,
+      },
+    });
+
+    // Call the LLM; log llm_error and re-throw on failure.
+    let result: Awaited<ReturnType<typeof summariseForResumption>>;
+    try {
+      result = await summariseForResumption(basis, provider);
+    } catch (err: unknown) {
+      await this.logEvent({
+        type: "llm_error",
+        time: now(),
+        url: RESUMPTION_URL,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    // Write the assistant response to context.jsonl.
+    const assistantMsg = { role: "assistant" as const, content: result.providerResult.text };
+    const assistantHash = await appendContextMessage(assistantMsg, this.contextFile);
+
+    // Log llm_response.
+    await this.logEvent({
+      type: "llm_response",
+      time: now(),
+      stopReason: result.providerResult.stopReason,
+      usage: result.providerResult.usage,
+      contextHash: assistantHash,
+      text: result.providerResult.text,
+    });
+
+    // Seed the agent and log session_resumed.
+    await this.seedWithResumptionSummary(result.summary, continuationOf, basis);
+
+    return { description: result.description };
   }
 
   async *sendMessage(

@@ -78,8 +78,6 @@ const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("reset_done") }),
   z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string(), effort: z.string(), cwd: z.string(), name: z.string().optional() }),
   z.object({ type: z.literal("history"),      events: z.array(OmegaEventSchema) }),
-  /** Signals that session resumption has started (async work in progress). */
-  z.object({ type: z.literal("resuming_session"), sessionDir: z.string() }),
   /** Confirms a session was deleted. */
   z.object({ type: z.literal("session_deleted"), sessionDir: z.string() }),
   /** Confirms a session was renamed (or auto-named). */
@@ -100,6 +98,6 @@ export const ServerMessageSchema = z.union([
   OmegaEventSchema,
   StreamSignalSchema,
   ProtocolEnvelopeSchema,
-]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string; model: string; effort: string; cwd: string; name?: string } | { type: "history"; events: OmegaEvent[] } | { type: "resuming_session"; sessionDir: string } | { type: "session_deleted"; sessionDir: string } | { type: "session_renamed"; sessionDir: string; name: string }>;
+]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string; model: string; effort: string; cwd: string; name?: string } | { type: "history"; events: OmegaEvent[] } | { type: "session_deleted"; sessionDir: string } | { type: "session_renamed"; sessionDir: string; name: string }>;
 
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;

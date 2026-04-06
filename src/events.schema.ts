@@ -173,6 +173,13 @@ const TransportErrorSchema = z.object({
   context: z.string().optional(),
 });
 
+const ResumingSessionSchema = z.object({
+  type: z.literal("resuming_session"),
+  time: ISOTimestampSchema,
+  continuationOf: z.string(),
+  basis: z.string(),
+});
+
 const SessionResumedSchema = z.object({
   type: z.literal("session_resumed"),
   time: ISOTimestampSchema,
@@ -219,5 +226,6 @@ export const OmegaEventSchema = z.discriminatedUnion("type", [
   ModelChangedSchema,
   EffortChangedSchema,
   TransportErrorSchema,
+  ResumingSessionSchema,
   SessionResumedSchema,
 ]) satisfies z.ZodType<OmegaEvent>;

@@ -714,6 +714,7 @@ export function dispatch(event: ServerMessage): void {
     case "llm_error":
     case "agent_error":
     case "transport_error":
+    case "resuming_session":
     case "session_resumed":
       setState(produce(s => { s.events.push(event); }));
       break;
@@ -727,7 +728,6 @@ export function dispatch(event: ServerMessage): void {
       break;
 
     // Protocol envelopes handled elsewhere — no state update needed
-    case "resuming_session":
     case "session_deleted":
       break;
   }
