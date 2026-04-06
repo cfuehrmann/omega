@@ -149,7 +149,7 @@ describe("context.jsonl record shape", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const records = readContextRecords(contextFile);
     expect(records[0]!.role).toBe("user");
@@ -176,7 +176,7 @@ describe("hash uniqueness — identical content, different times", () => {
     await collectEvents(agent, "ok");
     await new Promise(r => setTimeout(r, 10)); // ensure time differs
     await collectEvents(agent, "ok");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const records = readContextRecords(contextFile);
     // Both user messages have content "ok" — their hashes must differ
@@ -198,7 +198,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const llmCallEvents = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
@@ -219,7 +219,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const contextRecords = readContextRecords(contextFile);
     const allEvents = readEventLines(eventsFile);
@@ -241,7 +241,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const contextRecords = readContextRecords(contextFile);
     const allEvents = readEventLines(eventsFile);
@@ -271,7 +271,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "turn1");
     await collectEvents(agent, "turn2");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const llmCalls = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
@@ -311,7 +311,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
     for (let i = 0; i < 3; i++) {
       await collectEvents(agent, `turn${i + 1}`);
     }
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const llmCalls = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
@@ -337,7 +337,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const contextRecords = readContextRecords(contextFile);
     const allEvents = readEventLines(eventsFile);
@@ -370,7 +370,7 @@ describe("no placeholder hashes", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "go");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const llmCalls = allEvents.filter(e => e.type === "llm_call") as LlmCallEvent[];
@@ -396,7 +396,7 @@ describe("[SCHEMA] llm_call has no messageCount field", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hello");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const llmCalls = allEvents.filter(e => e.type === "llm_call");
@@ -423,7 +423,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const llmResponses = allEvents.filter(e => e.type === "llm_response");
@@ -444,7 +444,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const contextRecords = readContextRecords(contextFile);
     const allEvents = readEventLines(eventsFile);
@@ -469,7 +469,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "hi");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     // Every llm_response.contextHash must resolve to a context record —
     // ordering on disk is guaranteed by the await chain (appendToHistory
@@ -504,7 +504,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const contextRecords = readContextRecords(contextFile);
     const allEvents = readEventLines(eventsFile);
@@ -534,7 +534,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
 
     const { agent, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const toolResults = allEvents.filter(e => e.type === "tool_result") as ToolResultEvent[];
@@ -554,7 +554,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
 
     const { agent, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const toolCalls = allEvents.filter(e => e.type === "tool_call");
@@ -575,7 +575,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
 
     const { agent, eventsFile } = await makeTestAgent(mockProvider);
     await collectEvents(agent, "list it");
-    await Bun.sleep(50);
+    await agent.flushEventLog();
 
     const allEvents = readEventLines(eventsFile);
     const toolResults = allEvents.filter(e => e.type === "tool_result");

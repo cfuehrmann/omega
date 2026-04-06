@@ -33,6 +33,11 @@ All development work goes on `develop`. Merge to `main` when stable.
 
 ### Testing
 
+- **NEVER use `git commit --no-verify`.** The pre-commit gate exists to
+  prevent broken commits. If the gate fails, the code is broken — fix it.
+  Do not bypass, do not classify failures as "flaky" without proof, do not
+  rationalize skipping the gate. A test that passes in isolation but fails
+  in `just gate` is a real bug (usually a race condition), not a flake.
 - `just gate` — full suite + knip. **The gate runs automatically as the
   pre-commit hook — do not run it separately before committing.** Always
   commit with `git add -A && git commit -m "..."` — `git add -A` stages
