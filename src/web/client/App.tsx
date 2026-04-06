@@ -831,7 +831,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     }
 
     case "llm_response": {
-      // Find the preceding llm_call in this turn to get its contextHashes.
+      // Find the preceding llm_call in this group to get its contextHashes.
       const precedingCall = [...props.turnEvents]
         .reverse()
         .find((ev): ev is ServerMessage & { type: "llm_call" } => ev.type === "llm_call");
@@ -1138,7 +1138,7 @@ function FreeView(props: {
   return (
     <>
       <For each={props.group.events}>{(event) => (
-        <EventBlock event={event} turnEvents={[]} allLlmCalls={props.allLlmCalls} />
+        <EventBlock event={event} turnEvents={props.group.events} allLlmCalls={props.allLlmCalls} />
       )}</For>
       <Show when={props.isLast && state.streamingThinking}>
         <div class="block thinking streaming" data-testid="block-thinking">
