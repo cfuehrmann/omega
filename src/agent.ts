@@ -580,21 +580,19 @@ export class Agent {
    * Seed this session with a summary of a previous session.
    *
    * Call once after `init()` and before any user turns. Logs a
-   * `session_resumed` event (carrying both the basis and the summary for
-   * post-mortem inspection), then injects a synthetic user + assistant
-   * message pair into `compactedContextHistory` so the LLM has the prior
-   * context from the very first turn.
+   * `session_resumed` event (carrying the summary for post-mortem inspection;
+   * the basis is already in the preceding `resuming_session` event), then
+   * injects a synthetic user + assistant message pair into
+   * `compactedContextHistory` so the LLM has the prior context from Turn 1.
    */
   async seedWithResumptionSummary(
     summary: string,
     continuationOf: string,
-    basis: string,
   ): Promise<void> {
     const ev: OmegaEvent = {
       type: "session_resumed",
       time: now(),
       continuationOf,
-      basis,
       summary,
     };
     await this.logEvent(ev);
@@ -696,7 +694,7 @@ export class Agent {
     });
 
     // Seed the agent and log session_resumed.
-    await this.seedWithResumptionSummary(result.summary, continuationOf, basis);
+    await this.seedWithResumptionSummary(result.summary, continuationOf);
 
     return { description: result.description };
   }

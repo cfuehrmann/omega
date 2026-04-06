@@ -126,78 +126,29 @@ test("session picker list is scrollable when many sessions exist", async ({ page
 });
 
 // ---------------------------------------------------------------------------
-// Resuming a session shows progress and then completes
+// Resuming a session closes the modal immediately and shows events in the feed
 // ---------------------------------------------------------------------------
 
-test("resuming session shows progress indicator then completes", async ({ page, server }) => {
-  const { dir } = await server.createPastSession({
+test("resuming session closes modal immediately and shows session_resumed in feed", async ({ page, server }) => {
+  await server.createPastSession({
     metadata: { name: "old session" },
     events: [{ type: "user_message", content: "old work" }],
   });
-  // Extract just the dir name from the full path
-  const dirName = dir.split("/").pop()!;
-
-  // Set a delay so we can observe the "resuming" state
-  await server.setResumeDelay(1000);
 
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
 
   await openSessionPicker(page);
 
-  // Click the Continue button on the matching session
+  // Click the Continue button — modal should close immediately
   await page.getByTestId("session-picker-item").filter({ hasText: "old session" }).first()
     .getByTestId("session-picker-continue").click();
 
-  // Should see a "resuming" indicator within the modal (modal stays open)
-  await expect(page.getByTestId("session-picker-modal")).toBeVisible();
-  await expect(page.getByTestId("session-picker-resuming")).toBeVisible({ timeout: 2000 });
+  // Modal closes right away without waiting for the server
+  await expect(page.getByTestId("session-picker-modal")).not.toBeVisible({ timeout: 2000 });
 
-  // Eventually the modal closes and we're connected with a session_resumed event
-  await expect(page.getByTestId("session-picker-modal")).not.toBeVisible({ timeout: 5000 });
-  await connectedDot(page).waitFor({ timeout: 5000 });
-
-  // The feed should show the session_resumed event
-  await expect(page.getByTestId("block-session-resumed")).toBeVisible({ timeout: 3000 });
-
-  // Clean up delay
-  await server.setResumeDelay(0);
-});
-
-// ---------------------------------------------------------------------------
-// Aborting a resumption returns to the session list
-// ---------------------------------------------------------------------------
-
-test("aborting a resumption returns to the session list", async ({ page, server }) => {
-  await server.createPastSession({
-    metadata: { name: "slow session" },
-    events: [{ type: "user_message", content: "work" }],
-  });
-
-  // Long delay so abort can fire before completion
-  await server.setResumeDelay(5000);
-
-  await page.goto("/");
-  await connectedDot(page).waitFor({ timeout: 5000 });
-
-  await openSessionPicker(page);
-
-  // Click the Continue button on the matching session
-  await page.getByTestId("session-picker-item").filter({ hasText: "slow session" }).first()
-    .getByTestId("session-picker-continue").click();
-
-  // Wait for resuming state
-  await expect(page.getByTestId("session-picker-resuming")).toBeVisible({ timeout: 2000 });
-
-  // Click cancel/abort
-  await page.getByTestId("session-picker-cancel").click();
-
-  // Should return to the session list (modal stays open)
-  await expect(page.getByTestId("session-picker-list")).toBeVisible({ timeout: 3000 });
-  await expect(page.getByTestId("session-picker-resuming")).not.toBeVisible();
-
-  // Clean up delay
-  await server.setResumeDelay(0);
+  // The feed eventually shows the session_resumed event
+  await expect(page.getByTestId("block-session-resumed")).toBeVisible({ timeout: 5000 });
 });
 
 // ---------------------------------------------------------------------------

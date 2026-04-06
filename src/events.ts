@@ -324,8 +324,7 @@ export interface ResumingSessionEvent {
  *
  * Emitted once at the start of a resumed session, after the summarisation
  * LLM call completes successfully and the agent has been seeded.
- * The `basis` and `summary` fields are both persisted so the quality of
- * the extraction function can be inspected and improved over time.
+ * The basis is already recorded in the preceding `resuming_session` event.
  */
 export interface SessionResumedEvent {
   type: "session_resumed";
@@ -336,12 +335,6 @@ export interface SessionResumedEvent {
    * does not break the lineage chain.
    */
   continuationOf: string;
-  /**
-   * The extracted basis text that was sent to the LLM for summarisation.
-   * Persisted so the extraction function's output can be inspected and
-   * iterated on independently of the LLM call.
-   */
-  basis: string;
   /**
    * The summary produced by the LLM from the basis. This text is also
    * injected into the new session's LLM context as the opening message.

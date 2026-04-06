@@ -7,8 +7,9 @@
  *   2. `extractResumptionBasis(events)` → a structured markdown text
  *      (the "basis") containing only the information relevant for summary.
  *   3. `summariseForResumption(basis, provider)` → a concise summary string.
- *   4. Caller stores both basis + summary in a `session_resumed` event and
- *      seeds the new Agent with the summary via `seedWithResumptionSummary()`.
+ *   4. Caller stores the summary in a `session_resumed` event (basis is in
+ *      the preceding `resuming_session` event) and seeds the new Agent with
+ *      the summary via `seedWithResumptionSummary()`.
  *
  * The extraction function is the critical path — it determines what the LLM
  * sees and therefore the quality of the summary. It is a pure function so it

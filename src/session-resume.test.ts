@@ -81,12 +81,11 @@ function turnInterrupted(reason?: "aborted" | "error"): OmegaEvent {
   return { type: "turn_interrupted", time: "2025-01-01T00:00:04.000Z" as any, reason };
 }
 
-function sessionResumed(continuationOf: string, basis: string, summary: string): OmegaEvent {
+function sessionResumed(continuationOf: string, summary: string): OmegaEvent {
   return {
     type: "session_resumed",
     time: "2025-01-01T00:00:00.000Z" as any,
     continuationOf,
-    basis,
     summary,
   };
 }
@@ -228,7 +227,7 @@ describe("extractResumptionBasis — carry-forward from prior resumption", () =>
   it("includes carried-forward context section when session_resumed exists", () => {
     const priorSummary = "Auth module is complete. Next: write tests.";
     const events: OmegaEvent[] = [
-      sessionResumed("2025-01-01T00-00-00-000-aaaaaaaa", "prior basis", priorSummary),
+      sessionResumed("2025-01-01T00-00-00-000-aaaaaaaa", priorSummary),
       userMsg("Write tests"),
       llmResp("Writing tests now."),
       turnEnd(),
@@ -244,7 +243,7 @@ describe("extractResumptionBasis — carry-forward from prior resumption", () =>
       userMsg("Old turn from before resumption"),
       llmResp("Old response"),
       turnEnd(),
-      sessionResumed("2025-01-01T00-00-00-000-aaaaaaaa", "prior basis", "Prior summary."),
+      sessionResumed("2025-01-01T00-00-00-000-aaaaaaaa", "Prior summary."),
       userMsg("New turn after resumption"),
       llmResp("New response"),
       turnEnd(),
@@ -254,15 +253,14 @@ describe("extractResumptionBasis — carry-forward from prior resumption", () =>
     expect(basis).toContain("New turn after resumption");
   });
 
-  it("uses only the summary (not the basis) from session_resumed", () => {
+  it("uses the summary from session_resumed in the carry-forward section", () => {
     const events: OmegaEvent[] = [
-      sessionResumed("2025-01-01T00-00-00-000-aaaaaaaa", "THIS IS THE BASIS", "This is the summary."),
+      sessionResumed("2025-01-01T00-00-00-000-aaaaaaaa", "This is the summary."),
       userMsg("Continue"),
       llmResp("OK."),
       turnEnd(),
     ];
     const basis = extractResumptionBasis(events);
-    expect(basis).not.toContain("THIS IS THE BASIS");
     expect(basis).toContain("This is the summary.");
   });
 });
@@ -461,7 +459,6 @@ describe("Agent.seedWithResumptionSummary", () => {
     await agent.seedWithResumptionSummary(
       "The summary text.",
       "2025-01-01T00-00-00-000-aaaaaaaa",
-      "The basis text.",
     );
     await agent.flushEventLog();
 
@@ -469,7 +466,6 @@ describe("Agent.seedWithResumptionSummary", () => {
     const ev = events.find(e => e.type === "session_resumed") as any;
     expect(ev).toBeDefined();
     expect(ev.continuationOf).toBe("2025-01-01T00-00-00-000-aaaaaaaa");
-    expect(ev.basis).toBe("The basis text.");
     expect(ev.summary).toBe("The summary text.");
     expect(typeof ev.time).toBe("string");
   });
@@ -481,7 +477,6 @@ describe("Agent.seedWithResumptionSummary", () => {
     await agent.seedWithResumptionSummary(
       "Summary of prior session.",
       "2025-01-01T00-00-00-000-aaaaaaaa",
-      "Basis.",
     );
 
     const history = agent.getCompactedContextHistory() as any[];
@@ -498,7 +493,6 @@ describe("Agent.seedWithResumptionSummary", () => {
     await agent.seedWithResumptionSummary(
       summary,
       "2025-01-01T00-00-00-000-aaaaaaaa",
-      "basis",
     );
 
     const history = agent.getCompactedContextHistory() as any[];
@@ -533,7 +527,7 @@ describe("Agent.seedWithResumptionSummary", () => {
     const { agent, dispose } = await makeTestAgent(mockProvider as any);
     afterAll(dispose);
 
-    await agent.seedWithResumptionSummary("Summary.", "old-session", "Basis.");
+    await agent.seedWithResumptionSummary("Summary.", "old-session");
 
     const events: OmegaEvent[] = [];
     for await (const e of agent.sendMessage("Continue the work.", async () => true)) {

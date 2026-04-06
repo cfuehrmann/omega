@@ -267,7 +267,6 @@ Bun.serve({
             type: "session_resumed",
             time: isoNow(),
             continuationOf: dir,
-            basis: "(test basis)",
             summary: "(test summary of previous session)",
           };
           await appendEvent(resumed, sessionPaths.eventsFile);

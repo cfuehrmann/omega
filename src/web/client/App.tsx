@@ -258,11 +258,7 @@ function connect() {
     try { event = ServerMessageSchema.parse(JSON.parse(e.data as string)); } catch { return; }
     dispatch(event);
 
-    // Session picker integration: close modal on successful resume, refresh on delete
-    if (event.type === "ready" && resumingDir()) {
-      setResumingDir(null);
-      setSessionPickerOpen(false);
-    }
+    // Session picker integration: refresh on delete
     if (event.type === "session_deleted") {
       _onSessionDeleted(event.sessionDir);
     }
@@ -1061,10 +1057,6 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
         kind: "block",
         detail: { label: "session_resumed · summary", time, body: e.summary },
       });
-      const openBasis = () => setActiveModal({
-        kind: "block",
-        detail: { label: "session_resumed · basis", time, body: e.basis },
-      });
       return (
         <div class="block info" data-testid="block-session-resumed">
           <div class="block-label-row">
@@ -1072,7 +1064,6 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
             <span class="block-body resumed-label">{label}</span>
             <div class="block-btn-group">
               <button class="block-expand-btn" onClick={openSummary} title="View summary">summary</button>
-              <button class="block-expand-btn" onClick={openBasis} title="View basis">basis</button>
             </div>
           </div>
         </div>
@@ -1317,8 +1308,6 @@ interface SessionItem {
 
 const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
 
-// State for session resumption progress
-const [resumingDir, setResumingDir] = createSignal<string | null>(null);
 // Track deleted session dirs so the picker can filter them out client-side
 const [deletedSessions, setDeletedSessions] = createSignal<Set<string>>(new Set());
 function _onSessionDeleted(dir: string) {
@@ -1368,14 +1357,8 @@ function SessionPickerModal() {
   });
 
   function resume(dir: string) {
-    setResumingDir(dir);
     sendToServer({ type: "resume_session", sessionDir: dir });
-    // Modal stays open — will be closed when `ready` arrives (see dispatch handler)
-  }
-
-  function cancelResume() {
-    sendToServer({ type: "abort" });
-    setResumingDir(null);
+    setSessionPickerOpen(false);
   }
 
   function deleteSession(dir: string, e: MouseEvent) {
@@ -1412,7 +1395,7 @@ function SessionPickerModal() {
 
   return (
     <Show when={sessionPickerOpen()}>
-      <div class="modal-backdrop" onClick={() => { if (!resumingDir()) setSessionPickerOpen(false); }}>
+      <div class="modal-backdrop" onClick={() => setSessionPickerOpen(false)}>
         <div class="modal session-picker-modal" data-testid="session-picker-modal"
              onClick={(e) => e.stopPropagation()}>
           <div class="modal-header">
@@ -1421,26 +1404,14 @@ function SessionPickerModal() {
               <button
                 class="session-picker-new"
                 data-testid="session-picker-new"
-                disabled={!!resumingDir() || state.streaming || !state.connected}
+                disabled={state.streaming || !state.connected}
                 onClick={() => { newSession(); setSessionPickerOpen(false); }}
               >＋ New session</button>
-              <button class="modal-close" onClick={() => { setResumingDir(null); setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
+              <button class="modal-close" onClick={() => { setRenamingDir(null); setSessionPickerOpen(false); }}>✕ close</button>
             </div>
           </div>
 
-          {/* Resuming state — shown while server processes the resumption */}
-          <Show when={resumingDir()}>
-            <div class="session-picker-resuming" data-testid="session-picker-resuming">
-              <div class="session-picker-resuming-text">Resuming session…</div>
-              <div class="session-picker-resuming-dir">{resumingDir()}</div>
-              <button class="session-picker-cancel" data-testid="session-picker-cancel" onClick={cancelResume}>Cancel</button>
-            </div>
-          </Show>
-
-          {/* Normal list state — hidden while resuming */}
-          <Show when={!resumingDir()}>
-
-            <Show when={sessions.loading}>
+          <Show when={sessions.loading}>
               <div class="session-picker-loading">Loading sessions…</div>
             </Show>
             <Show when={!sessions.loading && (sessions() ?? []).length === 0}>
@@ -1531,7 +1502,6 @@ function SessionPickerModal() {
                 </For>
               </div>
             </Show>
-          </Show>
         </div>
       </div>
     </Show>

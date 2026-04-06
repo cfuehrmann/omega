@@ -184,7 +184,6 @@ const SessionResumedSchema = z.object({
   type: z.literal("session_resumed"),
   time: ISOTimestampSchema,
   continuationOf: z.string(),
-  basis: z.string(),
   summary: z.string(),
 });
 
