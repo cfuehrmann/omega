@@ -147,6 +147,32 @@ test("resuming session closes modal immediately and shows session_resumed in fee
 });
 
 // ---------------------------------------------------------------------------
+// Resume button is disabled for the current session
+// ---------------------------------------------------------------------------
+
+test("resume button is disabled for the current session", async ({ page, server }) => {
+  await server.createPastSession({
+    metadata: { name: "old session" },
+    events: [{ type: "user_message", content: "old work" }],
+  });
+
+  await page.goto("/");
+  await connectedDot(page).waitFor({ timeout: 5000 });
+
+  await openSessionPicker(page);
+
+  const list = page.getByTestId("session-picker-list");
+
+  // The current session item (marked with "current" badge) has a disabled Resume button.
+  const currentItem = list.getByTestId("session-picker-item").filter({ hasText: "current" }).first();
+  await expect(currentItem.getByTestId("session-picker-resume")).toBeDisabled();
+
+  // Past sessions that are not current have an enabled Resume button.
+  const oldItem = list.getByTestId("session-picker-item").filter({ hasText: "old session" }).first();
+  await expect(oldItem.getByTestId("session-picker-resume")).toBeEnabled();
+});
+
+// ---------------------------------------------------------------------------
 // Deleting a session removes it from the list
 // ---------------------------------------------------------------------------
 

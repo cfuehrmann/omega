@@ -1472,7 +1472,8 @@ function SessionPickerModal() {
                                 <>
                                   <button class="session-picker-resume" data-testid="session-picker-resume"
                                           onClick={(e) => { e.stopPropagation(); resume(s.dir); }}
-                                          title="Resume this session">Resume</button>
+                                          disabled={isCurrent()}
+                                          title={isCurrent() ? "This is the current session" : "Resume this session"}>Resume</button>
                                   <button class="session-picker-rename" data-testid="session-picker-rename"
                                           onClick={(e) => startRename(s.dir, s.name, e)}
                                           title="Rename this session">Rename</button>
