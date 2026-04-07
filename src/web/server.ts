@@ -416,7 +416,16 @@ async function handleMessage(
     });
 
     persistentAgent.init()
-      .then(() => persistentAgent!.loadSystemPromptAppend().catch(() => {}))
+      .then(async () => {
+        await persistentAgent!.loadSystemPromptAppend().catch(() => {});
+        // Forward the init events (server_started + session_started) that init()
+        // just persisted to events.jsonl. Without this they are invisible until a
+        // browser refresh triggers the history-replay path.
+        const initEvents = await loadReplayEvents(currentSessionPaths!.eventsFile);
+        for (const ev of initEvents) {
+          send(session.ws, ev);
+        }
+      })
       .catch((err: unknown) => {
         send(session.ws, { type: "agent_error", time: now(), error: `Init failed: ${err instanceof Error ? err.message : String(err)}` });
       });
