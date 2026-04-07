@@ -163,9 +163,9 @@ test("resume button is disabled for the current session", async ({ page, server 
 
   const list = page.getByTestId("session-picker-list");
 
-  // The current session item (marked with "current" badge) has a disabled Resume button.
+  // The current session item (marked with "current" badge) has no Resume button.
   const currentItem = list.getByTestId("session-picker-item").filter({ hasText: "current" }).first();
-  await expect(currentItem.getByTestId("session-picker-resume")).toBeDisabled();
+  await expect(currentItem.getByTestId("session-picker-resume")).not.toBeVisible();
 
   // Past sessions that are not current have an enabled Resume button.
   const oldItem = list.getByTestId("session-picker-item").filter({ hasText: "old session" }).first();

@@ -1470,10 +1470,11 @@ function SessionPickerModal() {
                             <Show when={isRenaming()}
                               fallback={
                                 <>
-                                  <button class="session-picker-resume" data-testid="session-picker-resume"
-                                          onClick={(e) => { e.stopPropagation(); resume(s.dir); }}
-                                          disabled={isCurrent()}
-                                          title={isCurrent() ? "This is the current session" : "Resume this session"}>Resume</button>
+                                  <Show when={!isCurrent()}>
+                                    <button class="session-picker-resume" data-testid="session-picker-resume"
+                                            onClick={(e) => { e.stopPropagation(); resume(s.dir); }}
+                                            title="Resume this session">Resume</button>
+                                  </Show>
                                   <button class="session-picker-rename" data-testid="session-picker-rename"
                                           onClick={(e) => startRename(s.dir, s.name, e)}
                                           title="Rename this session">Rename</button>
