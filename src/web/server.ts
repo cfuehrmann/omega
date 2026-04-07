@@ -405,6 +405,7 @@ async function handleMessage(
       streamProvider,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
+      currentSessionPaths.dir,
     );
 
     // After the await we're outside the auto-corked message callback —
@@ -448,6 +449,7 @@ async function handleMessage(
       streamProvider,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
+      currentSessionPaths.dir,
     );
 
     await persistentAgent.init();

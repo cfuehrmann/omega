@@ -62,7 +62,7 @@ describe("OmegaEvent round-trip serialisation", () => {
   });
 
   it("session_started", async () => {
-    const e: SessionStartedEvent = { type: "session_started", time: iso("2025-01-01T00:00:00.000Z"), sessionId: "abc123", model: "claude-sonnet-4-6", authMode: "api-key", systemPrompt: "You are a helpful assistant." };
+    const e: SessionStartedEvent = { type: "session_started", time: iso("2025-01-01T00:00:00.000Z"), sessionId: "abc123", path: ".omega/sessions/2025-01-01T00-00-00-000-abcdef12", model: "claude-sonnet-4-6", effort: "medium", systemPrompt: "You are a helpful assistant." };
     await appendEvent(e, testFile);
     const [read] = readEvents(testFile);
     expect(read).toEqual(e);

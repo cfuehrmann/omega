@@ -12,6 +12,7 @@ import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import type { ContextHash } from "./context-hash.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
+import { readSessionMetadata } from "./session-dir.js";
 import { type ISOTimestamp, now, fromDate } from "./iso-timestamp.js";
 import {
   extractSummaryFromResponse,
@@ -354,6 +355,9 @@ export class Agent {
   /** Events JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly eventsFile: string | null | undefined;
 
+  /** Session directory path relative to Omega root (cwd). undefined = unknown (tests). */
+  private readonly sessionDir: string | undefined;
+
   /** Content of .omega/system-prompt-append.md, injected into system prompt at session start. */
   private systemPromptAppendContent: string | null = null;
 
@@ -382,11 +386,13 @@ export class Agent {
     streamProvider?: StreamProvider,
     contextFile?: string | null,
     eventsFile?: string | null,
+    sessionDir?: string | null,
   ) {
     // Will be initialized in init()
     this.client = new Anthropic();
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
+    this.sessionDir = sessionDir ?? undefined;
 
     // Layer c: in test env, any unspecified file path defaults to null (disabled).
     const inTestEnv = process.env.OMEGA_TEST === "1";
@@ -488,12 +494,17 @@ export class Agent {
     }
     if (!this.sessionStartLogged) {
       this.sessionStartLogged = true;
+      const sessionName = this.sessionDir
+        ? (await readSessionMetadata(this.sessionDir).catch((): import("./session-dir.js").SessionMetadata => ({}))).name
+        : undefined;
       await this.logEvent({
         type: "session_started",
         time: now(),
         sessionId: this.sessionId,
+        path: this.sessionDir ?? "",
+        ...(sessionName !== undefined ? { name: sessionName } : {}),
         model: this.activeModel,
-        authMode: "api-key",
+        effort: this.activeEffort,
         systemPrompt: this.buildSystemPrompt(),
       });
     }

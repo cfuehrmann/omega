@@ -156,7 +156,7 @@ describe("extractResumptionBasis — empty session", () => {
   it("returns empty-session message when events have no turns", () => {
     const events: OmegaEvent[] = [
       { type: "server_started", time: "2025-01-01T00:00:00.000Z" as any },
-      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", model: "m", authMode: "api-key", systemPrompt: "s" },
+      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", path: "", model: "m", effort: "medium", systemPrompt: "s" },
     ];
     expect(extractResumptionBasis(events)).toBe(
       "(empty session — no turns recorded)",
@@ -351,7 +351,7 @@ describe("extractResumptionBasis — dropped events", () => {
   it("does not include server_started, session_started, llm_call, turn_end, llm_retry", () => {
     const events: OmegaEvent[] = [
       { type: "server_started", time: "2025-01-01T00:00:00.000Z" as any },
-      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", model: "m", authMode: "a", systemPrompt: "s" },
+      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", path: "", model: "m", effort: "medium", systemPrompt: "s" },
       userMsg("hello"),
       { type: "llm_call", time: "2025-01-01T00:00:01.000Z" as any, url: "u", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 100 },
       { type: "llm_retry", time: "2025-01-01T00:00:01.000Z" as any, attempt: 1, waitMs: 1000, error: "rate limit" },
