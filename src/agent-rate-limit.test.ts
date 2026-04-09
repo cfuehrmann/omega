@@ -598,6 +598,39 @@ describe("retry-after header", () => {
     delete process.env.OMEGA_RETRY_MAX_MS;
   });
 
+  it("retry-after header is honoured even when it exceeds retryMaxMs cap", async () => {
+    // retryMaxMs is tiny (5 ms) but the server asks for 500 ms.
+    // The cap must NOT reduce the header-recommended wait — otherwise we'd
+    // hammer an already-overloaded API.
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "5"; // cap well below the header value
+
+    let callCount = 0;
+    const successStream = makeSuccessProvider();
+    const mockProvider: StreamProvider = (params) => {
+      callCount++;
+      if (callCount === 1) {
+        const err: any = new Error("529 overloaded");
+        err.status = 529;
+        err.headers = new Headers({ "retry-after": "0.5" }); // 500 ms
+        throw err;
+      }
+      return successStream(params);
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries).toHaveLength(1);
+    // Must use the header value (500 ms), not the cap (5 ms).
+    expect(retries[0].waitMs).toBe(500);
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
   it("falls back to exponential backoff when no retry-after header is present", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "5000";
