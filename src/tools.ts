@@ -439,22 +439,57 @@ function executeRunCommand(
   signal?: AbortSignal,
 ): Promise<string> {
   const timeoutMs = (input.timeout ?? 120) * 1000;
+  const timeoutS = input.timeout ?? 120;
 
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let killed = false;
     let killedByAbort = false;
+    let killedByTimeout = false;
+    // Settled flag: once true, the Promise has been resolved and subsequent
+    // proc.on("close") / error callbacks are no-ops. This is necessary because
+    // orphaned child processes (e.g. bun test worker threads) can keep the pipe
+    // FDs alive long after bash has been killed — causing proc.on("close") to
+    // fire far beyond the requested timeout. We resolve immediately on timeout
+    // or abort rather than waiting for all pipe writers to exit.
+    let settled = false;
+
+    const settle = (result: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    const buildResult = (suffix: string): string => {
+      let result = "";
+      if (stdout) result += stdout;
+      if (stderr) result += (result ? "\n" : "") + `[stderr]\n${stderr}`;
+      result += suffix;
+      return result || "(no output)";
+    };
 
     const proc = spawn("bash", ["-c", input.command], {
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
     });
 
-    // Kill the subprocess immediately when the abort signal fires.
+    // Manual timeout: kill the process and resolve immediately without waiting
+    // for proc.on("close"). Orphaned children (e.g. spawned by bun test) keep
+    // the pipe FDs open after bash exits, which can delay close by many minutes.
+    const timeoutHandle = setTimeout(() => {
+      killedByTimeout = true;
+      proc.kill("SIGKILL");
+      settle(buildResult(`\n[killed: timeout after ${timeoutS}s]`));
+    }, timeoutMs);
+
+    // Kill the subprocess immediately when the abort signal fires, and resolve
+    // without waiting for close (same orphan-pipe concern as the timeout case).
     const onAbort = () => {
       killedByAbort = true;
-      proc.kill();
+      proc.kill("SIGKILL");
+      settle(buildResult("\n[killed by abort signal]"));
     };
     if (signal?.aborted) {
       onAbort();
@@ -480,21 +515,16 @@ function executeRunCommand(
     });
 
     proc.on("close", (code) => {
-      signal?.removeEventListener("abort", onAbort);
-      let result = "";
-      if (stdout) result += stdout;
-      if (stderr) result += (result ? "\n" : "") + `[stderr]\n${stderr}`;
-      if (killedByAbort) result += "\n[killed by abort signal]";
-      else if (killed) result += "\n[Output truncated at 100KB]";
-      if (code !== 0 && code !== null) {
-        result += `\n[exit code: ${code}]`;
-      }
-      resolve(result || "(no output)");
+      let suffix = "";
+      if (killedByAbort) suffix = "\n[killed by abort signal]";
+      else if (killedByTimeout) suffix = `\n[killed: timeout after ${timeoutS}s]`;
+      else if (killed) suffix = "\n[Output truncated at 100KB]";
+      else if (code !== 0 && code !== null) suffix = `\n[exit code: ${code}]`;
+      settle(buildResult(suffix));
     });
 
     proc.on("error", (err) => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve(`[error: ${err.message}]`);
+      settle(`[error: ${err.message}]`);
     });
   });
 }

@@ -170,6 +170,22 @@ describe("executeTool: run_command", () => {
     expect(result.output).toBe("(no output)");
   });
 
+  it("kills the process and reports timeout when it exceeds the timeout", async () => {
+    const start = Date.now();
+    // The inner bash keeps the pipes alive even after the outer bash is killed —
+    // this is the "orphaned child holds pipe FDs open" scenario that caused a
+    // 60 s timeout to run for 906 s in practice.
+    const result = await executeTool("run_command", {
+      command: "bash -c 'sleep 300'",
+      timeout: 2,
+    });
+    const elapsed = Date.now() - start;
+    // Should finish well within 5 s (2 s timeout + generous buffer)
+    expect(elapsed).toBeLessThan(5_000);
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("timeout");
+  });
+
   it("errors when command is missing", async () => {
     const result = await executeTool("run_command", {});
     expect(result.isError).toBe(true);
