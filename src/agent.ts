@@ -12,7 +12,6 @@ import { appendContextMessage, buildContextRecord } from "./context-store.js";
 import type { ContextHash } from "./context-hash.js";
 import { appendEvent, DEFAULT_EVENTS_FILE } from "./event-store.js";
 import type { OmegaEvent, StreamSignal, TurnMetrics } from "./events.js";
-import { readSessionMetadata } from "./session-dir.js";
 import { type ISOTimestamp, now, fromDate } from "./iso-timestamp.js";
 import {
   extractSummaryFromResponse,
@@ -494,15 +493,11 @@ export class Agent {
     }
     if (!this.sessionStartLogged) {
       this.sessionStartLogged = true;
-      const sessionName = this.sessionDir
-        ? (await readSessionMetadata(this.sessionDir).catch((): import("./session-dir.js").SessionMetadata => ({}))).name
-        : undefined;
       await this.logEvent({
         type: "session_started",
         time: now(),
         sessionId: this.sessionId,
         path: this.sessionDir ?? "",
-        ...(sessionName !== undefined ? { name: sessionName } : {}),
         model: this.activeModel,
         effort: this.activeEffort,
         systemPrompt: this.buildSystemPrompt(),

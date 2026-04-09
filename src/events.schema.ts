@@ -45,7 +45,6 @@ const SessionStartSchema = z.object({
   sessionId: z.string(),
   /** Default "" for backward compat — old logs lack this field. */
   path: z.string().default(""),
-  name: z.string().optional(),
   model: z.string(),
   /** Default "medium" for backward compat — old logs lack this field. */
   effort: z.string().default("medium"),

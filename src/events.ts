@@ -48,8 +48,6 @@ export interface SessionStartedEvent {
   sessionId: string;
   /** Session directory path relative to the Omega root (cwd). */
   path: string;
-  /** Human-readable session name from session.jsonc, if already set. */
-  name?: string;
   model: string;
   effort: string;
   /** The full system prompt text at session start. */

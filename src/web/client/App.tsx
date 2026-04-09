@@ -998,8 +998,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     }
 
     case "session_started": {
-      const label = e.name ? `${e.name} — ${e.path}` : e.path;
-      const body = `${label} · ${e.model} · ${(e as any).effort ?? "medium"}`;
+      const body = `${e.path} · ${e.model} · ${(e as any).effort ?? "medium"}`;
       return (
         <div class="block info" data-testid="block-info">
           <div class="block-label-row">
