@@ -786,6 +786,7 @@ export class Agent {
     basis: string,
     resumedFrom: string,
     signal?: AbortSignal,
+    name?: string,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
     const RESUMPTION_URL = "https://api.anthropic.com/v1/messages";
 
@@ -798,6 +799,7 @@ export class Agent {
       type: "resuming_session",
       time: now(),
       resumedFrom,
+      ...(name !== undefined ? { name } : {}),
       basis,
     };
     await this.logEvent(resumingEvent);

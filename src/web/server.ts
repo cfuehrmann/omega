@@ -456,9 +456,14 @@ async function handleMessage(
     await persistentAgent.loadSystemPromptAppend().catch(() => {});
 
     // Read previous session events and extract the basis for summarisation.
-    const prevEventsFile = join(activeSessionsRoot, msg.sessionDir, "events.jsonl");
-    const prevEvents = await loadAllEvents(prevEventsFile);
+    const prevSessionDir = join(activeSessionsRoot, msg.sessionDir);
+    const prevEventsFile = join(prevSessionDir, "events.jsonl");
+    const [prevEvents, prevMeta] = await Promise.all([
+      loadAllEvents(prevEventsFile),
+      readSessionMetadata(prevSessionDir).catch(() => ({})),
+    ]);
     const basis = extractResumptionBasis(prevEvents);
+    const resumedSessionName = (prevMeta as { name?: string }).name;
 
     // Send session_info and the init events (server_started + session_started)
     // to the client immediately — before the LLM call — so the feed clears and
@@ -489,6 +494,7 @@ async function handleMessage(
         basis,
         msg.sessionDir,
         session.abortController.signal,
+        resumedSessionName,
       )) {
         send(session.ws, event);
         if (event.type === "llm_response" && event.text) {
@@ -509,7 +515,6 @@ async function handleMessage(
     }
 
     // Write description back to the *source* session's metadata (retroactive labelling).
-    const prevSessionDir = join(activeSessionsRoot, msg.sessionDir);
     if (description) {
       await updateSessionMetadata(prevSessionDir, { description }).catch(() => {});
     }

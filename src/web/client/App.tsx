@@ -1033,7 +1033,9 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
     }
 
     case "resuming_session": {
-      const label = `↩ resuming from ${e.resumedFrom}`;
+      const label = e.name
+        ? `↩ resuming "${e.name}" (${e.resumedFrom})`
+        : `↩ resuming from ${e.resumedFrom}`;
       const openBasis = () => setActiveModal({
         kind: "block",
         detail: { label: "resuming_session · basis", time, body: e.basis },

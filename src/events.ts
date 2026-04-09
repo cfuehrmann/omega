@@ -315,6 +315,8 @@ export interface ResumingSessionEvent {
    * resumed. Relative for portability.
    */
   resumedFrom: string;
+  /** Human-readable name of the session being resumed, if one exists. */
+  name?: string;
   /**
    * The extracted basis text that will be sent to the LLM for summarisation.
    */

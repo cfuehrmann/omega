@@ -180,6 +180,7 @@ const ResumingSessionSchema = z.object({
   type: z.literal("resuming_session"),
   time: ISOTimestampSchema,
   resumedFrom: z.string(),
+  name: z.string().optional(),
   basis: z.string(),
 });
 
