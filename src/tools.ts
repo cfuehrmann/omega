@@ -473,22 +473,37 @@ function executeRunCommand(
 
     const proc = spawn("bash", ["-c", input.command], {
       stdio: ["ignore", "pipe", "pipe"],
+      // detached: true makes bash a new process-group leader (PGID = PID).
+      // Combined with killGroup() below, this ensures SIGKILL reaches bash
+      // AND all its child processes (e.g. bun test worker threads), preventing
+      // orphan leaks when the timeout or abort fires.
+      detached: true,
     });
 
-    // Manual timeout: kill the process and resolve immediately without waiting
-    // for proc.on("close"). Orphaned children (e.g. spawned by bun test) keep
-    // the pipe FDs open after bash exits, which can delay close by many minutes.
+    // Kill bash and its entire process group.
+    const killGroup = () => {
+      try {
+        process.kill(-proc.pid!, "SIGKILL");
+      } catch {
+        // Process may have already exited — ignore ESRCH.
+      }
+    };
+
+    // Manual timeout: kill the process group and resolve immediately without
+    // waiting for proc.on("close"). Orphaned children (e.g. spawned by bun
+    // test) keep the pipe FDs open after bash exits, which can delay close by
+    // many minutes.
     const timeoutHandle = setTimeout(() => {
       killedByTimeout = true;
-      proc.kill("SIGKILL");
+      killGroup();
       settle(buildResult(`\n[killed: timeout after ${timeoutS}s]`));
     }, timeoutMs);
 
-    // Kill the subprocess immediately when the abort signal fires, and resolve
-    // without waiting for close (same orphan-pipe concern as the timeout case).
+    // Kill the process group immediately when the abort signal fires, and
+    // resolve without waiting for close (same orphan-pipe concern as timeout).
     const onAbort = () => {
       killedByAbort = true;
-      proc.kill("SIGKILL");
+      killGroup();
       settle(buildResult("\n[killed by abort signal]"));
     };
     if (signal?.aborted) {
@@ -501,7 +516,7 @@ function executeRunCommand(
       stdout += data.toString();
       // Cap output size
       if (stdout.length > 100_000) {
-        proc.kill();
+        killGroup();
         killed = true;
       }
     });
@@ -509,7 +524,7 @@ function executeRunCommand(
     proc.stderr.on("data", (data: Buffer) => {
       stderr += data.toString();
       if (stderr.length > 100_000) {
-        proc.kill();
+        killGroup();
         killed = true;
       }
     });
