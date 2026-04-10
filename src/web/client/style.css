@@ -469,26 +469,6 @@ html, body, #root {
 .sessions-btn:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .sessions-btn:disabled { opacity: 0.4; cursor: default; }
 
-/* Model selector sitting in the input row left of the textarea */
-.model-select-inline {
-  font-family: var(--font);
-  font-size: 14px;
-  color: var(--dim);
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0 6px;
-  cursor: pointer;
-  appearance: auto;
-  flex-shrink: 0;
-  align-self: flex-end;
-  height: 38px;
-  transition: border-color 0.15s;
-}
-.model-select-inline:hover:not(:disabled) { border-color: var(--ctp-blue); }
-.model-select-inline:disabled { opacity: 0.5; cursor: default; }
-.model-select-inline:focus    { outline: none; border-color: var(--user); }
-
 /* ── Tool block header row ── */
 .block-label-row {
   display: flex;

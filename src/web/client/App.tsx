@@ -1154,8 +1154,7 @@ function activeModel(): string {
   return state.liveTurn !== null ? state.liveModel : (state.lastTurnEnd?.model ?? state.liveModel);
 }
 
-function handleModelChange(e: Event) {
-  const model = (e.currentTarget as HTMLSelectElement).value as OmegaModel;
+function handleModelChange(model: OmegaModel) {
   sendToServer({ type: "set_model", model });
 }
 
@@ -1567,6 +1566,59 @@ function ReconnectBanner() {
 }
 
 // ---------------------------------------------------------------------------
+// ModelSelect — custom dropdown matching EffortSelect's look and behaviour
+// ---------------------------------------------------------------------------
+
+function ModelSelect() {
+  const [open, setOpen] = createSignal(false);
+  let ref!: HTMLDivElement;
+
+  createEffect(() => {
+    if (!open()) return;
+    const handler = (e: MouseEvent) => {
+      if (!ref.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    onCleanup(() => document.removeEventListener("mousedown", handler));
+  });
+
+  const options: Array<{ value: OmegaModel; label: string }> = [
+    { value: "claude-sonnet-4-6", label: "Sonnet" },
+    { value: "claude-opus-4-6",   label: "Opus"   },
+  ];
+
+  const currentLabel = () =>
+    options.find(o => o.value === activeModel())?.label ?? activeModel();
+
+  return (
+    <div class="effort-select" ref={ref}>
+      <button
+        class="effort-trigger"
+        disabled={state.streaming}
+        onClick={() => setOpen(o => !o)}
+      >
+        {currentLabel()}
+      </button>
+      <Show when={open()}>
+        <div class="effort-dropdown">
+          <For each={options}>
+            {(opt) => (
+              <div
+                class={"effort-option" + (opt.value === activeModel() ? " effort-option-selected" : "")}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { handleModelChange(opt.value); setOpen(false); }}
+              >
+                {opt.label}
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // EffortSelect — custom dropdown that shows annotations only when open
 // ---------------------------------------------------------------------------
 
@@ -1697,15 +1749,7 @@ function InputRow() {
         title="Manage sessions"
       >Sessions</button>
       <Show when={activeModel()}>
-        <select
-          class="model-select-inline"
-          disabled={state.streaming}
-          value={activeModel()}
-          onChange={handleModelChange}
-        >
-          <option value="claude-sonnet-4-6">Sonnet</option>
-          <option value="claude-opus-4-6">Opus</option>
-        </select>
+        <ModelSelect />
         <EffortSelect />
       </Show>
       <div class="textarea-wrap">
