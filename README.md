@@ -57,9 +57,10 @@ agent-specific constraints.
   `git add -A && git commit -m "..."` — `git add -A` stages everything (new,
   modified, deleted) so the hook actually runs. Do not use `git commit -a`:
   it silently skips new untracked files. Exit code 0 = committed and gate
-  passed. Non-zero = read the tail of the background log first; only open
-  `test-output/gate-latest.log` when that tail confirms the gate ran and
-  failed (it is stale otherwise).
+  passed — the hook suppresses gate stdout so the tool result stays small.
+  Non-zero = the hook already prints the last 60 lines of
+  `test-output/gate-latest.log` in the tool result; open the full log only
+  if those lines aren't enough to diagnose the failure.
 - Push to origin at least every 3 commits.
 - Never commit red code.
 

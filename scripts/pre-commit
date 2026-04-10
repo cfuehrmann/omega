@@ -31,16 +31,28 @@ echo "✅  No unsafe Agent construction."
 unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE
 
 echo "Running just gate..."
-just gate
+# Suppress stdout — gate writes its full output to test-output/gate-latest.log
+# internally via `tee`, so the log is always up-to-date regardless.
+# Keeping stdout silent here prevents ~60 KB of build/test output from being
+# fed back to the LLM as tool-result content on every successful commit.
+just gate > /dev/null
 status=$?
 
 if [ $status -ne 0 ]; then
   echo ""
   echo "❌  Gate failed — commit aborted."
-  echo "    Fix the failures, then commit again."
+  echo "    Tail of test-output/gate-latest.log:"
+  echo ""
+  if [ -f test-output/gate-latest.log ]; then
+    tail -60 test-output/gate-latest.log
+  else
+    echo "    (log file not found)"
+  fi
+  echo ""
+  echo "    Full log: test-output/gate-latest.log"
   echo "    To skip this check (emergency only): git commit --no-verify"
   exit 1
 fi
 
-echo "✅  Gate passed."
+echo "✅  Gate passed. Full log: test-output/gate-latest.log"
 exit 0

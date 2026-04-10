@@ -37,9 +37,11 @@ All development work goes on `develop`. Merge to `main` when stable.
   "flaky". A test that passes alone but fails in the gate is a real bug. Fix it.
 - `just gate` runs as the **pre-commit hook** — do not run it separately.
   Always commit with `git add -A && git commit -m "..."` (not `git commit -a`,
-  which misses untracked files). **Exit code 0 = committed, gate passed** — no
-  log reading needed. Non-zero: check the `run_command` output, or for the full
-  log: `test-output/gate-latest.log` (sections: `=== typecheck / test / knip ===`).
+  which misses untracked files). **Exit code 0 = committed, gate passed** — the
+  hook suppresses gate stdout so the tool result stays small; no log reading
+  needed. Non-zero: the hook already prints the last 60 lines of
+  `test-output/gate-latest.log` in the tool result; open the full log only if
+  those lines aren't enough to diagnose the failure.
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
