@@ -344,7 +344,7 @@ html, body, #root {
 .effort-trigger {
   font-size: 14px;
   color: var(--dim);
-  background: var(--bg2);
+  background: none;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0 8px;
