@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, generateSessionName, AUTO_NAME_INSTRUCTIONS } from "./session-resume.js";
+import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, generateSessionName, extractLastModelAndEffort, AUTO_NAME_INSTRUCTIONS } from "./session-resume.js";
 import type { StreamProvider } from "./stream-provider.js";
 import type { OmegaEvent } from "./events.js";
 import { makeTestAgent } from "./test-utils.js";
@@ -364,6 +364,74 @@ describe("extractResumptionBasis — dropped events", () => {
     expect(basis).not.toContain("llm_call");
     expect(basis).not.toContain("llm_retry");
     expect(basis).not.toContain("turn_end");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractLastModelAndEffort
+// ---------------------------------------------------------------------------
+
+describe("extractLastModelAndEffort", () => {
+  const base = { time: "2025-01-01T00:00:00.000Z" as any };
+
+  it("returns undefined for both when event list is empty", () => {
+    expect(extractLastModelAndEffort([])).toEqual({ model: undefined, effort: undefined });
+  });
+
+  it("returns undefined for both when no model_changed or effort_changed events exist", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "session_started", sessionId: "x", path: "", model: "claude-sonnet-4-6", effort: "medium", systemPrompt: "" },
+      { ...base, type: "user_message", content: "hello" },
+    ];
+    expect(extractLastModelAndEffort(events)).toEqual({ model: undefined, effort: undefined });
+  });
+
+  it("returns the model from the last model_changed event", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "model_changed", model: "claude-sonnet-4-6" },
+      { ...base, type: "model_changed", model: "claude-opus-4-6" },
+    ];
+    expect(extractLastModelAndEffort(events).model).toBe("claude-opus-4-6");
+  });
+
+  it("returns the effort from the last effort_changed event", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "effort_changed", effort: "high" },
+      { ...base, type: "effort_changed", effort: "max" },
+    ];
+    expect(extractLastModelAndEffort(events).effort).toBe("max");
+  });
+
+  it("returns model and effort independently when both are present", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "model_changed", model: "claude-opus-4-6" },
+      { ...base, type: "effort_changed", effort: "high" },
+    ];
+    expect(extractLastModelAndEffort(events)).toEqual({ model: "claude-opus-4-6", effort: "high" });
+  });
+
+  it("picks the last of each even when interleaved", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "model_changed", model: "claude-opus-4-6" },
+      { ...base, type: "effort_changed", effort: "high" },
+      { ...base, type: "model_changed", model: "claude-sonnet-4-6" },
+      { ...base, type: "effort_changed", effort: "medium" },
+    ];
+    expect(extractLastModelAndEffort(events)).toEqual({ model: "claude-sonnet-4-6", effort: "medium" });
+  });
+
+  it("returns only model when only model_changed events exist", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "model_changed", model: "claude-opus-4-6" },
+    ];
+    expect(extractLastModelAndEffort(events)).toEqual({ model: "claude-opus-4-6", effort: undefined });
+  });
+
+  it("returns only effort when only effort_changed events exist", () => {
+    const events: OmegaEvent[] = [
+      { ...base, type: "effort_changed", effort: "low" },
+    ];
+    expect(extractLastModelAndEffort(events)).toEqual({ model: undefined, effort: "low" });
   });
 });
 

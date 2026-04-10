@@ -42,6 +42,7 @@ import { now } from "../iso-timestamp.js";
 import {
   extractResumptionBasis,
   extractDescriptionFromResponse,
+  extractLastModelAndEffort,
   generateSessionName,
 } from "../session-resume.js";
 
@@ -464,6 +465,16 @@ async function handleMessage(
     ]);
     const basis = extractResumptionBasis(prevEvents);
     const resumedSessionName = (prevMeta as { name?: string }).name;
+
+    // Restore the model and effort that were active at the end of the previous
+    // session so the resumed session starts in the same state.
+    const { model: prevModel, effort: prevEffort } = extractLastModelAndEffort(prevEvents);
+    if (prevModel !== undefined && prevModel !== persistentAgent.getActiveModel()) {
+      persistentAgent.setModel(prevModel);
+    }
+    if (prevEffort !== undefined && prevEffort !== persistentAgent.getActiveEffort()) {
+      persistentAgent.setEffort(prevEffort);
+    }
 
     // Send session_info and the init events (server_started + session_started)
     // to the client immediately — before the LLM call — so the feed clears and

@@ -191,6 +191,30 @@ function projectTurn(turn: Turn, index: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Public: last model/effort extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan a session's event list and return the last explicitly set model and
+ * effort values.
+ *
+ * Returns `undefined` for either value when no corresponding change event is
+ * found, meaning the default should be used. This is a pure function — no I/O.
+ */
+export function extractLastModelAndEffort(events: OmegaEvent[]): {
+  model: string | undefined;
+  effort: string | undefined;
+} {
+  let model: string | undefined;
+  let effort: string | undefined;
+  for (const event of events) {
+    if (event.type === "model_changed") model = event.model;
+    if (event.type === "effort_changed") effort = event.effort;
+  }
+  return { model, effort };
+}
+
+// ---------------------------------------------------------------------------
 // Public: basis extraction
 // ---------------------------------------------------------------------------
 
