@@ -254,8 +254,7 @@ describe("executeTool: edit_file", () => {
     await writeFile(path, "hello world\ngoodbye world\n");
     const result = await executeTool("edit_file", {
       path,
-      old_text: "hello world",
-      new_text: "hi world",
+      replacements: [{ old_text: "hello world", new_text: "hi world" }],
     });
     expect(result.isError).toBe(false);
     expect(result.output).toContain("edit_file");
@@ -270,8 +269,7 @@ describe("executeTool: edit_file", () => {
     await writeFile(path, "hello world\n");
     const result = await executeTool("edit_file", {
       path,
-      old_text: "not found text",
-      new_text: "replacement",
+      replacements: [{ old_text: "not found text", new_text: "replacement" }],
     });
     expect(result.isError).toBe(true);
     expect(result.output).toContain("not found");
@@ -282,8 +280,7 @@ describe("executeTool: edit_file", () => {
     await writeFile(path, "foo bar\nfoo baz\n");
     const result = await executeTool("edit_file", {
       path,
-      old_text: "foo",
-      new_text: "qux",
+      replacements: [{ old_text: "foo", new_text: "qux" }],
     });
     expect(result.isError).toBe(true);
     expect(result.output).toContain("2 times");
@@ -292,8 +289,7 @@ describe("executeTool: edit_file", () => {
   it("returns error for missing file", async () => {
     const result = await executeTool("edit_file", {
       path: join(TMP, "nonexistent.txt"),
-      old_text: "x",
-      new_text: "y",
+      replacements: [{ old_text: "x", new_text: "y" }],
     });
     expect(result.isError).toBe(true);
   });
@@ -303,8 +299,7 @@ describe("executeTool: edit_file", () => {
     await writeFile(path, "line 1\nline 2\nline 3\nline 4\n");
     const result = await executeTool("edit_file", {
       path,
-      old_text: "line 2\nline 3",
-      new_text: "replaced 2\nreplaced 3\nextra line",
+      replacements: [{ old_text: "line 2\nline 3", new_text: "replaced 2\nreplaced 3\nextra line" }],
     });
     expect(result.isError).toBe(false);
 
@@ -350,24 +345,24 @@ describe("executeTool: edit_file", () => {
     expect(content).toBe("aaa\nbbb\n");
   });
 
-  it("errors when neither old_text nor replacements provided", async () => {
+  it("errors when replacements array is empty", async () => {
     const path = join(TMP, "multi-edit-empty.txt");
     await writeFile(path, "hello\n");
-    const result = await executeTool("edit_file", { path });
+    const result = await executeTool("edit_file", { path, replacements: [] });
     expect(result.isError).toBe(true);
     expect(result.output).toContain("requires");
   });
 });
 
 describe("formatToolCall: edit_file", () => {
-  it("formats edit_file with path and sizes", () => {
+  it("formats edit_file with path and replacement count", () => {
     const formatted = formatToolCall("edit_file", {
       path: "src/agent.ts",
-      old_text: "hello",
-      new_text: "world!",
+      replacements: [{ old_text: "hello", new_text: "world!" }],
     });
     expect(formatted).toContain("edit_file");
     expect(formatted).toContain("src/agent.ts");
+    expect(formatted).toContain("1 replacement");
   });
 
   it("formats edit_file with replacements count", () => {
@@ -1009,7 +1004,7 @@ describe("primaryToolArg", () => {
   it("extracts path for file tools", () => {
     expect(primaryToolArg("read_file", { path: "src/agent.ts" })).toBe("src/agent.ts");
     expect(primaryToolArg("write_file", { path: "out.txt", content: "hi" })).toBe("out.txt");
-    expect(primaryToolArg("edit_file", { path: "f.ts", old_text: "a", new_text: "b" })).toBe("f.ts");
+    expect(primaryToolArg("edit_file", { path: "f.ts", replacements: [{ old_text: "a", new_text: "b" }] })).toBe("f.ts");
   });
 
   it("extracts path for list_files", () => {

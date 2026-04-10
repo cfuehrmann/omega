@@ -56,10 +56,8 @@ const ReplacementSchema = z.object({
 });
 
 export const EditFileSchema = z.object({
-  path:     z.string().describe("Path to the file (absolute or relative to cwd)"),
-  old_text: z.string().optional().describe("Exact text to find (must match exactly, must appear once)"),
-  new_text: z.string().optional().describe("Text to replace old_text with"),
-  replacements: z.array(ReplacementSchema).optional().describe("Multiple replacements to apply in order. Each old_text must appear exactly once in the file. Use this instead of old_text/new_text when making several edits to the same file."),
+  path:         z.string().describe("Path to the file (absolute or relative to cwd)"),
+  replacements: z.array(ReplacementSchema).describe("One or more replacements to apply in order. Each old_text must appear exactly once in the file. Pass all changes to this file together — never call edit_file on the same file twice in a row."),
 });
 
 export const ListFilesSchema = z.object({

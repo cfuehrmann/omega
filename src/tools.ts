@@ -260,8 +260,8 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "(including whitespace and indentation). Use this for surgical edits " +
       "instead of rewriting entire files with write_file. Each old_text must " +
       "appear exactly once in the file. For multiple edits to the same file, " +
-      "pass a `replacements` array instead of old_text/new_text — this is " +
-      "faster and avoids round-trips.",
+      "pass a `replacements` array — this is faster and avoids round-trips. " +
+      "Always pass ALL changes to a file in a single call.",
     input_schema: toToolInputSchema(EditFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -406,18 +406,11 @@ async function executeWriteFile(input: {
 
 async function executeEditFile(input: {
   path: string;
-  old_text?: string;
-  new_text?: string;
-  replacements?: { old_text: string; new_text: string }[];
+  replacements: { old_text: string; new_text: string }[];
 }): Promise<string> {
-  // Normalize: build a replacements array from either form.
-  let replacements: { old_text: string; new_text: string }[];
-  if (input.replacements && input.replacements.length > 0) {
-    replacements = input.replacements;
-  } else if (input.old_text !== undefined && input.new_text !== undefined) {
-    replacements = [{ old_text: input.old_text, new_text: input.new_text }];
-  } else {
-    throw new Error("edit_file requires either old_text+new_text or a non-empty replacements array.");
+  const { replacements } = input;
+  if (!replacements || replacements.length === 0) {
+    throw new Error("edit_file requires a non-empty replacements array.");
   }
 
   let content = await readFile(input.path, "utf-8");
@@ -955,10 +948,8 @@ export function formatToolCall(name: string, input: any): string {
       return `write_file: ${input.path} (${input.content?.length ?? 0} bytes)`;
     case "edit_file": {
       const reps = input.replacements as { old_text: string; new_text: string }[] | undefined;
-      if (reps && reps.length > 0) {
-        return `edit_file: ${input.path} (${reps.length} replacements)`;
-      }
-      return `edit_file: ${input.path} (${input.old_text?.length ?? 0} → ${input.new_text?.length ?? 0} bytes)`;
+      const count = reps?.length ?? 0;
+      return `edit_file: ${input.path} (${count} replacement${count === 1 ? "" : "s"})`;
     }
     case "run_command":
       return `run_command: ${input.command}`;

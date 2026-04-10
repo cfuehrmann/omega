@@ -61,6 +61,9 @@ Chain independent tool calls in parallel when results don't depend on each
 other.
 Check for a task runner and use it to discover available commands
 (\`just --list\`, \`make help\`, \`npm run\`, etc.).
+For \`edit_file\`: read or grep the file first to identify **all** needed
+changes, then apply them in a single call with \`replacements\`. Never call
+\`edit_file\` on the same file twice in a row — that is always a mistake.
 
 Use \`web_search\` freely for documentation, current information, API details,
 error messages, or anything not in local files. Prefer it over guessing or
