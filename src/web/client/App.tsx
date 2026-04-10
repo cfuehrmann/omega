@@ -1680,8 +1680,8 @@ function InputRow() {
           class="panel-toggle-btn"
           data-testid="panel-toggle-btn"
           onClick={() => setPanelOpen(o => !o)}
-          title={panelOpen() ? "Hide details panel" : "Show details panel"}
-        >{panelOpen() ? "▲ panel" : "▼ panel"}</button>
+          title={panelOpen() ? "Hide usage panel" : "Show usage panel"}
+        >{panelOpen() ? "▲ Usage" : "▼ Usage"}</button>
         <span class="status-label" data-testid="status-label">{statusLabel()}</span>
       </div>
       <Show when={state.streaming}

@@ -295,13 +295,20 @@ html, body, #root {
 }
 .sm-legend-toggle:hover { opacity: 0.9; }
 
-/* ── Status display (read-only, coloured text showing connection state) ── */
+/* ── Status display (read-only box showing connection state) ── */
 .status-display {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   font-family: var(--font);
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: 14px;
   user-select: none;
   white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-end;
   transition: color 0.2s;
 }
 .status-display.status-ready      { color: var(--green); }
@@ -310,27 +317,29 @@ html, body, #root {
 .status-display.status-connecting { color: var(--yellow); }
 .status-display.status-error      { color: var(--red); }
 
-/* ── Panel toggle button (expand / collapse details panel) ── */
+/* ── Panel toggle button (expand / collapse usage panel) ── */
 .panel-toggle-btn {
-  background: none;
-  border: 1px solid var(--border);
+  padding: 0 12px;
   border-radius: var(--radius);
-  color: var(--fg);
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--dim);
   font-family: var(--font);
-  font-size: 0.75rem;
-  padding: 3px 8px;
-  height: 28px;
+  font-size: 14px;
   cursor: pointer;
+  height: 38px;
+  flex-shrink: 0;
+  align-self: flex-end;
   user-select: none;
   white-space: nowrap;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s;
 }
 .panel-toggle-btn:hover { opacity: 0.75; }
 
 /* ── Status row — flex container for status display + panel toggle ── */
 .status-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px;
   flex-shrink: 0;
   align-self: flex-end;
