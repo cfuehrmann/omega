@@ -29,6 +29,40 @@ export const config = {
   autoCompactThreshold: 750_000,
 
   // ---------------------------------------------------------------------------
+  // Tool result clearing
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Server-side tool result clearing: begin dropping old tool results when
+   * input tokens reach this value.  Acts as a first stage before full
+   * compaction (autoCompactThreshold) kicks in.
+   *
+   * 100 000 is Anthropic's own default and matches real-world Omega session
+   * data: 66 % of sessions never exceed ~10 tool calls and will never trigger
+   * this; only the heavy coding sessions (top ~10 %) that drive quadratic
+   * context growth are affected.
+   */
+  toolResultClearTrigger: 100_000,
+
+  /**
+   * Number of most-recent tool use/result pairs to preserve after each
+   * clearing.  Anthropic's default is 3 (aggressive); 10 is conservative —
+   * it covers the median turn (4–6 calls) plus the previous turn's results,
+   * making it very unlikely that Claude loses context it still needs.
+   */
+  toolResultClearKeep: 10,
+
+  /**
+   * Minimum tokens that must be clearable before the strategy fires.  If
+   * fewer tokens would be removed (e.g. only a handful of tiny tool results
+   * are older than the keep window), clearing is skipped entirely.  This
+   * prevents cache-busting micro-trims where the prompt-cache write cost
+   * would exceed the token savings.  15 000 tokens is a comfortable floor
+   * for a coding agent whose tool results are typically large.
+   */
+  toolResultClearAtLeast: 15_000,
+
+  // ---------------------------------------------------------------------------
   // Retry backoff
   // ---------------------------------------------------------------------------
 

@@ -799,6 +799,18 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
     }
 
+    case "tool_results_cleared": {
+      const body = `Old tool results cleared by server: ${e.clearedToolUses} tool use${e.clearedToolUses !== 1 ? "s" : ""} removed, ~${e.clearedInputTokens.toLocaleString()} tokens saved.`;
+      return (
+        <div class="block status" data-testid="block-status">
+          <div class="block-label-row">
+            <span class="block-label">tool_results_cleared</span>
+          </div>
+          <div class="block-body">{body}</div>
+        </div>
+      );
+    }
+
     case "llm_call": {
       // Find the previous llm_call across all turns to compute the delta.
       const myIdx = props.allLlmCalls.indexOf(e);

@@ -729,6 +729,7 @@ export function dispatch(event: ServerMessage): void {
     case "server_stopped":
     case "tool_call":
     case "compacted":
+    case "tool_results_cleared":
     case "llm_error":
     case "agent_error":
     case "transport_error":

@@ -1011,9 +1011,15 @@ export class Agent {
         system: systemBlocks,
         tools: cachedTools,
         messages: cachedMessages,
-        betas: ["compact-2026-01-12"],
+        betas: ["compact-2026-01-12", "context-management-2025-06-27"],
         context_management: {
           edits: [
+            {
+              type: "clear_tool_uses_20250919" as const,
+              trigger: { type: "input_tokens" as const, value: config.toolResultClearTrigger },
+              keep: { type: "tool_uses" as const, value: config.toolResultClearKeep },
+              clear_at_least: { type: "input_tokens" as const, value: config.toolResultClearAtLeast },
+            },
             {
               type: "compact_20260112" as const,
               trigger: { type: "input_tokens" as const, value: config.autoCompactThreshold },
@@ -1137,6 +1143,26 @@ export class Agent {
         };
         await this.logEvent(compactedEv);
         yield compactedEv;
+      }
+
+      // Detect server-side tool result clearing. The API returns
+      // context_management.applied_edits with a clear_tool_uses_20250919 entry
+      // when clearing fired. Clearing happens server-side only — our local
+      // compactedContextHistory is unaffected (the API docs confirm the client
+      // keeps its full history; only the server-side prompt is edited).
+      const appliedEdits: any[] = (response as any).context_management?.applied_edits ?? [];
+      const clearingEdit = appliedEdits.find(
+        (edit: any) => edit.type === "clear_tool_uses_20250919",
+      );
+      if (clearingEdit) {
+        const clearedEv: OmegaEvent = {
+          type: "tool_results_cleared",
+          time: now(),
+          clearedToolUses: clearingEdit.cleared_tool_uses ?? 0,
+          clearedInputTokens: clearingEdit.cleared_input_tokens ?? 0,
+        };
+        await this.logEvent(clearedEv);
+        yield clearedEv;
       }
 
       // Add assistant response to history; capture hash for llm_response + tool_call events.

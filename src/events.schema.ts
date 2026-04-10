@@ -144,6 +144,13 @@ const CompactedSchema = z.object({
   usage: z.unknown(),
 });
 
+const ToolResultsClearedSchema = z.object({
+  type: z.literal("tool_results_cleared"),
+  time: ISOTimestampSchema,
+  clearedToolUses: z.number().int(),
+  clearedInputTokens: z.number().int(),
+});
+
 const LlmRetrySchema = z.object({
   type: z.literal("llm_retry"),
   time: ISOTimestampSchema,
@@ -225,6 +232,7 @@ export const OmegaEventSchema = z.discriminatedUnion("type", [
   AgentErrorSchema,
   TurnInterruptedSchema,
   CompactedSchema,
+  ToolResultsClearedSchema,
   LlmRetrySchema,
   ModelChangedSchema,
   EffortChangedSchema,
