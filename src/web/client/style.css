@@ -212,7 +212,6 @@ html, body, #root {
 
 /* ── Bottom panel (collapsible: session + metrics) ── */
 .bottom-panel {
-  border-top: 1px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto; /* metrics table can scroll horizontally */
   padding: 6px 0 4px;
@@ -399,7 +398,6 @@ html, body, #root {
   gap: 8px;
   align-items: flex-end;
   padding: 8px 0 10px;
-  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
