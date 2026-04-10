@@ -295,6 +295,21 @@ html, body, #root {
 }
 .sm-legend-toggle:hover { opacity: 0.9; }
 
+/* ── Base class for all input-row interactive controls ── */
+.input-btn {
+  border: 1px solid var(--border);
+  background: none;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  height: 38px;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.input-btn:disabled { opacity: 0.4; cursor: default; }
+
 /* ── Status display (read-only indicator — no border, not interactive) ── */
 .status-display {
   display: inline-flex;
@@ -319,21 +334,11 @@ html, body, #root {
 /* ── Usage toggle button (Show usage / Hide usage) ── */
 .panel-toggle-btn {
   padding: 0 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--dim);
-  font-family: var(--font);
-  font-size: 14px;
-  cursor: pointer;
-  height: 38px;
   flex-shrink: 0;
   align-self: flex-end;
   user-select: none;
-  white-space: nowrap;
-  transition: border-color 0.15s, color 0.15s;
 }
-.panel-toggle-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.panel-toggle-btn:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
 /* ── Custom effort dropdown ── */
 .effort-select {
@@ -342,17 +347,7 @@ html, body, #root {
   align-self: flex-end;
 }
 .effort-trigger {
-  font-size: 14px;
-  color: var(--dim);
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   padding: 0 8px;
-  cursor: pointer;
-  height: 38px;
-  font-family: var(--font);
-  white-space: nowrap;
-  transition: border-color 0.15s, color 0.15s;
 }
 .effort-trigger::after {
   content: "▼";
@@ -360,8 +355,7 @@ html, body, #root {
   opacity: 0.6;
 }
 .effort-trigger:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.effort-trigger:disabled { opacity: 0.5; cursor: default; }
-.effort-trigger:focus     { outline: none; border-color: var(--user); }
+.effort-trigger:focus { outline: none; border-color: var(--user); }
 .effort-dropdown {
   position: absolute;
   bottom: calc(100% + 4px);
@@ -439,41 +433,20 @@ html, body, #root {
 
 .send-btn, .abort-btn {
   padding: 0 16px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: none;
-  font-family: var(--font);
-  font-size: 14px;
-  cursor: pointer;
-  height: 38px;
   align-self: flex-end;
-  transition: border-color 0.15s, color 0.15s;
 }
-.send-btn  { color: var(--dim); }
 .abort-btn { color: var(--red); }
 .send-btn:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .abort-btn:hover               { border-color: var(--red); }
-.send-btn:disabled { opacity: 0.4; cursor: default; }
 
 
 /* Sessions button — always-visible button in the input row (left of Ω) */
 .sessions-btn {
   padding: 0 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--dim);
-  font-family: var(--font);
-  font-size: 14px;
-  cursor: pointer;
-  height: 38px;
   flex-shrink: 0;
   align-self: flex-end;
-  white-space: nowrap;
-  transition: border-color 0.15s, color 0.15s;
 }
 .sessions-btn:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.sessions-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Tool block header row ── */
 .block-label-row {

@@ -1593,7 +1593,7 @@ function ModelSelect() {
   return (
     <div class="effort-select" ref={ref}>
       <button
-        class="effort-trigger"
+        class="input-btn effort-trigger"
         disabled={state.streaming}
         onClick={() => setOpen(o => !o)}
       >
@@ -1653,7 +1653,7 @@ function EffortSelect() {
   return (
     <div class="effort-select" ref={ref}>
       <button
-        class="effort-trigger"
+        class="input-btn effort-trigger"
         disabled={state.streaming}
         onClick={() => setOpen(o => !o)}
       >
@@ -1741,7 +1741,7 @@ function InputRow() {
   return (
     <div class="input-row">
       <button
-        class="sessions-btn"
+        class="input-btn sessions-btn"
         data-testid="sessions-btn"
         data-session-dir={state.sessionDir ?? ""}
         disabled={state.streaming}
@@ -1764,7 +1764,7 @@ function InputRow() {
         />
       </div>
       <button
-        class="panel-toggle-btn"
+        class="input-btn panel-toggle-btn"
         data-testid="panel-toggle-btn"
         onClick={() => setPanelOpen(o => !o)}
         title={panelOpen() ? "Hide usage" : "Show usage"}
@@ -1779,10 +1779,10 @@ function InputRow() {
       </div>
       <Show when={state.streaming}
         fallback={
-          <button class="send-btn" onClick={send} disabled={!state.connected}>Send</button>
+          <button class="input-btn send-btn" onClick={send} disabled={!state.connected}>Send</button>
         }
       >
-        <button class="abort-btn" onClick={abort}>Abort</button>
+        <button class="input-btn abort-btn" onClick={abort}>Abort</button>
       </Show>
     </div>
   );
