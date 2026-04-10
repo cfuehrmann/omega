@@ -478,6 +478,7 @@ export function dispatch(event: ServerMessage): void {
       let replaySessionDurations: DurationMetrics = zeroDurations();
       let replayCompactionTotals: StickyMetrics = zeroMetrics();
       let replayLiveModel = "";
+      let replayLiveEffort = "medium";
       let replayLiveDurations: DurationMetrics = zeroDurations();
       let replayStreaming = false;
 
@@ -490,6 +491,15 @@ export function dispatch(event: ServerMessage): void {
 
         if (e.type === "session_started") {
           replayLiveModel = e.model;
+          replayLiveEffort = e.effort;
+        }
+
+        if (e.type === "model_changed") {
+          replayLiveModel = e.model;
+        }
+
+        if (e.type === "effort_changed") {
+          replayLiveEffort = e.effort;
         }
 
         if (e.type === "llm_call") {
@@ -550,6 +560,7 @@ export function dispatch(event: ServerMessage): void {
         setState("compactionTotals", replayCompactionTotals);
         setState("liveDurations", replayLiveDurations);
         setState("liveModel", replayLiveModel);
+        setState("liveEffort", replayLiveEffort);
       });
       break;
     }

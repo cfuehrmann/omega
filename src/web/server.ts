@@ -475,6 +475,10 @@ async function handleMessage(
     if (prevEffort !== undefined && prevEffort !== persistentAgent.getActiveEffort()) {
       persistentAgent.setEffort(prevEffort);
     }
+    // Flush so model_changed/effort_changed are on disk before loadReplayEvents
+    // reads the file — otherwise those events are missing from the history
+    // payload and only appear on the next page refresh.
+    await persistentAgent.flushEventLog();
 
     // Send session_info and the init events (server_started + session_started)
     // to the client immediately — before the LLM call — so the feed clears and
