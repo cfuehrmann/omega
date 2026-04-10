@@ -331,7 +331,7 @@ html, body, #root {
   align-self: flex-end;
   user-select: none;
   white-space: nowrap;
-  transition: opacity 0.15s;
+  transition: border-color 0.15s, color 0.15s;
 }
 .panel-toggle-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
@@ -352,7 +352,7 @@ html, body, #root {
   height: 38px;
   font-family: var(--font);
   white-space: nowrap;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, color 0.15s;
 }
 .effort-trigger:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .effort-trigger:disabled { opacity: 0.5; cursor: default; }
@@ -471,6 +471,7 @@ html, body, #root {
 
 /* Model selector sitting in the input row left of the textarea */
 .model-select-inline {
+  font-family: var(--font);
   font-size: 13px;
   color: var(--dim);
   background: var(--bg2);
