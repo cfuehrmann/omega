@@ -471,7 +471,7 @@ html, body, #root {
   white-space: nowrap;
   transition: border-color 0.15s, color 0.15s;
 }
-.sessions-btn:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.sessions-btn:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .sessions-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Tool block header row ── */
