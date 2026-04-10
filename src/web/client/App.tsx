@@ -1163,10 +1163,7 @@ function activeEffort(): string {
   return state.liveEffort;
 }
 
-function handleEffortChange(e: Event) {
-  const effort = (e.currentTarget as HTMLSelectElement).value as OmegaEffort;
-  sendToServer({ type: "set_effort", effort });
-}
+
 
 function newSession() {
   if (!state.connected || state.streaming) return;
@@ -1568,7 +1565,70 @@ function ReconnectBanner() {
 }
 
 // ---------------------------------------------------------------------------
-// InputRow — textarea + Ω toggle button (left) + send/abort/new (right)
+// EffortSelect — custom dropdown that shows annotations only when open
+// ---------------------------------------------------------------------------
+
+function EffortSelect() {
+  const [open, setOpen] = createSignal(false);
+  let ref!: HTMLDivElement;
+
+  // Close on outside click
+  createEffect(() => {
+    if (!open()) return;
+    const handler = (e: MouseEvent) => {
+      if (!ref.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    onCleanup(() => document.removeEventListener("mousedown", handler));
+  });
+
+  interface EffortOption { value: string; short: string; long: string; }
+
+  const options = createMemo((): EffortOption[] => {
+    const isOpus = activeModel() === "claude-opus-4-6";
+    return [
+      { value: "low",    short: "Low",    long: "Low" },
+      { value: "medium", short: "Medium", long: isOpus ? "Medium" : "Medium (recommended)" },
+      { value: "high",   short: "High",   long: "High (API default)" },
+      ...(isOpus ? [{ value: "max", short: "Max", long: "Max" }] : []),
+    ];
+  });
+
+  const current = () => options().find(o => o.value === activeEffort());
+
+  return (
+    <div class="effort-select" ref={ref}>
+      <button
+        class="effort-trigger"
+        disabled={state.streaming}
+        onClick={() => setOpen(o => !o)}
+      >
+        {current()?.short ?? activeEffort()}
+      </button>
+      <Show when={open()}>
+        <div class="effort-dropdown">
+          <For each={options()}>
+            {(opt) => (
+              <div
+                class={"effort-option" + (opt.value === activeEffort() ? " effort-option-selected" : "")}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  sendToServer({ type: "set_effort", effort: opt.value as OmegaEffort });
+                  setOpen(false);
+                }}
+              >
+                {opt.long}
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// InputRow — Sessions · model · effort · textarea · Usage · status · Send
 // ---------------------------------------------------------------------------
 
 function InputRow() {
@@ -1618,14 +1678,21 @@ function InputRow() {
     : "connected";
 
   const statusLabel = () =>
-    state.connecting  ? (state.retryCount > 0 ? "reconnecting…" : "connecting…")
-    : !state.connected ? "disconnected"
-    : state.retrying   ? "retrying…"
-    : state.streaming  ? "streaming…"
-    : "ready";
+    state.connecting  ? (state.retryCount > 0 ? "Reconnecting…" : "Connecting…")
+    : !state.connected ? "Disconnected"
+    : state.retrying   ? "Retrying…"
+    : state.streaming  ? "Streaming…"
+    : "Ready";
 
   return (
     <div class="input-row">
+      <button
+        class="sessions-btn"
+        data-testid="sessions-btn"
+        data-session-dir={state.sessionDir ?? ""}
+        onClick={() => setSessionPickerOpen(true)}
+        title="Manage sessions"
+      >Sessions</button>
       <Show when={activeModel()}>
         <select
           class="model-select-inline"
@@ -1636,21 +1703,7 @@ function InputRow() {
           <option value="claude-sonnet-4-6">Sonnet</option>
           <option value="claude-opus-4-6">Opus</option>
         </select>
-        <select
-          class="model-select-inline"
-          disabled={state.streaming}
-          value={activeEffort()}
-          onChange={handleEffortChange}
-        >
-          <option value="low">Low</option>
-          <option value="medium">
-            {activeModel() === "claude-opus-4-6" ? "Medium" : "Medium (recommended)"}
-          </option>
-          <option value="high">High (API default)</option>
-          <Show when={activeModel() === "claude-opus-4-6"}>
-            <option value="max">Max</option>
-          </Show>
-        </select>
+        <EffortSelect />
       </Show>
       <div class="textarea-wrap">
         <textarea
@@ -1664,24 +1717,17 @@ function InputRow() {
         />
       </div>
       <button
-        class="sessions-btn"
-        data-testid="sessions-btn"
-        data-session-dir={state.sessionDir ?? ""}
-        onClick={() => setSessionPickerOpen(true)}
-        title="Manage sessions"
-      >Sessions</button>
+        class="panel-toggle-btn"
+        data-testid="panel-toggle-btn"
+        onClick={() => setPanelOpen(o => !o)}
+        title={panelOpen() ? "Hide usage" : "Show usage"}
+      >{panelOpen() ? "Hide usage" : "Show usage"}</button>
       <div class="status-row" data-testid="status-row">
         <span
           class={statusDisplayClass()}
           data-testid="omega-btn"
           data-status={omegaStatus()}
         >{statusLabel()}</span>
-        <button
-          class="panel-toggle-btn"
-          data-testid="panel-toggle-btn"
-          onClick={() => setPanelOpen(o => !o)}
-          title={panelOpen() ? "Hide usage panel" : "Show usage panel"}
-        >{panelOpen() ? "▲ Usage" : "▼ Usage"}</button>
         <span class="status-label" data-testid="status-label">{statusLabel()}</span>
       </div>
       <Show when={state.streaming}

@@ -32,7 +32,7 @@ test("Ω button is visible", async ({ page, server }) => {
 test("shows 'ready' status after connecting to server", async ({ page, server }) => {
   await page.goto("/");
   // Server sends `ready` event after history batch → state.connected = true
-  await expect(page.getByTestId("status-label")).toHaveText("ready", { timeout: 5000 });
+  await expect(page.getByTestId("status-label")).toHaveText("Ready", { timeout: 5000 });
 });
 
 test("status dot is green when connected", async ({ page, server }) => {
@@ -249,7 +249,7 @@ test("llm_retry event changes status dot to 'retrying…'", async ({ page, serve
 
   await server.sendEvent({ type: "user_message", content: "hi" });
   // Status should be streaming at this point
-  await expect(page.getByTestId("status-row")).toContainText("streaming", { timeout: 3000 });
+  await expect(page.getByTestId("status-row")).toContainText("Streaming", { timeout: 3000 });
 
   await server.sendEvent({
     type: "llm_retry",
@@ -258,9 +258,9 @@ test("llm_retry event changes status dot to 'retrying…'", async ({ page, serve
     waitMs: 5000,
     error: "overloaded",
   });
-  await expect(page.getByTestId("status-row")).toContainText("retrying", { timeout: 3000 });
+  await expect(page.getByTestId("status-row")).toContainText("Retrying", { timeout: 3000 });
 
   // After turn_interrupted the status returns to ready
   await server.sendEvent({ type: "turn_interrupted", reason: "error" });
-  await expect(page.getByTestId("status-row")).toContainText("ready", { timeout: 3000 });
+  await expect(page.getByTestId("status-row")).toContainText("Ready", { timeout: 3000 });
 });

@@ -43,7 +43,7 @@ test("crash recovery: page reload after open turn shows turn_interrupted", async
   // UI must NOT be stuck in streaming state
   await expect(connectedDot(page)).toBeVisible({ timeout: 3000 });
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 3000 });
-  await expect(page.getByTestId("status-label")).toHaveText("ready", { timeout: 3000 });
+  await expect(page.getByTestId("status-label")).toHaveText("Ready", { timeout: 3000 });
   // Interrupted marker should be visible
   await expect(page.getByTestId("block-interrupt")).toBeVisible({ timeout: 3000 });
 });

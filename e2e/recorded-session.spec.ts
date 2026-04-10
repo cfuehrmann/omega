@@ -31,7 +31,7 @@ test("recorded session replays all blocks after page reload", async ({
 }) => {
   // 1. Navigate to the app first (establishes WebSocket)
   await page.goto("/");
-  await expect(page.getByTestId("status-label")).toHaveText("ready");
+  await expect(page.getByTestId("status-label")).toHaveText("Ready");
 
   // 2. Write the fixture directly to the session's events.jsonl
   const lines = loadFixtureLines();

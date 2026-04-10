@@ -317,7 +317,7 @@ html, body, #root {
 .status-display.status-connecting { color: var(--yellow); }
 .status-display.status-error      { color: var(--red); }
 
-/* ── Panel toggle button (expand / collapse usage panel) ── */
+/* ── Usage toggle button (Show usage / Hide usage) ── */
 .panel-toggle-btn {
   padding: 0 12px;
   border-radius: var(--radius);
@@ -335,6 +335,50 @@ html, body, #root {
   transition: opacity 0.15s;
 }
 .panel-toggle-btn:hover { opacity: 0.75; }
+
+/* ── Custom effort dropdown ── */
+.effort-select {
+  position: relative;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+.effort-trigger {
+  font-size: 13px;
+  color: var(--dim);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 8px;
+  cursor: pointer;
+  height: 38px;
+  font-family: var(--font);
+  white-space: nowrap;
+  transition: border-color 0.15s;
+}
+.effort-trigger:disabled { opacity: 0.5; cursor: default; }
+.effort-trigger:focus     { outline: none; border-color: var(--user); }
+.effort-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 100%;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  padding: 4px 0;
+}
+.effort-option {
+  padding: 6px 12px;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.effort-option:hover               { background: var(--bg3); color: var(--text); }
+.effort-option.effort-option-selected { color: var(--text); }
 
 /* ── Status row — flex container for status display + panel toggle ── */
 .status-row {
