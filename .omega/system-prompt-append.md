@@ -11,6 +11,14 @@ files. The user interacts via terminal or web UI.
 - Agent core (`src/agent.ts`) must have no UI imports — UI and agent stay cleanly separated.
 - `StreamProvider` is the interface for LLM provider calls; tests inject a mock — the real API is never called in tests. **If `StreamProvider` is renamed, update this file too.**
 
+### Scripting language
+
+Default to **Bun/TypeScript** for utility scripts (stats, log analysis,
+migrations, CI helpers). Bun is already a project dependency so it costs
+nothing, and TypeScript scripts can import types directly from the project
+source. Use Python only when a library with no Bun equivalent is genuinely
+needed (e.g. `matplotlib` for plots, `pandas` for heavy data wrangling).
+
 ### LLM Provider
 
 Omega is Anthropic-only. The two supported models are:
