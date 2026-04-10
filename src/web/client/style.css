@@ -463,7 +463,8 @@ html, body, #root {
   white-space: nowrap;
   transition: border-color 0.15s, color 0.15s;
 }
-.sessions-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.sessions-btn:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.sessions-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* Model selector sitting in the input row left of the textarea */
 .model-select-inline {
@@ -752,11 +753,13 @@ html, body, #root {
   flex-shrink: 0;
   font-family: var(--font);
 }
-.session-picker-resume:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-resume:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-resume:disabled { opacity: 0.4; cursor: default; }
 .session-picker-rename:hover   { border-color: var(--dim);      color: var(--text); }
 .session-picker-save:hover     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .session-picker-cancel-rename:hover { border-color: var(--dim); color: var(--text); }
-.session-picker-delete:hover   { border-color: var(--red); color: var(--red); }
+.session-picker-delete:hover    { border-color: var(--red); color: var(--red); }
+.session-picker-delete:disabled { opacity: 0.4; cursor: default; }
 
 .session-picker-rename-input {
   flex: 1;

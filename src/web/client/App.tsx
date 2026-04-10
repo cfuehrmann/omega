@@ -1483,6 +1483,7 @@ function SessionPickerModal() {
                                 <>
                                   <Show when={!isCurrent()}>
                                     <button class="session-picker-resume" data-testid="session-picker-resume"
+                                            disabled={state.streaming}
                                             onClick={(e) => { e.stopPropagation(); resume(s.dir); }}
                                             title="Resume this session">Resume</button>
                                   </Show>
@@ -1490,6 +1491,7 @@ function SessionPickerModal() {
                                           onClick={(e) => startRename(s.dir, s.name, e)}
                                           title="Rename this session">Rename</button>
                                   <button class="session-picker-delete" data-testid="session-picker-delete"
+                                          disabled={state.streaming}
                                           onClick={(e) => deleteSession(s.dir, e)} title="Delete session">✕</button>
                                 </>
                               }
@@ -1690,6 +1692,7 @@ function InputRow() {
         class="sessions-btn"
         data-testid="sessions-btn"
         data-session-dir={state.sessionDir ?? ""}
+        disabled={state.streaming}
         onClick={() => setSessionPickerOpen(true)}
         title="Manage sessions"
       >Sessions</button>
