@@ -74,10 +74,20 @@ const StreamSignalSchema = z.discriminatedUnion("type", [
  * server at connection open and after a reset. Never written to events.jsonl.
  */
 const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ready") }),
+  /**
+   * Signals "ready to interact". When `streaming` is true the server has an
+   * in-flight agent turn that survived a browser refresh; the client should
+   * keep `streaming = true` rather than resetting to idle.
+   */
+  z.object({ type: z.literal("ready"), streaming: z.boolean().optional() }),
   z.object({ type: z.literal("reset_done") }),
   z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string(), effort: z.string(), cwd: z.string(), name: z.string().optional() }),
-  z.object({ type: z.literal("history"),      events: z.array(OmegaEventSchema) }),
+  /**
+   * History replay batch. When `streaming` is true the server has an
+   * in-flight turn; the client must NOT add a synthetic turn_interrupted
+   * — it will receive the real turn_end (or turn_interrupted) over the live socket.
+   */
+  z.object({ type: z.literal("history"), events: z.array(OmegaEventSchema), streaming: z.boolean().optional() }),
   /** Confirms a session was deleted. */
   z.object({ type: z.literal("session_deleted"), sessionDir: z.string() }),
   /** Confirms a session was renamed (or auto-named). */

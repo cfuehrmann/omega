@@ -463,15 +463,23 @@ export function dispatch(event: ServerMessage): void {
     case "ready":
       setState("connecting", false);
       setState("connected", true);
-      setState("streaming", false);
+      // When the server has an in-flight turn that survived a browser refresh,
+      // it sets streaming=true so the client stays in streaming mode instead
+      // of resetting to idle. Without this the user would see the turn as
+      // interrupted even though the agent is still running.
+      setState("streaming", event.streaming ?? false);
       setState("retryCount", 0);
       break;
 
     case "history": {
       // Rebuild all state from the flat event log sent by the server.
-      // The server runs closeOpenTurn() before sending, so any open turn
-      // already has a synthetic turn_interrupted appended.
+      // When event.streaming is false/absent, the server has already applied
+      // closeOpenTurn() so any crashed-mid-turn open turn has a synthetic
+      // turn_interrupted appended. When event.streaming is true the agent is
+      // actively running — we must NOT add a synthetic interrupt; the real
+      // turn_end (or turn_interrupted) will arrive over the live socket.
       const rawEvents = event.events;
+      const serverIsStreaming = event.streaming ?? false;
 
       let replayLastTurnEnd: LastTurnInfo | null = null;
       let replaySessionTotals: StickyMetrics = zeroMetrics();
@@ -535,9 +543,13 @@ export function dispatch(event: ServerMessage): void {
       }
 
       // Secondary crash recovery: if still marked streaming after all events,
-      // the server didn't close the turn (defensive). Append a synthetic
-      // turn_interrupted so the UI is never left stuck in streaming state.
-      const replayEvents: ServerMessage[] = replayStreaming && currentTurnStartIdx >= 0
+      // the server didn't close the turn — but only add the synthetic
+      // turn_interrupted when the server is NOT actively streaming. When
+      // serverIsStreaming is true, the turn is still running and the real
+      // turn_end will arrive over the live socket — injecting a synthetic
+      // interrupt here would corrupt the event list.
+      const openTurnWithoutServer = replayStreaming && currentTurnStartIdx >= 0 && !serverIsStreaming;
+      const replayEvents: ServerMessage[] = openTurnWithoutServer
         ? [...rawEvents, { type: "turn_interrupted" as const, time: now() }]
         : rawEvents;
 
@@ -547,6 +559,9 @@ export function dispatch(event: ServerMessage): void {
       }
 
       // Single batch write — SolidJS sees one atomic state transition.
+      // Note: streaming state is intentionally left at false here; the
+      // subsequent "ready" message sets it correctly (including streaming=true
+      // when the server has an in-flight turn).
       batch(() => {
         setState("events", replayEvents);
         setState("streamingText", "");

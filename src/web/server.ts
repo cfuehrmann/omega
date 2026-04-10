@@ -217,7 +217,8 @@ export async function loadAllEvents(eventsFile: string): Promise<OmegaEvent[]> {
 /**
  * Read the current session's events.jsonl and return the subset of events
  * suitable for history replay (excludes streaming text, transient signals).
- * Applies closeOpenTurn so a crashed session doesn't lock the browser UI.
+ * Does NOT apply closeOpenTurn — callers decide whether to apply it based on
+ * the current isStreaming state (running turns must not be falsely closed).
  */
 async function loadReplayEvents(eventsFile: string): Promise<object[]> {
   if (!existsSync(eventsFile)) return [];
@@ -341,11 +342,33 @@ let currentSessionPaths: SessionPaths | undefined;
 
 interface Session {
   ws: ServerWebSocket<unknown>;
-  abortController: AbortController | null;
-  isStreaming: boolean;
 }
 
 let activeSession: Session | null = null;
+
+/**
+ * Module-level streaming state — persists across WebSocket reconnects.
+ *
+ * Keeping these at module scope (rather than on the Session object) means that
+ * when a browser refreshes mid-turn the new WebSocket session inherits the
+ * correct streaming state. Without this, a refresh would create a new Session
+ * with isStreaming=false and allow a second concurrent turn to start, while
+ * events from the running turn would be sent to the now-closed old socket.
+ */
+let isStreaming = false;
+let activeAbortController: AbortController | null = null;
+
+/**
+ * Send an event to the currently active WebSocket, if any.
+ *
+ * Using broadcast() instead of a captured `ws` reference ensures that events
+ * from a long-running turn reach a browser that reconnected mid-turn (e.g.
+ * after a page refresh). The captured `ws` would be the now-closed old socket;
+ * `activeSession?.ws` is always the current live connection.
+ */
+function broadcast(event: object): void {
+  if (activeSession) send(activeSession.ws, event);
+}
 
 function send(ws: ServerWebSocket<unknown>, event: object): void {
   try {
@@ -391,14 +414,14 @@ async function handleMessage(
   }
 
   if (msg.type === "abort") {
-    if (persistentAgent) session.abortController?.abort();
+    if (persistentAgent) activeAbortController?.abort();
     return;
   }
 
   if (msg.type === "reset") {
-    session.abortController?.abort();
-    session.isStreaming = false;
-    session.abortController = null;
+    activeAbortController?.abort();
+    isStreaming = false;
+    activeAbortController = null;
 
     // Replace the persistent agent with a fresh one in a new session dir
     currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
@@ -435,14 +458,14 @@ async function handleMessage(
   }
 
   if (msg.type === "resume_session") {
-    if (session.isStreaming) {
+    if (isStreaming) {
       sendTransportError(session.ws, "Cannot resume session during an active turn", "handleMessage");
       return;
     }
 
-    session.abortController?.abort();
-    session.isStreaming = false;
-    session.abortController = null;
+    activeAbortController?.abort();
+    isStreaming = false;
+    activeAbortController = null;
 
     // Create new session dir + agent
     currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
@@ -497,8 +520,8 @@ async function handleMessage(
 
     // Guard against concurrent messages while the resumption LLM call is
     // in flight — same pattern as the normal turn handler.
-    session.isStreaming = true;
-    session.abortController = new AbortController();
+    isStreaming = true;
+    activeAbortController = new AbortController();
 
     // Stream resumption events live as they are generated, exactly like a
     // normal turn. The generator yields: resuming_session → llm_call →
@@ -508,7 +531,7 @@ async function handleMessage(
       for await (const event of persistentAgent.performResumption(
         basis,
         msg.sessionDir,
-        session.abortController.signal,
+        activeAbortController.signal,
         resumedSessionName,
       )) {
         send(session.ws, event);
@@ -525,8 +548,8 @@ async function handleMessage(
         "resume_session",
       );
     } finally {
-      session.isStreaming = false;
-      session.abortController = null;
+      isStreaming = false;
+      activeAbortController = null;
     }
 
     // Write description back to the *source* session's metadata (retroactive labelling).
@@ -577,7 +600,7 @@ async function handleMessage(
 
   if (msg.type === "set_model") {
     if (!persistentAgent) return; // no session yet
-    if (session.isStreaming) {
+    if (isStreaming) {
       sendTransportError(session.ws, "Cannot switch model during an active turn", "handleMessage");
       return;
     }
@@ -594,7 +617,7 @@ async function handleMessage(
 
   if (msg.type === "set_effort") {
     if (!persistentAgent) return; // no session yet
-    if (session.isStreaming) {
+    if (isStreaming) {
       sendTransportError(session.ws, "Cannot change effort during an active turn", "handleMessage");
       return;
     }
@@ -608,16 +631,15 @@ async function handleMessage(
       sendTransportError(session.ws, "No active session — create or resume a session first", "handleMessage");
       return;
     }
-    if (session.isStreaming) {
+    if (isStreaming) {
       sendTransportError(session.ws, "Turn already in progress", "handleMessage");
       return;
     }
     const content = msg.content.trim();
     if (!content) return;
 
-    session.isStreaming = true;
-    session.abortController = new AbortController();
-    const { ws } = session;
+    isStreaming = true;
+    activeAbortController = new AbortController();
 
     const turnEvents: OmegaEvent[] = [];
     try {
@@ -625,22 +647,30 @@ async function handleMessage(
       for await (const event of persistentAgent.sendMessage(
         content,
         confirmTool,
-        session.abortController.signal,
+        activeAbortController.signal,
       )) {
-        send(ws, event);
+        // Use broadcast() instead of a captured `ws` so that events reach a
+        // browser that reconnected mid-turn (e.g. after a page refresh). The
+        // captured `ws` would be the now-closed old socket.
+        broadcast(event);
         if ("type" in event) turnEvents.push(event as OmegaEvent);
       }
     } catch (err: unknown) {
-      sendTransportError(ws, err instanceof Error ? err.message : String(err), "handleMessage");
+      // Route errors to the current active session (may differ from the ws
+      // that initiated the turn if the browser refreshed mid-turn).
+      if (activeSession) {
+        sendTransportError(activeSession.ws, err instanceof Error ? err.message : String(err), "handleMessage");
+      }
     } finally {
-      session.isStreaming = false;
-      session.abortController = null;
+      isStreaming = false;
+      activeAbortController = null;
     }
 
     // Auto-name after first turn_end (fire-and-forget)
     if (turnEvents.some(e => e.type === "turn_end")) {
       maybeAutoName(currentSessionPaths!.dir, turnEvents, streamProvider, (name) => {
-        send(ws, { type: "session_renamed", sessionDir: basename(currentSessionPaths!.dir), name });
+        // Use broadcast so the renamed event reaches the current browser tab.
+        broadcast({ type: "session_renamed", sessionDir: basename(currentSessionPaths!.dir), name });
       }).catch(() => {});
     }
   }
@@ -722,29 +752,36 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
 
     websocket: {
       async open(ws) {
-        const session: Session = {
-          ws,
-          abortController: null,
-          isStreaming: false,
-        };
+        const session: Session = { ws };
         activeSession = session;
 
         if (currentSessionPaths && persistentAgent) {
           // Existing session (reconnect after user already chose): replay history.
           // After the await we're outside the auto-corked open callback, so we
           // must cork explicitly (Bun docs: "use cork in async functions").
-          const [replayEvents, sessionMeta] = await Promise.all([
+          const [rawReplayEvents, sessionMeta] = await Promise.all([
             loadReplayEvents(currentSessionPaths.eventsFile),
             readSessionMetadata(currentSessionPaths.dir),
           ]);
+
+          // If an agent turn is actively running (isStreaming), do NOT apply
+          // closeOpenTurn — the turn is not interrupted, it is still in
+          // progress. The browser will receive the remaining live events via
+          // broadcast(). Applying closeOpenTurn here would inject a false
+          // turn_interrupted into the replay, making the UI think the turn
+          // ended when it didn't.
+          const replayEvents = isStreaming ? rawReplayEvents : closeOpenTurn(rawReplayEvents);
+
           ws.cork(() => {
             const sessionInfoMsg: Record<string, unknown> = { type: "session_info", dir: currentSessionPaths!.dir, model: persistentAgent!.getActiveModel(), effort: persistentAgent!.getActiveEffort(), cwd: process.cwd() };
             if (sessionMeta.name) sessionInfoMsg.name = sessionMeta.name;
             ws.send(JSON.stringify(sessionInfoMsg));
-            if (replayEvents.length > 0) {
-              ws.send(JSON.stringify({ type: "history", events: replayEvents }));
+            // Always send history (even empty) when streaming so the client
+            // receives the streaming=true flag and stays in streaming mode.
+            if (replayEvents.length > 0 || isStreaming) {
+              ws.send(JSON.stringify({ type: "history", events: replayEvents, ...(isStreaming ? { streaming: true } : {}) }));
             }
-            ws.send(JSON.stringify({ type: "ready" }));
+            ws.send(JSON.stringify({ type: "ready", ...(isStreaming ? { streaming: true } : {}) }));
           });
 
           persistentAgent.init()
