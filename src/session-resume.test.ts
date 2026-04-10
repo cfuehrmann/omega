@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, generateSessionName, extractLastModelAndEffort, AUTO_NAME_INSTRUCTIONS } from "./session-resume.js";
+import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, extractLastModelAndEffort } from "./session-resume.js";
 import type { StreamProvider } from "./stream-provider.js";
 import type { OmegaEvent } from "./events.js";
 import { makeTestAgent } from "./test-utils.js";
@@ -50,29 +50,6 @@ function makeTextStreamProvider(text: string): StreamProvider {
  */
 function makeFailingStreamProvider(message: string): StreamProvider {
   return () => { throw new Error(message); };
-}
-
-/**
- * Build a StreamProvider mock for generateSessionName tests.
- * Accepts an optional callback to capture the params passed to the provider.
- */
-function makeNameStreamProvider(text: string, onCall?: (params: any) => void): StreamProvider {
-  return (params) => {
-    onCall?.(params);
-    return {
-      async *[Symbol.asyncIterator]() { /* no chunks needed for naming */ },
-      finalMessage: async () => ({
-        id: "msg_name",
-        type: "message",
-        role: "assistant",
-        content: [{ type: "text", text }],
-        model: "claude-sonnet-4-6",
-        stop_reason: "end_turn",
-        stop_sequence: null,
-        usage: { input_tokens: 5, output_tokens: 3 },
-      } as any),
-    };
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -458,36 +435,6 @@ describe("extractSummaryFromResponse", () => {
   it("handles multiline content inside tags", () => {
     const raw = "<summary>Line 1\nLine 2\nLine 3</summary>";
     expect(extractSummaryFromResponse(raw)).toBe("Line 1\nLine 2\nLine 3");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// generateSessionName
-// ---------------------------------------------------------------------------
-
-describe("generateSessionName", () => {
-  it("calls provider with AUTO_NAME_INSTRUCTIONS as system and user/agent content", async () => {
-    let capturedParams: any;
-    const provider = makeNameStreamProvider("jwt login", (p) => { capturedParams = p; });
-    await generateSessionName("Add JWT login", "I'll add JWT login to the app.", provider);
-    expect(capturedParams.system).toBe(AUTO_NAME_INSTRUCTIONS);
-    expect(capturedParams.messages[0].content).toContain("Add JWT login");
-    expect(capturedParams.messages[0].content).toContain("I'll add JWT login to the app.");
-  });
-
-  it("returns sanitised lowercase name", async () => {
-    const result = await generateSessionName("x", "y", makeNameStreamProvider("  JWT Login Endpoint!  "));
-    expect(result).toBe("jwt login endpoint");
-  });
-
-  it("strips non-alphanumeric chars (except spaces)", async () => {
-    const result = await generateSessionName("x", "y", makeNameStreamProvider("auth-tests: v2.0"));
-    expect(result).toBe("authtests v20");
-  });
-
-  it("truncates very long names to 60 chars", async () => {
-    const result = await generateSessionName("x", "y", makeNameStreamProvider("a".repeat(100)));
-    expect(result.length).toBeLessThanOrEqual(60);
   });
 });
 

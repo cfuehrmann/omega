@@ -43,7 +43,6 @@ import {
   extractResumptionBasis,
   extractDescriptionFromResponse,
   extractLastModelAndEffort,
-  generateSessionName,
 } from "../session-resume.js";
 
 // ---------------------------------------------------------------------------
@@ -283,42 +282,6 @@ async function listSessions(): Promise<SessionListItem[]> {
     });
   }
   return items;
-}
-
-// ---------------------------------------------------------------------------
-// Auto-naming — fire-and-forget after first turn_end
-// ---------------------------------------------------------------------------
-
-/**
- * Auto-name a session after its first completed turn.
- * Reads the first user message and first agent text from `turnEvents`,
- * calls the LLM for a short name, and writes it to session.jsonc.
- * Only runs if the session has no name yet. Fire-and-forget — errors are
- * silently swallowed.
- */
-async function maybeAutoName(
-  sessionDir: string,
-  turnEvents: OmegaEvent[],
-  provider: StreamProvider,
-  onNamed?: (name: string) => void,
-): Promise<void> {
-  // Only name once
-  const existing = await readSessionMetadata(sessionDir);
-  if (existing.name) return;
-
-  const userMsg = turnEvents.find(e => e.type === "user_message");
-  const llmResp = turnEvents.find(e => e.type === "llm_response" && (e as any).text);
-  if (!userMsg || !llmResp) return;
-
-  const name = await generateSessionName(
-    (userMsg as Extract<OmegaEvent, { type: "user_message" }>).content,
-    (llmResp as Extract<OmegaEvent, { type: "llm_response" }>).text ?? "",
-    provider,
-  );
-  if (name) {
-    await updateSessionMetadata(sessionDir, { name });
-    onNamed?.(name);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,13 +633,6 @@ async function handleMessage(
       activeAbortController = null;
     }
 
-    // Auto-name after first turn_end (fire-and-forget)
-    if (turnEvents.some(e => e.type === "turn_end")) {
-      maybeAutoName(currentSessionPaths!.dir, turnEvents, streamProvider, (name) => {
-        // Use broadcast so the renamed event reaches the current browser tab.
-        broadcast({ type: "session_renamed", sessionDir: basename(currentSessionPaths!.dir), name });
-      }).catch(() => {});
-    }
   }
 }
 

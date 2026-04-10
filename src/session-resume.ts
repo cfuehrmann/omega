@@ -69,25 +69,6 @@ This is used for display in the session picker — be specific and concrete, \
 not vague. Example: "Added JWT auth middleware and login endpoint tests".\
 `;
 
-/**
- * System prompt for the auto-naming call.
- */
-export const AUTO_NAME_INSTRUCTIONS = `\
-Name this coding session in 2–4 lowercase words separated by spaces.
-
-Rules:
-- Lowercase only, words separated by spaces, no punctuation
-- No articles (a/an/the), no filler words
-- Describe the subject, not the process: prefer "jwt login endpoint" over \
-"implement jwt login"
-- Examples: "jwt login", "auth tests", "session resumption", "event schema"
-
-Respond with ONLY the name — no explanation, no punctuation, nothing else.\
-`;
-
-/** The model used for auto-naming (generateSessionName). */
-const RESUMPTION_MODEL = "claude-sonnet-4-6";
-
 // ---------------------------------------------------------------------------
 // Basis extraction helpers
 // ---------------------------------------------------------------------------
@@ -303,40 +284,3 @@ export function extractDescriptionFromResponse(responseText: string): string | u
   return undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Public: auto-naming call
-// ---------------------------------------------------------------------------
-
-/**
- * Call the LLM to produce a short session name from the first user message
- * and the first agent response text. Uses the same StreamProvider as normal
- * turns — no separate provider abstraction.
- */
-export async function generateSessionName(
-  firstUserMessage: string,
-  firstAgentResponse: string,
-  provider: StreamProvider,
-): Promise<string> {
-  const userContent =
-    `First user message: ${firstUserMessage.slice(0, 300).trim()}\n` +
-    `First agent response: ${firstAgentResponse.slice(0, 400).trim()}`;
-  const stream = provider({
-    model: RESUMPTION_MODEL,
-    max_tokens: 64,
-    system: AUTO_NAME_INSTRUCTIONS,
-    messages: [{ role: "user", content: userContent }],
-  });
-  // We only need the final text — no streaming needed for a short name.
-  const message = await stream.finalMessage();
-  const text = message.content
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => (b as { type: "text"; text: string }).text)
-    .join("");
-  // Sanitise: lowercase, collapse whitespace, strip non-word chars
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 60);
-}
