@@ -355,7 +355,7 @@ html, body, #root {
   transition: border-color 0.15s, color 0.15s;
 }
 .effort-trigger::after {
-  content: "▾";
+  content: "▼";
   margin-left: 5px;
   opacity: 0.6;
 }
