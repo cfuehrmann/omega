@@ -440,19 +440,20 @@ html, body, #root {
 .send-btn, .abort-btn {
   padding: 0 16px;
   border-radius: var(--radius);
-  border: none;
+  border: 1px solid var(--border);
+  background: none;
   font-family: var(--font);
   font-size: 14px;
   cursor: pointer;
   height: 38px;
   align-self: flex-end;
-  transition: opacity 0.15s;
+  transition: border-color 0.15s, color 0.15s;
 }
-.send-btn  { background: var(--user); color: var(--ctp-crust); font-weight: bold; }
-.abort-btn { background: var(--red);  color: var(--ctp-crust); }
-.send-btn:hover:not(:disabled)  { opacity: 0.85; }
+.send-btn  { color: var(--dim); }
+.abort-btn { color: var(--red); }
+.send-btn:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.abort-btn:hover               { border-color: var(--red); }
 .send-btn:disabled { opacity: 0.4; cursor: default; }
-.abort-btn:hover { opacity: 0.85; }
 
 
 /* Sessions button — always-visible button in the input row (left of Ω) */
