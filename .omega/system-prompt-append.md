@@ -33,22 +33,13 @@ All development work goes on `develop`. Merge to `main` when stable.
 
 ### Testing
 
-- **NEVER use `git commit --no-verify`.** The pre-commit gate exists to
-  prevent broken commits. If the gate fails, the code is broken — fix it.
-  Do not bypass, do not classify failures as "flaky" without proof, do not
-  rationalize skipping the gate. A test that passes in isolation but fails
-  in `just gate` is a real bug (usually a race condition), not a flake.
-- `just gate` — full suite + knip. **The gate runs automatically as the
-  pre-commit hook — do not run it separately before committing.** Always
-  commit with `git add -A && git commit -m "..."` — `git add -A` stages
-  everything (new, modified, deleted), ensuring the hook actually runs.
-  Do not use `git commit -a`: it silently skips new untracked files.
-  Bare `git commit` with nothing staged exits 1 before the hook fires.
-  **Exit code is the primary signal:** 0 = committed, gate passed — done,
-  no log reading needed. Non-zero = the stderr/stdout in the `run_command`
-  result shows what happened. Only open `test-output/gate-latest.log` when
-  you need the full gate output — sections are marked
-  `=== typecheck ===`, `=== test ===`, `=== knip ===`.
+- **Never bypass the gate** — no `--no-verify`, no rationalizing failures as
+  "flaky". A test that passes alone but fails in the gate is a real bug. Fix it.
+- `just gate` runs as the **pre-commit hook** — do not run it separately.
+  Always commit with `git add -A && git commit -m "..."` (not `git commit -a`,
+  which misses untracked files). **Exit code 0 = committed, gate passed** — no
+  log reading needed. Non-zero: check the `run_command` output, or for the full
+  log: `test-output/gate-latest.log` (sections: `=== typecheck / test / knip ===`).
 - `just test` — test-core and test-browser in parallel (outputs printed
   sequentially)
 - `just test-fast` — `bun test --bail`, fast feedback during iteration
