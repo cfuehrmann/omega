@@ -1601,13 +1601,14 @@ function InputRow() {
     setTimeout(autoResize, 0);
   }
 
-  const omegaClass = () =>
-    (state.connecting   ? "omega-btn omega-connecting"
-    : !state.connected  ? "omega-btn omega-error"
-    : state.retrying    ? "omega-btn omega-retrying"
-    : state.streaming   ? "omega-btn omega-streaming"
-    : "omega-btn omega-ready")
-    + (panelOpen() ? " omega-open" : "");
+  const statusDisplayClass = () =>
+    "status-display " + (
+      state.connecting  ? "status-connecting"
+    : !state.connected ? "status-error"
+    : state.retrying   ? "status-retrying"
+    : state.streaming  ? "status-streaming"
+    :                    "status-ready"
+    );
 
   const omegaStatus = () =>
     state.connecting  ? "connecting"
@@ -1670,13 +1671,17 @@ function InputRow() {
         title="Manage sessions"
       >Sessions</button>
       <div class="status-row" data-testid="status-row">
-        <button
-          class={omegaClass()}
+        <span
+          class={statusDisplayClass()}
           data-testid="omega-btn"
           data-status={omegaStatus()}
+        >{statusLabel()}</span>
+        <button
+          class="panel-toggle-btn"
+          data-testid="panel-toggle-btn"
           onClick={() => setPanelOpen(o => !o)}
-          title={`${statusLabel()} · ${panelOpen() ? "hide" : "show"} panel`}
-        >Ω</button>
+          title={panelOpen() ? "Hide details panel" : "Show details panel"}
+        >{panelOpen() ? "▲ panel" : "▼ panel"}</button>
         <span class="status-label" data-testid="status-label">{statusLabel()}</span>
       </div>
       <Show when={state.streaming}

@@ -295,35 +295,43 @@ html, body, #root {
 }
 .sm-legend-toggle:hover { opacity: 0.9; }
 
-/* ── Ω button (status indicator + panel toggle, left of textarea) ── */
-.omega-btn {
+/* ── Status display (read-only, coloured text showing connection state) ── */
+.status-display {
+  font-family: var(--font);
+  font-size: 0.8rem;
+  font-weight: 500;
+  user-select: none;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+.status-display.status-ready      { color: var(--green); }
+.status-display.status-streaming  { color: var(--yellow); animation: pulse 1s infinite; }
+.status-display.status-retrying   { color: var(--peach);  animation: pulse 1.5s infinite; }
+.status-display.status-connecting { color: var(--yellow); }
+.status-display.status-error      { color: var(--red); }
+
+/* ── Panel toggle button (expand / collapse details panel) ── */
+.panel-toggle-btn {
   background: none;
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  color: var(--fg);
   font-family: var(--font);
-  font-size: 18px;
-  font-weight: bold;
-  line-height: 1;
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  height: 28px;
   cursor: pointer;
-  height: 38px;
-  padding: 0 10px;
-  display: inline-flex;
-  align-items: center;
-  transition: color 0.2s, border-color 0.2s, background 0.15s, opacity 0.2s;
-  flex-shrink: 0;
   user-select: none;
   white-space: nowrap;
+  transition: opacity 0.15s, background 0.15s;
 }
-.omega-btn.omega-ready      { color: var(--green);  border-color: color-mix(in srgb, var(--green) 35%, var(--border)); }
-.omega-btn.omega-streaming  { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); animation: pulse 1s infinite; }
-.omega-btn.omega-retrying   { color: var(--peach);  border-color: color-mix(in srgb, var(--peach) 35%, var(--border)); animation: pulse 1.5s infinite; }
-.omega-btn.omega-connecting { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 35%, var(--border)); }
-.omega-btn.omega-error      { color: var(--red);    border-color: color-mix(in srgb, var(--red) 35%, var(--border)); }
-.omega-btn.omega-open       { background: var(--bg3); }
-.omega-btn:hover            { opacity: 0.75; }
+.panel-toggle-btn:hover { opacity: 0.75; }
 
-/* ── Status row — thin wrapper kept for e2e test selectors ── */
+/* ── Status row — flex container for status display + panel toggle ── */
 .status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
   align-self: flex-end;
 }
