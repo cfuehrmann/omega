@@ -534,7 +534,9 @@ async function handleMessage(
         activeAbortController.signal,
         resumedSessionName,
       )) {
-        send(session.ws, event);
+        // Use broadcast() so that a browser refresh mid-resumption still
+        // receives the remaining events on the new socket.
+        broadcast(event);
         if (event.type === "llm_response" && event.text) {
           description = extractDescriptionFromResponse(event.text);
         }
@@ -542,11 +544,13 @@ async function handleMessage(
     } catch (err: unknown) {
       // llm_error is already logged and sent inside the generator.
       // Surface the failure to the client as a transport error too.
-      sendTransportError(
-        session.ws,
-        `Session resumption failed: ${err instanceof Error ? err.message : String(err)}`,
-        "resume_session",
-      );
+      if (activeSession) {
+        sendTransportError(
+          activeSession.ws,
+          `Session resumption failed: ${err instanceof Error ? err.message : String(err)}`,
+          "resume_session",
+        );
+      }
     } finally {
       isStreaming = false;
       activeAbortController = null;

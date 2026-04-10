@@ -165,6 +165,83 @@ describe("store history replay — open turn recovery", () => {
     expect(lastEvent.type).toBe("turn_interrupted");
   });
 
+  // ---------------------------------------------------------------------------
+  // Browser-refresh resilience: history with streaming=true (server has an
+  // in-flight turn that survived a WS reconnect)
+  // ---------------------------------------------------------------------------
+
+  it("does NOT inject synthetic turn_interrupted when history.streaming=true", () => {
+    // Simulates a browser refresh mid-turn: the server sends partial history
+    // with streaming=true because the agent turn is still running.
+    dispatch({
+      type: "history",
+      events: [
+        { type: "user_message", time: now(), content: "hello" },
+        { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc"], cacheBreakpointIndex: 0 } as any,
+        // NO turn_end — turn is still in progress
+      ],
+      streaming: true,
+    } as any);
+    // No synthetic turn_interrupted should have been appended
+    const lastEvent = state.events[state.events.length - 1]!;
+    expect(lastEvent.type).not.toBe("turn_interrupted");
+    expect(lastEvent.type).toBe("llm_call");
+  });
+
+  it("still injects synthetic turn_interrupted when history.streaming is absent (crash recovery)", () => {
+    // Absent streaming flag = server crashed mid-turn, not a live browser refresh
+    dispatch({
+      type: "history",
+      events: [
+        { type: "user_message", time: now(), content: "hello" },
+        { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc"], cacheBreakpointIndex: 0 } as any,
+      ],
+      // no streaming field
+    } as any);
+    const lastEvent = state.events[state.events.length - 1]!;
+    expect(lastEvent.type).toBe("turn_interrupted");
+  });
+
+  it("ready with streaming=true sets state.streaming to true", () => {
+    // history always resets streaming=false; ready with streaming=true then
+    // corrects it to reflect the server's live in-flight turn.
+    dispatch({
+      type: "history",
+      events: [{ type: "user_message", time: now(), content: "hello" }],
+      streaming: true,
+    } as any);
+    dispatch({ type: "ready", streaming: true } as any);
+    expect(state.streaming).toBe(true);
+  });
+
+  it("ready without streaming field keeps streaming=false", () => {
+    dispatch({
+      type: "history",
+      events: [
+        { type: "user_message", time: now(), content: "hello" },
+        { type: "turn_end", time: now(), metrics: { inputTokens: 1, outputTokens: 1 } },
+      ],
+    } as any);
+    dispatch({ type: "ready" });
+    expect(state.streaming).toBe(false);
+  });
+
+  it("live turn_end after streaming=true reconnect clears streaming", () => {
+    // Simulate: reconnect mid-turn, get history+ready with streaming=true,
+    // then the live turn_end arrives via broadcast()
+    dispatch({
+      type: "history",
+      events: [{ type: "user_message", time: now(), content: "hello" }],
+      streaming: true,
+    } as any);
+    dispatch({ type: "ready", streaming: true } as any);
+    expect(state.streaming).toBe(true);
+
+    // Live turn_end arrives via broadcast
+    dispatch({ type: "turn_end", time: now(), metrics: { inputTokens: 5, outputTokens: 10 } } as any);
+    expect(state.streaming).toBe(false);
+  });
+
   it("replays a complete ping/pong session with all event types", () => {
     // Exact events from a real session (events.jsonl), filtered through shouldLogEvent
     // (text and connected are excluded; the rest survive)
