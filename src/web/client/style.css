@@ -295,13 +295,12 @@ html, body, #root {
 }
 .sm-legend-toggle:hover { opacity: 0.9; }
 
-/* ── Status display (read-only box showing connection state) ── */
+/* ── Status display (read-only indicator — no border, not interactive) ── */
 .status-display {
   display: inline-flex;
   align-items: center;
   height: 38px;
   padding: 0 12px;
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   font-family: var(--font);
   font-size: 14px;
@@ -334,7 +333,7 @@ html, body, #root {
   white-space: nowrap;
   transition: opacity 0.15s;
 }
-.panel-toggle-btn:hover { opacity: 0.75; }
+.panel-toggle-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
 /* ── Custom effort dropdown ── */
 .effort-select {
@@ -355,6 +354,7 @@ html, body, #root {
   white-space: nowrap;
   transition: border-color 0.15s;
 }
+.effort-trigger:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .effort-trigger:disabled { opacity: 0.5; cursor: default; }
 .effort-trigger:focus     { outline: none; border-color: var(--user); }
 .effort-dropdown {
@@ -427,6 +427,7 @@ html, body, #root {
   outline: none;
   transition: border-color 0.15s;
 }
+.input-row textarea:hover:not(:disabled):not(:focus) { border-color: var(--ctp-blue); }
 .input-row textarea:focus       { border-color: var(--user); }
 .input-row textarea::placeholder { color: var(--dim); }
 .input-row textarea:disabled    { opacity: 0.5; }
@@ -444,7 +445,9 @@ html, body, #root {
 }
 .send-btn  { background: var(--user); color: var(--ctp-crust); font-weight: bold; }
 .abort-btn { background: var(--red);  color: var(--ctp-crust); }
+.send-btn:hover:not(:disabled)  { opacity: 0.85; }
 .send-btn:disabled { opacity: 0.4; cursor: default; }
+.abort-btn:hover { opacity: 0.85; }
 
 
 /* Sessions button — always-visible button in the input row (left of Ω) */
@@ -481,6 +484,7 @@ html, body, #root {
   height: 38px;
   transition: border-color 0.15s;
 }
+.model-select-inline:hover:not(:disabled) { border-color: var(--ctp-blue); }
 .model-select-inline:disabled { opacity: 0.5; cursor: default; }
 .model-select-inline:focus    { outline: none; border-color: var(--user); }
 
