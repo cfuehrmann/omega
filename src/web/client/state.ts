@@ -140,7 +140,7 @@ interface AppState {
    * Live duration accumulation for the current in-progress turn.
    */
   liveDurations: DurationMetrics;
-  /** Model for the current/last turn (set from llm_call or session_started). */
+  /** User's chosen model (set from session_started, model_changed, session_info). */
   liveModel: string;
   /** Current thinking effort level (set by session_info and effort_changed events). */
   liveEffort: string;
@@ -502,9 +502,9 @@ export function dispatch(event: ServerMessage): void {
           replayLiveEffort = e.effort;
         }
 
-        if (e.type === "llm_call") {
-          replayLiveModel = e.model ?? replayLiveModel;
-        }
+        // Note: llm_call.model is NOT used for replayLiveModel — internal
+        // calls (e.g. resumption) may use a different model than the user's
+        // chosen one. model_changed and session_started are authoritative.
 
         if (e.type === "user_message") {
           currentTurnStartIdx = i;
@@ -678,7 +678,6 @@ export function dispatch(event: ServerMessage): void {
 
     case "llm_call": {
       setState(produce(s => { s.events.push(event); }));
-      setState("liveModel", event.model);
       // Tick up requestBytes in the live turn accumulator
       setState("liveTurn", prev => {
         if (!prev) return prev;

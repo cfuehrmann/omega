@@ -351,3 +351,56 @@ describe("store resumption streaming state", () => {
     expect(state.events[state.events.length - 1]!.type).toBe("resuming_session");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Resumption llm_call must not override liveModel
+// ---------------------------------------------------------------------------
+
+describe("resumption llm_call does not override liveModel", () => {
+  it("liveModel stays at user-chosen model when resumption llm_call uses a different model", () => {
+    // Simulate the resume flow: history sets model to opus via model_changed,
+    // then a streamed resumption llm_call arrives using sonnet.
+    dispatch({
+      type: "history",
+      events: [
+        { type: "session_started", path: ".omega/sessions/test", model: "claude-sonnet-4-6", effort: "low", systemPrompt: "..." } as any,
+        { type: "model_changed", time: now(), model: "claude-opus-4-6" } as any,
+        { type: "effort_changed", time: now(), effort: "low" } as any,
+      ],
+    });
+
+    // After history replay, model should be opus
+    expect(state.liveModel).toBe("claude-opus-4-6");
+    expect(state.liveEffort).toBe("low");
+
+    // Now a resumption llm_call arrives using sonnet (the resumption model)
+    dispatch({
+      type: "llm_call",
+      url: "https://api.anthropic.com/v1/messages",
+      model: "claude-sonnet-4-6",
+      contextHashes: ["abc123"],
+      cacheBreakpointIndex: 0,
+    } as any);
+
+    // liveModel must still be opus — the user's chosen model
+    expect(state.liveModel).toBe("claude-opus-4-6");
+  });
+
+  it("history replay ignores llm_call model for liveModel derivation", () => {
+    // A resumed session where model_changed set opus, but an llm_call used sonnet
+    dispatch({
+      type: "history",
+      events: [
+        { type: "session_started", path: ".omega/sessions/test", model: "claude-sonnet-4-6", effort: "medium", systemPrompt: "..." } as any,
+        { type: "model_changed", time: now(), model: "claude-opus-4-6" } as any,
+        { type: "resuming_session", time: now(), resumedFrom: "prev-session", basis: "..." } as any,
+        { type: "llm_call", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-6", contextHashes: ["abc"], cacheBreakpointIndex: 0 } as any,
+        { type: "llm_response", stopReason: "end_turn", usage: { input_tokens: 10, output_tokens: 20 }, text: "summary" } as any,
+        { type: "session_resumed", time: now(), resumedFrom: "prev-session" } as any,
+      ],
+    });
+
+    // liveModel should be opus (from model_changed), not sonnet (from llm_call)
+    expect(state.liveModel).toBe("claude-opus-4-6");
+  });
+});
