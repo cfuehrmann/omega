@@ -286,7 +286,7 @@ describe("executeTool: edit_file", () => {
       new_text: "qux",
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("multiple");
+    expect(result.output).toContain("2 times");
   });
 
   it("returns error for missing file", async () => {
@@ -312,6 +312,51 @@ describe("executeTool: edit_file", () => {
     const content = await readFile(path, "utf-8");
     expect(content).toBe("line 1\nreplaced 2\nreplaced 3\nextra line\nline 4\n");
   });
+
+  it("applies multiple replacements via replacements array", async () => {
+    const path = join(TMP, "multi-edit.txt");
+    await writeFile(path, "aaa\nbbb\nccc\n");
+    const result = await executeTool("edit_file", {
+      path,
+      replacements: [
+        { old_text: "aaa", new_text: "AAA" },
+        { old_text: "ccc", new_text: "CCC" },
+      ],
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("2 replacements");
+
+    const { readFile } = await import("fs/promises");
+    const content = await readFile(path, "utf-8");
+    expect(content).toBe("AAA\nbbb\nCCC\n");
+  });
+
+  it("fails on second replacement if old_text not found after first edit", async () => {
+    const path = join(TMP, "multi-edit-fail.txt");
+    await writeFile(path, "aaa\nbbb\n");
+    const result = await executeTool("edit_file", {
+      path,
+      replacements: [
+        { old_text: "aaa", new_text: "bbb" },   // now two "bbb"
+        { old_text: "bbb", new_text: "ccc" },   // ambiguous
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("2 times");
+    expect(result.output).toContain("replacement 2/2");
+    // File should NOT have been written (error on second replacement)
+    const { readFile } = await import("fs/promises");
+    const content = await readFile(path, "utf-8");
+    expect(content).toBe("aaa\nbbb\n");
+  });
+
+  it("errors when neither old_text nor replacements provided", async () => {
+    const path = join(TMP, "multi-edit-empty.txt");
+    await writeFile(path, "hello\n");
+    const result = await executeTool("edit_file", { path });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("requires");
+  });
 });
 
 describe("formatToolCall: edit_file", () => {
@@ -323,6 +368,17 @@ describe("formatToolCall: edit_file", () => {
     });
     expect(formatted).toContain("edit_file");
     expect(formatted).toContain("src/agent.ts");
+  });
+
+  it("formats edit_file with replacements count", () => {
+    const formatted = formatToolCall("edit_file", {
+      path: "src/agent.ts",
+      replacements: [
+        { old_text: "a", new_text: "b" },
+        { old_text: "c", new_text: "d" },
+      ],
+    });
+    expect(formatted).toContain("2 replacements");
   });
 });
 
@@ -504,6 +560,7 @@ describe("executeTool: grep_files", () => {
       pattern: "Hello",
       path: TMP,
       case_sensitive: true,
+      context_lines: 0,
     });
     expect(result.isError).toBe(false);
     expect(result.output).toContain("Hello World");

@@ -50,10 +50,16 @@ export const RunCommandSchema = z.object({
   timeout: z.number().optional().describe("Timeout in seconds (optional, default 120)"),
 });
 
-export const EditFileSchema = z.object({
-  path:     z.string().describe("Path to the file (absolute or relative to cwd)"),
+const ReplacementSchema = z.object({
   old_text: z.string().describe("Exact text to find (must match exactly, must appear once)"),
   new_text: z.string().describe("Text to replace old_text with"),
+});
+
+export const EditFileSchema = z.object({
+  path:     z.string().describe("Path to the file (absolute or relative to cwd)"),
+  old_text: z.string().optional().describe("Exact text to find (must match exactly, must appear once)"),
+  new_text: z.string().optional().describe("Text to replace old_text with"),
+  replacements: z.array(ReplacementSchema).optional().describe("Multiple replacements to apply in order. Each old_text must appear exactly once in the file. Use this instead of old_text/new_text when making several edits to the same file."),
 });
 
 export const ListFilesSchema = z.object({
@@ -74,7 +80,7 @@ export const GrepFilesSchema = z.object({
   pattern:       z.string().describe("Regex or literal string to search for"),
   path:          z.string().describe("Directory (or file) path to search in"),
   file_glob:     z.string().optional().describe("Optional glob to restrict which files are searched (e.g. '*.ts')"),
-  context_lines: z.number().optional().describe("Number of context lines to include before and after each match (optional)"),
+  context_lines: z.number().optional().default(2).describe("Number of context lines to include before and after each match (default 2, pass 0 for bare matches)"),
   case_sensitive: z.boolean().optional().describe("If true, match is case-sensitive. Default: false (case-insensitive)"),
   max_results:   z.number().optional().describe("Maximum number of match lines to return (default 200)"),
 });

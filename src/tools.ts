@@ -258,8 +258,10 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Edit a file by replacing exact text. The old_text must match exactly " +
       "(including whitespace and indentation). Use this for surgical edits " +
-      "instead of rewriting entire files with write_file. The old_text must " +
-      "appear exactly once in the file.",
+      "instead of rewriting entire files with write_file. Each old_text must " +
+      "appear exactly once in the file. For multiple edits to the same file, " +
+      "pass a `replacements` array instead of old_text/new_text — this is " +
+      "faster and avoids round-trips.",
     input_schema: toToolInputSchema(EditFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -293,7 +295,8 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Search for a pattern across files in a directory using ripgrep (rg) with grep fallback. " +
       "Returns structured file:line:text matches, capped at max_results (default 200). " +
       "Use this to find all occurrences of a symbol, string, or regex across the codebase " +
-      "instead of reading files speculatively. Chain with read_file to inspect context.",
+      "instead of reading files speculatively. Chain with read_file to inspect context. " +
+      "By default includes 2 context lines around each match; pass 0 for bare matches.",
     input_schema: toToolInputSchema(GrepFilesSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -403,35 +406,57 @@ async function executeWriteFile(input: {
 
 async function executeEditFile(input: {
   path: string;
-  old_text: string;
-  new_text: string;
+  old_text?: string;
+  new_text?: string;
+  replacements?: { old_text: string; new_text: string }[];
 }): Promise<string> {
-  const content = await readFile(input.path, "utf-8");
-
-  // Count occurrences
-  let count = 0;
-  let idx = -1;
-  while ((idx = content.indexOf(input.old_text, idx + 1)) !== -1) {
-    count++;
+  // Normalize: build a replacements array from either form.
+  let replacements: { old_text: string; new_text: string }[];
+  if (input.replacements && input.replacements.length > 0) {
+    replacements = input.replacements;
+  } else if (input.old_text !== undefined && input.new_text !== undefined) {
+    replacements = [{ old_text: input.old_text, new_text: input.new_text }];
+  } else {
+    throw new Error("edit_file requires either old_text+new_text or a non-empty replacements array.");
   }
 
-  if (count === 0) {
-    throw new Error(
-      `old_text not found in ${input.path}. Make sure it matches exactly (including whitespace).`
-    );
-  }
-  if (count > 1) {
-    throw new Error(
-      `old_text found ${count} multiple times in ${input.path}. It must appear exactly once. Use a larger/more unique snippet.`
-    );
+  let content = await readFile(input.path, "utf-8");
+  const summaries: string[] = [];
+
+  for (let i = 0; i < replacements.length; i++) {
+    const { old_text, new_text } = replacements[i]!;
+
+    // Count occurrences
+    let count = 0;
+    let idx = -1;
+    while ((idx = content.indexOf(old_text, idx + 1)) !== -1) {
+      count++;
+    }
+
+    const label = replacements.length > 1 ? ` (replacement ${i + 1}/${replacements.length})` : "";
+    if (count === 0) {
+      throw new Error(
+        `old_text not found in ${input.path}${label}. Make sure it matches exactly (including whitespace).`
+      );
+    }
+    if (count > 1) {
+      throw new Error(
+        `old_text found ${count} times in ${input.path}${label}. It must appear exactly once. Use a larger/more unique snippet.`
+      );
+    }
+
+    content = content.replace(old_text, new_text);
+    const oldLines = old_text.split("\n").length;
+    const newLines = new_text.split("\n").length;
+    summaries.push(`replaced ${oldLines} line(s) with ${newLines} line(s)`);
   }
 
-  const newContent = content.replace(input.old_text, input.new_text);
-  await writeFile(input.path, newContent, "utf-8");
+  await writeFile(input.path, content, "utf-8");
 
-  const oldLines = input.old_text.split("\n").length;
-  const newLines = input.new_text.split("\n").length;
-  return `edit_file: ${input.path} — replaced ${oldLines} line(s) with ${newLines} line(s)`;
+  if (summaries.length === 1) {
+    return `edit_file: ${input.path} — ${summaries[0]}`;
+  }
+  return `edit_file: ${input.path} — ${summaries.length} replacements applied:\n${summaries.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}`;
 }
 
 function executeRunCommand(
@@ -928,8 +953,13 @@ export function formatToolCall(name: string, input: any): string {
     }
     case "write_file":
       return `write_file: ${input.path} (${input.content?.length ?? 0} bytes)`;
-    case "edit_file":
+    case "edit_file": {
+      const reps = input.replacements as { old_text: string; new_text: string }[] | undefined;
+      if (reps && reps.length > 0) {
+        return `edit_file: ${input.path} (${reps.length} replacements)`;
+      }
       return `edit_file: ${input.path} (${input.old_text?.length ?? 0} → ${input.new_text?.length ?? 0} bytes)`;
+    }
     case "run_command":
       return `run_command: ${input.command}`;
     case "list_files": {
