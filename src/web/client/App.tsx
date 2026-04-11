@@ -1174,6 +1174,31 @@ function newSession() {
 // ---------------------------------------------------------------------------
 
 function MetricsTable() {
+  // Ticking wall-clock signal — updates every second while a turn is live.
+  const [now, setNow] = createSignal(Date.now());
+  createEffect(() => {
+    if (!state.streaming) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(id));
+  });
+
+  // Timestamp of the current turn's user_message — null when not streaming.
+  const liveTurnStartMs = createMemo(() => {
+    if (!state.streaming) return null;
+    const events = state.events;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i]!;
+      if (e.type === "user_message" && e.time) return new Date(e.time).getTime();
+    }
+    return null;
+  });
+
+  // Elapsed ms for the current live turn (0 when idle).
+  const liveTurnElapsedMs = (): number => {
+    const start = liveTurnStartMs();
+    return start !== null ? Math.max(0, now() - start) : 0;
+  };
+
   const turnMetrics = (): StickyMetrics =>
     state.liveTurn ?? state.lastTurnEnd?.metrics ?? zeroMetrics();
 
@@ -1219,7 +1244,7 @@ function MetricsTable() {
     { label: "request size",     gap: true,  turnVal: (m) => formatKb(m.requestBytes), compactVal: (_m) => "—", sessVal: (m) => formatKb(m.requestBytes) },
     { label: "llm",              gap: true,  turnVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",  compactVal: (_m) => "—", sessVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—" },
     { label: "tools",            gap: false, turnVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—", compactVal: (_m) => "—", sessVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—" },
-    { label: "total",            gap: false, turnVal: (_m, d, isLive) => (!isLive && d.turnMs > 0) ? formatDuration(d.turnMs) : "—", compactVal: (_m) => "—", sessVal: (_m, _d) => "—" },
+    { label: "total",            gap: false, turnVal: (_m, d, isLive) => isLive ? formatDuration(liveTurnElapsedMs()) : (d.turnMs > 0 ? formatDuration(d.turnMs) : "—"), compactVal: (_m) => "—", sessVal: (_m, d) => { const t = d.turnMs + (state.streaming ? liveTurnElapsedMs() : 0); return t > 0 ? formatDuration(t) : "—"; } },
   ];
 
   const showCompact = () =>
