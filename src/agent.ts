@@ -86,6 +86,7 @@ function elideAnthropicResponse(resp: Anthropic.Beta.Messages.BetaMessage): Reco
     model: resp.model,
     stop_reason: resp.stop_reason,
     usage: resp.usage,
+    ...(((resp as any).context_management) ? { context_management: (resp as any).context_management } : {}),
     content: `[elided — use context hash]`,
   };
 }
