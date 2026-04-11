@@ -386,6 +386,8 @@ interface LlmResponseDetail {
   allContextHashes: string[];
   text?: string;
   responseSummary?: Record<string, unknown>;
+  clearedToolUses?: number;
+  clearedInputTokens?: number;
 }
 
 interface BlockDetail {
@@ -642,6 +644,9 @@ function ActiveModal() {
             <Show when={d.time}>
               <div class="modal-section-label">time: {formatTs(d.time)}</div>
             </Show>
+            <Show when={d.clearedToolUses}>
+              <div class="modal-section-label">tools cleared: {d.clearedToolUses} · tokens saved: ~{d.clearedInputTokens?.toLocaleString()}</div>
+            </Show>
             <div class="modal-section-label">{usageParts}  <button class="llm-legend-btn" onClick={() => setLegendOpen(o => !o)} title="Token legend">ⓘ</button>  <button class="llm-legend-btn" onClick={openMessages} title="View as messages">messages (+1)</button></div>
             <div class="modal-section-label">payload</div>
             <pre class="modal-body">{respStr}</pre>
@@ -851,6 +856,8 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
           allContextHashes,
           text: e.text,
           responseSummary: e.responseSummary,
+          clearedToolUses: e.clearedToolUses,
+          clearedInputTokens: e.clearedInputTokens,
         },
       });
       const openMessages = () => setActiveModal({
