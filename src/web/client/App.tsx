@@ -799,18 +799,6 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
     }
 
-    case "tool_results_cleared": {
-      const body = `Old tool results cleared by server: ${e.clearedToolUses} tool use${e.clearedToolUses !== 1 ? "s" : ""} removed, ~${e.clearedInputTokens.toLocaleString()} tokens saved.`;
-      return (
-        <div class="block status" data-testid="block-status">
-          <div class="block-label-row">
-            <span class="block-label">tool_results_cleared</span>
-          </div>
-          <div class="block-body">{body}</div>
-        </div>
-      );
-    }
-
     case "llm_call": {
       // Find the previous llm_call across all turns to compute the delta.
       const myIdx = props.allLlmCalls.indexOf(e);
@@ -887,7 +875,7 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       return (
         <div class="block api-response" data-testid="block-llm-response">
           <div class="block-label-row">
-            <span class="block-label">llm_response<span class="block-label-meta">{e.stopReason}</span></span>
+            <span class="block-label">llm_response<span class="block-label-meta">{e.stopReason}</span><Show when={e.clearedToolUses}><span class="block-label-meta"> · {e.clearedToolUses} tools cleared</span></Show></span>
             <div class="block-btn-group">
               <Show when={e.thinking}>
                 <button class="block-expand-btn thinking-btn" onClick={openThinking} title="View thinking">thinking</button>

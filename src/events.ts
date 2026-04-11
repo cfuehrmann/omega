@@ -122,6 +122,13 @@ export interface LlmResponseEvent {
   type: "llm_response";
   time: ISOTimestamp;
   stopReason: string;
+  /**
+   * Number of tool use/result pairs the server cleared from the context before
+   * processing this response. Absent when no clearing occurred.
+   */
+  clearedToolUses?: number;
+  /** Approximate input tokens saved by server-side clearing. */
+  clearedInputTokens?: number;
   usage: {
     input_tokens: number;
     output_tokens: number;
@@ -245,20 +252,6 @@ export interface CompactedEvent {
    * (non-compaction) iteration. Sum across iterations for the true total.
    */
   usage: unknown;
-}
-
-/**
- * Server-side tool result clearing fired during this turn.  Emitted once per
- * response where context_management.applied_edits contains a
- * clear_tool_uses_20250919 entry.
- */
-export interface ToolResultsClearedEvent {
-  type: "tool_results_cleared";
-  time: ISOTimestamp;
-  /** Number of tool use/result pairs removed from the context. */
-  clearedToolUses: number;
-  /** Approximate input tokens saved by this clearing. */
-  clearedInputTokens: number;
 }
 
 /** LLM provider call retried after a transient error. */
@@ -409,7 +402,6 @@ export type OmegaEvent =
   | AgentErrorEvent
   | TurnInterruptedEvent
   | CompactedEvent
-  | ToolResultsClearedEvent
   | LlmRetryEvent
   | ModelChangedEvent
   | EffortChangedEvent

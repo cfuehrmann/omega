@@ -1150,20 +1150,15 @@ export class Agent {
       // when clearing fired. Clearing happens server-side only — our local
       // compactedContextHistory is unaffected (the API docs confirm the client
       // keeps its full history; only the server-side prompt is edited).
+      // Detect server-side tool result clearing. The API returns
+      // context_management.applied_edits with a clear_tool_uses_20250919 entry
+      // when clearing fired. Clearing happens server-side only — our local
+      // compactedContextHistory is unaffected (the API docs confirm the client
+      // keeps its full history; only the server-side prompt is edited).
       const appliedEdits: any[] = (response as any).context_management?.applied_edits ?? [];
       const clearingEdit = appliedEdits.find(
         (edit: any) => edit.type === "clear_tool_uses_20250919",
       );
-      if (clearingEdit) {
-        const clearedEv: OmegaEvent = {
-          type: "tool_results_cleared",
-          time: now(),
-          clearedToolUses: clearingEdit.cleared_tool_uses ?? 0,
-          clearedInputTokens: clearingEdit.cleared_input_tokens ?? 0,
-        };
-        await this.logEvent(clearedEv);
-        yield clearedEv;
-      }
 
       // Add assistant response to history; capture hash for llm_response + tool_call events.
       // appendToHistory is awaited so the context.jsonl record is on disk before
@@ -1176,6 +1171,12 @@ export class Agent {
         type: "llm_response",
         time: now(),
         stopReason: response.stop_reason ?? "unknown",
+        ...(clearingEdit
+          ? {
+              clearedToolUses: clearingEdit.cleared_tool_uses ?? 0,
+              clearedInputTokens: clearingEdit.cleared_input_tokens ?? 0,
+            }
+          : {}),
         usage: {
           input_tokens: response.usage.input_tokens ?? 0,
           output_tokens: response.usage.output_tokens,

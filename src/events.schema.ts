@@ -84,6 +84,8 @@ const LlmResponseSchema = z.object({
   type: z.literal("llm_response"),
   time: ISOTimestampSchema,
   stopReason: z.string(),
+  clearedToolUses: z.number().int().optional(),
+  clearedInputTokens: z.number().int().optional(),
   usage: LlmResponseUsageSchema,
   contextHash: ContextHashSchema,
   text: z.string().optional(),
@@ -142,13 +144,6 @@ const CompactedSchema = z.object({
   time: ISOTimestampSchema,
   // usage is the raw Anthropic usage object — not further constrained
   usage: z.unknown(),
-});
-
-const ToolResultsClearedSchema = z.object({
-  type: z.literal("tool_results_cleared"),
-  time: ISOTimestampSchema,
-  clearedToolUses: z.number().int(),
-  clearedInputTokens: z.number().int(),
 });
 
 const LlmRetrySchema = z.object({
@@ -232,7 +227,6 @@ export const OmegaEventSchema = z.discriminatedUnion("type", [
   AgentErrorSchema,
   TurnInterruptedSchema,
   CompactedSchema,
-  ToolResultsClearedSchema,
   LlmRetrySchema,
   ModelChangedSchema,
   EffortChangedSchema,
