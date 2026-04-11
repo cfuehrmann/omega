@@ -1485,7 +1485,7 @@ function SessionPickerModal() {
                                           onClick={(e) => startRename(s.dir, s.name, e)}
                                           title="Rename this session">Rename</button>
                                   <button class="session-picker-delete" data-testid="session-picker-delete"
-                                          disabled={state.streaming}
+                                          disabled={state.streaming && isCurrent()}
                                           onClick={(e) => deleteSession(s.dir, e)} title="Delete session">✕</button>
                                 </>
                               }
@@ -1739,7 +1739,6 @@ function InputRow() {
         class="input-btn sessions-btn"
         data-testid="sessions-btn"
         data-session-dir={state.sessionDir ?? ""}
-        disabled={state.streaming}
         onClick={() => setSessionPickerOpen(true)}
         title="Manage sessions"
       >Sessions</button>
