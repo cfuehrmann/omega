@@ -699,14 +699,14 @@ html, body, #root {
   margin-top: 2px;
 }
 
-/* Small action buttons shared style */
+/* Small action buttons shared style — mirrors .input-btn (minus size) */
 .session-picker-resume,
 .session-picker-rename,
 .session-picker-save,
 .session-picker-cancel-rename,
 .session-picker-delete {
   background: none;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--dim);
   cursor: pointer;
@@ -714,13 +714,17 @@ html, body, #root {
   padding: 2px 7px;
   flex-shrink: 0;
   font-family: var(--font);
+  transition: border-color 0.15s, color 0.15s;
 }
-.session-picker-resume:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.session-picker-resume:disabled { opacity: 0.4; cursor: default; }
-.session-picker-rename:hover   { border-color: var(--dim);      color: var(--text); }
-.session-picker-save:hover     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.session-picker-cancel-rename:hover { border-color: var(--dim); color: var(--text); }
-.session-picker-delete:hover    { border-color: var(--red); color: var(--red); }
+.session-picker-resume:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-rename:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-save:hover:not(:disabled)          { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-cancel-rename:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.session-picker-delete:hover:not(:disabled)        { border-color: var(--red);      color: var(--red);      }
+.session-picker-resume:disabled,
+.session-picker-rename:disabled,
+.session-picker-save:disabled,
+.session-picker-cancel-rename:disabled,
 .session-picker-delete:disabled { opacity: 0.4; cursor: default; }
 
 .session-picker-rename-input {
