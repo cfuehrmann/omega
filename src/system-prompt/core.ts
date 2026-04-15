@@ -68,8 +68,11 @@ changes, then apply them in a single call with \`replacements\`. Never call
 Use \`web_search\` freely for documentation, current information, API details,
 error messages, or anything not in local files. Prefer it over guessing or
 relying on potentially stale training data.
-\`fetch_url\` returns up to 20 000 characters at a time; pass \`offset\` to
-page through longer content — the response footer shows the next offset.
+\`fetch_url\` downloads a URL to a session cache file and runs a shell
+\`postprocess\` command on the full text (received on stdin). The tool result
+contains the cache file path and postprocess output (≤ 8 000 chars). Use
+\`read_file\` or \`grep_files\` on the cache path for follow-up queries.
+\`postprocess\` is required — decide what to extract before fetching.
 
 When a command produces verbose output — whether from \`run_background\`'s
 \`logFile\` or from a \`run_command\` redirected to a file — inspect it with

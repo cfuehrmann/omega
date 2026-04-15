@@ -427,65 +427,74 @@ describe("executeTool: web_search", () => {
 // --- executeTool: fetch_url ---
 
 describe("executeTool: fetch_url", () => {
-  it("fetches a real URL and returns text content", async () => {
-    const result = await executeTool("fetch_url", { url: "https://example.com" });
+  it("downloads URL, runs postprocess, and returns cache path + output", async () => {
+    const result = await executeTool("fetch_url", {
+      url: "https://example.com",
+      postprocess: "grep -i 'example'",
+    });
     expect(result.isError).toBe(false);
-    expect(result.output).toContain("Example Domain");
+    expect(result.output).toMatch(/Cached:.*\.txt/);
+    expect(result.output).toContain("--- postprocess:");
+    expect(result.output).toContain("example");
   }, 15_000);
 
-  it("result is truncated if page is very long", async () => {
-    // example.com is short, so test truncation indirectly via the cap
-    const result = await executeTool("fetch_url", { url: "https://example.com" });
+  it("cache file path is in the result", async () => {
+    const result = await executeTool("fetch_url", {
+      url: "https://example.com",
+      postprocess: "head -5",
+    });
     expect(result.isError).toBe(false);
-    // Output should never exceed ~10000 chars (our cap)
-    expect(result.output.length).toBeLessThanOrEqual(10_000);
+    expect(result.output).toMatch(/Cached:.*omega-webcache.*\.txt/);
   }, 15_000);
+
+  it("second call to same URL reuses the cache file", async () => {
+    const url = "https://example.com";
+    const r1 = await executeTool("fetch_url", { url, postprocess: "wc -c" });
+    const r2 = await executeTool("fetch_url", { url, postprocess: "wc -l" });
+    expect(r1.isError).toBe(false);
+    expect(r2.isError).toBe(false);
+    // Both results reference the same cache file path
+    const path1 = r1.output.match(/Cached: (\S+)/)?.[1];
+    const path2 = r2.output.match(/Cached: (\S+)/)?.[1];
+    expect(path1).toBeDefined();
+    expect(path1).toBe(path2);
+  }, 15_000);
+
+  it("postprocess with no matches (grep exit 1) is not an error", async () => {
+    const result = await executeTool("fetch_url", {
+      url: "https://example.com",
+      postprocess: "grep -n 'zzz_this_string_is_definitely_not_present_zzz'",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("(no output)");
+  }, 15_000);
+
+  it("missing postprocess returns an error", async () => {
+    const result = await executeTool("fetch_url", { url: "https://example.com" } as any);
+    expect(result.isError).toBe(true);
+  });
 
   it("returns an error for an invalid URL", async () => {
-    const result = await executeTool("fetch_url", { url: "not-a-url" });
+    const result = await executeTool("fetch_url", {
+      url: "not-a-url",
+      postprocess: "cat",
+    });
     expect(result.isError).toBe(true);
   });
 
   it("returns an error for an unreachable host", async () => {
-    const result = await executeTool("fetch_url", { url: "https://this-host-does-not-exist.invalid" });
+    const result = await executeTool("fetch_url", {
+      url: "https://this-host-does-not-exist.invalid",
+      postprocess: "cat",
+    });
     expect(result.isError).toBe(true);
   }, 15_000);
 
-  it("formatToolCall formats fetch_url without offset", () => {
-    expect(formatToolCall("fetch_url", { url: "https://example.com" })).toBe(
-      "fetch_url: https://example.com"
-    );
+  it("formatToolCall shows URL and postprocess command", () => {
+    expect(
+      formatToolCall("fetch_url", { url: "https://example.com", postprocess: "grep -n 'foo'" })
+    ).toBe("fetch_url: https://example.com | grep -n 'foo'");
   });
-
-  it("formatToolCall formats fetch_url with offset", () => {
-    expect(formatToolCall("fetch_url", { url: "https://example.com", offset: 5000 })).toBe(
-      "fetch_url: https://example.com (offset 5000)"
-    );
-  });
-
-  it("offset=0 returns the same content as no offset", async () => {
-    const [r1, r2] = await Promise.all([
-      executeTool("fetch_url", { url: "https://example.com" }),
-      executeTool("fetch_url", { url: "https://example.com", offset: 0 }),
-    ]);
-    expect(r1.isError).toBe(false);
-    expect(r2.isError).toBe(false);
-    expect(r1.output).toBe(r2.output);
-  }, 15_000);
-
-  it("offset skips the leading characters", async () => {
-    const r = await executeTool("fetch_url", { url: "https://example.com", offset: 10 });
-    expect(r.isError).toBe(false);
-    // The full page starts with "Example Domain" (or similar); offset=10 skips the first 10 chars
-    const full = await executeTool("fetch_url", { url: "https://example.com" });
-    expect(r.output).toBe(full.output.slice(10));
-  }, 15_000);
-
-  it("offset beyond page length returns a no-more-content message", async () => {
-    const r = await executeTool("fetch_url", { url: "https://example.com", offset: 999_999 });
-    expect(r.isError).toBe(false);
-    expect(r.output).toContain("No more content");
-  }, 15_000);
 });
 
 // --- executeTool: grep_files ---

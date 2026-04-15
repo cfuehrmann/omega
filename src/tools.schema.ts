@@ -70,8 +70,12 @@ export const WebSearchSchema = z.object({
 });
 
 export const FetchUrlSchema = z.object({
-  url:    z.string().describe("The URL to fetch (must be http or https)"),
-  offset: z.number().optional().describe("Character offset to start reading from (optional, default 0). Use the value from the previous response footer to page through content longer than 20000 chars."),
+  url:         z.string().describe("The URL to fetch (must be http or https)"),
+  postprocess: z.string().describe(
+    "Shell command to run on the downloaded text, received on stdin. " +
+    "Examples: grep -n 'pattern', head -80, jq '.', awk '/foo/', python3 -c '...'. " +
+    "Required: decide what to extract before fetching."
+  ),
 });
 
 export const GrepFilesSchema = z.object({

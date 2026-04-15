@@ -1,4 +1,5 @@
-import { readFile, writeFile, readdir, stat } from "fs/promises";
+import { readFile, writeFile, readdir, stat, mkdir } from "fs/promises";
+import { createHash } from "crypto";
 import { join, relative } from "path";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
@@ -111,6 +112,28 @@ const MAX_TOOL_OUTPUT_CHARS = 100_000;
 const FETCH_TLS_OPTIONS = { tls: { rejectUnauthorized: false } };
 
 /**
+ * Maximum characters returned from a postprocess command before truncation.
+ * Small enough to keep the tool result context-friendly; the full downloaded
+ * content is always available in the cache file for follow-up queries.
+ */
+const FETCH_URL_POSTPROCESS_MAX_CHARS = 8_000;
+
+/**
+ * Session-scoped web cache directory. Created lazily on first fetch_url call.
+ * Keyed on process.pid so it is unique per Omega session and automatically
+ * abandoned when the process exits (no stale-content risk).
+ */
+let webCacheDirPath: string | null = null;
+
+async function getWebCacheDir(): Promise<string> {
+  if (webCacheDirPath) return webCacheDirPath;
+  const dir = join(tmpdir(), `omega-webcache-${process.pid}`);
+  await mkdir(dir, { recursive: true });
+  webCacheDirPath = dir;
+  return webCacheDirPath;
+}
+
+/**
  * Strip HTML tags and collapse whitespace, returning plain text.
  * Good enough for readability without a full DOM parser.
  */
@@ -178,10 +201,11 @@ async function executeWebSearch(input: { query: string }): Promise<string> {
     : output;
 }
 
-async function executeFetchUrl(input: { url: string; offset?: number }): Promise<string> {
-  if (!input.url || !input.url.trim()) throw new Error("url is required");
+async function executeFetchUrl(input: { url: string; postprocess: string }): Promise<string> {
+  if (!input.url?.trim()) throw new Error("url is required");
+  if (!input.postprocess?.trim()) throw new Error("postprocess is required");
 
-  // Basic URL validation
+  // Validate URL
   let parsed: URL;
   try {
     parsed = new URL(input.url.trim());
@@ -192,37 +216,80 @@ async function executeFetchUrl(input: { url: string; offset?: number }): Promise
     throw new Error(`Unsupported protocol: ${parsed.protocol}`);
   }
 
-  const res = await fetch(parsed.href, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-    signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
-    ...FETCH_TLS_OPTIONS,
-  } as any);
+  // Content-addressed cache: SHA-256 of the normalized URL.
+  // Same URL → same file; re-download is skipped within the session.
+  const urlHash = createHash("sha256").update(parsed.href).digest("hex");
+  const cacheDir = await getWebCacheDir();
+  const cacheFile = join(cacheDir, `${urlHash}.txt`);
 
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  // Download only if not already cached this session
+  const fileExists = await stat(cacheFile).then(() => true).catch(() => false);
+  let charCount: number;
+  if (!fileExists) {
+    const res = await fetch(parsed.href, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
+      ...FETCH_TLS_OPTIONS,
+    } as any);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
-  const contentType = res.headers.get("content-type") ?? "";
-  const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml");
-
-  const body = await res.text();
-  const text = isHtml ? htmlToText(body) : body;
-
-  const startChar = input.offset ?? 0;
-
-  if (startChar > 0 && startChar >= text.length) {
-    return `[No more content. Total page length: ${text.length} chars.]`;
+    const contentType = res.headers.get("content-type") ?? "";
+    const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml");
+    const body = await res.text();
+    const text = isHtml ? htmlToText(body) : body;
+    await writeFile(cacheFile, text, "utf-8");
+    charCount = text.length;
+  } else {
+    charCount = (await stat(cacheFile)).size;
   }
 
-  const window = text.slice(startChar, startChar + FETCH_URL_MAX_CHARS);
-  const endChar = startChar + window.length;
+  // Run postprocess command with the cached file piped to stdin.
+  // Single-quoting the path is safe: it contains only hex chars + separators.
+  const wrappedCmd = `${input.postprocess.trim()} < '${cacheFile}'`;
+  const postResult = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
+    (resolve) => {
+      let stdout = "";
+      let stderr = "";
+      const proc = spawn("bash", ["-c", wrappedCmd], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+      proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+      proc.on("close", (code) => resolve({ stdout, stderr, code }));
+      proc.on("error", (err) => resolve({ stdout: "", stderr: err.message, code: -1 }));
+    }
+  );
 
-  if (endChar < text.length) {
-    return window + `\n\n[Showing chars ${startChar}–${endChar} of ${text.length}. Fetch again with offset=${endChar} to continue.]`;
+  // code 0 = success; code 1 = grep/rg "no matches" — not an error
+  const ppIsError = postResult.code !== 0 && postResult.code !== 1;
+  let ppOut = ppIsError
+    ? (postResult.stderr.trim() || `[exit code ${postResult.code}]`)
+    : postResult.stdout;
+
+  let truncated = false;
+  if (ppOut.length > FETCH_URL_POSTPROCESS_MAX_CHARS) {
+    ppOut = ppOut.slice(0, FETCH_URL_POSTPROCESS_MAX_CHARS);
+    truncated = true;
   }
 
-  return window;
+  let result = `Cached: ${cacheFile} (${charCount} chars)\n`;
+  result += `\n--- postprocess: ${input.postprocess.trim()} ---\n`;
+  if (ppIsError) {
+    result += `[error] ${ppOut}`;
+  } else if (!ppOut.trim()) {
+    result += "(no output)";
+  } else {
+    result += ppOut.trimEnd();
+    if (truncated) {
+      result += `\n[postprocess output truncated at ${FETCH_URL_POSTPROCESS_MAX_CHARS} chars — use read_file or grep_files on the cached file for more]`;
+    }
+  }
+  result += "\n--- end ---";
+
+  return result;
 }
 
 // Tool definitions for the Anthropic API
@@ -281,12 +348,15 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
   {
     name: "fetch_url",
     description:
-      "Fetch the content of a URL and return it as plain text. " +
-      "HTML pages are converted to readable text (tags stripped). " +
-      `Returns up to ${FETCH_URL_MAX_CHARS} characters starting at the optional char offset. ` +
-      "When a page is cut off, the response footer shows the total length and " +
-      "the next offset — call again with that offset to page through. " +
-      "Use this to read documentation, articles, or any web page.",
+      "Download a URL to a session-local cache file (content-addressed by URL hash) and " +
+      "immediately run a shell postprocessing command on the full downloaded text. " +
+      "HTML is converted to readable text before caching. " +
+      "The tool result contains the cache file path and postprocess output (≤ 8 000 chars). " +
+      "Use read_file or grep_files on the cache path for follow-up queries — no re-download needed. " +
+      "postprocess is required and receives the full content on stdin: " +
+      "grep -n 'pattern', head -80, jq '.', awk, python3 -c '...', etc. " +
+      "Decide what to extract before fetching. " +
+      "Repeated calls to the same URL within a session reuse the cached file.",
     input_schema: toToolInputSchema(FetchUrlSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -960,11 +1030,8 @@ export function formatToolCall(name: string, input: any): string {
     }
     case "web_search":
       return `web_search: ${input.query}`;
-    case "fetch_url": {
-      let s = `fetch_url: ${input.url}`;
-      if (input.offset) s += ` (offset ${input.offset})`;
-      return s;
-    }
+    case "fetch_url":
+      return `fetch_url: ${input.url} | ${input.postprocess ?? ""}`;
     case "grep_files": {
       let s = `grep_files: ${input.pattern} in ${input.path}`;
       if (input.file_glob) s += ` [${input.file_glob}]`;
