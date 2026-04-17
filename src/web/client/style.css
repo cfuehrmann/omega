@@ -854,6 +854,27 @@ html, body, #root {
   min-height: 0;
 }
 
+/* Single scrolling container — used by tool-modal to unify input+output */
+.modal-scroll-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Non-scrolling pre block used inside .modal-scroll-body */
+.modal-pre {
+  padding: 6px 14px 12px;
+  font-family: var(--font);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  margin: 0;
+  flex-shrink: 0;
+}
+
 /* ── llm_call modal ── */
 .llm-call-messages {
   flex: 1;

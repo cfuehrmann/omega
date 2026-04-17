@@ -506,25 +506,27 @@ function ActiveModal() {
           const d = modal.detail;
           return (
             <ModalShell title={`tool › ${d.name}`} cls="tool-modal">
-              <Show when={d.time}>
-                <div class="modal-section-label">{formatTs(d.time)}</div>
-              </Show>
-              <div class="modal-section-label">input</div>
-              <pre class="modal-body">{
-                d.input == null
-                  ? "(none)"
-                  : typeof d.input === "object"
-                    ? JSON.stringify(d.input, null, 2)
-                    : String(d.input)
-              }</pre>
-              <div class="modal-section-label">
-                output
-                <span class="modal-meta">
-                  {d.isError ? " · error" : ""}
-                  {" · "}{d.durationMs.toFixed(0)} ms
-                </span>
+              <div class="modal-scroll-body">
+                <Show when={d.time}>
+                  <div class="modal-section-label">{formatTs(d.time)}</div>
+                </Show>
+                <div class="modal-section-label">input</div>
+                <pre class="modal-pre">{
+                  d.input == null
+                    ? "(none)"
+                    : typeof d.input === "object"
+                      ? JSON.stringify(d.input, null, 2)
+                      : String(d.input)
+                }</pre>
+                <div class="modal-section-label">
+                  output
+                  <span class="modal-meta">
+                    {d.isError ? " · error" : ""}
+                    {" · "}{d.durationMs.toFixed(0)} ms
+                  </span>
+                </div>
+                <pre class="modal-pre">{d.output}</pre>
               </div>
-              <pre class="modal-body">{d.output}</pre>
             </ModalShell>
           );
         }
