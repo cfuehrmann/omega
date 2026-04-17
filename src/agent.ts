@@ -1116,19 +1116,15 @@ export class Agent {
 
       const { response, assembledText, assembledTextTs, assembledThinking } = llmResult;
 
-      // Track tokens — sum across iterations for the true billing total.
-      // When compaction fires, usage.iterations carries a "compaction" entry
-      // and a "message" entry; the top-level input_tokens/output_tokens reflect
-      // only the message iteration and do NOT include the compaction cost.
-      // See: https://docs.anthropic.com/en/build-with-claude/compaction#understanding-usage
-      const usageIterations: any[] | undefined = (response.usage as any).iterations;
-      if (usageIterations && Array.isArray(usageIterations) && usageIterations.length > 0) {
-        turnInputTokens  = usageIterations.reduce((s: number, it: any) => s + (it.input_tokens  ?? 0), 0);
-        turnOutputTokens = usageIterations.reduce((s: number, it: any) => s + (it.output_tokens ?? 0), 0);
-      } else {
-        turnInputTokens = response.usage.input_tokens;
-        turnOutputTokens = response.usage.output_tokens;
-      }
+      // Track tokens — message-iteration only (top-level usage fields).
+      // When compaction fires, the API's usage.iterations carries a separate
+      // "compaction" entry whose input_tokens have an unknown cache breakdown
+      // (the API reports a flat number, no cache_read/cache_creation split).
+      // We intentionally keep turn/session accumulators message-iteration-only
+      // so every column maps to a single billing rate.  Compaction costs are
+      // surfaced separately via the CompactedEvent → compactionTotals path.
+      turnInputTokens = response.usage.input_tokens;
+      turnOutputTokens = response.usage.output_tokens;
       const turnCacheCreation = response.usage.cache_creation_input_tokens ?? 0;
       const turnCacheRead = response.usage.cache_read_input_tokens ?? 0;
       this.sessionInputTokens += turnInputTokens;
@@ -1202,7 +1198,7 @@ export class Agent {
           : {}),
         usage: {
           // Use the already-computed turnInput/OutputTokens so this stays in
-          // sync with the session accumulators (includes compaction iteration).
+          // sync with the session accumulators (message iteration only).
           input_tokens: turnInputTokens,
           output_tokens: turnOutputTokens,
           cache_creation_input_tokens:

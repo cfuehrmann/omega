@@ -1234,19 +1234,18 @@ function MetricsTable() {
     label: string;
     gap: boolean;
     turnVal:    (m: StickyMetrics, d: DurationMetrics, isLive: boolean) => string;
-    compactVal: (m: StickyMetrics) => string;
     sessVal:    (m: StickyMetrics, d: DurationMetrics) => string;
   }
 
   const allCols = (): ColDef[] => [
-    { label: "in (uncached)",    gap: false, turnVal: (m) => String(m.freshInTokens), compactVal: (m) => String(m.freshInTokens), sessVal: (m) => String(m.freshInTokens) },
-    { label: "in (cache write)", gap: false, turnVal: (m) => String(m.writeInTokens), compactVal: (m) => String(m.writeInTokens), sessVal: (m) => String(m.writeInTokens) },
-    { label: "in (cache read)",  gap: false, turnVal: (m) => String(m.readInTokens),  compactVal: (m) => String(m.readInTokens),  sessVal: (m) => String(m.readInTokens) },
-    { label: "out",              gap: true,  turnVal: (m) => String(m.outTokens),     compactVal: (m) => String(m.outTokens),     sessVal: (m) => String(m.outTokens) },
-    { label: "request size",     gap: true,  turnVal: (m) => formatKb(m.requestBytes), compactVal: (_m) => "—", sessVal: (m) => formatKb(m.requestBytes) },
-    { label: "llm",              gap: true,  turnVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",  compactVal: (_m) => "—", sessVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—" },
-    { label: "tools",            gap: false, turnVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—", compactVal: (_m) => "—", sessVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—" },
-    { label: "total",            gap: false, turnVal: (_m, d, isLive) => isLive ? formatDuration(liveTurnElapsedMs()) : (d.turnMs > 0 ? formatDuration(d.turnMs) : "—"), compactVal: (_m) => "—", sessVal: (_m, d) => { const t = d.turnMs + (state.streaming ? liveTurnElapsedMs() : 0); return t > 0 ? formatDuration(t) : "—"; } },
+    { label: "in (uncached)",    gap: false, turnVal: (m) => String(m.freshInTokens), sessVal: (m) => String(m.freshInTokens) },
+    { label: "in (cache write)", gap: false, turnVal: (m) => String(m.writeInTokens), sessVal: (m) => String(m.writeInTokens) },
+    { label: "in (cache read)",  gap: false, turnVal: (m) => String(m.readInTokens),  sessVal: (m) => String(m.readInTokens) },
+    { label: "out",              gap: true,  turnVal: (m) => String(m.outTokens),     sessVal: (m) => String(m.outTokens) },
+    { label: "request size",     gap: true,  turnVal: (m) => formatKb(m.requestBytes), sessVal: (m) => formatKb(m.requestBytes) },
+    { label: "llm",              gap: true,  turnVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—",  sessVal: (_m, d) => d.llmMs > 0 ? formatDuration(d.llmMs) : "—" },
+    { label: "tools",            gap: false, turnVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—", sessVal: (_m, d) => d.toolMs > 0 ? formatDuration(d.toolMs) : "—" },
+    { label: "total",            gap: false, turnVal: (_m, d, isLive) => isLive ? formatDuration(liveTurnElapsedMs()) : (d.turnMs > 0 ? formatDuration(d.turnMs) : "—"), sessVal: (_m, d) => { const t = d.turnMs + (state.streaming ? liveTurnElapsedMs() : 0); return t > 0 ? formatDuration(t) : "—"; } },
   ];
 
   const showCompact = () =>
@@ -1285,13 +1284,11 @@ function MetricsTable() {
         <Show when={showCompact()}>
           <tr>
             <td class="sm-row-label">compact</td>
-            <For each={allCols()}>
-              {(col) => (
-                <td class={`sm-col-val${col.gap ? " sm-col-gap" : ""}`}>
-                  {col.compactVal(state.compactionTotals)}
-                </td>
-              )}
-            </For>
+            <td colspan={allCols().length} class="sm-compact-line">
+              in: {state.compactionTotals.freshInTokens.toLocaleString()}
+              {"\u2003"}
+              out: {state.compactionTotals.outTokens.toLocaleString()}
+            </td>
             <td />
           </tr>
         </Show>

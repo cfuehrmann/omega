@@ -278,6 +278,16 @@ html, body, #root {
   white-space: nowrap;
 }
 
+/* Compact row: standalone in/out line, not column-aligned with cache-breakdown
+   columns because the compaction iteration has no cache breakdown from the API. */
+.sm-compact-line {
+  color: var(--dim);
+  opacity: 0.85;
+  padding: 1px 0 1px 16px;
+  text-align: left;
+  white-space: nowrap;
+}
+
 .sm-legend-cell {
   padding-left: 12px;
   vertical-align: middle;

@@ -206,6 +206,21 @@ function sumRequestBytes(events: ServerMessage[]): number {
   return total;
 }
 
+/** Extract compaction-iteration token counts from a compacted event's usage.
+ *  Returns { inputTokens, outputTokens } from the "compaction"-type iteration,
+ *  or zeros if the iterations array is absent/malformed. */
+function compactionIterationTokens(usage: unknown): { inputTokens: number; outputTokens: number } {
+  const u = usage as any;
+  const iterations: any[] | undefined = u?.iterations;
+  if (!iterations || !Array.isArray(iterations)) return { inputTokens: 0, outputTokens: 0 };
+  const compIter = iterations.find((it: any) => it.type === "compaction");
+  if (!compIter) return { inputTokens: 0, outputTokens: 0 };
+  return {
+    inputTokens:  compIter.input_tokens  ?? 0,
+    outputTokens: compIter.output_tokens ?? 0,
+  };
+}
+
 /** Add two StickyMetrics together (for cumulative session totals). */
 function addMetrics(a: StickyMetrics, b: StickyMetrics): StickyMetrics {
   return {
@@ -539,7 +554,14 @@ export function dispatch(event: ServerMessage): void {
           currentTurnStartIdx = -1;
         }
 
-        // Note: compacted handling could go here if needed for replayCompactionTotals
+        if (e.type === "compacted") {
+          const ct = compactionIterationTokens((e as any).usage);
+          replayCompactionTotals = {
+            ...replayCompactionTotals,
+            freshInTokens: replayCompactionTotals.freshInTokens + ct.inputTokens,
+            outTokens:     replayCompactionTotals.outTokens     + ct.outputTokens,
+          };
+        }
       }
 
       // Secondary crash recovery: if still marked streaming after all events,
@@ -740,10 +762,20 @@ export function dispatch(event: ServerMessage): void {
       setState("streaming", true);
       break;
 
+    case "compacted": {
+      setState(produce(s => { s.events.push(event); }));
+      const ct = compactionIterationTokens((event as any).usage);
+      setState("compactionTotals", prev => ({
+        ...prev,
+        freshInTokens: prev.freshInTokens + ct.inputTokens,
+        outTokens:     prev.outTokens     + ct.outputTokens,
+      }));
+      break;
+    }
+
     case "server_started":
     case "server_stopped":
     case "tool_call":
-    case "compacted":
     case "llm_error":
     case "agent_error":
     case "transport_error":

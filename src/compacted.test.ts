@@ -367,13 +367,13 @@ describe("server-side compaction — persistence", () => {
   });
 });
 
-describe("server-side compaction — token counting sums iterations", () => {
+describe("server-side compaction — token counting is message-iteration only", () => {
   const ITERATIONS = [
     { type: "compaction", input_tokens: 80000, output_tokens: 300 },
     { type: "message",    input_tokens: 500,   output_tokens: 50  },
   ];
 
-  it("turn_end metrics sum all iterations when compaction fires", async () => {
+  it("turn_end metrics reflect message iteration only (compaction excluded)", async () => {
     const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
@@ -385,13 +385,12 @@ describe("server-side compaction — token counting sums iterations", () => {
     const events = await collectEvents(agent, "hello");
     const turnEndEv = events.find(e => e.type === "turn_end") as any;
     expect(turnEndEv).toBeDefined();
-    // 80000 + 500 = 80500, not just 500
-    expect(turnEndEv.metrics.inputTokens).toBe(80500);
-    // 300 + 50 = 350, not just 50
-    expect(turnEndEv.metrics.outputTokens).toBe(350);
+    // Message-iteration only: 500 / 50 (not 80500 / 350)
+    expect(turnEndEv.metrics.inputTokens).toBe(500);
+    expect(turnEndEv.metrics.outputTokens).toBe(50);
   });
 
-  it("llm_response usage sums all iterations when compaction fires", async () => {
+  it("llm_response usage reflects message iteration only", async () => {
     const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
@@ -403,11 +402,11 @@ describe("server-side compaction — token counting sums iterations", () => {
     const events = await collectEvents(agent, "hello");
     const llmRespEv = events.find(e => e.type === "llm_response") as any;
     expect(llmRespEv).toBeDefined();
-    expect(llmRespEv.usage.input_tokens).toBe(80500);
-    expect(llmRespEv.usage.output_tokens).toBe(350);
+    expect(llmRespEv.usage.input_tokens).toBe(500);
+    expect(llmRespEv.usage.output_tokens).toBe(50);
   });
 
-  it("session accumulators include compaction iteration tokens", async () => {
+  it("session accumulators reflect message iteration only", async () => {
     const provider: StreamProvider = () =>
       makeMockStream(
         compactionStreamEvents("summary", "reply"),
@@ -417,8 +416,23 @@ describe("server-side compaction — token counting sums iterations", () => {
     afterAll(dispose);
 
     await collectEvents(agent, "hello");
-    expect(agent.sessionInputTokens).toBe(80500);
-    expect(agent.sessionOutputTokens).toBe(350);
+    expect(agent.sessionInputTokens).toBe(500);
+    expect(agent.sessionOutputTokens).toBe(50);
+  });
+
+  it("compacted event still carries full usage with iterations for client-side extraction", async () => {
+    const provider: StreamProvider = () =>
+      makeMockStream(
+        compactionStreamEvents("summary", "reply"),
+        compactionMessage("summary", "reply", { iterations: ITERATIONS }),
+      );
+    const { agent, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+
+    const events = await collectEvents(agent, "hello");
+    const compactedEv = events.find(e => e.type === "compacted") as any;
+    expect(compactedEv).toBeDefined();
+    expect(compactedEv.usage.iterations).toEqual(ITERATIONS);
   });
 
   it("token counting is unaffected for normal turns without iterations", async () => {
