@@ -353,9 +353,9 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "HTML is converted to readable text before caching. " +
       "The tool result contains the cache file path and postprocess output (≤ 8 000 chars). " +
       "Use read_file or grep_files on the cache path for follow-up queries — no re-download needed. " +
-      "postprocess is required and receives the full content on stdin: " +
-      "grep -n 'pattern', head -80, jq '.', awk, python3 -c '...', etc. " +
-      "Decide what to extract before fetching. " +
+      "postprocess is required and receives the full content on stdin. " +
+      "Prefer grep or awk when you know what to look for, head -N as the catch-all. " +
+      "Never use cat — head -N gives the same result on short pages and stays bounded on long ones. " +
       "Repeated calls to the same URL within a session reuse the cached file.",
     input_schema: toToolInputSchema(FetchUrlSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },

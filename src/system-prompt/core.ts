@@ -72,7 +72,9 @@ relying on potentially stale training data.
 \`postprocess\` command on the full text (received on stdin). The tool result
 contains the cache file path and postprocess output (≤ 8 000 chars). Use
 \`read_file\` or \`grep_files\` on the cache path for follow-up queries.
-\`postprocess\` is required — decide what to extract before fetching.
+\`postprocess\` is required. Prefer \`grep\` or \`awk\` when you know what to
+look for, and \`head -N\` as the catch-all. Never use \`cat\` — \`head -N\`
+gives the same result on short pages and stays bounded on long ones.
 
 When a command produces verbose output — whether from \`run_background\`'s
 \`logFile\` or from a \`run_command\` redirected to a file — inspect it with
