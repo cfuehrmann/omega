@@ -1020,6 +1020,16 @@ export class Agent {
               trigger: { type: "input_tokens" as const, value: config.toolResultClearTrigger },
               keep: { type: "tool_uses" as const, value: config.toolResultClearKeep },
               clear_at_least: { type: "input_tokens" as const, value: config.toolResultClearAtLeast },
+              clear_tool_inputs: true,
+            },
+            {
+              // Keep all thinking blocks to preserve the prompt-cache prefix.
+              // Thinking tokens are free as input (excluded from billing and context
+              // window), so there is no cost to retaining them — but clearing them
+              // (the API default) busts the cache at each clearing point, causing
+              // expensive cache re-writes on the tokens that follow.
+              type: "clear_thinking_20251015" as const,
+              keep: "all" as const,
             },
             {
               type: "compact_20260112" as const,
