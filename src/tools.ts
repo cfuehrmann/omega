@@ -243,7 +243,8 @@ async function executeFetchUrl(input: { url: string; postprocess: string }): Pro
     await writeFile(cacheFile, text, "utf-8");
     charCount = text.length;
   } else {
-    charCount = (await stat(cacheFile)).size;
+    const content = await readFile(cacheFile, "utf-8");
+    charCount = content.length;
   }
 
   // Run postprocess command with the cached file piped to stdin.
@@ -352,11 +353,10 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "immediately run a shell postprocessing command on the full downloaded text. " +
       "HTML is converted to readable text before caching. " +
       "The tool result contains the cache file path and postprocess output (≤ 8 000 chars). " +
-      "Use read_file or grep_files on the cache path for follow-up queries — no re-download needed. " +
+      "For any further queries on the same content, use read_file or grep_files on the cache path. " +
       "postprocess is required and receives the full content on stdin. " +
       "Prefer grep or awk when you know what to look for, head -N as the catch-all. " +
-      "Never use cat — head -N gives the same result on short pages and stays bounded on long ones. " +
-      "Repeated calls to the same URL within a session reuse the cached file.",
+      "Never use cat — head -N gives the same result on short pages and stays bounded on long ones.",
     input_schema: toToolInputSchema(FetchUrlSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {

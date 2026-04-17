@@ -68,10 +68,9 @@ changes, then apply them in a single call with \`replacements\`. Never call
 Use \`web_search\` freely for documentation, current information, API details,
 error messages, or anything not in local files. Prefer it over guessing or
 relying on potentially stale training data.
-\`fetch_url\` downloads a URL to a session cache file and runs a shell
-\`postprocess\` command on the full text (received on stdin). The tool result
-contains the cache file path and postprocess output (≤ 8 000 chars). Use
-\`read_file\` or \`grep_files\` on the cache path for follow-up queries.
+\`fetch_url\` downloads a URL **once** and runs a single \`postprocess\` query
+on it. The result includes a cache path — for any further queries on the same
+content, use \`grep_files\`/\`read_file\` on that path.
 \`postprocess\` is required. Prefer \`grep\` or \`awk\` when you know what to
 look for, and \`head -N\` as the catch-all. Never use \`cat\` — \`head -N\`
 gives the same result on short pages and stays bounded on long ones.
