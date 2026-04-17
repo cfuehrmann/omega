@@ -366,3 +366,72 @@ describe("server-side compaction — persistence", () => {
     expect(ev.usage.iterations).toEqual(iterations);
   });
 });
+
+describe("server-side compaction — token counting sums iterations", () => {
+  const ITERATIONS = [
+    { type: "compaction", input_tokens: 80000, output_tokens: 300 },
+    { type: "message",    input_tokens: 500,   output_tokens: 50  },
+  ];
+
+  it("turn_end metrics sum all iterations when compaction fires", async () => {
+    const provider: StreamProvider = () =>
+      makeMockStream(
+        compactionStreamEvents("summary", "reply"),
+        compactionMessage("summary", "reply", { iterations: ITERATIONS }),
+      );
+    const { agent, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+
+    const events = await collectEvents(agent, "hello");
+    const turnEndEv = events.find(e => e.type === "turn_end") as any;
+    expect(turnEndEv).toBeDefined();
+    // 80000 + 500 = 80500, not just 500
+    expect(turnEndEv.metrics.inputTokens).toBe(80500);
+    // 300 + 50 = 350, not just 50
+    expect(turnEndEv.metrics.outputTokens).toBe(350);
+  });
+
+  it("llm_response usage sums all iterations when compaction fires", async () => {
+    const provider: StreamProvider = () =>
+      makeMockStream(
+        compactionStreamEvents("summary", "reply"),
+        compactionMessage("summary", "reply", { iterations: ITERATIONS }),
+      );
+    const { agent, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+
+    const events = await collectEvents(agent, "hello");
+    const llmRespEv = events.find(e => e.type === "llm_response") as any;
+    expect(llmRespEv).toBeDefined();
+    expect(llmRespEv.usage.input_tokens).toBe(80500);
+    expect(llmRespEv.usage.output_tokens).toBe(350);
+  });
+
+  it("session accumulators include compaction iteration tokens", async () => {
+    const provider: StreamProvider = () =>
+      makeMockStream(
+        compactionStreamEvents("summary", "reply"),
+        compactionMessage("summary", "reply", { iterations: ITERATIONS }),
+      );
+    const { agent, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+
+    await collectEvents(agent, "hello");
+    expect(agent.sessionInputTokens).toBe(80500);
+    expect(agent.sessionOutputTokens).toBe(350);
+  });
+
+  it("token counting is unaffected for normal turns without iterations", async () => {
+    const provider: StreamProvider = () =>
+      makeMockStream(textStreamEvents("hello back"), textMessage("hello back"));
+    const { agent, dispose } = await makeTestAgent(provider);
+    afterAll(dispose);
+
+    const events = await collectEvents(agent, "hello");
+    const llmRespEv = events.find(e => e.type === "llm_response") as any;
+    expect(llmRespEv.usage.input_tokens).toBe(10);
+    expect(llmRespEv.usage.output_tokens).toBe(5);
+    expect(agent.sessionInputTokens).toBe(10);
+    expect(agent.sessionOutputTokens).toBe(5);
+  });
+});

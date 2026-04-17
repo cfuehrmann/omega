@@ -1016,20 +1016,22 @@ export class Agent {
         context_management: {
           edits: [
             {
+              // Must be first: API requires clear_thinking_20251015 as the first
+              // strategy when provided. Keep all thinking blocks to preserve the
+              // prompt-cache prefix. Thinking tokens are free as input (excluded
+              // from billing and context window), so there is no cost to retaining
+              // them — but clearing them (the API default) busts the cache at each
+              // clearing point, causing expensive cache re-writes on the tokens that
+              // follow.
+              type: "clear_thinking_20251015" as const,
+              keep: "all" as const,
+            },
+            {
               type: "clear_tool_uses_20250919" as const,
               trigger: { type: "input_tokens" as const, value: config.toolResultClearTrigger },
               keep: { type: "tool_uses" as const, value: config.toolResultClearKeep },
               clear_at_least: { type: "input_tokens" as const, value: config.toolResultClearAtLeast },
               clear_tool_inputs: true,
-            },
-            {
-              // Keep all thinking blocks to preserve the prompt-cache prefix.
-              // Thinking tokens are free as input (excluded from billing and context
-              // window), so there is no cost to retaining them — but clearing them
-              // (the API default) busts the cache at each clearing point, causing
-              // expensive cache re-writes on the tokens that follow.
-              type: "clear_thinking_20251015" as const,
-              keep: "all" as const,
             },
             {
               type: "compact_20260112" as const,
@@ -1114,9 +1116,19 @@ export class Agent {
 
       const { response, assembledText, assembledTextTs, assembledThinking } = llmResult;
 
-      // Track tokens
-      turnInputTokens = response.usage.input_tokens;
-      turnOutputTokens = response.usage.output_tokens;
+      // Track tokens — sum across iterations for the true billing total.
+      // When compaction fires, usage.iterations carries a "compaction" entry
+      // and a "message" entry; the top-level input_tokens/output_tokens reflect
+      // only the message iteration and do NOT include the compaction cost.
+      // See: https://docs.anthropic.com/en/build-with-claude/compaction#understanding-usage
+      const usageIterations: any[] | undefined = (response.usage as any).iterations;
+      if (usageIterations && Array.isArray(usageIterations) && usageIterations.length > 0) {
+        turnInputTokens  = usageIterations.reduce((s: number, it: any) => s + (it.input_tokens  ?? 0), 0);
+        turnOutputTokens = usageIterations.reduce((s: number, it: any) => s + (it.output_tokens ?? 0), 0);
+      } else {
+        turnInputTokens = response.usage.input_tokens;
+        turnOutputTokens = response.usage.output_tokens;
+      }
       const turnCacheCreation = response.usage.cache_creation_input_tokens ?? 0;
       const turnCacheRead = response.usage.cache_read_input_tokens ?? 0;
       this.sessionInputTokens += turnInputTokens;
@@ -1189,8 +1201,10 @@ export class Agent {
             }
           : {}),
         usage: {
-          input_tokens: response.usage.input_tokens ?? 0,
-          output_tokens: response.usage.output_tokens,
+          // Use the already-computed turnInput/OutputTokens so this stays in
+          // sync with the session accumulators (includes compaction iteration).
+          input_tokens: turnInputTokens,
+          output_tokens: turnOutputTokens,
           cache_creation_input_tokens:
             response.usage.cache_creation_input_tokens ?? undefined,
           cache_read_input_tokens:
