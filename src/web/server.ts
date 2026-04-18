@@ -250,7 +250,7 @@ async function loadReplayEvents(eventsFile: string): Promise<object[]> {
  * Returns up to 50 paths (relative or absolute), with directories suffixed
  * with "/" and sorted dirs-first then alphabetically.
  */
-async function listFilesForCompletion(prefix: string): Promise<string[]> {
+export async function listFilesForCompletion(prefix: string, cwd = process.cwd()): Promise<string[]> {
   const lastSlash = prefix.lastIndexOf("/");
   const dir    = lastSlash >= 0 ? prefix.slice(0, lastSlash + 1) : "";
   const filter = lastSlash >= 0 ? prefix.slice(lastSlash + 1)    : prefix;
@@ -258,7 +258,7 @@ async function listFilesForCompletion(prefix: string): Promise<string[]> {
 
   const targetDir = isAbs
     ? (dir || "/")
-    : join(process.cwd(), dir || ".");
+    : join(cwd, dir || ".");
 
   let entries: { name: string; isDir: boolean }[];
   try {

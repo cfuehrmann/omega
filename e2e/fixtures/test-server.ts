@@ -30,7 +30,7 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import { readFile, writeFile, readdir, rm, mkdir } from "fs/promises";
 import type { ServerWebSocket } from "bun";
-import { closeOpenTurn, shouldLogEvent } from "../../src/web/server.js";
+import { closeOpenTurn, shouldLogEvent, listFilesForCompletion } from "../../src/web/server.js";
 import { appendEvent } from "../../src/event-store.js";
 import {
   makeSessionDir,
@@ -209,6 +209,15 @@ Bun.serve({
   async fetch(req, srv) {
     if (srv.upgrade(req)) return undefined as any;
     const url = new URL(req.url);
+
+    // File completion: GET /files?prefix=... (mirrors real server)
+    if (url.pathname === "/files" && req.method === "GET") {
+      const prefix = url.searchParams.get("prefix") ?? "";
+      const items = await listFilesForCompletion(prefix);
+      return new Response(JSON.stringify(items), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+      });
+    }
 
     // Session listing: GET /sessions (mirrors real server)
     if (url.pathname === "/sessions" && req.method === "GET") {
