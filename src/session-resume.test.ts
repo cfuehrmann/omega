@@ -12,21 +12,21 @@
 
 import { describe, it, expect, afterAll } from "bun:test";
 import { extractResumptionBasis, extractSummaryFromResponse, extractDescriptionFromResponse, extractLastModelAndEffort } from "./session-resume.js";
-import type { StreamProvider } from "./stream-provider.js";
+import type { CreateMessageStream } from "./create-message-stream.js";
 import type { OmegaEvent } from "./events.js";
 import { makeTestAgent } from "./test-utils.js";
 import { OmegaEventSchema } from "./events.schema.js";
 import { readFileSync, existsSync } from "fs";
 
 // ---------------------------------------------------------------------------
-// StreamProvider mock helpers
+// CreateMessageStream mock helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Build a StreamProvider mock that yields a single text chunk and returns
+ * Build a CreateMessageStream mock that yields a single text chunk and returns
  * the given text as the final message. Suitable for performResumption tests.
  */
-function makeTextStreamProvider(text: string): StreamProvider {
+function makeTextCreateMessageStream(text: string): CreateMessageStream {
   return () => ({
     async *[Symbol.asyncIterator]() {
       yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
@@ -45,10 +45,10 @@ function makeTextStreamProvider(text: string): StreamProvider {
 }
 
 /**
- * Build a StreamProvider mock that throws when called.
+ * Build a CreateMessageStream mock that throws when called.
  * Suitable for testing error paths in performResumption.
  */
-function makeFailingStreamProvider(message: string): StreamProvider {
+function makeFailingCreateMessageStream(message: string): CreateMessageStream {
   return () => { throw new Error(message); };
 }
 
@@ -546,7 +546,7 @@ describe("Agent.seedWithResumptionSummary", () => {
 describe("Agent.performResumption", () => {
   it("logs resuming_session → llm_call → llm_response → session_resumed on success", async () => {
     const text = "<summary>Prior session summary.</summary><description>Did some work</description>";
-    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider(text));
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextCreateMessageStream(text));
     afterAll(dispose);
     await agent.init();
 
@@ -568,7 +568,7 @@ describe("Agent.performResumption", () => {
   });
 
   it("resuming_session event carries resumedFrom and basis", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>Summary.</summary>"));
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextCreateMessageStream("<summary>Summary.</summary>"));
     afterAll(dispose);
     await agent.init();
 
@@ -582,7 +582,7 @@ describe("Agent.performResumption", () => {
   });
 
   it("llm_call event has correct model, contextHashes length and url", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>S.</summary>"));
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextCreateMessageStream("<summary>S.</summary>"));
     afterAll(dispose);
     await agent.init();
 
@@ -598,7 +598,7 @@ describe("Agent.performResumption", () => {
   });
 
   it("llm_response event carries usage and text", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>Done.</summary>"));
+    const { agent, eventsFile, dispose } = await makeTestAgent(makeTextCreateMessageStream("<summary>Done.</summary>"));
     afterAll(dispose);
     await agent.init();
 
@@ -614,7 +614,7 @@ describe("Agent.performResumption", () => {
   });
 
   it("generator yields text chunks as StreamSignals during streaming", async () => {
-    const { agent, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>S.</summary>"));
+    const { agent, dispose } = await makeTestAgent(makeTextCreateMessageStream("<summary>S.</summary>"));
     afterAll(dispose);
     await agent.init();
 
@@ -627,7 +627,7 @@ describe("Agent.performResumption", () => {
 
   it("llm_response text contains description tag for extraction", async () => {
     const text = "<summary>S.</summary><description>Added auth middleware</description>";
-    const { agent, dispose } = await makeTestAgent(makeTextStreamProvider(text));
+    const { agent, dispose } = await makeTestAgent(makeTextCreateMessageStream(text));
     afterAll(dispose);
     await agent.init();
 
@@ -641,7 +641,7 @@ describe("Agent.performResumption", () => {
   });
 
   it("description is undefined when tag absent", async () => {
-    const { agent, dispose } = await makeTestAgent(makeTextStreamProvider("<summary>S.</summary>"));
+    const { agent, dispose } = await makeTestAgent(makeTextCreateMessageStream("<summary>S.</summary>"));
     afterAll(dispose);
     await agent.init();
 
@@ -657,7 +657,7 @@ describe("Agent.performResumption", () => {
   it("logs llm_error and re-throws when provider fails with non-retryable error", async () => {
     const err: any = new Error("Bad request");
     err.status = 400;
-    const provider: StreamProvider = () => { throw err; };
+    const provider: CreateMessageStream = () => { throw err; };
     const { agent, eventsFile, dispose } = await makeTestAgent(provider);
     afterAll(dispose);
     await agent.init();
@@ -686,14 +686,14 @@ describe("Agent.performResumption", () => {
     process.env.OMEGA_RETRY_ATTEMPTS = "3";
 
     let attempts = 0;
-    const provider: StreamProvider = () => {
+    const provider: CreateMessageStream = () => {
       attempts++;
       if (attempts < 3) {
         const err: any = new Error("overloaded");
         err.status = 529;
         throw err;
       }
-      return makeTextStreamProvider("<summary>Recovered.</summary>")({} as any);
+      return makeTextCreateMessageStream("<summary>Recovered.</summary>")({} as any);
     };
 
     const { agent, eventsFile, dispose } = await makeTestAgent(provider);
@@ -725,7 +725,7 @@ describe("Agent.performResumption", () => {
 
   it("respects abort signal during streaming", async () => {
     const controller = new AbortController();
-    const provider: StreamProvider = () => ({
+    const provider: CreateMessageStream = () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk1 " } };
         // Abort fires here

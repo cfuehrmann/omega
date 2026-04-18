@@ -4,14 +4,14 @@
  * These tests cover the full sendMessage loop — streaming, tool dispatch,
  * session persistence, and history management — without hitting the real API.
  *
- * The Agent constructor accepts an optional StreamProvider. Tests inject a
+ * The Agent constructor accepts an optional CreateMessageStream. Tests inject a
  * mock that returns pre-scripted responses.
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
 
-import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal, type CreateMessageStream } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
 
 const disposeAll: (() => void)[] = [];
@@ -118,7 +118,7 @@ async function collectEvents(
 
 describe("Agent.sendMessage — plain text response", () => {
   it.concurrent("emits user_message, then text events, then turn_end", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
 
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -142,7 +142,7 @@ describe("Agent.sendMessage — plain text response", () => {
       { type: "content_block_stop", index: 0 },
       { type: "message_stop" },
     ];
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(chunkEvents, textMessage("foo bar baz"));
 
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -156,7 +156,7 @@ describe("Agent.sendMessage — plain text response", () => {
   });
 
   it.concurrent("adds user message and assistant response to history", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("I am fine"), textMessage("I am fine"));
 
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -170,7 +170,7 @@ describe("Agent.sendMessage — plain text response", () => {
   });
 
   it.concurrent("accumulates token counts across turns", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -184,7 +184,7 @@ describe("Agent.sendMessage — plain text response", () => {
   });
 
   it.concurrent("turn_end carries correct token counts", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("ok"), textMessage("ok"));
 
     const { agent, dispose } = await makeTestAgent(mockProvider);
@@ -207,7 +207,7 @@ describe("Agent.sendMessage — tool call loop", () => {
   it.concurrent("emits tool_call event for auto-approved tools", async () => {
     // First response: use read_file (auto-approved). Second: plain text.
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -229,7 +229,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 
   it.concurrent("emits tool_result event after executing the tool", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -255,7 +255,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 
   it.concurrent("adds tool results to history and makes a second API call", async () => {
     const calls: any[] = [];
-    const mockProvider: StreamProvider = (params) => {
+    const mockProvider: CreateMessageStream = (params) => {
       // Snapshot immediately — params.messages is this.history by reference
       calls.push({ messages: [...params.messages] });
       if (calls.length === 1) {
@@ -285,7 +285,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 
   it.concurrent("history grows correctly across a tool loop", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -338,7 +338,7 @@ describe("Agent.sendMessage — tool call loop", () => {
     ];
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(twoToolStreamEvents, twoToolMessage);
       return makeMockStream(textStreamEvents("Done"), textMessage("Done"));
@@ -372,7 +372,7 @@ describe("Agent.sendMessage — tool call loop", () => {
 
 describe("Agent.sendMessage — error handling", () => {
   it.concurrent("emits an error event on non-retryable API failure", async () => {
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       const err: any = new Error("Bad request");
       err.status = 400;
       throw err;
@@ -397,7 +397,7 @@ describe("Agent.sendMessage — error handling", () => {
     process.env.OMEGA_RETRY_ATTEMPTS = "3";
 
     let attempts = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       attempts++;
       if (attempts < 3) {
         const err: any = new Error("overloaded");
@@ -435,7 +435,7 @@ describe("Agent.sendMessage — error handling", () => {
 describe("Agent.sendMessage — abort", () => {
   it.concurrent("stops emitting events when aborted mid-stream", async () => {
     // Stream that yields text chunks with a delay so we can abort mid-way
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       async function* slowEvents() {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk1 " } };
@@ -481,7 +481,7 @@ describe("Agent.sendMessage — abort", () => {
   });
 
   it.concurrent("does not add incomplete assistant turn to history when aborted", async () => {
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       async function* slowEvents() {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } };
@@ -519,7 +519,7 @@ describe("Agent.sendMessage — abort", () => {
 
 describe("llm_call event", () => {
   it.concurrent("emits llm_call before the first API call", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -529,7 +529,7 @@ describe("llm_call event", () => {
   });
 
   it.concurrent("llm_call carries url and requestSummary", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -542,7 +542,7 @@ describe("llm_call event", () => {
   });
 
   it.concurrent("llm_call requestSummary has elided messages descriptor", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -554,7 +554,7 @@ describe("llm_call event", () => {
   });
 
   it.concurrent("llm_call requestSummary includes all top-level request fields (pass-through)", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -569,7 +569,7 @@ describe("llm_call event", () => {
   it.concurrent("emits llm_call once per round-trip in a tool loop", async () => {
     // First call: tool_use; second call: text response
     let callCount = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       callCount++;
       if (callCount === 1) {
         return makeMockStream(
@@ -587,7 +587,7 @@ describe("llm_call event", () => {
   });
 
   it.concurrent("llm_call requestSummary reflects the number of messages sent", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("reply"), textMessage("reply"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -606,7 +606,7 @@ describe("Agent — full auto-approve", () => {
   it.concurrent("never emits tool_pending even for previously-rejected commands", async () => {
     // run_command with a dangerous command — should auto-approve, never ask
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -625,7 +625,7 @@ describe("Agent — full auto-approve", () => {
 
   it.concurrent("emits tool_call for every tool regardless of name", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -646,7 +646,7 @@ describe("Agent — full auto-approve", () => {
   it.concurrent("confirmTool callback is never invoked", async () => {
     let confirmCalled = false;
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -670,7 +670,7 @@ describe("Agent — full auto-approve", () => {
 
 describe("Agent — turn_end event", () => {
   it.concurrent("emits exactly one turn_end per user message", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -680,7 +680,7 @@ describe("Agent — turn_end event", () => {
   });
 
   it.concurrent("turn_end is the last event emitted", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -690,7 +690,7 @@ describe("Agent — turn_end event", () => {
 
   it.concurrent("turn_end aggregates token counts across all API calls", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -716,7 +716,7 @@ describe("Agent — turn_end event", () => {
 
 describe("Agent — llm_response event", () => {
   it.concurrent("emits llm_response after each API call with stop_reason and usage", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -729,7 +729,7 @@ describe("Agent — llm_response event", () => {
   });
 
   it.concurrent("llm_response responseSummary has stop_reason and usage", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -742,7 +742,7 @@ describe("Agent — llm_response event", () => {
 
   it.concurrent("llm_response responseSummary content is elided", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -770,7 +770,7 @@ describe("Agent — llm_response event", () => {
 describe("Agent — tool_call input and tool_result output fields", () => {
   it.concurrent("tool_call event carries the input object", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -789,7 +789,7 @@ describe("Agent — tool_call input and tool_result output fields", () => {
 
   it.concurrent("tool_result event carries the output string", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) {
         return makeMockStream(
@@ -814,7 +814,7 @@ describe("Agent — tool_call input and tool_result output fields", () => {
 
 describe("Agent — user_message event", () => {
   it.concurrent("emits user_message as first event with the prompt text", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -825,7 +825,7 @@ describe("Agent — user_message event", () => {
   });
 
   it.concurrent("user_message is emitted before llm_call", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -846,7 +846,7 @@ describe("Agent — user_message event", () => {
 
 describe("Agent — verbatim history (no turn compaction)", () => {
   it.concurrent("after a turn, history contains the verbatim user+assistant exchange", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("Hello!"), textMessage("Hello!"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -861,7 +861,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
 
   it.concurrent("after two turns, history contains all four messages verbatim", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       return makeMockStream(textStreamEvents(`response ${call}`), textMessage(`response ${call}`));
     };
@@ -880,7 +880,7 @@ describe("Agent — verbatim history (no turn compaction)", () => {
 
   it.concurrent("no orphaned tool_result blocks across multiple turns with tool use", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       if (call === 2) return makeMockStream(textStreamEvents("done turn 1"), textMessage("done turn 1"));
@@ -953,7 +953,7 @@ describe("model switching via setModel()", () => {
 
 describe("Agent — unified event taxonomy (true duals)", () => {
   it.concurrent("emits llm_response (not api_response or llm_to_agent) after LLM call", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -965,7 +965,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
 
   it.concurrent("emits tool_call (not agent_to_agent_tool_call) when a tool is invoked", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("read_file"), toolUseMessage("t1", "read_file", { path: "src/config.ts" }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -979,7 +979,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
 
   it.concurrent("emits tool_result (not agent_to_agent_tool_result) after tool execution", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("read_file"), toolUseMessage("t1", "read_file", { path: "src/config.ts" }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -998,7 +998,7 @@ describe("Agent — unified event taxonomy (true duals)", () => {
 
 describe("Agent — llm_response text field", () => {
   it.concurrent("llm_response carries text when response has text", async () => {
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("Hello world"), textMessage("Hello world"));
     const { agent, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -1010,7 +1010,7 @@ describe("Agent — llm_response text field", () => {
 
   it.concurrent("llm_response.text is written to events.jsonl", async () => {
     const { readFile } = await import("fs/promises");
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("Persisted text"), textMessage("Persisted text"));
     const { agent, eventsFile, dispose } = await makeTestAgent(mockProvider);
     disposeAll.push(dispose);
@@ -1024,7 +1024,7 @@ describe("Agent — llm_response text field", () => {
 
   it.concurrent("llm_response has no text field when response is tool-only", async () => {
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("read_file"), toolUseMessage("t1", "read_file", { path: "README.md" }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -1078,7 +1078,7 @@ describe("Agent — interrupted-session guard: dangling tool_use repair", () => 
       // context is valid (no dangling tool_use block without a tool_result).
       let capturedMessages: any[] | null = null;
 
-      const mockProvider: StreamProvider = (params) => {
+      const mockProvider: CreateMessageStream = (params) => {
         capturedMessages = params.messages as any[];
         return makeMockStream(textStreamEvents("All good!"), textMessage("All good!"));
       };
@@ -1163,7 +1163,7 @@ describe("Agent — interrupted-session guard: dangling tool_use repair", () => 
     "does NOT fire guard when context already has a proper tool_result",
     async () => {
       let callCount = 0;
-      const mockProvider: StreamProvider = () => {
+      const mockProvider: CreateMessageStream = () => {
         callCount++;
         return makeMockStream(textStreamEvents("done"), textMessage("done"));
       };
@@ -1210,7 +1210,7 @@ describe("Agent.sendMessage — abort during tool execution", () => {
       // never be reached because the abort fires after the tool_call is emitted
       // and before we try to continue the loop with a second LLM call.
       let callCount = 0;
-      const mockProvider: StreamProvider = () => {
+      const mockProvider: CreateMessageStream = () => {
         callCount++;
         if (callCount === 1) {
           return makeMockStream(
@@ -1349,7 +1349,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
       // because the assistant message would contain a dangling tool_use block,
       // and the next API call would return 400 "tool_use without tool_result".
       let call = 0;
-      const mockProvider: StreamProvider = () => {
+      const mockProvider: CreateMessageStream = () => {
         call++;
         if (call === 1) {
           return makeMockStream(
@@ -1406,7 +1406,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
     "emits agent_error when model_context_window_exceeded on a plain text response",
     async () => {
       const partialText = "Here is a very long answer that got cut off...";
-      const mockProvider: StreamProvider = () =>
+      const mockProvider: CreateMessageStream = () =>
         makeMockStream(
           truncatedTextStreamEvents(partialText, "model_context_window_exceeded"),
           truncatedTextMessage(partialText, "model_context_window_exceeded"),
@@ -1459,7 +1459,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
           speed: null,
         },
       };
-      const mockProvider: StreamProvider = () =>
+      const mockProvider: CreateMessageStream = () =>
         makeMockStream(
           [
             { type: "message_delta", delta: { stop_reason: "refusal" }, usage: { output_tokens: 3 } },

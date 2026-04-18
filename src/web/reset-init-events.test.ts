@@ -12,7 +12,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { runWebApp } from "./server.js";
 import type { ServerMessage } from "./protocol.js";
-import type { StreamProvider } from "../agent.js";
+import type { CreateMessageStream } from "../agent.js";
 import { TEST_SESSIONS_ROOT } from "../session-dir.js";
 
 // ---------------------------------------------------------------------------
@@ -20,8 +20,8 @@ import { TEST_SESSIONS_ROOT } from "../session-dir.js";
 // ---------------------------------------------------------------------------
 
 /** A stream provider that should never be called in this test. */
-const noopProvider: StreamProvider = () => {
-  throw new Error("StreamProvider should not be called in this test");
+const noopProvider: CreateMessageStream = () => {
+  throw new Error("CreateMessageStream should not be called in this test");
 };
 
 /**

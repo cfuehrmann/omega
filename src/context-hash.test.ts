@@ -15,7 +15,7 @@ import { describe, it, expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import type Anthropic from "@anthropic-ai/sdk";
 
-import { Agent, type OmegaEvent, type StreamSignal, type StreamProvider } from "./agent.js";
+import { Agent, type OmegaEvent, type StreamSignal, type CreateMessageStream } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
 import type { ContextRecord } from "./context-store.js";
 import { ContextRecordSchema } from "./context-store.schema.js";
@@ -121,7 +121,7 @@ function readEventLines(file: string): OmegaEvent[] {
 describe("context.jsonl record shape", () => {
   it.concurrent("each written record has hash (12 hex chars), time, role, and content", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello"), textMessage("hello"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -144,7 +144,7 @@ describe("context.jsonl record shape", () => {
 
   it.concurrent("first record is the user message, second is assistant response", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("world"), textMessage("world"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -166,7 +166,7 @@ describe("hash uniqueness — identical content, different times", () => {
   it.concurrent("two identical user messages produce different hashes", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       return makeMockStream(textStreamEvents(`response ${call}`), textMessage(`response ${call}`));
     };
@@ -193,7 +193,7 @@ describe("hash uniqueness — identical content, different times", () => {
 describe("llm_call contextHashes in events.jsonl", () => {
   it.concurrent("llm_call event has contextHashes array with one hash per sent message", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -214,7 +214,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
 
   it.concurrent("contextHashes match the hash field of the corresponding context.jsonl records", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -233,7 +233,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
   it.concurrent("tool loop: second llm_call contextHashes includes user + assistant + tool_result messages", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -263,7 +263,7 @@ describe("llm_call contextHashes in events.jsonl", () => {
   it.concurrent("contextHashes grow across multiple turns in the same session", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       return makeMockStream(textStreamEvents(`resp${call}`), textMessage(`resp${call}`));
     };
@@ -300,7 +300,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
   it.concurrent("after 3 turns, contextHashes length equals compactedContextHistory length sent", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       return makeMockStream(textStreamEvents(`resp${call}`), textMessage(`resp${call}`));
     };
@@ -330,7 +330,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
   it.concurrent("hashes in contextHashes correctly cross-reference context.jsonl entries", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       return makeMockStream(textStreamEvents("ok"), textMessage("ok"));
     };
@@ -362,7 +362,7 @@ describe("no placeholder hashes", () => {
   it.concurrent("all contextHashes are 12-char hex strings (no '????????????' placeholders)", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -391,7 +391,7 @@ describe("no placeholder hashes", () => {
 describe("[SCHEMA] llm_call has no messageCount field", () => {
   it.concurrent("llm_call events written to events.jsonl do not carry messageCount", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hi"), textMessage("hi"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -418,7 +418,7 @@ describe("[SCHEMA] llm_call has no messageCount field", () => {
 describe("[SCHEMA] llm_response has no content field", () => {
   it.concurrent("llm_response events written to events.jsonl do not carry content", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -439,7 +439,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
   it.concurrent("llm_response carries contextHash that matches the assistant context.jsonl record", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -464,7 +464,7 @@ describe("[SCHEMA] llm_response has no content field", () => {
 
   it.concurrent("llm_response contextHash points to a record that exists in context.jsonl before the event", async () => {
 
-    const mockProvider: StreamProvider = () =>
+    const mockProvider: CreateMessageStream = () =>
       makeMockStream(textStreamEvents("hello world"), textMessage("hello world"));
 
     const { agent, contextFile, eventsFile } = await makeTestAgent(mockProvider);
@@ -496,7 +496,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
   it.concurrent("tool_call event carries contextHash matching the assistant context.jsonl record", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -526,7 +526,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
   it.concurrent("tool_result event does not carry contextHash", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -546,7 +546,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
   it.concurrent("tool_call event has input field persisted in events.jsonl", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));
@@ -567,7 +567,7 @@ describe("[SCHEMA] tool_call and tool_result fields", () => {
   it.concurrent("tool_result event has output field persisted in events.jsonl", async () => {
 
     let call = 0;
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       call++;
       if (call === 1) return makeMockStream(toolUseStreamEvents("list_files"), toolUseMessage("t1", "list_files", { path: "." }));
       return makeMockStream(textStreamEvents("done"), textMessage("done"));

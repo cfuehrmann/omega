@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { type StreamProvider, type OmegaEvent, type StreamSignal } from "./agent.js";
+import { type CreateMessageStream, type OmegaEvent, type StreamSignal } from "./agent.js";
 import { makeTestAgent, type TestAgent } from "./test-utils.js";
 
 function makeRateLimitError() {
@@ -19,7 +19,7 @@ afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("Agent fallback", () => {
   it("emits api_error on rate limit", async () => {
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       throw makeRateLimitError();
     };
 

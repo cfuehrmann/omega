@@ -37,7 +37,7 @@
  * They are not the primary isolation mechanism — path separation is.
  */
 
-import { Agent, type StreamProvider } from "./agent.js";
+import { Agent, type CreateMessageStream } from "./agent.js";
 import { makeSessionDir, TEST_SESSIONS_ROOT } from "./session-dir.js";
 
 export interface TestAgent {
@@ -63,12 +63,12 @@ let _counter = 0;
  * Each call creates a fresh uniquely-named session directory (via
  * `makeSessionDir()`), so concurrent tests never collide.
  *
- * @param streamProvider  Optional mock stream provider. If omitted, any LLM
+ * @param createMessageStream  Optional mock stream function. If omitted, any LLM
  *                        call will throw (fine for tests that don't exercise
  *                        the streaming path).
  */
 export async function makeTestAgent(
-  streamProvider?: StreamProvider
+  createMessageStream?: CreateMessageStream
 ): Promise<TestAgent> {
   // Incorporate a monotonic counter into the timestamp to guarantee uniqueness
   // even when multiple calls happen within the same millisecond.
@@ -78,7 +78,7 @@ export async function makeTestAgent(
     TEST_SESSIONS_ROOT,
   );
 
-  const agent = new Agent(streamProvider, contextFile, eventsFile);
+  const agent = new Agent(createMessageStream, contextFile, eventsFile);
 
   return {
     agent,

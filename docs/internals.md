@@ -133,7 +133,7 @@ function.
 
 ## Key Files
 
-- `src/agent.ts` — Agent class, `sendMessage` async generator, `StreamProvider`
+- `src/agent.ts` — Agent class, `sendMessage` async generator, `CreateMessageStream`
   type, `PRICING` table; `compactedContextHistory` / `compactedContextHashes[]`
   are the mutable in-memory context window and parallel hash array;
   `appendToHistory()` fire-and-forgets file I/O; `logEvent()` fire-and-forget

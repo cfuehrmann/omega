@@ -27,7 +27,7 @@
  */
 
 import type { OmegaEvent } from "./events.js";
-import type { StreamProvider } from "./stream-provider.js";
+import type { CreateMessageStream } from "./create-message-stream.js";
 import { primaryToolArg } from "./tools.schema.js";
 
 // ---------------------------------------------------------------------------

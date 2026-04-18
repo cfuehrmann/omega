@@ -17,15 +17,15 @@ import {
   extractSummaryFromResponse,
   RESUMPTION_SUMMARY_INSTRUCTIONS,
 } from "./session-resume.js";
-import type { StreamProvider } from "./stream-provider.js";
+import type { CreateMessageStream } from "./create-message-stream.js";
 
 // --- Types ---
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
-export type { StreamProvider } from "./stream-provider.js";
+export type { CreateMessageStream } from "./create-message-stream.js";
 
 /**
- * Create a StreamProvider backed by the real Anthropic API.
+ * Create a CreateMessageStream backed by the real Anthropic API.
  *
  * This is the single place where the Anthropic client is constructed for
  * production use. `maxRetries: 0` disables the SDK's built-in retry so that
@@ -36,7 +36,7 @@ export type { StreamProvider } from "./stream-provider.js";
  * The API key check lives here so that the error surfaces at the earliest
  * possible moment (server startup), not on the first API call.
  */
-export function makeDefaultStreamProvider(): StreamProvider {
+export function makeDefaultCreateMessageStream(): CreateMessageStream {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error(
       "ANTHROPIC_API_KEY is not set. Set it in the environment to use Omega.",
@@ -376,8 +376,8 @@ export class Agent {
   /** Content of .omega/system-prompt-append.md, injected into system prompt at session start. */
   private systemPromptAppendContent: string | null = null;
 
-  /** Optional injectable stream provider (used in tests). */
-  private readonly streamProvider: StreamProvider | undefined;
+  /** Optional injectable createMessageStream (used in tests). */
+  private readonly createMessageStream: CreateMessageStream | undefined;
 
   /**
    * Monotonically increasing counter, incremented at the start of every
@@ -391,10 +391,10 @@ export class Agent {
   private activeGeneration = 0;
 
   /**
-   * Production: new Agent(streamProvider, contextFile, eventsFile, sessionDir)
-   *   — pass the result of makeDefaultStreamProvider(); context appended to
+   * Production: new Agent(createMessageStream, contextFile, eventsFile, sessionDir)
+   *   — pass the result of makeDefaultCreateMessageStream(); context appended to
    *     .omega/sessions/<ts>/context.jsonl
-   * Test: new Agent(mockProvider, contextFile, eventsFile)
+   * Test: new Agent(mockCreateMessageStream, contextFile, eventsFile)
    *   — uses mock provider; context file and events file are disabled unless
    *     explicit paths are given.
    *
@@ -402,30 +402,30 @@ export class Agent {
    * decision (and therefore controls maxRetries, API key validation, etc.).
    */
   constructor(
-    streamProvider: StreamProvider | undefined,
+    createMessageStream: CreateMessageStream | undefined,
     contextFile?: string | null,
     eventsFile?: string | null,
     sessionDir?: string | null,
   ) {
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    this.streamProvider = streamProvider;
+    this.createMessageStream = createMessageStream;
     this.sessionDir = sessionDir ?? undefined;
 
     // Layer c: in test env, any unspecified file path defaults to null (disabled).
     const inTestEnv = process.env.OMEGA_TEST === "1";
 
-    // Context file: disable in test env unless explicitly set; or if mock provider given.
+    // Context file: disable in test env unless explicitly set; or if mock stream given.
     if (
-      (inTestEnv || streamProvider !== undefined) &&
+      (inTestEnv || createMessageStream !== undefined) &&
       contextFile === undefined
     ) {
       this.contextFile = null;
     } else {
       this.contextFile = contextFile;
     }
-    // Events file: disable in test env unless explicitly set; or if mock provider given.
+    // Events file: disable in test env unless explicitly set; or if mock stream given.
     if (
-      (inTestEnv || streamProvider !== undefined) &&
+      (inTestEnv || createMessageStream !== undefined) &&
       eventsFile === undefined
     ) {
       this.eventsFile = null;
@@ -572,14 +572,14 @@ export class Agent {
   }
 
   /**
-   * Get the injected StreamProvider. Throws if none was provided — callers
-   * must supply a provider (real or mock) via the constructor.
+   * Get the injected CreateMessageStream. Throws if none was configured — callers
+   * must supply one (real or mock) via the constructor.
    */
-  private getStreamProvider(): StreamProvider {
-    if (!this.streamProvider) {
-      throw new Error("No StreamProvider configured. Pass one to the Agent constructor.");
+  private getCreateMessageStream(): CreateMessageStream {
+    if (!this.createMessageStream) {
+      throw new Error("No CreateMessageStream configured. Pass one to the Agent constructor.");
     }
-    return this.streamProvider;
+    return this.createMessageStream;
   }
 
   // -----------------------------------------------------------------------
@@ -633,7 +633,7 @@ export class Agent {
         assembledTextTs = null;
         assembledThinking = "";
         inThinkingBlock = false;
-        const stream = this.getStreamProvider()(streamParams);
+        const stream = this.getCreateMessageStream()(streamParams);
 
         let aborted = false;
         for await (const event of stream) {

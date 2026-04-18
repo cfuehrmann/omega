@@ -2,11 +2,11 @@
 
 ## Problem
 
-`StreamProvider` discards the SDK's stream event types:
+`CreateMessageStream` discards the SDK's stream event types:
 
 ```typescript
-// stream-provider.ts
-export type StreamProvider = (
+// create-message-stream.ts
+export type CreateMessageStream = (
   params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
 ) => {
   [Symbol.asyncIterator](): AsyncIterator<any>;  // ← should be BetaRawMessageStreamEvent
@@ -19,7 +19,7 @@ Every `event.type`, `event.delta.type`, `event.delta.text`,
 `event.content_block?.type` check is untyped — a typo would silently fail at
 runtime rather than failing at compile time.
 
-## Fix: `StreamProvider` iterator type
+## Fix: `CreateMessageStream` iterator type
 
 Replace `AsyncIterator<any>` with
 `AsyncIterator<Anthropic.Beta.Messages.BetaRawMessageStreamEvent>`. The SDK's
@@ -46,7 +46,7 @@ mask type information. Removing them lets the compiler verify field access.
 
 ## Scope
 
-- `src/stream-provider.ts` — change the iterator type
+- `src/create-message-stream.ts` — change the iterator type
 - `src/agent.ts` — remove unnecessary `as any` casts, fix any resulting type
   errors
 - Test files (`src/agent-integration.test.ts`, `src/agent-thinking.test.ts`,

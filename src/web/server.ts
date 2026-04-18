@@ -21,7 +21,7 @@ import { readFileSync, existsSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { z } from "zod";
 import type { ServerWebSocket } from "bun";
-import { Agent, makeDefaultStreamProvider, type StreamProvider, type OmegaEvent } from "../agent.js";
+import { Agent, makeDefaultCreateMessageStream, type CreateMessageStream, type OmegaEvent } from "../agent.js";
 import {
   makeSessionDir,
   readSessionMetadata,
@@ -365,7 +365,7 @@ function sendTransportError(ws: ServerWebSocket<unknown>, error: string, context
 async function handleMessage(
   session: Session,
   data: string,
-  streamProvider: StreamProvider,
+  createMessageStream: CreateMessageStream,
 ): Promise<void> {
   let msg: ClientMessage;
   try {
@@ -389,7 +389,7 @@ async function handleMessage(
     // Replace the persistent agent with a fresh one in a new session dir
     currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
     persistentAgent = new Agent(
-      streamProvider,
+      createMessageStream,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
       currentSessionPaths.dir,
@@ -433,7 +433,7 @@ async function handleMessage(
     // Create new session dir + agent
     currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
     persistentAgent = new Agent(
-      streamProvider,
+      createMessageStream,
       currentSessionPaths.contextFile,
       currentSessionPaths.eventsFile,
       currentSessionPaths.dir,
@@ -641,8 +641,8 @@ async function handleMessage(
 // ---------------------------------------------------------------------------
 
 export interface WebAppOptions {
-  /** Injectable LLM stream provider (used in tests to avoid real API calls). */
-  streamProvider?: StreamProvider;
+  /** Injectable LLM stream function (used in tests to avoid real API calls). */
+  streamProvider?: CreateMessageStream;
   /** Override the HTTP port (default: resolved from --port flag / PORT env / 3000). */
   port?: number;
   /** Root directory for session folders (default: `.omega/sessions`). Tests pass `.omega/test-sessions`. */
@@ -652,8 +652,8 @@ export interface WebAppOptions {
 export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
   // Always resolve a concrete stream provider so it can be shared between
   // the Agent (for normal turns) and auto-naming (for session name generation).
-  const streamProvider: StreamProvider =
-    opts.streamProvider ?? makeDefaultStreamProvider();
+  const streamProvider: CreateMessageStream =
+    opts.streamProvider ?? makeDefaultCreateMessageStream();
 
   activeSessionsRoot = opts.sessionsRoot ?? SESSIONS_ROOT;
   // No session is created at startup — the client is forced to choose (new or

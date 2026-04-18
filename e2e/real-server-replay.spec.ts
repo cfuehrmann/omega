@@ -2,7 +2,7 @@
  * Session replay test against the real production server (src/web/server.ts).
  *
  * Uses the real-server fixture (e2e/fixtures/real-server.ts) which starts
- * runWebApp() with a mock StreamProvider — no real Anthropic API calls are made.
+ * runWebApp() with a mock CreateMessageStream — no real Anthropic API calls are made.
  *
  * Purpose: catch bugs in the production server code path that the test-server
  * (e2e/fixtures/test-server.ts) cannot detect, because the test-server never

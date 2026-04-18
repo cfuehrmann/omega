@@ -14,7 +14,7 @@
 import { describe, it, expect, afterAll } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { makeTestAgent } from "./test-utils.js";
-import type { StreamProvider } from "./agent.js";
+import type { CreateMessageStream } from "./agent.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMess
   };
 }
 
-function textStreamProvider(text: string): StreamProvider {
+function textCreateMessageStream(text: string): CreateMessageStream {
   return () => makeMockStream(
     [
       { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -56,7 +56,7 @@ afterAll(() => { disposeAll.splice(0).forEach(d => d()); });
 
 describe("Agent session path routing", () => {
   it("writes events to eventsFile, not to the default fallback path", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent(textStreamProvider("hello"));
+    const { agent, eventsFile, dispose } = await makeTestAgent(textCreateMessageStream("hello"));
     disposeAll.push(dispose);
 
     await agent.init();
@@ -77,7 +77,7 @@ describe("Agent session path routing", () => {
   });
 
   it("events written to eventsFile are valid JSONL with expected event types", async () => {
-    const { agent, eventsFile, dispose } = await makeTestAgent(textStreamProvider("world"));
+    const { agent, eventsFile, dispose } = await makeTestAgent(textCreateMessageStream("world"));
     disposeAll.push(dispose);
 
     await agent.init();
@@ -101,7 +101,7 @@ describe("Agent session path routing", () => {
   });
 
   it("writes context to contextFile, not silently discarded", async () => {
-    const { agent, contextFile, dispose } = await makeTestAgent(textStreamProvider("ctx-test"));
+    const { agent, contextFile, dispose } = await makeTestAgent(textCreateMessageStream("ctx-test"));
     disposeAll.push(dispose);
 
     await agent.init();
@@ -123,7 +123,7 @@ describe("Agent session path routing", () => {
     // This test mirrors the exact call shape used in server.ts after the fix.
     // If the constructor is ever accidentally changed back to accepting wrong args,
     // or a refactor shifts positions, this test will catch it.
-    const { agent, eventsFile, contextFile, dispose } = await makeTestAgent(textStreamProvider("three-arg"));
+    const { agent, eventsFile, contextFile, dispose } = await makeTestAgent(textCreateMessageStream("three-arg"));
     disposeAll.push(dispose);
 
     // Confirm constructor position 1=provider, 2=contextFile, 3=eventsFile

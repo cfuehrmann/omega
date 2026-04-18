@@ -1,7 +1,10 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type {
+  BetaMessageStreamParams,
+  BetaMessage,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 /**
- * A StreamProvider calls the LLM streaming API (or a mock in tests) and
+ * A CreateMessageStream calls the LLM streaming API (or a mock in tests) and
  * returns an object with an async iterator of raw stream events and a
  * `finalMessage()` method.
  *
@@ -14,9 +17,9 @@ import type Anthropic from "@anthropic-ai/sdk";
  * NOTE: This type is referenced by name in .omega/system-prompt-append.md.
  * If you rename it, update that file too.
  */
-export type StreamProvider = (
-  params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+export type CreateMessageStream = (
+  params: BetaMessageStreamParams,
 ) => {
   [Symbol.asyncIterator](): AsyncIterator<any>;
-  finalMessage(): Promise<Anthropic.Beta.Messages.BetaMessage>;
+  finalMessage(): Promise<BetaMessage>;
 };

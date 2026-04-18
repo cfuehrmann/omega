@@ -1,7 +1,7 @@
 /**
  * Real-server fixture for Playwright e2e tests.
  *
- * Wraps the production runWebApp() with a mock StreamProvider so no real
+ * Wraps the production runWebApp() with a mock CreateMessageStream so no real
  * Anthropic API calls are made. Runs on port 3003 (distinct from the
  * test-server on 3001).
  *
@@ -15,14 +15,14 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { runWebApp } from "../../src/web/server.js";
-import type { StreamProvider } from "../../src/agent.js";
+import type { CreateMessageStream } from "../../src/agent.js";
 import { TEST_SESSIONS_ROOT } from "../../src/session-dir.js";
 
 export const REAL_SERVER_PORT = 3003;
 const CTRL_PORT = 3004;
 
 // ---------------------------------------------------------------------------
-// Mock StreamProvider — routes by trigger message content
+// Mock CreateMessageStream — routes by trigger message content
 // ---------------------------------------------------------------------------
 
 function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
@@ -85,7 +85,7 @@ function makeSleepToolUseStream() {
   return makeMockStream(events, message);
 }
 
-const mockStreamProvider: StreamProvider = (params) => {
+const mockCreateMessageStream: CreateMessageStream = (params) => {
   // Inspect the last user message to route to the right mock response.
   // Simple messages arrive as a plain string; tool_result turns arrive as
   // an array of blocks — in that case we look at the most recent text block.
@@ -107,7 +107,7 @@ const mockStreamProvider: StreamProvider = (params) => {
 // Start the real server
 // ---------------------------------------------------------------------------
 
-await runWebApp({ streamProvider: mockStreamProvider, port: REAL_SERVER_PORT, sessionsRoot: TEST_SESSIONS_ROOT });
+await runWebApp({ streamProvider: mockCreateMessageStream, port: REAL_SERVER_PORT, sessionsRoot: TEST_SESSIONS_ROOT });
 
 // ---------------------------------------------------------------------------
 // Control server — health check only

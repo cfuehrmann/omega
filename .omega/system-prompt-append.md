@@ -9,7 +9,7 @@ files. The user interacts via terminal or web UI.
 ### Stack
 
 - Agent core (`src/agent.ts`) must have no UI imports — UI and agent stay cleanly separated.
-- `StreamProvider` is the interface for LLM provider calls; tests inject a mock — the real API is never called in tests. **If `StreamProvider` is renamed, update this file too.**
+- `CreateMessageStream` is the type for LLM streaming calls; tests inject a mock — the real API is never called in tests. **If `CreateMessageStream` is renamed, update this file too.**
 
 ### Scripting language
 

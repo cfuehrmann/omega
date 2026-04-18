@@ -11,7 +11,7 @@ import { defineConfig, devices } from "@playwright/test";
  *    history replay from injected events, etc.
  *
  * 2. "real-server" — runs against the real production server (port 3003)
- *    started with a mock StreamProvider. Catches bugs in the production
+ *    started with a mock CreateMessageStream. Catches bugs in the production
  *    server code path (Agent constructor args, file paths, etc.) that the
  *    test-server cannot detect.
  *
@@ -44,7 +44,7 @@ export default defineConfig({
     },
 
     // -----------------------------------------------------------------------
-    // Project 2: real-server (real Agent + mock StreamProvider)
+    // Project 2: real-server (real Agent + mock CreateMessageStream)
     // -----------------------------------------------------------------------
     {
       name: "real-server",

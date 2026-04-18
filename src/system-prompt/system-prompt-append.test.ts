@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { readSystemPromptAppend, writeSystemPromptAppend, systemPromptAppendPath } from "./append.js";
-import { Agent, type StreamProvider } from "../agent.js";
+import { Agent, type CreateMessageStream } from "../agent.js";
 import { makeTestAgent } from "../test-utils.js";
 import { corePrompt } from "./core.js";
 import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
@@ -169,7 +169,7 @@ describe("Agent.buildSystemPrompt()", () => {
 describe("system-prompt-append end-to-end: content reaches API request", () => {
   it("system field of outgoing request contains base prompt when no file loaded", async () => {
     let capturedSystem: any;
-    const mockProvider: StreamProvider = (params: any) => {
+    const mockProvider: CreateMessageStream = (params: any) => {
       capturedSystem = params.system;
       return makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     };
@@ -187,7 +187,7 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
 
   it("system field contains appended content when file is loaded", async () => {
     let capturedSystem: any;
-    const mockProvider: StreamProvider = (params: any) => {
+    const mockProvider: CreateMessageStream = (params: any) => {
       capturedSystem = params.system;
       return makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     };
@@ -208,7 +208,7 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
 
   it("appended content is absent when file does not exist", async () => {
     let capturedSystem: any;
-    const mockProvider: StreamProvider = (params: any) => {
+    const mockProvider: CreateMessageStream = (params: any) => {
       capturedSystem = params.system;
       return makeMockStream(textStreamEvents("hi"), textMessage("hi"));
     };
@@ -227,7 +227,7 @@ describe("system-prompt-append end-to-end: content reaches API request", () => {
   it("appended content is present across multiple turns (stable in system prompt)", async () => {
     let callCount = 0;
     const capturedSystems: any[] = [];
-    const mockProvider: StreamProvider = (params: any) => {
+    const mockProvider: CreateMessageStream = (params: any) => {
       callCount++;
       capturedSystems.push(params.system);
       return makeMockStream(textStreamEvents(`reply ${callCount}`), textMessage(`reply ${callCount}`));

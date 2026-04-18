@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { Agent, type OmegaEvent, type StreamSignal } from "./agent.js";
-import type { StreamProvider } from "./agent.js";
+import type { CreateMessageStream } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
 
 
@@ -54,7 +54,7 @@ describe("rate limit backoff", () => {
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       throw rateLimitError();
     };
 
@@ -83,7 +83,7 @@ describe("rate limit backoff", () => {
 
 describe("overload (529) — indefinite retry", () => {
   /** Build a minimal successful stream mock (text-only, no tool use). */
-  function makeSuccessProvider(): StreamProvider {
+  function makeSuccessProvider(): CreateMessageStream {
     return () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
@@ -116,7 +116,7 @@ describe("overload (529) — indefinite retry", () => {
     const failTimes = 3; // fail 3 times, then succeed
 
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = (params) => {
+    const mockProvider: CreateMessageStream = (params) => {
       callCount++;
       if (callCount <= failTimes) throw overloadError();
       return successStream(params);
@@ -157,7 +157,7 @@ describe("overload (529) — indefinite retry", () => {
     let callCount = 0;
     const failTimes = 2;
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = (params) => {
+    const mockProvider: CreateMessageStream = (params) => {
       callCount++;
       if (callCount <= failTimes) throw sseOverloadError();
       return successStream(params);
@@ -188,7 +188,7 @@ describe("overload (529) — indefinite retry", () => {
     process.env.OMEGA_RETRY_MAX_MS = "5";
     process.env.OMEGA_RETRY_ATTEMPTS = "2"; // cap so test terminates quickly
 
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       throw overloadError();
     };
 
@@ -224,7 +224,7 @@ describe("overload (529) — indefinite retry", () => {
     process.env.OMEGA_RETRY_MAX_MS = "2";
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       throw overloadError();
     };
 
@@ -267,7 +267,7 @@ describe("mid-stream retry", () => {
   function makePartialThenSuccessProvider(
     failCount: number,
     opts: { thinkingBeforeError?: string; textBeforeError?: string } = {},
-  ): StreamProvider {
+  ): CreateMessageStream {
     let calls = 0;
 
     return () => {
@@ -397,7 +397,7 @@ describe("mid-stream retry", () => {
     process.env.OMEGA_RETRY_ATTEMPTS = "2";
 
     // Provider always fails before yielding anything
-    const provider: StreamProvider = () => { throw overloadError(); };
+    const provider: CreateMessageStream = () => { throw overloadError(); };
     const { agent, dispose } = await makeTestAgent(provider);
     disposeAll.push(dispose);
     const events = await collectEvents(agent, "hello");
@@ -450,7 +450,7 @@ describe("mid-stream retry", () => {
     let capturedMessages: any[] | undefined;
     let callCount = 0;
 
-    const provider: StreamProvider = (params) => {
+    const provider: CreateMessageStream = (params) => {
       callCount++;
       if (callCount === 1) {
         // First call: yield partial thinking, then throw
@@ -513,7 +513,7 @@ describe("mid-stream retry", () => {
 
 describe("retry-after header", () => {
   /** Shared success stream used across tests in this describe block. */
-  function makeSuccessProvider(): StreamProvider {
+  function makeSuccessProvider(): CreateMessageStream {
     return () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
@@ -540,7 +540,7 @@ describe("retry-after header", () => {
 
     let callCount = 0;
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = (params) => {
+    const mockProvider: CreateMessageStream = (params) => {
       callCount++;
       if (callCount === 1) {
         const err: any = new Error("429 rate limited");
@@ -576,7 +576,7 @@ describe("retry-after header", () => {
 
     let callCount = 0;
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = (params) => {
+    const mockProvider: CreateMessageStream = (params) => {
       callCount++;
       if (callCount === 1) {
         const err: any = new Error("429 rate limited");
@@ -607,7 +607,7 @@ describe("retry-after header", () => {
 
     let callCount = 0;
     const successStream = makeSuccessProvider();
-    const mockProvider: StreamProvider = (params) => {
+    const mockProvider: CreateMessageStream = (params) => {
       callCount++;
       if (callCount === 1) {
         const err: any = new Error("529 overloaded");
@@ -636,7 +636,7 @@ describe("retry-after header", () => {
     process.env.OMEGA_RETRY_MAX_MS = "5000";
     process.env.OMEGA_RETRY_ATTEMPTS = "2"; // cap so test terminates quickly
 
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       const err: any = new Error("429 rate limited");
       err.status = 429;
       // no .headers — must fall back to backoff
@@ -673,7 +673,7 @@ describe("context overflow (prompt too long)", () => {
   it("emits llm_error + actionable agent_error — no retry", async () => {
     let callCount = 0;
 
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       callCount++;
       throw promptTooLongError();
     };
@@ -703,7 +703,7 @@ describe("context overflow (prompt too long)", () => {
       return err;
     }
 
-    const mockProvider: StreamProvider = () => {
+    const mockProvider: CreateMessageStream = () => {
       throw contextTooLongError();
     };
 
