@@ -417,7 +417,37 @@ html, body, #root {
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  position: relative; /* anchor for the @-completion dropdown */
 }
+
+/* ── @-path completion dropdown ── */
+.fc-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.35);
+}
+
+.fc-item {
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 0.82em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.fc-item.fc-hl  { background: var(--bg3); }
+.fc-item.fc-dir { color: var(--ctp-blue); }
 
 .input-row textarea {
   width: 100%;

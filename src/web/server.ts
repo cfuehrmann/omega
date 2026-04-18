@@ -239,6 +239,48 @@ async function loadReplayEvents(eventsFile: string): Promise<object[]> {
 }
 
 // ---------------------------------------------------------------------------
+// File completion — GET /files?prefix=...
+// ---------------------------------------------------------------------------
+
+/**
+ * List filesystem entries whose names match a typed path prefix, for the
+ * @-completion dropdown. `prefix` is the text after `@` in the user's input,
+ * e.g. "src/web/cl" or "/home/carsten/.".
+ *
+ * Returns up to 50 paths (relative or absolute), with directories suffixed
+ * with "/" and sorted dirs-first then alphabetically.
+ */
+async function listFilesForCompletion(prefix: string): Promise<string[]> {
+  const lastSlash = prefix.lastIndexOf("/");
+  const dir    = lastSlash >= 0 ? prefix.slice(0, lastSlash + 1) : "";
+  const filter = lastSlash >= 0 ? prefix.slice(lastSlash + 1)    : prefix;
+  const isAbs  = prefix.startsWith("/");
+
+  const targetDir = isAbs
+    ? (dir || "/")
+    : join(process.cwd(), dir || ".");
+
+  let entries: { name: string; isDir: boolean }[];
+  try {
+    const dirents = await readdir(targetDir, { withFileTypes: true });
+    entries = dirents
+      .filter(d => !filter || d.name.startsWith(filter))
+      .map(d => ({ name: d.name, isDir: d.isDirectory() }));
+  } catch {
+    return [];
+  }
+
+  entries.sort((a, b) => {
+    const ad = a.isDir ? 0 : 1;
+    const bd = b.isDir ? 0 : 1;
+    if (ad !== bd) return ad - bd;
+    return a.name.localeCompare(b.name);
+  });
+
+  return entries.slice(0, 50).map(e => dir + e.name + (e.isDir ? "/" : ""));
+}
+
+// ---------------------------------------------------------------------------
 // Session listing — GET /sessions
 // ---------------------------------------------------------------------------
 
@@ -686,6 +728,15 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
       if (url.pathname === "/sessions" && req.method === "GET") {
         const sessions = await listSessions();
         return new Response(JSON.stringify(sessions), {
+          headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+        });
+      }
+
+      // File completion: GET /files?prefix=...
+      if (url.pathname === "/files" && req.method === "GET") {
+        const prefix = url.searchParams.get("prefix") ?? "";
+        const items = await listFilesForCompletion(prefix);
+        return new Response(JSON.stringify(items), {
           headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
         });
       }

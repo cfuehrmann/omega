@@ -1704,10 +1704,95 @@ function EffortSelect() {
 // InputRow — Sessions · model · effort · textarea · Usage · status · Send
 // ---------------------------------------------------------------------------
 
+/**
+ * If the text immediately before `cursor` contains an unbroken `@`-path token
+ * (no whitespace between `@` and the cursor), return its start index and the
+ * path-prefix string that follows the `@`. Returns null otherwise.
+ */
+function getAtToken(text: string, cursor: number): { start: number; prefix: string } | null {
+  const before = text.slice(0, cursor);
+  const match = before.match(/@(\S*)$/);
+  if (!match) return null;
+  return { start: before.length - match[0].length, prefix: match[1]! };
+}
+
 function InputRow() {
   let textareaRef!: HTMLTextAreaElement;
+  let dropdownRef: HTMLDivElement | undefined;
 
   const [inputValue, setInputValue] = createSignal("");
+
+  // ── @-path completion state ──
+  const [completionItems, setCompletionItems] = createSignal<string[]>([]);
+  const [completionHighlight, setCompletionHighlight] = createSignal(-1); // -1 = none
+  const [completionOpen, setCompletionOpen] = createSignal(false);
+  let fetchSeq = 0;
+
+  function closeCompletion() {
+    setCompletionOpen(false);
+    setCompletionItems([]);
+    setCompletionHighlight(-1);
+  }
+
+  async function queryCompletion(prefix: string) {
+    const seq = ++fetchSeq;
+    try {
+      const res = await fetch(`/files?prefix=${encodeURIComponent(prefix)}`);
+      if (seq !== fetchSeq) return;
+      if (!res.ok) { closeCompletion(); return; }
+      const items: string[] = await res.json() as string[];
+      if (seq !== fetchSeq) return;
+      setCompletionItems(items);
+      setCompletionHighlight(-1);
+      setCompletionOpen(items.length > 0);
+    } catch {
+      if (seq !== fetchSeq) return;
+      closeCompletion();
+    }
+  }
+
+  function moveHighlight(delta: number) {
+    const items = completionItems();
+    if (items.length === 0) return;
+    const h = completionHighlight();
+    // Wrap around: Ctrl+N past last goes to first; Ctrl+P at first goes to last.
+    const next = delta > 0
+      ? (h >= items.length - 1 ? 0 : h + 1)
+      : (h <= 0 ? items.length - 1 : h - 1);
+    setCompletionHighlight(next);
+  }
+
+  // Scroll the highlighted item into view whenever the highlight changes.
+  createEffect(() => {
+    const h = completionHighlight();
+    if (h < 0 || !dropdownRef) return;
+    dropdownRef.querySelectorAll<HTMLElement>(".fc-item")[h]?.scrollIntoView({ block: "nearest" });
+  });
+
+  function acceptCompletion(item: string) {
+    const text = inputValue();
+    const cursor = textareaRef.selectionStart ?? text.length;
+    const token = getAtToken(text, cursor);
+    if (!token) { closeCompletion(); return; }
+
+    // Replace the @-token (from "@" through cursor) with "@" + selected item.
+    const newText = text.slice(0, token.start) + "@" + item + text.slice(cursor);
+    const newCursor = token.start + 1 + item.length;
+    setInputValue(newText);
+
+    // Restore cursor after SolidJS flushes the DOM update.
+    setTimeout(() => {
+      textareaRef.selectionStart = newCursor;
+      textareaRef.selectionEnd   = newCursor;
+      autoResize();
+    }, 0);
+
+    if (item.endsWith("/")) {
+      void queryCompletion(item); // directory → drill deeper, keep dropdown open
+    } else {
+      closeCompletion();          // file → done
+    }
+  }
 
   function autoResize() {
     textareaRef.style.height = "auto";
@@ -1715,6 +1800,7 @@ function InputRow() {
   }
 
   function send() {
+    if (completionOpen()) return; // never send while the dropdown is visible
     const content = inputValue().trim();
     if (!content || state.streaming || !state.connected) return;
     sendToServer({ type: "message", content });
@@ -1727,6 +1813,42 @@ function InputRow() {
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    if (completionOpen()) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeCompletion();
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const h = completionHighlight();
+        if (h >= 0) acceptCompletion(completionItems()[h]!);
+        else        closeCompletion();
+        return; // never send while dropdown is open
+      }
+      if (e.ctrlKey && e.key === "n") {
+        e.preventDefault();
+        moveHighlight(1);
+        return;
+      }
+      if (e.ctrlKey && e.key === "p") {
+        e.preventDefault();
+        moveHighlight(-1);
+        return;
+      }
+      // "/" with a highlighted directory: accept it and drill in.
+      if (e.key === "/" && completionHighlight() >= 0) {
+        const item = completionItems()[completionHighlight()];
+        if (item?.endsWith("/")) {
+          e.preventDefault();
+          acceptCompletion(item);
+          return;
+        }
+      }
+      // All other keys fall through to normal textarea handling
+      // (typing narrows the filter via the onInput handler below).
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -1771,12 +1893,30 @@ function InputRow() {
         <EffortSelect />
       </Show>
       <div class="textarea-wrap">
+        <Show when={completionOpen()}>
+          <div class="fc-dropdown" ref={el => { dropdownRef = el; }}>
+            <For each={completionItems()}>{(item, i) =>
+              <div
+                class={`fc-item${i() === completionHighlight() ? " fc-hl" : ""}${item.endsWith("/") ? " fc-dir" : ""}`}
+                onMouseDown={e => { e.preventDefault(); acceptCompletion(item); }}
+              >{item}</div>
+            }</For>
+          </div>
+        </Show>
         <textarea
           ref={textareaRef}
           value={inputValue()}
-          onInput={(e) => { setInputValue(e.currentTarget.value); autoResize(); }}
+          onInput={e => {
+            setInputValue(e.currentTarget.value);
+            autoResize();
+            const cursor = e.currentTarget.selectionStart ?? e.currentTarget.value.length;
+            const token = getAtToken(e.currentTarget.value, cursor);
+            if (token !== null) void queryCompletion(token.prefix);
+            else closeCompletion();
+          }}
           onKeyDown={onKeyDown}
-          placeholder="Message Omega… (Enter to send, Shift+Enter for newline)"
+          onBlur={() => setTimeout(closeCompletion, 150)}
+          placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline)"
           rows={1}
           disabled={!state.connected}
         />
