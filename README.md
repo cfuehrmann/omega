@@ -48,7 +48,6 @@ agent-specific constraints.
 | ------------- | ---------------------- | ----------------------------------------------- |
 | Session bar   | Auth mode dropdown     | Switch between Claude Max and API Key           |
 | Session bar   | Model dropdown         | Switch between `claude-sonnet-4-6` and `claude-opus-4-6` |
-| Slash command | `/compact`             | Collapse history head into an LLM summary, keep last 10 turns verbatim |
 
 ## Git discipline
 

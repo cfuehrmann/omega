@@ -884,15 +884,6 @@ export class Agent {
     _confirmTool: (name: string, input: unknown) => Promise<boolean>,
     signal?: AbortSignal,
   ): AsyncGenerator<OmegaEvent | StreamSignal> {
-    if (userMessage.startsWith("/")) {
-      yield {
-        type: "agent_error",
-        time: now(),
-        error: `Unknown command: ${userMessage}`,
-      };
-      return;
-    }
-
     // Capture this call's generation so we can detect if a newer sendMessage
     // starts while we are blocked inside tool execution (see activeGeneration).
     const myGeneration = ++this.activeGeneration;

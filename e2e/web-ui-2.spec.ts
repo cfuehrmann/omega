@@ -181,11 +181,11 @@ test("agent_error event shows error block", async ({ page, server }) => {
   await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await server.sendEvent({ type: "agent_error", error: "Context too large to send. Use /compact." });
+  await server.sendEvent({ type: "agent_error", error: "Something went wrong." });
 
   const errBlock = page.getByTestId("block-error");
   await expect(errBlock).toBeVisible({ timeout: 3000 });
-  await expect(errBlock.locator(".block-body")).toContainText("Context too large");
+  await expect(errBlock.locator(".block-body")).toContainText("Something went wrong.");
 });
 
 test("llm_error event shows error block", async ({ page, server }) => {

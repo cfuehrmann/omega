@@ -18,8 +18,7 @@ rotation machinery.
   start. Contains agent-specific constraints and operational policies. Updated
   manually. Lives under source control.
 - **History** — `compactedContextHistory` grows verbatim across turns. Sent
-  in full to each LLM provider call — no mid-turn trimming. `/compact`
-  summarises the head and keeps the last 10 turns verbatim. Auto-compact fires
+  in full to each LLM provider call — no mid-turn trimming. Auto-compact fires
   when `input_tokens` exceeds `config.autoCompactThreshold = 750_000`.
 - **Current turn** — always verbatim, never compacted mid-turn.
 - Hard message cap: 100 messages. Token budget: 100k.
@@ -137,8 +136,7 @@ function.
   type, `PRICING` table; `compactedContextHistory` / `compactedContextHashes[]`
   are the mutable in-memory context window and parallel hash array;
   `appendToHistory()` fire-and-forgets file I/O; `logEvent()` fire-and-forget
-  event logger; `emitSessionEnd()` awaits flush; `/compact` replaces context
-  view and hashes in memory only.
+  event logger; `emitSessionEnd()` awaits flush.
 - `src/events.ts` — `OmegaEvent` discriminated union; `StreamSignal`;
   `exhaustiveCheck(x: never)` guard.
 - `src/event-store.ts` — `appendEvent(event, filePath?)` — null-is-no-op.
@@ -147,7 +145,6 @@ function.
   `appendContextMessage()` returns hash.
 - `src/session-dir.ts` — `makeSessionDir()`; `makeSessionDirName()`;
   `findPreviousEventsFile()`; `SESSIONS_ROOT`; `TEST_SESSIONS_ROOT`.
-- `src/compaction.ts` — `compactHistory()`. `KEEP_RECENT_TURNS = 10`.
 - `src/system-prompt/` — modular system prompt: `identity.ts` (OAuth prefix),
   `core.ts` (main instructions), `append.ts` (`readSystemPromptAppend()`,
   `writeSystemPromptAppend()`, `systemPromptAppendPath()`,

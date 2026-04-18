@@ -913,22 +913,6 @@ describe("Agent — verbatim history (no turn compaction)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Slash command tests
-// ---------------------------------------------------------------------------
-
-describe("slash commands", () => {
-  it.concurrent("any slash command is rejected as unknown", async () => {
-    const { agent, dispose } = await makeTestAgent(undefined);
-    disposeAll.push(dispose);
-    for (const cmd of ["/sonnet", "/opus", "/codex", "/help", "/anthropic"]) {
-      const events = await collectEvents(agent, cmd);
-      const err = events.find((e) => e.type === "agent_error") as any;
-      expect(err).toBeDefined();
-    }
-  });
-});
-
 describe("model switching via setModel()", () => {
   it.concurrent("setModel() emits and persists model_changed", async () => {
     const { agent, dispose } = await makeTestAgent(undefined);

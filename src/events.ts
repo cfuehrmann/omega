@@ -216,7 +216,7 @@ export interface LlmErrorEvent {
   httpStatus?: number;
 }
 
-/** A generic agent-level error (slash-command failures, etc.). */
+/** A generic agent-level error. */
 export interface AgentErrorEvent {
   type: "agent_error";
   time: ISOTimestamp;
