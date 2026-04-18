@@ -1722,14 +1722,11 @@ function InputRow() {
 
   const [inputValue, setInputValue] = createSignal("");
 
-  // Intercept navigation keys at the capture phase so the browser never acts
-  // on them while the textarea is focused:
-  //   Ctrl+N/P  – always intercepted (would open new window / print)
-  //   Tab       – only intercepted when the dropdown is open (would shift focus)
+  // Intercept Tab at the capture phase so the browser never shifts focus while
+  // the completion dropdown is open.
   onMount(() => {
     function captureNavKeys(e: KeyboardEvent) {
       if (document.activeElement !== textareaRef) return;
-      if (e.ctrlKey && (e.key === "n" || e.key === "p")) { e.preventDefault(); return; }
       if (e.key === "Tab" && completionOpen()) { e.preventDefault(); }
     }
     window.addEventListener("keydown", captureNavKeys, { capture: true });
@@ -1769,7 +1766,7 @@ function InputRow() {
     const items = completionItems();
     if (items.length === 0) return;
     const h = completionHighlight();
-    // Wrap around: Ctrl+N past last goes to first; Ctrl+P at first goes to last.
+    // Wrap around: past last goes to first; at first goes to last.
     const next = delta > 0
       ? (h >= items.length - 1 ? 0 : h + 1)
       : (h <= 0 ? items.length - 1 : h - 1);
@@ -1840,12 +1837,12 @@ function InputRow() {
         else        closeCompletion();
         return; // never send while dropdown is open
       }
-      if ((e.ctrlKey && e.key === "n") || (e.key === "Tab" && !e.shiftKey)) {
+      if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
         e.preventDefault();
         moveHighlight(1);
         return;
       }
-      if ((e.ctrlKey && e.key === "p") || (e.key === "Tab" && e.shiftKey)) {
+      if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
         e.preventDefault();
         moveHighlight(-1);
         return;
@@ -1930,7 +1927,7 @@ function InputRow() {
           }}
           onKeyDown={onKeyDown}
           onBlur={() => setTimeout(closeCompletion, 150)}
-          placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline)"
+          placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline, ↑↓/Tab to navigate)"
           rows={1}
           disabled={!state.connected}
         />

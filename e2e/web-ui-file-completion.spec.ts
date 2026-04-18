@@ -4,7 +4,7 @@
  * Covers:
  *  1. Typing @ opens the dropdown
  *  2. Typing more characters narrows the list
- *  3. Ctrl+N / Ctrl+P move the highlight (with wrap-around)
+ *  3. ArrowDown / ArrowUp move the highlight (with wrap-around)
  *  4. Enter with a highlighted file accepts it, closes dropdown, does NOT send
  *  5. Enter with nothing highlighted just closes the dropdown, does NOT send
  *  6. Esc closes the dropdown, keeps text
@@ -77,10 +77,10 @@ test("typing a non-matching filter hides the dropdown", async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Ctrl+N / Ctrl+P move the highlight
+// 3. ArrowDown / ArrowUp move the highlight
 // ---------------------------------------------------------------------------
 
-test("Ctrl+N highlights the first item, subsequent presses move down", async ({ page }) => {
+test("ArrowDown highlights the first item, subsequent presses move down", async ({ page }) => {
   await setup(page);
   const textarea = page.locator("textarea");
   await textarea.click();
@@ -90,30 +90,30 @@ test("Ctrl+N highlights the first item, subsequent presses move down", async ({ 
   // Initially nothing is highlighted
   await expect(highlighted(page)).not.toBeVisible();
 
-  // First Ctrl+N → first item highlighted
-  await page.keyboard.press("Control+n");
+  // First ArrowDown → first item highlighted
+  await page.keyboard.press("ArrowDown");
   await expect(highlighted(page)).toBeVisible({ timeout: 1000 });
   const firstText = await highlighted(page).textContent();
 
-  // Second Ctrl+N → second item highlighted (different from first)
-  await page.keyboard.press("Control+n");
+  // Second ArrowDown → second item highlighted (different from first)
+  await page.keyboard.press("ArrowDown");
   await expect(highlighted(page)).toBeVisible();
   const secondText = await highlighted(page).textContent();
   expect(secondText).not.toBe(firstText);
 });
 
-test("Ctrl+P wraps from first item to last", async ({ page }) => {
+test("ArrowUp wraps from first item to last", async ({ page }) => {
   await setup(page);
   const textarea = page.locator("textarea");
   await textarea.click();
   await textarea.pressSequentially("@");
   await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
 
-  // Ctrl+N to first item, then Ctrl+P should wrap to last
-  await page.keyboard.press("Control+n");
+  // ArrowDown to first item, then ArrowUp should wrap to last
+  await page.keyboard.press("ArrowDown");
   const firstText = await highlighted(page).textContent();
 
-  await page.keyboard.press("Control+p");
+  await page.keyboard.press("ArrowUp");
   const wrappedText = await highlighted(page).textContent();
   // Wrapped to last — should differ from first (assuming >1 items, which is certain for "@")
   expect(wrappedText).not.toBe(firstText);
@@ -194,7 +194,7 @@ test("Enter on a highlighted file accepts it and does not send the message", asy
   await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
 
   // Highlight the first (and only) match
-  await page.keyboard.press("Control+n");
+  await page.keyboard.press("ArrowDown");
   await expect(highlighted(page)).toBeVisible();
   await expect(highlighted(page)).toContainText("backlog.md");
 
@@ -267,7 +267,7 @@ test("pressing / on a highlighted directory drills into it", async ({ page }) =>
   await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
 
   // Highlight the "src/" entry
-  await page.keyboard.press("Control+n");
+  await page.keyboard.press("ArrowDown");
   await expect(highlighted(page)).toContainText("src/");
 
   // Press "/" — should accept "src/" and list its contents
