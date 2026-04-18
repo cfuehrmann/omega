@@ -12,6 +12,8 @@
  *  8. Resumability: after Esc, typing "/" reopens dropdown for the next level
  *  9. Clicking an item in the dropdown accepts it
  * 10. Clicking outside the dropdown closes it
+ * 11. Tab / Shift+Tab move the highlight (with wrap-around)
+ * 12. Tab does not shift browser focus while the dropdown is open
  */
 
 import { test, expect } from "./fixtures/index.js";
@@ -115,6 +117,68 @@ test("Ctrl+P wraps from first item to last", async ({ page }) => {
   const wrappedText = await highlighted(page).textContent();
   // Wrapped to last — should differ from first (assuming >1 items, which is certain for "@")
   expect(wrappedText).not.toBe(firstText);
+});
+
+// ---------------------------------------------------------------------------
+// 11. Tab / Shift+Tab move the highlight (with wrap-around)
+// ---------------------------------------------------------------------------
+
+test("Tab highlights the first item, subsequent presses move down", async ({ page }) => {
+  await setup(page);
+  const textarea = page.locator("textarea");
+  await textarea.click();
+  await textarea.pressSequentially("@");
+  await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
+
+  // Initially nothing is highlighted
+  await expect(highlighted(page)).not.toBeVisible();
+
+  // First Tab → first item highlighted
+  await page.keyboard.press("Tab");
+  await expect(highlighted(page)).toBeVisible({ timeout: 1000 });
+  const firstText = await highlighted(page).textContent();
+
+  // Second Tab → second item highlighted (different from first)
+  await page.keyboard.press("Tab");
+  await expect(highlighted(page)).toBeVisible();
+  const secondText = await highlighted(page).textContent();
+  expect(secondText).not.toBe(firstText);
+});
+
+test("Shift+Tab wraps from first item to last", async ({ page }) => {
+  await setup(page);
+  const textarea = page.locator("textarea");
+  await textarea.click();
+  await textarea.pressSequentially("@");
+  await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
+
+  // Tab to first item, then Shift+Tab should wrap to last
+  await page.keyboard.press("Tab");
+  const firstText = await highlighted(page).textContent();
+
+  await page.keyboard.press("Shift+Tab");
+  const wrappedText = await highlighted(page).textContent();
+  // Wrapped to last — should differ from first (assuming >1 items, which is certain for "@")
+  expect(wrappedText).not.toBe(firstText);
+});
+
+// ---------------------------------------------------------------------------
+// 12. Tab does not shift browser focus while the dropdown is open
+// ---------------------------------------------------------------------------
+
+test("Tab does not move browser focus away from the textarea while dropdown is open", async ({ page }) => {
+  await setup(page);
+  const textarea = page.locator("textarea");
+  await textarea.click();
+  await textarea.pressSequentially("@");
+  await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
+
+  await page.keyboard.press("Tab");
+
+  // Textarea must still be the active element
+  await expect(textarea).toBeFocused();
+  // Dropdown must still be visible
+  await expect(dropdown(page)).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
