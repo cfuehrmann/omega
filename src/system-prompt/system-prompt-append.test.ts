@@ -18,6 +18,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 // ---------------------------------------------------------------------------
 // Shared cleanup
@@ -39,7 +40,7 @@ afterEach(async () => {
 // Mock stream helpers (mirrors agent-integration.test.ts pattern)
 // ---------------------------------------------------------------------------
 
-function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
+function makeMockStream(events: BetaRawMessageStreamEvent[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() { for (const e of events) yield e; },
     finalMessage: async () => message,
@@ -56,12 +57,12 @@ function textMessage(text: string): Anthropic.Beta.Messages.BetaMessage {
   };
 }
 
-function textStreamEvents(text: string): any[] {
+function textStreamEvents(text: string): BetaRawMessageStreamEvent[] {
   return [
-    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }

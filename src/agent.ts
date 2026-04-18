@@ -102,7 +102,7 @@ function elideAnthropicResponse(resp: Anthropic.Beta.Messages.BetaMessage): Reco
     model: resp.model,
     stop_reason: resp.stop_reason,
     usage: resp.usage,
-    ...(((resp as any).context_management) ? { context_management: (resp as any).context_management } : {}),
+    ...(resp.context_management ? { context_management: resp.context_management } : {}),
     content: `[elided — use context hash]`,
   };
 }
@@ -862,7 +862,7 @@ export class Agent {
         output_tokens: result.response.usage.output_tokens,
         cache_creation_input_tokens: result.response.usage.cache_creation_input_tokens ?? undefined,
         cache_read_input_tokens: result.response.usage.cache_read_input_tokens ?? undefined,
-        service_tier: (result.response.usage as any).service_tier ?? undefined,
+        service_tier: result.response.usage.service_tier ?? undefined,
       },
       contextHash: assistantHash,
       ...(result.assembledText
@@ -1186,9 +1186,10 @@ export class Agent {
       // when clearing fired. Clearing happens server-side only — our local
       // compactedContextHistory is unaffected (the API docs confirm the client
       // keeps its full history; only the server-side prompt is edited).
-      const appliedEdits: any[] = (response as any).context_management?.applied_edits ?? [];
+      const appliedEdits = response.context_management?.applied_edits ?? [];
       const clearingEdit = appliedEdits.find(
-        (edit: any) => edit.type === "clear_tool_uses_20250919",
+        (edit): edit is Anthropic.Beta.Messages.BetaClearToolUses20250919EditResponse =>
+          edit.type === "clear_tool_uses_20250919",
       );
 
       // Add assistant response to history; capture hash for llm_response + tool_call events.

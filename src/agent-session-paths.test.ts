@@ -16,12 +16,13 @@ import { existsSync, readFileSync } from "fs";
 import { makeTestAgent } from "./test-utils.js";
 import type { CreateMessageStream } from "./agent.js";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock provider (same pattern as agent-integration.test.ts)
 // ---------------------------------------------------------------------------
 
-function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
+function makeMockStream(events: BetaRawMessageStreamEvent[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() { for (const e of events) yield e; },
     finalMessage: async () => message,
@@ -31,10 +32,10 @@ function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMess
 function textCreateMessageStream(text: string): CreateMessageStream {
   return () => makeMockStream(
     [
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
       { type: "content_block_stop", index: 0 },
-      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+      { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
       { type: "message_stop" },
     ],
     {

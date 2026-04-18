@@ -15,6 +15,7 @@ import { Agent } from "./agent.js";
 import { existsSync } from "fs";
 import { TEST_SESSIONS_ROOT } from "./session-dir.js";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 // Minimal mock stream that returns one text block and stops.
 function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0] {
@@ -31,11 +32,11 @@ function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0
     usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
   return (_params) => ({
-    async *[Symbol.asyncIterator]() {
-      yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+    async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+      yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
       yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
       yield { type: "content_block_stop", index: 0 };
-      yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } };
+      yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
     },
     finalMessage: async () => message,
   });

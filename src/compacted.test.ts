@@ -16,6 +16,7 @@
 
 import { describe, it, expect, afterAll } from "bun:test";
 import type { CreateMessageStream, OmegaEvent, StreamSignal } from "./agent.js";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { makeTestAgent } from "./test-utils.js";
 import { OmegaEventSchema } from "./events.schema.js";
 import { readFileSync, existsSync } from "fs";
@@ -24,7 +25,7 @@ import { readFileSync, existsSync } from "fs";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeMockStream(streamEvents: any[], finalMsg: any) {
+function makeMockStream(streamEvents: BetaRawMessageStreamEvent[], finalMsg: any) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const e of streamEvents) yield e;
@@ -33,12 +34,12 @@ function makeMockStream(streamEvents: any[], finalMsg: any) {
   };
 }
 
-function textStreamEvents(text: string): any[] {
+function textStreamEvents(text: string): BetaRawMessageStreamEvent[] {
   return [
-    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -82,17 +83,17 @@ function compactionMessage(summaryText: string, replyText: string, usageOverride
 }
 
 /** Stream events for a compacting response: compaction block (one delta) + text. */
-function compactionStreamEvents(summaryText: string, replyText: string): any[] {
+function compactionStreamEvents(summaryText: string, replyText: string): BetaRawMessageStreamEvent[] {
   return [
     // Compaction block — arrives as a single delta (no incremental streaming)
-    { type: "content_block_start", index: 0, content_block: { type: "compaction", content: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "compaction", content: null } },
     { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: summaryText } },
     { type: "content_block_stop", index: 0 },
     // Actual text response
-    { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+    { type: "content_block_start", index: 1, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: replyText } },
     { type: "content_block_stop", index: 1 },
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 50 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 50, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }

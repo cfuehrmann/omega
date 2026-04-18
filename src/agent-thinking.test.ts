@@ -11,6 +11,7 @@
 
 import { describe, it, expect, afterEach } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { readFileSync } from "fs";
 
 import { Agent, type OmegaEvent, type StreamSignal, type CreateMessageStream, processStreamEvents } from "./agent.js";
@@ -23,7 +24,7 @@ afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
 // Mock helpers
 // ---------------------------------------------------------------------------
 
-function makeMockStream(events: any[], message: any) {
+function makeMockStream(events: BetaRawMessageStreamEvent[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const e of events) yield e;
@@ -33,34 +34,36 @@ function makeMockStream(events: any[], message: any) {
 }
 
 /** Stream events for a response with a single thinking block then text. */
-function thinkingThenTextStreamEvents(thinking: string, text: string): any[] {
+function thinkingThenTextStreamEvents(thinking: string, text: string): BetaRawMessageStreamEvent[] {
   return [
-    { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
     { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: thinking.slice(0, 10) } },
     { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: thinking.slice(10) } },
     { type: "content_block_stop", index: 0 },
-    { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+    { type: "content_block_start", index: 1, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 1, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 1 },
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 30 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 30, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
 
 /** Final message for a response with thinking + text. */
-function thinkingThenTextMessage(thinking: string, text: string): any {
+function thinkingThenTextMessage(thinking: string, text: string): Anthropic.Beta.Messages.BetaMessage {
   return {
     id: "msg_thinking_test",
     type: "message",
     role: "assistant",
     model: "claude-sonnet-4-6",
+    container: null,
+    context_management: null,
     content: [
       { type: "thinking", thinking, signature: "test-sig" },
-      { type: "text", text },
+      { type: "text", text, citations: null },
     ],
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: { input_tokens: 100, output_tokens: 30 },
+    usage: { input_tokens: 100, output_tokens: 30, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
 }
 
@@ -69,18 +72,18 @@ function twoThinkingBlocksStreamEvents(
   thinking1: string,
   thinking2: string,
   text: string
-): any[] {
+): BetaRawMessageStreamEvent[] {
   return [
-    { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
     { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: thinking1 } },
     { type: "content_block_stop", index: 0 },
-    { type: "content_block_start", index: 1, content_block: { type: "thinking", thinking: "" } },
+    { type: "content_block_start", index: 1, content_block: { type: "thinking", thinking: "", signature: "" } },
     { type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: thinking2 } },
     { type: "content_block_stop", index: 1 },
-    { type: "content_block_start", index: 2, content_block: { type: "text", text: "" } },
+    { type: "content_block_start", index: 2, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 2, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 2 },
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 40 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 40, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -200,10 +203,10 @@ describe("Agent — adaptive thinking", () => {
     const provider: CreateMessageStream = () =>
       makeMockStream(
         [
-          { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
           { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
           { type: "content_block_stop", index: 0 },
-          { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 10 } },
+          { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
           { type: "message_stop" },
         ],
         {
@@ -211,10 +214,12 @@ describe("Agent — adaptive thinking", () => {
           type: "message",
           role: "assistant",
           model: "claude-sonnet-4-6",
-          content: [{ type: "text", text }],
+          container: null,
+          context_management: null,
+          content: [{ type: "text", text, citations: null }],
           stop_reason: "end_turn",
           stop_sequence: null,
-          usage: { input_tokens: 10, output_tokens: 10 },
+          usage: { input_tokens: 10, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
         }
       );
 
@@ -243,14 +248,16 @@ describe("Agent — adaptive thinking", () => {
           type: "message",
           role: "assistant",
           model: "claude-sonnet-4-6",
+          container: null,
+          context_management: null,
           content: [
             { type: "thinking", thinking: thinking1, signature: "sig1" },
             { type: "thinking", thinking: thinking2, signature: "sig2" },
-            { type: "text", text },
+            { type: "text", text, citations: null },
           ],
           stop_reason: "end_turn",
           stop_sequence: null,
-          usage: { input_tokens: 50, output_tokens: 40 },
+          usage: { input_tokens: 50, output_tokens: 40, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
         }
       );
 
@@ -282,13 +289,13 @@ describe("Agent — adaptive thinking", () => {
         // First call: return thinking block + tool_use, stop_reason: "tool_use"
         return makeMockStream(
           [
-            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
             { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: THINKING_TEXT } },
             { type: "content_block_stop", index: 0 },
-            { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: TOOL_USE_ID, name: "list_files" } },
+            { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: TOOL_USE_ID, name: "list_files", input: {} } },
             { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path": "."}' } },
             { type: "content_block_stop", index: 1 },
-            { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 20 } },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 20, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
             { type: "message_stop" },
           ],
           {
@@ -300,9 +307,11 @@ describe("Agent — adaptive thinking", () => {
               { type: "thinking", thinking: THINKING_TEXT, signature: SIGNATURE },
               { type: "tool_use", id: TOOL_USE_ID, name: "list_files", input: { path: "." } },
             ],
+            container: null,
+            context_management: null,
             stop_reason: "tool_use",
             stop_sequence: null,
-            usage: { input_tokens: 50, output_tokens: 20 },
+            usage: { input_tokens: 50, output_tokens: 20, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
           }
         );
       } else {
@@ -310,10 +319,10 @@ describe("Agent — adaptive thinking", () => {
         capturedSecondCallMessages = params.messages;
         return makeMockStream(
           [
-            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
             { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: FINAL_TEXT } },
             { type: "content_block_stop", index: 0 },
-            { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
             { type: "message_stop" },
           ],
           {
@@ -321,10 +330,12 @@ describe("Agent — adaptive thinking", () => {
             type: "message",
             role: "assistant",
             model: "claude-sonnet-4-6",
-            content: [{ type: "text", text: FINAL_TEXT }],
+            container: null,
+            context_management: null,
+            content: [{ type: "text", text: FINAL_TEXT, citations: null }],
             stop_reason: "end_turn",
             stop_sequence: null,
-            usage: { input_tokens: 80, output_tokens: 5 },
+            usage: { input_tokens: 80, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
           }
         );
       }

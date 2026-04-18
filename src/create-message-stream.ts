@@ -1,6 +1,7 @@
 import type {
   BetaMessageStreamParams,
   BetaMessage,
+  BetaRawMessageStreamEvent,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 /**
@@ -20,6 +21,6 @@ import type {
 export type CreateMessageStream = (
   params: BetaMessageStreamParams,
 ) => {
-  [Symbol.asyncIterator](): AsyncIterator<any>;
+  [Symbol.asyncIterator](): AsyncIterator<BetaRawMessageStreamEvent>;
   finalMessage(): Promise<BetaMessage>;
 };

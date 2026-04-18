@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { Agent, type OmegaEvent, type StreamSignal } from "./agent.js";
 import type { CreateMessageStream } from "./agent.js";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { makeTestAgent } from "./test-utils.js";
 
 
@@ -85,11 +86,11 @@ describe("overload (529) — indefinite retry", () => {
   /** Build a minimal successful stream mock (text-only, no tool use). */
   function makeSuccessProvider(): CreateMessageStream {
     return () => ({
-      async *[Symbol.asyncIterator]() {
-        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+      async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
         yield { type: "content_block_stop", index: 0 };
-        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } };
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
         yield { type: "message_stop" };
       },
       finalMessage: async () => ({
@@ -273,24 +274,24 @@ describe("mid-stream retry", () => {
     return () => {
       const attempt = ++calls;
       if (attempt <= failCount) {
-        const events: any[] = [];
+        const events: BetaRawMessageStreamEvent[] = [];
 
         if (opts.thinkingBeforeError) {
           events.push(
-            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
             { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: opts.thinkingBeforeError } },
           );
         }
         if (opts.textBeforeError) {
           const idx = opts.thinkingBeforeError ? 1 : 0;
           events.push(
-            { type: "content_block_start", index: idx, content_block: { type: "text", text: "" } },
+            { type: "content_block_start", index: idx, content_block: { type: "text", text: "", citations: null } },
             { type: "content_block_delta", index: idx, delta: { type: "text_delta", text: opts.textBeforeError } },
           );
         }
 
         return {
-          async *[Symbol.asyncIterator]() {
+          async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
             for (const e of events) yield e;
             throw overloadError();
           },
@@ -300,11 +301,11 @@ describe("mid-stream retry", () => {
 
       // Success
       return {
-        async *[Symbol.asyncIterator]() {
-          yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+        async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+          yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
           yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
           yield { type: "content_block_stop", index: 0 };
-          yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } };
+          yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
           yield { type: "message_stop" };
         },
         finalMessage: async () => ({
@@ -455,8 +456,8 @@ describe("mid-stream retry", () => {
       if (callCount === 1) {
         // First call: yield partial thinking, then throw
         return {
-          async *[Symbol.asyncIterator]() {
-            yield { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } };
+          async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+            yield { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } };
             yield { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: THINKING_BEFORE_ERROR } };
             throw overloadError();
           },
@@ -466,11 +467,11 @@ describe("mid-stream retry", () => {
       // Retry: capture the messages to verify they don't contain the fragment
       capturedMessages = params.messages as any[];
       return {
-        async *[Symbol.asyncIterator]() {
-          yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+        async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+          yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
           yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
           yield { type: "content_block_stop", index: 0 };
-          yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } };
+          yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
           yield { type: "message_stop" };
         },
         finalMessage: async () => ({
@@ -515,11 +516,11 @@ describe("retry-after header", () => {
   /** Shared success stream used across tests in this describe block. */
   function makeSuccessProvider(): CreateMessageStream {
     return () => ({
-      async *[Symbol.asyncIterator]() {
-        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+      async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
         yield { type: "content_block_stop", index: 0 };
-        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } };
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
         yield { type: "message_stop" };
       },
       finalMessage: async () => ({

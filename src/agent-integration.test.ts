@@ -10,6 +10,7 @@
 
 import { describe, it, expect, afterEach } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 import { Agent, type OmegaEvent, type StreamSignal, type CreateMessageStream } from "./agent.js";
 import { makeTestAgent } from "./test-utils.js";
@@ -26,7 +27,7 @@ afterEach(() => { disposeAll.splice(0).forEach(d => d()); });
  * `events` is the sequence of raw stream events to yield.
  * `message` is what finalMessage() resolves to.
  */
-function makeMockStream(events: any[], message: Anthropic.Beta.Messages.BetaMessage) {
+function makeMockStream(events: BetaRawMessageStreamEvent[], message: Anthropic.Beta.Messages.BetaMessage) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const e of events) yield e;
@@ -52,12 +53,12 @@ function textMessage(text: string): Anthropic.Beta.Messages.BetaMessage {
 }
 
 /** Stream events for a plain text response. */
-function textStreamEvents(text: string): any[] {
+function textStreamEvents(text: string): BetaRawMessageStreamEvent[] {
   return [
-    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -83,12 +84,12 @@ function toolUseMessage(
 }
 
 /** Stream events for a tool_use response. */
-function toolUseStreamEvents(toolName: string): any[] {
+function toolUseStreamEvents(toolName: string): BetaRawMessageStreamEvent[] {
   return [
-    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: toolName } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: toolName, input: {} } },
     { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{}" } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -134,8 +135,8 @@ describe("Agent.sendMessage — plain text response", () => {
   });
 
   it.concurrent("accumulates text from chunks", async () => {
-    const chunkEvents = [
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    const chunkEvents: BetaRawMessageStreamEvent[] = [
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "foo " } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "bar " } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "baz" } },
@@ -326,14 +327,14 @@ describe("Agent.sendMessage — tool call loop", () => {
       context_management: null,
       usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
     };
-    const twoToolStreamEvents: any[] = [
-      { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tA", name: "list_files" } },
+    const twoToolStreamEvents: BetaRawMessageStreamEvent[] = [
+      { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tA", name: "list_files", input: {} } },
       { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"path":"src"}' } },
       { type: "content_block_stop", index: 0 },
-      { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tB", name: "list_files" } },
+      { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tB", name: "list_files", input: {} } },
       { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path":"plan"}' } },
       { type: "content_block_stop", index: 1 },
-      { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
+      { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
       { type: "message_stop" },
     ];
 
@@ -437,16 +438,16 @@ describe("Agent.sendMessage — abort", () => {
     // Stream that yields text chunks with a delay so we can abort mid-way
     const mockProvider: CreateMessageStream = () => {
       async function* slowEvents() {
-        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
-        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk1 " } };
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk1 " } } satisfies BetaRawMessageStreamEvent;
         // Pause — abort fires here
         await new Promise((r) => setTimeout(r, 50));
-        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk2 " } };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk2 " } } satisfies BetaRawMessageStreamEvent;
         await new Promise((r) => setTimeout(r, 50));
-        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk3" } };
-        yield { type: "content_block_stop", index: 0 };
-        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 10 } };
-        yield { type: "message_stop" };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk3" } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "content_block_stop", index: 0 } satisfies BetaRawMessageStreamEvent;
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "message_stop" } satisfies BetaRawMessageStreamEvent;
       }
       return {
         [Symbol.asyncIterator]: slowEvents,
@@ -483,13 +484,13 @@ describe("Agent.sendMessage — abort", () => {
   it.concurrent("does not add incomplete assistant turn to history when aborted", async () => {
     const mockProvider: CreateMessageStream = () => {
       async function* slowEvents() {
-        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
-        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } };
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } } satisfies BetaRawMessageStreamEvent;
         await new Promise((r) => setTimeout(r, 50));
-        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " response" } };
-        yield { type: "content_block_stop", index: 0 };
-        yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } };
-        yield { type: "message_stop" };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " response" } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "content_block_stop", index: 0 } satisfies BetaRawMessageStreamEvent;
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "message_stop" } satisfies BetaRawMessageStreamEvent;
       }
       return {
         [Symbol.asyncIterator]: slowEvents,
@@ -1330,12 +1331,12 @@ describe("Agent.sendMessage — stop reason handling", () => {
   }
 
   // Helper: stream events for a response that stops mid-text with a given stop_reason
-  function truncatedTextStreamEvents(text: string, stopReason: string): any[] {
+  function truncatedTextStreamEvents(text: string, stopReason: Anthropic.Beta.Messages.BetaStopReason): BetaRawMessageStreamEvent[] {
     return [
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
       { type: "content_block_stop", index: 0 },
-      { type: "message_delta", delta: { stop_reason: stopReason }, usage: { output_tokens: 30000 } },
+      { type: "message_delta", context_management: null, delta: { stop_reason: stopReason, stop_sequence: null, container: null }, usage: { output_tokens: 30000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
       { type: "message_stop" },
     ];
   }
@@ -1356,9 +1357,10 @@ describe("Agent.sendMessage — stop reason handling", () => {
             [
               {
                 type: "message_delta",
-                delta: { stop_reason: "model_context_window_exceeded" },
-                usage: { output_tokens: 30000 },
-              },
+                context_management: null,
+                delta: { stop_reason: "model_context_window_exceeded", stop_sequence: null, container: null },
+                usage: { output_tokens: 30000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null },
+              } satisfies BetaRawMessageStreamEvent,
               { type: "message_stop" },
             ],
             truncatedToolUseMessage("model_context_window_exceeded"),
@@ -1462,7 +1464,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
       const mockProvider: CreateMessageStream = () =>
         makeMockStream(
           [
-            { type: "message_delta", delta: { stop_reason: "refusal" }, usage: { output_tokens: 3 } },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "refusal", stop_sequence: null, container: null }, usage: { output_tokens: 3, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
             { type: "message_stop" },
           ],
           refusalMessage,
