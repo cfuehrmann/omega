@@ -90,7 +90,7 @@ describe("overload (529) — indefinite retry", () => {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
         yield { type: "content_block_stop", index: 0 };
-        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
         yield { type: "message_stop" };
       },
       finalMessage: async () => ({
@@ -305,7 +305,7 @@ describe("mid-stream retry", () => {
           yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
           yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
           yield { type: "content_block_stop", index: 0 };
-          yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
+          yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
           yield { type: "message_stop" };
         },
         finalMessage: async () => ({
@@ -471,7 +471,7 @@ describe("mid-stream retry", () => {
           yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
           yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
           yield { type: "content_block_stop", index: 0 };
-          yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
+          yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
           yield { type: "message_stop" };
         },
         finalMessage: async () => ({
@@ -520,7 +520,7 @@ describe("retry-after header", () => {
         yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
         yield { type: "content_block_stop", index: 0 };
-        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
         yield { type: "message_stop" };
       },
       finalMessage: async () => ({

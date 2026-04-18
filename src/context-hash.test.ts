@@ -46,6 +46,7 @@ function textMessage(text: string): Anthropic.Beta.Messages.BetaMessage {
     content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
+    stop_details: null,
     context_management: null,
     usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
@@ -56,7 +57,7 @@ function textStreamEvents(text: string): BetaRawMessageStreamEvent[] {
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -71,6 +72,7 @@ function toolUseMessage(toolId: string, toolName: string, toolInput: any): Anthr
     content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
+    stop_details: null,
     context_management: null,
     usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
@@ -81,7 +83,7 @@ function toolUseStreamEvents(toolName: string, toolId = "t1"): BetaRawMessageStr
     { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: toolId, name: toolName, input: {} } },
     { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{}" } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }

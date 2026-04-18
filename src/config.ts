@@ -94,14 +94,17 @@ export const config = {
    *              default for agentic coding workflows on Sonnet 4.6.
    *   "high"   — Claude almost always thinks; equivalent to omitting the
    *              parameter (Anthropic's built-in default).
-   *   "max"    — unconstrained thinking depth; Opus 4.6 only.
+   *   "max"    — unconstrained thinking depth; Opus 4.6 / 4.7 / Sonnet 4.6.
+   *   "xhigh"  — extended capability for long-horizon work; Opus 4.7 only.
+   *              Anthropic's recommended starting point for coding/agentic
+   *              tasks on Opus 4.7.
    *
    * "medium" is chosen because Anthropic explicitly recommends it as the
    * starting point for agentic coding on Sonnet 4.6: it is the best balance
    * of speed, cost, and quality for tool-heavy workflows. Claude still thinks
    * on complex tasks at medium effort — it only skips thinking for simple
    * queries where extended reasoning adds no value. Users can raise this to
-   * "high" or "max" when maximum reasoning depth is needed.
+   * "high", "xhigh" (Opus 4.7), or "max" when maximum reasoning depth is needed.
    */
   defaultEffort: "medium" as const,
 
@@ -117,8 +120,8 @@ export const config = {
    * require the deeper reasoning that agentic coding turns demand.
    *
    * Sonnet 4.6 is the right choice: fast, cost-effective, and more than capable
-   * for summarisation. Switch to "claude-opus-4-6" only if summary quality is
-   * noticeably poor on very complex or long sessions.
+   * for summarisation. Switch to "claude-opus-4-6" or "claude-opus-4-7" only
+   * if summary quality is noticeably poor on very complex or long sessions.
    */
   resumptionModel: "claude-sonnet-4-6",
 
@@ -131,7 +134,7 @@ export const config = {
    * improvement while making resumption slower and more expensive. Raise to
    * "medium" only if summaries omit important information on complex sessions.
    */
-  resumptionEffort: "low" as "low" | "medium" | "high" | "max",
+  resumptionEffort: "low" as "low" | "medium" | "high" | "xhigh" | "max",
 
   // ---------------------------------------------------------------------------
   // Server
@@ -163,10 +166,12 @@ export const config = {
  *
  *   claude-sonnet-4-6 →  64 000  (Anthropic API maximum for this model)
  *   claude-opus-4-6   → 128 000  (Anthropic API maximum for this model)
+ *   claude-opus-4-7   → 128 000  (Anthropic API maximum for this model)
  */
 const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "claude-sonnet-4-6":  64_000,
   "claude-opus-4-6":   128_000,
+  "claude-opus-4-7":   128_000,
 };
 
 /** Fallback used when the active model is not in the map (should not occur). */

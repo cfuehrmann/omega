@@ -21,14 +21,14 @@ import type { OmegaEvent, StreamSignal } from "../events.js";
 // Model enum (shared by both directions)
 // ---------------------------------------------------------------------------
 
-export const OmegaModelSchema = z.enum(["claude-sonnet-4-6", "claude-opus-4-6"]);
+export const OmegaModelSchema = z.enum(["claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-7"]);
 export type OmegaModel = z.infer<typeof OmegaModelSchema>;
 
 // ---------------------------------------------------------------------------
 // Client → Server
 // ---------------------------------------------------------------------------
 
-export const OmegaEffortSchema = z.enum(["low", "medium", "high", "max"]);
+export const OmegaEffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type OmegaEffort = z.infer<typeof OmegaEffortSchema>;
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [

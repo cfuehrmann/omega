@@ -47,7 +47,7 @@ agent-specific constraints.
 | Where         | Control                | Effect                                          |
 | ------------- | ---------------------- | ----------------------------------------------- |
 | Session bar   | Auth mode dropdown     | Switch between Claude Max and API Key           |
-| Session bar   | Model dropdown         | Switch between `claude-sonnet-4-6` and `claude-opus-4-6` |
+| Session bar   | Model dropdown         | Switch between `claude-sonnet-4-6`, `claude-opus-4-6`, and `claude-opus-4-7` |
 
 ## Git discipline
 

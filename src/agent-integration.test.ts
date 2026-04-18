@@ -47,6 +47,7 @@ function textMessage(text: string): Anthropic.Beta.Messages.BetaMessage {
     content: [{ type: "text", text, citations: null }],
     stop_reason: "end_turn",
     stop_sequence: null,
+    stop_details: null,
     context_management: null,
     usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
@@ -58,7 +59,7 @@ function textStreamEvents(text: string): BetaRawMessageStreamEvent[] {
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -78,6 +79,7 @@ function toolUseMessage(
     content: [{ type: "tool_use", id: toolId, name: toolName, input: toolInput, caller: { type: "direct" } }],
     stop_reason: "tool_use",
     stop_sequence: null,
+    stop_details: null,
     context_management: null,
     usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
@@ -89,7 +91,7 @@ function toolUseStreamEvents(toolName: string): BetaRawMessageStreamEvent[] {
     { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: toolName, input: {} } },
     { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{}" } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -324,6 +326,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       ],
       stop_reason: "tool_use",
       stop_sequence: null,
+      stop_details: null,
       context_management: null,
       usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
     };
@@ -334,7 +337,7 @@ describe("Agent.sendMessage — tool call loop", () => {
       { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tB", name: "list_files", input: {} } },
       { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path":"plan"}' } },
       { type: "content_block_stop", index: 1 },
-      { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+      { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
       { type: "message_stop" },
     ];
 
@@ -446,7 +449,7 @@ describe("Agent.sendMessage — abort", () => {
         await new Promise((r) => setTimeout(r, 50));
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "chunk3" } } satisfies BetaRawMessageStreamEvent;
         yield { type: "content_block_stop", index: 0 } satisfies BetaRawMessageStreamEvent;
-        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } } satisfies BetaRawMessageStreamEvent;
         yield { type: "message_stop" } satisfies BetaRawMessageStreamEvent;
       }
       return {
@@ -489,7 +492,7 @@ describe("Agent.sendMessage — abort", () => {
         await new Promise((r) => setTimeout(r, 50));
         yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " response" } } satisfies BetaRawMessageStreamEvent;
         yield { type: "content_block_stop", index: 0 } satisfies BetaRawMessageStreamEvent;
-        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } } satisfies BetaRawMessageStreamEvent;
+        yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } } satisfies BetaRawMessageStreamEvent;
         yield { type: "message_stop" } satisfies BetaRawMessageStreamEvent;
       }
       return {
@@ -1268,6 +1271,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
       ],
       stop_reason: stopReason as any,
       stop_sequence: null,
+      stop_details: null,
       context_management: null,
       usage: {
         input_tokens: 900000,
@@ -1298,6 +1302,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
       content: [{ type: "text", text, citations: null }],
       stop_reason: stopReason as any,
       stop_sequence: null,
+      stop_details: null,
       context_management: null,
       usage: {
         input_tokens: 900000,
@@ -1320,7 +1325,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
       { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
       { type: "content_block_stop", index: 0 },
-      { type: "message_delta", context_management: null, delta: { stop_reason: stopReason, stop_sequence: null, container: null }, usage: { output_tokens: 30000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+      { type: "message_delta", context_management: null, delta: { stop_reason: stopReason, stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 30000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
       { type: "message_stop" },
     ];
   }
@@ -1342,7 +1347,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
               {
                 type: "message_delta",
                 context_management: null,
-                delta: { stop_reason: "model_context_window_exceeded", stop_sequence: null, container: null },
+                delta: { stop_reason: "model_context_window_exceeded", stop_sequence: null, stop_details: null, container: null },
                 usage: { output_tokens: 30000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null },
               } satisfies BetaRawMessageStreamEvent,
               { type: "message_stop" },
@@ -1431,6 +1436,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
         content: [],
         stop_reason: "refusal" as any,
         stop_sequence: null,
+        stop_details: null,
         context_management: null,
         usage: {
           input_tokens: 50,
@@ -1448,7 +1454,7 @@ describe("Agent.sendMessage — stop reason handling", () => {
       const mockProvider: CreateMessageStream = () =>
         makeMockStream(
           [
-            { type: "message_delta", context_management: null, delta: { stop_reason: "refusal", stop_sequence: null, container: null }, usage: { output_tokens: 3, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "refusal", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 3, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
             { type: "message_stop" },
           ],
           refusalMessage,

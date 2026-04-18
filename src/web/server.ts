@@ -615,9 +615,14 @@ async function handleMessage(
     }
     const ev = persistentAgent.setModel(msg.model);
     send(session.ws, ev);
-    // "max" effort is only valid on Opus. If the user switches to Sonnet while
-    // effort is "max", auto-reset to "high" so the UI stays consistent.
-    if (msg.model !== "claude-opus-4-6" && persistentAgent.getActiveEffort() === "max") {
+    // "max" / "xhigh" effort may be invalid on the target model.
+    // If the user switches to a model that doesn't support the current
+    // effort level, auto-reset to "medium" so the UI stays consistent.
+    const currentEffort = persistentAgent.getActiveEffort();
+    const needsReset =
+      (currentEffort === "max" && !new Set(["claude-opus-4-6", "claude-opus-4-7"]).has(msg.model)) ||
+      (currentEffort === "xhigh" && msg.model !== "claude-opus-4-7");
+    if (needsReset) {
       const effortEv = persistentAgent.setEffort("medium");
       send(session.ws, effortEv);
     }

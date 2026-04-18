@@ -28,6 +28,7 @@ function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0
     model: "claude-sonnet-4-6",
     stop_reason: "end_turn",
     stop_sequence: null,
+    stop_details: null,
     context_management: null,
     usage: { input_tokens: 10, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
@@ -36,7 +37,7 @@ function makeMinimalProvider(text = "hello"): Parameters<typeof makeTestAgent>[0
       yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
       yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
       yield { type: "content_block_stop", index: 0 };
-      yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
+      yield { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } };
     },
     finalMessage: async () => message,
   });

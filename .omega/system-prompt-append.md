@@ -21,10 +21,11 @@ needed (e.g. `matplotlib` for plots, `pandas` for heavy data wrangling).
 
 ### LLM Provider
 
-Omega is Anthropic-only. The two supported models are:
+Omega is Anthropic-only. The supported models are:
 
 - `claude-sonnet-4-6` — default, fast
 - `claude-opus-4-6` — slower, more capable
+- `claude-opus-4-7` — most capable; step-change improvement in agentic coding over 4.6
 
 To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
 to get an indexed list of all docs pages (each entry links to a `.md` URL), find the

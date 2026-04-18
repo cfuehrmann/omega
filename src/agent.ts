@@ -107,6 +107,32 @@ function elideAnthropicResponse(resp: Anthropic.Beta.Messages.BetaMessage): Reco
   };
 }
 
+// --- Effort capping ---
+
+/** Effort level type — matches the Anthropic API's accepted values. */
+type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** Models that accept the full effort range including "max" and "xhigh". */
+const OPUS_MODELS = new Set(["claude-opus-4-6", "claude-opus-4-7"]);
+
+/** Models that accept the "xhigh" effort level (Opus 4.7 only). */
+const XHIGH_MODELS = new Set(["claude-opus-4-7"]);
+
+/**
+ * Cap effort to the highest value the model actually supports.
+ *
+ *   "xhigh" → only Opus 4.7; falls back to "high" on Opus 4.6 and
+ *             to "high" on Sonnet.
+ *   "max"   → only Opus models (4.6, 4.7); falls back to "high" on Sonnet.
+ *
+ * Returned as a typed EffortLevel so callers don't need inline casts.
+ */
+function capEffortForModel(effort: string, model: string): EffortLevel {
+  if (effort === "xhigh" && !XHIGH_MODELS.has(model)) return "high";
+  if (effort === "max"   && !OPUS_MODELS.has(model))   return "high";
+  return effort as EffortLevel;
+}
+
 // --- Auto-approve logic ---
 
 /** Always returns true — everything is auto-approved. No allowlist. */
@@ -820,11 +846,9 @@ export class Agent {
 
     // Build stream params — llm_call event is emitted inside streamLlmCall.
     const resumptionModel = config.resumptionModel;
-    const resumptionEffort = (
-      config.resumptionEffort === "max" && resumptionModel !== "claude-opus-4-6"
-        ? "high"
-        : config.resumptionEffort
-    ) as "low" | "medium" | "high" | "max";
+    const resumptionEffort = capEffortForModel(
+      config.resumptionEffort, resumptionModel,
+    );
     const streamParams = {
       model: resumptionModel,
       max_tokens: 4096,
@@ -1045,10 +1069,7 @@ export class Agent {
         },
         thinking: { type: "adaptive" as const },
         output_config: {
-          // "max" effort is only supported on claude-opus-4-6; cap to "high" for all other models.
-          effort: (this.activeEffort === "max" && activeModel !== "claude-opus-4-6"
-            ? "high"
-            : this.activeEffort) as "low" | "medium" | "high" | "max",
+          effort: capEffortForModel(this.activeEffort, activeModel),
         },
       };
 

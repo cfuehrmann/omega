@@ -39,7 +39,7 @@ function textStreamEvents(text: string): BetaRawMessageStreamEvent[] {
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -86,14 +86,14 @@ function compactionMessage(summaryText: string, replyText: string, usageOverride
 function compactionStreamEvents(summaryText: string, replyText: string): BetaRawMessageStreamEvent[] {
   return [
     // Compaction block — arrives as a single delta (no incremental streaming)
-    { type: "content_block_start", index: 0, content_block: { type: "compaction", content: null } },
-    { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: summaryText } },
+    { type: "content_block_start", index: 0, content_block: { type: "compaction", content: null, encrypted_content: null } },
+    { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: summaryText, encrypted_content: "" } },
     { type: "content_block_stop", index: 0 },
     // Actual text response
     { type: "content_block_start", index: 1, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: replyText } },
     { type: "content_block_stop", index: 1 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 50, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 50, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }

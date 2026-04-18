@@ -1603,7 +1603,8 @@ function ModelSelect() {
 
   const options: Array<{ value: OmegaModel; label: string }> = [
     { value: "claude-sonnet-4-6", label: "Sonnet" },
-    { value: "claude-opus-4-6",   label: "Opus"   },
+    { value: "claude-opus-4-6",   label: "Opus 4.6" },
+    { value: "claude-opus-4-7",   label: "Opus 4.7" },
   ];
 
   const currentLabel = () =>
@@ -1658,11 +1659,14 @@ function EffortSelect() {
   interface EffortOption { value: string; short: string; long: string; }
 
   const options = createMemo((): EffortOption[] => {
-    const isOpus = activeModel() === "claude-opus-4-6";
+    const model = activeModel();
+    const isOpus = model === "claude-opus-4-6" || model === "claude-opus-4-7";
+    const isOpus47 = model === "claude-opus-4-7";
     return [
       { value: "low",    short: "Low",    long: "Low" },
       { value: "medium", short: "Medium", long: isOpus ? "Medium" : "Medium (recommended)" },
       { value: "high",   short: "High",   long: "High (API default)" },
+      ...(isOpus47 ? [{ value: "xhigh", short: "XHigh", long: "XHigh (recommended for coding)" }] : []),
       ...(isOpus ? [{ value: "max", short: "Max", long: "Max" }] : []),
     ];
   });

@@ -43,7 +43,7 @@ function thinkingThenTextStreamEvents(thinking: string, text: string): BetaRawMe
     { type: "content_block_start", index: 1, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 1, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 1 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 30, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 30, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -63,6 +63,7 @@ function thinkingThenTextMessage(thinking: string, text: string): Anthropic.Beta
     ],
     stop_reason: "end_turn",
     stop_sequence: null,
+    stop_details: null,
     usage: { input_tokens: 100, output_tokens: 30, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
   };
 }
@@ -83,7 +84,7 @@ function twoThinkingBlocksStreamEvents(
     { type: "content_block_start", index: 2, content_block: { type: "text", text: "", citations: null } },
     { type: "content_block_delta", index: 2, delta: { type: "text_delta", text } },
     { type: "content_block_stop", index: 2 },
-    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 40, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+    { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 40, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
     { type: "message_stop" },
   ];
 }
@@ -206,7 +207,7 @@ describe("Agent — adaptive thinking", () => {
           { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
           { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
           { type: "content_block_stop", index: 0 },
-          { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+          { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
           { type: "message_stop" },
         ],
         {
@@ -219,6 +220,7 @@ describe("Agent — adaptive thinking", () => {
           content: [{ type: "text", text, citations: null }],
           stop_reason: "end_turn",
           stop_sequence: null,
+          stop_details: null,
           usage: { input_tokens: 10, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
         }
       );
@@ -257,6 +259,7 @@ describe("Agent — adaptive thinking", () => {
           ],
           stop_reason: "end_turn",
           stop_sequence: null,
+          stop_details: null,
           usage: { input_tokens: 50, output_tokens: 40, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
         }
       );
@@ -295,7 +298,7 @@ describe("Agent — adaptive thinking", () => {
             { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: TOOL_USE_ID, name: "list_files", input: {} } },
             { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"path": "."}' } },
             { type: "content_block_stop", index: 1 },
-            { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, container: null }, usage: { output_tokens: 20, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 20, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
             { type: "message_stop" },
           ],
           {
@@ -311,6 +314,7 @@ describe("Agent — adaptive thinking", () => {
             context_management: null,
             stop_reason: "tool_use",
             stop_sequence: null,
+            stop_details: null,
             usage: { input_tokens: 50, output_tokens: 20, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
           }
         );
@@ -322,7 +326,7 @@ describe("Agent — adaptive thinking", () => {
             { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } },
             { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: FINAL_TEXT } },
             { type: "content_block_stop", index: 0 },
-            { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 5, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
             { type: "message_stop" },
           ],
           {
@@ -335,6 +339,7 @@ describe("Agent — adaptive thinking", () => {
             content: [{ type: "text", text: FINAL_TEXT, citations: null }],
             stop_reason: "end_turn",
             stop_sequence: null,
+            stop_details: null,
             usage: { input_tokens: 80, output_tokens: 5, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
           }
         );

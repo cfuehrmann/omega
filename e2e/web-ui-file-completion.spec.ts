@@ -189,8 +189,8 @@ test("Enter on a highlighted file accepts it and does not send the message", asy
   await setup(page);
   const textarea = page.locator("textarea");
   await textarea.click();
-  // Type prefix that matches a known file: "backlog.md" starts with "backlog"
-  await textarea.pressSequentially("@backlog");
+  // Type prefix that matches a known file: "backlog.md" starts with "backlog."
+  await textarea.pressSequentially("@backlog.");
   await expect(dropdown(page)).toBeVisible({ timeout: 3000 });
 
   // Highlight the first (and only) match
