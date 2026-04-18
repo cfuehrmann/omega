@@ -2,12 +2,12 @@
  * Tests that Agent writes to the explicit session paths passed to its constructor.
  *
  * Regression: server.ts was calling new Agent(undefined, null, undefined, contextFile, eventsFile)
- * with 5 arguments. The Agent constructor only accepts 3, so contextFile and eventsFile
+ * with 5 arguments. The Agent constructor only accepts 4, so contextFile and eventsFile
  * landed in the wrong positions and were silently ignored. Events were written to the
  * default fallback path (.omega/sessions/events.jsonl) instead of the session-specific
  * file, causing history replay after browser refresh to find an empty file and show nothing.
  *
- * These tests directly verify that new Agent(undefined, contextFile, eventsFile) routes
+ * These tests directly verify that new Agent(provider, contextFile, eventsFile) routes
  * writes to the given paths — not to any fallback.
  */
 

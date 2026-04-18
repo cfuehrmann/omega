@@ -24,9 +24,25 @@ import type { StreamProvider } from "./stream-provider.js";
 export type { OmegaEvent, StreamSignal } from "./events.js";
 export type { StreamProvider } from "./stream-provider.js";
 
-/** Create a StreamProvider backed by the real Anthropic API. */
+/**
+ * Create a StreamProvider backed by the real Anthropic API.
+ *
+ * This is the single place where the Anthropic client is constructed for
+ * production use. `maxRetries: 0` disables the SDK's built-in retry so that
+ * Omega's own retry loop (in `streamLlmCall`) is the sole retry mechanism —
+ * avoiding silent double-retry, keeping every attempt visible in the event
+ * log, and preserving abort-signal integration between retries.
+ *
+ * The API key check lives here so that the error surfaces at the earliest
+ * possible moment (server startup), not on the first API call.
+ */
 export function makeDefaultStreamProvider(): StreamProvider {
-  const client = new Anthropic();
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error(
+      "ANTHROPIC_API_KEY is not set. Set it in the environment to use Omega.",
+    );
+  }
+  const client = new Anthropic({ maxRetries: 0 });
   return (params) => client.beta.messages.stream(params);
 }
 
@@ -322,7 +338,6 @@ type LlmStreamResult =
 // --- Agent ---
 
 export class Agent {
-  private client: Anthropic;
   private compactedContextHistory: Anthropic.Beta.Messages.BetaMessageParam[] = [];
   /** Parallel to compactedContextHistory — stores the 12-char random hash of each stored record. */
   private compactedContextHashes: ContextHash[] = [];
@@ -376,20 +391,22 @@ export class Agent {
   private activeGeneration = 0;
 
   /**
-   * Production: new Agent()
-   *   — uses real Anthropic client, context appended to .omega/sessions/<ts>/context.jsonl
+   * Production: new Agent(streamProvider, contextFile, eventsFile, sessionDir)
+   *   — pass the result of makeDefaultStreamProvider(); context appended to
+   *     .omega/sessions/<ts>/context.jsonl
    * Test: new Agent(mockProvider, contextFile, eventsFile)
    *   — uses mock provider; context file and events file are disabled unless
    *     explicit paths are given.
+   *
+   * Agent never constructs an Anthropic client directly — the caller owns that
+   * decision (and therefore controls maxRetries, API key validation, etc.).
    */
   constructor(
-    streamProvider?: StreamProvider,
+    streamProvider: StreamProvider | undefined,
     contextFile?: string | null,
     eventsFile?: string | null,
     sessionDir?: string | null,
   ) {
-    // Will be initialized in init()
-    this.client = new Anthropic();
     this.sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.streamProvider = streamProvider;
     this.sessionDir = sessionDir ?? undefined;
@@ -482,12 +499,6 @@ export class Agent {
   }
 
   async init(): Promise<void> {
-    if (!process.env.OMEGA_TEST && !process.env.ANTHROPIC_API_KEY) {
-      throw new Error(
-        "ANTHROPIC_API_KEY is not set. Set it in the environment to use Omega.",
-      );
-    }
-    this.client = new Anthropic();
     if (!this.serverStartLogged) {
       this.serverStartLogged = true;
       await this.logEvent({ type: "server_started", time: now() });
@@ -561,13 +572,14 @@ export class Agent {
   }
 
   /**
-   * Get a StreamProvider wrapping the real Anthropic client (or the injected
-   * mock, in tests).
+   * Get the injected StreamProvider. Throws if none was provided — callers
+   * must supply a provider (real or mock) via the constructor.
    */
   private getStreamProvider(): StreamProvider {
-    if (this.streamProvider) return this.streamProvider;
-    const client = this.client;
-    return (params) => client.beta.messages.stream(params);
+    if (!this.streamProvider) {
+      throw new Error("No StreamProvider configured. Pass one to the Agent constructor.");
+    }
+    return this.streamProvider;
   }
 
   // -----------------------------------------------------------------------
