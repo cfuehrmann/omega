@@ -1722,6 +1722,19 @@ function InputRow() {
 
   const [inputValue, setInputValue] = createSignal("");
 
+  // Intercept Ctrl+N/P at the capture phase so the browser never sees them
+  // as "open new window" / "print" shortcuts while the textarea is focused.
+  onMount(() => {
+    function captureNavKeys(e: KeyboardEvent) {
+      if (!e.ctrlKey) return;
+      if (e.key !== "n" && e.key !== "p") return;
+      if (document.activeElement !== textareaRef) return;
+      e.preventDefault();
+    }
+    window.addEventListener("keydown", captureNavKeys, { capture: true });
+    onCleanup(() => window.removeEventListener("keydown", captureNavKeys, { capture: true }));
+  });
+
   // ── @-path completion state ──
   const [completionItems, setCompletionItems] = createSignal<string[]>([]);
   const [completionHighlight, setCompletionHighlight] = createSignal(-1); // -1 = none
