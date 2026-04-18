@@ -1722,14 +1722,15 @@ function InputRow() {
 
   const [inputValue, setInputValue] = createSignal("");
 
-  // Intercept Ctrl+N/P at the capture phase so the browser never sees them
-  // as "open new window" / "print" shortcuts while the textarea is focused.
+  // Intercept navigation keys at the capture phase so the browser never acts
+  // on them while the textarea is focused:
+  //   Ctrl+N/P  – always intercepted (would open new window / print)
+  //   Tab       – only intercepted when the dropdown is open (would shift focus)
   onMount(() => {
     function captureNavKeys(e: KeyboardEvent) {
-      if (!e.ctrlKey) return;
-      if (e.key !== "n" && e.key !== "p") return;
       if (document.activeElement !== textareaRef) return;
-      e.preventDefault();
+      if (e.ctrlKey && (e.key === "n" || e.key === "p")) { e.preventDefault(); return; }
+      if (e.key === "Tab" && completionOpen()) { e.preventDefault(); }
     }
     window.addEventListener("keydown", captureNavKeys, { capture: true });
     onCleanup(() => window.removeEventListener("keydown", captureNavKeys, { capture: true }));
@@ -1839,12 +1840,12 @@ function InputRow() {
         else        closeCompletion();
         return; // never send while dropdown is open
       }
-      if (e.ctrlKey && e.key === "n") {
+      if ((e.ctrlKey && e.key === "n") || (e.key === "Tab" && !e.shiftKey)) {
         e.preventDefault();
         moveHighlight(1);
         return;
       }
-      if (e.ctrlKey && e.key === "p") {
+      if ((e.ctrlKey && e.key === "p") || (e.key === "Tab" && e.shiftKey)) {
         e.preventDefault();
         moveHighlight(-1);
         return;
