@@ -51,9 +51,29 @@ async function openNewSession(page: Page): Promise<void> {
   }
   // Wait until the New session button is enabled (idle state).
   await expect(page.getByTestId("session-picker-new")).toBeEnabled({ timeout: 10000 });
+
+  // Capture the current session dir BEFORE clicking, so we can wait for the
+  // new session_info to arrive and update data-session-dir. Waiting for
+  // status="Ready" alone is insufficient: if the server was already idle on
+  // a previous session when we arrive, status is already "Ready" and that
+  // wait passes instantly — before the reset has roundtripped. The test
+  // then reads data-session-dir and gets the stale previous value.
+  const prevDir = await page
+    .getByTestId("sessions-btn")
+    .getAttribute("data-session-dir");
+
   await page.getByTestId("session-picker-new").click();
   await expect(picker).not.toBeVisible({ timeout: 5000 });
   await expect(page.getByTestId("status-label")).toHaveText("Ready", { timeout: 5000 });
+
+  // Wait for the server's session_info for the new session to be applied.
+  await expect
+    .poll(
+      async () =>
+        await page.getByTestId("sessions-btn").getAttribute("data-session-dir"),
+      { timeout: 5000 },
+    )
+    .not.toBe(prevDir);
 }
 
 interface ProjectedCall {
