@@ -31,9 +31,30 @@ export type OmegaModel = z.infer<typeof OmegaModelSchema>;
 export const OmegaEffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type OmegaEffort = z.infer<typeof OmegaEffortSchema>;
 
+/**
+ * Server-tracked turn state, surfaced on `session_info` so the client can
+ * render the right UI (buttons + status) without replaying events on every
+ * reconnect. Derived server-side from the agent's event stream.
+ *
+ *   idle             — no turn active.
+ *   running          — turn in progress, no pause pending.
+ *   pause_requested  — user pressed pause; agent still running until seam.
+ *   paused           — agent suspended at seam, awaiting continue/abort.
+ */
+export const TurnStateSchema = z.enum(["idle", "running", "pause_requested", "paused"]);
+export type TurnState = z.infer<typeof TurnStateSchema>;
+
 export const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message"), content: z.string() }),
   z.object({ type: z.literal("abort") }),
+  /** User pressed Esc from Running: request pause at next clean seam. */
+  z.object({ type: z.literal("pause") }),
+  /**
+   * Continue from Paused (or PauseRequested with pre-commit fired). Optional
+   * `content` is a mid-turn interjection appended as a user_message before the
+   * next LLM call. Empty/undefined resumes without a message.
+   */
+  z.object({ type: z.literal("continue"), content: z.string().optional() }),
   z.object({ type: z.literal("reset") }),
   z.object({ type: z.literal("set_model"), model: OmegaModelSchema }),
   z.object({ type: z.literal("set_effort"), effort: OmegaEffortSchema }),
@@ -81,7 +102,20 @@ const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
    */
   z.object({ type: z.literal("ready"), streaming: z.boolean().optional() }),
   z.object({ type: z.literal("reset_done") }),
-  z.object({ type: z.literal("session_info"), dir: z.string(), model: z.string(), effort: z.string(), cwd: z.string(), name: z.string().optional() }),
+  z.object({
+    type: z.literal("session_info"),
+    dir: z.string(),
+    model: z.string(),
+    effort: z.string(),
+    cwd: z.string(),
+    name: z.string().optional(),
+    /**
+     * Live turn state. Sent on WS open and whenever the state transitions.
+     * Optional for backwards compatibility with older server versions (client
+     * defaults to "idle" when absent).
+     */
+    turnState: TurnStateSchema.optional(),
+  }),
   /**
    * History replay batch. When `streaming` is true the server has an
    * in-flight turn; the client must NOT add a synthetic turn_interrupted
@@ -108,6 +142,15 @@ export const ServerMessageSchema = z.union([
   OmegaEventSchema,
   StreamSignalSchema,
   ProtocolEnvelopeSchema,
-]) satisfies z.ZodType<OmegaEvent | StreamSignal | { type: "ready" } | { type: "reset_done" } | { type: "session_info"; dir: string; model: string; effort: string; cwd: string; name?: string } | { type: "history"; events: OmegaEvent[] } | { type: "session_deleted"; sessionDir: string } | { type: "session_renamed"; sessionDir: string; name: string }>;
+]) satisfies z.ZodType<
+  | OmegaEvent
+  | StreamSignal
+  | { type: "ready"; streaming?: boolean }
+  | { type: "reset_done" }
+  | { type: "session_info"; dir: string; model: string; effort: string; cwd: string; name?: string; turnState?: TurnState }
+  | { type: "history"; events: OmegaEvent[]; streaming?: boolean }
+  | { type: "session_deleted"; sessionDir: string }
+  | { type: "session_renamed"; sessionDir: string; name: string }
+>;
 
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;

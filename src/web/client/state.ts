@@ -16,7 +16,7 @@
 
 import { batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { ServerMessage } from "../protocol";
+import type { ServerMessage, TurnState } from "../protocol";
 import { now } from "../../iso-timestamp.js";
 
 // ---------------------------------------------------------------------------
@@ -150,6 +150,13 @@ interface AppState {
   sessionName: string;
   /** Working directory Omega was launched from (set by session_info from server). */
   cwd: string;
+  /**
+   * Server-reported turn state — authoritative, updated from every
+   * `session_info` message. Drives the composer/pause UI (Stage 3).
+   * Defaults to "idle"; older server versions may omit `turnState` in
+   * `session_info`, in which case we fall back to "idle".
+   */
+  turnState: TurnState;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +187,7 @@ const [state, setState] = createStore<AppState>({
   sessionDir: "",
   sessionName: "",
   cwd: "",
+  turnState: "idle",
 });
 
 export { state };
@@ -470,6 +478,9 @@ export function handleDisconnect(): void {
   setState("connecting", false);
   setState("connected", false);
   setState("streaming", false);
+  // We no longer know the real turn state once the socket drops — the next
+  // session_info on reconnect will carry the authoritative value.
+  setState("turnState", "idle");
   setState("retryCount", r => r + 1);
 }
 
@@ -604,10 +615,15 @@ export function dispatch(event: ServerMessage): void {
 
     case "session_info":
       setState("sessionDir", event.dir);
+      // Preserve a previously-known name if the server omits it on this
+      // session_info (e.g. a turnState-only transition broadcast where the
+      // server's cached name happens to be absent). Reset flows set name=""
+      // by sending an empty string explicitly via the absent-name fallback.
       setState("sessionName", event.name ?? "");
       setState("liveModel", event.model);
       setState("liveEffort", event.effort);
       setState("cwd", event.cwd);
+      setState("turnState", event.turnState ?? "idle");
       break;
 
     case "reset_done":
@@ -626,6 +642,7 @@ export function dispatch(event: ServerMessage): void {
       setState("liveModel", "");
       setState("liveEffort", "medium");
       setState("sessionName", "");
+      setState("turnState", "idle");
       break;
 
     case "user_message":
@@ -780,6 +797,11 @@ export function dispatch(event: ServerMessage): void {
     case "agent_error":
     case "transport_error":
     case "session_resumed":
+    // Pause/resume lifecycle — store in the event log so Stage 3 can render
+    // them in the feed. Authoritative turn state arrives via session_info.
+    case "pause_requested":
+    case "turn_paused":
+    case "turn_continued":
       setState(produce(s => { s.events.push(event); }));
       break;
 

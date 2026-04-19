@@ -37,7 +37,7 @@ import { parseOmegaEvent } from "../events.schema.js";
 import { ContextRecordSchema } from "../context-store.schema.js";
 import { readEnvPort } from "../env.js";
 import { config } from "../config.js";
-import { ClientMessageSchema, type ClientMessage } from "./protocol.js";
+import { ClientMessageSchema, type ClientMessage, type TurnState } from "./protocol.js";
 import { now } from "../iso-timestamp.js";
 import {
   extractResumptionBasis,
@@ -340,6 +340,62 @@ async function listSessions(): Promise<SessionListItem[]> {
  */
 let persistentAgent: Agent | undefined;
 let currentSessionPaths: SessionPaths | undefined;
+/**
+ * Cached display name of the current session, mirroring `session.jsonc`'s
+ * `name` field. Maintained at module scope so every `session_info` broadcast
+ * (including turnState-transition updates) can include it — otherwise the
+ * client's `sessionName` would be wiped on every turnState change.
+ *
+ * Set on open (from metadata), reset/resume (undefined — fresh session),
+ * and rename (when the renamed session is the current one).
+ */
+let currentSessionName: string | undefined;
+
+/**
+ * Server-tracked turn state — see `TurnState` in protocol.ts. Survives WS
+ * reconnects (module-scoped). Derived from the agent's event stream (plus an
+ * explicit transition on `pause` since `pause_requested` is not yielded by
+ * the Agent generator).
+ */
+let currentTurnState: TurnState = "idle";
+
+/** State transitions driven by each yielded OmegaEvent. `default` = unchanged. */
+function deriveTurnState(prev: TurnState, event: { type: string }): TurnState {
+  switch (event.type) {
+    case "user_message":     return "running";
+    case "pause_requested":  return "pause_requested";
+    case "turn_paused":      return "paused";
+    case "turn_continued":   return "running";
+    case "turn_end":
+    case "turn_interrupted": return "idle";
+    default:                 return prev;
+  }
+}
+
+/** Build a session_info payload for the current session, or null if no session. */
+function buildSessionInfo(): Record<string, unknown> | null {
+  if (!currentSessionPaths || !persistentAgent) return null;
+  const info: Record<string, unknown> = {
+    type: "session_info",
+    dir: currentSessionPaths.dir,
+    model: persistentAgent.getActiveModel(),
+    effort: persistentAgent.getActiveEffort(),
+    cwd: process.cwd(),
+    turnState: currentTurnState,
+  };
+  if (currentSessionName !== undefined && currentSessionName !== "") {
+    info.name = currentSessionName;
+  }
+  return info;
+}
+
+/** Update turn state and broadcast a fresh session_info if it changed. */
+function setTurnState(next: TurnState): void {
+  if (currentTurnState === next) return;
+  currentTurnState = next;
+  const info = buildSessionInfo();
+  if (info !== null) broadcast(info);
+}
 
 // ---------------------------------------------------------------------------
 // WebSocket session (transport layer — one active WS at a time)
@@ -419,14 +475,46 @@ async function handleMessage(
   }
 
   if (msg.type === "abort") {
-    if (persistentAgent) activeAbortController?.abort();
+    // requestAbort() aborts the agent's internal controller AND wakes the
+    // pause seam if suspended. activeAbortController.abort() propagates via
+    // the external signal we passed into sendMessage too, but requestAbort
+    // is the documented entry point and handles the Paused case correctly.
+    persistentAgent?.requestAbort();
+    activeAbortController?.abort();
+    return;
+  }
+
+  if (msg.type === "pause") {
+    // Only forward when a turn is actually running — Idle/PauseRequested/Paused
+    // states have no meaningful pause target. Agent.requestPause() is
+    // idempotent but we gate here so malformed clients can't spam events.
+    if (!persistentAgent || currentTurnState !== "running") return;
+    persistentAgent.requestPause();
+    // `pause_requested` is NOT yielded by the Agent generator (it's fired
+    // outside the turn's for-await loop in requestPause()). Broadcast it
+    // explicitly so WS clients see the state transition immediately.
+    // It's also persisted to events.jsonl by agent.logEvent() so reconnect
+    // replay will include it.
+    broadcast({ type: "pause_requested", time: now() });
+    setTurnState("pause_requested");
+    return;
+  }
+
+  if (msg.type === "continue") {
+    if (!persistentAgent) return;
+    // turn_continued (and any interjection user_message) ARE yielded by the
+    // generator; the main for-await loop will update turnState → running.
+    persistentAgent.requestContinue(msg.content);
     return;
   }
 
   if (msg.type === "reset") {
     activeAbortController?.abort();
+    persistentAgent?.requestAbort();
     isStreaming = false;
     activeAbortController = null;
+    currentTurnState = "idle";
+    currentSessionName = undefined;
 
     // Replace the persistent agent with a fresh one in a new session dir
     currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
@@ -440,7 +528,7 @@ async function handleMessage(
     // After the await we're outside the auto-corked message callback —
     // cork explicitly so all three frames are batched reliably.
     session.ws.cork(() => {
-      session.ws.send(JSON.stringify({ type: "session_info", dir: currentSessionPaths!.dir, model: persistentAgent!.getActiveModel(), effort: persistentAgent!.getActiveEffort(), cwd: process.cwd() }));
+      session.ws.send(JSON.stringify(buildSessionInfo()!));
       session.ws.send(JSON.stringify({ type: "history", events: [] }));
       session.ws.send(JSON.stringify({ type: "reset_done" }));
     });
@@ -469,8 +557,11 @@ async function handleMessage(
     }
 
     activeAbortController?.abort();
+    persistentAgent?.requestAbort();
     isStreaming = false;
     activeAbortController = null;
+    currentTurnState = "idle";
+    currentSessionName = undefined;
 
     // Create new session dir + agent
     currentSessionPaths = await makeSessionDir(new Date(), activeSessionsRoot);
@@ -513,13 +604,7 @@ async function handleMessage(
     // the new session directory is visible right away.
     const initEvents = await loadReplayEvents(currentSessionPaths.eventsFile);
     session.ws.cork(() => {
-      session.ws.send(JSON.stringify({
-        type: "session_info",
-        dir: currentSessionPaths!.dir,
-        model: persistentAgent!.getActiveModel(),
-        effort: persistentAgent!.getActiveEffort(),
-        cwd: process.cwd(),
-      }));
+      session.ws.send(JSON.stringify(buildSessionInfo()!));
       session.ws.send(JSON.stringify({ type: "history", events: initEvents }));
     });
 
@@ -600,6 +685,11 @@ async function handleMessage(
     const fullDir = join(activeSessionsRoot, msg.sessionDir);
     try {
       await updateSessionMetadata(fullDir, { name: msg.name });
+      // Keep the cached name in sync so future session_info broadcasts
+      // (turnState transitions) include the new name.
+      if (currentSessionPaths && basename(currentSessionPaths.dir) === msg.sessionDir) {
+        currentSessionName = msg.name;
+      }
       send(session.ws, { type: "session_renamed", sessionDir: msg.sessionDir, name: msg.name });
     } catch (err: unknown) {
       sendTransportError(session.ws, `Rename failed: ${err instanceof Error ? err.message : String(err)}`, "handleMessage");
@@ -667,7 +757,13 @@ async function handleMessage(
         // browser that reconnected mid-turn (e.g. after a page refresh). The
         // captured `ws` would be the now-closed old socket.
         broadcast(event);
-        if ("type" in event) turnEvents.push(event as OmegaEvent);
+        if ("type" in event) {
+          turnEvents.push(event as OmegaEvent);
+          // Update turn state (and broadcast session_info on change) for any
+          // transition-carrying event. pause_requested is not yielded, it is
+          // broadcast from the `pause` handler above.
+          setTurnState(deriveTurnState(currentTurnState, event as OmegaEvent));
+        }
       }
     } catch (err: unknown) {
       // Route errors to the current active session (may differ from the ws
@@ -678,6 +774,10 @@ async function handleMessage(
     } finally {
       isStreaming = false;
       activeAbortController = null;
+      // Safety net: any unfinished transition (e.g. exception escaped the
+      // loop before turn_end) should not leave the UI stuck in running or
+      // paused forever.
+      setTurnState("idle");
     }
 
   }
@@ -788,9 +888,12 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
           // ended when it didn't.
           const replayEvents = isStreaming ? rawReplayEvents : closeOpenTurn(rawReplayEvents);
 
+          // Refresh cached name from disk in case the session was renamed
+          // out-of-band (e.g. by a concurrent process) since last read.
+          currentSessionName = sessionMeta.name;
+
           ws.cork(() => {
-            const sessionInfoMsg: Record<string, unknown> = { type: "session_info", dir: currentSessionPaths!.dir, model: persistentAgent!.getActiveModel(), effort: persistentAgent!.getActiveEffort(), cwd: process.cwd() };
-            if (sessionMeta.name) sessionInfoMsg.name = sessionMeta.name;
+            const sessionInfoMsg = buildSessionInfo()!;
             ws.send(JSON.stringify(sessionInfoMsg));
             // Always send history (even empty) when streaming so the client
             // receives the streaming=true flag and stays in streaming mode.
