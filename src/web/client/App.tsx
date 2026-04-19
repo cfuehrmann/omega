@@ -1,7 +1,7 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import type { JSX } from "solid-js";
-import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
-import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel, type OmegaEffort } from "../protocol";
+import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, setPreCommitted, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
+import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel, type OmegaEffort, type TurnState } from "../protocol";
 import { primaryToolArg } from "../../tools.schema.js";
 import { marked } from "marked";
 
@@ -1832,9 +1832,56 @@ function InputRow() {
     setTimeout(autoResize, 0);
   }
 
+  // ── Pause / resume / interject actions (Stage 3) ──
+
+  function pause() {
+    sendToServer({ type: "pause" });
+  }
+
+  /**
+   * Continue from PauseRequested: the pause seam hasn't landed yet, so we
+   * don't send anything over the wire. We flip a client-local pre-commit
+   * flag; when turnState transitions to "paused" the effect below
+   * synthesises the `continue` WS message (optionally carrying an
+   * interjection typed meanwhile).
+   */
+  function continueFromPauseRequested() {
+    setPreCommitted(true);
+  }
+
+  /** Revert a pre-committed Continue while still in PauseRequested. */
+  function takeItBack() {
+    setPreCommitted(false);
+  }
+
+  /** Continue from Paused (or drain the pre-commit on entering Paused). */
+  function continueFromPaused() {
+    const content = inputValue().trim();
+    const payload: ClientMessage =
+      content.length > 0
+        ? { type: "continue", content }
+        : { type: "continue" };
+    sendToServer(payload);
+    if (content.length > 0) setInputValue("");
+    setPreCommitted(false);
+    setTimeout(autoResize, 0);
+  }
+
   function abort() {
     sendToServer({ type: "abort" });
   }
+
+  // Auto-drain: when turnState transitions into "paused" while the user has
+  // pre-committed a Continue, synthesise the continue WS message. Guarded
+  // on `prev !== "paused"` so each fresh entry into Paused fires at most
+  // once; the subsequent setPreCommitted(false) ensures nothing re-fires.
+  createEffect<TurnState>(prev => {
+    const current = state.turnState;
+    if (prev !== "paused" && current === "paused" && state.preCommitted) {
+      continueFromPaused();
+    }
+    return current;
+  }, state.turnState);
 
   function onKeyDown(e: KeyboardEvent) {
     if (completionOpen()) {
@@ -1873,35 +1920,87 @@ function InputRow() {
       // (typing narrows the filter via the onInput handler below).
     }
 
+    // Esc: pause from Running; abort from PauseRequested / Paused.
+    if (e.key === "Escape") {
+      if (state.turnState === "running") {
+        e.preventDefault();
+        pause();
+        return;
+      }
+      if (state.turnState === "pause_requested" || state.turnState === "paused") {
+        e.preventDefault();
+        abort();
+        return;
+      }
+      // Idle: no action — let the browser keep its default behaviour.
+    }
+
+    // Enter (no Shift): fire the primary action for the current state.
+    // In Running or PauseRequested-with-precommit there is no Enter action;
+    // we let the default (newline insertion) happen so the user can compose
+    // a multi-line interjection.
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
+      if (state.turnState === "idle") {
+        e.preventDefault();
+        send();
+        setTimeout(autoResize, 0);
+        return;
+      }
+      if (state.turnState === "pause_requested" && !state.preCommitted) {
+        e.preventDefault();
+        continueFromPauseRequested();
+        return;
+      }
+      if (state.turnState === "paused") {
+        e.preventDefault();
+        continueFromPaused();
+        return;
+      }
+      // Fall through — textarea inserts a newline.
     }
     setTimeout(autoResize, 0);
   }
 
-  const statusDisplayClass = () =>
-    "status-display " + (
-      state.connecting  ? "status-connecting"
-    : !state.connected ? "status-error"
-    : state.retrying   ? "status-retrying"
-    : state.streaming  ? "status-streaming"
-    :                    "status-ready"
-    );
+  // ── Status display ──
+  // Order of precedence: connection state always wins, then turnState drives
+  // the Running / PauseRequested / Paused labels. Connection states reuse
+  // the existing CSS classes so visuals don't shift for users who never
+  // pause.
 
-  const omegaStatus = () =>
-    state.connecting  ? "connecting"
-    : !state.connected ? "disconnected"
-    : state.retrying   ? "retrying"
-    : state.streaming  ? "streaming"
-    : "connected";
+  const statusDisplayClass = () => {
+    let bucket: string;
+    if (state.connecting)      bucket = "status-connecting";
+    else if (!state.connected) bucket = "status-error";
+    else if (state.retrying)   bucket = "status-retrying";
+    else if (state.turnState === "pause_requested")
+      bucket = state.preCommitted ? "status-pause-requested-precommit" : "status-pause-requested";
+    else if (state.turnState === "paused")  bucket = "status-paused";
+    else if (state.turnState === "running") bucket = "status-streaming";
+    else                                    bucket = "status-ready";
+    return "status-display " + bucket;
+  };
 
-  const statusLabel = () =>
-    state.connecting  ? (state.retryCount > 0 ? "Reconnecting…" : "Connecting…")
-    : !state.connected ? "Disconnected"
-    : state.retrying   ? "Retrying…"
-    : state.streaming  ? "Streaming…"
-    : "Ready";
+  const omegaStatus = () => {
+    if (state.connecting)      return "connecting";
+    if (!state.connected)      return "disconnected";
+    if (state.retrying)        return "retrying";
+    if (state.turnState === "pause_requested")
+      return state.preCommitted ? "pause-requested-precommit" : "pause-requested";
+    if (state.turnState === "paused")  return "paused";
+    if (state.turnState === "running") return "streaming";
+    return "connected";
+  };
+
+  const statusLabel = () => {
+    if (state.connecting)   return state.retryCount > 0 ? "Reconnecting…" : "Connecting…";
+    if (!state.connected)   return "Disconnected";
+    if (state.retrying)     return "Retrying…";
+    if (state.turnState === "pause_requested")
+      return state.preCommitted ? "Pausing, will continue" : "Pausing…";
+    if (state.turnState === "paused")  return "Paused";
+    if (state.turnState === "running") return "Streaming…";
+    return "Ready";
+  };
 
   return (
     <div class="input-row">
@@ -1959,12 +2058,48 @@ function InputRow() {
         >{statusLabel()}</span>
         <span class="status-label" data-testid="status-label">{statusLabel()}</span>
       </div>
-      <Show when={state.streaming}
-        fallback={
-          <button class="input-btn send-btn" onClick={send} disabled={!state.connected}>Send</button>
-        }
-      >
-        <button class="input-btn abort-btn" onClick={abort}>Abort</button>
+      {/* ── Button matrix (Stage 3 pause/resume) ──
+         Primary button + optional Abort, keyed on turnState and the
+         client-local preCommitted flag. See backlog/pause-resume-interject.md
+         §Button matrix. */}
+      <Show when={state.turnState === "idle"}>
+        <button
+          class="input-btn send-btn"
+          data-testid="send-btn"
+          onClick={send}
+          disabled={!state.connected || inputValue().trim().length === 0}
+        >Send ⏎</button>
+      </Show>
+      <Show when={state.turnState === "running"}>
+        <button class="input-btn pause-btn" data-testid="pause-btn" onClick={pause}>Pause ⎋</button>
+      </Show>
+      <Show when={state.turnState === "pause_requested"}>
+        <Show
+          when={!state.preCommitted}
+          fallback={
+            <button
+              class="input-btn takeitback-btn"
+              data-testid="takeitback-btn"
+              onClick={takeItBack}
+            >Take it back</button>
+          }
+        >
+          <button
+            class="input-btn continue-btn"
+            data-testid="continue-btn"
+            onClick={continueFromPauseRequested}
+          >Continue ⏎</button>
+        </Show>
+      </Show>
+      <Show when={state.turnState === "paused"}>
+        <button
+          class="input-btn continue-btn"
+          data-testid="continue-btn"
+          onClick={continueFromPaused}
+        >Continue ⏎</button>
+      </Show>
+      <Show when={state.turnState === "pause_requested" || state.turnState === "paused"}>
+        <button class="input-btn abort-btn" data-testid="abort-btn" onClick={abort}>Abort ⎋</button>
       </Show>
     </div>
   );

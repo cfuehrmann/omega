@@ -49,54 +49,73 @@ test("crash recovery: page reload after open turn shows turn_interrupted", async
 });
 
 // ---------------------------------------------------------------------------
-// 2. Abort button sends { type: "abort" } to server
+// 2. Pause button sends { type: "pause" } to server; abort only in paused
 // ---------------------------------------------------------------------------
 
-test("abort button click sends abort message to server", async ({ page, server }) => {
+test("pause button click sends pause message to server", async ({ page, server }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
 
-  // Start a turn so the abort button appears
+  // Start a turn so the pause button appears
   await server.sendEvent({ type: "user_message", content: "long running" });
-  await expect(page.getByRole("button", { name: "Abort" })).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("pause-btn")).toBeVisible({ timeout: 3000 });
 
-  // Click abort
-  await page.getByRole("button", { name: "Abort" }).click();
+  await page.getByTestId("pause-btn").click();
 
   const msg = await server.nextMessage();
-  expect((msg as any).type).toBe("abort");
+  expect((msg as any).type).toBe("pause");
+});
+
+test("abort button appears once paused and sends abort", async ({ page, server }) => {
+  await page.goto("/");
+  await connectedDot(page).waitFor({ timeout: 5000 });
+
+  // Drive into paused state via the pause_requested → turn_paused sequence.
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await server.sendEvent({ type: "pause_requested" });
+  await server.sendEvent({ type: "turn_paused", summary: "at seam" });
+  await expect(page.getByTestId("abort-btn")).toBeVisible({ timeout: 3000 });
+
+  await page.getByTestId("abort-btn").click();
+
+  // Drain up to a few messages in case other traffic is queued.
+  for (let i = 0; i < 5; i++) {
+    const msg = await server.nextMessage();
+    if ((msg as any).type === "abort") return;
+  }
+  throw new Error("Did not receive abort message");
 });
 
 // ---------------------------------------------------------------------------
-// 3. Streaming locks / unlocks input
+// 3. Button matrix: pause ↔ send as turn cycles; composer stays enabled
 // ---------------------------------------------------------------------------
 
-test("abort button replaces send button while streaming", async ({ page, server }) => {
+test("pause button replaces send button while running", async ({ page, server }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  // user_message sets streaming=true → abort-btn replaces send-btn
-  await expect(page.getByRole("button", { name: "Abort" })).toBeVisible({ timeout: 3000 });
-  await expect(page.getByRole("button", { name: "Send" })).not.toBeVisible();
+  // user_message → turnState=running → pause-btn replaces send-btn
+  await expect(page.getByTestId("pause-btn")).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("send-btn")).not.toBeVisible();
 });
 
-test("textarea is enabled while streaming (typing allowed, send blocked)", async ({ page, server }) => {
+test("textarea is enabled while running (typing allowed, composer stays open)", async ({ page, server }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await expect(page.getByRole("button", { name: "Abort" })).toBeVisible({ timeout: 3000 });
-  // Textarea stays enabled so the user can compose a reply while waiting
+  await expect(page.getByTestId("pause-btn")).toBeVisible({ timeout: 3000 });
+  // Textarea stays enabled so the user can compose an interjection while waiting
   await expect(page.locator("textarea")).toBeEnabled();
 });
 
-test("input unlocks after turn_end", async ({ page, server }) => {
+test("input returns to Send after turn_end", async ({ page, server }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await expect(page.getByRole("button", { name: "Abort" })).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("pause-btn")).toBeVisible({ timeout: 3000 });
 
   await server.sendEvent({
     type: "turn_end",
@@ -105,20 +124,20 @@ test("input unlocks after turn_end", async ({ page, server }) => {
     provider: "anthropic",
   });
 
-  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("send-btn")).toBeVisible({ timeout: 3000 });
   await expect(page.locator("textarea")).toBeEnabled();
 });
 
-test("input unlocks after turn_interrupted", async ({ page, server }) => {
+test("input returns to Send after turn_interrupted", async ({ page, server }) => {
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
 
   await server.sendEvent({ type: "user_message", content: "hi" });
-  await expect(page.getByRole("button", { name: "Abort" })).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("pause-btn")).toBeVisible({ timeout: 3000 });
 
   await server.sendEvent({ type: "turn_interrupted" });
 
-  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("send-btn")).toBeVisible({ timeout: 3000 });
   await expect(page.locator("textarea")).toBeEnabled();
 });
 

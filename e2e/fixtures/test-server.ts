@@ -46,6 +46,7 @@ import {
 import type { OmegaEvent } from "../../src/events.js";
 import { parseOmegaEvent } from "../../src/events.schema.js";
 import { now as isoNow } from "../../src/iso-timestamp.js";
+import type { TurnState } from "../../src/web/protocol.js";
 
 const MAIN_PORT = 3001;
 const CTRL_PORT = 3002;
@@ -92,6 +93,37 @@ function serveStatic(pathname: string): Response | null {
 
 let activeWs: ServerWebSocket<unknown> | null = null;
 const receivedMessages: string[] = [];
+
+/**
+ * Derived turn state, mirroring src/web/server.ts's deriveTurnState(). Kept
+ * in sync with events as they flow through /control/send so the test server
+ * broadcasts a session_info update on every transition — exactly what the
+ * real server does.
+ */
+let currentTurnState: TurnState = "idle";
+
+function deriveTurnState(prev: TurnState, event: { type: string }): TurnState {
+  switch (event.type) {
+    case "user_message":     return "running";
+    case "pause_requested":  return "pause_requested";
+    case "turn_paused":      return "paused";
+    case "turn_continued":   return "running";
+    case "turn_end":
+    case "turn_interrupted": return "idle";
+    default:                 return prev;
+  }
+}
+
+function buildSessionInfo(): Record<string, unknown> {
+  return {
+    type: "session_info",
+    dir: sessionPaths.dir,
+    model: "claude-sonnet-4-6",
+    effort: "medium",
+    cwd: process.cwd(),
+    turnState: currentTurnState,
+  };
+}
 
 /**
  * Configurable delay (ms) injected into resume_session handling so tests
@@ -146,6 +178,7 @@ async function loadReplayEvents(): Promise<object[]> {
 
 async function resetState(): Promise<void> {
   currentAgentId += 1;
+  currentTurnState = "idle";
   // Create a fresh uniquely-named session directory for the next session
   sessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
   ownedSessionDirs.add(sessionPaths.dir);
@@ -238,8 +271,16 @@ Bun.serve({
       // After the await we're outside the auto-corked open callback — cork
       // explicitly so the history + connected frames are batched reliably.
       const replay = await loadReplayEvents();
+      // Re-derive currentTurnState from the replayed events: after closeOpenTurn()
+      // any mid-turn crash has a synthetic turn_interrupted appended, so the
+      // derived state matches what a real server would see on restart. This also
+      // keeps the server's broadcast turnState consistent with the disk log after
+      // page reloads within the same server process.
+      let derived: TurnState = "idle";
+      for (const e of replay) derived = deriveTurnState(derived, e as { type: string });
+      currentTurnState = derived;
       ws.cork(() => {
-        ws.send(JSON.stringify({ type: "session_info", dir: sessionPaths.dir, model: "claude-sonnet-4-6", effort: "medium", cwd: process.cwd() }));
+        ws.send(JSON.stringify(buildSessionInfo()));
         if (replay.length > 0) {
           ws.send(JSON.stringify({ type: "history", events: replay }));
         }
@@ -255,7 +296,7 @@ Bun.serve({
         resetState().then(() => {
           // After await (inside .then) — cork explicitly.
           ws.cork(() => {
-            ws.send(JSON.stringify({ type: "session_info", dir: sessionPaths.dir, model: "claude-sonnet-4-6", effort: "medium", cwd: process.cwd() }));
+            ws.send(JSON.stringify(buildSessionInfo()));
             ws.send(JSON.stringify({ type: "history", events: [] }));
             ws.send(JSON.stringify({ type: "reset_done" }));
           });
@@ -284,16 +325,14 @@ Bun.serve({
           };
           await appendEvent(resumed, sessionPaths.eventsFile);
 
-          // Replay events from new session
+          // Replay events from new session (typically just the session_resumed
+          // event we just wrote). Re-derive turnState for consistency.
           const replay = await loadReplayEvents();
+          let derived: TurnState = "idle";
+          for (const e of replay) derived = deriveTurnState(derived, e as { type: string });
+          currentTurnState = derived;
           ws.cork(() => {
-            ws.send(JSON.stringify({
-              type: "session_info",
-              dir: sessionPaths.dir,
-              model: "claude-sonnet-4-6",
-              effort: "medium",
-              cwd: process.cwd(),
-            }));
+            ws.send(JSON.stringify(buildSessionInfo()));
             ws.send(JSON.stringify({ type: "history", events: replay }));
             ws.send(JSON.stringify({ type: "ready" }));
           });
@@ -386,12 +425,20 @@ Bun.serve({
         await appendEvent(event as unknown as OmegaEvent, sessionPaths.eventsFile);
       }
       sendWs(event);
+      // Broadcast a session_info update if this event transitions turnState —
+      // mirrors what the real server does from its agent event loop.
+      const nextTurnState = deriveTurnState(currentTurnState, event as { type: string });
+      if (nextTurnState !== currentTurnState) {
+        currentTurnState = nextTurnState;
+        sendWs(buildSessionInfo());
+      }
       return new Response("ok");
     }
 
     if (req.method === "POST" && url.pathname === "/control/reset") {
       receivedMessages.length = 0;
       currentAgentId = 1;
+      currentTurnState = "idle";
       resumeDelayMs = 0;
       // Delete only sessions created by this server — not those belonging to
       // concurrent bun-test agents sharing .omega/test-sessions/.

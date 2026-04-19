@@ -157,6 +157,14 @@ interface AppState {
    * `session_info`, in which case we fall back to "idle".
    */
   turnState: TurnState;
+  /**
+   * Client-local pre-commit flag for the Continue-during-PauseRequested
+   * flow. When true and turnState transitions to "paused", the client
+   * auto-fires a `continue` WS message (carrying the current composer
+   * value, if any). Cleared on disconnect, reset, and on auto-fire.
+   * Never sent to the server — it's purely a UI promise.
+   */
+  preCommitted: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +196,16 @@ const [state, setState] = createStore<AppState>({
   sessionName: "",
   cwd: "",
   turnState: "idle",
+  preCommitted: false,
 });
+
+/**
+ * Set the client-local pre-commit flag. See the `preCommitted` docstring
+ * on AppState for semantics.
+ */
+export function setPreCommitted(v: boolean): void {
+  setState("preCommitted", v);
+}
 
 export { state };
 
@@ -481,6 +498,9 @@ export function handleDisconnect(): void {
   // We no longer know the real turn state once the socket drops — the next
   // session_info on reconnect will carry the authoritative value.
   setState("turnState", "idle");
+  // Pre-commit is client-local and intentionally lost on reconnect. The
+  // user can re-click Continue from the server-reported paused state.
+  setState("preCommitted", false);
   setState("retryCount", r => r + 1);
 }
 
@@ -643,6 +663,7 @@ export function dispatch(event: ServerMessage): void {
       setState("liveEffort", "medium");
       setState("sessionName", "");
       setState("turnState", "idle");
+      setState("preCommitted", false);
       break;
 
     case "user_message":

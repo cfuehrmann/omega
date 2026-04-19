@@ -339,6 +339,13 @@ html, body, #root {
 .status-display.status-retrying   { color: var(--peach);  animation: pulse 1.5s infinite; }
 .status-display.status-connecting { color: var(--yellow); }
 .status-display.status-error      { color: var(--red); }
+/* Pause/resume states (Stage 3). Pausing… is yellow-and-pulsing like
+   streaming — the agent is still producing output. Pre-committed
+   Pausing is green-and-pulsing: the user has already promised to continue.
+   Paused is solid green — quiescent, waiting for the user. */
+.status-display.status-pause-requested           { color: var(--yellow); animation: pulse 1s infinite; }
+.status-display.status-pause-requested-precommit { color: var(--green);  animation: pulse 1s infinite; }
+.status-display.status-paused                    { color: var(--green); }
 
 /* ── Usage toggle button (Show usage / Hide usage) ── */
 .panel-toggle-btn {
@@ -469,13 +476,19 @@ html, body, #root {
 .input-row textarea::placeholder { color: var(--dim); }
 .input-row textarea:disabled    { opacity: 0.5; }
 
-.send-btn, .abort-btn {
+.send-btn, .abort-btn, .pause-btn, .continue-btn, .takeitback-btn {
   padding: 0 16px;
   align-self: flex-end;
 }
-.abort-btn { color: var(--red); }
-.send-btn:hover:not(:disabled) { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.abort-btn:hover               { border-color: var(--red); }
+.abort-btn       { color: var(--red); }
+.pause-btn       { color: var(--yellow); }
+.continue-btn    { color: var(--green); }
+.takeitback-btn  { color: var(--peach); }
+.send-btn:hover:not(:disabled)     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.abort-btn:hover                   { border-color: var(--red); }
+.pause-btn:hover:not(:disabled)    { border-color: var(--yellow); }
+.continue-btn:hover:not(:disabled) { border-color: var(--green); }
+.takeitback-btn:hover:not(:disabled) { border-color: var(--peach); }
 
 
 /* Sessions button — always-visible button in the input row (left of Ω) */

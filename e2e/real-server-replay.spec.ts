@@ -80,8 +80,13 @@ test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly"
   // Wait for the tool_call block — this confirms the sleep subprocess is running
   await expect(page.getByTestId("block-tool")).toBeVisible({ timeout: 10000 });
 
-  // Click Abort — with the fix, the subprocess is killed immediately
-  await page.getByRole("button", { name: "Abort" }).click();
+  // Under the new button matrix, Running shows Pause (not Abort). Press Pause
+  // to enter PauseRequested (the pause seam won't fire until the sleep finishes),
+  // then press Abort — the server's abort handler wakes the seam AND kills the
+  // subprocess via activeAbortController.abort().
+  await page.getByTestId("pause-btn").click();
+  await expect(page.getByTestId("abort-btn")).toBeVisible({ timeout: 3000 });
+  await page.getByTestId("abort-btn").click();
 
   // '⊘ Aborted' must appear within 3 seconds.
   // Without the subprocess-kill fix this times out because sleep 10 keeps running.
