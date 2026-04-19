@@ -324,6 +324,60 @@ describe("extractResumptionBasis — multiple turns", () => {
   });
 });
 
+describe("extractResumptionBasis — interjections", () => {
+  // Mid-turn user messages arrive while the agent is paused. They must stay
+  // inside their original turn (not start a new one) and render with the
+  // `User (mid-turn):` prefix so the resumption summary preserves the
+  // sequence correctly.
+
+  function turnPaused(): OmegaEvent {
+    return { type: "turn_paused", time: "2025-01-01T00:00:02.000Z" as any };
+  }
+  function turnContinued(mode: "manual" | "auto" = "manual"): OmegaEvent {
+    return { type: "turn_continued", time: "2025-01-01T00:00:02.000Z" as any, mode };
+  }
+
+  it("renders interjection with User (mid-turn) prefix and keeps it in the same turn", () => {
+    const events: OmegaEvent[] = [
+      userMsg("original ask"),
+      toolCall("t1", "run_command", { command: "echo hi" }),
+      toolResult("t1", "run_command", "hi"),
+      turnPaused(),
+      userMsg("mid turn note"),
+      turnContinued(),
+      llmResp("done"),
+      turnEnd(),
+    ];
+    const basis = extractResumptionBasis(events);
+    expect(basis).toContain("### Turn 1");
+    expect(basis).not.toContain("### Turn 2");
+    expect(basis).toContain("User: original ask");
+    expect(basis).toContain("User (mid-turn): mid turn note");
+    // The interjection should appear after the tool result, not before.
+    const pos1 = basis.indexOf("run_command");
+    const pos2 = basis.indexOf("User (mid-turn):");
+    expect(pos1).toBeGreaterThan(-1);
+    expect(pos2).toBeGreaterThan(pos1);
+  });
+
+  it("a subsequent top-level user_message (after turn_end) still starts a new turn", () => {
+    const events: OmegaEvent[] = [
+      userMsg("first"),
+      llmResp("r1"),
+      turnEnd(),
+      userMsg("second"),
+      llmResp("r2"),
+      turnEnd(),
+    ];
+    const basis = extractResumptionBasis(events);
+    expect(basis).toContain("### Turn 1");
+    expect(basis).toContain("### Turn 2");
+    expect(basis).toContain("User: first");
+    expect(basis).toContain("User: second");
+    expect(basis).not.toContain("User (mid-turn)");
+  });
+});
+
 describe("extractResumptionBasis — dropped events", () => {
   it("does not include server_started, session_started, llm_call, turn_end, llm_retry", () => {
     const events: OmegaEvent[] = [

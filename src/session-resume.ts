@@ -85,8 +85,12 @@ interface Turn {
 
 /**
  * Group a flat event list into turns.
- * A turn starts with `user_message` and ends with `turn_end` or
- * `turn_interrupted`. Events outside any turn are ignored.
+ * A turn starts with the first `user_message` after a turn boundary and
+ * ends with `turn_end` or `turn_interrupted`. A `user_message` that
+ * appears inside an already-open turn is an **interjection** (sent while
+ * the agent was paused) and stays inside the current turn so `projectTurn`
+ * can render it with the `User (mid-turn):` prefix. Events outside any
+ * turn are ignored.
  */
 function groupIntoTurns(events: OmegaEvent[]): Turn[] {
   const turns: Turn[] = [];
@@ -94,8 +98,13 @@ function groupIntoTurns(events: OmegaEvent[]): Turn[] {
 
   for (const e of events) {
     if (e.type === "user_message") {
-      current = [e];
-      turns.push({ events: current });
+      if (current !== null) {
+        // Mid-turn interjection — keep it inside the current turn.
+        current.push(e);
+      } else {
+        current = [e];
+        turns.push({ events: current });
+      }
     } else if (current !== null) {
       current.push(e);
       if (e.type === "turn_end" || e.type === "turn_interrupted") {

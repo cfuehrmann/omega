@@ -1,6 +1,6 @@
 # Pause / Resume / Interject — implementation plan
 
-**Status:** approved, awaiting implementation.
+**Status:** shipped (commits 91bda6b, 0b774aa, 74fe40a, and the Stage 4 commit introducing this status flip).
 **Replaces:** UX-1 (hard-stop semantics) and UX-2 (prompt queue / inject at seam).
 
 ## TL;DR

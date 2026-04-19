@@ -21,17 +21,24 @@ const connectedDot = (page: import("@playwright/test").Page) =>
   page.locator('[data-testid="omega-btn"][data-status="connected"]');
 
 /**
- * If the server has no active session (fresh start), the session picker is
- * forced open. Click "New session" so the real-server tests can proceed.
- * No-op when a session already exists (picker is not shown).
+ * Always start each test in a fresh session so prior tests cannot pollute
+ * the event feed. The real-server keeps state across tests (one server,
+ * many sessions on disk), so every test must explicitly create its own
+ * blank session. When the picker is already open (first test on a fresh
+ * server), just click New; otherwise open the picker first.
  */
 async function ensureSession(page: import("@playwright/test").Page) {
   const picker = page.getByTestId("session-picker-modal");
-  if (await picker.isVisible()) {
-    await page.getByTestId("session-picker-new").click();
-    // Wait for the picker to disappear (session_info arrives and sets sessionDir)
-    await expect(picker).not.toBeVisible({ timeout: 5000 });
+  if (!(await picker.isVisible())) {
+    await page.getByTestId("sessions-btn").click();
+    await expect(picker).toBeVisible({ timeout: 3000 });
   }
+  // The "New session" button is disabled while the current agent is still
+  // streaming — wait for it to become actionable.
+  await expect(page.getByTestId("session-picker-new")).toBeEnabled({ timeout: 5000 });
+  await page.getByTestId("session-picker-new").click();
+  await expect(picker).not.toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("status-label")).toHaveText("Ready", { timeout: 5000 });
 }
 
 test("events persist through the real server and replay after page reload", async ({ page }) => {

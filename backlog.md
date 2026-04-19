@@ -6,21 +6,6 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ## P2 — Medium priority
 
-### UX-1 — Hard stop semantics
-
-Define and implement clean abort semantics. Candidates: single Esc = soft abort
-(finish current tool, stop); double Esc = hard kill. Today Esc aborts
-unconditionally, but the abort-after-tool-execution guard (already implemented)
-ensures history stays well-formed.
-
-### UX-2 — Prompt queue / turn injection
-
-Let the user type a follow-up message while a turn is in flight. Buffer it and
-deliver at the next clean break (after current tool, before next API call).
-Design questions: where is the buffer stored, how does the agent loop receive
-it, does it inject into the current turn or start the next one, what's the UI
-affordance.
-
 ### SCHEMA-1 — Event field audit (error events first)
 
 Review every event variant's fields for completeness and consistency. Priority:
@@ -117,3 +102,4 @@ inputs.
 | FEAT-3 — Anthropic beta headers | **Done** | Beta headers are passed on all API calls. |
 | Eager input streaming | **Done** | `eager_input_streaming: true` added to `write_file` and `edit_file`. Reduces first-chunk latency ~15 s → ~3 s for large file writes. No beta header needed. |
 | Task budget (`task_budget` on `output_config`) | **Declined** | See [backlog/task-budget.md](backlog/task-budget.md). Advisory soft hint, not cost enforcement. Opus 4.7 only. Cost visibility already solved by per-turn/session display; user prefers efficiency over pre-committed budgets. Reopen criteria documented. |
+| UX-1 / UX-2 — Hard-stop semantics + prompt queue | **Superseded & shipped** | Both replaced by pause/resume/interject. See [backlog/pause-resume-interject.md](backlog/pause-resume-interject.md). |

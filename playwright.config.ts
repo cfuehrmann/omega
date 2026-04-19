@@ -36,7 +36,10 @@ export default defineConfig({
     // -----------------------------------------------------------------------
     {
       name: "chromium",
-      testIgnore: "**/real-server-replay.spec.ts",
+      testIgnore: [
+        "**/real-server-replay.spec.ts",
+        "**/pause-resume-interject.spec.ts",
+      ],
       use: {
         ...devices["Desktop Chrome"],
         baseURL: "http://localhost:3001",
@@ -48,7 +51,10 @@ export default defineConfig({
     // -----------------------------------------------------------------------
     {
       name: "real-server",
-      testMatch: "**/real-server-replay.spec.ts",
+      testMatch: [
+        "**/real-server-replay.spec.ts",
+        "**/pause-resume-interject.spec.ts",
+      ],
       use: {
         ...devices["Desktop Chrome"],
         baseURL: "http://localhost:3003",
