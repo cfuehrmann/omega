@@ -6,17 +6,6 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ## P1 — High priority
 
-### Advisor tool — Sonnet executor with Opus strategic guidance
-
-**[backlog/advisor-tool.md](backlog/advisor-tool.md)**
-
-Use Anthropic's `advisor_20260301` beta tool to pair Sonnet 4.6 (fast, cheap
-executor) with Opus 4.7 (strategic advisor). The model decides when to consult
-the advisor — no manual orchestration. Near-Opus quality at near-Sonnet cost.
-
-Requires: beta access (`advisor-tool-2026-03-01`), new content block types in
-persistence + UI, usage tracking for advisor sub-inferences.
-
 ### Task budget — cost protection for long sessions
 
 **[backlog/task-budget.md](backlog/task-budget.md)**
@@ -60,6 +49,18 @@ coverage. Fix: emit `llm_error` before `agent_error` on exhaustion.
 ---
 
 ## P3 — Low priority / deferred
+
+### Advisor tool — blocked on `clear_tool_uses` compatibility
+
+**[backlog/advisor-tool.md](backlog/advisor-tool.md)**
+
+Anthropic's `advisor_20260301` beta pairs a Sonnet executor with an Opus
+advisor for near-Opus quality at near-Sonnet cost. Deferred because the docs
+explicitly state `clear_tool_uses` is "not yet fully compatible with advisor
+tool blocks; full support is planned for a follow-up release." Omega uses
+`clear_tool_uses_20250919` in production, so enabling the advisor today would
+mean either disabling tool-result clearing (hurting long sessions) or accepting
+undefined behaviour. Revisit when Anthropic ships the follow-up.
 
 ### SCHEMA-3 — Web server protocol errors not in `events.jsonl`
 

@@ -1,95 +1,96 @@
 # Advisor tool — Sonnet executor with Opus strategic guidance
 
+**Status: deferred.** See "Why deferred" below.
+
 ## What
 
-Anthropic's **advisor tool** (`advisor_20260301`) lets a fast executor model
-(e.g. Sonnet 4.6) consult a more capable advisor model (e.g. Opus 4.7)
-mid-generation. The advisor sees the full transcript, produces strategic
-guidance (~400–700 tokens of advice, ~1400–1800 total including thinking),
-and the executor continues — all inside a single API call.
+Anthropic's **advisor tool** (`advisor_20260301`, beta header
+`advisor-tool-2026-03-01`) lets a fast executor (e.g. Sonnet 4.6) consult a
+stronger advisor model (e.g. Opus 4.7) mid-generation inside a single
+`/v1/messages` call.
 
-Beta header: `advisor-tool-2026-03-01`
+The advisor receives the **full transcript** automatically — system prompt,
+tool definitions, every prior user/assistant turn, every tool call and result.
+The executor cannot prompt it: `server_tool_use.input` is always `{}`. The
+server builds the advisor's view from the transcript, the advisor emits
+~400–700 tokens of strategic guidance, and the executor continues.
+
 Docs: <https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool>
 
 ## Why it matters for Omega
 
-This is Anthropic's answer to "I want Opus quality at Sonnet speed/cost":
+- Near-Opus quality at near-Sonnet cost: executor output bills at Sonnet rates;
+  only the short advisor sub-inference bills at Opus rates.
+- Zero orchestration code: the executor decides when to consult.
+- Fits Omega's workload (long-horizon coding with many tool calls) — exactly
+  the pattern the advisor is built for.
 
-- **Near-Opus quality at Sonnet rates.** The bulk of token generation happens
-  at Sonnet pricing ($0.80/$4 per MTok). Only the advisor sub-inference bills
-  at Opus rates ($5/$25 per MTok), and those calls are short (~1800 tokens).
-- **Model decides when to consult.** The executor invokes the advisor like any
-  other tool — no manual orchestration needed.
-- **Zero extra round trips.** Everything happens server-side inside one
-  `/v1/messages` request.
+## Why deferred
 
-## How it works
+**`clear_tool_uses` incompatibility.** The Anthropic docs state plainly:
+> `clear_tool_uses` is not yet fully compatible with advisor tool blocks;
+> full support is planned for a follow-up release.
 
-1. Add the advisor tool to the `tools` array:
-   ```typescript
-   { type: "advisor_20260301", name: "advisor", model: "claude-opus-4-7" }
-   ```
-2. The executor emits a `server_tool_use` block (empty `input`).
-3. Anthropic runs a separate inference on the advisor model, passing the full
-   transcript (system prompt, tools, all turns).
-4. The advisor's response comes back as an `advisor_tool_result` block.
-5. The executor continues, informed by the advice.
+Omega runs `clear_tool_uses_20250919` in production (triggered at 100k input
+tokens) as a first-stage defence before full compaction. Enabling the advisor
+today means either:
 
-## New content block types to handle
+1. Disabling tool-result clearing when the advisor is on — hurts long coding
+   sessions by inflating input tokens and busting the cache earlier, **or**
+2. Accepting undefined behaviour on the interaction.
 
-| Block type | Where | Notes |
-|---|---|---|
-| `server_tool_use` | Assistant content | `name: "advisor"`, `input: {}` |
-| `advisor_tool_result` | Assistant content | Contains `advisor_result` (text) or `advisor_redacted_result` (encrypted) |
-| `advisor_tool_result_error` | Assistant content | Error codes: `max_uses_exceeded`, `too_many_requests`, `overloaded`, `prompt_too_long`, `execution_time_exceeded`, `unavailable` |
+Neither is acceptable. Revisit once Anthropic ships the follow-up.
 
-## Implementation plan
+Secondary concerns (not blockers on their own):
 
-### Phase 1 — Core integration
+- Beta + possible account-access request.
+- Stream pauses up to ~30 s during advisor inference (SSE pings only).
+- Two billing rates in one call, reported via `usage.iterations[]`; the turn
+  footer needs rework to stay truthful.
+- Conversation-level cap requires stripping all prior `advisor_tool_result`
+  blocks from history when the cap is hit, which busts the prompt cache.
 
-1. **Add advisor tool to the tools array** in `src/agent.ts` when a new config
-   flag is enabled (e.g. `useAdvisor: true` + `advisorModel: "claude-opus-4-7"`).
-2. **Add beta header** `advisor-tool-2026-03-01` to the `betas` array.
-3. **Pass through new content blocks.** The advisor blocks are part of the
-   assistant message and must be round-tripped verbatim in subsequent turns.
-   Omega's `context.jsonl` persistence must serialize them as-is.
-4. **Handle `advisor_redacted_result`** — opaque `encrypted_content` blob that
-   must be round-tripped but cannot be displayed. On the next turn the server
-   decrypts it for the executor.
-5. **Usage tracking.** Advisor usage appears in `usage.iterations[]` as
-   `{ type: "advisor_message", model: "...", input_tokens, output_tokens }`.
-   Surface this in `llm_response` events and the turn footer.
+## When we revisit — implementation sketch
+
+### Phase 1 — core integration
+
+1. Add the tool to the `tools` array behind a flag, plus the beta header.
+2. **Round-tripping is nearly free**: `compactedContextHistory` already stores
+   `response.content` verbatim, and `context.jsonl` serialises it as-is. New
+   block types (`server_tool_use`, `advisor_tool_result`,
+   `advisor_tool_result_error`) pass through without schema changes.
+3. Extend the streaming loop in `streamLlmCall` to recognise the new block
+   types — emit a "consulting advisor" signal on `server_tool_use` open, and
+   capture the advisor's advice when `advisor_tool_result` arrives (single
+   `content_block_start`, no deltas).
+4. Handle `advisor_redacted_result` — opaque `encrypted_content` that must be
+   round-tripped but cannot be displayed.
+5. Usage tracking: extend `LlmResponseEvent.usage` to carry
+   `usage.iterations[]` so advisor-message entries are visible in the footer.
 
 ### Phase 2 — UI
 
-6. **Stream pause indicator.** The executor's stream pauses during advisor
-   inference. Show a "consulting advisor…" indicator in the web UI.
-7. **Advisor result display.** Show the advisor's text advice in a collapsible
-   block (like thinking blocks) — useful for debugging but not primary content.
-8. **Error display.** Show advisor errors as a soft warning, not a hard failure.
+6. "Consulting advisor…" stream indicator.
+7. Collapsible advice block (mirror the existing thinking-block pattern).
+8. Soft-warning rendering for advisor errors.
 
-### Phase 3 — Configuration
+### Phase 3 — configuration
 
-9. **Model dropdown integration.** Add a "Sonnet + Opus advisor" composite
-   option alongside the existing single-model choices.
-10. **`max_uses` control.** Let the user cap advisor calls per request to
-    control cost.
-11. **Advisor caching.** Enable `caching: { type: "ephemeral", ttl: "5m" }` to
-    cache the advisor's transcript across calls within a conversation.
+9. "Sonnet + Opus advisor" composite model choice in the dropdown.
+10. Per-request `max_uses` cap.
+11. Advisor-side caching (`caching: { type: "ephemeral", ttl: "5m" }`) —
+    enable only for conversations with ≥3 expected advisor calls.
+12. Conversation-level cap: count client-side; when exceeded, remove the tool
+    AND strip all advisor blocks from history.
 
-## Caveats
+## Reference — content-block shapes
 
-- **Beta, requires account access.** May need to request access from Anthropic.
-- **Streaming pause.** The advisor sub-inference does not stream — the
-  executor's stream goes quiet (with SSE keepalives) until the advisor
-  finishes. Short advisor calls may show no pings.
-- **Multi-turn round-trip.** All `advisor_tool_result` blocks must be passed
-  back on subsequent turns. If the advisor tool is removed from `tools`
-  mid-conversation, all advisor result blocks must also be stripped from
-  history — otherwise the API returns 400.
-- **No conversation-level cap.** `max_uses` is per-request. To limit across a
-  conversation, count client-side and remove the tool when the ceiling is
-  reached.
+| Block type | Notes |
+|---|---|
+| `server_tool_use` | `name: "advisor"`, `input: {}` — executor emits this |
+| `advisor_tool_result` with `content.type: "advisor_result"` | Plaintext `text` field |
+| `advisor_tool_result` with `content.type: "advisor_redacted_result"` | Opaque `encrypted_content` blob |
+| `advisor_tool_result` with `content.type: "advisor_tool_result_error"` | Error codes: `max_uses_exceeded`, `too_many_requests`, `overloaded`, `prompt_too_long`, `execution_time_exceeded`, `unavailable` |
 
 ## Valid executor/advisor pairs
 
