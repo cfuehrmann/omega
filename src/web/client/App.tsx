@@ -1157,7 +1157,11 @@ function GroupView(props: {
 
 // Module-level helpers used by BottomPanel and InputRow
 function activeModel(): string {
-  return state.liveTurn !== null ? state.liveModel : (state.lastTurnEnd?.model ?? state.liveModel);
+  // Always use liveModel — it is the authoritative user-chosen model, updated
+  // immediately by model_changed events. lastTurnEnd.model is only a snapshot
+  // of liveModel at turn-end time; using it here caused the picker to show a
+  // stale model after the user changed model while idle (between turns).
+  return state.liveModel;
 }
 
 function handleModelChange(model: OmegaModel) {
