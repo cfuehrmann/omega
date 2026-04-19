@@ -25,14 +25,6 @@ Add `task_budget` to `output_config` to cap total token spend per session.
 Server-side enforcement — when the budget is exhausted, the model stops.
 Currently Omega has no cost guardrail.
 
-### Eager input streaming — faster tool call delivery
-
-**[backlog/eager-input-streaming.md](backlog/eager-input-streaming.md)**
-
-Add `eager_input_streaming: true` to `write_file` and `edit_file` tool
-definitions. Reduces first-chunk latency from ~15 s to ~3 s for large file
-writes. GA, no beta header needed, low implementation effort.
-
 ---
 
 ## P2 — Medium priority
@@ -106,6 +98,17 @@ add a proof-of-concept.
 
 Feed should scroll to bottom on new content.
 
+### WEB-2 — Live write_file preview
+
+`eager_input_streaming` is already enabled on `write_file` and `edit_file`,
+so input chunks arrive as the model generates them. A future enhancement could
+stream those `input_json_delta` events to the web UI so the user sees file
+content appearing line by line during a large write. This is a UX improvement
+only — it does not reduce agent loop latency, since the tool result cannot be
+sent until the full stream completes. Requires a streaming JSON parser to
+decode partial content-field values, plus UI rendering of in-flight tool
+inputs.
+
 ---
 
 ## Done / removed
@@ -123,3 +126,4 @@ Feed should scroll to bottom on new content.
 | FEAT-1 — Extended thinking | **Done** | Adaptive thinking (`type: "adaptive"`) is active on all models. |
 | FEAT-2 — OpenAI `previous_response_id` | **Removed** | OpenAI provider was removed. |
 | FEAT-3 — Anthropic beta headers | **Done** | Beta headers are passed on all API calls. |
+| Eager input streaming | **Done** | `eager_input_streaming: true` added to `write_file` and `edit_file`. Reduces first-chunk latency ~15 s → ~3 s for large file writes. No beta header needed. |
