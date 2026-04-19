@@ -120,10 +120,27 @@ function projectTurn(turn: Turn, index: number): string {
     Extract<OmegaEvent, { type: "tool_call" }>
   >();
 
+  // Track whether we're inside a paused window (turn_paused … turn_continued).
+  // A user_message inside that window is an interjection and renders with a
+  // "User (mid-turn):" prefix so the resume basis preserves its semantics.
+  let inPausedWindow = false;
+
   for (const e of turn.events) {
     switch (e.type) {
       case "user_message":
-        lines.push(`\nUser: ${e.content.trim()}`);
+        lines.push(
+          inPausedWindow
+            ? `\nUser (mid-turn): ${e.content.trim()}`
+            : `\nUser: ${e.content.trim()}`,
+        );
+        break;
+
+      case "turn_paused":
+        inPausedWindow = true;
+        break;
+
+      case "turn_continued":
+        inPausedWindow = false;
         break;
 
       case "llm_response":

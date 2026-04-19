@@ -416,6 +416,88 @@ export class Agent {
    */
   private activeGeneration = 0;
 
+  // ------------------------------------------------------------------------
+  // Pause / resume / interject state (UX-1/UX-2 replacement)
+  //
+  // The state machine is fully log-driven; these fields are transient state
+  // that coordinates the running generator with external control calls
+  // (`requestPause`, `requestContinue`, `requestAbort`). They are reset at
+  // the start and end of every `sendMessage` call so a prior turn's state
+  // never leaks into the next one.
+  //
+  //   pauseRequested:   true between `requestPause()` and the seam firing.
+  //   pendingContinue:  set by `requestContinue()`; consumed at the seam.
+  //                     `mode="manual"` when the resolver was non-null at
+  //                     continue-time (a user-visible Paused state existed);
+  //                     `mode="auto"` when Continue was clicked before the
+  //                     seam had landed — Paused was never rendered.
+  //   pausedResolver:   set only while the agentic loop is blocked awaiting
+  //                     a continue/abort. Resolving it wakes the seam.
+  //   abortTurn:        AbortController for the currently-running
+  //                     sendMessage. Created on entry, used by
+  //                     `requestAbort()` so external code doesn't need to
+  //                     track the controller itself. Merges with an optional
+  //                     external AbortSignal passed to sendMessage.
+  // ------------------------------------------------------------------------
+  private pauseRequested = false;
+  private pendingContinue: { content?: string; mode: "manual" | "auto" } | null = null;
+  private pausedResolver: (() => void) | null = null;
+  private abortTurn: AbortController | null = null;
+
+  /**
+   * Request that the currently-running turn pause at its next clean seam
+   * (after all tool_results from the current tool batch are appended to
+   * history). Idempotent — repeated calls while the request is already
+   * pending or the agent is already Paused are no-ops.
+   *
+   * Emits a `pause_requested` event to the event log. If no turn is
+   * running, still logs the event (the client/server can surface this as
+   * "nothing to pause") — but in practice the web server only forwards
+   * pause clicks when `turnState !== "idle"`.
+   */
+  requestPause(): void {
+    if (this.pauseRequested || this.pausedResolver !== null) return;
+    this.pauseRequested = true;
+    const ev: OmegaEvent = { type: "pause_requested", time: now() };
+    void this.logEvent(ev);
+  }
+
+  /**
+   * Resume a paused (or about-to-pause) turn. Optional `content` becomes a
+   * mid-turn interjection: a `user_message` event emitted between
+   * `turn_paused` and `turn_continued`, with its content appended to
+   * context history so the next LLM call sees it.
+   *
+   * `mode` in the emitted `turn_continued` event is `"manual"` if the
+   * agentic loop is already blocked at the seam (a Paused state was
+   * visible to the user), `"auto"` if Continue was clicked before the
+   * seam landed (pre-commit — Paused was never rendered).
+   */
+  requestContinue(content?: string): void {
+    const mode: "manual" | "auto" = this.pausedResolver !== null ? "manual" : "auto";
+    this.pendingContinue = content !== undefined ? { content, mode } : { mode };
+    const resolver = this.pausedResolver;
+    if (resolver !== null) {
+      this.pausedResolver = null;
+      resolver();
+    }
+  }
+
+  /**
+   * Abort the currently-running turn. Fires the shared AbortController so
+   * in-flight tools and LLM streams are cancelled, and wakes the pause
+   * seam if it's suspended (so it can emit `turn_interrupted` and exit).
+   * Idempotent — safe to call when no turn is running.
+   */
+  requestAbort(): void {
+    this.abortTurn?.abort();
+    const resolver = this.pausedResolver;
+    if (resolver !== null) {
+      this.pausedResolver = null;
+      resolver();
+    }
+  }
+
   /**
    * Production: new Agent(createMessageStream, contextFile, eventsFile, sessionDir)
    *   — pass the result of makeDefaultCreateMessageStream(); context appended to
@@ -911,6 +993,30 @@ export class Agent {
     // Capture this call's generation so we can detect if a newer sendMessage
     // starts while we are blocked inside tool execution (see activeGeneration).
     const myGeneration = ++this.activeGeneration;
+
+    // --- Pause-state lifecycle + abort plumbing ---
+    // Every sendMessage owns a fresh AbortController so `requestAbort()` can
+    // fire it without the server having to pass a controller in. If the
+    // caller provided an external signal we still honour it by forwarding
+    // abort events to our internal controller (and check `aborted` once up
+    // front). Pause state is reset here and in the finally block below so a
+    // prior turn's pauseRequested/pendingContinue never bleeds into the next.
+    const externalSignal = signal;
+    const turnAbort = new AbortController();
+    this.abortTurn = turnAbort;
+    signal = turnAbort.signal;
+    const onExternalAbort = () => turnAbort.abort();
+    if (externalSignal !== undefined) {
+      if (externalSignal.aborted) turnAbort.abort();
+      else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+    // Reset pause-control state for this turn. pauseRequested/pendingContinue
+    // from an aborted-and-abandoned earlier turn would be stale.
+    this.pauseRequested = false;
+    this.pendingContinue = null;
+    this.pausedResolver = null;
+
+    try {
 
     // --- Interrupted-session guard: dangling tool_use from interrupted previous turn ---
     // If the last message in compactedContextHistory is an assistant message
@@ -1444,6 +1550,74 @@ export class Agent {
           })),
         });
         continueLoop = true;
+
+        // --- Pause seam ---
+        // This is the only point in the agentic loop where the turn can pause.
+        // We've just landed a clean context state: all tool_results for the
+        // current batch are appended to history, so resuming later just runs
+        // the next llm_call as if nothing happened. Any earlier seam would
+        // risk leaving tool_use blocks without matching tool_results.
+        if (this.pauseRequested) {
+          this.pauseRequested = false;
+          const pausedEv: OmegaEvent = { type: "turn_paused", time: now() };
+          this.logEvent(pausedEv);
+          yield pausedEv;
+
+          // If Continue was already clicked (pre-commit path), pendingContinue
+          // is already set and we skip the suspend — mode="auto" was recorded
+          // at click-time because the resolver was null then.
+          if (this.pendingContinue === null) {
+            await new Promise<void>(resolve => {
+              this.pausedResolver = resolve;
+            });
+            this.pausedResolver = null;
+          }
+
+          // Woke up. Three possibilities:
+          //   1. Abort fired          → signal.aborted is true; emit
+          //                            turn_interrupted and exit.
+          //   2. Continue (no content) → pendingContinue set, emit
+          //                            turn_continued and loop.
+          //   3. Continue (with content) → append the interjection as a
+          //                            user_message first, then turn_continued.
+          if (signal?.aborted) {
+            const interruptEv: OmegaEvent = {
+              type: "turn_interrupted",
+              time: now(),
+              reason: "aborted",
+            };
+            this.logEvent(interruptEv);
+            yield interruptEv;
+            return;
+          }
+
+          // Snapshot pendingContinue before clearing. Cast defeats TS's
+          // over-eager class-field narrowing across the prior if-branches.
+          type PendingContinue = { content?: string; mode: "manual" | "auto" };
+          const cont = this.pendingContinue as PendingContinue | null;
+          this.pendingContinue = null;
+          const interjection = cont !== null && cont.content !== undefined && cont.content.length > 0
+            ? cont.content
+            : null;
+          if (interjection !== null) {
+            await this.appendToHistory({ role: "user", content: interjection });
+            const interjectEv: OmegaEvent = {
+              type: "user_message",
+              time: now(),
+              content: interjection,
+            };
+            this.logEvent(interjectEv);
+            yield interjectEv;
+          }
+          const continuedMode: "manual" | "auto" = cont !== null ? cont.mode : "auto";
+          const continuedEv: OmegaEvent = {
+            type: "turn_continued",
+            time: now(),
+            mode: continuedMode,
+          };
+          this.logEvent(continuedEv);
+          yield continuedEv;
+        }
       }
     }
 
@@ -1461,5 +1635,21 @@ export class Agent {
     };
     this.logEvent(turnEndEvent);
     yield turnEndEvent;
+    } finally {
+      // Always clear pause-control state so a subsequent sendMessage starts
+      // clean. Detach the external abort listener to avoid leaks across turns.
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+      if (this.abortTurn === turnAbort) this.abortTurn = null;
+      this.pauseRequested = false;
+      this.pendingContinue = null;
+      // If the generator unwinds while still suspended at the seam (e.g.
+      // caller called .return()), the resolver would leak. Fire it so the
+      // awaiting promise settles — the subsequent abort check exits cleanly.
+      const resolver = this.pausedResolver as (() => void) | null;
+      if (resolver !== null) {
+        this.pausedResolver = null;
+        resolver();
+      }
+    }
   }
 }

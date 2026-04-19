@@ -353,6 +353,47 @@ export interface SessionResumedEvent {
   summary: string;
 }
 
+// ---------------------------------------------------------------------------
+// Pause / resume / interject (UX-1/UX-2 replacement)
+// ---------------------------------------------------------------------------
+
+/**
+ * The user has requested a pause. Emitted immediately on Esc from `Running`.
+ * The agent finishes the current tool batch before transitioning to `Paused`
+ * (emitting `turn_paused`).
+ */
+export interface PauseRequestedEvent {
+  type: "pause_requested";
+  time: ISOTimestamp;
+}
+
+/**
+ * The agent has reached a clean seam and the turn is now paused.
+ * Emitted after all tool_results from the current tool batch have been
+ * appended to history. The next action is either `turn_continued`
+ * (resume, optionally with an interjection user_message) or
+ * `turn_interrupted{reason:"aborted"}`.
+ */
+export interface TurnPausedEvent {
+  type: "turn_paused";
+  time: ISOTimestamp;
+}
+
+/**
+ * The paused turn is resuming. `mode` distinguishes a user-visible Continue
+ * click from the (client-local) pre-commit path where the user clicked
+ * Continue while still in `PauseRequested` and the seam hadn't yet landed.
+ * From the log's perspective, `"auto"` means zero dwell time in `Paused`.
+ *
+ * The interjection (if any) rides as a preceding `user_message` event
+ * between `turn_paused` and `turn_continued`.
+ */
+export interface TurnContinuedEvent {
+  type: "turn_continued";
+  time: ISOTimestamp;
+  mode: "manual" | "auto";
+}
+
 /**
  * A transport-layer error emitted by the web server.
  *
@@ -407,4 +448,7 @@ export type OmegaEvent =
   | EffortChangedEvent
   | TransportErrorEvent
   | ResumingSessionEvent
-  | SessionResumedEvent;
+  | SessionResumedEvent
+  | PauseRequestedEvent
+  | TurnPausedEvent
+  | TurnContinuedEvent;

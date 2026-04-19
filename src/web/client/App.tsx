@@ -1081,6 +1081,15 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
       );
     }
 
+    // Pause / resume / interject events.
+    // Stage 1: log-layer only, not yet rendered in the turn feed — Stage 3
+    // will add proper status blocks and a sticky pause pill. We return null
+    // here so the switch stays exhaustive without affecting layout.
+    case "pause_requested":
+    case "turn_paused":
+    case "turn_continued":
+      return null;
+
     // Protocol envelope events — handled by dispatch(), never appear in turn.events.
     // Listed here to satisfy the exhaustive check.
     case "ready":

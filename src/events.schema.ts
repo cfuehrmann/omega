@@ -193,6 +193,22 @@ const SessionResumedSchema = z.object({
   summary: z.string(),
 });
 
+const PauseRequestedSchema = z.object({
+  type: z.literal("pause_requested"),
+  time: ISOTimestampSchema,
+});
+
+const TurnPausedSchema = z.object({
+  type: z.literal("turn_paused"),
+  time: ISOTimestampSchema,
+});
+
+const TurnContinuedSchema = z.object({
+  type: z.literal("turn_continued"),
+  time: ISOTimestampSchema,
+  mode: z.enum(["manual", "auto"]),
+});
+
 // ---------------------------------------------------------------------------
 // Full discriminated union
 // ---------------------------------------------------------------------------
@@ -233,6 +249,9 @@ export const OmegaEventSchema = z.discriminatedUnion("type", [
   TransportErrorSchema,
   ResumingSessionSchema,
   SessionResumedSchema,
+  PauseRequestedSchema,
+  TurnPausedSchema,
+  TurnContinuedSchema,
 ]) satisfies z.ZodType<OmegaEvent>;
 
 // ---------------------------------------------------------------------------
