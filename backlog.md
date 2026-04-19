@@ -4,18 +4,6 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ---
 
-## P1 — High priority
-
-### Task budget — cost protection for long sessions
-
-**[backlog/task-budget.md](backlog/task-budget.md)**
-
-Add `task_budget` to `output_config` to cap total token spend per session.
-Server-side enforcement — when the budget is exhausted, the model stops.
-Currently Omega has no cost guardrail.
-
----
-
 ## P2 — Medium priority
 
 ### UX-1 — Hard stop semantics
@@ -128,3 +116,4 @@ inputs.
 | FEAT-2 — OpenAI `previous_response_id` | **Removed** | OpenAI provider was removed. |
 | FEAT-3 — Anthropic beta headers | **Done** | Beta headers are passed on all API calls. |
 | Eager input streaming | **Done** | `eager_input_streaming: true` added to `write_file` and `edit_file`. Reduces first-chunk latency ~15 s → ~3 s for large file writes. No beta header needed. |
+| Task budget (`task_budget` on `output_config`) | **Declined** | See [backlog/task-budget.md](backlog/task-budget.md). Advisory soft hint, not cost enforcement. Opus 4.7 only. Cost visibility already solved by per-turn/session display; user prefers efficiency over pre-committed budgets. Reopen criteria documented. |
