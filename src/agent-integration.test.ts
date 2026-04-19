@@ -565,7 +565,7 @@ describe("llm_call event", () => {
     const events = await collectEvents(agent, "hi");
     const e = events.find((e) => e.type === "llm_call") as any;
     // thinking and betas must appear — they are part of the actual API payload
-    expect(e.requestSummary.thinking).toEqual({ type: "adaptive" });
+    expect(e.requestSummary.thinking).toEqual({ type: "adaptive", display: "summarized" });
     expect(Array.isArray(e.requestSummary.betas)).toBe(true);
     expect(e.requestSummary.context_management).toBeDefined();
   });

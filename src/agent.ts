@@ -854,7 +854,7 @@ export class Agent {
       max_tokens: 4096,
       system: RESUMPTION_SUMMARY_INSTRUCTIONS,
       messages: [{ role: "user" as const, content: basis }],
-      thinking: { type: "adaptive" as const },
+      thinking: { type: "adaptive" as const, display: "summarized" } as any,
       output_config: { effort: resumptionEffort },
     };
 
@@ -1067,7 +1067,7 @@ export class Agent {
             },
           ],
         },
-        thinking: { type: "adaptive" as const },
+        thinking: { type: "adaptive" as const, display: "summarized" } as any,
         output_config: {
           effort: capEffortForModel(this.activeEffort, activeModel),
         },
