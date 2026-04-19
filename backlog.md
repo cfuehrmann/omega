@@ -1,356 +1,125 @@
-# Backlog — Issue Tracker
+# Backlog
 
-## Open items
-
-### [SYSPROMPT] System prompt architecture
-
-#### SYSPROMPT-2 — Review the full system prompt assembly process
-
-**Status: LARGELY DONE** — holistic review of `core.ts`, `system-prompt-append.md`,
-and all docs completed over multiple sessions. Remaining open questions:
-
-- **`buildSystemPrompt()`** — called on every API call; should any parts be
-  computed once and cached?
-- **Prompt caching** — the system prompt is wrapped in a single
-  `cache_control: ephemeral` block. Are there cases where the cache is
-  invalidated unexpectedly (e.g. `cwd` or `maxOutputTokens` changing between
-  calls)?
-- **Test coverage** — does `system-prompt.test.ts` cover the assembly
-  integration end-to-end, or only individual parts in isolation?
+Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ---
 
-### [INFRA] `.omega/` namespace organisation
+## P1 — High priority
 
-#### INFRA-5 — Move runtime artefacts into `.omega/runtime/`
+### Advisor tool — Sonnet executor with Opus strategic guidance
 
-**Priority: mid**
+**[backlog/advisor-tool.md](backlog/advisor-tool.md)**
 
-`.omega/` currently mixes two categories:
-- **Authored/source-controlled:** `.omega/system-prompt-append.md` (operator-written context injected into the system prompt).
-- **Generated/runtime:** `sessions/` and `test-sessions/` subdirectories written by Omega at runtime.
+Use Anthropic's `advisor_20260301` beta tool to pair Sonnet 4.6 (fast, cheap
+executor) with Opus 4.7 (strategic advisor). The model decides when to consult
+the advisor — no manual orchestration. Near-Opus quality at near-Sonnet cost.
 
-Move the generated artefacts under `.omega/runtime/` so the distinction is
-explicit in the directory layout:
+Requires: beta access (`advisor-tool-2026-03-01`), new content block types in
+persistence + UI, usage tracking for advisor sub-inferences.
 
-```
-.omega/
-  system-prompt-append.md   ← authored, source-controlled
-  runtime/
-    sessions/               ← was .omega/sessions/
-    test-sessions/          ← was .omega/test-sessions/
-```
+### Task budget — cost protection for long sessions
 
-Acceptance criteria:
-- `SESSIONS_ROOT` in `src/session-dir.ts` updated to `.omega/runtime/sessions`.
-- `TEST_SESSIONS_ROOT` updated to `.omega/runtime/test-sessions`.
-- `assertNotProductionPath()` in `src/test-guard.ts` updated to match new paths.
-- `.gitignore` updated if sessions were excluded there.
-- All existing tests pass.
-- Any existing `.omega/sessions/` data is noted as needing manual migration
-  (one-time rename); no automated migration required.
+**[backlog/task-budget.md](backlog/task-budget.md)**
+
+Add `task_budget` to `output_config` to cap total token spend per session.
+Server-side enforcement — when the budget is exhausted, the model stops.
+Currently Omega has no cost guardrail.
+
+### Eager input streaming — faster tool call delivery
+
+**[backlog/eager-input-streaming.md](backlog/eager-input-streaming.md)**
+
+Add `eager_input_streaming: true` to `write_file` and `edit_file` tool
+definitions. Reduces first-chunk latency from ~15 s to ~3 s for large file
+writes. GA, no beta header needed, low implementation effort.
 
 ---
 
-### [SESSION] Session storage
+## P2 — Medium priority
 
-#### SESSION-3 Strict session resumption
+### UX-1 — Hard stop semantics
 
-On startup, offer to resume a previous session. Validate the candidate session's
-persisted files against the current Omega schema version: sessions with richer
-data (extra fields) are tolerated; sessions with missing required fields are
-rejected. If validation fails, Omega should bail out rather than silently
-continuing with corrupted state.
+Define and implement clean abort semantics. Candidates: single Esc = soft abort
+(finish current tool, stop); double Esc = hard kill. Today Esc aborts
+unconditionally, but the abort-after-tool-execution guard (already implemented)
+ensures history stays well-formed.
 
-Resumption could be offered interactively at startup or triggered via a
-command-line flag.
+### UX-2 — Prompt queue / turn injection
 
-> Command-line flag design is a good occasion to discuss a CLI argument library
-> (built-in help, input validation, etc.).
+Let the user type a follow-up message while a turn is in flight. Buffer it and
+deliver at the next clean break (after current tool, before next API call).
+Design questions: where is the buffer stored, how does the agent loop receive
+it, does it inject into the current turn or start the next one, what's the UI
+affordance.
 
-#### SESSION-4 Soft session resumption
+### SCHEMA-1 — Event field audit (error events first)
 
-When strict resumption fails, offer a fallback: ask the LLM to summarise the
-incompatible session and use that summary as a starting point. Soft resumption
-should be decoupled from the agent — it is a project-level feature.
+Review every event variant's fields for completeness and consistency. Priority:
+`LlmErrorEvent` / `AgentErrorEvent` — currently no cross-reference to the
+`llm_call` that triggered the error. Should carry context hashes or a call ID
+for post-mortem diagnosis.
 
-_Key advantage:_ soft resumption relaxes the pressure to nail down the schema
-once and for all — schema evolution becomes less painful.
+### SCHEMA-2 — "All retries exhausted" missing `llm_error`
 
-#### SESSION-5 Human-readable folder names
+When every retry is consumed, the final fallback yields a bare `agent_error`
+with no `llm_error` event. The worst crash path has the least diagnostic
+coverage. Fix: emit `llm_error` before `agent_error` on exhaustion.
 
-Session folders should be renameable to meaningful names (e.g.
-`implement-login-flow`) without breaking anything. This is the natural
-session-labelling mechanism — no separate tagging concept needed.
+---
 
-### [SCHEMA] Persistence contract (schema lock)
+## P3 — Low priority / deferred
 
-**Status: IN PROGRESS**
-
-Review and lock the exact shape of every JSONL record in
-`sessions/context.jsonl` and `sessions/events.jsonl`.
-
-#### SCHEMA-1 — Property names and completeness per event
-
-For every event variant, review: (a) are the existing field names clear and
-consistent? (b) are any fields missing that would be needed for post-mortem
-diagnosis or session resume?
-
-**Priority: error events first.** `llm_error` and `agent_error` are the events
-most likely to be consulted in a post-mortem — if their fields are incomplete or
-missing cross-references, the diagnostic value is zero exactly when it matters
-most.
-
-Known candidates, in priority order:
-
-- `LlmErrorEvent` / `AgentErrorEvent` — no cross-reference to the `llm_call`
-  that triggered the error. Currently linked only by temporal order. Should
-  carry a reference (e.g. the `contextHashes` of the failed call, or a call ID)
-  so a post-mortem can reconstruct exactly what was sent when the error
-  occurred.
-- `LlmCallEvent` / `LlmResponseEvent` — linked only by temporal order in the
-  JSONL; no explicit cross-reference field. Is ordering sufficient, or should
-  `llm_response` carry a reference back to its `llm_call`?
-- `TurnEndEvent.toolCalls` — list of tool _names_, not IDs; cannot be correlated
-  back to individual `tool_call` events. Consider replacing with `toolUseIds` or
-  keeping as a summary alongside the IDs.
-- `SessionStartEvent.authMode` — only two live values (`"claude-max"`,
-  `"api-key"`); should be a typed union, not a free string.
-
-#### SCHEMA-2 — "All retries exhausted" missing `llm_error`
-
-When every retry attempt is consumed (both Anthropic and OpenAI paths), the
-final fallback yields a bare `agent_error` with no `llm_error` event. This is
-the worst crash path and has the least diagnostic coverage — exactly backwards
-from what we want.
-
-Acceptance criteria:
-
-- "All retries exhausted" path emits `llm_error` (with `lastError` details)
-  before `agent_error`
-- Both Anthropic and OpenAI paths covered
-- Test: mock stream that always throws a retryable error; assert `llm_error`
-  event is present after exhaustion
-
-#### SCHEMA-3 — Web server protocol errors not in `events.jsonl`
+### SCHEMA-3 — Web server protocol errors not in `events.jsonl`
 
 Three conditions in `web/server.ts` emit `{ type: "error" }` over WebSocket but
-write nothing to `events.jsonl`: invalid JSON from client, "turn already in
-progress", and uncaught throws in the turn loop. These are intentionally outside
-the `OmegaEvent` type (WebSocket-protocol-level errors), but whether they should
-be persisted is an open design question.
+write nothing to `events.jsonl`. Decision needed: persist as `agent_error`, or
+document as intentionally excluded.
 
-Decision needed: are these server-internal errors that belong in `events.jsonl`
-(perhaps as `agent_error`), or are they purely transport-layer and deliberately
-excluded from the session record?
+### SCHEMA-4 — Persistence completeness audit
 
-Acceptance criteria:
+Document which events/signals are intentionally _not_ persisted, and why.
+Known intentional omissions: streaming `text` fragments, old `status`/`metrics`
+signals.
 
-- Explicit decision recorded in backlog and in the schema doc (SCHEMA-6)
-- If persisted: wired via `logEvent()` with an appropriate `OmegaEvent` variant
-- If excluded: documented as intentional omission in SCHEMA-4
+### SCHEMA-5 — Forward-compatibility policy
 
-#### SCHEMA-4 — Persistence completeness audit
+Document the Postel's Law contract: tolerant readers, additive writers, breaking
+changes require migration.
 
-Formally verify and document which events/signals are intentionally _not_
-persisted, and why. Current known intentional omissions:
+### SCHEMA-6 — Schema reference document
 
-- `status` messages — gone; each real signal is now a typed event.
-- `metrics` AgentEvent — gone; superseded by `llm_response` usage fields and
-  `turn_end` aggregate.
-- Streaming `text` fragments — assembled response is in `context.jsonl`; `text`
-  is a `StreamSignal`, explicitly outside the persistence boundary by design.
+After SCHEMA-1–5 are resolved, write `docs/schema.md`: the definitive reference
+for every JSONL record.
 
-Close the question explicitly so future contributors know these are deliberate,
-not oversights.
+### SCHEMA-7 — Session resume from persisted state
 
-#### SCHEMA-5 — Forward-compatibility policy
+Load `context.jsonl` and `events.jsonl` from a previous session, restore
+`llmContextView`, and continue. Depends on SCHEMA-6.
 
-Document the Postel's Law contract for the persistence schema:
+### TEST-1 — Evaluate snapshot testing
 
-- **Tolerant readers:** unknown fields on a known event are silently ignored;
-  unknown event types are silently skipped.
-- **Additive writers:** adding a new optional field or a new event type is a
-  non-breaking change and requires no migration.
-- **Breaking changes** (removing or renaming a required field, changing field
-  semantics) require a documented migration plan and must not happen silently.
+Investigate whether snapshot testing fits Omega's output surfaces (system prompt
+assembly, event rendering, JSONL shapes). Write a short evaluation; if adopted,
+add a proof-of-concept.
 
-This policy should live in the schema reference document produced by SCHEMA-6.
+### WEB-1 — Auto-scroll
 
-#### SCHEMA-6 — Schema reference document
-
-After SCHEMA-1 through SCHEMA-5 are resolved, write `docs/schema.md`: the
-definitive reference for every JSONL record in `sessions/context.jsonl` and
-`sessions/events.jsonl`. Covers field names, types, required vs. optional, all
-event variant names, and the forward-compatibility policy from SCHEMA-5. This
-document is the stable contract that SCHEMA-7 builds on.
-
-#### SCHEMA-7 — Session resume
-
-**Depends on SCHEMA-6**
-
-On startup, offer to resume the most recent previous session. The previous
-session directory is found via `findPreviousEventsFile()` in
-`src/session-dir.ts`. Load `context.jsonl` and `events.jsonl` from that
-directory, restore `llmContextView` and the event history, and continue as if
-the session had not ended.
-
-Acceptance criteria:
-
-- Startup detects a non-empty previous session via `findPreviousEventsFile()`
-- User is prompted: resume previous session or start fresh
-- On resume: `llmContextView` is restored from the context file; a new session
-  dir is created but seeded with the restored history
-- On fresh start: behaviour unchanged from today
-- Test: round-trip — session writes context, restarts, resumes, next API call
-  sends the restored history with correct `contextHashes`
+Feed should scroll to bottom on new content.
 
 ---
 
-### [INFRA] Self-protection and structural invariants
+## Done / removed
 
-#### INFRA-1 — Structural invariant tests for web server entry point
-
-`entry.test.ts` guards `src/web/server.ts` exports (`runWebApp`, `closeOpenTurn`,
-`shouldLogEvent`). If someone renames or restructures `server.ts`, `bun test`
-will catch it. Consider expanding coverage if more public exports are added.
-
-Acceptance criteria:
-
-- `entry.test.ts` or a new `web-entry.test.ts` imports and asserts callability
-  of those exports
-- `bun test` catches a rename/deletion of `server.ts`
-
-#### INFRA-2 — Abort-safe agentic loop — soft interrupt at tool boundary
-
-`AbortSignal` can fire mid-tool-execution. The tool result is lost, leaving a
-`tool_use` block in history with no matching `tool_result` → 400 on next turn.
-
-Acceptance criteria:
-
-- Esc mid-tool waits for the in-flight tool to complete, then stops
-- History is always well-formed (every `tool_use` has a matching `tool_result`)
-- Test: abort signal fires during a tool call; next API call succeeds
-
-#### INFRA-3 — History validation before every API call
-
-Cheap sanity check at top of agentic loop: every `tool_use` block must have a
-matching `tool_result`. If not, abort the turn rather than sending malformed
-history. Circuit-breaker; real fix is INFRA-2.
-
----
-
-### [UX] Prompt queuing — interruption, injection, and turn sequencing
-
-**Priority: HIGH — next major design area**
-
-The core question: how should the user interact with Omega _while a turn is in
-flight_? Today, Esc aborts unconditionally.
-
-#### UX-1 — Ideal hard stop
-
-Candidates: single Esc = soft abort (finish current tool, stop); double Esc =
-hard kill. Acceptance criteria: define and implement one semantics; document the
-choice.
-
-#### UX-2 — Modifying an ongoing turn
-
-Candidates: a "prompt queue" buffer delivered at the next clean break (after
-current tool call, before next API call); a visible "pending" line in the UI.
-
-Design questions before implementation:
-
-- Where is the queue buffer stored? (in `app.ts` state? in `agent.ts`?)
-- How does the agent loop receive it? (callback? `Promise`? shared
-  `AsyncIterable`?)
-- Does it inject into the _current_ turn's history or start the _next_ turn?
-- What is the UI affordance?
-
----
-
-### [ARCH] Provider feature parity & architecture
-
-#### ARCH-1 — Clean provider boundary in agent.ts
-
-**Priority: do first — unblocks everything below**
-
-`agent.ts` has large `if (useOpenAi) { ... } else { ... }` blocks inside the
-agentic loop. Goal: extract `callAnthropicTurn()` and `callOpenAiTurn()` helpers
-so each provider's slice is self-contained.
-
-Acceptance criteria:
-
-- Agentic loop body has no large `if (useOpenAi)` branch
-- Each provider helper is independently testable
-- All existing tests still pass
-
-#### FEAT-1 — Anthropic extended thinking
-
-Pass `thinking: { type: "enabled", budget_tokens: N }` to Anthropic calls.
-Requires `anthropic-beta: interleaved-thinking-2025-05-14` header (see FEAT-3).
-
-Sub-tasks: add `thinking` param; handle `thinking` content blocks (don't yield
-as text); cost accounting; tests.
-
-#### FEAT-2 — OpenAI `previous_response_id`
-
-**Priority: high — cuts OpenAI input token cost by ~80% on long sessions**
-
-`callOpenAi()` resends full history on every call. Responses API supports
-`previous_response_id` to let the server maintain history.
-
-Sub-tasks: accept/return `previousResponseId` in `callOpenAi()`; thread ID
-through agentic loop; reset on turn boundary; tests.
-
-#### FEAT-3 — Anthropic beta headers on API-key path
-
-**Priority: low-medium — prerequisite for FEAT-1 on API-key auth**
-
-OAuth client sets `anthropic-beta: claude-code-20250219,oauth-2025-04-20`.
-API-key client sends no beta headers. Goal: unify so both paths get the same
-betas.
-
----
-
-### [TEST] Testing approach
-
-#### TEST-1 — Evaluate snapshot testing for Omega
-
-**Priority: mid**
-
-Investigate whether snapshot testing is a good fit for Omega's output surfaces.
-Candidate areas:
-
-- **System prompt assembly** — `buildSystemPrompt()` output is a large string;
-  snapshots could catch unintended changes from edits to `core.ts`, `identity.ts`,
-  or `append.ts`.
-- **Event rendering** — web client HTML/JSX (`App.tsx`); snapshots would catch
-  visual regressions.
-- **JSONL record shapes** — `context.jsonl` and `events.jsonl` record formats;
-  snapshots complement the schema lock work (SCHEMA-1–SCHEMA-6).
-- **Tool output formatting** — `truncateOutput` and related display helpers.
-
-Questions to answer:
-
-- Does Bun's test runner have built-in snapshot support? If not, what library
-  fits best (e.g. `jest-snapshot`, a custom serialiser)?
-- How are snapshots stored and reviewed in code review? Are they committed to
-  source control?
-- What is the update workflow when a snapshot intentionally changes?
-- Are there surfaces where snapshots would produce too much noise (e.g. outputs
-  that embed timestamps or random IDs)?
-
-Acceptance criteria:
-
-- Short written evaluation (can live in `docs/` or inline as a backlog update)
-  covering fit, tooling choice, and a recommendation (adopt / defer / skip)
-- If adopted: at least one example snapshot test added to the codebase as a
-  proof of concept
-
----
-
-### [WEB] Web interface e2e tests — expand coverage
-
-#### WEB-1 — Auto-scroll
-
-Feed should scroll to bottom on new content. Not yet implemented or tested.
+| Item | Status | Notes |
+|---|---|---|
+| SYSPROMPT-2 — System prompt review | **Done** | Reviewed across multiple sessions. Remaining sub-questions (caching, test coverage) are minor and tracked implicitly. |
+| INFRA-5 — `.omega/runtime/` namespace | **Removed** | Low value — the current layout is clear enough. |
+| SESSION-3/4 — Strict/soft session resumption | **Superseded** by SCHEMA-7 | SCHEMA-7 covers the same ground with a clearer dependency chain. |
+| SESSION-5 — Human-readable folder names | **Removed** | Nice-to-have with no urgency. |
+| INFRA-1 — Structural invariant tests | **Removed** | The knip linter + gate already catch structural drift. |
+| INFRA-2 — Abort-safe agentic loop | **Done** | Abort-after-tool-execution guard is implemented. History is always well-formed. |
+| INFRA-3 — History validation | **Done** | Covered by INFRA-2's guard + server-side context management. |
+| ARCH-1 — Clean provider boundary | **Removed** | OpenAI provider was removed entirely. Omega is Anthropic-only. |
+| FEAT-1 — Extended thinking | **Done** | Adaptive thinking (`type: "adaptive"`) is active on all models. |
+| FEAT-2 — OpenAI `previous_response_id` | **Removed** | OpenAI provider was removed. |
+| FEAT-3 — Anthropic beta headers | **Done** | Beta headers are passed on all API calls. |
