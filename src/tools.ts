@@ -311,6 +311,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "Files longer than ~500 lines or ~20 000 characters risk being cut off mid-write. " +
       "For large new files write a skeleton first, then extend with edit_file. " +
       "For large existing files always prefer edit_file over a full rewrite.",
+    eager_input_streaming: true,
     input_schema: toToolInputSchema(WriteFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -330,6 +331,7 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "appear exactly once in the file. For multiple edits to the same file, " +
       "pass a `replacements` array — this is faster and avoids round-trips. " +
       "Always pass ALL changes to a file in a single call.",
+    eager_input_streaming: true,
     input_schema: toToolInputSchema(EditFileSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
