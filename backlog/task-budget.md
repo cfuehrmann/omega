@@ -1,63 +1,68 @@
-# Token task budget — cost protection for long sessions
+# Task budgets — evaluated, declined
 
-## What
+**Status: declined.** Evaluated against Anthropic's published docs
+([task-budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets)).
+The feature does not match the problem it was originally proposed to solve,
+and the real problem it does solve is not one Omega currently has. Keeping
+this note so future analysis passes don't re-surface the same suggestion.
 
-Anthropic's `task_budget` parameter (on `output_config`) sets a total token
-budget for a task across multiple turns and compactions. When the budget is
-exhausted, the model stops. The client tracks `remaining` across turns.
+## What `task_budget` actually is
 
-```typescript
-output_config: {
-  effort: "high",
-  task_budget: { type: "tokens", total: 500_000, remaining: 350_000 }
-}
-```
+- **Advisory soft hint, not a hard cap.** The model may exceed the budget if
+  interrupting mid-action would be more disruptive than finishing. The real
+  hard cap on generated tokens is still `max_tokens` per request.
+- **Server-injected countdown marker.** Claude sees a running `remaining`
+  counter in its context and uses it to pace itself — prioritize, wrap up
+  gracefully, scale down adaptive thinking as the budget depletes.
+- **Scoped to one agentic loop** (one user message → tool-use turns →
+  `end_turn`), not a session lifetime.
+- **Opus 4.7 only**, public beta. Requires header
+  `anthropic-beta: task-budgets-2026-03-13`. Not supported on Sonnet 4.6
+  or Opus 4.6.
+- **Minimum total: 20 000 tokens.** Values below return HTTP 400.
+- **Too-small budgets cause refusal-like behavior.** If Claude judges the
+  budget insufficient, it may decline, scope down aggressively, or stop early.
+- **Prompt-cache interaction.** Mutating `remaining` client-side on every
+  request invalidates cache prefixes. Docs recommend setting `total` once
+  and letting the server track; only pass `remaining` if you rewrite
+  history client-side (Omega doesn't — we use server-side compaction).
 
-The API returns the updated `remaining` in the response, which the client
-passes back on the next call.
+## Why the original proposal was wrong
 
-## Why it matters for Omega
+The suggestion was framed as a **cost guardrail**: "set a budget, when
+exhausted the model stops." That is not what this feature is. It's a
+**behavioral nudge** for long agentic loops to land gracefully. If cost
+enforcement is the goal, `task_budget` doesn't deliver it; `max_tokens`
+per request plus the user's abort control are still the real ceilings.
 
-Omega currently has **no cost guardrail**. A runaway session (infinite tool
-loop, overly ambitious plan) can burn unlimited tokens. On Opus at $25/MTok
-output, that adds up fast.
+## Why it's declined for Omega specifically
 
-`task_budget` gives server-side enforcement:
-- Set a total budget at session start (e.g. 1M tokens).
-- Pass `remaining` back on each turn.
-- When exhausted, the model emits a `stop_reason` indicating budget exhaustion
-  rather than silently continuing.
+1. **Guessing a budget in advance is the wrong direction.** The preferred
+   path for cost control is making the agent efficient at its work, not
+   pre-committing to a number that's either too low (refusals, premature
+   stops) or too high (does nothing).
+2. **Opus 4.7 only.** A large fraction of sessions run Sonnet 4.6 and get
+   no benefit. Even on Opus 4.7, the user's only `xhigh` use case is
+   planning — short, bounded work, not the long agentic loops this feature
+   targets.
+3. **Cost visibility is already solved.** The expandable per-turn / per-session
+   cost display gives the user live feedback, which is the control they want.
+4. **The failure mode isn't live.** Runaway loops are theoretically possible
+   but rare, visible to the user, and interruptible. No evidence of it being
+   a real problem.
+5. **Existing guardrails cover the rest.** Per-request `max_tokens` (64k
+   Sonnet / 128k Opus), server-side compaction at 750k, tool-result clearing
+   at 100k, and user abort.
 
-## Implementation plan
+## When to reconsider
 
-1. **Add `task_budget` to the API call** in `src/agent.ts`. Source the `total`
-   from a new config field (e.g. `taskBudgetTokens: number | null`).
-2. **Track remaining.** After each API response, read
-   `response.usage.output_tokens` (or whatever the response reports) and update
-   `remaining` for the next call. The response's `task_budget` field may
-   include the updated remaining directly.
-3. **Handle budget exhaustion.** When the model stops due to budget, emit a
-   clear `turn_end` event with a reason like `"budget_exhausted"` instead of
-   the normal `"end_turn"`.
-4. **UI indicator.** Show remaining budget as a progress bar or counter in the
-   turn footer, next to the existing token counts.
-5. **Configuration.** Expose in the web UI settings panel:
-   - Toggle: enable/disable task budget
-   - Input: total budget (tokens), with sensible defaults per model
-   - Display: remaining tokens, percentage used
-6. **Session persistence.** Persist the budget state in `events.jsonl` so
-   resumed sessions continue with the correct remaining count.
+- If a concrete pattern emerges of long Opus 4.7 runs hitting `max_tokens`
+  mid-thought and producing truncated output that would have benefited from
+  graceful wrap-up.
+- If Anthropic extends `task_budget` to Sonnet 4.6 and it becomes cheap
+  default-on infrastructure.
+- If users start running unattended long-horizon Opus 4.7 sessions where
+  live cost visibility isn't enough and a behavioural pacing signal would
+  demonstrably help.
 
-## Caveats
-
-- The exact response shape for `task_budget` remaining needs verification
-  against the live API — the SDK types show `remaining` on the request but
-  the response field may differ.
-- Budget is in tokens (input + output combined? output only?). Need to verify
-  the exact semantics from the API docs when they're published.
-- Consider whether compaction tokens count against the budget.
-
-## Effort estimate
-
-Small — the core change is adding one field to the API call and threading
-`remaining` through the turn loop. The UI work is optional polish.
+None of these apply today.
