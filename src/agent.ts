@@ -279,6 +279,33 @@ export function isRetryable(err: unknown): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Error policy
+// ---------------------------------------------------------------------------
+
+/**
+ * Describes how to react to an LLM error. The retry/recovery loop reads
+ * behaviours directly from this policy; there is no error "category" label.
+ *
+ * - `recovery: "none"` — terminal. Emit llm_error and end the LLM call.
+ * - `recovery: "retry"` — retry the same request.
+ *   - `maxAttempts: undefined` → retry unboundedly (production default for
+ *     transient API errors like 529). A finite value is mostly for tests.
+ *   - `backoffMs(attempt)` — wait duration before each retry.
+ *   - `feedbackOnExhaustion` — if set, the outer loop (`sendMessage`)
+ *     appends this as a synthetic user message and restarts the turn so
+ *     the model can self-correct. Bounded by its own per-turn cap.
+ *     Consumed only after `streamLlmCall`'s own retries are exhausted.
+ */
+type ErrorPolicy =
+  | { recovery: "none" }
+  | {
+      recovery: "retry";
+      maxAttempts: number | undefined;
+      backoffMs: (attempt: number) => number;
+      feedbackOnExhaustion?: string;
+    };
+
 // --- Context window management ---
 // Truncates conversation history to stay within the token budget.
 // Always preserves the first user message (the original task) and the most
@@ -389,6 +416,26 @@ export class Agent {
    */
   private readonly retryMaxAttempts: number | undefined =
     readEnvOptionalPositiveInt("OMEGA_RETRY_ATTEMPTS");
+
+  /**
+   * Classify an LLM error into a recovery policy. Single source of truth
+   * for "what should happen when this error occurs" — the retry loop in
+   * `streamLlmCall` reads behaviours off the returned policy.
+   *
+   * Current behaviour is a thin derivation from `isRetryable`, preserving
+   * exactly the pre-refactor semantics. Commits 2 and 3 (see
+   * `backlog/error-policy-refactor.md`) extend it with retry-after
+   * server-wins handling and invalid-tool-JSON recovery.
+   */
+  private policyFor(err: unknown): ErrorPolicy {
+    if (!isRetryable(err)) return { recovery: "none" };
+    return {
+      recovery: "retry",
+      maxAttempts: this.retryMaxAttempts,
+      backoffMs: (attempt) =>
+        getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs),
+    };
+  }
 
   /** Context JSONL file path. null = disabled (tests). undefined = use production default. */
   private readonly contextFile: string | null | undefined;
@@ -788,16 +835,16 @@ export class Agent {
         };
       } catch (err: unknown) {
         const { httpStatus, message } = errFields(err);
-        const maxAttempts = this.retryMaxAttempts;
-        const exhausted = maxAttempts !== undefined && attempt >= maxAttempts - 1;
+        const policy = this.policyFor(err);
+        const canRetry =
+          policy.recovery === "retry" &&
+          (policy.maxAttempts === undefined || attempt < policy.maxAttempts - 1);
 
-        if (isRetryable(err) && !exhausted) {
-          const waitMs = getAnthropicRetryDelayMs(
-            err,
-            attempt,
-            this.retryBaseMs,
-            this.retryMaxMs,
-          );
+        if (canRetry) {
+          // Narrowed by canRetry above; TS doesn't follow through the
+          // intermediate boolean so assert the retry variant once here.
+          const retryPolicy = policy as Extract<ErrorPolicy, { recovery: "retry" }>;
+          const waitMs = retryPolicy.backoffMs(attempt);
           const retryAt = fromDate(new Date(Date.now() + waitMs));
           const retryEv: OmegaEvent = {
             type: "llm_retry",
