@@ -1646,6 +1646,7 @@ function ModelSelect() {
     <div class="effort-select" ref={ref}>
       <button
         class="input-btn effort-trigger"
+        data-testid="model-trigger"
         disabled={state.streaming}
         onClick={() => setOpen(o => !o)}
       >
@@ -1657,6 +1658,7 @@ function ModelSelect() {
             {(opt) => (
               <div
                 class={"effort-option" + (opt.value === activeModel() ? " effort-option-selected" : "")}
+                data-testid={`model-option-${opt.value}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => { handleModelChange(opt.value); setOpen(false); }}
               >

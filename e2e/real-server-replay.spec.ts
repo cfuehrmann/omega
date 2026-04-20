@@ -145,3 +145,31 @@ test("session dir shown in sessions button persists after reload", async ({ page
   const sessionDirAfter = await page.getByTestId("sessions-btn").getAttribute("data-session-dir");
   expect(sessionDirAfter).toBe(sessionDirBefore);
 });
+
+// ---------------------------------------------------------------------------
+// Model picker — regression for 8e2106b (picker shows stale value after
+// idle model change)
+// ---------------------------------------------------------------------------
+
+test("model picker button updates immediately after switching model while idle", async ({ page }) => {
+  await page.goto("/");
+  await connectedDot(page).waitFor({ timeout: 5000 });
+  await ensureSession(page);
+
+  // Complete a turn so we're idle with a lastTurnEnd (the original bug only
+  // manifested after at least one completed turn).
+  await page.locator("textarea").fill("ping");
+  await page.locator("textarea").press("Enter");
+  await expect(page.getByTestId("block-turn-end").first()).toBeVisible({ timeout: 10000 });
+
+  // The model trigger should start on Sonnet
+  await expect(page.getByTestId("model-trigger")).toHaveText("Sonnet");
+
+  // Open the picker and select Opus 4.7
+  await page.getByTestId("model-trigger").click();
+  await page.getByTestId("model-option-claude-opus-4-7").click();
+
+  // The trigger must immediately reflect the new model — without a round-trip
+  // delay or page reload.
+  await expect(page.getByTestId("model-trigger")).toHaveText("Opus 4.7", { timeout: 3000 });
+});
