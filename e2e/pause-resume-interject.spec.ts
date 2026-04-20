@@ -15,6 +15,9 @@
  *   5. Two pauses in one turn (with interjections on each).
  *   6. Pause during pure-text LLM stream: no truncation.
  *   7. Session resume basis includes interjection as "User (mid-turn): ...".
+ *   8. Reload during Paused must never flash a turn_interrupted block
+ *      (regression: real session 2026-04-20T06-29-36 briefly showed
+ *      "⊘ Interrupted" in the feed after refresh while paused).
  */
 
 import { test, expect, type Page } from "@playwright/test";
@@ -365,4 +368,79 @@ test("session resume basis includes interjection as 'User (mid-turn): ...'", asy
   const userMsg = firstResumption.messages.find(m => m.role === "user");
   expect(userMsg).toBeTruthy();
   expect(userMsg!.content).toContain("User (mid-turn): mid turn note");
+});
+
+// 8.
+test("reload while Paused: no transient ⊘ Interrupted block ever renders", async ({ page }) => {
+  // Observed in the wild (session 2026-04-20T06-29-36): refreshing the
+  // browser while the server was in Paused briefly rendered a
+  // `turn_interrupted` block in the event feed, which vanished on a
+  // subsequent refresh. Test 3 above already reloads during Paused and
+  // asserts the final status label, but it does not catch a transient
+  // block-interrupt that appears for one frame and is then reconciled
+  // away. This test installs a continuous DOM watcher so even a single
+  // frame with the block is recorded.
+  //
+  // Watcher is installed via addInitScript so it is attached *before* the
+  // bundle's first render on every navigation (the initial goto and the
+  // reload). It combines a MutationObserver (fires on any DOM mutation)
+  // with a requestAnimationFrame poll (fires every frame) to catch both
+  // mutation- and rerender-driven appearances.
+  await page.addInitScript(() => {
+    // Reset on every navigation so the reload's observations start clean.
+    (window as unknown as { __interruptSightings: number[] }).__interruptSightings = [];
+    const record = () => {
+      if (document.querySelector('[data-testid="block-interrupt"]')) {
+        (window as unknown as { __interruptSightings: number[] }).__interruptSightings
+          .push(Date.now());
+      }
+    };
+    const start = () => {
+      record();
+      new MutationObserver(record).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+      const loop = () => { record(); requestAnimationFrame(loop); };
+      requestAnimationFrame(loop);
+    };
+    if (document.documentElement) start();
+    else document.addEventListener("readystatechange", start, { once: true });
+  });
+
+  await page.goto("/");
+  await connectedDot(page).waitFor({ timeout: 5000 });
+  await openNewSession(page);
+
+  // Trigger a pausable multi-tool turn (same scenario as test 3).
+  await page.locator("textarea").fill("MULTI_TOOL_TEST flash probe");
+  await page.locator("textarea").press("Enter");
+
+  await expect(page.getByTestId("block-tool").first()).toBeVisible({ timeout: 10000 });
+  await page.getByTestId("pause-btn").click();
+  await expect(page.getByTestId("status-label")).toHaveText("Paused", { timeout: 6000 });
+
+  // Clear any pre-reload sightings (there should be none; this is defensive)
+  // so the assertion below is strictly about the post-reload window.
+  await page.evaluate(() => {
+    (window as unknown as { __interruptSightings: number[] }).__interruptSightings = [];
+  });
+
+  await page.reload();
+  await waitForAlive(page);
+  await expect(page.getByTestId("status-label")).toHaveText("Paused", { timeout: 5000 });
+
+  // Give the UI a settling window to expose any flash the reconnect flow
+  // might produce. 1 s is plenty: session_info + history + ready round-trip
+  // in tens of ms on localhost.
+  await page.waitForTimeout(1000);
+
+  const sightings = await page.evaluate(
+    () => (window as unknown as { __interruptSightings: number[] }).__interruptSightings,
+  );
+  expect(sightings, `block-interrupt was rendered ${sightings.length} time(s) after reload`).toEqual([]);
+
+  // Drive the turn cleanly to completion so the test leaves no zombie.
+  await page.getByTestId("continue-btn").click();
+  await expect(page.getByTestId("block-turn-end").last()).toBeVisible({ timeout: 10000 });
 });

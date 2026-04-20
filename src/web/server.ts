@@ -232,7 +232,7 @@ async function loadReplayEvents(eventsFile: string): Promise<object[]> {
       const result = parseOmegaEvent(raw);
       if (result.success && shouldLogEvent(result.data)) events.push(result.data);
     }
-    return closeOpenTurn(events);
+    return events;
   } catch {
     return [];
   }
