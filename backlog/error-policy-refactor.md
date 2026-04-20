@@ -7,7 +7,7 @@ This document is your full handover. Read it end-to-end before acting.
 
 | Step | Status |
 |---|---|
-| Commit 1 — `ErrorPolicy` type, `policyFor(err)`, retry loop uses policy | **DONE** (see `git log src/agent.ts`, commit `feat(agent): ErrorPolicy / policyFor`) |
+| Commit 1 — `ErrorPolicy` type, `policyFor(err)`, retry loop uses policy | **DONE** (commit `feat(agent): ErrorPolicy / policyFor`) |
 | Commit 2 — retry-after server-wins + 5 min cap | **DONE** (commit `feat(agent): retry-after server-wins + 5-min cap`) |
 | Commit 3 — invalid-tool-JSON policy + feedback loop | TODO |
 | Commit 4 — delete scratchpads | TODO |
@@ -43,136 +43,152 @@ traits.
 
 ## Decisions already made (do not re-litigate)
 
-1. **Retry-after wins unconditionally.** If the Anthropic response carries a
-   `retry-after` header, we retry regardless of classifier opinion, and we
-   keep retrying unboundedly as long as the server keeps sending it. When
-   the server stops, the next error falls through to policy-driven handling.
-2. **Cap retry-after at 5 minutes** as a sanity limit on absurd durations.
-3. **Policy object, not category label.** `isRetryable` is kept as a
+1. **Retry-after wins unconditionally.** Handled at the top of
+   `streamLlmCall`'s catch block, BEFORE `policyFor` is consulted. Bypasses
+   any policy attempt cap. Capped at 5 minutes. **(Implemented in Commit 2.)**
+2. **Policy object, not category label.** `isRetryable` is kept as a
    backwards-compatible top-level function; `Agent.policyFor(err)` is the
    new source of truth for the retry loop.
-4. **Invalid-tool-JSON policy:**
+3. **Invalid-tool-JSON policy:**
    ```ts
    {
      recovery: "retry",
      maxAttempts: 2,
-     backoffMs: (attempt) => getAnthropicRetryDelayMs(err, attempt, base, max),
-     feedbackOnExhaustion: "Your previous response could not be parsed — the tool-call JSON had invalid escaping (likely unescaped newlines or quotes in a string argument). Please retry the same tool call, being extra careful with JSON string escaping.",
+     backoffMs: (attempt) =>
+       getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs),
+     feedbackOnExhaustion:
+       "Your previous response could not be parsed — the tool-call JSON had " +
+       "invalid escaping (likely unescaped newlines or quotes in a string " +
+       "argument). Please retry the same tool call, being extra careful with " +
+       "JSON string escaping.",
    }
    ```
-5. **Feedback loop lives in `sendMessage`, not `streamLlmCall`.** When
+4. **Feedback loop lives in `sendMessage`, not `streamLlmCall`.** When
    `streamLlmCall` returns `{ ok: false, error }` and the policy for that
    error has `feedbackOnExhaustion`, `sendMessage` appends a synthetic user
-   message to `this.history` and restarts the turn's outer LLM loop.
-   Bounded at 2 feedback cycles per turn; then fall through to
-   `agent_error` + `turn_interrupted` as today.
-6. **No context pollution from failed turns.** `stream.finalMessage()` throws
-   before we build an assistant response, so `appendToHistory` is not
-   called. Feedback user messages ARE persisted — they're legitimate
-   conversation.
+   message to history and restarts the turn's outer LLM loop. Bounded at 2
+   feedback cycles per turn; then fall through to `agent_error` +
+   `turn_interrupted` as today.
+5. **No context pollution from failed turns.** `stream.finalMessage()` throws
+   before we build an assistant response, so `appendToHistory` is not called
+   for the failed attempt. Feedback user messages ARE persisted — they're
+   legitimate conversation.
 
 ## What exists already (use, don't re-create)
 
 | Symbol | Location | Role |
 |---|---|---|
 | `ErrorPolicy` type | `src/agent.ts` | discriminated union — see top of file |
-| `Agent.policyFor(err)` | `src/agent.ts` | **single source of truth** for error-recovery behaviour; Commits 2/3 extend this |
-| `isRetryable(err)` | `src/agent.ts` | top-level, still exported (tests import it). Currently still used in the `rate_limit` event path in `sendMessage` |
+| `Agent.policyFor(err)` | `src/agent.ts` | **single source of truth** for error-recovery behaviour; Commit 3 extends this with an `invalid-tool-JSON` branch |
+| `isRetryable(err)` | `src/agent.ts` | top-level, still exported (tests import it). Still used in the `rate_limit` agent_error branch in `sendMessage` |
 | `getRetryAfterMs(err)` | `src/agent.ts` | extracts retry-after header value in ms |
-| `getAnthropicRetryDelayMs(err, attempt, base, max)` | `src/agent.ts` | composes retry-after + exponential backoff |
-| retry loop in `streamLlmCall` | `src/agent.ts` | now calls `this.policyFor(err)` and branches on `policy.recovery`. Extend this in Commit 2 |
+| `getAnthropicRetryDelayMs(err, attempt, base, max)` | `src/agent.ts` | composes retry-after + exponential backoff. (The retry-after branch inside it is now unreachable from `streamLlmCall`'s main loop — the top-level check catches it first — but the function is still used via `policy.backoffMs`.) |
+| retry loop in `streamLlmCall` | `src/agent.ts` | top of catch: retry-after (server-wins, unbounded, 5-min cap). Below that: `policyFor` dispatch. Two counters: `attempt` (total, emitted) and `policyAttempts` (gates `maxAttempts` and feeds `backoffMs`). |
+| `LlmRetryEvent.reason` | `src/events.ts` | optional `"retry-after"` discriminator introduced in Commit 2. No value means ordinary policy-driven retry. |
+| `appendToHistory(msg)` | `src/agent.ts` (private) | canonical way to append to `compactedContextHistory` AND persist to `context.jsonl`. Use this for the feedback user message — not a direct array push. |
 | unit tests | `src/agent.test.ts` | cover `isRetryable` directly — must keep passing unchanged |
-| retry-after tests | `src/agent-rate-limit.test.ts` | cover header honour, fractional, cap-interaction, fallback |
+| retry/retry-after tests | `src/agent-rate-limit.test.ts` | cover header honour, 5-min cap, server-wins over classifier, policy-cap independence |
 
-## What's missing (the remaining work)
+## What's missing (the remaining work for Commit 3)
 
-- Server-wins retry-after (today retry-after only applies within
-  already-retryable errors, inside `getAnthropicRetryDelayMs`).
-- 5-minute cap on retry-after.
 - Invalid-tool-JSON detection in `policyFor`.
-- Feedback loop in `sendMessage`.
+- Feedback loop in `sendMessage` (bounded per-turn `feedbackAttempts` counter).
 
 ---
 
-## Commit 2 — Retry-after: server-wins + 5-min cap
-
-Change retry-after handling from "authoritative duration within a retryable
-error" to "authoritative decision to retry at all", capped at 5 minutes.
-
-Concrete steps:
-
-1. In the retry loop in `streamLlmCall`, BEFORE calling `this.policyFor(err)`,
-   check `getRetryAfterMs(err)`. If present:
-   - `const waitMs = Math.min(retryAfterMs, 5 * 60 * 1000);`
-   - Emit the existing `llm_retry` event (no new event type needed;
-     optionally add a `reason: "retry-after"` field if ergonomic).
-   - Sleep, `continue` loop. Do NOT call `policyFor`, do NOT count toward
-     any attempt cap. Unbounded while server keeps sending retry-after.
-2. If no retry-after, fall through to policy-driven handling from Commit 1
-   (already in place).
-3. Add tests in `src/agent-rate-limit.test.ts`:
-   - Error that `isRetryable` returns false for, but carries `retry-after`
-     (e.g. a 400 with retry-after) → retries anyway.
-   - Retry-after of 600 s → capped to 300 s (5 min).
-   - Server sends retry-after 3 times in a row, then succeeds → 3 retries,
-     all respecting retry-after cadence, no attempt cap hit.
-4. Review existing retry-after test "retry-after header is honoured even
-   when it exceeds retryMaxMs cap" — it uses 500 ms, well under 5 min, so
-   behaviour unchanged. No test modifications expected.
-
-Acceptance: all new tests pass, all existing tests pass unchanged.
-
 ## Commit 3 — Invalid-tool-JSON policy + feedback loop
 
-Detect the invalid-tool-JSON error, give it a policy with a feedback message,
-and wire the feedback loop in `sendMessage`.
+Detect the invalid-tool-JSON error, give it a policy with a feedback
+message, and wire the feedback loop in `sendMessage`.
 
-Concrete steps:
+### Concrete steps
 
-1. Grep `node_modules/@anthropic-ai/sdk/` for the error text "Unable to parse
-   tool parameter JSON from model" or "parse tool parameter" to find how
-   it's surfaced. Match on whatever stable surface the SDK provides —
-   prefer HTTP status + error type over free-text match if available.
-   Evidence from the real session:
+1. **Find the stable error surface.** Grep `node_modules/@anthropic-ai/sdk/`
+   for "Unable to parse tool parameter JSON from model" or "parse tool
+   parameter" to find where the SDK throws. Prefer HTTP status + error type
+   over free-text message matching if the SDK exposes them.
+   Evidence from a real session:
    `.omega/sessions/2026-04-20T06-29-36-840-3560ab15/events.jsonl` contains
-   an actual `llm_error` with this message. Inspect it.
-2. Add an `invalid-tool-JSON` branch in `Agent.policyFor(err)` that returns:
+   an actual `llm_error` with this message — inspect it to see the exact
+   error-body shape we'll match on.
+
+2. **Add an `invalid-tool-JSON` branch in `Agent.policyFor(err)`** that
+   returns the policy shown in Decisions §3 above. Place it BEFORE the
+   existing `isRetryable` check — invalid-tool-JSON should win even if a
+   future classifier change would otherwise route it elsewhere.
+
+3. **Add a per-turn `feedbackAttempts` counter in `sendMessage`.**
+   Initialise to 0 at the start of the turn (alongside
+   `totalInputTokens` etc.). Reset is automatic since it's a local
+   `let`.
+
+4. **Wire the feedback path in `sendMessage`'s `!llmResult.ok` branch.**
+   Current structure (after abort check):
+   ```
+   if (isContextOverflow) { agent_error; turn_interrupted; return; }
+   else if (isRetryable)  { agent_error; turn_interrupted; return; }
+   else                   { agent_error; turn_interrupted; return; }
+   ```
+   Insert the feedback branch BEFORE all three classification branches:
    ```ts
-   {
-     recovery: "retry",
-     maxAttempts: 2,
-     backoffMs: (attempt) => getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs),
-     feedbackOnExhaustion: "Your previous response could not be parsed — the tool-call JSON had invalid escaping (likely unescaped newlines or quotes in a string argument). Please retry the same tool call, being extra careful with JSON string escaping.",
+   const policy = this.policyFor(llmResult.error);
+   const feedback =
+     policy.recovery === "retry" ? policy.feedbackOnExhaustion : undefined;
+   if (feedback !== undefined && feedbackAttempts < 2) {
+     await this.appendToHistory({
+       role: "user",
+       content: [{ type: "text", text: feedback }],
+     });
+     // Emit a user_message event so the UI/log shows the synthetic nudge.
+     const feedbackEv: OmegaEvent = {
+       type: "user_message",
+       time: now(),
+       content: feedback,
+     };
+     this.logEvent(feedbackEv);
+     yield feedbackEv;
+     feedbackAttempts++;
+     continueLoop = true;
+     continue; // restart the agentic while-loop
    }
    ```
-3. In `sendMessage`, where `streamLlmCall` returns `{ ok: false, error }`
-   (not aborted, not context-overflow), check
-   `this.policyFor(err).feedbackOnExhaustion`. If set AND
-   `feedbackAttempts < 2`:
-   - Append `{ role: "user", content: [{ type: "text", text: feedback }] }`
-     to `this.history`.
-   - `feedbackAttempts++`.
-   - Continue the turn's outer loop → new `llm_call` with the feedback in
-     context.
-   - Do NOT yield `agent_error` or `turn_interrupted` on this path.
-4. If `feedbackAttempts` is exhausted, fall through to today's behaviour:
-   yield `agent_error` + `turn_interrupted{error}`.
-5. The synthetic user message WILL be written to `context.jsonl` through
-   the normal history-persistence path — that's correct and intentional.
-6. Tests (in `src/agent.test.ts` or a new file, using the existing
-   `CreateMessageStream` mock pattern):
-   - **Transparent retry succeeds:** throw invalid-tool-JSON twice, then
-     succeed. Expect 2 × `llm_retry`, then success. No feedback message in
-     history.
-   - **Feedback retry succeeds:** throw 2 times (exhaust transparent),
-     feedback message appended, then on the retry with feedback, succeed.
-     Expect exactly 1 feedback user message in `this.history`.
-   - **Full exhaustion:** throw indefinitely. Expect 2 transparent + 1
-     feedback + 2 transparent + 1 feedback + 2 transparent + exhaustion →
-     `agent_error` + `turn_interrupted{error}`.
+   Do NOT yield `agent_error` or `turn_interrupted` on this path.
 
-Acceptance: all tests pass; the three recovery modes are individually
-exercised.
+5. **If `feedbackAttempts` is exhausted, fall through** to today's three
+   classification branches unchanged. (Invalid-tool-JSON will match the
+   "else" branch of the isContextOverflow/isRetryable classification and
+   produce a generic `API error: …` message. If desired, add a dedicated
+   branch for a nicer message — optional.)
+
+6. **Persistence is automatic.** `appendToHistory` writes the feedback
+   message to `context.jsonl` through the normal path — that's correct and
+   intentional. The user-facing UI will render it the same as any other
+   user message.
+
+### Tests
+
+Place in a new file `src/agent-invalid-tool-json.test.ts` (keeps
+`agent-rate-limit.test.ts` single-purpose), using the existing
+`CreateMessageStream` mock pattern from `src/agent-rate-limit.test.ts`:
+
+- **Transparent retry succeeds.** Throw invalid-tool-JSON twice, then
+  succeed. Expect 2 × `llm_retry` (with no `reason` field), then success.
+  No feedback `user_message` emitted.
+- **Feedback retry succeeds.** Throw 3 times (exhaust the transparent
+  retries: attempt 1 + 2 × retry = 3 calls), then on the 4th call succeed.
+  Expect 2 × `llm_retry`, then an `llm_error`, then a feedback `user_message`
+  event, then success. Exactly 1 feedback message appears in
+  `agent.getCompactedContextHistory()`.
+- **Full exhaustion.** Throw indefinitely. Expect the pattern
+  `llm_retry × 2 + llm_error + user_message(feedback) + llm_retry × 2 +
+  llm_error + user_message(feedback) + llm_retry × 2 + llm_error + agent_error
+  + turn_interrupted(error)`. Precisely 2 feedback messages end up in
+  history.
+
+### Acceptance
+
+All tests pass; the three recovery modes (transparent retry,
+feedback-driven retry, full exhaustion) are individually exercised.
 
 ## Commit 4 — Delete scratchpads
 
