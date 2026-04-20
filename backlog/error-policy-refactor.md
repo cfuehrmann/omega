@@ -9,7 +9,7 @@ This document is your full handover. Read it end-to-end before acting.
 |---|---|
 | Commit 1 — `ErrorPolicy` type, `policyFor(err)`, retry loop uses policy | **DONE** (commit `feat(agent): ErrorPolicy / policyFor`) |
 | Commit 2 — retry-after server-wins + 5 min cap | **DONE** (commit `feat(agent): retry-after server-wins + 5-min cap`) |
-| Commit 3 — invalid-tool-JSON policy + feedback loop | TODO |
+| Commit 3 — invalid-tool-JSON policy + feedback loop | **DONE** (commit `feat(agent): invalid-tool-JSON policy + feedback loop`) |
 | Commit 4 — delete scratchpads | TODO |
 
 ## Background

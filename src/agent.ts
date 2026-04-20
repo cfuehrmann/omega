@@ -230,6 +230,26 @@ function extractErrorBody(err: unknown): unknown {
 }
 
 /**
+ * Returns true if the error is the Anthropic SDK's "invalid tool JSON"
+ * error — thrown by BetaMessageStream when the model emits malformed JSON in
+ * a tool_use input (typically unescaped newlines / quotes in a string arg).
+ *
+ * The SDK constructs a plain `AnthropicError` (no HTTP status, no structured
+ * body) whose message always starts with the exact literal below — see
+ * `node_modules/@anthropic-ai/sdk/src/lib/BetaMessageStream.ts` (≈ line 650).
+ * Message-prefix matching is the only stable surface the SDK exposes for
+ * this case.
+ */
+function isInvalidToolJson(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const e = err as Record<string, unknown>;
+  if (typeof e.message !== "string") return false;
+  return e.message.startsWith(
+    "Unable to parse tool parameter JSON from model",
+  );
+}
+
+/**
  * Returns true if the error is a "context too long" 429 from the API.
  * Retrying with the same payload is futile — treat as non-retryable.
  */
@@ -420,14 +440,34 @@ export class Agent {
   /**
    * Classify an LLM error into a recovery policy. Single source of truth
    * for "what should happen when this error occurs" — the retry loop in
-   * `streamLlmCall` reads behaviours off the returned policy.
+   * `streamLlmCall` reads behaviours off the returned policy. Retry-after
+   * server-wins (handled separately at the top of `streamLlmCall`'s catch)
+   * short-circuits this method entirely.
    *
-   * Current behaviour is a thin derivation from `isRetryable`, preserving
-   * exactly the pre-refactor semantics. Commits 2 and 3 (see
-   * `backlog/error-policy-refactor.md`) extend it with retry-after
-   * server-wins handling and invalid-tool-JSON recovery.
+   * Invalid-tool-JSON is matched first — even if a future classifier change
+   * routed it elsewhere we want it to take this dedicated recovery path.
+   * After transparent retries are exhausted, the `feedbackOnExhaustion`
+   * nudge is consumed by `sendMessage` to prompt the model to self-correct.
    */
   private policyFor(err: unknown): ErrorPolicy {
+    if (isInvalidToolJson(err)) {
+      // maxAttempts: 3 → 2 retries per streamLlmCall cycle under the
+      // existing `policyAttempts < maxAttempts - 1` semantic (see the
+      // retry loop comment in streamLlmCall). Two transparent retries
+      // before we escalate to feedback; after two feedback cycles the
+      // turn is aborted in sendMessage.
+      return {
+        recovery: "retry",
+        maxAttempts: 3,
+        backoffMs: (attempt) =>
+          getAnthropicRetryDelayMs(err, attempt, this.retryBaseMs, this.retryMaxMs),
+        feedbackOnExhaustion:
+          "Your previous response could not be parsed — the tool-call JSON had " +
+          "invalid escaping (likely unescaped newlines or quotes in a string " +
+          "argument). Please retry the same tool call, being extra careful with " +
+          "JSON string escaping.",
+      };
+    }
     if (!isRetryable(err)) return { recovery: "none" };
     return {
       recovery: "retry",
@@ -1164,6 +1204,10 @@ export class Agent {
     let totalOutputTokens = 0;
     let totalCacheCreationTokens = 0;
     let totalCacheReadTokens = 0;
+    // Per-turn budget for policy-driven `feedbackOnExhaustion` nudges
+    // (currently only invalid-tool-JSON). Bounded at 2 cycles per turn —
+    // after that we fall through to the terminal agent_error path.
+    let feedbackAttempts = 0;
 
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
@@ -1287,6 +1331,33 @@ export class Agent {
           yield interruptEv;
           return;
         }
+        // --- Feedback recovery ---
+        // Some policies (currently invalid-tool-JSON) carry a
+        // `feedbackOnExhaustion` nudge: after streamLlmCall's transparent
+        // retries are used up we append the nudge as a synthetic user
+        // message and restart the outer agentic loop so the model can
+        // self-correct. Bounded per turn by feedbackAttempts so we don't
+        // loop forever on a persistently-broken model.
+        const policy = this.policyFor(llmResult.error);
+        const feedback =
+          policy.recovery === "retry" ? policy.feedbackOnExhaustion : undefined;
+        if (feedback !== undefined && feedbackAttempts < 2) {
+          await this.appendToHistory({
+            role: "user",
+            content: [{ type: "text", text: feedback }],
+          });
+          const feedbackEv: OmegaEvent = {
+            type: "user_message",
+            time: now(),
+            content: feedback,
+          };
+          this.logEvent(feedbackEv);
+          yield feedbackEv;
+          feedbackAttempts++;
+          continueLoop = true;
+          continue;
+        }
+
         // Terminal error — llm_error already yielded by streamLlmCall.
         // Classify the error to emit a helpful agent_error before ending the turn.
         const { httpStatus, message } = errFields(llmResult.error);
