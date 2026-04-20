@@ -8,7 +8,7 @@ This document is your full handover. Read it end-to-end before acting.
 | Step | Status |
 |---|---|
 | Commit 1 — `ErrorPolicy` type, `policyFor(err)`, retry loop uses policy | **DONE** (see `git log src/agent.ts`, commit `feat(agent): ErrorPolicy / policyFor`) |
-| Commit 2 — retry-after server-wins + 5 min cap | TODO |
+| Commit 2 — retry-after server-wins + 5 min cap | **DONE** (commit `feat(agent): retry-after server-wins + 5-min cap`) |
 | Commit 3 — invalid-tool-JSON policy + feedback loop | TODO |
 | Commit 4 — delete scratchpads | TODO |
 
