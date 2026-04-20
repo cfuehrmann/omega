@@ -288,6 +288,14 @@ export interface LlmRetryEvent {
    * interruption. Same lifecycle as thinkingFragment.
    */
   textFragment?: string;
+  /**
+   * Why the retry fired. Absent for ordinary policy-driven retries (the
+   * common case — transient 429/529/500/503, stream restart, etc.).
+   * `"retry-after"` when the provider sent a `retry-after` response header:
+   * the retry is server-directed and bypasses policy classification + any
+   * policy attempt cap, retrying unboundedly while the server keeps asking.
+   */
+  reason?: "retry-after";
 }
 
 

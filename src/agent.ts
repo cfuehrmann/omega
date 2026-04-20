@@ -781,6 +781,13 @@ export class Agent {
     let assembledThinking = "";
     let inThinkingBlock = false;
 
+    // Two counters: `attempt` is the total retry count (emitted as
+    // llm_retry.attempt for log continuity); `policyAttempts` is the
+    // subset driven by policyFor—only that counter is compared against
+    // policy.maxAttempts and fed into backoffMs. Server-directed
+    // retry-after retries bypass the policy entirely and do not consume
+    // a policy attempt, so the server can keep asking unboundedly.
+    let policyAttempts = 0;
     for (let attempt = 0; ; attempt++) {
       try {
         // Reset per-attempt accumulators so a retry starts with a clean slate.
@@ -835,16 +842,45 @@ export class Agent {
         };
       } catch (err: unknown) {
         const { httpStatus, message } = errFields(err);
+
+        // Server-wins retry-after: if the provider sent a retry-after
+        // header, honour it unconditionally (regardless of classifier
+        // opinion) and retry. Capped at 5 minutes as a sanity limit on
+        // absurd durations. Does NOT consume a policy attempt, so the
+        // server can keep sending retry-after indefinitely.
+        const retryAfterMs = getRetryAfterMs(err);
+        if (retryAfterMs !== undefined) {
+          const waitMs = Math.min(retryAfterMs, 5 * 60 * 1000);
+          const retryAt = fromDate(new Date(Date.now() + waitMs));
+          const retryEv: OmegaEvent = {
+            type: "llm_retry",
+            time: now(),
+            attempt: attempt + 1,
+            httpStatus,
+            waitMs,
+            retryAt,
+            errorBody: extractErrorBody(err),
+            error: message,
+            reason: "retry-after",
+            ...(assembledThinking ? { thinkingFragment: assembledThinking } : {}),
+            ...(assembledText     ? { textFragment:     assembledText     } : {}),
+          };
+          this.logEvent(retryEv);
+          yield retryEv;
+          await sleep(waitMs, opts.signal);
+          continue; // attempt++ at loop top; policyAttempts untouched
+        }
+
         const policy = this.policyFor(err);
         const canRetry =
           policy.recovery === "retry" &&
-          (policy.maxAttempts === undefined || attempt < policy.maxAttempts - 1);
+          (policy.maxAttempts === undefined || policyAttempts < policy.maxAttempts - 1);
 
         if (canRetry) {
           // Narrowed by canRetry above; TS doesn't follow through the
           // intermediate boolean so assert the retry variant once here.
           const retryPolicy = policy as Extract<ErrorPolicy, { recovery: "retry" }>;
-          const waitMs = retryPolicy.backoffMs(attempt);
+          const waitMs = retryPolicy.backoffMs(policyAttempts);
           const retryAt = fromDate(new Date(Date.now() + waitMs));
           const retryEv: OmegaEvent = {
             type: "llm_retry",
@@ -861,6 +897,7 @@ export class Agent {
           this.logEvent(retryEv);
           yield retryEv;
           await sleep(waitMs, opts.signal);
+          policyAttempts++;
           // continue — attempt++ at loop top
         } else {
           const llmErrEv: OmegaEvent = {

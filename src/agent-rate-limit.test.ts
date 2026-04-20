@@ -632,6 +632,182 @@ describe("retry-after header", () => {
     delete process.env.OMEGA_RETRY_MAX_MS;
   });
 
+  it("server-wins: retry-after on a non-retryable error (400) still retries", async () => {
+    // Server-wins retry-after: even if the classifier would say "don't
+    // retry" (e.g. a 400), the presence of retry-after means the server
+    // is explicitly asking us to wait and try again. Honour that.
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "5";
+
+    let callCount = 0;
+    const successStream = makeSuccessProvider();
+    const mockProvider: CreateMessageStream = (params) => {
+      callCount++;
+      if (callCount === 1) {
+        // 400 is not in isRetryable's list — but retry-after must win.
+        const err: any = new Error("400 try again");
+        err.status = 400;
+        err.headers = new Headers({ "retry-after": "0.001" });
+        throw err;
+      }
+      return successStream(params);
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    expect(callCount).toBe(2);
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries).toHaveLength(1);
+    expect(retries[0].reason).toBe("retry-after");
+    expect(retries[0].httpStatus).toBe(400);
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_end");
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+  });
+
+  it("retry-after is capped at 5 minutes (absurd duration sanity limit)", async () => {
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "5";
+
+    let callCount = 0;
+    const successProvider = makeSuccessProvider();
+    // Override sleep by intercepting via a provider that succeeds on attempt 2
+    // We can't easily stub sleep; instead verify waitMs in the emitted event
+    // (the test doesn't actually wait 5 min — we capture the value and then
+    // a separate success attempt lets the turn complete quickly... but sleep
+    // still runs. So use a smaller "600 s" that still exceeds the 5 min cap,
+    // and verify the cap via the emitted waitMs only. The real sleep must be
+    // short enough that the test doesn't hang.)
+    //
+    // Strategy: emit retry-after="600" (600 s = 600 000 ms, exceeds 300 000 ms
+    // cap). The cap reduces waitMs to 300 000 ms — but the test would then
+    // wait 5 minutes, which is unacceptable. So we patch a tiny window by
+    // using a value that exceeds the cap but after capping is still tiny:
+    // impossible for the current cap. Instead, assert the cap behaviour at a
+    // lower fake cap by directly inspecting getRetryAfterMs — but that's a
+    // unit-level peek.
+    //
+    // Cleanest: stub global.setTimeout so sleep resolves immediately, and
+    // verify the emitted waitMs reflects the 5 min cap.
+    const origSetTimeout = globalThis.setTimeout;
+    (globalThis as any).setTimeout = (fn: () => void, _ms: number) =>
+      origSetTimeout(fn, 0);
+
+    try {
+      const mockProvider: CreateMessageStream = (params) => {
+        callCount++;
+        if (callCount === 1) {
+          const err: any = new Error("429 rate limited");
+          err.status = 429;
+          err.headers = new Headers({ "retry-after": "600" }); // 600 s
+          throw err;
+        }
+        return successProvider(params);
+      };
+
+      const { agent, dispose } = await makeTestAgent(mockProvider);
+      disposeAll.push(dispose);
+      const events = await collectEvents(agent, "hello");
+
+      expect(callCount).toBe(2);
+      const retries = events.filter(e => e.type === "llm_retry") as any[];
+      expect(retries).toHaveLength(1);
+      // 600 s would be 600 000 ms; cap reduces to 300 000 ms (5 min).
+      expect(retries[0].waitMs).toBe(5 * 60 * 1000);
+      expect(retries[0].reason).toBe("retry-after");
+    } finally {
+      (globalThis as any).setTimeout = origSetTimeout;
+    }
+  });
+
+  it("unbounded retries while server keeps sending retry-after (no attempt cap)", async () => {
+    // Retry-after bypasses the policy attempt cap. Set a low
+    // OMEGA_RETRY_ATTEMPTS to prove the cap does NOT terminate us: if the
+    // server sends retry-after 3 times (more than the cap of 2), we must
+    // still retry and eventually succeed.
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "5";
+    process.env.OMEGA_RETRY_ATTEMPTS = "2"; // below the 3 retry-after events
+
+    let callCount = 0;
+    const failTimes = 3;
+    const successStream = makeSuccessProvider();
+    const mockProvider: CreateMessageStream = (params) => {
+      callCount++;
+      if (callCount <= failTimes) {
+        const err: any = new Error("429 rate limited");
+        err.status = 429;
+        err.headers = new Headers({ "retry-after": "0.001" });
+        throw err;
+      }
+      return successStream(params);
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    // All three retry-after errors honoured; turn succeeds on the 4th call.
+    expect(callCount).toBe(failTimes + 1);
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries).toHaveLength(failTimes);
+    expect(retries.every(r => r.reason === "retry-after")).toBe(true);
+    // Emitted attempt numbers are 1-based and sequential across all retries.
+    expect(retries.map(r => r.attempt)).toEqual([1, 2, 3]);
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_end");
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+    delete process.env.OMEGA_RETRY_ATTEMPTS;
+  });
+
+  it("retry-after first, then a non-retry-after overload: policy cap applies to the latter only", async () => {
+    // After retry-after retries (which don't consume the policy cap), a
+    // subsequent non-retry-after error with OMEGA_RETRY_ATTEMPTS=1 should
+    // terminate the turn immediately (no policy retry allowed). This
+    // verifies retry-after retries don't accidentally consume policy budget.
+    process.env.OMEGA_RETRY_BASE_MS = "1";
+    process.env.OMEGA_RETRY_MAX_MS = "5";
+    process.env.OMEGA_RETRY_ATTEMPTS = "1";
+
+    let callCount = 0;
+    const mockProvider: CreateMessageStream = () => {
+      callCount++;
+      if (callCount === 1) {
+        const err: any = new Error("429 rate limited");
+        err.status = 429;
+        err.headers = new Headers({ "retry-after": "0.001" });
+        throw err;
+      }
+      // Second call: plain overload, no retry-after.
+      throw overloadError();
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    // One retry-after retry + one terminal overload = 2 calls total.
+    expect(callCount).toBe(2);
+    const retries = events.filter(e => e.type === "llm_retry") as any[];
+    expect(retries).toHaveLength(1);
+    expect(retries[0].reason).toBe("retry-after");
+    // Turn terminates via the policy path — maxAttempts=1 means no policy
+    // retry permitted, so the overload becomes terminal.
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_interrupted");
+    expect(last.reason).toBe("error");
+
+    delete process.env.OMEGA_RETRY_BASE_MS;
+    delete process.env.OMEGA_RETRY_MAX_MS;
+    delete process.env.OMEGA_RETRY_ATTEMPTS;
+  });
+
   it("falls back to exponential backoff when no retry-after header is present", async () => {
     process.env.OMEGA_RETRY_BASE_MS = "1";
     process.env.OMEGA_RETRY_MAX_MS = "5000";
