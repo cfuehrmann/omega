@@ -26,18 +26,34 @@ const connectedDot = (page: import("@playwright/test").Page) =>
  * many sessions on disk), so every test must explicitly create its own
  * blank session. When the picker is already open (first test on a fresh
  * server), just click New; otherwise open the picker first.
+ *
+ * Race note: clicking "New session" closes the picker optimistically before
+ * the server has processed the reset and broadcast session_info with the
+ * NEW dir. Likewise, `status-label` may already read "Ready" from the
+ * previous session's idle state, so it's not a usable sync point. We
+ * therefore capture the pre-click `data-session-dir` and wait for it to
+ * change — that's the only observable signal that the server's new
+ * session_info has propagated.
  */
 async function ensureSession(page: import("@playwright/test").Page) {
   const picker = page.getByTestId("session-picker-modal");
+  const sessionsBtn = page.getByTestId("sessions-btn");
   if (!(await picker.isVisible())) {
-    await page.getByTestId("sessions-btn").click();
+    await sessionsBtn.click();
     await expect(picker).toBeVisible({ timeout: 3000 });
   }
   // The "New session" button is disabled while the current agent is still
   // streaming — wait for it to become actionable.
   await expect(page.getByTestId("session-picker-new")).toBeEnabled({ timeout: 5000 });
+  const priorDir = (await sessionsBtn.getAttribute("data-session-dir")) ?? "";
   await page.getByTestId("session-picker-new").click();
   await expect(picker).not.toBeVisible({ timeout: 5000 });
+  // Wait for session_info with the NEW dir to arrive. When there was no
+  // prior session, priorDir is "" and we just wait for any non-empty value.
+  await expect.poll(
+    async () => (await sessionsBtn.getAttribute("data-session-dir")) ?? "",
+    { timeout: 5000 },
+  ).not.toBe(priorDir);
   await expect(page.getByTestId("status-label")).toHaveText("Ready", { timeout: 5000 });
 }
 
