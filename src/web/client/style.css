@@ -134,6 +134,8 @@ html, body, #root {
 .block.status        { border-color: var(--mauve);    color: var(--mauve);    font-size: 13px; }
 .block.footer        { border-color: var(--border);   color: var(--dim);      font-size: 13px; }
 .block.footer .block-label-row { margin-bottom: 0; }
+.block.pause-event   { border-color: var(--ctp-teal);  color: var(--ctp-teal); font-size: 13px; }
+.block.pause-event .block-label-row { margin-bottom: 0; }
 .turn-end-line { flex: 1; margin-left: 8px; }
 .block.error-b       { border-color: var(--red);      color: var(--red);      }
 .block.interrupt     { border-color: var(--red);      color: var(--red);      }

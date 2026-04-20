@@ -297,3 +297,46 @@ test("WS disconnect clears pre-commit (no lingering auto-send)", async ({ page, 
   await expect(page.getByTestId("takeitback-btn")).not.toBeVisible({ timeout: 3000 });
   await expect(page.getByTestId("continue-btn")).not.toBeVisible();
 });
+
+// ---------------------------------------------------------------------------
+// 10. Pause events render live in the turn feed
+// ---------------------------------------------------------------------------
+
+test("pause_requested / turn_paused / turn_continued appear live in the feed", async ({ page, server }) => {
+  await page.goto("/");
+  await connectedDot(page).waitFor({ timeout: 5000 });
+
+  // Start a turn so events land in the active turn feed.
+  await server.sendEvent({ type: "user_message", content: "hi" });
+  await expect(page.getByTestId("status-label")).toHaveText("Streaming\u2026", { timeout: 3000 });
+
+  // pause_requested arrives live — block must appear immediately.
+  await server.sendEvent({ type: "pause_requested" });
+  await expect(page.getByTestId("block-pause-requested")).toBeVisible({ timeout: 2000 });
+
+  // turn_paused arrives at the seam.
+  await server.sendEvent({ type: "turn_paused", summary: "at seam" });
+  await expect(page.getByTestId("block-turn-paused")).toBeVisible({ timeout: 2000 });
+
+  // turn_continued arrives after resume.
+  await server.sendEvent({ type: "turn_continued", mode: "manual" });
+  await expect(page.getByTestId("block-turn-continued")).toBeVisible({ timeout: 2000 });
+
+  // The continued block shows no \u00b7 auto suffix for manual mode.
+  await expect(page.getByTestId("block-turn-continued")).toHaveText(/\u25b6 continued$/);
+
+  // End the turn, then replay with auto mode.
+  await server.sendEvent({
+    type: "turn_end",
+    metrics: { inputTokens: 5, outputTokens: 3, costUsd: 0, savedUsd: 0, ttftMs: 10 },
+    model: "claude-sonnet-4-6",
+    provider: "anthropic",
+  });
+
+  // New turn — check auto mode suffix.
+  await server.sendEvent({ type: "user_message", content: "hi again" });
+  await server.sendEvent({ type: "pause_requested" });
+  await server.sendEvent({ type: "turn_paused", summary: "seam" });
+  await server.sendEvent({ type: "turn_continued", mode: "auto" });
+  await expect(page.getByTestId("block-turn-continued").last()).toHaveText(/\u25b6 continued \u00b7 auto/, { timeout: 2000 });
+});
