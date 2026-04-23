@@ -4,7 +4,7 @@ Harbor agent adapter for Omega.
 Usage
 -----
 harbor run -d terminal-bench@2.0 \\
-  --agent-import-path ./omega_agent:OmegaAgent \\
+  --agent-import-path omega_agent:OmegaAgent \\
   -m anthropic/claude-sonnet-4-6 \\
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 
@@ -62,7 +62,7 @@ class OmegaAgent(BaseInstalledAgent):
             environment,
             command=(
                 "apt-get update -qq"
-                " && apt-get install -y --no-install-recommends curl git ca-certificates"
+                " && apt-get install -y --no-install-recommends curl git ca-certificates unzip"
             ),
         )
         await self.exec_as_agent(

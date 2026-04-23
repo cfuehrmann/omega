@@ -1,0 +1,21 @@
+Traceback (most recent call last):
+  File "/home/carsten/.local/share/uv/tools/harbor/lib/python3.12/site-packages/harbor/trial/trial.py", line 542, in run
+    await self._setup_agent()
+  File "/home/carsten/.local/share/uv/tools/harbor/lib/python3.12/site-packages/harbor/trial/trial.py", line 266, in _setup_agent
+    await asyncio.wait_for(
+  File "/home/carsten/.local/share/uv/python/cpython-3.12.8-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/home/carsten/.local/share/uv/tools/harbor/lib/python3.12/site-packages/harbor/agents/installed/base.py", line 405, in setup
+    await self.install(environment)
+  File "/home/carsten/omega/dev/omega_agent.py", line 68, in install
+    await self.exec_as_agent(
+  File "/home/carsten/.local/share/uv/tools/harbor/lib/python3.12/site-packages/harbor/agents/installed/base.py", line 379, in exec_as_agent
+    return await self._exec(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/carsten/.local/share/uv/tools/harbor/lib/python3.12/site-packages/harbor/agents/installed/base.py", line 342, in _exec
+    raise NonZeroAgentExitCodeError(
+harbor.agents.installed.base.NonZeroAgentExitCodeError: Command failed (exit 1): curl -fsSL https://bun.sh/install | bash
+stdout: error: unzip is required to install bun
+
+stderr: None
