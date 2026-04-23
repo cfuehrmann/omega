@@ -103,7 +103,7 @@ export const RunBackgroundSchema = z.object({
 export const WaitForOutputSchema = z.object({
   logFile:   z.string().describe("Path to the log file to monitor — the logFile value returned by run_background."),
   timeoutMs: z.number().describe("Maximum milliseconds to wait before giving up and returning whatever the log contains."),
-  pattern:   z.string().optional().describe("Return as soon as this string appears anywhere in the log (e.g. 'listening on', 'ready', 'Server started')."),
+  pattern:   z.string().optional().describe("Return as soon as this pattern matches anywhere in the log. Interpreted as a JavaScript regex, so use '|' for alternation (e.g. 'ready|started|Error'). Simple strings like 'ready' also work as-is."),
   minBytes:  z.number().optional().describe("Return as soon as the log reaches this many bytes. Useful when you don't know the ready signal but want to wait for meaningful output."),
 });
 

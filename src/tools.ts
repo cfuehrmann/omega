@@ -402,7 +402,8 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
       "(2) log reaches minBytes in size, or (3) timeoutMs elapses. " +
       "If neither pattern nor minBytes is given, returns as soon as any output appears. " +
       "Returns { output, matched, minBytesReached, timedOut }. " +
-      "Use this after run_background instead of sleep + tail to wait for a server or process to become ready.",
+      "Use this after run_background instead of sleep + tail to wait for a server or process to become ready. " +
+      "The pattern is interpreted as a JavaScript regex (e.g. 'ready|started|Error' for alternation).",
     input_schema: toToolInputSchema(WaitForOutputSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
   },
   {
@@ -856,19 +857,36 @@ async function executeRunBackground(input: {
   return JSON.stringify({ pid: proc.pid, logFile });
 }
 
-async function executeWaitForOutput(input: {
-  logFile: string;
-  timeoutMs: number;
-  pattern?: string;
-  minBytes?: number;
-}): Promise<string> {
+async function executeWaitForOutput(
+  input: {
+    logFile: string;
+    timeoutMs: number;
+    pattern?: string;
+    minBytes?: number;
+  },
+  signal?: AbortSignal,
+): Promise<string> {
   const { logFile, timeoutMs, pattern, minBytes } = input;
   const deadline = Date.now() + timeoutMs;
-  const POLL_MS = 200;
+
+  // Compile the pattern into a RegExp once, falling back to a literal match if
+  // the string is not a valid regex (so simple strings like "ready" still work).
+  let patternRe: RegExp | null = null;
+  if (pattern !== undefined) {
+    try {
+      patternRe = new RegExp(pattern);
+    } catch {
+      // Invalid regex — escape all special chars and match literally.
+      const escaped = pattern.split("").map(
+        ch => /[.*+?^${}()|[\]\\]/.test(ch) ? "\\" + ch : ch,
+      ).join("");
+      patternRe = new RegExp(escaped);
+    }
+  }
 
   // Determine which conditions are active.
   // If neither pattern nor minBytes is given, trigger on any output (minBytes = 1).
-  const hasPattern  = pattern  !== undefined;
+  const hasPattern  = patternRe !== null;
   const hasMinBytes = minBytes !== undefined;
   const effectiveMinBytes = hasMinBytes ? minBytes! : (hasPattern ? null : 1);
 
@@ -878,16 +896,24 @@ async function executeWaitForOutput(input: {
   };
 
   while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      const content = await read();
+      return JSON.stringify({ output: content, matched: false, minBytesReached: false, timedOut: false });
+    }
+
     const content = await read();
 
-    if (hasPattern && content.includes(pattern!)) {
+    if (hasPattern && patternRe!.test(content)) {
       return JSON.stringify({ output: content, matched: true,  minBytesReached: false, timedOut: false });
     }
     if (effectiveMinBytes !== null && content.length >= effectiveMinBytes) {
       return JSON.stringify({ output: content, matched: false, minBytesReached: true,  timedOut: false });
     }
 
-    await new Promise((r) => setTimeout(r, WAIT_FOR_OUTPUT_POLL_MS));
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(resolve, WAIT_FOR_OUTPUT_POLL_MS);
+      signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+    });
   }
 
   // Timed out — return whatever is in the log
@@ -973,7 +999,7 @@ export async function executeTool(
         output = await executeRunBackground(RunBackgroundSchema.parse(input));
         break;
       case "wait_for_output":
-        output = await executeWaitForOutput(WaitForOutputSchema.parse(input));
+        output = await executeWaitForOutput(WaitForOutputSchema.parse(input), signal);
         break;
       case "write_stdin":
         output = await executeWriteStdin(WriteStdinSchema.parse(input));

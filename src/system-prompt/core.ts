@@ -53,7 +53,8 @@ you expect to take longer. Reserve \`run_background\` for processes that must
 stay alive indefinitely (dev servers, file watchers).
 To wait for a background process to become ready (e.g. a dev server), use
 \`wait_for_output(logFile, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
-It returns as soon as the pattern appears in the log (or on timeout).
+It returns as soon as the pattern matches the log (or on timeout).
+The \`pattern\` is a **JavaScript regex** — use \`|\` for alternation (e.g. \`"ready|Error|done"\`).
 If a background process prompts for interactive input, use
 \`write_stdin(pid, text)\` to respond (include \\n to submit a line). Pass
 \`end_stdin=true\` to signal EOF after writing.

@@ -29,7 +29,7 @@ OMEGA_VERSION = "v0.1.0"
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
-RUN_TIMEOUT_SEC = 600  # 10 minutes per task
+RUN_TIMEOUT_SEC = 1800  # 30 minutes per task
 
 
 class OmegaAgent(BaseInstalledAgent):

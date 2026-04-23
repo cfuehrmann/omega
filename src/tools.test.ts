@@ -900,6 +900,51 @@ describe("executeTool: wait_for_output", () => {
     expect(r.output).toBe("");
   });
 
+  it("matches regex alternation pattern (e.g. 'Error|ready')", async () => {
+    // The log will contain 'NonZeroExitError' — a regex with '|' should match it
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 0.1 && echo NonZeroExitError",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      timeoutMs: 3000,
+      pattern: "ready|started|Error",
+    });
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.matched).toBe(true);
+    expect(r.timedOut).toBe(false);
+    expect(r.output).toContain("NonZeroExitError");
+  });
+
+  it("returns early when abort signal fires", async () => {
+    const bgResult = await executeTool("run_background", {
+      command: "sleep 10 && echo never",
+    });
+    const { logFile } = JSON.parse(bgResult.output);
+
+    const controller = new AbortController();
+    // Fire the abort after a short delay
+    setTimeout(() => controller.abort(), 150);
+
+    const start = Date.now();
+    const result = await executeTool(
+      "wait_for_output",
+      { logFile, timeoutMs: 10_000, pattern: "never" },
+      controller.signal,
+    );
+    const elapsed = Date.now() - start;
+
+    expect(result.isError).toBe(false);
+    // Should have returned well before the 10-second timeout
+    expect(elapsed).toBeLessThan(2000);
+    const r = JSON.parse(result.output);
+    expect(r.timedOut).toBe(false);
+    expect(r.matched).toBe(false);
+  });
+
   it("formatToolCall formats wait_for_output", () => {
     const s = formatToolCall("wait_for_output", {
       logFile: "/tmp/omega-bg-123.log",
