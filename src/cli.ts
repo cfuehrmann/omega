@@ -115,7 +115,7 @@ function formatEvent(event: OmegaEvent | StreamSignal): string | null {
     case "agent_error":
       return `[agent_error] ${event.error}`;
     default:
-      return null; // silent for text chunks, thinking, etc.
+      return null;
   }
 }
 
@@ -200,6 +200,17 @@ async function main(): Promise<number> {
 
   let llmCallCount = 0;
   let exitCode = 0;
+  // Track whether we're mid-stream so we can emit a newline before the next
+  // structured log line (which starts with '[').
+  let midStream = false;
+
+  const logLine = (msg: string): void => {
+    if (midStream) {
+      process.stderr.write("\n");
+      midStream = false;
+    }
+    log(msg);
+  };
 
   try {
     for await (const event of agent.sendMessage(
@@ -207,17 +218,32 @@ async function main(): Promise<number> {
       async () => true, // auto-approve all tools
       abortCtrl.signal,
     )) {
+      // Stream text/thinking directly to stderr without a newline so output
+      // appears inline as the model generates it.
+      if (event.type === "text") {
+        process.stderr.write(event.text);
+        midStream = true;
+        continue;
+      }
+      if (event.type === "thinking") {
+        // Thinking is verbose — skip it in headless mode.
+        continue;
+      }
+
       const line = formatEvent(event as OmegaEvent | StreamSignal);
-      if (line) log(line);
+      if (line) logLine(line);
 
       if ("type" in event) {
         const e = event as OmegaEvent;
 
-        // Budget enforcement: abort if max-turns LLM calls have been made
-        if (e.type === "llm_call") {
+        // Budget enforcement: allow up to --max-turns complete LLM responses,
+        // then abort before the next call starts.  Counting llm_response (not
+        // llm_call) means each counted turn is fully complete — the model's
+        // output and any tool results are in the session before we stop.
+        if (e.type === "llm_response") {
           llmCallCount++;
           if (opts.maxTurns !== undefined && llmCallCount >= opts.maxTurns) {
-            log(
+            logLine(
               `[budget] Reached --max-turns=${opts.maxTurns} — aborting`,
             );
             abortCtrl.abort();

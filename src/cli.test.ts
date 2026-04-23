@@ -108,7 +108,7 @@ function makeTextStreamEvents(text: string): BetaRawMessageStreamEvent[] {
 // ---------------------------------------------------------------------------
 
 describe("headless run", () => {
-  it("runs to turn_end and writes events.jsonl", async () => {
+  it("streams assistant text to stderr and reaches turn_end", async () => {
     const sessionDir = uniqueDir();
     await mkdir(sessionDir, { recursive: true });
     const contextFile = join(sessionDir, "context.jsonl");
@@ -154,8 +154,32 @@ describe("headless run", () => {
     const contextFile = join(sessionDir, "context.jsonl");
     const eventsFile = join(sessionDir, "events.jsonl");
 
-    const mockStream: CreateMessageStream = () =>
-      makeMockStream(makeTextStreamEvents("Done."), makeTextMessage("Done."));
+    // First response uses tool_use (list_directory) so the agent would
+    // normally loop for a second LLM call.  The budget fires after this
+    // first response, so the second call never happens.
+    let callIndex = 0;
+    const mockStream: CreateMessageStream = () => {
+      if (callIndex++ === 0) {
+        return makeMockStream(
+          [
+            { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "list_directory", input: {} } },
+            { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify({ path: "." }) } },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_delta", context_management: null, delta: { stop_reason: "tool_use", stop_sequence: null, stop_details: null, container: null }, usage: { output_tokens: 10, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null } },
+            { type: "message_stop" },
+          ] as Parameters<typeof makeMockStream>[0],
+          {
+            id: "msg_tool", type: "message", role: "assistant", model: "claude-sonnet-4-6",
+            container: null,
+            content: [{ type: "tool_use", id: "t1", name: "list_directory", input: { path: "." }, caller: { type: "direct" } }],
+            stop_reason: "tool_use", stop_sequence: null, stop_details: null, context_management: null,
+            usage: { input_tokens: 20, output_tokens: 10, cache_creation: null, cache_creation_input_tokens: null, cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
+          } as Parameters<typeof makeMockStream>[1],
+        );
+      }
+      // Should never be called — budget fires after the first response.
+      return makeMockStream(makeTextStreamEvents("Done."), makeTextMessage("Done."));
+    };
 
     const agent = new Agent(mockStream, contextFile, eventsFile, sessionDir);
     agent.setModel("claude-sonnet-4-6");
@@ -174,7 +198,8 @@ describe("headless run", () => {
       if ("type" in event) {
         const e = event as OmegaEvent;
         events.push(e);
-        if (e.type === "llm_call") {
+        // Mirror the CLI: count completed responses, abort after N
+        if (e.type === "llm_response") {
           llmCallCount++;
           if (llmCallCount >= maxTurns) abortCtrl.abort();
         }
@@ -183,9 +208,12 @@ describe("headless run", () => {
     await agent.flushEventLog();
 
     const types = events.map((e) => e.type);
-    // The abort fires after the first llm_call; the turn cannot complete normally
+    // The abort fires after the first complete response; the second LLM
+    // call never starts, so we get turn_interrupted, not turn_end.
     expect(types).not.toContain("turn_end");
     expect(llmCallCount).toBe(maxTurns);
+    // The mock stream was only called once
+    expect(callIndex).toBe(1);
   });
 
   it("records model and effort in session_started event", async () => {
