@@ -38,46 +38,63 @@ This materially de-risks committing to Harbor.
    `--model`, `--effort`, `--session-dir`, `--max-turns`. LLM text → stdout,
    structured logs → stderr. Exit 0 on `turn_end`, 1 on interrupt/error.
 3. ✅ **Publish a pinned Omega version** — tagged `v0.1.0` on `develop`.
-4. ✅ **Write `omega_agent.py`** — done. Lives at the repo root. Installs
-   Omega via `git clone --branch v0.1.0 --depth 1`, invokes `src/cli.ts run`,
-   downloads `events.jsonl` post-run and populates token counts in
-   `AgentContext`. Run: `harbor run -d terminal-bench@2.0 \
-   --agent-import-path ./omega_agent:OmegaAgent -m anthropic/claude-sonnet-4-6
-   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY`
-5. ✅ **Install Docker + Harbor** — already installed.
-6. 🔄 **Cost-calibration run** — in progress. Running single task
-   `terminal-bench/crack-7z-hash` as first smoke test.
+4. ✅ **Write `omega_agent.py`** — done. Lives at the repo root.
+   - Installs Omega via `git clone --branch v0.1.0 --depth 1`
+   - Invokes `src/cli.ts run`, downloads `events.jsonl` post-run
+   - Populates token counts in `AgentContext` from `turn_end` event
+   - `--agent-import-path omega_agent:OmegaAgent` (no `./` prefix)
+   - `RUN_TIMEOUT_SEC = 1800` (30 min per task — increased from 600 s
+     after `crack-7z-hash` hit the limit at 10 m 57 s)
+5. ✅ **Install Docker + Harbor** — already installed. Repo is public.
+   `carsten` is in the `docker` group; `docker ps` works without sudo.
+6. 🔄 **Cost-calibration smoke test** — in progress.
 
-   **Blocked mid-session:** Docker was installed and running, but `carsten`
-   was not yet in the `docker` group, so harbor couldn't reach the socket.
-   Fix applied: `sudo usermod -aG docker carsten`. Requires **logout/login
-   (or reboot) to take effect** — `newgrp docker` only fixes the one terminal
-   where it's run, not the agent tool context.
+   Three attempts at `crack-7z-hash` during sessions #2 and #3:
 
-   **To resume after login:**
+   - **Attempt 1** (`./omega_agent` import path): `TypeError` — Harbor's
+     `importlib.import_module` rejects the `./` prefix. Fixed: drop `./`.
+   - **Attempt 2** (missing `unzip`): Bun's installer requires `unzip`;
+     not present in the task container. Fixed: added to `apt-get install`.
+   - **Attempt 3** (timeout): Harbor killed the run at 600 s; the task
+     took 10 m 57 s. Fixed: `RUN_TIMEOUT_SEC` raised to 1800 s.
+
+   Additionally, two Omega-side bugs surfaced and were fixed in session #3:
+   - `wait_for_output` used literal `content.includes()` instead of regex;
+     patterns like `"Error|done|ready"` never matched. Now uses `RegExp`.
+   - `wait_for_output` ignored the abort signal, causing the UI to hang
+     when the user pressed Abort. Now checks and cancels on abort.
+
+   **Current state: all known blockers resolved. Ready to retry.**
+
+   Run the smoke test:
    ```bash
    cd ~/omega/dev
-   docker ps   # should work without sudo — if not, group not active yet
+   docker ps    # confirm docker works without sudo
    harbor run -d terminal-bench@2.0 \
-     --agent-import-path ./omega_agent:OmegaAgent \
+     --agent-import-path omega_agent:OmegaAgent \
      -m anthropic/claude-sonnet-4-6 \
      --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
      -t terminal-bench/crack-7z-hash \
      -n 1
    ```
-   Then hand back to Omega (open a new chat/session) and say:
-   > "Docker group fix is done, please resume the crack-7z-hash smoke test"
-   Omega will re-run the command, watch the output, and fix any further issues.
-
-   After the single-task smoke test passes end-to-end, expand to 5–10 tasks:
+   Expected outcome: `1/1 Mean: X.XXX` with X > 0, no Exception row.
+   If it passes, check `jobs/<timestamp>/crack-7z-hash*/result.json`
+   for the score, then expand to 5–10 tasks:
    ```bash
    harbor run -d terminal-bench@2.0 \
-     --agent-import-path ./omega_agent:OmegaAgent \
+     --agent-import-path omega_agent:OmegaAgent \
      -m anthropic/claude-sonnet-4-6 \
      --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
      -n 1 --n-tasks 5
    ```
    Check Anthropic console for actual spend, extrapolate to 76 tasks.
+
+   **Important: harbor buffers all output until the run completes.**
+   Do not expect the log file to grow while the task is running — it is
+   written in one shot at the end. Use `run_background` + a single
+   `wait_for_output` with `timeoutMs` ≥ 1800000 (30 min) and pattern
+   `"Mean:|Results written to|Exception"`. Check the result at timeout;
+   do not issue follow-up waits.
 
 7. **Full TB2 run** on Sonnet 4.6 (and optionally Opus 4.7) if cost is acceptable.
 8. **SWE-Bench Verified** via the same Harbor wrapper — this is the number
