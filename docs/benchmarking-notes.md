@@ -38,10 +38,13 @@ This materially de-risks committing to Harbor.
    `--model`, `--effort`, `--session-dir`, `--max-turns`. LLM text → stdout,
    structured logs → stderr. Exit 0 on `turn_end`, 1 on interrupt/error.
 3. ✅ **Publish a pinned Omega version** — tagged `v0.1.0` on `develop`.
-4. **Write `omega_agent.py`** — Harbor-side wrapper; lives at the repo root
-   (same repo as Omega, not a sibling repo). Installs Omega inside the task
-   container via `git clone … --branch v0.1.0`, then invokes `src/cli.ts`.
-5. **Install Docker + Harbor** — see §7. Prerequisite for any local run.
+4. ✅ **Write `omega_agent.py`** — done. Lives at the repo root. Installs
+   Omega via `git clone --branch v0.1.0 --depth 1`, invokes `src/cli.ts run`,
+   downloads `events.jsonl` post-run and populates token counts in
+   `AgentContext`. Run: `harbor run -d terminal-bench@2.0 \
+   --agent-import-path ./omega_agent:OmegaAgent -m anthropic/claude-sonnet-4-6
+   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY`
+5. ✅ **Install Docker + Harbor** — already installed.
 6. **Cost-calibration run** — 5–10 representative tasks on Sonnet 4.6.
    Check actual spend in the Anthropic console, extrapolate to 76 tasks,
    then decide whether to proceed.
@@ -102,57 +105,27 @@ omega run --instruction "$INSTR" --model claude-sonnet-4-6 --session-dir /tmp/om
 All of the above is now implemented in `src/cli.ts`. Version `v0.1.0` is
 tagged on `develop`.
 
-### The Harbor-side wrapper (rough sketch)
+### The Harbor-side wrapper
 
-`omega_agent.py` lives at the root of this repo — no sibling repo needed.
-Harbor is invoked with `--agent-import-path` pointing at the local file.
+`omega_agent.py` lives at the root of this repo. See the file directly for
+the implementation. Key design points:
 
-```python
-# omega_agent.py — lives at the Omega repo root
-from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
-import shlex
-
-OMEGA_VERSION = "v0.1.0"
-OMEGA_REPO    = "https://github.com/cfuehrmann/omega"
-
-class OmegaAgent(BaseInstalledAgent):
-    @staticmethod
-    def name(): return "omega"
-    def version(self): return OMEGA_VERSION.lstrip("v")
-
-    async def install(self, env):
-        await self.exec_as_root(env,
-            command="apt-get update && apt-get install -y curl git unzip")
-        await self.exec_as_agent(env,
-            command="curl -fsSL https://bun.sh/install | bash")
-        await self.exec_as_agent(env, command=(
-            f"git clone --branch {OMEGA_VERSION} --depth 1 "
-            f"{OMEGA_REPO} /home/agent/omega "
-            f"&& cd /home/agent/omega && ~/.bun/bin/bun install"))
-
-    @with_prompt_template
-    async def run(self, instruction, env, context):
-        model = self.model  # Harbor passes -m value through
-        if not model.startswith("anthropic/"):
-            raise ValueError(f"Omega is Anthropic-only, got: {model}")
-        model_id = model.removeprefix("anthropic/")
-        await self.exec_as_agent(env, command=(
-            f"cd /home/agent/omega && ~/.bun/bin/bun run src/cli.ts run "
-            f"--instruction {shlex.quote(instruction)} "
-            f"--model {shlex.quote(model_id)} "
-            f"--session-dir /tmp/omega-session "
-            f"--max-turns 50"))
-
-    def populate_context_post_run(self, context):
-        # Parse /tmp/omega-session/events.jsonl → ATIF trajectory entries
-        ...
-```
+- `CLI_FLAGS` declares `--max-turns` (int, default 50) and `--effort` (enum,
+  default medium); `build_cli_flags()` serialises them to the CLI invocation.
+- `self._parsed_model_provider` / `self._parsed_model_name` come from
+  `BaseAgent` and split `anthropic/claude-sonnet-4-6` automatically.
+- `run()` downloads `events.jsonl` from the container in a `finally` block
+  so token data is preserved even on non-zero exit.
+- `populate_context_post_run()` reads the downloaded file and sets
+  `context.n_input_tokens`, `context.n_output_tokens`, `context.n_cache_tokens`
+  from the `turn_end` event's `metrics` object.
 
 Run it from the repo root:
 ```bash
-harbor run --dataset terminal-bench@2.0 \
+harbor run -d terminal-bench@2.0 \
   --agent-import-path ./omega_agent:OmegaAgent \
-  --model anthropic/claude-sonnet-4-6
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 ```
 
 ## 5. Model choice
