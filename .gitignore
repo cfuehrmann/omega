@@ -54,3 +54,10 @@ diagnosis/
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Harbor benchmark job output (local run artifacts)
+jobs/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
