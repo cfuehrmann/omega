@@ -45,9 +45,40 @@ This materially de-risks committing to Harbor.
    --agent-import-path ./omega_agent:OmegaAgent -m anthropic/claude-sonnet-4-6
    --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY`
 5. ✅ **Install Docker + Harbor** — already installed.
-6. **Cost-calibration run** — 5–10 representative tasks on Sonnet 4.6.
-   Check actual spend in the Anthropic console, extrapolate to 76 tasks,
-   then decide whether to proceed.
+6. 🔄 **Cost-calibration run** — in progress. Running single task
+   `terminal-bench/crack-7z-hash` as first smoke test.
+
+   **Blocked mid-session:** Docker was installed and running, but `carsten`
+   was not yet in the `docker` group, so harbor couldn't reach the socket.
+   Fix applied: `sudo usermod -aG docker carsten`. Requires **logout/login
+   (or reboot) to take effect** — `newgrp docker` only fixes the one terminal
+   where it's run, not the agent tool context.
+
+   **To resume after login:**
+   ```bash
+   cd ~/omega/dev
+   docker ps   # should work without sudo — if not, group not active yet
+   harbor run -d terminal-bench@2.0 \
+     --agent-import-path ./omega_agent:OmegaAgent \
+     -m anthropic/claude-sonnet-4-6 \
+     --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+     -t terminal-bench/crack-7z-hash \
+     -n 1
+   ```
+   Then hand back to Omega (open a new chat/session) and say:
+   > "Docker group fix is done, please resume the crack-7z-hash smoke test"
+   Omega will re-run the command, watch the output, and fix any further issues.
+
+   After the single-task smoke test passes end-to-end, expand to 5–10 tasks:
+   ```bash
+   harbor run -d terminal-bench@2.0 \
+     --agent-import-path ./omega_agent:OmegaAgent \
+     -m anthropic/claude-sonnet-4-6 \
+     --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+     -n 1 --n-tasks 5
+   ```
+   Check Anthropic console for actual spend, extrapolate to 76 tasks.
+
 7. **Full TB2 run** on Sonnet 4.6 (and optionally Opus 4.7) if cost is acceptable.
 8. **SWE-Bench Verified** via the same Harbor wrapper — this is the number
    everyone reports. 500 tasks, plan a few hundred dollars of API budget for
@@ -247,8 +278,9 @@ no downside, useful in scripts.
 
 - ~~Exact Harbor CLI flag names~~ Confirmed: use `--include-task-name` / `-i`
   to filter by task name (supports glob patterns). `--task-ids` does not exist.
-- How `self.model` is exposed on `BaseInstalledAgent` — read the
-  Terminus-2 or Claude Code source in the Harbor repo.
+- ~~How `self.model` is exposed~~ Confirmed: it's `self.model_name`
+  (set by `BaseAgent.__init__`); `self._parsed_model_provider` and
+  `self._parsed_model_name` split on `/` automatically.
 - Whether ATIF trajectory export is required for leaderboard submission or
   just nice-to-have.
 - Whether Omega's `events.jsonl` maps cleanly to ATIF or needs a custom
