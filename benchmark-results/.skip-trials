@@ -1,0 +1,11 @@
+# Trial IDs to permanently skip during ingest.
+# These are infrastructure failures from early debugging sessions (session #2/#3,
+# 2026-04-23) before the agent wrapper was working correctly. They are NOT
+# meaningful performance data for Omega.
+#
+# b56b2243: NonZeroAgentExitCodeError — unzip missing during Bun install
+# f184c5db: NonZeroAgentExitCodeError — git clone failed (private-repo DNS issue)
+# 07987c77: RuntimeError — Harbor 600 s timeout (before RUN_TIMEOUT_SEC was raised)
+b56b2243-7c4c-45c4-a646-bab51eb89458
+f184c5db-8ace-4b52-bd6b-30b5e79a7ed9
+07987c77-7e21-420d-873e-bd62b781ae2e
