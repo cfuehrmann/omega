@@ -37,10 +37,10 @@ This materially de-risks committing to Harbor.
 2. ✅ **Build `src/cli.ts`** — done. Headless entrypoint with `--instruction`,
    `--model`, `--effort`, `--session-dir`, `--max-turns`. LLM text → stdout,
    structured logs → stderr. Exit 0 on `turn_end`, 1 on interrupt/error.
-3. **Publish a pinned Omega version** — the Harbor installer needs a stable
-   ref to clone/install (git tag or npm publish). Prerequisite for step 4.
-4. **Write `omega_agent.py`** — Harbor-side wrapper that installs and invokes
-   Omega. Blocked on step 3 (needs a ref to fetch).
+3. ✅ **Publish a pinned Omega version** — tagged `v0.1.0` on `develop`.
+4. **Write `omega_agent.py`** — Harbor-side wrapper; lives at the repo root
+   (same repo as Omega, not a sibling repo). Installs Omega inside the task
+   container via `git clone … --branch v0.1.0`, then invokes `src/cli.ts`.
 5. **Install Docker + Harbor** — see §7. Prerequisite for any local run.
 6. **Cost-calibration run** — 5–10 representative tasks on Sonnet 4.6.
    Check actual spend in the Anthropic console, extrapolate to 76 tasks,
@@ -99,21 +99,26 @@ Rough contract:
 omega run --instruction "$INSTR" --model claude-sonnet-4-6 --session-dir /tmp/omega-session
 ```
 
-Also needs: turn/cost budget flag (runaway protection across ~80 tasks),
-and a published/pinned Omega version the installer can fetch (git tag or
-npm publish).
+All of the above is now implemented in `src/cli.ts`. Version `v0.1.0` is
+tagged on `develop`.
 
 ### The Harbor-side wrapper (rough sketch)
 
+`omega_agent.py` lives at the root of this repo — no sibling repo needed.
+Harbor is invoked with `--agent-import-path` pointing at the local file.
+
 ```python
-# omega_agent.py — lives in a sibling repo
+# omega_agent.py — lives at the Omega repo root
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 import shlex
+
+OMEGA_VERSION = "v0.1.0"
+OMEGA_REPO    = "https://github.com/cfuehrmann/omega"
 
 class OmegaAgent(BaseInstalledAgent):
     @staticmethod
     def name(): return "omega"
-    def version(self): return "0.1.0"
+    def version(self): return OMEGA_VERSION.lstrip("v")
 
     async def install(self, env):
         await self.exec_as_root(env,
@@ -121,8 +126,9 @@ class OmegaAgent(BaseInstalledAgent):
         await self.exec_as_agent(env,
             command="curl -fsSL https://bun.sh/install | bash")
         await self.exec_as_agent(env, command=(
-            "git clone https://github.com/<org>/omega /home/agent/omega "
-            "&& cd /home/agent/omega && ~/.bun/bin/bun install"))
+            f"git clone --branch {OMEGA_VERSION} --depth 1 "
+            f"{OMEGA_REPO} /home/agent/omega "
+            f"&& cd /home/agent/omega && ~/.bun/bin/bun install"))
 
     @with_prompt_template
     async def run(self, instruction, env, context):
@@ -131,20 +137,21 @@ class OmegaAgent(BaseInstalledAgent):
             raise ValueError(f"Omega is Anthropic-only, got: {model}")
         model_id = model.removeprefix("anthropic/")
         await self.exec_as_agent(env, command=(
-            f"cd /home/agent/omega && ~/.bun/bin/bun run src/cli.ts "
+            f"cd /home/agent/omega && ~/.bun/bin/bun run src/cli.ts run "
             f"--instruction {shlex.quote(instruction)} "
             f"--model {shlex.quote(model_id)} "
-            f"--session-dir /tmp/omega-session"))
+            f"--session-dir /tmp/omega-session "
+            f"--max-turns 50"))
 
     def populate_context_post_run(self, context):
         # Parse /tmp/omega-session/events.jsonl → ATIF trajectory entries
         ...
 ```
 
-Run it:
+Run it from the repo root:
 ```bash
 harbor run --dataset terminal-bench@2.0 \
-  --agent-import-path omega_agent:OmegaAgent \
+  --agent-import-path ./omega_agent:OmegaAgent \
   --model anthropic/claude-sonnet-4-6
 ```
 
