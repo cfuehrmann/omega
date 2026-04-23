@@ -206,7 +206,7 @@ async function main(): Promise<number> {
 
   const logLine = (msg: string): void => {
     if (midStream) {
-      process.stderr.write("\n");
+      process.stdout.write("\n"); // close the response text line before a log line
       midStream = false;
     }
     log(msg);
@@ -218,10 +218,10 @@ async function main(): Promise<number> {
       async () => true, // auto-approve all tools
       abortCtrl.signal,
     )) {
-      // Stream text/thinking directly to stderr without a newline so output
-      // appears inline as the model generates it.
+      // Stream text to stdout (data), structured logs go to stderr
+      // (diagnostics) — standard Unix separation.
       if (event.type === "text") {
-        process.stderr.write(event.text);
+        process.stdout.write(event.text);
         midStream = true;
         continue;
       }
