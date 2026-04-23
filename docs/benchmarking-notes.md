@@ -1,8 +1,7 @@
 # Benchmarking Omega — research notes
 
 Research session notes on subjecting Omega to agent benchmarks and comparing
-it with other agents. Nothing here is committed work — this is context for a
-future decision and a future implementation.
+it with other agents.
 
 ## 1. Goal
 
@@ -35,17 +34,22 @@ This materially de-risks committing to Harbor.
 1. ✅ **Terminal-Bench 2 oracle sweep** — done. 76/89 tasks pass (85.4%).
    13 tasks fail even for the oracle (GPU, large downloads, heavy builds) —
    these are excluded from all agent comparisons. Effective benchmark: 76 tasks.
-2. **Build `src/cli.ts`** — headless Omega entrypoint (see §4). This is the
-   prerequisite for everything below.
-3. **Write `omega_agent.py`** — Harbor-side wrapper that installs and invokes Omega.
-4. **Cost-calibration run** — 5–10 representative tasks on Sonnet 4.6.
+2. ✅ **Build `src/cli.ts`** — done. Headless entrypoint with `--instruction`,
+   `--model`, `--effort`, `--session-dir`, `--max-turns`. LLM text → stdout,
+   structured logs → stderr. Exit 0 on `turn_end`, 1 on interrupt/error.
+3. **Publish a pinned Omega version** — the Harbor installer needs a stable
+   ref to clone/install (git tag or npm publish). Prerequisite for step 4.
+4. **Write `omega_agent.py`** — Harbor-side wrapper that installs and invokes
+   Omega. Blocked on step 3 (needs a ref to fetch).
+5. **Install Docker + Harbor** — see §7. Prerequisite for any local run.
+6. **Cost-calibration run** — 5–10 representative tasks on Sonnet 4.6.
    Check actual spend in the Anthropic console, extrapolate to 76 tasks,
    then decide whether to proceed.
-5. **Full TB2 run** on Sonnet 4.6 (and optionally Opus 4.7) if cost is acceptable.
-6. **SWE-Bench Verified** via the same Harbor wrapper — this is the number
+7. **Full TB2 run** on Sonnet 4.6 (and optionally Opus 4.7) if cost is acceptable.
+8. **SWE-Bench Verified** via the same Harbor wrapper — this is the number
    everyone reports. 500 tasks, plan a few hundred dollars of API budget for
    a full pass with Sonnet.
-7. Optional: **SWE-Bench Pro** (harder, hasn't saturated) or **Aider
+9. Optional: **SWE-Bench Pro** (harder, hasn't saturated) or **Aider
    polyglot** (quick, cheap, multilingual; separate harness though).
 
 ## 3. Harbor / Terminal-Bench terminology
