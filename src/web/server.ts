@@ -194,7 +194,7 @@ export function closeOpenTurn(log: object[]): object[] {
  * Used to load a previous session for resumption basis extraction.
  * Returns [] if the file is absent or unreadable.
  */
-export async function loadAllEvents(eventsFile: string): Promise<OmegaEvent[]> {
+async function loadAllEvents(eventsFile: string): Promise<OmegaEvent[]> {
   if (!existsSync(eventsFile)) return [];
   try {
     const text = await readFile(eventsFile, "utf-8");
@@ -787,7 +787,7 @@ async function handleMessage(
 // Server
 // ---------------------------------------------------------------------------
 
-export interface WebAppOptions {
+interface WebAppOptions {
   /** Injectable LLM stream function (used in tests to avoid real API calls). */
   streamProvider?: CreateMessageStream;
   /** Override the HTTP port (default: resolved from --port flag / PORT env / 3000). */
