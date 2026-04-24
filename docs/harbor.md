@@ -11,22 +11,27 @@ to do.
 
 - **Model under evaluation:** `claude-sonnet-4-6`
 - **Tasks attempted:** 26 of 76 oracle-passing TB 2.0 tasks
-- **Pass rate:** 17 / 34 trials (50 %) on tried; 17 / 76 (22 %) on the
+- **Pass rate:** 18 / 38 trials (47 %) on tried; 18 / 76 (24 %) on the
   full oracle-passing set — the leaderboard-comparable number
-- **API spend to date:** ≈ $10.14
+- **API spend to date:** ≈ $11.42
 - **Results data:** `benchmark-results/results.jsonl`
 - **Per-trial logs:** `jobs/<timestamp>/<task>/agent/{events,context}.jsonl`
 
-### Failure shape — n=10 remaining across 3 categories
+### Failure shape — n=9 remaining across 3 categories
 
-After Phase A prompt-validation run (7 re-runs with the fixed prompt), the
-original 2-shape picture has resolved into a 3-shape picture:
+After Phase A (prompt fix) and Phase B (deadline injection + timeout fix),
+the current open failures are:
 
 | Category | n | Trial signature | Tasks |
 |---|---|---|---|
 | **Wrong answer despite verification** | 4 | 6–13 LLM turns; agent iterates but delivers wrong result | count-dataset-tokens, dna-insert, extract-elf, filter-js-from-html |
-| **Rabbit-hole / no time-budget** | 4 | wall-clock timeout; never delivered | largest-eigenval, gcode-to-text, write-compressor, winning-avg-corewars |
-| **Output token limit** | 1 | `max_tokens` stop on turn 2; agent tries to emit huge JSON in one shot | regex-chess |
+| **Genuinely hard / time-limited** | 3 | wall-clock timeout even with deadline; 21–45 turns of real work | largest-eigenval, gcode-to-text, winning-avg-corewars |
+| **Output token limit** | 2 | `max_tokens` stop; agent tries to emit huge output in one shot | regex-chess, winning-avg-corewars |
+
+*Note: `winning-avg-corewars` is listed in two categories — it hit `max_tokens`
+in both the prompt-validation run and the deadline-injection run; it no longer
+times out (RUN_TIMEOUT_SEC bug fixed) but now consistently hits the output
+token limit and delivers a wrong answer.*
 
 **Prompt-fix outcome (2026-04-24, item 1 complete):**  
 2 of 7 re-run tasks flipped to pass — below the ≥ 4 threshold.  
@@ -152,15 +157,32 @@ survived cancellation correctly in both cases.
 call and deleted the constant. Harbor's per-task timeout is now the sole
 controlling mechanism, which is correct by design.
 
-### 3. Rabbit-hole affordance — deadline injection
+### 3. Rabbit-hole affordance — deadline injection — **DONE** (2026-04-24)
 
-Address the 4 rabbit-hole failures after item 2 is resolved. Plan:
-`omega_agent.py` prepends the per-task `agent_timeout_sec` to the
-instruction (Harbor-side, not Omega core — the agent already knows what
-to do with a stated deadline).
+**Implementation.** `_get_agent_timeout_sec()` in `omega_agent.py` reads
+`config.json` from the trial directory and looks up the task's `task.toml`
+from the harbor host cache (`~/.cache/harbor/tasks/*/task_name/task.toml`).
+Applies the same multiplier + cap logic harbor uses. Result prepended as
+`"Time budget: N seconds (M minutes).\n\n"` before the instruction.
+Fails gracefully (no prepend) if the cache entry is absent.
 
-Re-run the 4 rabbit-hole fails with the wrapper change. Pass criterion:
-≥ 2 of 4 flip without regressions.
+**Result:** 1 of 4 flipped. Below the ≥ 2 threshold. Wall-clock 28 min 41 s.
+Job: `jobs/phaseB-deadline-validation/`.
+
+| Task | Before | After | Turns | Notes |
+|---|---|---|---|---|
+| write-compressor | AgentTimeoutError, 0 reward | **reward=1.0**, AgentTimeoutError | 9 | committed early, timed out during final size-check — injection **worked** |
+| gcode-to-text | AgentTimeoutError | AgentTimeoutError | 45 | ran full 900 s; 45 turns of real iteration; genuinely hard |
+| largest-eigenval | AgentTimeoutError | AgentTimeoutError | 21 | 21 turns on eigenvalue algorithm; still timed out |
+| winning-avg-corewars | RuntimeError 1800 s | reward=0.0, no timeout | 11 | RUN_TIMEOUT_SEC fix worked; but hit `max_tokens` on turn 2, wrong answer |
+
+**Interpretation.** Deadline injection is real and causally confirmed on
+`write-compressor`: the agent committed a working solution before running out
+of time, and the verifier rewarded it. For `gcode-to-text` and
+`largest-eigenval` the tasks are genuinely hard — 45 and 21 turns of real work
+still couldn’t deliver in 900 s. `winning-avg-corewars` changed failure shape:
+now completes without timeout (the RUN_TIMEOUT_SEC fix) but hits `max_tokens`
+and submits a wrong answer — a separate capability-floor issue.
 
 ### 4. Fresh ~12-task exploratory run
 
