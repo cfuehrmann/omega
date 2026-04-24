@@ -11,21 +11,30 @@ to do.
 
 - **Model under evaluation:** `claude-sonnet-4-6`
 - **Tasks attempted:** 26 of 76 oracle-passing TB 2.0 tasks
-- **Pass rate:** 15 / 27 trials (56 %) on attempted; 15 / 76 (20 %) on the
+- **Pass rate:** 17 / 34 trials (50 %) on tried; 17 / 76 (22 %) on the
   full oracle-passing set — the leaderboard-comparable number
-- **API spend to date:** ≈ $6.86
+- **API spend to date:** ≈ $10.14
 - **Results data:** `benchmark-results/results.jsonl`
 - **Per-trial logs:** `jobs/<timestamp>/<task>/agent/{events,context}.jsonl`
 
-### Failure shape — n=11 across 2 categories
+### Failure shape — n=10 remaining across 3 categories
 
-After Phase A batch 1, the category-spread target (≥ 4 shapes) has plateaued.
-The working hypothesis is that Omega has two dominant agent-layer gaps:
+After Phase A prompt-validation run (7 re-runs with the fixed prompt), the
+original 2-shape picture has resolved into a 3-shape picture:
 
 | Category | n | Trial signature | Tasks |
 |---|---|---|---|
-| **Goal-check missing** | 7 | clean `turn_end` after 2–13 LLM turns; verifier rejects | overfull-hbox, extract-elf, circuit-fibsqrt, count-dataset-tokens, dna-insert, filter-js-from-html, regex-chess |
+| **Wrong answer despite verification** | 4 | 6–13 LLM turns; agent iterates but delivers wrong result | count-dataset-tokens, dna-insert, extract-elf, filter-js-from-html |
 | **Rabbit-hole / no time-budget** | 4 | wall-clock timeout; never delivered | largest-eigenval, gcode-to-text, write-compressor, winning-avg-corewars |
+| **Output token limit** | 1 | `max_tokens` stop on turn 2; agent tries to emit huge JSON in one shot | regex-chess |
+
+**Prompt-fix outcome (2026-04-24, item 1 complete):**  
+2 of 7 re-run tasks flipped to pass — below the ≥ 4 threshold.  
+`circuit-fibsqrt` (was 2 turns → now 14 turns + all 32 tests pass) and
+`overfull-hbox` (was seed failure → now 15 turns + zero warnings) both
+benefited directly from the design-discipline / task-completion change.  
+For the 5 remaining failures the root cause is not early stopping but
+wrong approach or capability limits — see analysis under Mechanism 1 below.
 
 **Flakiness flag.** `crack-7z-hash` passed in the oracle-era smoke test
 (908 s) but hit `AgentTimeoutError` at 1800 s when re-run on 2026-04-24.
@@ -50,6 +59,19 @@ response = "I think I'm done"). No trial hit the 50-turn budget.
 
 Additionally, the prompt had no explicit *task-completion* rule telling the
 agent to verify the stated success criterion before declaring done.
+
+**Validation result (Phase A item 1, 2026-04-24).** 2 of 7 re-run tasks
+flipped. The two that passed (`circuit-fibsqrt`, `overfull-hbox`) confirm
+the hypothesis: the prompt change caused the agent to run 14–15 turns
+instead of 2 and actually verify its work. The 5 that still failed reveal
+that the original "goal-check missing" label was partially wrong for those
+tasks — the agent was not stopping early due to the prompt; it was running
+6–13 turns and producing wrong answers. `count-dataset-tokens` ran 13 turns
+in *both* runs (before and after the prompt fix), which makes it clear that
+early stopping was never the issue there. `regex-chess` switched failure mode:
+it now hits `max_tokens` on turn 2 because the agent tries to emit the entire
+regex JSON in a single response, which exceeds the model's output token limit.
+The 3-shape picture above reflects this revised understanding.
 
 **Fix (landed 2026-04-24, commit `f4320cd`, `v0.1.0` tag re-pointed):**
 
@@ -85,35 +107,18 @@ missing is the wrapper plumbing. That's roadmap item 3.
 
 Ordered. First item is the next thing to do.
 
-### 1. Validate the prompt hypothesis — **next**
+### 1. Validate the prompt hypothesis — **DONE** (2026-04-24)
 
-**Scope.** Re-run the 7 goal-check fails with the new core prompt. Nothing
-else. One batch, ingest, summarise, stop.
+**Result:** 2 of 7 tasks flipped (circuit-fibsqrt ✓, overfull-hbox ✓).
+Below the ≥ 4 threshold. Zero exceptions. Wall-clock 22 min 24 s, cost ≈ $3.28.
+Job: `jobs/phaseA-prompt-validation/`.
 
-**Tasks:** overfull-hbox, extract-elf, circuit-fibsqrt, count-dataset-tokens,
-dna-insert, filter-js-from-html, regex-chess.
-
-**Command shape** (explicit `-i` list, no `--n-tasks`):
-
-```bash
-harbor run -d terminal-bench@2.0 \
-  --agent-import-path omega_agent:OmegaAgent \
-  -m anthropic/claude-sonnet-4-6 \
-  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -i overfull-hbox -i extract-elf -i circuit-fibsqrt \
-  -i count-dataset-tokens -i dna-insert \
-  -i filter-js-from-html -i regex-chess \
-  --job-name phaseA-prompt-validation
-```
-
-Wait pattern: `"Results written to|Exception"`, `timeoutMs: 3600000` (1 h).
-Expected wall-clock ≈ 20–30 min, cost ≈ $1.75.
-
-**Pass criterion.** ≥ 4 of 7 flip to pass, zero new exceptions. Then add
-the old trial UUIDs to `.skip-trials`, ingest, summarise.
-
-**If < 4 flip,** the design-discipline / task-completion hypothesis is
-not the dominant cause; stop and revisit before further changes.
+**Interpretation.** The design-discipline / task-completion prompt change is
+real and measurable: the two flips confirm the causal mechanism for tasks
+where the agent had the right approach but quit early. However, it is not the
+dominant cause of the original 7-failure cluster — 5 tasks had deeper issues
+(wrong answers or capability limits) that extra verification turns cannot fix.
+See the extended analysis under Mechanism 1 in the Agent-layer gap section.
 
 **Autonomy envelope.** In scope: retry a crashed harbor invocation, re-run
 a single timed-out task, fix an `omega_agent.py` infrastructure bug (and
@@ -297,7 +302,12 @@ Completed or superseded work, kept for historical pointers.
   rephrased from "discuss before implementing" to "state, then proceed",
   new Task-completion section added, Carsten-specific habits moved to
   `.omega/system-prompt-append.md`. `v0.1.0` tag re-pointed from `657a647`
-  to `f4320cd`. Validation pending (roadmap item 1).
+  to `f4320cd`.
+- **Phase A prompt-validation run** (2026-04-24, job `phaseA-prompt-validation`).
+  Re-ran the 7 goal-check-fail tasks with the revised prompt. 2 of 7 flipped
+  (circuit-fibsqrt, overfull-hbox). Below the ≥ 4 threshold; hypothesis
+  partially confirmed but not dominant. Updated failure shape: 3 categories
+  (wrong-answer ×4, rabbit-hole ×4, max-tokens ×1). See Mechanism 1 analysis.
 - **`OMEGA_HEADLESS` prompt-gating idea, rejected.** Was briefly
   considered as a way to make the agent behave differently in benchmark
   runs. Rejected as "teaching to the test" — the fix belongs in the
