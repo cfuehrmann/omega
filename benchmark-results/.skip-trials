@@ -9,3 +9,27 @@
 b56b2243-7c4c-45c4-a646-bab51eb89458
 f184c5db-8ace-4b52-bd6b-30b5e79a7ed9
 07987c77-7e21-420d-873e-bd62b781ae2e
+
+# Phase A batch 1, 2026-04-24: Anthropic monthly usage limit was hit mid-run
+# (400 invalid_request_error "You have reached your specified API usage
+# limits."). Eight trials died on their first LLM call; two more failed
+# during bun install (transient curl | bash setup failure under concurrent
+# container bring-up). All ten are re-run in jobs/phaseA-batch1-retry/.
+# Quota-killed:
+7a27fba3-f26c-4223-8245-7d4f2fe2f27a
+a8c0a177-29e1-4ecf-af3b-ebf4833b89d4
+8395e97c-a54c-4735-8dfd-dfcc74b09f5a
+daa91018-c49d-4d0c-8b2d-6f97aef170c5
+2a46ddfb-188c-41fb-bb5d-8f23db80afd2
+ac267a96-9aaa-4aef-a992-7094323a12b6
+de54e576-1738-4c8e-a4a8-f267fb445a48
+056b7076-eff2-481e-a361-af4415e1653a
+# Bun-install curl|bash crash:
+d15a7c27-6ed3-4d3b-8bb5-8cda66d49c34
+18fb689d-7be7-4362-aa2d-7d3f32b32c60
+
+# Phase A batch 1 retry, 2026-04-24: write-compressor crashed again on
+# curl|bash during bun install (still concurrent bring-up storm). Re-run
+# sequentially in jobs/phaseA-batch1-retry2/ where it succeeded setup and
+# legitimately hit AgentTimeoutError.
+72eb8f99-dbc9-44c3-93db-2742bdb49bbf
