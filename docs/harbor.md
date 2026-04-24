@@ -103,6 +103,19 @@ chat. The core prompt already has the matching rule ("if the instruction
 names a time budget, commit a working solution before refining"); what's
 missing is the wrapper plumbing. That's roadmap item 3.
 
+### Wrong-answer category — capability floor, no scaffolding fix planned
+
+4 tasks (count-dataset-tokens, dna-insert, extract-elf, filter-js-from-html)
+failed in both runs despite the agent doing real work (6–13 LLM turns). No
+single scaffolding intervention addresses this: the agent's approach or
+knowledge is wrong, not its verification discipline. Three narrow levers
+exist — higher effort (`--effort xhigh`), an infra check on network access
+inside containers (count-dataset-tokens ran identically both times, which is
+suspicious), and model upgrade — but the clean answer is the Opus 4.7 run
+planned for Phase D. If these tasks still fail on Opus they are genuine
+capability floors; if they flip, Sonnet was the ceiling and the scaffolding
+is fine. No separate roadmap item; revisit after Phase D.
+
 ## Roadmap
 
 Ordered. First item is the next thing to do.
@@ -125,9 +138,22 @@ a single timed-out task, fix an `omega_agent.py` infrastructure bug (and
 re-point the `v0.1.0` tag). Out of scope: changing agent behaviour beyond
 what's already committed, starting item 2.
 
-### 2. Rabbit-hole affordance — deadline injection
+### 2. `winning-avg-corewars` timeout-mismatch investigation — **next**
 
-If item 1 validates, address the 4 rabbit-hole failures next. Plan:
+Harbor's task-level `agent_timeout_sec = 900` did not fire for this trial;
+our Python-side `RUN_TIMEOUT_SEC = 1800` fired instead (verified in
+`agent_execution_*.log`). For `gcode-to-text` in the same batch, harbor's
+900 s timeout fired correctly. Root cause unknown. Could be a harbor
+config issue, a container-comms stall, or an asyncio propagation gap.
+
+Must be fixed **before** deadline injection (item 3): if harbor's timeout
+cannot be trusted to fire reliably, prepending `agent_timeout_sec` to the
+instruction produces uninterpretable results — the deadline would be wrong
+or absent for some tasks.
+
+### 3. Rabbit-hole affordance — deadline injection
+
+Address the 4 rabbit-hole failures after item 2 is resolved. Plan:
 `omega_agent.py` prepends the per-task `agent_timeout_sec` to the
 instruction (Harbor-side, not Omega core — the agent already knows what
 to do with a stated deadline).
@@ -135,33 +161,34 @@ to do with a stated deadline).
 Re-run the 4 rabbit-hole fails with the wrapper change. Pass criterion:
 ≥ 2 of 4 flip without regressions.
 
-### 3. `winning-avg-corewars` timeout-mismatch investigation
+### 4. Fresh ~12-task exploratory run
 
-Harbor's task-level `agent_timeout_sec = 900` did not fire for this trial;
-our Python-side `RUN_TIMEOUT_SEC = 1800` fired instead (verified in
-`agent_execution_*.log`). For `gcode-to-text` in the same batch, harbor's
-900 s timeout fired correctly. Root cause unknown. Could be a harbor
-config issue, a container-comms stall, or an asyncio propagation gap. Fix
-before the full 76-task run so timings are trustworthy.
+Before the full 76-task run, pick ~12 tasks not yet attempted and run them
+with whatever affordances are live at the time. Purpose: avoid selection bias
+from having iterated exclusively on the same 26 tasks — check that
+interventions generalise rather than overfit to the re-run set. Pick tasks
+spanning multiple categories and difficulties. Ingest and inspect the failure
+shape; if new categories emerge, update the roadmap before Phase D.
 
-### 4. LLM-driven diagnosis script — **deferred**
+### 5. LLM-driven diagnosis script — **deferred**
 
 Originally next; deprioritised because manual inspection over n=11 already
-yields a clear 2-shape picture. Reconsider when the failure count exceeds
-~25 or if the 2-shape picture starts breaking down.
+yields a clear picture. Reconsider when the failure count exceeds ~25 or if
+the shape starts breaking down.
 
-### 5. Full 76-task run — Phase D
+### 6. Full 76-task run — Phase D
 
-Leaderboard-comparable number on Sonnet 4.6 after items 1 and 2 validate.
-Optionally repeat on Opus 4.7 to separate scaffolding effects from model
-strength.
+Leaderboard-comparable number on Sonnet 4.6 after items 2 and 3 validate.
+Repeat on Opus 4.7 to separate scaffolding effects from model strength —
+this is also the definitive test for the wrong-answer capability-floor
+tasks (count-dataset-tokens, dna-insert, extract-elf, filter-js-from-html).
 
 **Reference baselines (same task set, published):** Claude Code + Sonnet 4.5
 scores ≈ 50 % on TB 2.0 (tbench.ai leaderboard, Nov 2026). Scaffolding on
 the same model swings results 10–20 pp in the arxiv paper (2601.11868, Fig.
-on Gemini-2.5-Pro). That's the band where affordances 1 + 2 could land us.
+on Gemini-2.5-Pro). That's the band where affordances 2 + 3 could land us.
 
-### 6. SWE-Bench Verified — later
+### 7. SWE-Bench Verified — later
 
 Same Harbor wrapper, one flag change. 500 tasks, plan a few hundred
 dollars of API budget. Only after Phase D.
