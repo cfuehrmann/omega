@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import shlex
+import tomllib
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harbor.agents.installed.base import BaseInstalledAgent, CliFlag, with_prompt_template
@@ -83,6 +85,49 @@ class OmegaAgent(BaseInstalledAgent):
         )
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _get_agent_timeout_sec(self) -> float | None:
+        """Return the effective per-task agent timeout by reading harbor's trial config
+        and the cached task.toml.  Returns None if the information is unavailable."""
+        config_path = self.logs_dir.parent / "config.json"
+        if not config_path.exists():
+            return None
+        with config_path.open() as f:
+            config = json.load(f)
+
+        # Honor any explicit per-run override first.
+        override = (config.get("agent") or {}).get("override_timeout_sec")
+        if override is not None:
+            return float(override)
+
+        # Locate task.toml in the harbor cache by task name.
+        task_name = (config.get("task") or {}).get("path")
+        if not task_name:
+            return None
+        task_name = Path(task_name).name  # strip any leading "terminal-bench/" prefix
+        cache_root = Path.home() / ".cache" / "harbor" / "tasks"
+        matches = list(cache_root.glob(f"*/{task_name}/task.toml"))
+        if len(matches) != 1:
+            return None
+        with matches[0].open("rb") as f:
+            task_config = tomllib.load(f)
+
+        base_timeout = (task_config.get("agent") or {}).get("timeout_sec")
+        if base_timeout is None:
+            return None
+
+        # Apply the same multiplier + cap logic harbor uses.
+        multiplier = (
+            config.get("agent_timeout_multiplier")
+            or config.get("timeout_multiplier")
+            or 1.0
+        )
+        cap = (config.get("agent") or {}).get("max_timeout_sec") or float("inf")
+        return min(float(base_timeout) * float(multiplier), cap)
+
+    # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
 
@@ -98,6 +143,17 @@ class OmegaAgent(BaseInstalledAgent):
                 f"Omega is Anthropic-only; got provider "
                 f"'{self._parsed_model_provider}'. "
                 f"Pass e.g. -m anthropic/claude-sonnet-4-6."
+            )
+
+        # Prepend the per-task deadline so the agent can honour the
+        # half-budget rule in its core prompt ("commit a working solution
+        # before refining").  Fails gracefully if timeout is unavailable.
+        timeout_sec = self._get_agent_timeout_sec()
+        if timeout_sec is not None:
+            minutes = int(timeout_sec) // 60
+            instruction = (
+                f"Time budget: {int(timeout_sec)} seconds ({minutes} minutes).\n\n"
+                + instruction
             )
 
         flags = self.build_cli_flags()
