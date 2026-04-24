@@ -10,161 +10,156 @@ to do.
 ## Status
 
 - **Model under evaluation:** `claude-sonnet-4-6`
-- **Tasks scanned:** 10 of 76 oracle-passing TB 2.0 tasks (plus a smoke test,
-  not counted here)
-- **Pass rate:** 7 / 10 (70 %)
+- **Tasks attempted:** 26 of 76 oracle-passing TB 2.0 tasks
+- **Pass rate:** 15 / 27 trials (56 %) on attempted; 15 / 76 (20 %) on the
+  full oracle-passing set — the leaderboard-comparable number
+- **API spend to date:** ≈ $6.86
 - **Results data:** `benchmark-results/results.jsonl`
 - **Per-trial logs:** `jobs/<timestamp>/<task>/agent/{events,context}.jsonl`
 
-| Result | Count | Tasks |
-|---|---|---|
-| Pass | 7 | prove-plus-comm, fix-git, log-summary-date-ranges, cobol-modernization, vulnerable-secret, regex-log, sqlite-db-truncate |
-| Fail (agent) | 3 | overfull-hbox, extract-elf, largest-eigenval |
+### Failure shape — n=11 across 2 categories
 
-All three failures are variations of **missing goal-check** — see
-[Known weaknesses](#known-weaknesses). n=3 is too thin to commit to a specific
-intervention shape; the first roadmap item broadens the sample before we
-prototype anything.
+After Phase A batch 1, the category-spread target (≥ 4 shapes) has plateaued.
+The working hypothesis is that Omega has two dominant agent-layer gaps:
 
-**Flakiness flag.** `crack-7z-hash` passed in the original oracle-era smoke
-test (908 s) but hit `AgentTimeoutError` at 1800 s when re-run on 2026-04-24
-to validate Phase 1 of the events-analysis plan. One data point — watch for
-non-determinism when the full Phase A scan runs.
+| Category | n | Trial signature | Tasks |
+|---|---|---|---|
+| **Goal-check missing** | 7 | clean `turn_end` after 2–13 LLM turns; verifier rejects | overfull-hbox, extract-elf, circuit-fibsqrt, count-dataset-tokens, dna-insert, filter-js-from-html, regex-chess |
+| **Rabbit-hole / no time-budget** | 4 | wall-clock timeout; never delivered | largest-eigenval, gcode-to-text, write-compressor, winning-avg-corewars |
+
+**Flakiness flag.** `crack-7z-hash` passed in the oracle-era smoke test
+(908 s) but hit `AgentTimeoutError` at 1800 s when re-run on 2026-04-24.
+Two data points; watch for more non-determinism in Phase D.
+
+## Agent-layer gap
+
+Evidence pointing at two fixable gaps in Omega's core setup:
+
+### Mechanism 1 — system prompt pushed the agent toward "stop and wait"
+
+The original `core.ts` Design-discipline clause read:
+
+> *"Discuss design with the user before implementing non-trivial changes.
+> If the user raises a design question mid-implementation, stop and discuss
+> before continuing."*
+
+In headless runs this reduced to "do the smallest thing, then stop" — which
+matches what the event logs show: goal-check fails had **2–13 LLM turns**
+and always ended with a clean `turn_end` (no tool calls in the final
+response = "I think I'm done"). No trial hit the 50-turn budget.
+
+Additionally, the prompt had no explicit *task-completion* rule telling the
+agent to verify the stated success criterion before declaring done.
+
+**Fix (landed 2026-04-24, commit `f4320cd`, `v0.1.0` tag re-pointed):**
+
+- Design discipline: *"state your chosen approach and the alternatives you
+  considered, then proceed. If the user raises a design question — before,
+  during, or after — stop and discuss."* No implicit wait; user interrupts
+  still halt.
+- New Task-completion section: *"verify the stated success criterion before
+  declaring done … run the check and confirm the measured value."* Also a
+  half-budget rule for time-bounded tasks.
+- Carsten-specific habits ("run git status before new work", general testing
+  guidance) moved out of core into `.omega/system-prompt-append.md` so the
+  core prompt stays behaviour-oriented and repo-neutral.
+
+Design principle held throughout: **one prompt, both modes**. No
+`OMEGA_HEADLESS` gating — what we want the benchmark agent to do is what we
+want the daily agent to do. See the pass criterion in roadmap item 1.
+
+### Mechanism 2 — zero wall-clock awareness
+
+Rabbit-hole failures (4 of 12) all ran to a wall-clock cap (harbor's
+`agent_timeout_sec = 900`, or our Python-side 1800 s). The agent never
+knew a deadline existed. Harbor knows each task's `agent_timeout_sec`
+and could prepend it to the instruction.
+
+This is benchmark-supplied information, not a benchmark-specific agent
+behaviour — equivalent to a user typing "I need this in 15 minutes" in
+chat. The core prompt already has the matching rule ("if the instruction
+names a time budget, commit a working solution before refining"); what's
+missing is the wrapper plumbing. That's roadmap item 3.
 
 ## Roadmap
 
 Ordered. First item is the next thing to do.
 
-### 1. Broaden the failure sample (Phase A) — **next**
+### 1. Validate the prompt hypothesis — **next**
 
-**Scope of this session.** One batch of ~15 previously-unrun tasks from the
-76 oracle-passing set. Ingest, post a short summary, stop. Do not start
-item 2. Do not change Omega's agent behaviour.
+**Scope.** Re-run the 7 goal-check fails with the new core prompt. Nothing
+else. One batch, ingest, summarise, stop.
 
-**Why.** Avoid overfitting a single "goal-check" hypothesis to n=3. Phase A's
-aggregate goal is ≥ 10 failure trials spanning ≥ 4 categories — may span
-more than one batch, but one batch is the unit per session.
+**Tasks:** overfull-hbox, extract-elf, circuit-fibsqrt, count-dataset-tokens,
+dna-insert, filter-js-from-html, regex-chess.
 
-**How.**
+**Command shape** (explicit `-i` list, no `--n-tasks`):
 
-1. **Dedup against already-run tasks.**
-   ```bash
-   jq -r '.task_name' benchmark-results/results.jsonl | sort -u
-   ```
-   Construct an explicit task list for harbor that excludes those — see
-   `harbor run --help` for the flag shape.
-2. **Run the scan.** See [Running benchmarks](#running-benchmarks) below —
-   **harbor buffers all stdout until the run completes**. From an Omega
-   session, use `run_background` + a single `wait_for_output` with pattern
-   `"Results written to|Exception"` and `timeoutMs: 7200000` (2 h). Do NOT
-   re-run or kill just because output is silent.
-3. **Ingest and summarise.**
-   ```bash
-   bun scripts/bench-ingest.ts
-   bun scripts/bench-summary.ts
-   ```
-4. **Post a short summary and stop.** Report: pass/fail split for this
-   batch, whether any new failure shape doesn't match the three existing
-   weakness patterns, any infrastructure issues handled. Then stop.
+```bash
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -i overfull-hbox -i extract-elf -i circuit-fibsqrt \
+  -i count-dataset-tokens -i dna-insert \
+  -i filter-js-from-html -i regex-chess \
+  --job-name phaseA-prompt-validation
+```
 
-**Autonomy envelope.**
+Wait pattern: `"Results written to|Exception"`, `timeoutMs: 3600000` (1 h).
+Expected wall-clock ≈ 20–30 min, cost ≈ $1.75.
 
-In scope if they arise:
-- Retry a crashed harbor invocation.
-- Fix an `omega_agent.py` infrastructure bug (missing apt dep, path glitch,
-  timeout setting, etc.). Because the container installs Omega from
-  `git clone --branch v0.1.0 --depth 1`, any fix must also be pushed and
-  the `v0.1.0` tag re-pointed (`git tag -f v0.1.0 && git push --force origin v0.1.0`)
-  so the next harbor run actually gets the fix.
-- Re-run a single timed-out or crashed task.
+**Pass criterion.** ≥ 4 of 7 flip to pass, zero new exceptions. Then add
+the old trial UUIDs to `.skip-trials`, ingest, summarise.
 
-Out of scope (stop and ask):
-- Changing Omega's agent behaviour (system prompts, tools, loop logic).
-- Starting item 2 or later roadmap items.
-- Revising the weakness hypothesis.
+**If < 4 flip,** the design-discipline / task-completion hypothesis is
+not the dominant cause; stop and revisit before further changes.
 
-**Budget.** ≈ $4–6 API spend, ≈ 1–2 h wall-clock. Trials now persist both
-`events.jsonl` and `context.jsonl` (context.jsonl added to `omega_agent.py`
-on 2026-04-24) so the full session is replayable and LLM-diagnosable.
+**Autonomy envelope.** In scope: retry a crashed harbor invocation, re-run
+a single timed-out task, fix an `omega_agent.py` infrastructure bug (and
+re-point the `v0.1.0` tag). Out of scope: changing agent behaviour beyond
+what's already committed, starting item 2.
 
-### 2. LLM-driven diagnosis script — **blocked on design review**
+### 2. Rabbit-hole affordance — deadline injection
 
-Feed each failure's `events.jsonl` + `context.jsonl` to a separate Claude
-call with a categorisation prompt. Output: failure category (goal-check /
-rabbit-hole / convergence / model-layer / other) + evidence pointers.
-Replaces manual trial browsing and scales to hundreds of trials.
+If item 1 validates, address the 4 rabbit-hole failures next. Plan:
+`omega_agent.py` prepends the per-task `agent_timeout_sec` to the
+instruction (Harbor-side, not Omega core — the agent already knows what
+to do with a stated deadline).
 
-**Blocked on:** Carsten to review the design before implementation. Do not
-start this item without explicit go-ahead.
+Re-run the 4 rabbit-hole fails with the wrapper change. Pass criterion:
+≥ 2 of 4 flip without regressions.
 
-### 3. Categorise failures against hypothesis buckets (Phase B)
+### 3. `winning-avg-corewars` timeout-mismatch investigation
 
-Run item 2 across all failure trials. If > 50 % of agent-layer failures
-fall into one bucket, that is the first affordance to prototype. If the
-distribution is flat, prioritise the broadest affordance.
+Harbor's task-level `agent_timeout_sec = 900` did not fire for this trial;
+our Python-side `RUN_TIMEOUT_SEC = 1800` fired instead (verified in
+`agent_execution_*.log`). For `gcode-to-text` in the same batch, harbor's
+900 s timeout fired correctly. Root cause unknown. Could be a harbor
+config issue, a container-comms stall, or an asyncio propagation gap. Fix
+before the full 76-task run so timings are trustworthy.
 
-### 4. Prototype one affordance, A/B test (Phase C)
+### 4. LLM-driven diagnosis script — **deferred**
 
-Implement behind a feature flag. Re-run the *same* failed tasks, compare
-before/after pass rate.
+Originally next; deprioritised because manual inspection over n=11 already
+yields a clear 2-shape picture. Reconsider when the failure count exceeds
+~25 or if the 2-shape picture starts breaking down.
 
-- **Success criterion:** ≥ 2 net passes on the held-out failures, zero
-  regressions on the passing tasks.
-- **Hard constraint:** the affordance must be generic — no task-specific
-  prompting. If we find ourselves writing "when you see a LaTeX task…", the
-  design is wrong.
+### 5. Full 76-task run — Phase D
 
-### 5. Full 76-task run with the winner (Phase D)
+Leaderboard-comparable number on Sonnet 4.6 after items 1 and 2 validate.
+Optionally repeat on Opus 4.7 to separate scaffolding effects from model
+strength.
 
-Leaderboard-comparable number on Sonnet 4.6. Optionally repeat on Opus 4.7
-to separate scaffolding effects from model strength.
+**Reference baselines (same task set, published):** Claude Code + Sonnet 4.5
+scores ≈ 50 % on TB 2.0 (tbench.ai leaderboard, Nov 2026). Scaffolding on
+the same model swings results 10–20 pp in the arxiv paper (2601.11868, Fig.
+on Gemini-2.5-Pro). That's the band where affordances 1 + 2 could land us.
 
-### 6. SWE-Bench Verified (later)
+### 6. SWE-Bench Verified — later
 
-Same Harbor wrapper, one flag change. 500 tasks, plan a few hundred dollars
-of API budget. Only after Phase D.
-
-## Known weaknesses
-
-Observed patterns in Omega's failures. Each is a candidate affordance for
-Phase C. Evidence is in the referenced trial directories under `jobs/`.
-
-### No goal-check against stated success criterion
-
-The model produces plausible output, runs it once, and exits without
-verifying the stated success criterion was actually met.
-
-| Trial | Task | What happened |
-|---|---|---|
-| `d27ba77a-…` | `overfull-hbox` | Edited twice, re-ran `pdflatex`, warnings still present, ended without further edits. |
-| `376cd0ab-…` | `extract-elf` | Produced valid JSON, never measured coverage against the task's explicit ≥ 75 % threshold. |
-
-**Candidate affordance.** Success-criterion reminder — when the instruction
-contains a concrete threshold ("≥ 75 %", "no overfull hbox warnings", "all
-tests pass"), surface that threshold in the context near the end of each
-turn and prompt self-evaluation against it.
-
-### No time-budget awareness / rabbit-hole
-
-The model pursues optimisation without ever having delivered a working
-baseline. No stop signal on "X min elapsed, nothing shipped."
-
-| Trial | Task | What happened |
-|---|---|---|
-| `18106395-…` | `largest-eigenval` | 30+ tool calls into `ctypes` / OpenBLAS `dgeev`; never wrote `/app/eigen.py`; hit the 900 s task timeout. A `scipy.linalg.eig` solution would have passed in ~60 s. |
-
-**Candidate affordances.**
-- Inject `elapsed: X min / deadline: Y min` into the context at turn end.
-  Omega currently has turn budgets but no wall-clock awareness.
-- Depth limit: after N consecutive tool calls with no file write to a target
-  path, inject "step back — have you delivered a solution?"
-- System-prompt nudge: "commit a working solution before optimising."
-
-### Common thread
-
-All three failures are variations of **"kept going without a meta-check that
-the stated goal was reached."** Whether this is the dominant weakness
-Omega-wide, or an artefact of n=3, is the question Phase A will answer.
+Same Harbor wrapper, one flag change. 500 tasks, plan a few hundred
+dollars of API budget. Only after Phase D.
 
 ## Running benchmarks
 
@@ -178,7 +173,15 @@ harbor run -d terminal-bench@2.0 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -t terminal-bench/fix-git -n 1
 
-# N random tasks
+# explicit list of tasks (recommended for targeted re-runs)
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -i taskA -i taskB -i taskC \
+  --job-name my-validation-run
+
+# N random tasks (bring-up only; prefer explicit lists for data collection)
 harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaAgent \
   -m anthropic/claude-sonnet-4-6 \
@@ -186,17 +189,24 @@ harbor run -d terminal-bench@2.0 \
   -n 1 --n-tasks 15
 ```
 
-Results land in `jobs/<timestamp>/`. Each trial directory contains
-`agent/events.jsonl`, `agent/context.jsonl`, Harbor's `result.json`, and
-`trial.log`.
+Results land in `jobs/<timestamp>/` (or `jobs/<job-name>/` if `--job-name` is
+passed). Each trial directory contains `agent/events.jsonl`,
+`agent/context.jsonl`, Harbor's `result.json`, and `trial.log`.
 
 **harbor buffers all stdout until the run completes.** The log file is
 written in one shot at the end — don't expect it to grow while tasks run.
 From an Omega session, use `run_background` + a single `wait_for_output`
-with `timeoutMs` ≥ 1800000 (30 min for a 1-task run; 7200000 for a 15-task
-batch) and pattern `"Mean:|Results written to|Exception"`. Check the
-result once at the timeout; do not issue follow-up waits or kill the
-process just because output is silent.
+with `timeoutMs` sized to the batch (30 min per task is a reasonable upper
+bound) and pattern `"Mean:|Results written to|Exception"`. Check the result
+once at the timeout; do not issue follow-up waits or kill the process just
+because output is silent.
+
+### Skipping contaminated trials
+
+`benchmark-results/.skip-trials` is a plain list of trial UUIDs that the
+ingest script permanently ignores. Populate it when a trial fails for
+reasons unrelated to agent behaviour — API quota hit mid-run, container
+setup race, etc. Legitimate fail/timeout trials stay in the results.
 
 ### Ingest results
 
@@ -279,11 +289,25 @@ Completed or superseded work, kept for historical pointers.
 - **Phase 2A — web-UI replay script.** Originally planned as glue to load
   trials in Omega's web UI. Judged ballast given the LLM-driven diagnosis
   goal and deleted before landing.
+- **Phase A batch 1** (2026-04-24). 15 tasks, 7 pass / 8 fail; 2 infra
+  issues handled (Anthropic monthly quota hit mid-run, `curl | bash` bun
+  install failure under concurrent bring-up). See commit `7ff87cb`. All
+  8 new failures fit the existing two shapes — no third category emerged.
+- **Prompt refinement** (2026-04-24, commit `f4320cd`). Design-discipline
+  rephrased from "discuss before implementing" to "state, then proceed",
+  new Task-completion section added, Carsten-specific habits moved to
+  `.omega/system-prompt-append.md`. `v0.1.0` tag re-pointed from `657a647`
+  to `f4320cd`. Validation pending (roadmap item 1).
+- **`OMEGA_HEADLESS` prompt-gating idea, rejected.** Was briefly
+  considered as a way to make the agent behave differently in benchmark
+  runs. Rejected as "teaching to the test" — the fix belongs in the
+  single shared prompt, not behind a benchmark-only gate.
 
 ## References
 
 - `benchmark-results/results.jsonl` — accumulated trial data
 - `benchmark-results/oracle-tasks.json` — per-task oracle status
+- `benchmark-results/.skip-trials` — trial UUIDs permanently ignored by ingest
 - `jobs/<timestamp>/<task>/agent/{events,context}.jsonl` — raw session per trial
 - `omega_agent.py` — Harbor wrapper
 - `scripts/bench-ingest.ts`, `scripts/bench-summary.ts` — results tooling
