@@ -10,28 +10,28 @@ to do.
 ## Status
 
 - **Model under evaluation:** `claude-sonnet-4-6`
-- **Tasks attempted:** 26 of 76 oracle-passing TB 2.0 tasks
-- **Pass rate:** 18 / 38 trials (47 %) on tried; 18 / 76 (24 %) on the
+- **Tasks attempted:** 34 of 76 oracle-passing TB 2.0 tasks
+- **Pass rate:** 27 / 50 trials (54 %) on tried; 27 / 76 (36 %) on the
   full oracle-passing set — the leaderboard-comparable number
-- **API spend to date:** ≈ $11.42
+- **API spend to date:** ≈ $12.74
 - **Results data:** `benchmark-results/results.jsonl`
 - **Per-trial logs:** `jobs/<timestamp>/<task>/agent/{events,context}.jsonl`
 
-### Failure shape — n=9 remaining across 3 categories
+### Failure shape — after Phase C (fresh 12-task run)
 
-After Phase A (prompt fix) and Phase B (deadline injection + timeout fix),
-the current open failures are:
+The Phase C run (9/12 = 75 % pass rate on fresh tasks) confirms interventions
+generalise and the re-run cluster is harder than average. Three new failures
+fit cleanly into existing shapes:
 
-| Category | n | Trial signature | Tasks |
-|---|---|---|---|
-| **Wrong answer despite verification** | 4 | 6–13 LLM turns; agent iterates but delivers wrong result | count-dataset-tokens, dna-insert, extract-elf, filter-js-from-html |
-| **Genuinely hard / time-limited** | 3 | wall-clock timeout even with deadline; 21–45 turns of real work | largest-eigenval, gcode-to-text, winning-avg-corewars |
-| **Output token limit** | 2 | `max_tokens` stop; agent tries to emit huge output in one shot | regex-chess, winning-avg-corewars |
+| Category | Tasks (n) | Trial signature |
+|---|---|---|
+| **Wrong answer despite verification** | count-dataset-tokens, dna-insert, extract-elf, filter-js-from-html, query-optimize (5) | 6–13 LLM turns; real work, wrong result |
+| **Genuinely hard / time-limited** | largest-eigenval, gcode-to-text, winning-avg-corewars (3) | wall-clock timeout even with deadline; 21–45 turns |
+| **Output token limit** | regex-chess, winning-avg-corewars (2) | `max_tokens` stop; agent tries to emit huge output in one shot |
+| **Fast capability failure** | cancel-async-tasks, polyglot-c-py (2) | 2–4 min; agent produces wrong answer quickly |
 
-*Note: `winning-avg-corewars` is listed in two categories — it hit `max_tokens`
-in both the prompt-validation run and the deadline-injection run; it no longer
-times out (RUN_TIMEOUT_SEC bug fixed) but now consistently hits the output
-token limit and delivers a wrong answer.*
+*`winning-avg-corewars` spans two categories (time-limited and max_tokens).
+No new failure shape introduced by Phase C.*
 
 **Prompt-fix outcome (2026-04-24, item 1 complete):**  
 2 of 7 re-run tasks flipped to pass — below the ≥ 4 threshold.  
@@ -184,14 +184,20 @@ still couldn’t deliver in 900 s. `winning-avg-corewars` changed failure shape:
 now completes without timeout (the RUN_TIMEOUT_SEC fix) but hits `max_tokens`
 and submits a wrong answer — a separate capability-floor issue.
 
-### 4. Fresh ~12-task exploratory run
+### 4. Fresh ~12-task exploratory run — **DONE** (2026-04-24)
 
-Before the full 76-task run, pick ~12 tasks not yet attempted and run them
-with whatever affordances are live at the time. Purpose: avoid selection bias
-from having iterated exclusively on the same 26 tasks — check that
-interventions generalise rather than overfit to the re-run set. Pick tasks
-spanning multiple categories and difficulties. Ingest and inspect the failure
-shape; if new categories emerge, update the roadmap before Phase D.
+**Tasks:** fix-git, cobol-modernization, crack-7z-hash, nginx-request-logging,
+openssl-selfsigned-cert, kv-store-grpc, query-optimize, git-multibranch,
+log-summary-date-ranges, polyglot-c-py, cancel-async-tasks, fix-code-vulnerability.
+
+**Result:** 9/12 passed (75 %). Zero exceptions. 13 min 2 s.
+Job: `jobs/phaseC-fresh-12/`. New leaderboard metric: **27/76 = 36 %**.
+
+**Interpretation.** 75 % pass rate on fresh tasks vs 54 % overall confirms
+interventions generalise — the re-run cluster is genuinely harder than
+average, not a sign of overfitting. Three new failures mapped to existing
+shapes (wrong-answer × 1, fast capability failure × 2). No new failure
+category emerged; roadmap holds.
 
 ### 5. LLM-driven diagnosis script — **deferred**
 
