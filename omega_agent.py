@@ -112,13 +112,22 @@ class OmegaAgent(BaseInstalledAgent):
                 environment, command=cmd, timeout_sec=RUN_TIMEOUT_SEC
             )
         finally:
-            # Always pull events.jsonl to the host logs dir so that
-            # populate_context_post_run and Harbor's UI can read it,
-            # even when the CLI exits non-zero.
+            # Always pull events.jsonl and context.jsonl to the host logs
+            # dir so that populate_context_post_run, Harbor's UI, and the
+            # Omega web UI replay script can read the full session — even
+            # when the CLI exits non-zero.  Each download is wrapped
+            # independently so one failure cannot prevent the other.
             try:
                 await environment.download_file(
                     f"{OMEGA_SESSION_DIR}/events.jsonl",
                     self.logs_dir / "events.jsonl",
+                )
+            except Exception:
+                pass
+            try:
+                await environment.download_file(
+                    f"{OMEGA_SESSION_DIR}/context.jsonl",
+                    self.logs_dir / "context.jsonl",
                 )
             except Exception:
                 pass
