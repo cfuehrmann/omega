@@ -138,18 +138,19 @@ a single timed-out task, fix an `omega_agent.py` infrastructure bug (and
 re-point the `v0.1.0` tag). Out of scope: changing agent behaviour beyond
 what's already committed, starting item 2.
 
-### 2. `winning-avg-corewars` timeout-mismatch investigation — **next**
+### 2. `winning-avg-corewars` timeout-mismatch investigation — **DONE** (2026-04-24)
 
-Harbor's task-level `agent_timeout_sec = 900` did not fire for this trial;
-our Python-side `RUN_TIMEOUT_SEC = 1800` fired instead (verified in
-`agent_execution_*.log`). For `gcode-to-text` in the same batch, harbor's
-900 s timeout fired correctly. Root cause unknown. Could be a harbor
-config issue, a container-comms stall, or an asyncio propagation gap.
+**Root cause.** `winning-avg-corewars` has `agent.timeout_sec = 3600` in its
+`task.toml` (a 1-hour deadline, not the standard 900 s). Harbor's outer
+`asyncio.wait_for` was correctly set to 3600 s. Our hard-coded
+`RUN_TIMEOUT_SEC = 1800` in `omega_agent.py` created an inner timeout that
+fired at 30 min, raising `RuntimeError` instead of `AgentTimeoutError` and
+cutting the task's runtime in half. The `finally` downloads (events/context)
+survived cancellation correctly in both cases.
 
-Must be fixed **before** deadline injection (item 3): if harbor's timeout
-cannot be trusted to fire reliably, prepending `agent_timeout_sec` to the
-instruction produces uninterpretable results — the deadline would be wrong
-or absent for some tasks.
+**Fix.** Removed `timeout_sec=RUN_TIMEOUT_SEC` from the `exec_as_agent`
+call and deleted the constant. Harbor's per-task timeout is now the sole
+controlling mechanism, which is correct by design.
 
 ### 3. Rabbit-hole affordance — deadline injection
 

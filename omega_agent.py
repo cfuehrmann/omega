@@ -29,7 +29,10 @@ OMEGA_VERSION = "v0.1.0"
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
-RUN_TIMEOUT_SEC = 1800  # 30 minutes per task
+# No Python-side timeout: harbor wraps run() with asyncio.wait_for(timeout=task.agent_timeout_sec),
+# which fires an AgentTimeoutError at the correct per-task deadline.  Adding our own inner
+# timeout_sec would fire earlier for long-deadline tasks (e.g. winning-avg-corewars has 3600 s)
+# and raise RuntimeError instead of AgentTimeoutError, corrupting results.
 
 
 class OmegaAgent(BaseInstalledAgent):
@@ -109,7 +112,7 @@ class OmegaAgent(BaseInstalledAgent):
 
         try:
             await self.exec_as_agent(
-                environment, command=cmd, timeout_sec=RUN_TIMEOUT_SEC
+                environment, command=cmd
             )
         finally:
             # Always pull events.jsonl and context.jsonl to the host logs
