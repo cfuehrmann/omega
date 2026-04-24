@@ -17,6 +17,13 @@ import { join, resolve } from "path";
 // ── paths ────────────────────────────────────────────────────────────────────
 
 const ROOT = resolve(import.meta.dir, "..");
+
+/** Normalise task name to always include the dataset prefix. */
+function normaliseTaskName(raw: string): string {
+  if (raw.includes("/")) return raw; // already qualified
+  return `terminal-bench/${raw}`;
+}
+
 const JOBS_DIR = join(ROOT, "jobs");
 const RESULTS_FILE = join(ROOT, "benchmark-results", "results.jsonl");
 const SKIP_FILE = join(ROOT, "benchmark-results", ".skip-trials");
@@ -121,7 +128,7 @@ for (const jobDir of jobDirs) {
     const record = {
       trial_id:        trialId,
       job_id:          config?.job_id ?? null,
-      task_name:       raw.task_name as string,
+      task_name:       normaliseTaskName(raw.task_name as string),
       ingested_at:     new Date().toISOString(),
       started_at:      startedAt ?? null,
       finished_at:     finishedAt ?? null,
