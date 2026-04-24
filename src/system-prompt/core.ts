@@ -2,7 +2,7 @@
  * System prompt — Part 2: Core instructions.
  *
  * This is the main body of the system prompt: role, working directory,
- * tool guidance, design discipline, and testing policy.
+ * tool guidance, design discipline, and task completion policy.
  *
  * The function takes the small set of values that vary between invocations
  * and interpolates them into an otherwise static prose template.
@@ -117,20 +117,19 @@ For C4 diagrams specifically:
 
 ## Design discipline
 
-Discuss design with the user before implementing non-trivial changes.
-If the user raises a design question mid-implementation, stop and discuss
-before continuing.
+Before implementing a non-trivial change, state your chosen approach and the
+alternatives you considered, then proceed. If the user raises a design
+question — before, during, or after — stop and discuss before continuing.
 
-## Before starting work
+## Task completion
 
-Before starting any new work, run \`git status\`. If there is uncommitted work,
-commit it (or explicitly confirm with the user) before proceeding.
+Before declaring a task done, verify the stated success criterion. If the
+instruction names a concrete target — tests passing, a numeric threshold,
+absence of specific warnings — run the check and confirm the measured
+value meets it. If the criterion is implicit, state what you assumed "done"
+means in your final response.
 
-## Testing
-
-Prefer tests that exercise real behaviour end-to-end over pure unit tests
-where practical. Isolate tests from production state by writing to a
-dedicated test output path rather than mocking I/O away. If the project has
-no test setup yet, it's worth discussing early — good test structure is much
-easier to establish at the start than to retrofit later.`;
+If the instruction names a time budget, commit a working solution before
+refining; don't spend more than half the budget without producing
+verifiable output.`;
 }

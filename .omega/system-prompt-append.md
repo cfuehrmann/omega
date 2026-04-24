@@ -40,7 +40,16 @@ comfortably within the 20 000-char `fetch_url` limit.
 
 All development work goes on `develop`. Merge to `main` when stable.
 
+### Before starting work
+
+Before starting any new work, run `git status`. If there is uncommitted work,
+commit it (or explicitly confirm with the user) before proceeding.
+
 ### Testing
+
+If the project has no test setup yet, it's worth discussing early — good
+test structure is much easier to establish at the start than to retrofit
+later.
 
 - **Never bypass the gate** — no `--no-verify`, no rationalizing failures as
   "flaky". A test that passes alone but fails in the gate is a real bug. Fix it.
