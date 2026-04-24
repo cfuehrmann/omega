@@ -37,27 +37,55 @@ Ordered. First item is the next thing to do.
 
 ### 1. Broaden the failure sample (Phase A) — **next**
 
-Run 15–20 additional tasks from the remaining 65 on Sonnet 4.6, to avoid
-overfitting a single "goal-check" hypothesis to n=3. Favour medium-difficulty
-tasks with concrete success criteria (numeric thresholds, test suites,
-deterministic verification).
+**Scope of this session.** One batch of ~15 previously-unrun tasks from the
+76 oracle-passing set. Ingest, post a short summary, stop. Do not start
+item 2. Do not change Omega's agent behaviour.
 
-```bash
-harbor run -d terminal-bench@2.0 \
-  --agent-import-path omega_agent:OmegaAgent \
-  -m anthropic/claude-sonnet-4-6 \
-  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -n 1 --n-tasks 15
+**Why.** Avoid overfitting a single "goal-check" hypothesis to n=3. Phase A's
+aggregate goal is ≥ 10 failure trials spanning ≥ 4 categories — may span
+more than one batch, but one batch is the unit per session.
 
-bun scripts/bench-ingest.ts
-```
+**How.**
 
-Budget: ≈ $4–6 API spend, ≈ 1–2 h wall-clock. Trials now persist both
+1. **Dedup against already-run tasks.**
+   ```bash
+   jq -r '.task_name' benchmark-results/results.jsonl | sort -u
+   ```
+   Construct an explicit task list for harbor that excludes those — see
+   `harbor run --help` for the flag shape.
+2. **Run the scan.** See [Running benchmarks](#running-benchmarks) below —
+   **harbor buffers all stdout until the run completes**. From an Omega
+   session, use `run_background` + a single `wait_for_output` with pattern
+   `"Results written to|Exception"` and `timeoutMs: 7200000` (2 h). Do NOT
+   re-run or kill just because output is silent.
+3. **Ingest and summarise.**
+   ```bash
+   bun scripts/bench-ingest.ts
+   bun scripts/bench-summary.ts
+   ```
+4. **Post a short summary and stop.** Report: pass/fail split for this
+   batch, whether any new failure shape doesn't match the three existing
+   weakness patterns, any infrastructure issues handled. Then stop.
+
+**Autonomy envelope.**
+
+In scope if they arise:
+- Retry a crashed harbor invocation.
+- Fix an `omega_agent.py` infrastructure bug (missing apt dep, path glitch,
+  timeout setting, etc.). Because the container installs Omega from
+  `git clone --branch v0.1.0 --depth 1`, any fix must also be pushed and
+  the `v0.1.0` tag re-pointed (`git tag -f v0.1.0 && git push --force origin v0.1.0`)
+  so the next harbor run actually gets the fix.
+- Re-run a single timed-out or crashed task.
+
+Out of scope (stop and ask):
+- Changing Omega's agent behaviour (system prompts, tools, loop logic).
+- Starting item 2 or later roadmap items.
+- Revising the weakness hypothesis.
+
+**Budget.** ≈ $4–6 API spend, ≈ 1–2 h wall-clock. Trials now persist both
 `events.jsonl` and `context.jsonl` (context.jsonl added to `omega_agent.py`
 on 2026-04-24) so the full session is replayable and LLM-diagnosable.
-
-**Done when:** ≥ 10 failure trials accumulated, spanning ≥ 4 task categories
-(software-engineering, debugging, data-processing, security at minimum).
 
 ### 2. LLM-driven diagnosis script — **blocked on design review**
 
@@ -160,8 +188,15 @@ harbor run -d terminal-bench@2.0 \
 
 Results land in `jobs/<timestamp>/`. Each trial directory contains
 `agent/events.jsonl`, `agent/context.jsonl`, Harbor's `result.json`, and
-`trial.log`. `harbor` buffers stdout until the run completes — don't expect
-the log to grow live; use a timeout ≥ 30 min.
+`trial.log`.
+
+**harbor buffers all stdout until the run completes.** The log file is
+written in one shot at the end — don't expect it to grow while tasks run.
+From an Omega session, use `run_background` + a single `wait_for_output`
+with `timeoutMs` ≥ 1800000 (30 min for a 1-task run; 7200000 for a 15-task
+batch) and pattern `"Mean:|Results written to|Exception"`. Check the
+result once at the timeout; do not issue follow-up waits or kill the
+process just because output is silent.
 
 ### Ingest results
 
