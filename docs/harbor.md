@@ -199,11 +199,44 @@ average, not a sign of overfitting. Three new failures mapped to existing
 shapes (wrong-answer × 1, fast capability failure × 2). No new failure
 category emerged; roadmap holds.
 
-### 5. LLM-driven diagnosis script — **deferred**
+### 5. Failure-mode investigation across the 76 tried tasks — **next**
 
-Originally next; deprioritised because manual inspection over n=11 already
-yields a clear picture. Reconsider when the failure count exceeds ~25 or if
-the shape starts breaking down.
+We now have 29 failing tasks (and 47 passing) with full event logs at
+`jobs/<phase>/<task>/agent/{events,context}.jsonl`. The headline failure-shape
+taxonomy in this doc was built incrementally during the runs themselves — a
+clean read-through of the actual logs may reveal patterns that the
+incremental view missed.
+
+**Goals.**
+- Find recurring patterns in *how* trials fail (not just *that* they fail) —
+  e.g. shared tool-misuse, shared dead-end approaches, shared blind spots.
+- Identify candidates for cheap fixes (prompt or wrapper level) before
+  spending on the Opus run.
+- Sanity-check `docs/results.md`'s shape taxonomy against actual log content.
+- Surface anything *surprising* in the passing trials too (e.g. tasks that
+  passed by accident, near-misses, suspicious shortcuts).
+
+**Approach — two sub-steps.**
+
+**5a. Read-and-cluster pass** (Sonnet 4.6, medium effort, agentic). Read
+event logs across the 29 failures (and a sample of passes for contrast).
+Produce `docs/failure-analysis.md` containing: (i) a refined shape taxonomy
+with examples, (ii) a list of candidate cheap fixes ranked by expected
+yield, (iii) a list of "interesting" trials worth deeper inspection.
+
+**5b. Per-trial deep-dive** (optional, Opus 4.7, batch script). For trials
+flagged interesting in 5a, run a non-interactive script that sends each
+trial's full event excerpt to Opus 4.7 with a structured diagnosis prompt.
+Opus's reasoning depth pays off when looking at one failure deeply, without
+the context bloat of an agentic loop. Skip if 5a already gave a clear
+picture.
+
+**Stays inside autonomy envelope:** read-only investigation, retries fine,
+`omega_agent.py` infra fixes fine, no agent-behaviour changes.
+
+**Pass criterion.** `docs/failure-analysis.md` exists and either (a) names
+≥ 1 cheap fix worth implementing before the Opus run, or (b) confirms the
+existing taxonomy is sound and nothing cheap is left on the table.
 
 ### 6. Full 76-task run — Phase D — **DONE** (2026-04-24)
 
