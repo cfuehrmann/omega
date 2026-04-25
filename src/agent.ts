@@ -1212,6 +1212,9 @@ export class Agent {
     // Agentic loop: keep going while the model wants to use tools
     let continueLoop = true;
     let activeModel = this.activeModel;
+    // Fix C: recovery counter for pure thinking-budget exhaustion
+    // (stop_reason=max_tokens, no text, no tool_use). Capped at 1 recovery per turn.
+    let maxTokensRecoveries = 0;
     while (continueLoop) {
       continueLoop = false;
 
@@ -1581,6 +1584,41 @@ export class Agent {
         await this.logEvent(truncErrEvent);
         yield truncErrEvent;
         // Do NOT set continueLoop = true — turn ends here.
+      }
+
+      // Fix C — Recovery loop after thinking-budget exhaustion (Shape 1).
+      // When stop_reason=max_tokens arrives with no text and no tool_use blocks,
+      // the entire output budget was consumed by internal thinking. Inject a
+      // synthetic user message asking the model to continue with a short plan
+      // and a tool call. Cap at 1 recovery per turn to avoid an infinite loop.
+      if (
+        toolUseBlocks.length === 0 &&
+        assembledText.length === 0 &&
+        response.stop_reason === "max_tokens"
+      ) {
+        if (maxTokensRecoveries >= 1) {
+          // Cap hit — log agent_error and let continueLoop remain false.
+          const capHitErr = `Thinking-budget exhaustion recovery cap reached: the model consumed the entire ${maxOutputTokens}-token output budget for internal thinking on two consecutive turns. The turn ends here.`;
+          const capHitEv: OmegaEvent = { type: "agent_error", time: now(), error: capHitErr };
+          await this.logEvent(capHitEv);
+          yield capHitEv;
+        } else {
+          maxTokensRecoveries++;
+          // Inject a synthetic user message prompting the model to act.
+          const recoveryMsg =
+            `Your extended thinking exceeded the ${maxOutputTokens}-token output limit and produced` +
+            ` no action. Please continue — write a short plan (\u22645 lines) and immediately call a` +
+            ` tool. Do not re-explore the problem from scratch.`;
+          await this.appendToHistory({ role: "user", content: recoveryMsg });
+          const recoveryEv: OmegaEvent = {
+            type: "agent_error",
+            time: now(),
+            error: `Thinking-budget exhaustion (stop_reason=max_tokens, no output): injecting recovery prompt and retrying (recovery ${maxTokensRecoveries}/1).`,
+          };
+          await this.logEvent(recoveryEv);
+          yield recoveryEv;
+          continueLoop = true;
+        }
       }
 
       // Warn when model context window was exceeded on a non-tool response.

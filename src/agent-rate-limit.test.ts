@@ -896,3 +896,129 @@ describe("context overflow (prompt too long)", () => {
     expect(last.reason).toBe("error");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix C — Recovery loop after thinking-budget exhaustion (Shape 1)
+// stop_reason: max_tokens, empty text, no tool_use blocks
+// ---------------------------------------------------------------------------
+
+describe("thinking-budget exhaustion recovery", () => {
+  /** A stream that simulates a pure thinking-budget exhaustion:
+   *  stop_reason=max_tokens, no text output, no tool_use blocks.
+   */
+  function makeMaxTokensExhaustedStream(): ReturnType<CreateMessageStream> {
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+        // Only a message_delta with max_tokens stop reason — no content blocks
+        yield {
+          type: "message_delta",
+          context_management: null,
+          delta: { stop_reason: "max_tokens", stop_sequence: null, stop_details: null, container: null },
+          usage: { output_tokens: 64000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null },
+        };
+        yield { type: "message_stop" };
+      },
+      finalMessage: async () => ({
+        id: "msg_exhausted",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        container: null,
+        context_management: null,
+        content: [],
+        stop_reason: "max_tokens",
+        stop_sequence: null,
+        usage: { input_tokens: 100, output_tokens: 64000 },
+      } as any),
+    };
+  }
+
+  /** A normal end_turn stream with text "done". */
+  function makeSuccessStream(): ReturnType<CreateMessageStream> {
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "done" } };
+        yield { type: "content_block_stop", index: 0 };
+        yield {
+          type: "message_delta",
+          context_management: null,
+          delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null },
+          usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null },
+        };
+        yield { type: "message_stop" };
+      },
+      finalMessage: async () => ({
+        id: "msg_ok",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        container: null,
+        context_management: null,
+        content: [{ type: "text", text: "done", citations: null }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      } as any),
+    };
+  }
+
+  it("recovery fires: emits agent_error, makes second LLM call, final text is 'done'", async () => {
+    let callCount = 0;
+
+    const mockProvider: CreateMessageStream = () => {
+      callCount++;
+      if (callCount === 1) return makeMaxTokensExhaustedStream();
+      return makeSuccessStream();
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    // A second LLM call was made (recovery fired)
+    expect(callCount).toBe(2);
+
+    // An agent_error recovery event was emitted
+    const agentErrors = events.filter(e => e.type === "agent_error") as any[];
+    expect(agentErrors.length).toBeGreaterThanOrEqual(1);
+    const recoveryError = agentErrors.find((e: any) =>
+      e.error.includes("thinking") || e.error.includes("max_tokens") || e.error.includes("token")
+    );
+    expect(recoveryError).toBeDefined();
+
+    // Turn ended cleanly with end_turn
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_end");
+
+    // Final text is "done" from the second call
+    const llmResponses = events.filter(e => e.type === "llm_response") as any[];
+    const lastResponse = llmResponses[llmResponses.length - 1];
+    expect(lastResponse.text).toBe("done");
+  });
+
+  it("cap respected: two consecutive max_tokens responses — second emits cap-hit agent_error, no third LLM call", async () => {
+    let callCount = 0;
+
+    const mockProvider: CreateMessageStream = () => {
+      callCount++;
+      return makeMaxTokensExhaustedStream();
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    // Only two calls made — cap stops a third
+    expect(callCount).toBe(2);
+
+    // At least two agent_error events (one for recovery, one for cap)
+    const agentErrors = events.filter(e => e.type === "agent_error") as any[];
+    expect(agentErrors.length).toBeGreaterThanOrEqual(2);
+
+    // Turn ends (not necessarily with turn_interrupted — the turn just stops
+    // without setting continueLoop; check it's either turn_end or turn_interrupted)
+    const last = events[events.length - 1] as any;
+    expect(["turn_end", "turn_interrupted"]).toContain(last.type);
+  });
+});
