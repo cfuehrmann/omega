@@ -9,7 +9,7 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 
 - **Model under evaluation:** `claude-sonnet-4-6`
 - **Tasks attempted:** 76 / 76 oracle-passing TB 2.0 tasks (complete)
-- **Pass rate:** 53 / 76 = **70 %** (leaderboard-comparable number)
+- **Pass rate:** 54 / 76 = **71 %** (leaderboard-comparable number)
 - **API spend to date:** ≈ $28.30
 - **Results data:** `benchmark-results/results.jsonl`, `docs/results.md`
 - **Failure analysis:** `docs/failure-analysis.md`
@@ -137,7 +137,7 @@ Remaining Shape 3 failures carry forward to Fix F below.
 
 ---
 
-#### Fix F — CWD fix in omega_agent.py — **landed, needs smoke test**
+#### Fix F — CWD fix in omega_agent.py — **DONE**
 
 **Root cause.** `omega_agent.py` ran Omega with `cd /home/agent/omega`, making
 `process.cwd()` the install directory. This caused two problems simultaneously:
@@ -162,31 +162,35 @@ agent defaults to writing files in the task directory.
 - `## Task completion` in `core.ts` extended: conditional submission-state
   verification + relative-path-assumptions warning.
 
-**Smoke test (next step):** Run `extract-elf` with v0.1.2. If it flips (reward=1),
-the CWD fix works. Then re-run `polyglot-rust-c` and `polyglot-c-py` to assess
-whether the remaining Shape 3 tasks are resolved.
+**Smoke test result (job: fix-f-smoke-test, 2026-04-25):**
 
-**Expected yield:** 1–2 tasks (`extract-elf` most likely; `polyglot-rust-c` depends
-on whether the agent now applies the submission-state check; `polyglot-c-py` is
-blocked on infra reliability).
+| Task | Before | After | Flip? | Root cause |
+|---|---|---|---|---|
+| `extract-elf` | 0.0 | 1.0 | ✅ | CWD fix resolved wrong-directory issue |
+| `polyglot-rust-c` | 0.0 | 0.0 | ✗ | Agent writes to `/app/polyglot/` correctly now, but still leaves `cmain`/`rmain` after compilation; verifier asserts `['main.rs']` only |
+| `polyglot-c-py` | 0.0 | 0.0 | ✗ | DNS failure in verifier container (uv install from GitHub fails) — infra, not agent |
+
+**1 task flipped.** New leaderboard metric: **54/76 = 71 %**.
+
+`polyglot-rust-c` still blocked by binary cleanup: the submission-state check
+prompt is not strong enough on Sonnet 4.6 to consistently trigger cleanup of
+compiled artifacts before submission. This may resolve under Opus 4.7 (item 7)
+given its stronger instruction-following, or may need a dedicated Fix G targeting
+the binary-cleanup pattern explicitly.
+
+`polyglot-c-py` is a persistent infra flake (bun.sh DNS and GitHub DNS both
+transient-fail in some containers). Likely resolves with a retry; not an agent issue.
 
 ---
 
-#### Next session
+---
 
-**Model/effort for Omega (the coding agent):** `claude-sonnet-4-6`, `medium`.
+**Item 6 complete.** Fix F validated (extract-elf flipped). Proceeding to item 7.
 
-**Instruction:**
-> Run the Fix F smoke test from docs/harbor.md item 6: run `extract-elf` with
-> harbor (v0.1.2 is already tagged and pushed), ingest the result, and report
-> whether it flipped. If it flips, continue with `polyglot-rust-c` and
-> `polyglot-c-py`. Update harbor.md with the outcome and proceed to item 7 if
-> the smoke test passes.
-
-### 7 — Opus 4.7 run — **planned** (after Fix F validated)
+### 7 — Opus 4.7 run — **in progress** (job: `opus-4-7-xhigh-76`)
 
 Full 76 tasks with `claude-opus-4-7` at `xhigh` effort. Compare against Sonnet
-4.6 (70 %) to isolate scaffolding contribution from model contribution.
+4.6 (71 %) to isolate scaffolding contribution from model contribution.
 
 Shape 1 (thinking-budget exhaustion) largely disappears on Opus (128k ceiling).
 Shape 2 may partially improve (Opus more capable per turn, fewer turns needed).
