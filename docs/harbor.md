@@ -31,7 +31,7 @@ Seven shapes across 29 failing tasks / 40 failing trials:
 Shape 1 is a Sonnet 4.6-specific scaffolding issue: the 64k output budget covers
 thinking + text + tool arguments in generation order. On hard planning tasks Claude
 can exhaust the full budget on thinking alone, leaving zero tokens for any output.
-The recovery loop (Fix C below) addresses this.
+The recovery loop (Fix C) addresses this.
 
 ## Roadmap
 
@@ -45,95 +45,86 @@ The recovery loop (Fix C below) addresses this.
 
 ### 6 — Implement and validate cheap fixes — **in progress**
 
-Five fixes, ordered by yield × cost. Expected total: **≥ 3 tasks flip** → proceed to item 7.
-
-#### Fix A — Delete compiled artifacts before submitting — **pending**
-
-**Affected tasks:** `polyglot-c-py`, `polyglot-rust-c` (Shape 3)
-
-Both tasks fail because the agent compiles to verify, then leaves test binaries
-alongside the source. The verifier expects exactly one file.
-
-**Implementation.** Add to the Task-completion section of the system prompt
-(`.omega/system-prompt-append.md`):
-> After testing compiled code, remove all compiled binaries, object files, and
-> build artifacts from the submission directory. Before declaring done, list the
-> submission directory to confirm only the expected output files remain.
-
-**Expected yield:** 2 tasks flip (polyglot-c-py, polyglot-rust-c).
-
----
-
-#### Fix B — Verify output at the exact specified path — **pending**
-
-**Affected tasks:** `extract-elf` (confirmed), `sqlite-with-gcov` (partial) (Shape 3)
-
-Agent writes to `/home/agent/omega/` instead of `/app/`, self-verifies against
-the wrong location, and declares success.
-
-**Implementation.** Extend Task-completion section:
-> When the task specifies an output path (e.g. `/app/extract.js`), confirm
-> the file exists at that exact absolute path — not relative to the working
-> directory — before declaring done.
-
-**Expected yield:** 1 task firm (`extract-elf`).
-
----
-
-#### Fix C — Recovery loop after thinking-budget exhaustion — **DONE** (2026-05-xx)
-
-**Affected tasks:** `winning-avg-corewars`, `dna-assembly`, possibly
-`feal-linear-cryptanalysis` (Shape 1)
+#### Fix C — Recovery loop after thinking-budget exhaustion — **DONE**
 
 When `stop_reason=max_tokens` arrives with no text and no tool_use blocks, the
-agent now injects a synthetic user message asking the model to write a short plan
+agent injects a synthetic user message asking the model to write a short plan
 and call a tool, then retries. Capped at 1 recovery per turn. Implemented in
-`src/agent.ts`; two tests added to `src/agent-rate-limit.test.ts`.
+`src/agent.ts`; two tests in `src/agent-rate-limit.test.ts`.
 
-**Expected yield:** 1–2 tasks.
-
----
-
-#### Fix D — Skip the distribution-search false negative — **pending**
-
-**Root cause.** Verifier container can't reach `astral.sh`; `uvx` never installs;
-reward = 0.0 for infrastructure reasons, not agent failure.
-
-**Implementation.**
-```bash
-echo "<trial-uuid>" >> benchmark-results/.skip-trials
-```
-Requires Fix B to also land before re-run registers correctly (agent wrote to
-wrong path too).
-
-**Expected yield:** 1 task eligible for re-run.
+**Expected yield:** 1–2 tasks (`winning-avg-corewars`, `dna-assembly`).
 
 ---
 
-#### Fix E — Pre-completion checklist (subsumes A + B) — **pending**
+#### Fix E — Submission-state verification — **next**
 
-Replace the individual A/B prompt additions with a single structured checklist
-in the Task-completion section:
+**Affected tasks:** `polyglot-c-py`, `polyglot-rust-c`, `extract-elf` (Shape 3)
 
-> **Before declaring done:**
-> 1. List all files in the output/submission directory and confirm only the
->    required outputs are present (no compiled binaries, no temporaries).
-> 2. Confirm each output file exists at the exact absolute path specified in
->    the task description.
-> 3. Run the code or command that produces the output one final time in a
->    clean state to confirm reproducibility.
+**Root cause (two variants, same underlying gap):**
 
-**Expected yield:** Prevents future Shape 3 recurrences across any task.
+- *Wrong directory:* The agent's working directory is `/home/agent/omega/`. When
+  a task says "write to `/app/extract.js`", the agent writes there, tests it
+  successfully against that path — then declares done. The verifier checks `/app/`
+  and finds nothing. Confirmed for `extract-elf`; likely for `distribution-search`.
+
+- *Dirty submission directory:* The agent compiles its polyglot source to verify
+  it, which is correct. But it never cleans up the binaries. The verifier does an
+  exact directory listing and fails — `['cmain', 'main.rs', 'rmain']` instead of
+  `['main.rs']`.
+
+**Why not a rule-based fix.** A rule like "delete compiled binaries" would be
+benchmark overfitting and could be harmful in general use. The real principle is
+simpler and more agnostic: **the task description specifies the required final
+state of the submission; the agent should verify against that spec, not against
+what it happens to have produced.** The model already has the task description;
+it just needs to be prompted to re-read it at the end and check.
+
+**Scope note.** This only applies to the task's designated submission directory
+(typically `/app/` or a subdirectory of it). The agent's own session artifacts —
+`events.jsonl`, `context.jsonl`, working files in `/home/agent/omega/` — are in
+a different location and are never in scope.
+
+**Implementation.** Add to the Task-completion section of `.omega/system-prompt-append.md`
+(which is injected into the Harbor agent's system prompt via `omega_agent.py`):
+
+> **Before declaring done, verify the submission state:**
+> Re-read the task description's output requirements. Check that the submission
+> directory contains exactly what the task asks for — no more, no less. In
+> particular: if the task names a specific output path, confirm the file exists
+> at that exact absolute path; if the task specifies which files should be
+> present, list the directory and compare.
+
+This is deliberately judgment-based. The model reads the task spec and decides
+what "correct final state" means for that task — no hardcoded rules about file
+types or directories.
+
+**Expected yield:** 3 tasks (`polyglot-c-py`, `polyglot-rust-c`, `extract-elf`).
+
+---
+
+#### Fix D — distribution-search false negative — **deferred**
+
+The verifier container failed to reach `astral.sh` (TCP connection error) during
+the original run, so `uvx` never installed and the verifier never ran. The agent
+did find the correct solution (KL divergence = 10.000, error = 1.74×10⁻¹²), so
+`reward=0.0` is a false negative.
+
+**Why deferred.** The network failure is likely transient (a container DNS
+hiccup), not systematic — we can't tell from one trial. Additionally, the agent
+also wrote its output to the wrong directory, so a re-run would need Fix E to
+land first to have any chance of passing. The right action is: apply Fix E, then
+re-run `distribution-search` and let the result resolve both questions at once.
+If the verifier fails again with the same curl error, investigate further then.
 
 ---
 
 #### Validation plan
 
-After landing Fixes A/B/D/E:
+After landing Fix E:
 
-1. Re-run `polyglot-c-py`, `polyglot-rust-c`, `extract-elf` — expect all 3 to flip.
-2. Re-run `distribution-search` — expect to flip (Fix B must also be applied).
-3. Re-run `winning-avg-corewars`, `dna-assembly` — expect 1–2 to flip.
+1. Re-run `polyglot-c-py`, `polyglot-rust-c`, `extract-elf` — expect all 3 to flip (Fix E).
+2. Re-run `winning-avg-corewars`, `dna-assembly` — expect 1–2 to flip (Fix C).
+3. Re-run `distribution-search` — resolves Fix D question simultaneously.
 
 **Pass criterion:** ≥ 3 tasks flip → proceed to item 7.
 
@@ -144,7 +135,7 @@ Full 76 tasks with `claude-opus-4-7` at `xhigh` effort. Compare against Sonnet
 
 Shape 1 (thinking-budget exhaustion) largely disappears on Opus (128k ceiling).
 Shape 2 may partially improve (Opus more capable per turn, fewer turns needed).
-Shapes 3, 5, 6 should be resolved by item 6.
+Shape 3 should be resolved by Fix E.
 
 Estimated budget: ≈ $100–150 at Opus 4.7 pricing ($5/$25 per MTok).
 
