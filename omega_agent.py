@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
 
-OMEGA_VERSION = "v0.1.1"
+OMEGA_VERSION = "v0.1.2"
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
@@ -158,8 +158,8 @@ class OmegaAgent(BaseInstalledAgent):
 
         flags = self.build_cli_flags()
         cmd = (
-            f"cd {OMEGA_INSTALL_DIR}"
-            f" && ~/.bun/bin/bun run src/cli.ts run"
+            f"cd /app"
+            f" && ~/.bun/bin/bun run {OMEGA_INSTALL_DIR}/src/cli.ts run"
             f" --instruction {shlex.quote(instruction)}"
             f" --model {shlex.quote(self._parsed_model_name)}"
             f" --session-dir {OMEGA_SESSION_DIR}"

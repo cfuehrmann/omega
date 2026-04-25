@@ -133,24 +133,69 @@ Run job `fix-e-validation` (2026-04-25). Results:
 
 **2 tasks flipped.** Pass criterion (≥ 3) not met. New leaderboard metric: **53/76 = 70 %**.
 
-Remaining Shape 3 failures (`extract-elf`, `polyglot-rust-c`, `polyglot-c-py`) are
-not resolved by Fix E alone — the judgment-based prompt is insufficient when the
-task description is ambiguous about the output path, or when the model doesn't
-connect cleanup to the "exact files" check. These carry forward to item 7.
+Remaining Shape 3 failures carry forward to Fix F below.
 
-### 7 — Opus 4.7 run — **planned**
+---
+
+#### Fix F — CWD fix in omega_agent.py — **landed, needs smoke test**
+
+**Root cause.** `omega_agent.py` ran Omega with `cd /home/agent/omega`, making
+`process.cwd()` the install directory. This caused two problems simultaneously:
+
+1. *Wrong working directory:* The system prompt told the agent its CWD was
+   `/home/agent/omega`, so files written to relative or CWD-relative paths
+   landed there instead of `/app/`. This is the structural cause of all Shape 3
+   wrong-directory failures.
+2. *Polluted system prompt:* `.omega/system-prompt-append.md` was loaded from the
+   cloned repo, injecting Omega development conventions (bun test, just gate,
+   SolidJS, branch policy) into the context of every benchmark task — noise with
+   no relevance to the task.
+
+**Fix.** `omega_agent.py` now runs `cd /app && bun run /home/agent/omega/src/cli.ts`.
+With `process.cwd()` = `/app/`: the system prompt names the right directory, no
+`.omega/system-prompt-append.md` exists there (so nothing is appended), and the
+agent defaults to writing files in the task directory.
+
+**Additional prompt improvements landed simultaneously (v0.1.2):**
+- `## Bug fixes` (red-green testing) moved from `system-prompt-append.md` to
+  `core.ts` — it is universal good practice, not Omega-project-specific.
+- `## Task completion` in `core.ts` extended: conditional submission-state
+  verification + relative-path-assumptions warning.
+
+**Smoke test (next step):** Run `extract-elf` with v0.1.2. If it flips (reward=1),
+the CWD fix works. Then re-run `polyglot-rust-c` and `polyglot-c-py` to assess
+whether the remaining Shape 3 tasks are resolved.
+
+**Expected yield:** 1–2 tasks (`extract-elf` most likely; `polyglot-rust-c` depends
+on whether the agent now applies the submission-state check; `polyglot-c-py` is
+blocked on infra reliability).
+
+---
+
+#### Next session
+
+**Model/effort for Omega (the coding agent):** `claude-sonnet-4-6`, `medium`.
+
+**Instruction:**
+> Run the Fix F smoke test from docs/harbor.md item 6: run `extract-elf` with
+> harbor (v0.1.2 is already tagged and pushed), ingest the result, and report
+> whether it flipped. If it flips, continue with `polyglot-rust-c` and
+> `polyglot-c-py`. Update harbor.md with the outcome and proceed to item 7 if
+> the smoke test passes.
+
+### 7 — Opus 4.7 run — **planned** (after Fix F validated)
 
 Full 76 tasks with `claude-opus-4-7` at `xhigh` effort. Compare against Sonnet
-4.6 (67 %) to isolate scaffolding contribution from model contribution.
+4.6 (70 %) to isolate scaffolding contribution from model contribution.
 
 Shape 1 (thinking-budget exhaustion) largely disappears on Opus (128k ceiling).
 Shape 2 may partially improve (Opus more capable per turn, fewer turns needed).
-Shape 3 should be resolved by Fix E.
+Shape 3 should be resolved by Fix F (CWD fix).
 
 Estimated budget: ≈ $100–150 at Opus 4.7 pricing ($5/$25 per MTok).
 
 **Reference baseline.** Claude Code + Sonnet 4.5 ≈ 50 % on TB 2.0. Omega +
-Sonnet 4.6 at 67 % clears that by ~17 pp.
+Sonnet 4.6 at 70 % clears that by ~20 pp.
 
 ### 8 — SWE-Bench Verified — **later**
 

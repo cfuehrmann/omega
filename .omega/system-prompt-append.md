@@ -102,15 +102,6 @@ is authoritative and all others conform to it. For Omega:
 
 Rule: update the UI to match the log — never the log to match the UI.
 
-### Bug fixes — red-green testing
-
-When fixing a bug, write a failing test that reproduces it first (red), then
-fix the code so the test passes (green), wherever this is practical. Practical
-means: the bug is deterministic, the failure mode is directly observable in a
-test, and writing the test doesn't cost more than the fix itself. Skip red-green
-when the bug is a one-liner typo or the reproduction requires complex
-infrastructure that already exists only in production.
-
 ### Tricky bugs — ask for session logs
 
 If you have tried two or more approaches on the same bug and are still stuck,
@@ -118,13 +109,5 @@ or if you suspect you may be going in circles, **stop and ask the user whether
 a prior session log is relevant** before trying another approach. Only the user
 can make the connection between a symptom and the right log.
 
-## Task completion
-
-**Before declaring done, verify the submission state:**
-Re-read the task description's output requirements. Check that the submission
-directory contains exactly what the task asks for — no more, no less. In
-particular: if the task names a specific output path, confirm the file exists
-at that exact absolute path; if the task specifies which files should be
-present, list the directory and compare.
 
 

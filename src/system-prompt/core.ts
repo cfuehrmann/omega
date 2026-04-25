@@ -121,6 +121,15 @@ Before implementing a non-trivial change, state your chosen approach and the
 alternatives you considered, then proceed. If the user raises a design
 question — before, during, or after — stop and discuss before continuing.
 
+## Bug fixes
+
+When fixing a bug, write a failing test that reproduces it first (red), then
+fix the code so the test passes (green), wherever this is practical. Practical
+means: the bug is deterministic, the failure mode is directly observable in a
+test, and writing the test doesn't cost more than the fix itself. Skip red-green
+when the bug is a one-liner typo or the reproduction requires complex
+infrastructure that already exists only in production.
+
 ## Task completion
 
 Before declaring a task done, verify the stated success criterion. If the
@@ -131,5 +140,12 @@ means in your final response.
 
 If the instruction names a time budget, commit a working solution before
 refining; don't spend more than half the budget without producing
-verifiable output.`;
+verifiable output.
+
+If the task names a specific output path or submission directory, verify the
+final state matches the spec before declaring done. Be careful with
+relative-path assumptions — a path that resolves correctly from your current
+working directory may not be the location the task requires. If the task
+specifies which files should be present, list the directory and compare
+against the spec.`;
 }
