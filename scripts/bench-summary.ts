@@ -162,7 +162,10 @@ const dline = "═".repeat(W);
 
 const attempted = [...byTask.values()];
 const oracleAttempted = attempted.filter((s) => oraclePassingNames.has(s.task_name));
-const totalPasses = oracleAttempted.reduce((a, s) => a + s.passes, 0);
+// totalTrialPasses: counts every reward=1 trial (can exceed #tasks for multi-trial tasks)
+const totalTrialPasses = oracleAttempted.reduce((a, s) => a + s.passes, 0);
+// totalPassingTasks: number of distinct tasks with ≥1 pass — the correct leaderboard metric
+const totalPassingTasks = oracleAttempted.reduce((a, s) => a + (s.passes > 0 ? 1 : 0), 0);
 const totalAttempts = oracleAttempted.reduce((a, s) => a + s.attempts, 0);
 const totalTasks = oraclePassing.length; // 76
 
@@ -187,8 +190,11 @@ console.log(`  Tasks in scope:      ${totalTasks}  (oracle-passing)`);
 console.log(`  Tasks attempted:     ${oracleAttempted.length} / ${totalTasks}  (${pct(oracleAttempted.length, totalTasks)})`);
 console.log(`  Total trials run:    ${totalAttempts}`);
 if (totalAttempts > 0) {
-  console.log(`  Pass rate (tried):   ${totalPasses} / ${totalAttempts}  (${pct(totalPasses, totalAttempts)})`);
-  console.log(`  Pass rate (all 76):  ${totalPasses} / ${totalTasks}  (${pct(totalPasses, totalTasks)})  ← leaderboard metric`);
+  console.log(`  Pass rate (tried):   ${totalTrialPasses} / ${totalAttempts}  (${pct(totalTrialPasses, totalAttempts)})`);
+  console.log(`  Tasks passed (≥1):   ${totalPassingTasks} / ${totalTasks}  (${pct(totalPassingTasks, totalTasks)})  ← leaderboard metric`);
+  if (totalTrialPasses !== totalPassingTasks) {
+    console.log(`  (trial passes=${totalTrialPasses} vs unique passing tasks=${totalPassingTasks}; ${totalTrialPasses - totalPassingTasks} extra trial passes from multi-trial tasks)`);
+  }
   console.log(`  Estimated API cost:  $${totalCost.toFixed(3)}`);
 }
 

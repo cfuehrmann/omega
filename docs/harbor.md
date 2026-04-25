@@ -7,12 +7,18 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 
 ## Status
 
-- **Model under evaluation:** `claude-sonnet-4-6`
-- **Tasks attempted:** 76 / 76 oracle-passing TB 2.0 tasks (complete)
-- **Pass rate:** 54 / 76 = **71 %** (leaderboard-comparable number)
-- **API spend to date:** ≈ $28.30
+- **Models evaluated:** `claude-sonnet-4-6` (medium effort), `claude-opus-4-7` (xhigh effort)
+- **Tasks attempted:** 76 / 76 oracle-passing TB 2.0 tasks (both models)
+- **Sonnet 4.6 pass rate (unique tasks, best-of-N):** 50 / 76 = **66 %**
+- **Opus 4.7 pass rate (unique tasks, 1-shot):** 50 / 76 = **66 %**
+- **API spend to date:** ≈ $58.13 (Sonnet $28.90 + Opus $29.23)
 - **Results data:** `benchmark-results/results.jsonl`, `docs/results.md`
 - **Failure analysis:** `docs/failure-analysis.md`
+
+> **Reporting correction:** `bench-summary.ts` was computing *total trial passes / 76* rather than
+> *unique task passes / 76*, inflating the Sonnet figure by 4 (cobol-modernization,
+> crack-7z-hash, fix-git, log-summary-date-ranges each ran twice and passed both times).
+> The correct Sonnet metric is **50/76 = 66 %**, not 54/76 = 71 %. Fixed in this session.
 
 ### Failure-shape taxonomy
 
@@ -43,7 +49,7 @@ The recovery loop (Fix C) addresses this.
 - **4** Fresh 12-task run: 9/12 (75 %). Leaderboard metric established at 67 %.
 - **5a** Failure-mode investigation complete. Seven shapes found. See `docs/failure-analysis.md`.
 
-### 6 — Implement and validate cheap fixes — **in progress**
+### 6 — Implement and validate cheap fixes — **DONE**
 
 #### Fix C — Recovery loop after thinking-budget exhaustion — **DONE**
 
@@ -187,23 +193,82 @@ transient-fail in some containers). Likely resolves with a retry; not an agent i
 
 **Item 6 complete.** Fix F validated (extract-elf flipped). Proceeding to item 7.
 
-### 7 — Opus 4.7 run — **in progress** (job: `opus-4-7-xhigh-76`)
+### 7 — Opus 4.7 run — **DONE** (job: `opus-4-7-xhigh-76`, 3h 22m, $29.23)
 
-Full 76 tasks with `claude-opus-4-7` at `xhigh` effort. Compare against Sonnet
-4.6 (71 %) to isolate scaffolding contribution from model contribution.
+#### Results summary
 
-Shape 1 (thinking-budget exhaustion) largely disappears on Opus (128k ceiling).
-Shape 2 may partially improve (Opus more capable per turn, fewer turns needed).
-Shape 3 should be resolved by Fix F (CWD fix).
+| Metric | Sonnet 4.6 medium | Opus 4.7 xhigh |
+|---|---|---|
+| Single-shot pass rate | 42/76 = **55 %** | 50/76 = **66 %** |
+| Best-of-N pass rate | 50/76 = **66 %** | 50/76 = **66 %** (1 trial each) |
+| API spend | $28.90 | $29.23 |
+| Runtime | multiple runs | 3h 22m |
 
-Estimated budget: ≈ $100–150 at Opus 4.7 pricing ($5/$25 per MTok).
+**Key finding: on a fair single-shot comparison, Opus 4.7 xhigh beats Sonnet 4.6 medium by ~11 pp.
+The headline score for both is 50/76 = 66 % when comparing best-of-N for Sonnet vs 1-shot for Opus.**
+
+#### Flip matrix (tasks solved by one model but not the other)
+
+**Opus passes, Sonnet never passes (10 tasks):**
+`count-dataset-tokens`, `dna-insert`, `feal-linear-cryptanalysis`, `gpt2-codegolf`,
+`mteb-retrieve`, `path-tracing-reverse`, `protein-assembly`, `regex-chess`,
+`sanitize-git-repo`, `sqlite-with-gcov`
+
+**Sonnet passes (best-of-N), Opus fails (10 tasks) — by cause:**
+
+| Task | Opus failure | Category |
+|---|---|---|
+| `mailman` | AgentSetupTimeoutError | Infra |
+| `prove-plus-comm` | bun.sh DNS failure (82s runtime) | Infra |
+| `chess-best-move` | AgentTimeoutError (987s, 900s limit) | xhigh too slow |
+| `tune-mjcf` | AgentTimeoutError (1006s, 900s limit) | xhigh too slow |
+| `winning-avg-corewars` | turn_interrupted / server error after 1541s | High variance |
+| `distribution-search` | reward=0.0, no exception | High variance (Sonnet needed retry) |
+| `qemu-startup` | reward=0.0 — verifier test_version failed | Model quality |
+| `configure-git-webserver` | reward=0.0 — test_hello_html_exists failed | Model quality |
+| `headless-terminal` | reward=0.0 — 1/7 tests failed | Near-miss |
+| `openssl-selfsigned-cert` | reward=0.0 — 1/6 tests failed | Near-miss |
+
+**Both fail (16 tasks):** `adaptive-rejection-sampler`, `cancel-async-tasks`, `dna-assembly`¹,
+`filter-js-from-html`¹, `gcode-to-text`, `largest-eigenval`, `make-doom-for-mips`,
+`make-mips-interpreter`, `mteb-leaderboard`, `path-tracing`, `polyglot-c-py`,
+`polyglot-rust-c`, `query-optimize`, `raman-fitting`, `video-processing`.
+
+¹ Opus bun DNS/install failure — likely passes on retry.
+
+#### xhigh effort and 900-second tasks
+
+Five tasks hit `AgentTimeoutError` for Opus that Sonnet (medium effort) completed within
+the 900 s budget: `chess-best-move`, `tune-mjcf`, `raman-fitting`, `gcode-to-text`,
+`path-tracing`. Extended thinking at xhigh consumes 2–4× more tokens per call, eating
+into the total task time. `gpt2-codegolf` also got `AgentTimeoutError` but still scored
+reward=1.0 (completed before harbour killed the process). **A `high` or `max` effort
+re-run of the 5 timeout tasks would likely recover 2–4 of them.**
+
+#### Adjusted Opus estimate
+
+| Adjustment | Tasks | Adjusted score |
+|---|---|---|
+| Confirmed infra failures (mailman, prove-plus-comm) | +2 | 52/76 = 68 % |
+| + xhigh timeout tasks (chess-best-move, tune-mjcf) | +2 | 54/76 = 71 % |
+
+Bottom line: Opus 4.7 is genuinely stronger than Sonnet 4.6 per-shot. The raw
+50/76 under-states Opus due to infrastructure noise and an over-eager effort setting
+for short-timeout tasks.
 
 **Reference baseline.** Claude Code + Sonnet 4.5 ≈ 50 % on TB 2.0. Omega +
-Sonnet 4.6 at 70 % clears that by ~20 pp.
+Sonnet 4.6 (best-of-N) at 66 % and Omega + Opus 4.7 (1-shot) at 66 %+ clear
+that by ~16 pp.
 
-### 8 — SWE-Bench Verified — **later**
+### 8 — Follow-up Opus targeted re-run — **planned**
 
-Same Harbor wrapper, one flag change. 500 tasks, ~$300 budget. Only after item 7.
+Re-run the xhigh-timeout tasks (chess-best-move, tune-mjcf, raman-fitting, gcode-to-text)
+with `max` or `high` effort, plus the confirmed infra-flaky tasks (prove-plus-comm,
+dna-assembly, filter-js-from-html, mailman, winning-avg-corewars). Expected +2–5 tasks.
+
+### 9 — SWE-Bench Verified — **later**
+
+Same Harbor wrapper, one flag change. 500 tasks, ~$300 budget.
 
 ## Running benchmarks
 
