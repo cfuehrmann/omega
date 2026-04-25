@@ -118,4 +118,13 @@ or if you suspect you may be going in circles, **stop and ask the user whether
 a prior session log is relevant** before trying another approach. Only the user
 can make the connection between a symptom and the right log.
 
+## Task completion
+
+**Before declaring done, verify the submission state:**
+Re-read the task description's output requirements. Check that the submission
+directory contains exactly what the task asks for — no more, no less. In
+particular: if the task names a specific output path, confirm the file exists
+at that exact absolute path; if the task specifies which files should be
+present, list the directory and compare.
+
 
