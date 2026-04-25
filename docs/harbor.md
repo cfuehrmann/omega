@@ -209,6 +209,7 @@ the shape starts breaking down.
 
 **Result: 51 / 76 = 67 %** on Sonnet 4.6. $24.67 cumulative spend.
 Jobs: `jobs/phaseD-remaining-42/` + `jobs/phaseD-infra-retry/`.
+Full per-task breakdown and category analysis: **`docs/results.md`**.
 
 **Category breakdown:**
 
