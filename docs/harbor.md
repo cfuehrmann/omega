@@ -190,15 +190,20 @@ if (
 }
 ```
 
-Injected message:
-> Your extended thinking ran over the 64 000-token output limit and produced no
-> action. Please continue — write a short plan (≤ 5 lines) and immediately call
-> a tool. Do not re-explore the problem from scratch.
+Injected message (uses the model's actual `maxOutputTokens` at runtime, not a
+hardcoded value — so it reads correctly for any model ceiling):
+> Your extended thinking exceeded the {maxOutputTokens}-token output limit and
+> produced no action. Please continue — write a short plan (≤ 5 lines) and
+> immediately call a tool. Do not re-explore the problem from scratch.
 
 **Expected yield:** 1–2 tasks. `winning-avg-corewars` had completed 20 tool calls of
 research before the cutoff; with recovery it likely writes a warrior. `regex-chess` is
-probably unreachable on Sonnet 4.6 regardless. **Note:** this shape disappears on
-Opus 4.7 (128k ceiling), so Fix C matters only for the Sonnet score.
+probably unreachable on Sonnet 4.6 regardless.
+
+The mechanism is model-agnostic: it triggers on any model that returns
+`stop_reason: max_tokens` with no text and no tool calls. Opus 4.7's 128k ceiling
+makes the shape unlikely there, but not impossible on extreme tasks — the recovery
+loop is always active regardless of model.
 
 ---
 
