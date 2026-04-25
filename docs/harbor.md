@@ -173,11 +173,21 @@ task-specific; may need a second look.
 
 **Affected tasks:** `winning-avg-corewars`, `dna-assembly`, and possibly
 `feal-linear-cryptanalysis`; `regex-chess` unlikely (may be computationally infeasible).
-**Root cause.** When `stop_reason === "max_tokens"` with no tool_use blocks and no
-text, `agent.ts` silently ends the turn. The model had useful partial context and a
-full plan, but no chance to act on it.
 
-**Implementation.** In `agent.ts`, add a branch for the pure-thinking-exhaustion case:
+**Root cause.** When `stop_reason === "max_tokens"` arrives with no tool_use blocks
+and no text — the entire output budget consumed by thinking — `agent.ts` falls through
+silently. `continueLoop` is never set, the turn ends, the verifier finds an empty `/app`.
+
+**Contrast with existing handling.** The code already handles `(toolUseBlocks.length > 0
+&& max_tokens)` around line 1530: it injects synthetic tool-error results and logs an
+`agent_error`. The pure-thinking-exhaustion case `(toolUseBlocks.length === 0 &&
+assembledText.length === 0 && max_tokens)` is what's missing.
+
+**Implementation spec.**
+
+1. Add `let maxTokensRecoveries = 0` before the `while (continueLoop)` loop.
+
+2. After the existing `(toolUseBlocks.length > 0 && max_tokens)` branch, add:
 
 ```typescript
 if (
@@ -185,16 +195,41 @@ if (
   assembledText.length === 0 &&
   response.stop_reason === "max_tokens"
 ) {
-  // Increment a per-turn recovery counter; cap at 2 to prevent infinite loops.
-  // Inject a corrective user message and set continueLoop = true.
+  if (maxTokensRecoveries >= 1) {
+    // cap hit: log agent_error, leave continueLoop false, fall through to turn end
+  } else {
+    maxTokensRecoveries++;
+    // append synthetic user message to compactedContextHistory
+    // log agent_error recording that recovery fired
+    // set continueLoop = true
+  }
 }
 ```
 
-Injected message (uses the model's actual `maxOutputTokens` at runtime, not a
-hardcoded value — so it reads correctly for any model ceiling):
-> Your extended thinking exceeded the {maxOutputTokens}-token output limit and
-> produced no action. Please continue — write a short plan (≤ 5 lines) and
-> immediately call a tool. Do not re-explore the problem from scratch.
+3. Injected user message — use the in-scope `maxOutputTokens` variable so the number
+   is always correct for the active model:
+
+```
+Your extended thinking exceeded the ${maxOutputTokens}-token output limit and produced
+no action. Please continue — write a short plan (≤ 5 lines) and immediately call a
+tool. Do not re-explore the problem from scratch.
+```
+
+4. Emit an `agent_error` event in both branches (recovery fired; cap hit). Use the
+   existing `agent_error` event shape.
+
+5. The mechanism is **model-agnostic** — no branching on model name.
+
+**Testing (red-green — write the failing test first).**
+
+Look at `src/agent-rate-limit.test.ts` for the mock-stream pattern
+(`makeMockStream`, `makeTestAgent`). Write two tests:
+
+- *Recovery fires:* mock returns `stop_reason: max_tokens` / empty text / no tool-use
+  on call 1, then a normal `end_turn` / text `"done"` on call 2. Assert an `agent_error`
+  recovery event is emitted, a second LLM call is made, and the final text is `"done"`.
+- *Cap respected:* two consecutive max_tokens responses. Assert the second emits a
+  cap-hit `agent_error` and no third LLM call is made.
 
 **Expected yield:** 1–2 tasks. `winning-avg-corewars` had completed 20 tool calls of
 research before the cutoff; with recovery it likely writes a warrior. `regex-chess` is
