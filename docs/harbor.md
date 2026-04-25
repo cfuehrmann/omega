@@ -9,8 +9,8 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 
 - **Model under evaluation:** `claude-sonnet-4-6`
 - **Tasks attempted:** 76 / 76 oracle-passing TB 2.0 tasks (complete)
-- **Pass rate:** 51 / 76 = **67 %** (leaderboard-comparable number)
-- **API spend to date:** ≈ $24.67
+- **Pass rate:** 53 / 76 = **70 %** (leaderboard-comparable number)
+- **API spend to date:** ≈ $28.30
 - **Results data:** `benchmark-results/results.jsonl`, `docs/results.md`
 - **Failure analysis:** `docs/failure-analysis.md`
 
@@ -52,11 +52,12 @@ agent injects a synthetic user message asking the model to write a short plan
 and call a tool, then retries. Capped at 1 recovery per turn. Implemented in
 `src/agent.ts`; two tests in `src/agent-rate-limit.test.ts`.
 
-**Expected yield:** 1–2 tasks (`winning-avg-corewars`, `dna-assembly`).
+**Validated yield:** 1 task (`winning-avg-corewars` flipped 0→1). `dna-assembly`
+still times out at 1800 s — Fix C was not sufficient for that task.
 
 ---
 
-#### Fix E — Submission-state verification — **next**
+#### Fix E — Submission-state verification — **DONE** (prompt landed; yield below expectation)
 
 **Affected tasks:** `polyglot-c-py`, `polyglot-rust-c`, `extract-elf` (Shape 3)
 
@@ -98,35 +99,44 @@ This is deliberately judgment-based. The model reads the task spec and decides
 what "correct final state" means for that task — no hardcoded rules about file
 types or directories.
 
-**Expected yield:** 3 tasks (`polyglot-c-py`, `polyglot-rust-c`, `extract-elf`).
+**Validated yield:** 0 of the 3 primary targets flipped:
+
+| Task | Outcome | Root cause |
+|---|---|---|
+| `polyglot-c-py` | `NonZeroAgentExitCodeError` | bun.sh DNS failure in container (infra, not Fix E) |
+| `polyglot-rust-c` | reward=0.0 | Agent compiled binaries and left `cmain`/`rmain` in `/app/polyglot/`; prompt not strong enough to trigger cleanup |
+| `extract-elf` | reward=0.0 | Agent wrote `extract.js` to `/home/agent/omega/` instead of `/app/`; task description doesn't name the destination explicitly so the model didn't detect the mismatch |
+
+Fix E also contributed to `distribution-search` flipping (see Fix D below).
 
 ---
 
-#### Fix D — distribution-search false negative — **deferred**
+#### Fix D — distribution-search false negative — **RESOLVED**
 
-The verifier container failed to reach `astral.sh` (TCP connection error) during
-the original run, so `uvx` never installed and the verifier never ran. The agent
-did find the correct solution (KL divergence = 10.000, error = 1.74×10⁻¹²), so
-`reward=0.0` is a false negative.
-
-**Why deferred.** The network failure is likely transient (a container DNS
-hiccup), not systematic — we can't tell from one trial. Additionally, the agent
-also wrote its output to the wrong directory, so a re-run would need Fix E to
-land first to have any chance of passing. The right action is: apply Fix E, then
-re-run `distribution-search` and let the result resolve both questions at once.
-If the verifier fails again with the same curl error, investigate further then.
+Re-run with Fix E landed: `distribution-search` flipped 0→1. The network
+failure was transient. Fix E helped the agent write to the correct path.
 
 ---
 
-#### Validation plan
+#### Validation run — fix-e-validation — **DONE**
 
-After landing Fix E:
+Run job `fix-e-validation` (2026-04-25). Results:
 
-1. Re-run `polyglot-c-py`, `polyglot-rust-c`, `extract-elf` — expect all 3 to flip (Fix E).
-2. Re-run `winning-avg-corewars`, `dna-assembly` — expect 1–2 to flip (Fix C).
-3. Re-run `distribution-search` — resolves Fix D question simultaneously.
+| Task | Before | After | Flip? |
+|---|---|---|---|
+| `winning-avg-corewars` | 0.0 | 1.0 | ✅ Fix C |
+| `distribution-search` | 0.0 | 1.0 | ✅ Fix D+E |
+| `extract-elf` | 0.0 | 0.0 | ✗ |
+| `polyglot-rust-c` | 0.0 | 0.0 | ✗ |
+| `polyglot-c-py` | 0.0 | n/a | ✗ (infra) |
+| `dna-assembly` | 0.0 | 0.0 | ✗ (timeout) |
 
-**Pass criterion:** ≥ 3 tasks flip → proceed to item 7.
+**2 tasks flipped.** Pass criterion (≥ 3) not met. New leaderboard metric: **53/76 = 70 %**.
+
+Remaining Shape 3 failures (`extract-elf`, `polyglot-rust-c`, `polyglot-c-py`) are
+not resolved by Fix E alone — the judgment-based prompt is insufficient when the
+task description is ambiguous about the output path, or when the model doesn't
+connect cleanup to the "exact files" check. These carry forward to item 7.
 
 ### 7 — Opus 4.7 run — **planned**
 
