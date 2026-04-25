@@ -139,6 +139,28 @@ ports:
 push:
     git push
 
+# Tag the current commit with the version declared in omega_agent.py and push
+# both the tag and the current branch to origin.
+# Usage: just release
+# The tag name is read automatically from OMEGA_VERSION in omega_agent.py so
+# it is always in sync with what the benchmark containers will clone.
+release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(grep -m1 'OMEGA_VERSION' omega_agent.py | sed 's/.*"\(.*\)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        echo "❌  Could not read OMEGA_VERSION from omega_agent.py" >&2
+        exit 1
+    fi
+    if git rev-parse "$VERSION" >/dev/null 2>&1; then
+        echo "❌  Tag $VERSION already exists. Bump OMEGA_VERSION in omega_agent.py first." >&2
+        exit 1
+    fi
+    git push
+    git tag "$VERSION"
+    git push origin "$VERSION"
+    echo "✅  Released $VERSION"
+
 # Install git hooks (pre-commit test gate)
 install-hooks:
     cp scripts/pre-commit .git/hooks/pre-commit
