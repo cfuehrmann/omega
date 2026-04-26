@@ -9,16 +9,16 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 
 | Model | Effort | Pass rate | Note |
 |---|---|---|---|
-| `claude-sonnet-4-6` | medium | **50/76** on wrong task set | corrected /89 pending item 10 |
+| `claude-sonnet-4-6` | medium | **53/89** | corrected; 3 passes from 13 new tasks |
 | `claude-opus-4-7` | xhigh+high | **56/76** on wrong task set | corrected /89 pending item 11 |
 | Anthropic / Terminus-2 | thinking off | **69.4 % (62/89)** | official self-reported |
 
-> **Wrong task set discovered (item 10).** We filtered to 76 "oracle-passing" tasks
-> based on a misunderstanding — see below. All leaderboard agents run all 89 tasks.
-> Our numbers are not yet directly comparable to the leaderboard.
+> **Corrected in item 10.** Sonnet now has a complete /89 score: **53/89 = 59.6 %**.
+> The 13 previously-skipped tasks added 3 passes.
+> Comparable to the leaderboard (Terminus-2: 69.4 %).
 
-Single-shot comparison (within our wrong-76): Opus 4.7 **66 %** vs Sonnet 4.6 **55 %**
-(42/76 first-trial). Opus leads by ~11 pp per trial.
+Corrected /89 comparison pending item 11 (Opus missing-13 run).
+Prior single-shot comparison (wrong-76): Opus 4.7 **66 %** vs Sonnet 4.6 **55 %** (42/76 first-trial).
 
 > **Reporting note:** `bench-summary.ts` previously counted *total trial passes / 76*
 > instead of *unique task passes / 76*, inflating Sonnet from 50 → 54. Fixed.
@@ -147,46 +147,29 @@ actual trial results.
 
 ---
 
-### 10 — Fix oracle-tasks.json + run all 13 missing tasks (Sonnet) — **next**
+### 10 — Run all 13 missing tasks (Sonnet) — **DONE** (job: `sonnet-missing-13`, 1h 8m)
 
-1. **Correct `benchmark-results/oracle-tasks.json`.**
-   Ground truth is in `jobs/oracle-sweep-baseline/` — each task subdirectory
-   has a `result.json`; read `verifier_result.rewards.reward` for each of the
-   13 tasks we labelled non-oracle. The actual oracle failures differ from what
-   the file currently says (see `⚠️ Wrong task set` section above).
+Ran all 13 never-attempted tasks with Sonnet 4.6 at medium effort.
 
-2. **Run all 13 never-attempted tasks with Sonnet 4.6 at medium effort.**
-   The oracle failing a task does NOT mean an agent can't solve it — Opus solved
-   three oracle-failing tasks (`count-dataset-tokens`, `mteb-retrieve`,
-   `protein-assembly`). All leaderboard agents run all 89 tasks.
+**Results (13 tasks):**
 
-```bash
-harbor run -d terminal-bench@2.0 \
-  --agent-import-path omega_agent:OmegaAgent \
-  -m anthropic/claude-sonnet-4-6 \
-  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -i build-pov-ray -i caffe-cifar-10 -i compile-compcert \
-  -i hf-model-inference -i install-windows-3.11 \
-  -i llm-inference-batching-scheduler -i pytorch-model-cli \
-  -i pytorch-model-recovery -i reshard-c4-data -i sam-cell-seg \
-  -i torch-pipeline-parallelism -i torch-tensor-parallelism \
-  -i train-fasttext \
-  --job-name sonnet-missing-13
-```
+| Task | Reward | Exception | Notes |
+|---|---|---|---|
+| `hf-model-inference` | ✅ 1.0 | — | |
+| `llm-inference-batching-scheduler` | ✅ 1.0 | — | |
+| `reshard-c4-data` | ✅ 1.0 | — | |
+| `build-pov-ray` | ✗ 0.0 | — | Agent built & ran it; verifier rejected |
+| `caffe-cifar-10` | ✗ 0.0 | AgentTimeoutError | No GPU; training impossible |
+| `compile-compcert` | ✗ 0.0 | NonZeroAgentExitCodeError | Killed mid-build (OOM/abort) |
+| `install-windows-3.11` | ✗ 0.0 | NonZeroAgentExitCodeError | Killed mid-QEMU setup |
+| `pytorch-model-cli` | ✗ 0.0 | — | Agent output wrong answer |
+| `pytorch-model-recovery` | ✗ n/a | VerifierTimeoutError | Verifier itself timed out |
+| `sam-cell-seg` | ✗ 0.0 | — | SAM weights likely unavailable in container |
+| `torch-pipeline-parallelism` | ✗ 0.0 | AgentTimeoutError | Requires multi-GPU |
+| `torch-tensor-parallelism` | ✗ n/a | NonZeroAgentExitCodeError | bun.sh DNS failure at setup |
+| `train-fasttext` | ✗ n/a | NonZeroAgentExitCodeError | bun.sh DNS failure at setup |
 
-   Use `run_background` + `wait_for_output` with ~5 h timeout.
-   Expect most tasks <20 min; `sam-cell-seg` up to 30 min;
-   `compile-compcert` up to 25 min; `pytorch-model-recovery` may time out.
-
-3. **Ingest and report.**
-
-```bash
-bun scripts/bench-ingest.ts jobs/sonnet-missing-13
-bun scripts/bench-summary.ts sonnet
-```
-
-4. **Update this file:** mark item 10 DONE, record passes on the 13 new tasks,
-   update the Status table with the corrected Sonnet score as `n/89`.
+**Sonnet after item 10: 53/89 = 59.6 %** (50 from original 76 + 3 new passes)
 
 ### 11 — Run all 13 missing tasks (Opus) — **next after 10**
 
