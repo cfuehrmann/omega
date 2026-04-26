@@ -147,43 +147,64 @@ actual trial results.
 
 ---
 
-### 10 — Fix oracle-tasks.json + run 8 missing tasks (Sonnet) — **next**
+### 10 — Fix oracle-tasks.json + run all 13 missing tasks (Sonnet) — **next**
 
-1. Correct `benchmark-results/oracle-tasks.json` to reflect the actual 13 oracle
-   failures (from the April 2026 sweep in `jobs/oracle-sweep-baseline/`).
+1. **Correct `benchmark-results/oracle-tasks.json`.**
+   Ground truth is in `jobs/oracle-sweep-baseline/` — each task subdirectory
+   has a `result.json`; read `verifier_result.rewards.reward` for each of the
+   13 tasks we labelled non-oracle. The actual oracle failures differ from what
+   the file currently says (see `⚠️ Wrong task set` section above).
 
-2. Run the 8 wrongly-excluded tasks with Sonnet 4.6 at medium effort:
+2. **Run all 13 never-attempted tasks with Sonnet 4.6 at medium effort.**
+   The oracle failing a task does NOT mean an agent can't solve it — Opus solved
+   three oracle-failing tasks (`count-dataset-tokens`, `mteb-retrieve`,
+   `protein-assembly`). All leaderboard agents run all 89 tasks.
 
 ```bash
 harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -i build-pov-ray -i compile-compcert -i hf-model-inference \
-  -i install-windows-3.11 -i llm-inference-batching-scheduler \
-  -i pytorch-model-cli -i reshard-c4-data -i sam-cell-seg \
-  --job-name sonnet-missing-8
+  -i build-pov-ray -i caffe-cifar-10 -i compile-compcert \
+  -i hf-model-inference -i install-windows-3.11 \
+  -i llm-inference-batching-scheduler -i pytorch-model-cli \
+  -i pytorch-model-recovery -i reshard-c4-data -i sam-cell-seg \
+  -i torch-pipeline-parallelism -i torch-tensor-parallelism \
+  -i train-fasttext \
+  --job-name sonnet-missing-13
 ```
 
-   Expected runtimes: most <20 min per task; `sam-cell-seg` up to 30 min;
-   `compile-compcert` up to 25 min. Allocate 3–4 h total.
+   Use `run_background` + `wait_for_output` with ~5 h timeout.
+   Expect most tasks <20 min; `sam-cell-seg` up to 30 min;
+   `compile-compcert` up to 25 min; `pytorch-model-recovery` may time out.
 
-3. Ingest and update the leaderboard metric to `/89`.
+3. **Ingest and report.**
 
-### 11 — Run 8 missing tasks (Opus) — **next after 10**
+```bash
+bun scripts/bench-ingest.ts jobs/sonnet-missing-13
+bun scripts/bench-summary.ts sonnet
+```
 
-Same 8 tasks with Opus 4.7 at `high` effort:
+4. **Update this file:** mark item 10 DONE, record passes on the 13 new tasks,
+   update the Status table with the corrected Sonnet score as `n/89`.
+
+### 11 — Run all 13 missing tasks (Opus) — **next after 10**
+
+Same 13 tasks with Opus 4.7 at `high` effort:
 
 ```bash
 harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaAgent \
   -m anthropic/claude-opus-4-7 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -i build-pov-ray -i compile-compcert -i hf-model-inference \
-  -i install-windows-3.11 -i llm-inference-batching-scheduler \
-  -i pytorch-model-cli -i reshard-c4-data -i sam-cell-seg \
+  -i build-pov-ray -i caffe-cifar-10 -i compile-compcert \
+  -i hf-model-inference -i install-windows-3.11 \
+  -i llm-inference-batching-scheduler -i pytorch-model-cli \
+  -i pytorch-model-recovery -i reshard-c4-data -i sam-cell-seg \
+  -i torch-pipeline-parallelism -i torch-tensor-parallelism \
+  -i train-fasttext \
   --agent-kwargs effort=high \
-  --job-name opus-missing-8
+  --job-name opus-missing-13
 ```
 
 After ingesting, the final comparable scores (both /89) will be ready for a
