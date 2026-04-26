@@ -7,20 +7,23 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 
 ## Status
 
-| Model | Effort | Trials | Pass rate (unique tasks) | Spend |
-|---|---|---|---|---|
-| `claude-sonnet-4-6` | medium | 106 (best-of-N) | 50/76 = **66 %** | $28.90 |
-| `claude-opus-4-7` | xhigh | 76 (1-shot) | 50/76 = **66 %** | $29.23 |
-| `claude-opus-4-7` | high | +11 retry trials | **56/76 = 74 %** | TBD |
+| Model | Effort | Pass rate | Note |
+|---|---|---|---|
+| `claude-sonnet-4-6` | medium | **50/76** on wrong task set | corrected /89 pending item 10 |
+| `claude-opus-4-7` | xhigh+high | **56/76** on wrong task set | corrected /89 pending item 11 |
+| Anthropic / Terminus-2 | thinking off | **69.4 % (62/89)** | official self-reported |
 
-Single-shot comparison: Opus 4.7 xhigh **66 %** vs Sonnet 4.6 medium **55 %** (42/76).
-Opus 4.7 wins by ~11 pp in a fair per-trial comparison; the headline tie is an
-artefact of Sonnet having multiple attempts on some tasks.
+> **Wrong task set discovered (item 10).** We filtered to 76 "oracle-passing" tasks
+> based on a misunderstanding — see below. All leaderboard agents run all 89 tasks.
+> Our numbers are not yet directly comparable to the leaderboard.
+
+Single-shot comparison (within our wrong-76): Opus 4.7 **66 %** vs Sonnet 4.6 **55 %**
+(42/76 first-trial). Opus leads by ~11 pp per trial.
 
 > **Reporting note:** `bench-summary.ts` previously counted *total trial passes / 76*
 > instead of *unique task passes / 76*, inflating Sonnet from 50 → 54. Fixed.
 
-- **Results data:** `benchmark-results/results.jsonl`, `docs/results.md`
+- **Results data:** `benchmark-results/results.jsonl`
 - **Failure analysis:** `docs/failure-analysis.md`
 
 ### Failure-shape taxonomy (Sonnet 4.6 baseline)
@@ -47,35 +50,24 @@ artefact of Sonnet having multiple attempts on some tasks.
 
 ### 6 — Cheap fixes — **DONE**
 
-#### Fix C — Recovery loop (thinking-budget exhaustion) — **DONE**
+**Fix C** (recovery loop): When `stop_reason=max_tokens` with no output, inject a
+synthetic user message and retry. Yield: `winning-avg-corewars` flipped.
 
-When `stop_reason=max_tokens` with no output, inject a synthetic user message
-and retry. Capped at 1 recovery per turn. In `src/agent.ts`.
-**Yield:** 1 task flipped (`winning-avg-corewars`).
+**Fix E** (submission-state prompt): Before declaring done, re-read output requirements
+and verify submission directory matches. Yield: `distribution-search` flipped.
+Shape 3 targets didn't flip — extract-elf needed Fix F; polyglot-rust-c binary cleanup
+still eludes the prompt; polyglot-c-py is a persistent infra DNS flake.
 
-#### Fix E — Submission-state verification prompt — **DONE** (yield below expectation)
+**Fix F** (CWD fix, v0.1.2): `omega_agent.py` ran Omega with cwd=/home/agent/omega,
+so relative writes landed there instead of `/app/`. Fix: `cd /app && bun run ...`.
+Also removed `.omega/system-prompt-append.md` dev-conventions noise from task context.
+Yield: `extract-elf` flipped 0→1.
 
-Added to system prompt: before declaring done, re-read task output requirements
-and verify the submission directory matches exactly. Judgment-based, not rule-based.
-**Yield:** `distribution-search` flipped (Fix D+E combined). The three primary Shape 3
-targets (extract-elf, polyglot-rust-c, polyglot-c-py) did not flip — extract-elf
-needed the structural CWD fix (Fix F); polyglot-rust-c binary cleanup still eludes
-the prompt; polyglot-c-py is a persistent infra DNS flake.
-
-#### Fix F — CWD fix in omega_agent.py — **DONE**
-
-`omega_agent.py` was running Omega with `cd /home/agent/omega`, so `process.cwd()`
-was the install directory. Files written to relative paths landed there instead of
-`/app/`. Fix: run `cd /app && bun run /home/agent/omega/src/cli.ts`. Also removed
-`.omega/system-prompt-append.md` noise (Omega dev conventions) from task context.
-**Yield:** `extract-elf` flipped 0→1 (v0.1.2 smoke test, job `fix-f-smoke-test`).
-`polyglot-rust-c` still leaves compiled binaries; `polyglot-c-py` infra DNS flake.
-
-**Sonnet leaderboard after item 6:** 50/76 = 66 % (corrected; was mis-reported as 54/76 = 71 %).
+**Sonnet after item 6:** 50/76 = 66 % (corrected; was mis-reported as 54/76 = 71 %).
 
 ### 7 — Opus 4.7 full run — **DONE** (job: `opus-4-7-xhigh-76`, 3h 22m, $29.23)
 
-**Result:** 50/76 = 66 % (1-shot). Matches Sonnet best-of-N; beats Sonnet 1-shot by 11 pp.
+Result: 50/76 = 66 % (1-shot). Matches Sonnet best-of-N; beats Sonnet 1-shot by 11 pp.
 
 **Opus-only passes (10):** `count-dataset-tokens`, `dna-insert`, `feal-linear-cryptanalysis`,
 `gpt2-codegolf`, `mteb-retrieve`, `path-tracing-reverse`, `protein-assembly`, `regex-chess`,
@@ -86,9 +78,9 @@ was the install directory. Files written to relative paths landed there instead 
 | Task | Opus outcome | Category |
 |---|---|---|
 | `mailman` | AgentSetupTimeoutError | Infra |
-| `prove-plus-comm` | bun.sh DNS fail (82 s) | Infra |
-| `chess-best-move` | AgentTimeoutError (987 s / 900 s limit) | xhigh too slow |
-| `tune-mjcf` | AgentTimeoutError (1006 s / 900 s limit) | xhigh too slow |
+| `prove-plus-comm` | bun.sh DNS fail (82 s) | Infra / Fix F regression |
+| `chess-best-move` | AgentTimeoutError (987 s) | xhigh too slow |
+| `tune-mjcf` | AgentTimeoutError (1006 s) | xhigh too slow |
 | `winning-avg-corewars` | server error after 1541 s | High variance |
 | `distribution-search` | reward=0.0 | High variance (Sonnet needed retry) |
 | `qemu-startup` | test_version failed | Model quality |
@@ -96,61 +88,108 @@ was the install directory. Files written to relative paths landed there instead 
 | `headless-terminal` | 1 of 7 tests failed | Near-miss |
 | `openssl-selfsigned-cert` | 1 of 6 tests failed | Near-miss |
 
-**xhigh effort is too slow for 900 s tasks.** Extended thinking consumes 2–4× more
-time per call; five tasks timed out that Sonnet completed on medium. Re-running those
-at `high` effort should recover 2–4 tasks.
+xhigh effort is too slow for 900 s tasks — extended thinking consumes 2–4× per call.
 
-**Adjusted Opus estimate:** 52/76 (68 %) excluding infra; 54/76 (71 %) also excluding
-xhigh timeouts.
+### 8 — Opus targeted re-run — **DONE** (job: `opus-4-7-high-retry`, 37m)
 
-**Reference:** Claude Code + Sonnet 4.5 ≈ 50 % on TB 2.0. Omega clears that by ~16 pp.
+Re-ran 9 tasks at `high` effort. 5 flipped:
 
-### 8 — Opus targeted re-run — **DONE** (job: `opus-4-7-high-retry`, 37m, 5/9 pass)
+| Task | Flipped? |
+|---|---|
+| `chess-best-move`, `tune-mjcf`, `gcode-to-text`, `dna-assembly`, `mailman` | ✅ |
+| `raman-fitting` | ✗ still times out |
+| `prove-plus-comm` | ✗ Fix F regression: `cd /app` fails when `/app` absent |
+| `winning-avg-corewars` | ✗ OOM/resource kill |
+| `filter-js-from-html` | ✗ bun lightningcss tarball failure |
 
-Re-ran 9 tasks with `claude-opus-4-7` at `high` effort.
-
-| Task | xhigh outcome | high outcome | Flipped? |
-|---|---|---|---|
-| `chess-best-move` | AgentTimeoutError | reward=1.0 | ✅ |
-| `tune-mjcf` | AgentTimeoutError | reward=1.0 | ✅ |
-| `gcode-to-text` | AgentTimeoutError | reward=1.0 (despite timeout) | ✅ |
-| `raman-fitting` | AgentTimeoutError | reward=0.0 (still times out) | ✗ |
-| `dna-assembly` | NonZeroAgentExitCodeError | reward=1.0 | ✅ |
-| `mailman` | AgentSetupTimeoutError | reward=1.0 | ✅ |
-| `prove-plus-comm` | NonZeroAgentExitCodeError | NonZeroAgentExitCodeError | ✗ — Fix F regression |
-| `winning-avg-corewars` | NonZeroAgentExitCodeError | NonZeroAgentExitCodeError | ✗ — OOM/resource kill |
-| `filter-js-from-html` | NonZeroAgentExitCodeError | reward=0.0 (bun lightningcss fail) | ✗ |
-
-**Opus leaderboard after item 8: 55/76 = 72 %**
-
-**Fix F regression (`prove-plus-comm`):** `cd /app &&` fails immediately with
-`cd: /app: No such file or directory` for tasks whose Docker image has no `/app`
-mount. Fix G (below) changes the prefix to `cd /app 2>/dev/null || true`.
+**Opus after item 8: 55/76 = 72 %**
 
 ### 9 — Fix G + targeted re-run — **DONE** (job: `opus-4-7-fixg-retry`, 5m 55s)
 
-v0.1.3 tagged with Fix G. Re-ran `prove-plus-comm` and `winning-avg-corewars`.
+v0.1.3: changed `cd /app &&` to `cd /app 2>/dev/null || true` to handle tasks
+without `/app`. `prove-plus-comm` flipped ✅. `winning-avg-corewars` ✗ (genuinely hard).
 
-| Task | Outcome | Flipped? |
-|---|---|---|
-| `prove-plus-comm` | reward=1.0 | ✅ Fix G confirmed |
-| `winning-avg-corewars` | reward=0.0 (5 min, no exception) | ✗ genuinely hard |
+**Opus after item 9: 56/76 = 74 %**
 
-**Opus leaderboard after item 9: 56/76 = 74 %**
+---
 
-### 10 — Next steps — **next**
+### ⚠️ Wrong task set — discovered after item 9
 
-Remaining Opus failures worth investigating:
-- `openssl-selfsigned-cert`, `headless-terminal`, `configure-git-webserver`, `qemu-startup`
-  — Sonnet-only passes; model quality or near-miss
-- `polyglot-rust-c` — binary cleanup (Shape 3); prompt still insufficient
-- `raman-fitting`, `path-tracing`, `gcode-to-text` — Shape 2 (genuine timeouts)
-- `filter-js-from-html` — bun lightningcss tarball failure (infra; not effort-related)
+We built `oracle-tasks.json` by assuming that "oracle fails = broken task, skip it".
+That was wrong on two counts:
 
-Candidate: run a Sonnet 4.6 full re-run at v0.1.3 to measure Fix G's impact there,
-or push to SWE-Bench Verified.
+1. **The oracle is just a script runner** (`solution.sh`). Its pass/fail says nothing
+   about whether the verifier works or whether a real agent can solve the task.
+2. **All leaderboard agents run all 89 tasks** — there is no oracle-based filter in
+   the benchmark rules. Anthropic's 69.4% is over 89 tasks, as is every entry on
+   tbench.ai.
 
-### 11 — SWE-Bench Verified — **later**
+**Result:** we ran on the wrong 76 tasks. Our actual 76 differed from the correct
+oracle-passing 76 in both directions:
+
+| Direction | Tasks |
+|---|---|
+| **Wrongly excluded** (oracle passes, we skipped) | `build-pov-ray`, `compile-compcert`, `hf-model-inference`, `install-windows-3.11`, `llm-inference-batching-scheduler`, `pytorch-model-cli`, `reshard-c4-data`, `sam-cell-seg` |
+| **Wrongly included** (oracle fails, we ran anyway) | `build-pmars`, `count-dataset-tokens`, `custom-memory-heap-crash`, `make-doom-for-mips`, `mteb-retrieve`, `protein-assembly`, `pypi-server`, `rstan-to-pystan` |
+
+The wrongly-included tasks are fine to have run — the verifier works for them and
+agents can legitimately solve them (Opus solved 3: count-dataset-tokens, mteb-retrieve,
+protein-assembly). They stay in our results. The wrongly-excluded 8 tasks need to be run.
+
+**Actual 13 oracle failures** (the tasks everyone scores ~0 on):
+`caffe-cifar-10`, `torch-pipeline-parallelism`, `torch-tensor-parallelism`,
+`train-fasttext`, `pytorch-model-recovery`, plus the 8 wrongly-included tasks above.
+
+No task in TB 2.0 requires a GPU — the oracle runs on the benchmark machine
+(no GPU) and passes all 8 wrongly-excluded tasks. The "GPU" and "long build" labels
+in our original oracle-tasks.json were guesses from task descriptions, not from
+actual trial results.
+
+---
+
+### 10 — Fix oracle-tasks.json + run 8 missing tasks (Sonnet) — **next**
+
+1. Correct `benchmark-results/oracle-tasks.json` to reflect the actual 13 oracle
+   failures (from the April 2026 sweep in `jobs/oracle-sweep-baseline/`).
+
+2. Run the 8 wrongly-excluded tasks with Sonnet 4.6 at medium effort:
+
+```bash
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -i build-pov-ray -i compile-compcert -i hf-model-inference \
+  -i install-windows-3.11 -i llm-inference-batching-scheduler \
+  -i pytorch-model-cli -i reshard-c4-data -i sam-cell-seg \
+  --job-name sonnet-missing-8
+```
+
+   Expected runtimes: most <20 min per task; `sam-cell-seg` up to 30 min;
+   `compile-compcert` up to 25 min. Allocate 3–4 h total.
+
+3. Ingest and update the leaderboard metric to `/89`.
+
+### 11 — Run 8 missing tasks (Opus) — **next after 10**
+
+Same 8 tasks with Opus 4.7 at `high` effort:
+
+```bash
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaAgent \
+  -m anthropic/claude-opus-4-7 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  -i build-pov-ray -i compile-compcert -i hf-model-inference \
+  -i install-windows-3.11 -i llm-inference-batching-scheduler \
+  -i pytorch-model-cli -i reshard-c4-data -i sam-cell-seg \
+  --agent-kwargs effort=high \
+  --job-name opus-missing-8
+```
+
+After ingesting, the final comparable scores (both /89) will be ready for a
+direct apples-to-apples comparison with Terminus-2's 69.4 %.
+
+### 12 — SWE-Bench Verified — **later**
 
 Same Harbor wrapper, one flag change. 500 tasks, ~$300 budget.
 
@@ -212,9 +251,8 @@ bun scripts/bench-summary.ts sonnet                      # filter by substring
 ## Reference
 
 - `benchmark-results/results.jsonl` — accumulated trial data
-- `benchmark-results/oracle-tasks.json` — per-task oracle status
+- `benchmark-results/oracle-tasks.json` — per-task metadata (corrected in item 10)
 - `benchmark-results/.skip-trials` — trial UUIDs permanently ignored by ingest
-- `docs/results.md` — per-task table and category breakdown
 - `docs/failure-analysis.md` — failure-shape taxonomy and cheap-fix plan
 - `jobs/<phase>/<task>/agent/{events,context}.jsonl` — raw session per trial
 - `omega_agent.py` — Harbor wrapper
@@ -224,9 +262,9 @@ bun scripts/bench-summary.ts sonnet                      # filter by substring
 
 | Term | Meaning |
 |---|---|
-| **Terminal-Bench (TB)** | The benchmark — tasks + tests. We use version 2.0. |
+| **Terminal-Bench (TB)** | The benchmark — 89 tasks + verifiers. We use version 2.0. |
 | **Harbor** | The harness that runs containerised agent benchmarks. |
-| **Oracle** | Built-in Harbor agent that replays each task's `solution.sh`. 76/89 TB 2.0 tasks pass the oracle. |
+| **Oracle** | Built-in Harbor agent that executes each task's `solution.sh` verbatim. Tells you whether the *reference script* works — not which tasks agents should attempt. All 89 tasks are in scope for every agent. |
 
 ### Model choice and cost
 
