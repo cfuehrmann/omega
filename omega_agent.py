@@ -158,7 +158,7 @@ class OmegaAgent(BaseInstalledAgent):
 
         flags = self.build_cli_flags()
         cmd = (
-            f"cd /app"
+            f"cd /app 2>/dev/null || true"
             f" && ~/.bun/bin/bun run {OMEGA_INSTALL_DIR}/src/cli.ts run"
             f" --instruction {shlex.quote(instruction)}"
             f" --model {shlex.quote(self._parsed_model_name)}"

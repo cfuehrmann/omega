@@ -11,6 +11,7 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 |---|---|---|---|---|
 | `claude-sonnet-4-6` | medium | 106 (best-of-N) | 50/76 = **66 %** | $28.90 |
 | `claude-opus-4-7` | xhigh | 76 (1-shot) | 50/76 = **66 %** | $29.23 |
+| `claude-opus-4-7` | high | +9 retry trials | **55/76 = 72 %** | TBD |
 
 Single-shot comparison: Opus 4.7 xhigh **66 %** vs Sonnet 4.6 medium **55 %** (42/76).
 Opus 4.7 wins by ~11 pp in a fair per-trial comparison; the headline tie is an
@@ -104,20 +105,41 @@ xhigh timeouts.
 
 **Reference:** Claude Code + Sonnet 4.5 ≈ 50 % on TB 2.0. Omega clears that by ~16 pp.
 
-### 8 — Opus targeted re-run — **in progress**
+### 8 — Opus targeted re-run — **DONE** (job: `opus-4-7-high-retry`, 37m, 5/9 pass)
 
-Re-run two groups with `claude-opus-4-7` at `high` effort (job: `opus-4-7-high-retry`):
+Re-ran 9 tasks with `claude-opus-4-7` at `high` effort.
 
-**Group A — xhigh timeouts (effort is the fix):**
-`chess-best-move`, `tune-mjcf`, `raman-fitting`, `gcode-to-text`
-(skip `path-tracing` — timed out on Sonnet too; genuine Shape 2)
+| Task | xhigh outcome | high outcome | Flipped? |
+|---|---|---|---|
+| `chess-best-move` | AgentTimeoutError | reward=1.0 | ✅ |
+| `tune-mjcf` | AgentTimeoutError | reward=1.0 | ✅ |
+| `gcode-to-text` | AgentTimeoutError | reward=1.0 (despite timeout) | ✅ |
+| `raman-fitting` | AgentTimeoutError | reward=0.0 (still times out) | ✗ |
+| `dna-assembly` | NonZeroAgentExitCodeError | reward=1.0 | ✅ |
+| `mailman` | AgentSetupTimeoutError | reward=1.0 | ✅ |
+| `prove-plus-comm` | NonZeroAgentExitCodeError | NonZeroAgentExitCodeError | ✗ — Fix F regression |
+| `winning-avg-corewars` | NonZeroAgentExitCodeError | NonZeroAgentExitCodeError | ✗ — OOM/resource kill |
+| `filter-js-from-html` | NonZeroAgentExitCodeError | reward=0.0 (bun lightningcss fail) | ✗ |
 
-**Group B — infra flakes (retry is the fix):**
-`prove-plus-comm`, `dna-assembly`, `filter-js-from-html`, `mailman`, `winning-avg-corewars`
+**Opus leaderboard after item 8: 55/76 = 72 %**
 
-Expected: +2–5 tasks. Ingest and update this section with outcomes.
+**Fix F regression (`prove-plus-comm`):** `cd /app &&` fails immediately with
+`cd: /app: No such file or directory` for tasks whose Docker image has no `/app`
+mount. Fix G (below) changes the prefix to `cd /app 2>/dev/null || true`.
 
-### 9 — SWE-Bench Verified — **later**
+### 9 — Fix G + targeted re-run — **next**
+
+Fix G already applied to `omega_agent.py`: `cd /app 2>/dev/null || true` instead of
+`cd /app &&`. Tag v0.1.3 and re-run affected tasks:
+
+- `prove-plus-comm` — should flip once Fix G lands in the tagged version
+- `winning-avg-corewars` — resource-kill; worth one more retry at high effort
+- `raman-fitting` — still timing out; low priority (Shape 2, hard cap)
+- `filter-js-from-html` — bun lightningcss tarball failure; separate issue
+
+Expected: +1 (prove-plus-comm). Possibly +1 (winning-avg-corewars if OOM was a fluke).
+
+### 10 — SWE-Bench Verified — **later**
 
 Same Harbor wrapper, one flag change. 500 tasks, ~$300 budget.
 
