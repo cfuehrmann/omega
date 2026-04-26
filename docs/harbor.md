@@ -11,10 +11,10 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 |---|---|---|---|
 | `claude-sonnet-4-6` | medium | **53/89** | corrected; 3 passes from 13 new tasks |
 | `claude-opus-4-7` | xhigh+high | **62/89 = 69.7 %** | corrected; 6 passes from 13 new tasks |
-| Anthropic / Terminus-2 | thinking off | **69.4 % (62/89)** | official self-reported |
+| Claude Opus 4.7 / Adaptive agent | adaptive | **69.4 %** | official leaderboard (tbench.ai) |
 
 > **Corrected in items 10–11.** Both models now have complete /89 scores.
-> Opus 4.7 at **69.7 %** matches Terminus-2's self-reported 69.4 % exactly.
+> Opus 4.7 + Omega at **69.7 %** matches the official leaderboard's Claude Opus 4.7 / Adaptive entry (69.4 %) almost exactly — same model, different agent harness.
 > Sonnet 4.6 at **59.6 %** is 10 pp behind Opus on the same task set.
 
 > **Reporting note:** `bench-summary.ts` previously counted *total trial passes / 76*
