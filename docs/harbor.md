@@ -171,7 +171,9 @@ Ran all 13 never-attempted tasks with Sonnet 4.6 at medium effort.
 
 **Sonnet after item 10: 53/89 = 59.6 %** (50 from original 76 + 3 new passes)
 
-### 11 — Run all 13 missing tasks (Opus) — **next after 10**
+### 11 — Run all 13 missing tasks (Opus) — **DONE** (job: `opus-missing-13`)
+
+**Fix before run:** `omega_agent.py` install step now prepends `mkdir -p "$HOME" && touch "$HOME/.bashrc"` before the bun.sh curl. Hardens against bare Ubuntu containers (e.g. `ubuntu:24.04`) where the agent home directory doesn't exist yet.
 
 Same 13 tasks with Opus 4.7 at `high` effort:
 

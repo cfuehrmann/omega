@@ -72,7 +72,7 @@ class OmegaAgent(BaseInstalledAgent):
         )
         await self.exec_as_agent(
             environment,
-            command="curl -fsSL https://bun.sh/install | bash",
+            command="mkdir -p \"$HOME\" && touch \"$HOME/.bashrc\" && curl -fsSL https://bun.sh/install | bash",
         )
         await self.exec_as_agent(
             environment,
