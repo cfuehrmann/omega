@@ -11,7 +11,7 @@ against Claude Code, Terminus-2, Mini-SWE-Agent, and OpenHands on the same model
 |---|---|---|---|---|
 | `claude-sonnet-4-6` | medium | 106 (best-of-N) | 50/76 = **66 %** | $28.90 |
 | `claude-opus-4-7` | xhigh | 76 (1-shot) | 50/76 = **66 %** | $29.23 |
-| `claude-opus-4-7` | high | +9 retry trials | **55/76 = 72 %** | TBD |
+| `claude-opus-4-7` | high | +11 retry trials | **56/76 = 74 %** | TBD |
 
 Single-shot comparison: Opus 4.7 xhigh **66 %** vs Sonnet 4.6 medium **55 %** (42/76).
 Opus 4.7 wins by ~11 pp in a fair per-trial comparison; the headline tie is an
@@ -127,19 +127,30 @@ Re-ran 9 tasks with `claude-opus-4-7` at `high` effort.
 `cd: /app: No such file or directory` for tasks whose Docker image has no `/app`
 mount. Fix G (below) changes the prefix to `cd /app 2>/dev/null || true`.
 
-### 9 — Fix G + targeted re-run — **next**
+### 9 — Fix G + targeted re-run — **DONE** (job: `opus-4-7-fixg-retry`, 5m 55s)
 
-Fix G already applied to `omega_agent.py`: `cd /app 2>/dev/null || true` instead of
-`cd /app &&`. Tag v0.1.3 and re-run affected tasks:
+v0.1.3 tagged with Fix G. Re-ran `prove-plus-comm` and `winning-avg-corewars`.
 
-- `prove-plus-comm` — should flip once Fix G lands in the tagged version
-- `winning-avg-corewars` — resource-kill; worth one more retry at high effort
-- `raman-fitting` — still timing out; low priority (Shape 2, hard cap)
-- `filter-js-from-html` — bun lightningcss tarball failure; separate issue
+| Task | Outcome | Flipped? |
+|---|---|---|
+| `prove-plus-comm` | reward=1.0 | ✅ Fix G confirmed |
+| `winning-avg-corewars` | reward=0.0 (5 min, no exception) | ✗ genuinely hard |
 
-Expected: +1 (prove-plus-comm). Possibly +1 (winning-avg-corewars if OOM was a fluke).
+**Opus leaderboard after item 9: 56/76 = 74 %**
 
-### 10 — SWE-Bench Verified — **later**
+### 10 — Next steps — **next**
+
+Remaining Opus failures worth investigating:
+- `openssl-selfsigned-cert`, `headless-terminal`, `configure-git-webserver`, `qemu-startup`
+  — Sonnet-only passes; model quality or near-miss
+- `polyglot-rust-c` — binary cleanup (Shape 3); prompt still insufficient
+- `raman-fitting`, `path-tracing`, `gcode-to-text` — Shape 2 (genuine timeouts)
+- `filter-js-from-html` — bun lightningcss tarball failure (infra; not effort-related)
+
+Candidate: run a Sonnet 4.6 full re-run at v0.1.3 to measure Fix G's impact there,
+or push to SWE-Bench Verified.
+
+### 11 — SWE-Bench Verified — **later**
 
 Same Harbor wrapper, one flag change. 500 tasks, ~$300 budget.
 
