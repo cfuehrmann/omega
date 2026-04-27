@@ -1395,6 +1395,18 @@ function SessionPickerModal() {
   const [renamingDir, setRenamingDir] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal("");
 
+  onMount(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && !needsSessionChoice()) {
+        e.preventDefault();
+        setRenamingDir(null);
+        setSessionPickerOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+
   // The relative dir name of the current session (for marking "current")
   const currentDirName = () => {
     const d = state.sessionDir;

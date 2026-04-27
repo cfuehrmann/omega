@@ -173,6 +173,27 @@ test("resume button is disabled for the current session", async ({ page, server 
 });
 
 // ---------------------------------------------------------------------------
+// Escape key closes the session picker modal
+// ---------------------------------------------------------------------------
+
+test("pressing Escape closes the session picker modal", async ({ page, server }) => {
+  await server.createPastSession({
+    metadata: { name: "some session" },
+    events: [{ type: "user_message", content: "hi" }],
+  });
+
+  await page.goto("/");
+  await connectedDot(page).waitFor({ timeout: 5000 });
+
+  await openSessionPicker(page);
+  await expect(page.getByTestId("session-picker-modal")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByTestId("session-picker-modal")).not.toBeVisible({ timeout: 2000 });
+});
+
+// ---------------------------------------------------------------------------
 // Deleting a session removes it from the list
 // ---------------------------------------------------------------------------
 
