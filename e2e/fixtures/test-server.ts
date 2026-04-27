@@ -140,6 +140,12 @@ let resumeDelayMs = 0;
  * any counter bookkeeping.
  */
 
+// Wipe any sessions left over from previous test-server runs so the
+// directory cannot grow without bound across repeated gate / test-browser
+// invocations.  Safe to do at startup because no tests have run yet.
+await rm(TEST_SESSIONS_ROOT, { recursive: true, force: true });
+await mkdir(TEST_SESSIONS_ROOT, { recursive: true });
+
 let sessionPaths: SessionPaths = await makeSessionDir(new Date(), TEST_SESSIONS_ROOT);
 
 /** Track all session dirs created by this server so reset can clean only those. */
