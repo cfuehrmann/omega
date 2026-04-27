@@ -55,9 +55,11 @@ later.
   "flaky". A test that passes alone but fails in the gate is a real bug. Fix it.
 - `just gate` runs as the **pre-commit hook** — do not run it separately.
   Always commit with `git add -A && git commit -m "..."` (not `git commit -a`,
-  which misses untracked files). **Exit code 0 = committed, gate passed** — the
-  hook suppresses gate stdout so the tool result stays small; no log reading
-  needed. Non-zero: the hook already prints the last 60 lines of
+  which misses untracked files). **Exit code 0 = committed** — the hook
+  suppresses gate stdout so the tool result stays small; no log reading needed.
+  The hook skips the gate automatically when all staged files are docs/backlog
+  (`*.md`, `docs/`, `backlog/`) — for any code change the gate always runs.
+  Non-zero: the hook already prints the last 60 lines of
   `test-output/gate-latest.log` in the tool result; open the full log only if
   those lines aren't enough to diagnose the failure.
 - `just test` — test-core and test-browser in parallel (outputs printed

@@ -22,6 +22,22 @@ fi
 echo "✅  No unsafe Agent construction."
 
 # ---------------------------------------------------------------------------
+# Docs-only fast path: skip the gate when every staged file is a doc or
+# backlog file (*.md anywhere, or anything under docs/ or backlog/).
+# Code changes always go through the full gate.
+# ---------------------------------------------------------------------------
+STAGED=$(git diff --cached --name-only)
+NON_DOCS=$(printf '%s\n' $STAGED | grep -vE '(\.md$|^docs/|^backlog[./])')
+if [ -z "$STAGED" ]; then
+  echo "✅  Nothing staged."
+  exit 0
+fi
+if [ -z "$NON_DOCS" ]; then
+  echo "✅  Docs-only change — skipping gate."
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Run the full gate: typecheck + all tests (unit + browser) + knip.
 # ---------------------------------------------------------------------------
 # Clear git plumbing variables that git sets when running hooks with -a.
