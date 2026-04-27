@@ -147,9 +147,9 @@ push:
 release:
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep -m1 'OMEGA_VERSION' omega_agent.py | sed 's/.*"\(.*\)".*/\1/')
+    VERSION=$(grep -m1 'OMEGA_VERSION' bench/omega_agent.py | sed 's/.*"\(.*\)".*/\1/')
     if [ -z "$VERSION" ]; then
-        echo "❌  Could not read OMEGA_VERSION from omega_agent.py" >&2
+        echo "❌  Could not read OMEGA_VERSION from bench/omega_agent.py" >&2
         exit 1
     fi
     if git rev-parse "$VERSION" >/dev/null 2>&1; then

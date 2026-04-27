@@ -56,7 +56,7 @@ diagnosis/
 .DS_Store
 
 # Harbor benchmark job output (local run artifacts)
-jobs/
+bench/jobs/
 
 # Python bytecode cache
 __pycache__/

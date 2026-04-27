@@ -44,8 +44,8 @@ interface TrialRecord {
 // ── load data ────────────────────────────────────────────────────────────────
 
 const ROOT = resolve(import.meta.dir, "..");
-const ORACLE_FILE = join(ROOT, "benchmark-results", "oracle-tasks.json");
-const RESULTS_FILE = join(ROOT, "benchmark-results", "results.jsonl");
+const ORACLE_FILE = join(ROOT, "results", "oracle-tasks.json");
+const RESULTS_FILE = join(ROOT, "results", "results.jsonl");
 
 if (!existsSync(ORACLE_FILE)) {
   console.error("Error: benchmark-results/oracle-tasks.json not found");
@@ -167,7 +167,7 @@ const totalTrialPasses = oracleAttempted.reduce((a, s) => a + s.passes, 0);
 // totalPassingTasks: number of distinct tasks with ≥1 pass — the correct leaderboard metric
 const totalPassingTasks = oracleAttempted.reduce((a, s) => a + (s.passes > 0 ? 1 : 0), 0);
 const totalAttempts = oracleAttempted.reduce((a, s) => a + s.attempts, 0);
-const totalTasks = oraclePassing.length; // 76
+const totalTasks = oraclePassing.length;
 
 // Total tokens across all records (oracle-scope only)
 const allOracleRecords = filtered.filter((r) => oraclePassingNames.has(r.task_name));

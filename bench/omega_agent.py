@@ -4,7 +4,7 @@ Harbor agent adapter for Omega.
 Usage
 -----
 harbor run -d terminal-bench@2.0 \\
-  --agent-import-path omega_agent:OmegaAgent \\
+  --agent-import-path bench.omega_agent:OmegaAgent \\
   -m anthropic/claude-sonnet-4-6 \\
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 

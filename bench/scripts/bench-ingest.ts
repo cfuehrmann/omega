@@ -25,8 +25,8 @@ function normaliseTaskName(raw: string): string {
 }
 
 const JOBS_DIR = join(ROOT, "jobs");
-const RESULTS_FILE = join(ROOT, "benchmark-results", "results.jsonl");
-const SKIP_FILE = join(ROOT, "benchmark-results", ".skip-trials");
+const RESULTS_FILE = join(ROOT, "results", "results.jsonl");
+const SKIP_FILE = join(ROOT, "results", ".skip-trials");
 
 // ── load seen / skip sets ────────────────────────────────────────────────────
 

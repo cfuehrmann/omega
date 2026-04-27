@@ -5,7 +5,9 @@
  */
 
 import { readdirSync, readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
+
+const BENCH_DIR = resolve(import.meta.dir, "..");
 
 interface EventRecord {
   type: string;
@@ -109,7 +111,7 @@ function analyzeTrial(
 }
 
 // Build task->logPath map from all jobs
-const JOBS_DIR = "jobs";
+const JOBS_DIR = join(BENCH_DIR, "jobs");
 const taskLogs: Map<string, { path: string; job: string }[]> = new Map();
 
 for (const job of readdirSync(JOBS_DIR)) {
@@ -128,7 +130,7 @@ for (const job of readdirSync(JOBS_DIR)) {
 }
 
 // Load results
-const results: any[] = readFileSync("benchmark-results/results.jsonl", "utf-8")
+const results: any[] = readFileSync(join(BENCH_DIR, "results", "results.jsonl"), "utf-8")
   .trim().split("\n").filter(Boolean).map(l => JSON.parse(l));
 
 // Analyze each failing trial

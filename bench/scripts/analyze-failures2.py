@@ -9,8 +9,9 @@ import json, sys, os, re
 from collections import defaultdict, Counter
 from pathlib import Path
 
-JOBS_DIR = Path("jobs")
-RESULTS_FILE = Path("benchmark-results/results.jsonl")
+BENCH_DIR = Path(__file__).parent.parent
+JOBS_DIR = BENCH_DIR / "jobs"
+RESULTS_FILE = BENCH_DIR / "results" / "results.jsonl"
 
 def parse_events(path):
     try:
