@@ -399,9 +399,11 @@ export const toolDefinitions: Anthropic.Beta.Messages.BetaTool[] = [
     description:
       "Poll a background-process log file until a condition is met, then return the log contents. " +
       "Returns when the FIRST of these occurs: (1) pattern appears in the log, " +
-      "(2) log reaches minBytes in size, or (3) timeoutMs elapses. " +
+      "(2) log reaches minBytes in size, (3) the process exits, or (4) timeoutMs elapses. " +
       "If neither pattern nor minBytes is given, returns as soon as any output appears. " +
-      "Returns { output, matched, minBytesReached, timedOut }. " +
+      "Returns { output, matched, minBytesReached, timedOut, processExited?, exitCode? }. " +
+      "Pass the pid returned by run_background so that an early process exit is detected immediately " +
+      "instead of waiting for the full timeout. " +
       "Use this after run_background instead of sleep + tail to wait for a server or process to become ready. " +
       "The pattern is interpreted as a JavaScript regex (e.g. 'ready|started|Error' for alternation).",
     input_schema: toToolInputSchema(WaitForOutputSchema) as Anthropic.Beta.Messages.BetaTool["input_schema"],
@@ -860,13 +862,15 @@ async function executeRunBackground(input: {
 async function executeWaitForOutput(
   input: {
     logFile: string;
+    pid: number;
     timeoutMs: number;
     pattern?: string;
     minBytes?: number;
   },
   signal?: AbortSignal,
 ): Promise<string> {
-  const { logFile, timeoutMs, pattern, minBytes } = input;
+  const { logFile, pid, timeoutMs, pattern, minBytes } = input;
+  const proc = backgroundProcesses.get(pid);
   const deadline = Date.now() + timeoutMs;
 
   // Compile the pattern into a RegExp once, falling back to a literal match if
@@ -908,6 +912,15 @@ async function executeWaitForOutput(
     }
     if (effectiveMinBytes !== null && content.length >= effectiveMinBytes) {
       return JSON.stringify({ output: content, matched: false, minBytesReached: true,  timedOut: false });
+    }
+
+    // If the process has already exited, do one final read to capture any
+    // output that was buffered after our last read, then return immediately.
+    if (proc && proc.exitCode !== null) {
+      const final = await read();
+      const matched = hasPattern && patternRe!.test(final);
+      const minBytesReached = effectiveMinBytes !== null && final.length >= effectiveMinBytes;
+      return JSON.stringify({ output: final, matched, minBytesReached, timedOut: false, processExited: true, exitCode: proc.exitCode });
     }
 
     await new Promise<void>((resolve, reject) => {

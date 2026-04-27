@@ -52,8 +52,10 @@ The default timeout is 120 s; pass a higher \`timeout\` (e.g. 300) for commands
 you expect to take longer. Reserve \`run_background\` for processes that must
 stay alive indefinitely (dev servers, file watchers).
 To wait for a background process to become ready (e.g. a dev server), use
-\`wait_for_output(logFile, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
-It returns as soon as the pattern matches the log (or on timeout).
+\`wait_for_output(logFile, pid, timeoutMs, pattern?)\` instead of \`sleep\` + \`tail\`.
+Always pass the \`pid\` from \`run_background\` — if the process exits before the pattern matches,
+\`wait_for_output\` returns immediately with \`processExited: true\` and the exit code instead of
+waiting for the full timeout.
 The \`pattern\` is a **JavaScript regex** — use \`|\` for alternation (e.g. \`"ready|Error|done"\`).
 If a background process prompts for interactive input, use
 \`write_stdin(pid, text)\` to respond (include \\n to submit a line). Pass

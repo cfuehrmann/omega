@@ -803,10 +803,11 @@ describe("executeTool: wait_for_output", () => {
     const bgResult = await executeTool("run_background", {
       command: "sleep 0.1 && echo 'Server listening on port 3001'",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const result = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
       pattern: "listening on port",
     });
@@ -821,10 +822,11 @@ describe("executeTool: wait_for_output", () => {
     const bgResult = await executeTool("run_background", {
       command: "sleep 0.1 && printf 'x%.0s' {1..100}",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const result = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
       minBytes: 50,
     });
@@ -839,10 +841,11 @@ describe("executeTool: wait_for_output", () => {
     const bgResult = await executeTool("run_background", {
       command: "sleep 0.1 && echo hello",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const result = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
     });
     expect(result.isError).toBe(false);
@@ -856,10 +859,11 @@ describe("executeTool: wait_for_output", () => {
     const bgResult = await executeTool("run_background", {
       command: "sleep 10 && echo never",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const result = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 300,
       pattern: "never",
     });
@@ -869,15 +873,43 @@ describe("executeTool: wait_for_output", () => {
     expect(r.matched).toBe(false);
   });
 
+  it("returns immediately when process exits before pattern matches", async () => {
+    // Process exits quickly with a non-matching message — should not wait for timeout
+    const bgResult = await executeTool("run_background", {
+      command: "echo 'fatal: unknown option --concurrency' && exit 2",
+    });
+    const { pid, logFile } = JSON.parse(bgResult.output);
+
+    const start = Date.now();
+    const result = await executeTool("wait_for_output", {
+      logFile,
+      pid,
+      timeoutMs: 30_000,
+      pattern: "Results written to",
+    });
+    const elapsed = Date.now() - start;
+
+    expect(result.isError).toBe(false);
+    const r = JSON.parse(result.output);
+    expect(r.processExited).toBe(true);
+    expect(r.exitCode).toBe(2);
+    expect(r.matched).toBe(false);
+    expect(r.timedOut).toBe(false);
+    expect(r.output).toContain("unknown option");
+    // Should return in well under a second, not after the 30-second timeout
+    expect(elapsed).toBeLessThan(3000);
+  });
+
   it("pattern fires before minBytes when both given (or semantics)", async () => {
     // Pattern 'ready' appears quickly; minBytes=10000 would take much longer
     const bgResult = await executeTool("run_background", {
       command: "sleep 0.1 && echo ready",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const result = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
       pattern: "ready",
       minBytes: 10000,
@@ -889,9 +921,13 @@ describe("executeTool: wait_for_output", () => {
   });
 
   it("handles log file that does not exist yet", async () => {
+    // Use a long-running process so the exit check doesn't interfere with the timeout test
+    const bgResult = await executeTool("run_background", { command: "sleep 10" });
+    const { pid } = JSON.parse(bgResult.output);
     const nonExistent = "/tmp/omega-test-nonexistent-" + Date.now() + ".log";
     const result = await executeTool("wait_for_output", {
       logFile: nonExistent,
+      pid,
       timeoutMs: 300,
     });
     expect(result.isError).toBe(false);
@@ -905,10 +941,11 @@ describe("executeTool: wait_for_output", () => {
     const bgResult = await executeTool("run_background", {
       command: "sleep 0.1 && echo NonZeroExitError",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const result = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
       pattern: "ready|started|Error",
     });
@@ -923,7 +960,7 @@ describe("executeTool: wait_for_output", () => {
     const bgResult = await executeTool("run_background", {
       command: "sleep 10 && echo never",
     });
-    const { logFile } = JSON.parse(bgResult.output);
+    const { pid, logFile } = JSON.parse(bgResult.output);
 
     const controller = new AbortController();
     // Fire the abort after a short delay
@@ -932,7 +969,7 @@ describe("executeTool: wait_for_output", () => {
     const start = Date.now();
     const result = await executeTool(
       "wait_for_output",
-      { logFile, timeoutMs: 10_000, pattern: "never" },
+      { logFile, pid, timeoutMs: 10_000, pattern: "never" },
       controller.signal,
     );
     const elapsed = Date.now() - start;
@@ -980,6 +1017,7 @@ describe("executeTool: write_stdin", () => {
 
     const waitResult = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
       pattern: "got:hello",
     });
@@ -1004,6 +1042,7 @@ describe("executeTool: write_stdin", () => {
     // cat exits once stdin is closed (EOF) — wait for its output in the log
     const waitResult = await executeTool("wait_for_output", {
       logFile,
+      pid,
       timeoutMs: 3000,
       pattern: "hello world",
     });
