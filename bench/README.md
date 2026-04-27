@@ -16,17 +16,21 @@ Run `bun bench/scripts/bench-summary.ts` for a live breakdown from `bench/result
 
 ## Running benchmarks
 
+**Always run Harbor from the `bench/` directory** — Harbor writes `jobs/` relative to CWD, so running from `bench/` is what keeps job output inside `bench/jobs/`.
+
 ```bash
+cd bench
+
 # one specific task
 harbor run -d terminal-bench@2.0 \
-  --agent-import-path bench.omega_agent:OmegaAgent \
+  --agent-import-path omega_agent:OmegaAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -t terminal-bench/fix-git -n 1
 
 # explicit list of tasks (recommended for targeted re-runs)
 harbor run -d terminal-bench@2.0 \
-  --agent-import-path bench.omega_agent:OmegaAgent \
+  --agent-import-path omega_agent:OmegaAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -i taskA -i taskB \
