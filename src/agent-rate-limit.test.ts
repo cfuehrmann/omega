@@ -1022,3 +1022,138 @@ describe("thinking-budget exhaustion recovery", () => {
     expect(["turn_end", "turn_interrupted"]).toContain(last.type);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix D — Auto-retry after output-budget exhaustion mid-tool-call
+// stop_reason: max_tokens, tool_use block present (truncated arguments)
+// ---------------------------------------------------------------------------
+
+describe("output-budget mid-tool-call auto-retry", () => {
+  /**
+   * A stream that simulates the LLM running out of output tokens while
+   * generating a tool call's arguments:
+   *   stop_reason=max_tokens, content=[{ type: "tool_use", ... }]
+   */
+  function makeTruncatedToolCallStream(): ReturnType<CreateMessageStream> {
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+        yield {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_truncated", name: "write_file", input: {} } as any,
+        };
+        // No input_json_delta — budget exhausted before any arguments were emitted
+        yield { type: "content_block_stop", index: 0 };
+        yield {
+          type: "message_delta",
+          context_management: null,
+          delta: { stop_reason: "max_tokens", stop_sequence: null, stop_details: null, container: null },
+          usage: { output_tokens: 64000, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null },
+        };
+        yield { type: "message_stop" };
+      },
+      finalMessage: async () => ({
+        id: "msg_truncated",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        container: null,
+        context_management: null,
+        content: [{ type: "tool_use", id: "toolu_truncated", name: "write_file", input: {} }],
+        stop_reason: "max_tokens",
+        stop_sequence: null,
+        usage: { input_tokens: 100, output_tokens: 64000 },
+      } as any),
+    };
+  }
+
+  /** Normal end_turn stream with text "recovered". */
+  function makeRecoveredStream(): ReturnType<CreateMessageStream> {
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<BetaRawMessageStreamEvent> {
+        yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } };
+        yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "recovered" } };
+        yield { type: "content_block_stop", index: 0 };
+        yield {
+          type: "message_delta",
+          context_management: null,
+          delta: { stop_reason: "end_turn", stop_sequence: null, stop_details: null, container: null },
+          usage: { output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, input_tokens: null, iterations: null, server_tool_use: null },
+        };
+        yield { type: "message_stop" };
+      },
+      finalMessage: async () => ({
+        id: "msg_recovered",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        container: null,
+        context_management: null,
+        content: [{ type: "text", text: "recovered", citations: null }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      } as any),
+    };
+  }
+
+  it("auto-retries: emits agent_error and tool_result, makes second LLM call, final text is 'recovered'", async () => {
+    let callCount = 0;
+
+    const mockProvider: CreateMessageStream = () => {
+      callCount++;
+      if (callCount === 1) return makeTruncatedToolCallStream();
+      return makeRecoveredStream();
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    // A second LLM call was made (auto-retry fired)
+    expect(callCount).toBe(2);
+
+    // A synthetic tool_result error was emitted
+    const toolResults = events.filter(e => e.type === "tool_result") as any[];
+    expect(toolResults.length).toBe(1);
+    expect(toolResults[0].isError).toBe(true);
+    expect(toolResults[0].name).toBe("write_file");
+
+    // An agent_error describing the budget exhaustion was emitted
+    const agentErrors = events.filter(e => e.type === "agent_error") as any[];
+    expect(agentErrors.length).toBeGreaterThanOrEqual(1);
+    expect(agentErrors[0].error).toMatch(/max_tokens|output budget/i);
+
+    // Turn ended cleanly
+    const last = events[events.length - 1] as any;
+    expect(last.type).toBe("turn_end");
+
+    // Final text is from the second call
+    const llmResponses = events.filter(e => e.type === "llm_response") as any[];
+    expect(llmResponses[llmResponses.length - 1].text).toBe("recovered");
+  });
+
+  it("cap respected: two consecutive truncated tool calls — second emits cap-hit error, no third LLM call", async () => {
+    let callCount = 0;
+
+    const mockProvider: CreateMessageStream = () => {
+      callCount++;
+      return makeTruncatedToolCallStream();
+    };
+
+    const { agent, dispose } = await makeTestAgent(mockProvider);
+    disposeAll.push(dispose);
+    const events = await collectEvents(agent, "hello");
+
+    // Only two calls — cap stops a third
+    expect(callCount).toBe(2);
+
+    // At least two agent_error events (one for the first recovery, one for the cap)
+    const agentErrors = events.filter(e => e.type === "agent_error") as any[];
+    expect(agentErrors.length).toBeGreaterThanOrEqual(2);
+
+    // Turn ends
+    const last = events[events.length - 1] as any;
+    expect(["turn_end", "turn_interrupted"]).toContain(last.type);
+  });
+});

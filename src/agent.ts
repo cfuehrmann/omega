@@ -1583,7 +1583,25 @@ export class Agent {
         };
         await this.logEvent(truncErrEvent);
         yield truncErrEvent;
-        // Do NOT set continueLoop = true — turn ends here.
+        // For max_tokens: auto-retry (capped at 1) — the context is intact and
+        // the error feedback is now in the history, so the LLM can choose a
+        // smaller approach on the next call.
+        // For model_context_window_exceeded: the context window is full; a
+        // retry would fail immediately for the same reason, so we stop here.
+        if (!isContextWindowStop) {
+          if (maxTokensRecoveries >= 1) {
+            const capHitErr =
+              `Output-budget mid-tool-call recovery cap reached: the model exhausted the ` +
+              `${maxOutputTokens}-token output budget while generating tool call arguments on ` +
+              `two consecutive turns. The turn ends here.`;
+            const capHitEv: OmegaEvent = { type: "agent_error", time: now(), error: capHitErr };
+            await this.logEvent(capHitEv);
+            yield capHitEv;
+          } else {
+            maxTokensRecoveries++;
+            continueLoop = true;
+          }
+        }
       }
 
       // Fix C — Recovery loop after thinking-budget exhaustion (Shape 1).
