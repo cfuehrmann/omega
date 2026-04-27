@@ -9,7 +9,7 @@ harbor run -d terminal-bench@2.0 \\
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 
 Optional kwargs (via --agent-kwargs or subclass override):
-  max_turns  int    LLM-call budget per task (default 50)
+  max_turns  int    LLM-call budget per task (default 100)
   effort     str    Thinking effort: low|medium|high|max|xhigh (default medium)
 """
 
@@ -41,7 +41,7 @@ class OmegaAgent(BaseInstalledAgent):
     """Omega installed into the task container and invoked via src/cli.ts."""
 
     CLI_FLAGS = [
-        CliFlag(kwarg="max_turns", cli="--max-turns", type="int", default=50),
+        CliFlag(kwarg="max_turns", cli="--max-turns", type="int", default=100),
         CliFlag(
             kwarg="effort",
             cli="--effort",

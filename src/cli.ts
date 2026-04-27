@@ -12,7 +12,7 @@
  *     --model claude-sonnet-4-6 \
  *     --session-dir /tmp/omega-session \
  *     [--effort medium] \
- *     [--max-turns 50]
+ *     [--max-turns 100]
  *
  * Exit codes:
  *   0  — agent completed normally (turn_end)
