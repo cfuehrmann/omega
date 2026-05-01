@@ -6,10 +6,10 @@
 //!
 //! # JSON representation
 //!
-//! The outer discriminator field is `"type"` with snake_case values
+//! The outer discriminator field is `"type"` with `snake_case` values
 //! (e.g. `"session_started"`).  Most struct fields use camelCase to match
 //! existing `events.jsonl` files.  The nested `usage` object inside
-//! `LlmResponseEvent` keeps the Anthropic API's original snake_case field
+//! `LlmResponseEvent` keeps the Anthropic API's original `snake_case` field
 //! names (`input_tokens`, `output_tokens`, etc.).
 //!
 //! # Naming authority
@@ -75,7 +75,7 @@ pub struct TurnMetrics {
 }
 
 /// Token usage from an LLM response envelope.  Field names intentionally
-/// kept in snake_case to match the Anthropic API's wire format.
+/// kept in `snake_case` to match the Anthropic API's wire format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmResponseUsage {
     pub input_tokens: i64,
@@ -190,7 +190,7 @@ pub struct ToolCallEvent {
     pub name: String,
     /// Tool input parameters (arbitrary JSON from the LLM).
     pub input: Value,
-    /// Hash of the assistant context.jsonl record containing this tool_use block.
+    /// Hash of the assistant context.jsonl record containing this `tool_use` block.
     pub context_hash: ContextHash,
 }
 
@@ -347,7 +347,7 @@ pub struct TurnContinuedEvent {
 /// Every `OmegaEvent` is both streamed to UI consumers and written to
 /// `.omega/sessions/<timestamp>/events.jsonl`.
 ///
-/// The `"type"` JSON field is the discriminator; values are snake_case
+/// The `"type"` JSON field is the discriminator; values are `snake_case`
 /// (e.g. `"session_started"`, `"tool_call"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -382,6 +382,8 @@ pub enum OmegaEvent {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
     use super::*;
 
     // -----------------------------------------------------------------------

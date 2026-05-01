@@ -165,7 +165,7 @@ release:
 # Runs via the pre-commit hook when only rust/ files are staged.
 # Run manually: just rust-gate
 rust-gate:
-    cd rust && cargo fmt --check && cargo clippy && cargo test
+    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
 
 # Install git hooks (pre-commit test gate)
 install-hooks:

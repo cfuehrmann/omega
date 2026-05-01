@@ -1,3 +1,27 @@
 [workspace]
-members = ["crates/omega-protocol"]
+members  = ["crates/omega-protocol"]
 resolver = "2"
+
+[workspace.package]
+edition = "2024"
+
+# ---------------------------------------------------------------------------
+# Workspace-wide lint configuration.
+#
+# All lints are set to "warn" here; the rust-gate recipe runs
+# `cargo clippy -- -D warnings` which promotes every warning to an error.
+# That way individual crates can use `#[allow(...)]` to opt out of specific
+# lints where justified, while the gate still catches everything else.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Enable all and pedantic lint groups at warn level.
+# priority = -1 so that individual lint overrides take precedence.
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Specific high-value safety lints.
+unwrap_used = "warn"
+expect_used = "warn"
+panic       = "warn"
