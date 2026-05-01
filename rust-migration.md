@@ -193,6 +193,124 @@ anthropic-beta: interleaved-thinking-2025-05-14   (older models)
 
 ---
 
+## Phase 1b.6 — replace `ScriptedProvider` retry tests with e2e integration tests (next)
+
+### Motivation
+
+The retry unit tests in `retry.rs` use a `ScriptedProvider` — an in-module fake
+that returns scripted `Result` values directly, bypassing HTTP entirely. This
+creates two problems:
+
+1. **Untested seam.** No test exercises the composition
+   `RetryingProvider::new(AnthropicProvider::new(…), config)`. If `AnthropicProvider`
+   produces an error shape that `RetryingProvider` doesn't recognise, all tests
+   stay green.
+2. **Dead code hiding.** A branch reachable only through `ScriptedProvider` —
+   but never through a real provider — appears covered. e2e tests expose this:
+   code that has no real production path simply won't be hit.
+
+The rule of thumb: whenever e2e tests can achieve full coverage, prefer them
+and delete the internal-seam tests. If e2e coverage is incomplete, ask *why*
+before writing a unit test — the answer is often "this code is dead".
+
+### Session setup
+
+**Model:** `claude-opus-4-7` — **Effort:** High
+
+(Judgment calls arise: transport-error reachability, possible dead-code
+deletion, mutant triage after restructuring. The most capable model avoids
+back-and-forth on design questions.)
+
+**Prompt:**
+
+> Continuing the Rust migration of Omega. Read
+> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1b.6 session
+> prompt, and execute it.
+
+### Task
+
+#### Step 1 — Audit `ScriptedProvider` tests
+
+For every test in `retry.rs` that uses `ScriptedProvider`, answer: *can this
+be replaced by an integration test that goes through a real provider + wiremock?*
+
+The expected answer for almost all tests is yes. wiremock supports sequential
+responses: mount multiple `Mock`s with `.up_to_n_times(1)` in order, or use
+`Mock::given(…).respond_with(ResponseTemplate::…)` mounted repeatedly — the
+first mounted mock that matches fires first.
+
+For each test, rewrite it as an integration test in `tests/retry.rs` (create
+this file) that drives the full stack:
+
+```rust
+let provider = RetryingProvider::new(
+    AnthropicProvider::new("test-key").with_base_url(server.uri()),
+    RetryConfig::for_tests(n),
+);
+```
+
+Use both `AnthropicProvider` and `OllamaProvider` where the retry behaviour
+being tested is provider-agnostic — pick one and note why, or parameterise if
+it adds value without adding noise.
+
+#### Step 2 — Handle the transport-error case explicitly
+
+`retries_transport_errors` tests `LlmError::Transport`. Investigate:
+
+- Can `AnthropicProvider` or `OllamaProvider` actually produce
+  `LlmError::Transport` from a real HTTP exchange? (Look at how `reqwest`
+  errors are mapped — a connection-refused or mid-stream TCP close should
+  produce this.)
+- If yes: reproduce it via wiremock dropping the connection (wiring a
+  `ResponseTemplate` with `.set_delay(…)` and then a server shutdown, or
+  using `wiremock`'s `mount_as_scoped` to drop the guard mid-request).
+- If it turns out that the real providers *never* emit `LlmError::Transport`
+  from their current error-mapping code: that is dead code. Delete the
+  unreachable branch and the test.
+
+Document the conclusion with a comment either way.
+
+#### Step 3 — Delete `ScriptedProvider` and dead helpers
+
+Once every `ScriptedProvider`-based test has been replaced or deliberately
+retired, delete `ScriptedProvider`, `dummy_request`, `http_529`, `http_400`,
+`http_429`, `http_429_retry_after`, and `RetryConfig::for_tests` if they are
+no longer referenced. `cargo machete` and `cargo check` will confirm nothing
+lingers.
+
+If `RetryConfig::for_tests` is still useful in the new integration tests,
+keep it — but move it to a shared `tests/common/mod.rs` helper so it is
+clearly test-infrastructure rather than production code.
+
+#### Step 4 — Run `cargo mutants` and triage
+
+After the restructuring, run:
+
+```
+cargo mutants -p omega-core
+```
+
+Expect the surviving-mutant count to change — some mutants previously killed
+by `ScriptedProvider` tests may now survive (revealing genuinely undertested
+code or dead branches), and the new e2e tests may kill mutants that the old
+unit tests couldn't reach.
+
+Triage every surviving mutant using the same three-option framework as Phase
+1b.5 (new test / dead code removal / documented skip). **Stop and discuss with
+the user before applying any skip.**
+
+### Done when
+
+- `tests/retry.rs` exists and covers all retry behaviours through real
+  providers + wiremock.
+- `ScriptedProvider` and its associated helpers are deleted (or their survival
+  is explicitly justified).
+- `cargo mutants -p omega-core` reports 0 surviving mutants.
+- All commits passed `just rust-gate`.
+- This section is updated to a ✅ done record.
+
+---
+
 ## Phase 1c — `omega-server` (WebSocket)
 
 - `tokio` async runtime, `tokio-tungstenite` for WebSocket
