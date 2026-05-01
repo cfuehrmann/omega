@@ -238,10 +238,20 @@ async fn list_files_recursive() {
 
 #[tokio::test]
 async fn list_files_dirs_before_files() {
+    // Creates 10 files ("a00.txt" – "a09.txt") and 5 dirs ("z0/" – "z4/").
+    // With 15 entries, readdir returns them in a hash-based order that very
+    // likely interleaves files and dirs.  The (false, true) match arm in the
+    // sort_by comparator is the only thing that guarantees dirs precede files
+    // when a file is the *first* argument of a comparison.  Deleting that arm
+    // falls through to alphabetical order, which puts "a*" before "z*" — the
+    // test then sees a file before a dir and fails.
     let dir = tempfile::tempdir().unwrap();
-    let sub = dir.path().join("zzz_dir");
-    std::fs::create_dir(&sub).unwrap();
-    std::fs::write(dir.path().join("aaa.txt"), "").unwrap();
+    for i in 0..10 {
+        std::fs::write(dir.path().join(format!("a{i:02}.txt")), "").unwrap();
+    }
+    for i in 0..5 {
+        std::fs::create_dir(dir.path().join(format!("z{i}"))).unwrap();
+    }
 
     let out = exec(
         "list_files",
@@ -249,10 +259,20 @@ async fn list_files_dirs_before_files() {
     )
     .await
     .unwrap();
-    // Directory should appear before the file even though "zzz" sorts after "aaa".
-    let dir_pos = out.find("zzz_dir/").expect("directory not found");
-    let file_pos = out.find("aaa.txt").expect("file not found");
-    assert!(dir_pos < file_pos, "dirs should precede files: {out}");
+
+    // Collect positions of dirs ("z0/" … "z4/") and files ("a00.txt" … "a09.txt").
+    let last_dir_pos = (0..5)
+        .map(|i| out.find(&format!("z{i}/")).unwrap_or(usize::MAX))
+        .max()
+        .unwrap();
+    let first_file_pos = (0..10)
+        .map(|i| out.find(&format!("a{i:02}.txt")).unwrap_or(usize::MAX))
+        .min()
+        .unwrap();
+    assert!(
+        last_dir_pos < first_file_pos,
+        "ALL dirs must appear before ANY file; last_dir_pos={last_dir_pos} first_file_pos={first_file_pos}: {out}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +464,30 @@ async fn edit_file_single_replacement_uses_simple_format() {
     assert!(
         !out.contains("replacements applied:"),
         "single replacement must use simple format, not numbered list: {out}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_single_replacement_error_has_no_index_label() {
+    // When the replacement is not found and total==1, the error must NOT contain
+    // "(replacement 1/1)".  Kills the `> → >=` mutation on `if total > 1` which
+    // would add that label even for single replacements.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f.txt");
+    std::fs::write(&path, "hello world").unwrap();
+
+    let err = exec(
+        "edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "replacements": [{"old_text": "MISSING_TEXT", "new_text": "x"}]
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        !err.contains("replacement 1/1"),
+        "single replacement error must not include index label: {err}"
     );
 }
 
@@ -857,6 +901,30 @@ async fn find_files_max_results_truncated() {
     assert!(
         out.contains("Truncated"),
         "3 files with max_results=2 must be truncated: {out}"
+    );
+}
+
+#[tokio::test]
+async fn find_files_exactly_max_results_not_truncated() {
+    // Exactly max_results=3 files — no truncation expected.
+    // Kills `> → >=` (3 >= 3 = true would wrongly truncate).
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..3 {
+        std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+    }
+    let out = exec(
+        "find_files",
+        json!({
+            "pattern": "*.txt",
+            "path": dir.path().to_str().unwrap(),
+            "max_results": 3
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains("Truncated"),
+        "exactly max_results=3 files must not be truncated: {out}"
     );
 }
 

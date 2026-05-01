@@ -278,6 +278,26 @@ async fn fetch_url_postprocess_exit_1_not_marked_as_error() {
 }
 
 #[tokio::test]
+async fn fetch_url_exactly_max_chars_postprocess_not_truncated() {
+    // Exactly POSTPROCESS_MAX_CHARS (8 000) output must NOT be truncated.
+    // Kills the `> → >=` mutation (8000 >= 8000 = true would wrongly truncate).
+    // python3 "print('x' * 7999)" outputs 7999 'x' + newline = 8 000 chars.
+    let out = exec(
+        "fetch_url",
+        json!({
+            "url":         "https://example.com",
+            "postprocess": "python3 -c \"print('x' * 7999)\""
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains("truncated"),
+        "exactly 8 000 chars must not be truncated: {out}"
+    );
+}
+
+#[tokio::test]
 async fn fetch_url_large_postprocess_output_is_truncated() {
     // Postprocess output > POSTPROCESS_MAX_CHARS (8 000) must be truncated.
     // Kills the `> → ==`, `> → <`, `> → >=` mutations on the truncation guard.
