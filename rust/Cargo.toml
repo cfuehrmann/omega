@@ -1,5 +1,5 @@
 [workspace]
-members  = ["crates/omega-protocol"]
+members  = ["crates/omega-protocol", "crates/omega-core"]
 resolver = "2"
 
 [workspace.package]

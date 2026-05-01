@@ -1,0 +1,42 @@
+---
+source: crates/omega-core/tests/ollama.rs
+expression: project(&items)
+---
+[
+  {
+    "text": "Let me think.",
+    "type": "thinking"
+  },
+  {
+    "text": "Hello",
+    "type": "text"
+  },
+  {
+    "text": ", world!",
+    "type": "text"
+  },
+  {
+    "contextHash": "",
+    "id": "tc_1",
+    "input": {
+      "a": 1,
+      "b": 2
+    },
+    "name": "calc",
+    "time": "[time]",
+    "type": "tool_call"
+  },
+  {
+    "contextHash": "",
+    "stopReason": "tool_calls",
+    "streamingStart": "[time]",
+    "text": "Hello, world!",
+    "thinking": "Let me think.",
+    "time": "[time]",
+    "type": "llm_response",
+    "usage": {
+      "input_tokens": 25,
+      "output_tokens": 87
+    }
+  }
+]

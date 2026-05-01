@@ -384,13 +384,13 @@ mod tests {
     // Discriminator / type-field round-trips
     // -----------------------------------------------------------------------
 
-    /// Verify the `"type"` discriminator is snake_case and inlined correctly.
+    /// Verify the `"type"` discriminator is `snake_case` and inlined correctly.
     #[test]
     fn session_started_type_field() {
         let ev = OmegaEvent::SessionStarted(SessionStartedEvent {
             time: "2024-01-15T12:00:00.000Z".into(),
             session_id: "abc123".into(),
-            path: "".into(),
+            path: String::new(),
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
             system_prompt: "You are Omega.".into(),

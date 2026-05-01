@@ -1,0 +1,45 @@
+---
+source: crates/omega-core/tests/anthropic.rs
+expression: project(&items)
+---
+[
+  {
+    "text": "Let me think.",
+    "type": "thinking"
+  },
+  {
+    "text": "Hello",
+    "type": "text"
+  },
+  {
+    "text": ", world!",
+    "type": "text"
+  },
+  {
+    "contextHash": "",
+    "id": "toolu_42",
+    "input": {
+      "a": 1,
+      "b": 2
+    },
+    "name": "calc",
+    "time": "[time]",
+    "type": "tool_call"
+  },
+  {
+    "contextHash": "",
+    "stopReason": "tool_use",
+    "streamingStart": "[time]",
+    "text": "Hello, world!",
+    "thinking": "Let me think.",
+    "time": "[time]",
+    "type": "llm_response",
+    "usage": {
+      "cache_creation_input_tokens": 10,
+      "cache_read_input_tokens": 5,
+      "input_tokens": 25,
+      "output_tokens": 87,
+      "service_tier": "standard"
+    }
+  }
+]

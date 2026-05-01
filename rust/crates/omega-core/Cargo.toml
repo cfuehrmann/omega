@@ -1,0 +1,25 @@
+[package]
+name    = "omega-core"
+version = "0.1.0"
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+omega-protocol     = { path = "../omega-protocol" }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+tokio              = { version = "1", features = ["sync", "time", "macros", "rt"] }
+futures            = "0.3"
+reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+eventsource-stream = "0.2"
+async-stream       = "0.3"
+thiserror          = "2"
+chrono             = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+rand               = "0.9"
+
+[dev-dependencies]
+insta    = { version = "1", features = ["json", "redactions"] }
+wiremock = "0.6"
+tokio    = { version = "1", features = ["full", "test-util"] }
