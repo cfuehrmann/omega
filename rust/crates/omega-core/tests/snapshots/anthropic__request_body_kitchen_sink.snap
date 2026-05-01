@@ -1,0 +1,163 @@
+---
+source: crates/omega-core/tests/anthropic.rs
+expression: "json!({\"input\": input, \"wire_body\": wire_body})"
+---
+{
+  "input": {
+    "config": {
+      "max_tokens": 2048,
+      "temperature": 0.5
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What is 2+2?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "id": "[id_1]",
+            "input": {
+              "a": 2,
+              "b": 2
+            },
+            "name": "calculator",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "4",
+            "tool_use_id": "[id_1]",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-4-6",
+    "system": "You are a helpful assistant.",
+    "tools": [
+      {
+        "description": "Performs basic arithmetic.",
+        "input_schema": {
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        "name": "calculator"
+      },
+      {
+        "description": "Reads a file from disk.",
+        "input_schema": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        },
+        "name": "read_file"
+      }
+    ]
+  },
+  "wire_body": {
+    "max_tokens": 2048,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What is 2+2?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "id": "[id_1]",
+            "input": {
+              "a": 2,
+              "b": 2
+            },
+            "name": "calculator",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "4",
+            "tool_use_id": "[id_1]",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-4-6",
+    "stream": true,
+    "system": "You are a helpful assistant.",
+    "temperature": 0.5,
+    "tools": [
+      {
+        "description": "Performs basic arithmetic.",
+        "input_schema": {
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        "name": "calculator"
+      },
+      {
+        "description": "Reads a file from disk.",
+        "input_schema": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        },
+        "name": "read_file"
+      }
+    ]
+  }
+}

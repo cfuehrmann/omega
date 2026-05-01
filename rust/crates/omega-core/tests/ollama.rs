@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+
 fn simple_request() -> LlmRequest {
     LlmRequest {
         model: "llama3.2".to_owned(),
@@ -62,6 +64,122 @@ fn project(items: &[AgentItem]) -> Value {
             .map(|i| serde_json::to_value(i).expect("AgentItem serializes"))
             .collect(),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Request-body kitchen-sink snapshot
+// ---------------------------------------------------------------------------
+
+/// Snapshot the full `LlmRequest → Ollama wire body` transformation.
+///
+/// Includes: multi-turn conversation with a tool-use / tool-result pair
+/// (id-correlated), system prompt, two tool definitions, non-default
+/// `ModelConfig`.  Both the input projection and the captured wire body
+/// are included so the transformation is self-explanatory.
+///
+/// The Ollama provider strips tool ids from the wire body
+/// (`flatten_message` does not forward `tool_use.id` to the
+/// `tool_calls` array).  The redaction therefore fires only in the input
+/// portion — demonstrating that `[id_1]` present in the input is absent
+/// from the wire body, which is the expected lossy transformation.
+#[tokio::test]
+async fn request_body_kitchen_sink() {
+    let server = MockServer::start().await;
+
+    // Mount a minimal happy-path response so the provider completes.
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(ndjson(&[json!({
+            "model": "llama3.2",
+            "message": {"role": "assistant", "content": "ok"},
+            "done": true,
+            "prompt_eval_count": 10,
+            "eval_count": 1
+        })])))
+        .mount(&server)
+        .await;
+
+    let tool_id = "toolu_ks_01";
+    let req = LlmRequest {
+        model: "llama3.2".to_owned(),
+        system: Some("You are a helpful assistant.".to_owned()),
+        messages: vec![
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: "What is 2+2?".to_owned(),
+                }],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: tool_id.to_owned(),
+                    name: "calculator".to_owned(),
+                    input: json!({"a": 2, "b": 2}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: tool_id.to_owned(),
+                    content: "4".to_owned(),
+                    is_error: false,
+                }],
+            },
+        ],
+        tools: vec![
+            ToolDefinition {
+                name: "calculator".to_owned(),
+                description: "Performs basic arithmetic.".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "number"},
+                        "b": {"type": "number"}
+                    },
+                    "required": ["a", "b"]
+                }),
+            },
+            ToolDefinition {
+                name: "read_file".to_owned(),
+                description: "Reads a file from disk.".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    },
+                    "required": ["path"]
+                }),
+            },
+        ],
+        config: ModelConfig {
+            max_tokens: 2_048,
+            temperature: Some(0.5),
+            thinking_budget: None,
+        },
+    };
+
+    // Serialise input *before* consuming `req`.
+    let input = serde_json::to_value(&req).expect("LlmRequest serialises");
+
+    let provider = OllamaProvider::new().with_base_url(server.uri());
+    collect_ok(&provider, req).await;
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("wiremock recorded requests");
+    let wire_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("wire body is valid JSON");
+
+    let r = common::id_redactor();
+    insta::assert_json_snapshot!(
+        json!({"input": input, "wire_body": wire_body}),
+        {
+            ".**.id"          => r.redaction(),
+            ".**.tool_use_id" => r.redaction(),
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------

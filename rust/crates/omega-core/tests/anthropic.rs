@@ -11,8 +11,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use omega_core::{
     AgentItem, AnthropicProvider, ContentBlock, LlmError, LlmRequest, Message, ModelConfig,
-    Provider, Role,
+    Provider, Role, ToolDefinition,
 };
+
+mod common;
 use serde_json::{Value, json};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -72,6 +74,138 @@ fn project(items: &[AgentItem]) -> Value {
             .map(|i| serde_json::to_value(i).expect("AgentItem serializes"))
             .collect(),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Request-body kitchen-sink snapshot
+// ---------------------------------------------------------------------------
+
+/// Snapshot the full `LlmRequest → Anthropic wire body` transformation.
+///
+/// Includes: multi-turn conversation with a tool-use / tool-result pair
+/// (id-correlated), system prompt, two tool definitions, non-default
+/// `ModelConfig`.  Both the input projection and the captured wire body
+/// are included in the snapshot so the transformation is self-explanatory.
+///
+/// `[id_1]` appears in both the `tool_use.id` and `tool_result.tool_use_id`
+/// positions, proving they carry the same value end-to-end.
+#[tokio::test]
+async fn request_body_kitchen_sink() {
+    let server = MockServer::start().await;
+
+    // Mount a minimal happy-path response so the provider completes.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(sse_body(&[
+                    (
+                        "message_start",
+                        json!({
+                            "type": "message_start",
+                            "message": {
+                                "id": "msg_ks",
+                                "model": "claude-opus-4-6",
+                                "usage": {"input_tokens": 10, "output_tokens": 0}
+                            }
+                        }),
+                    ),
+                    (
+                        "message_delta",
+                        json!({
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                            "usage": {"output_tokens": 1}
+                        }),
+                    ),
+                    ("message_stop", json!({"type": "message_stop"})),
+                ]))
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let tool_id = "toolu_ks_01";
+    let req = LlmRequest {
+        model: "claude-opus-4-6".to_owned(),
+        system: Some("You are a helpful assistant.".to_owned()),
+        messages: vec![
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: "What is 2+2?".to_owned(),
+                }],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: tool_id.to_owned(),
+                    name: "calculator".to_owned(),
+                    input: json!({"a": 2, "b": 2}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: tool_id.to_owned(),
+                    content: "4".to_owned(),
+                    is_error: false,
+                }],
+            },
+        ],
+        tools: vec![
+            ToolDefinition {
+                name: "calculator".to_owned(),
+                description: "Performs basic arithmetic.".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "number"},
+                        "b": {"type": "number"}
+                    },
+                    "required": ["a", "b"]
+                }),
+            },
+            ToolDefinition {
+                name: "read_file".to_owned(),
+                description: "Reads a file from disk.".to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    },
+                    "required": ["path"]
+                }),
+            },
+        ],
+        config: ModelConfig {
+            max_tokens: 2_048,
+            temperature: Some(0.5),
+            thinking_budget: None,
+        },
+    };
+
+    // Serialise input *before* consuming `req`.
+    let input = serde_json::to_value(&req).expect("LlmRequest serialises");
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    collect_ok(&provider, req).await;
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("wiremock recorded requests");
+    let wire_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("wire body is valid JSON");
+
+    let r = common::id_redactor();
+    insta::assert_json_snapshot!(
+        json!({"input": input, "wire_body": wire_body}),
+        {
+            ".**.id"          => r.redaction(),
+            ".**.tool_use_id" => r.redaction(),
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------

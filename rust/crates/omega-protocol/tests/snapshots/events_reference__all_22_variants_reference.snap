@@ -1,0 +1,168 @@
+---
+source: crates/omega-protocol/tests/events_reference.rs
+expression: events
+---
+[
+  {
+    "type": "session_started",
+    "time": "2024-01-15T12:00:00.000Z",
+    "sessionId": "sess_abc123",
+    "path": ".omega/sessions/20240115_120000",
+    "model": "claude-sonnet-4-6",
+    "effort": "medium",
+    "systemPrompt": "You are Omega, a coding agent."
+  },
+  {
+    "type": "server_started",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "server_stopped",
+    "time": "2024-01-15T12:00:00.000Z",
+    "outcome": "clean"
+  },
+  {
+    "type": "user_message",
+    "time": "2024-01-15T12:00:00.000Z",
+    "content": "What files are in the current directory?"
+  },
+  {
+    "type": "llm_call",
+    "time": "2024-01-15T12:00:00.000Z",
+    "url": "https://api.anthropic.com/v1/messages",
+    "model": "claude-sonnet-4-6",
+    "contextHashes": [
+      "deadbeefcafe"
+    ],
+    "cacheBreakpointIndex": null,
+    "requestBytes": 1234
+  },
+  {
+    "type": "tool_call",
+    "time": "2024-01-15T12:00:00.000Z",
+    "id": "[id_1]",
+    "name": "list_dir",
+    "input": {
+      "path": "."
+    },
+    "contextHash": "deadbeefcafe"
+  },
+  {
+    "type": "tool_result",
+    "time": "2024-01-15T12:00:00.000Z",
+    "id": "[id_1]",
+    "name": "list_dir",
+    "isError": false,
+    "durationMs": 8,
+    "output": "README.md\nsrc/\ntests/"
+  },
+  {
+    "type": "llm_response",
+    "time": "2024-01-15T12:00:00.000Z",
+    "stopReason": "end_turn",
+    "clearedToolUses": 1,
+    "usage": {
+      "input_tokens": 512,
+      "output_tokens": 64,
+      "cache_creation_input_tokens": 480
+    },
+    "contextHash": "deadbeefcafe",
+    "text": "The directory contains: README.md, src/, tests/.",
+    "streamingStart": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "turn_end",
+    "time": "2024-01-15T12:00:00.000Z",
+    "metrics": {
+      "inputTokens": 512,
+      "outputTokens": 64,
+      "cacheCreationTokens": 480
+    }
+  },
+  {
+    "type": "llm_error",
+    "time": "2024-01-15T12:00:00.000Z",
+    "url": "https://api.anthropic.com/v1/messages",
+    "error": "HTTP 429: rate limit exceeded",
+    "httpStatus": 429
+  },
+  {
+    "type": "agent_error",
+    "time": "2024-01-15T12:00:00.000Z",
+    "error": "Tool execution failed: permission denied"
+  },
+  {
+    "type": "turn_interrupted",
+    "time": "2024-01-15T12:00:00.000Z",
+    "reason": "aborted"
+  },
+  {
+    "type": "compacted",
+    "time": "2024-01-15T12:00:00.000Z",
+    "usage": {
+      "cache_creation_input_tokens": 80,
+      "input_tokens": 100,
+      "output_tokens": 50
+    }
+  },
+  {
+    "type": "llm_retry",
+    "time": "2024-01-15T12:00:00.000Z",
+    "attempt": 2,
+    "httpStatus": 429,
+    "waitMs": 5000,
+    "error": "rate limited",
+    "retryAt": "2024-01-15T12:00:00.000Z",
+    "errorBody": {
+      "error": {
+        "message": "Too many requests",
+        "type": "rate_limit_error"
+      },
+      "type": "error"
+    },
+    "textFragment": "partial response text",
+    "reason": "retry-after"
+  },
+  {
+    "type": "model_changed",
+    "time": "2024-01-15T12:00:00.000Z",
+    "model": "claude-opus-4-6"
+  },
+  {
+    "type": "effort_changed",
+    "time": "2024-01-15T12:00:00.000Z",
+    "effort": "high"
+  },
+  {
+    "type": "transport_error",
+    "time": "2024-01-15T12:00:00.000Z",
+    "error": "WebSocket connection closed unexpectedly",
+    "context": "client 192.168.1.42"
+  },
+  {
+    "type": "resuming_session",
+    "time": "2024-01-15T12:00:00.000Z",
+    "resumedFrom": "20240114_090000",
+    "name": "prior session",
+    "basis": "The agent fixed a bug in the parser."
+  },
+  {
+    "type": "session_resumed",
+    "time": "2024-01-15T12:00:00.000Z",
+    "resumedFrom": "20240114_090000",
+    "summary": "Fixed a bug in the parser module."
+  },
+  {
+    "type": "pause_requested",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "turn_paused",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "turn_continued",
+    "time": "2024-01-15T12:00:00.000Z",
+    "mode": "manual"
+  }
+]

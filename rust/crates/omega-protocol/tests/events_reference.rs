@@ -1,0 +1,235 @@
+//! All-22-variants `OmegaEvent` reference snapshot.
+//!
+//! This file is the living wire-format reference for `events.jsonl`.  It
+//! contains exactly one example of every `OmegaEvent` variant, serialised
+//! as JSON, so that any change to the persistence shape produces a visible
+//! diff in `cargo insta review`.
+//!
+//! The snapshot deliberately includes a **correlated triple**:
+//!
+//! - `ToolCall` and `ToolResult` that share the same `id` (shown as `[id_1]`
+//!   in both, proving the same value is in both events).
+//! - The following `LlmResponse` has `cleared_tool_uses: 1`, completing the
+//!   tool-call lifecycle.
+//!
+//! The per-variant unit tests in `src/events.rs` stay — they pin specific
+//! mutants the catalogue snapshot wouldn't reliably catch.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use omega_protocol::OmegaEvent;
+use omega_protocol::events::{
+    AgentErrorEvent, CompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
+    LlmCallEvent, LlmErrorEvent, LlmResponseEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason,
+    ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
+    ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, ToolCallEvent,
+    ToolResultEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
+    TurnMetrics, TurnPausedEvent, UserMessageEvent,
+};
+use serde_json::json;
+
+mod common;
+
+// ---------------------------------------------------------------------------
+// Shared fixtures
+// ---------------------------------------------------------------------------
+
+/// A fixed ISO timestamp — deterministic, human-readable.
+const T: &str = "2024-01-15T12:00:00.000Z";
+
+/// An example context hash (12 hex chars = 6 bytes of random).
+const HASH: &str = "deadbeefcafe";
+
+/// The shared id for the correlated ToolCall / ToolResult triple.
+const CORR_ID: &str = "toolu_ref_01";
+
+// ---------------------------------------------------------------------------
+// Event factory
+// ---------------------------------------------------------------------------
+
+/// Build one representative example of every `OmegaEvent` variant.
+///
+/// The correlated triple (positions 6–8) uses the same `id` to demonstrate
+/// id propagation.  Every other value is illustrative but realistic.
+fn all_22_events() -> Vec<OmegaEvent> {
+    vec![
+        // 1. SessionStarted
+        OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: T.into(),
+            session_id: "sess_abc123".into(),
+            path: ".omega/sessions/20240115_120000".into(),
+            model: "claude-sonnet-4-6".into(),
+            effort: "medium".into(),
+            system_prompt: "You are Omega, a coding agent.".into(),
+        }),
+        // 2. ServerStarted
+        OmegaEvent::ServerStarted(ServerStartedEvent { time: T.into() }),
+        // 3. ServerStopped
+        OmegaEvent::ServerStopped(ServerStoppedEvent {
+            time: T.into(),
+            outcome: ServerStopOutcome::Clean,
+            reason: None,
+        }),
+        // 4. UserMessage
+        OmegaEvent::UserMessage(UserMessageEvent {
+            time: T.into(),
+            content: "What files are in the current directory?".into(),
+        }),
+        // 5. LlmCall
+        OmegaEvent::LlmCall(LlmCallEvent {
+            time: T.into(),
+            url: "https://api.anthropic.com/v1/messages".into(),
+            model: "claude-sonnet-4-6".into(),
+            context_hashes: vec![HASH.into()],
+            cache_breakpoint_index: None,
+            request_bytes: 1_234,
+            request_summary: None,
+        }),
+        // 6. ToolCall — correlated triple, part 1
+        OmegaEvent::ToolCall(ToolCallEvent {
+            time: T.into(),
+            id: CORR_ID.into(),
+            name: "list_dir".into(),
+            input: json!({"path": "."}),
+            context_hash: HASH.into(),
+        }),
+        // 7. ToolResult — correlated triple, part 2 (same id → same [id_1])
+        OmegaEvent::ToolResult(ToolResultEvent {
+            time: T.into(),
+            id: CORR_ID.into(),
+            name: "list_dir".into(),
+            is_error: false,
+            duration_ms: 8,
+            output: "README.md\nsrc/\ntests/".into(),
+        }),
+        // 8. LlmResponse — correlated triple, part 3 (cleared_tool_uses: 1)
+        OmegaEvent::LlmResponse(LlmResponseEvent {
+            time: T.into(),
+            stop_reason: "end_turn".into(),
+            cleared_tool_uses: Some(1),
+            cleared_input_tokens: None,
+            usage: LlmResponseUsage {
+                input_tokens: 512,
+                output_tokens: 64,
+                cache_creation_input_tokens: Some(480),
+                cache_read_input_tokens: None,
+                service_tier: None,
+            },
+            context_hash: HASH.into(),
+            text: Some("The directory contains: README.md, src/, tests/.".into()),
+            thinking: None,
+            streaming_start: Some(T.into()),
+            response_summary: None,
+        }),
+        // 9. TurnEnd
+        OmegaEvent::TurnEnd(TurnEndEvent {
+            time: T.into(),
+            metrics: TurnMetrics {
+                input_tokens: 512,
+                output_tokens: 64,
+                cache_creation_tokens: Some(480),
+                cache_read_tokens: None,
+            },
+        }),
+        // 10. LlmError
+        OmegaEvent::LlmError(LlmErrorEvent {
+            time: T.into(),
+            url: "https://api.anthropic.com/v1/messages".into(),
+            error: "HTTP 429: rate limit exceeded".into(),
+            http_status: Some(429),
+        }),
+        // 11. AgentError
+        OmegaEvent::AgentError(AgentErrorEvent {
+            time: T.into(),
+            error: "Tool execution failed: permission denied".into(),
+        }),
+        // 12. TurnInterrupted
+        OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
+            time: T.into(),
+            reason: Some(InterruptReason::Aborted),
+        }),
+        // 13. Compacted
+        OmegaEvent::Compacted(CompactedEvent {
+            time: T.into(),
+            usage: json!({
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 80
+            }),
+        }),
+        // 14. LlmRetry
+        OmegaEvent::LlmRetry(LlmRetryEvent {
+            time: T.into(),
+            attempt: 2,
+            http_status: Some(429),
+            wait_ms: 5_000,
+            error: "rate limited".into(),
+            retry_at: Some(T.into()),
+            error_body: Some(json!({
+                "type": "error",
+                "error": {"type": "rate_limit_error", "message": "Too many requests"}
+            })),
+            thinking_fragment: None,
+            text_fragment: Some("partial response text".into()),
+            reason: Some(LlmRetryReason::RetryAfter),
+        }),
+        // 15. ModelChanged
+        OmegaEvent::ModelChanged(ModelChangedEvent {
+            time: T.into(),
+            model: "claude-opus-4-6".into(),
+        }),
+        // 16. EffortChanged
+        OmegaEvent::EffortChanged(EffortChangedEvent {
+            time: T.into(),
+            effort: "high".into(),
+        }),
+        // 17. TransportError
+        OmegaEvent::TransportError(TransportErrorEvent {
+            time: T.into(),
+            error: "WebSocket connection closed unexpectedly".into(),
+            context: Some("client 192.168.1.42".into()),
+        }),
+        // 18. ResumingSession
+        OmegaEvent::ResumingSession(ResumingSessionEvent {
+            time: T.into(),
+            resumed_from: "20240114_090000".into(),
+            name: Some("prior session".into()),
+            basis: "The agent fixed a bug in the parser.".into(),
+        }),
+        // 19. SessionResumed
+        OmegaEvent::SessionResumed(SessionResumedEvent {
+            time: T.into(),
+            resumed_from: "20240114_090000".into(),
+            summary: "Fixed a bug in the parser module.".into(),
+        }),
+        // 20. PauseRequested
+        OmegaEvent::PauseRequested(PauseRequestedEvent { time: T.into() }),
+        // 21. TurnPaused
+        OmegaEvent::TurnPaused(TurnPausedEvent { time: T.into() }),
+        // 22. TurnContinued
+        OmegaEvent::TurnContinued(TurnContinuedEvent {
+            time: T.into(),
+            mode: ContinueMode::Manual,
+        }),
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/// Snapshot every `OmegaEvent` variant in a single JSON array.
+///
+/// `[].id` is the only field name `"id"` that appears in the serialised
+/// output — on `ToolCallEvent` and `ToolResultEvent`.  Both instances of
+/// `CORR_ID` are replaced with `[id_1]`, proving they carry the same value.
+#[test]
+fn all_22_variants_reference() {
+    let events = all_22_events();
+    assert_eq!(events.len(), 22, "exactly 22 OmegaEvent variants");
+
+    let r = common::id_redactor();
+    insta::assert_json_snapshot!(events, {
+        "[].id" => r.redaction(),
+    });
+}

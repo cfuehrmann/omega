@@ -1,0 +1,163 @@
+---
+source: crates/omega-core/tests/ollama.rs
+expression: "json!({\"input\": input, \"wire_body\": wire_body})"
+---
+{
+  "input": {
+    "config": {
+      "max_tokens": 2048,
+      "temperature": 0.5
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What is 2+2?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "content": [
+          {
+            "id": "[id_1]",
+            "input": {
+              "a": 2,
+              "b": 2
+            },
+            "name": "calculator",
+            "type": "tool_use"
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "content": [
+          {
+            "content": "4",
+            "tool_use_id": "[id_1]",
+            "type": "tool_result"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "llama3.2",
+    "system": "You are a helpful assistant.",
+    "tools": [
+      {
+        "description": "Performs basic arithmetic.",
+        "input_schema": {
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        "name": "calculator"
+      },
+      {
+        "description": "Reads a file from disk.",
+        "input_schema": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        },
+        "name": "read_file"
+      }
+    ]
+  },
+  "wire_body": {
+    "messages": [
+      {
+        "content": "You are a helpful assistant.",
+        "role": "system"
+      },
+      {
+        "content": "What is 2+2?",
+        "role": "user"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": {
+                "a": 2,
+                "b": 2
+              },
+              "name": "calculator"
+            }
+          }
+        ]
+      },
+      {
+        "content": "4",
+        "role": "tool"
+      }
+    ],
+    "model": "llama3.2",
+    "options": {
+      "temperature": 0.5
+    },
+    "stream": true,
+    "tools": [
+      {
+        "function": {
+          "description": "Performs basic arithmetic.",
+          "name": "calculator",
+          "parameters": {
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      },
+      {
+        "function": {
+          "description": "Reads a file from disk.",
+          "name": "read_file",
+          "parameters": {
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  }
+}
