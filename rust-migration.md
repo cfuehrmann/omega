@@ -9,11 +9,11 @@
 | Phase | Status | Deliverable |
 |---|---|---|
 | 0 — Planning | ✅ Done | This document + architectural decisions |
-| 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`; honest types (no `#[serde(default)]` shims) |
-| 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming; 0 surviving mutants |
-| 1b.7 — Insta snapshot coverage | ✅ Done | `id_redactor` helper (omega-protocol + omega-core), all-22-variants reference snapshot, Anthropic + Ollama kitchen-sink wire-body snapshots; 0 survived mutants, 2 expected timeouts in retry loop |
-| 1c — `omega-store` (Persistence) | ⬜ Next | Session dir, EventStore, ContextStore, ContextHash |
-| 1d — `omega-agent` + CLI binary | ⬜ Upcoming | Multi-turn loop, tool execution, compaction, context hashing; **first Harbor-testable binary** |
+| 1a — `omega-protocol` | ✅ Done | All 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling (edition 2024, clippy::pedantic, machete, mutants); honest types |
+| 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming, insta snapshots; 0 surviving mutants |
+| 1c — `omega-store` (Persistence) | ✅ Done | `ContextHash`, `SessionPaths`, `EventStore`, `ContextStore`; JSONC stripping; `spawn_blocking` append; 0 surviving mutants |
+| 1d.0 — `omega-tools` + `omega-agent` core + `omega-cli` | ⬜ Next | All 13 tools ported; core multi-turn loop; context hashing; **first Harbor-testable binary** |
+| 1d.1 — `omega-agent` advanced | ⬜ Upcoming | Pause/continue/abort, session resumption, compaction, model/effort switching |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -40,8 +40,11 @@ dev/
 │   ├── Cargo.toml
 │   └── crates/
 │       ├── omega-protocol/     ✅ done
-│       ├── omega-core/         🔜 next
-│       └── omega-server/       ⬜ upcoming
+│       ├── omega-core/         ✅ done
+│       ├── omega-store/        ✅ done
+│       ├── omega-tools/        ⬜ next (Phase 1d.0)
+│       ├── omega-agent/        ⬜ next (Phase 1d.0 core + 1d.1 advanced)
+│       └── omega-cli/          ⬜ next (Phase 1d.0 binary)
 ├── src/                        ← TypeScript (frozen; no new features)
 ├── Justfile                    ← just rust-gate for Rust-only commits
 └── package.json
@@ -73,346 +76,385 @@ The pre-commit hook routes automatically:
 
 ---
 
-## Phase 1b — `omega-core` ✅ Done
+## Completed phases — concise record
 
-`rust/crates/omega-core` complete: `Provider` trait, `AnthropicProvider`
-(SSE), `OllamaProvider` (NDJSON), and a generic `RetryingProvider<P>` retry
-wrapper that honours `Retry-After` and emits `OmegaEvent::LlmRetry` with
-text/thinking fragments. Both providers built simultaneously to force a real
-abstraction. All tests wiremock-fronted; no live API calls. **0 surviving
-mutants.**
+### Phase 1a — `omega-protocol` ✅
 
-**Sub-phases:**
+`rust/crates/omega-protocol`: all 22 `OmegaEvent` variants serialised/deserialised
+with honest types (no `#[serde(default)]` shims). `StreamSignal` type. Workspace
+tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`.
+Insta snapshot (`events_reference.rs`) covers all 22 variants with `id_redactor` helper.
+0 surviving mutants.
 
-- **1b.0** (commit `22a8f17`) — initial implementation. 17 omega-core tests
-  + 17 omega-protocol tests passing.
-- **1b.5** (commit `96620be`) — mutation tested with `cargo mutants`.
-  Killed 30 newly-discovered mutants by adding `LlmError::body()` unit
-  tests, retry-policy tests, and Ollama request-body tests. One documented
-  skip in `compute_backoff` (`replace * with /`): `x/f ≈ x*(1/f)` for
-  `f∈[0.9,1.1]`, so the mutant is statistically indistinguishable from the
-  original under RNG. Skip config in `rust/.cargo/mutants.toml`.
-- **1b.6** — replaced internal `ScriptedProvider` with e2e tests through
-  real providers + wiremock + a flaky-TCP listener. Deleted
-  `ScriptedProvider`, `dummy_request`, `http_*` helpers,
-  `RetryConfig::for_tests`, and the entire `#[cfg(test)] mod tests` block in
-  `src/retry.rs` (~450 lines). New `tests/retry.rs` (14 tests) and
-  `tests/common/mod.rs` (helpers). Two cargo-mutants timeouts (both
-  infinite-retry mutations the auto-timeout catches) treated as caught.
+### Phase 1b — `omega-core` (LLM loop) ✅
 
-**Implementation adjustments worth carrying forward:**
+`rust/crates/omega-core`: `Provider` trait, `AnthropicProvider` (SSE),
+`OllamaProvider` (NDJSON), `RetryingProvider<P>` (honours `Retry-After`,
+emits `LlmRetry` with text/thinking fragments). Both providers built
+simultaneously to force a real abstraction. All tests wiremock-fronted; no live
+API calls. Sub-phases:
 
+- **1b.0**: initial implementation (17 omega-core + 17 omega-protocol tests).
+- **1b.5**: mutation tested; killed 30 newly-discovered mutants. One documented
+  skip in `compute_backoff` (`replace * with /` — equivalent under RNG).
+- **1b.6**: replaced internal `ScriptedProvider` with e2e tests through real
+  providers + wiremock + flaky-TCP listener. Deleted ~450 lines of test
+  infrastructure. 2 expected timeout mutants (infinite-retry mutations).
+- **1b.7**: `id_redactor` helper; all-22-variants reference snapshot;
+  per-provider kitchen-sink wire-body snapshots. 0 survived, 2 timeouts.
+
+**Implementation notes carried forward:**
 - `AgentItem::Event` boxes `OmegaEvent` (large_enum_variant). Construct
   with `AgentItem::event(ev)` or `.into()`.
-- `Provider::stream` returns `BoxStream<'static, Result<AgentItem, LlmError>>`
-  (alias `AgentItemStream`) — ergonomic with trait-object composition.
-- `context_hash` on emitted `LlmResponse`/`ToolCall` events left empty;
-  Phase 1c persistence layer fills it in.
-- `LlmError::Transport` IS reachable through both real providers when
-  `reqwest::Client::send().await` fails (connection-refused, mid-stream
-  TCP close). Reproduced in `retries_transport_errors` via an in-process
-  flaky-listener Tokio task that drops the first connection and serves a
-  hand-rolled HTTP/1.1 SSE response (`Connection: close`) on the second.
-- An HTTP-status retry (e.g. 529) cannot stream text before failing — the
-  failure happens at response-status time. To exercise `text_fragment`
-  population on retry, emit an Anthropic SSE `event: error` with an
-  `overloaded_error` payload *after* a couple of text deltas; the
-  provider lifts that to `LlmError::Stream { message }` whose message
-  contains `"overloaded_error"`, which `is_retryable` recognises.
-- Sequential wiremock responses: mount multiple `Mock`s with
-  `.up_to_n_times(N)` in registration order. wiremock matches the first
-  un-exhausted mock — no stateful response builder needed.
+- `Provider::stream` → `BoxStream<'static, Result<AgentItem, LlmError>>`.
+- `LlmError::Transport` is reachable: reproduced via in-process flaky-listener.
+- Sequential wiremock responses: mount multiple `Mock`s with `.up_to_n_times(N)`.
+
+### Phase 1c — `omega-store` (Persistence) ✅
+
+`rust/crates/omega-store`: four modules porting `src/context-hash.ts`,
+`src/session-dir.ts`, `src/event-store.ts`, `src/context-store.ts`.
+
+Key decisions:
+- **`spawn_blocking` for file I/O** — Tokio's `File` uses positioned writes
+  (`pwrite`) that ignore `O_APPEND`; using `std::fs::OpenOptions` on a
+  blocking thread gives correct append semantics.
+- **`strip_jsonc_comments` as a manual byte-scanner** — avoids an extra crate
+  dependency; handles `// …` and `/* … */` comments.
+- **`debug_assert!(i < len)`** inside the outer while loop makes the
+  `< → <=` equivalent mutation observable in debug builds.
+- **`serde(alias = "continuationOf")`** on `resumed_from` handles legacy
+  session metadata.
+- **Backward compat** for `session.jsonc` only; `events.jsonl` / `context.jsonl`
+  have no serde defaults (policy unchanged).
+
+Mutation testing: 76 mutants — 66 caught, 6 unviable, 4 timeouts, **0 missed**.
+Deployed 8 boundary-condition tests targeting specific mutations in
+`strip_jsonc_comments`, including a `debug_assert!` and carefully chosen inputs
+that force each mutation's bounds check to access OOB memory.
 
 ---
 
-## Phase 1b.7 — Insta snapshot coverage ✅ Done
+## Phase 1d.0 — `omega-tools` + `omega-agent` core + `omega-cli` ⬜ Next
 
-`id_redactor` helper added to both `omega-protocol/tests/common/mod.rs`
-(new) and `omega-core/tests/common/mod.rs`. Uses `Arc<Mutex<HashMap>>`
-so multiple `r.redaction()` calls share numbering — same id value gets
-`[id_1]` whether it appears at `.id` or `.tool_use_id`.
+This is the biggest phase. The TypeScript source spans ~3000 lines across
+`src/agent.ts` (1866 lines) and `src/tools.ts` (1102 lines). The session
+produces three new crates and the first Harbor-testable binary.
 
-All-22-variants reference snapshot in `omega-protocol/tests/events_reference.rs`
-shows every `OmegaEvent` shape; correlated ToolCall + ToolResult triple
-proves id propagation is visible. Per-provider kitchen-sink snapshots in
-`omega-core/tests/anthropic.rs` and `omega-core/tests/ollama.rs` show
-`LlmRequest → wire-body` transformation with correlated `[id_1]`. Ollama
-snapshot clearly shows that `flatten_message` strips tool ids.
+**Scope for this session (1d.0):**
+- `omega-tools` crate — all 13 tool implementations
+- `omega-agent` crate — core agent loop (multi-turn, tool dispatch, context
+  hashing, event emission); no pause/resumption/compaction yet
+- `omega-cli` binary crate — thin wrapper around `omega-agent`
 
-`cargo mutants`: 56 caught, 19 unviable, 2 timeouts (retry-termination
-mutants cause infinite loops — expected), **0 survived**.
-
----
-
-## Phase 1c — `omega-store` (Persistence) 🔜 Next
-
-### What this phase builds
-
-A new `rust/crates/omega-store` crate that owns all filesystem persistence:
-session directories, the event log (`events.jsonl`), and the context log
-(`context.jsonl`). It mirrors `src/session-dir.ts`, `src/event-store.ts`,
-`src/context-store.ts`, and `src/context-hash.ts`.
-
-This is the right next step because:
-- It's a clean dependency leaf: `omega-store` → `omega-core` → `omega-protocol`
-- The agent loop (Phase 1d) needs it to persist events and context records
-- The TS source is small (~370 lines total) and well-understood
-- Real file-I/O tests keep it honest without mock complexity
-
-### Source reference
-
-Read these TS files before implementing:
-- `src/context-hash.ts` — hash type + `randomHash()`
-- `src/session-dir.ts` — session folder layout, naming, metadata read/write
-- `src/event-store.ts` — `appendEvent`
-- `src/context-store.ts` — `ContextRecord`, `appendContextMessage`
-
-### Crate structure
+### Source reference — read these before implementing
 
 ```
-rust/crates/omega-store/
+src/agent.ts        – Agent struct, sendMessage, streamLlmCall, processStreamEvents,
+                      isRetryable, isContextTooLong, elide helpers, capEffortForModel
+src/tools.ts        – all 13 executeTool implementations + toolDefinitions
+src/config.ts       – COMPACTION_INSTRUCTIONS, maxOutputTokensForModel, DEFAULT_MODEL
+src/system-prompt/  – buildSystemPrompt, readSystemPromptAppend, corePrompt
+src/session-resume.ts – only needed in Phase 1d.1; skip for now
+```
+
+### Crate dependency graph
+
+```
+omega-protocol
+     ↑
+omega-core        (Provider trait, RetryingProvider, AgentItem)
+     ↑
+omega-store       (EventStore, ContextStore, SessionPaths)
+     ↑
+omega-tools       (executeTool — NEW, Phase 1d.0)
+     ↑
+omega-agent       (Agent struct — NEW, Phase 1d.0 core)
+     ↑
+omega-cli         (main() binary — NEW, Phase 1d.0)
+```
+
+### `omega-tools` crate
+
+All 13 tools from `src/tools.ts`. This is a pure-Rust port of Bun/Node
+filesystem and subprocess APIs.
+
+**Cargo.toml dependencies:**
+```toml
+tokio     = { version = "1", features = ["full"] }
+serde     = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest   = { version = "0.12", features = ["json", "stream"] }
+omega-protocol = { path = "../omega-protocol" }  # for tool schema types
+thiserror = "2"
+```
+
+**Tool implementations (map TS → Rust):**
+
+| TS function | Rust equivalent |
+|---|---|
+| `executeReadFile` | `tokio::fs::read_to_string` + line slicing |
+| `executeWriteFile` | `tokio::fs::create_dir_all` + `tokio::fs::write` |
+| `executeEditFile` | read → replace-once (multiple replacements array) → write |
+| `executeRunCommand` (sync in TS) | `tokio::process::Command`, timeout via `tokio::time::timeout` |
+| `executeListFiles` | `tokio::fs::read_dir`, recursive via `walkdir` or manual recursion |
+| `executeWebSearch` | `reqwest` GET to DuckDuckGo or Brave, parse JSON/HTML |
+| `executeFetchUrl` | `reqwest` GET + `html2text` or similar → cache file + postprocess |
+| `executeGrepFiles` | `ripgrep` subprocess (`rg`) or `grep` fallback |
+| `executeFindFiles` | `fd` subprocess or `find` fallback |
+| `executeRunBackground` | `tokio::process::Command::spawn`, write stdout/stderr to log file |
+| `executeWaitForOutput` | poll log file for pattern/minBytes, honour timeout |
+| `executeWriteStdin` | write to stdin of tracked background process |
+| `executeWebSearch` | Brave Search API key from env; DuckDuckGo fallback |
+
+**Public API:**
+
+```rust
+pub struct ToolResult {
+    pub content: String,
+    pub is_error: bool,
+}
+
+/// Dispatch to the correct tool implementation.
+/// Returns ToolResult (never Err — errors are returned as is_error: true).
+pub async fn execute_tool(name: &str, input: serde_json::Value) -> ToolResult;
+
+/// The tool schema array sent to the LLM. Build from the TS toolDefinitions.
+pub fn tool_definitions() -> Vec<serde_json::Value>;
+
+/// A human-readable summary of a tool call for logging.
+pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String;
+```
+
+`execute_tool` never returns `Err` — errors become `ToolResult { is_error: true }`.
+Background process state (pid → log file path, pid → stdin) lives in a
+`tokio::sync::Mutex<HashMap<u32, BackgroundProcess>>` inside the crate.
+
+**Testing strategy for omega-tools:**
+- Integration tests with real file I/O in a temp dir (same discipline as omega-store).
+- No mocking of filesystem or subprocess.
+- `executeRunCommand` timeout test: spawn `sleep 60`, set timeout 100 ms.
+- `executeWebSearch`: if `BRAVE_SEARCH_API_KEY` env var absent, skip or use
+  DuckDuckGo; the test should not fail in CI without the key.
+- Background process tests: start `sleep 2`, wait for output, kill.
+
+### `omega-agent` crate (core — Phase 1d.0)
+
+Port `Agent` struct and `sendMessage` from `src/agent.ts`, omitting
+pause/continue/abort, session resumption, and compaction (those are Phase 1d.1).
+
+**Cargo.toml dependencies:**
+```toml
+omega-protocol = { path = "../omega-protocol" }
+omega-core     = { path = "../omega-core" }
+omega-store    = { path = "../omega-store" }
+omega-tools    = { path = "../omega-tools" }
+tokio          = { version = "1", features = ["full"] }
+serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
+reqwest        = { version = "0.12" }
+chrono         = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+thiserror      = "2"
+```
+
+**Core struct:**
+
+```rust
+pub struct Agent {
+    // Provided at construction
+    provider:      Box<dyn Provider + Send + Sync>,
+    context_store: ContextStore,
+    event_store:   EventStore,
+    session_dir:   PathBuf,
+
+    // State
+    model:     String,          // current model name
+    effort:    String,          // "low" | "medium" | "high"
+    session_id: String,         // random UUID or hex
+    history:   Vec<Message>,    // compacted context history (Message from omega_core)
+    context_hashes: Vec<ContextHash>, // parallel to history
+
+    // Counters for turn isolation (see TS source)
+    turn_counter: u64,
+}
+
+pub struct AgentConfig {
+    pub model:       String,
+    pub effort:      String,
+    pub session_dir: PathBuf,
+    pub provider:    Box<dyn Provider + Send + Sync>,
+}
+
+impl Agent {
+    pub async fn new(config: AgentConfig) -> Result<Self, AgentError>;
+
+    /// Emit session_started event. Idempotent — only fires once.
+    pub async fn init(&mut self) -> Result<(), AgentError>;
+
+    /// Core multi-turn loop. Yields AgentItems (events + stream signals).
+    /// Terminates with turn_end on success, or turn_interrupted on abort/error.
+    pub fn send_message(
+        &mut self,
+        content: String,
+        signal: Option<tokio_util::sync::CancellationToken>,
+    ) -> impl Stream<Item = Result<AgentItem, AgentError>>;
+}
+```
+
+**`send_message` logic (from TS `sendMessage`):**
+
+1. Emit + persist `user_message` event.
+2. Append user message to `history`; store in `ContextStore`; push hash to
+   `context_hashes`.
+3. Inner loop — `streamLlmCall` equivalent:
+   a. Build Anthropic request: `model`, `max_tokens`, `system`, `tools`,
+      `messages` (from `history`), `betas: ["interleaved-thinking-2025-05-14"]`.
+      Add cache-control to the last human message (same logic as TS
+      `addCacheControlToLastMessage`).
+   b. Call `provider.stream(request)`.
+   c. Process stream: accumulate text, collect tool calls (parallel),
+      detect `Compacted` stop reason.
+   d. Emit + persist `llm_call` (with `context_hashes` FK), `llm_response`.
+   e. Append assistant message to history; store in `ContextStore`; push hash.
+   f. If stop reason is `tool_use`: dispatch all tool calls in parallel via
+      `omega_tools::execute_tool`; emit + persist `tool_call` + `tool_result`
+      per call; append tool-result message to history + context.
+   g. If stop reason is `end_turn` or context too long: emit `turn_end` /
+      `agent_error`; break.
+   h. Loop (go to step 3).
+4. Emit + persist `turn_end` with aggregated `TurnMetrics`.
+
+**What to omit from Phase 1d.0:**
+- `requestPause()`, `requestContinue()`, `abort()` — Phase 1d.1
+- `performResumption()`, `seedWithResumptionSummary()` — Phase 1d.1
+- Server-side compaction (`Compacted` stop reason handling) — Phase 1d.1
+- `setModel()`, `setEffort()` — Phase 1d.1
+- `buildSystemPrompt` with append file — stub as `corePrompt(cwd, max_tokens)`
+
+**System prompt:** Port `src/system-prompt/index.ts` as a function
+`build_system_prompt(cwd: &Path, max_output_tokens: u32) -> String`. Read
+the `.omega/system-prompt-append` file and append it if present (mirrors
+`readSystemPromptAppend`). The core prompt text is a constant string — port
+it verbatim from `src/system-prompt/core-prompt.ts`.
+
+**Elision helpers:** Port `elideAnthropicRequest` and `elideAnthropicResponse`
+from `src/agent.ts`. These produce the `requestSummary` / `responseSummary`
+fields on `llm_call` / `llm_response` events — important for the event log
+to be readable without walls of text.
+
+**Invalid tool JSON recovery:** Port the invalid-JSON nudge logic
+(see `isInvalidToolJson`, `feedbackOnExhaustion`, the 3-attempt nudge in
+`sendMessage`). This is exercised by the TS tests in
+`src/agent-invalid-tool-json.test.ts`.
+
+**Dangling tool-use repair:** Before a `user_message`, check if the most recent
+assistant message has an unmatched `tool_use` block and inject a synthetic
+`tool_result` if so (see the TS guard in `sendMessage`).
+
+**Testing strategy for omega-agent core:**
+- Use `omega_core`'s wiremock pattern: inject a scripted `Provider` (or a
+  simple mock) rather than hitting the real API.
+- Key scenarios: single-turn text response, tool-call loop (one tool, two
+  tools in parallel), error on non-retryable status, context-too-long.
+- Use real `omega_store` with temp dirs (consistent with the project discipline).
+- Do NOT add `#[cfg(test)]` scripted providers inside the crate — put them in
+  `tests/common/mod.rs` as a `MockProvider` that returns pre-canned
+  `AgentItem` streams.
+
+### `omega-cli` binary crate
+
+```
+rust/crates/omega-cli/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs           (pub-use all public items)
-    ├── context_hash.rs  (ContextHash type, random_hash())
-    ├── session_dir.rs   (SessionPaths, make_session_dir, metadata I/O)
-    ├── event_store.rs   (EventStore: append OmegaEvent → events.jsonl)
-    └── context_store.rs (ContextRecord, append → context.jsonl → returns hash)
+    └── main.rs   (~100 lines)
 ```
 
-### Module contracts
-
-#### `context_hash`
-
-```rust
-/// 12 lowercase hex characters (6 random bytes). PK of context.jsonl records;
-/// FK in events.jsonl (LlmCallEvent.context_hashes, ToolCallEvent.context_hash, etc.)
-pub struct ContextHash(String);   // newtype; derives Serialize/Deserialize transparently
-
-pub fn random_hash() -> ContextHash;   // 6 bytes from rand or getrandom, hex-encoded
-pub fn hash_from_str(s: &str) -> Result<ContextHash>; // validates 12 hex chars
+```
+USAGE: omega-cli run \
+  --instruction <text> \
+  --model <model-name> \
+  [--effort <low|medium|high>] \
+  [--session-dir <path>]   (default: .omega/sessions/<timestamp>)
+  [--max-turns <n>]        (default: 100)
 ```
 
-`ContextHash` must satisfy `[0-9a-f]{12}`. `hash_from_str` returns an error
-on invalid input (validated by unit test). Implement `Display`, `AsRef<str>`,
-`From<ContextHash> for String`.
+`main.rs` logic:
+1. Parse CLI args (use `clap` with derive).
+2. Create `SessionPaths` via `omega_store::make_session_dir`.
+3. Construct `AnthropicProvider` (or `RetryingProvider<AnthropicProvider>`)
+   using `ANTHROPIC_API_KEY` env var.
+4. Construct `Agent` with the session paths.
+5. Call `agent.init()` → emit `session_started`.
+6. Call `agent.send_message(instruction, None)` → collect the stream.
+7. For each item: print text chunks to stdout; print structured event lines
+   to stderr (`event: <json>`); detect `turn_end` or `turn_interrupted`.
+8. Exit 0 on success, 1 on interruption/error.
 
-#### `session_dir`
+No web server, no WebSocket. Harbor points at this binary directly.
 
-Session folders live under a configurable root (default `.omega/sessions`).
-Folder name format: `YYYY-MM-DDTHH-MM-SS-mmm-<hex8>` (millisecond precision
-+ 4 random bytes as 8 hex chars). `ls`-by-name order = chronological order.
+**Harbor adapter changes** (apply at end of Phase 1d.0):
+```python
+# bench/omega_agent.py  install():
+"git clone ... && cargo build --release -p omega-cli"
 
-```rust
-pub const SESSIONS_ROOT: &str = ".omega/sessions";
-
-/// Regex matching all three historical name formats (see TS source):
-/// - YYYY-MM-DDTHH-MM-SS                  (legacy, second precision)
-/// - YYYY-MM-DDTHH-MM-SS-<hex8>           (v2, second + suffix)
-/// - YYYY-MM-DDTHH-MM-SS-mmm-<hex8>       (current, millisecond + suffix)
-pub fn session_dir_re() -> &'static Regex;
-
-pub fn make_session_dir_name(now: DateTime<Utc>) -> String;
-
-pub struct SessionPaths {
-    pub dir:          PathBuf,
-    pub context_file: PathBuf,
-    pub events_file:  PathBuf,
-}
-
-/// Creates <root>/<name>/ plus empty context.jsonl, events.jsonl,
-/// and session.jsonc (containing `{}`). Returns SessionPaths.
-pub async fn make_session_dir(root: &Path) -> Result<SessionPaths>;
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct SessionMetadata {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name:         Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description:  Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resumed_from: Option<String>,
-}
-
-/// Reads session.jsonc; returns SessionMetadata::default() if absent or
-/// unparseable. Strip `// …` and `/* … */` comments before parsing
-/// (same logic as the TS implementation — a single regex pass suffices).
-pub async fn read_session_metadata(dir: &Path) -> SessionMetadata;
-
-pub async fn write_session_metadata(dir: &Path, meta: &SessionMetadata) -> Result<()>;
-
-/// Merges patch into existing metadata (None patch fields leave the
-/// existing value unchanged).
-pub async fn update_session_metadata(dir: &Path, patch: SessionMetadata) -> Result<()>;
+# run():
+f"target/release/omega-cli run "
+f"--instruction {shlex.quote(instruction)} "
+f"--model {shlex.quote(self._parsed_model_name)} "
+f"--session-dir {OMEGA_SESSION_DIR}"
 ```
-
-JSONC comment stripping: the TS does it with two regex replacements.
-In Rust, pull in no extra crate — strip `// … \n` and `/* … */` with
-`regex` (already in the workspace) or simple `str` manipulation, then
-pass to `serde_json::from_str`. Keep this a private helper.
-
-#### `event_store`
-
-```rust
-/// Wraps the events.jsonl path; created once per session.
-pub struct EventStore {
-    path: PathBuf,
-}
-
-impl EventStore {
-    pub fn new(path: PathBuf) -> Self;
-
-    /// Serialise `event` with serde_json and append as a single line to
-    /// events.jsonl. Creates parent dirs if needed (defensive; the
-    /// session dir creator already does this).
-    pub async fn append(&self, event: &OmegaEvent) -> Result<()>;
-}
-```
-
-No UI-only field stripping needed — the Rust `OmegaEvent` type has no
-UI-only fields (that concern was TS-specific; Rust derives are honest).
-
-#### `context_store`
-
-```rust
-/// The on-disk shape of a context.jsonl record.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ContextRecord {
-    pub hash:    ContextHash,
-    pub time:    String,          // ISO 8601 UTC, same format as ISOTimestamp in events
-    pub role:    Role,            // reuse omega_core::types::Role
-    pub content: Vec<ContentBlock>, // reuse omega_core::types::ContentBlock
-}
-
-/// Wraps the context.jsonl path; created once per session.
-pub struct ContextStore {
-    path: PathBuf,
-}
-
-impl ContextStore {
-    pub fn new(path: PathBuf) -> Self;
-
-    /// Build a ContextRecord (random hash, current UTC time), append to
-    /// context.jsonl, return the hash. The caller uses it as the FK in
-    /// LlmCallEvent.context_hashes etc.
-    pub async fn append(&self, role: Role, content: Vec<ContentBlock>) -> Result<ContextHash>;
-
-    /// Build a record without writing — for testing the shape without I/O.
-    pub fn build_record(role: Role, content: Vec<ContentBlock>) -> ContextRecord;
-}
-```
-
-`ContextStore` depends on `omega-core` (for `Role` and `ContentBlock`).  
-Add `omega-core = { path = "../omega-core" }` to `omega-store/Cargo.toml`.
-
-### Testing strategy
-
-- Use **real file I/O** with a temp dir per test (use `tempfile` crate or
-  just `std::env::temp_dir()` with a unique suffix).
-- Do not mock the filesystem.
-- Integration tests in `tests/` (one file per module: `tests/session_dir.rs`,
-  `tests/event_store.rs`, `tests/context_store.rs`).
-- Aim for the same coverage discipline as `omega-core`: run `cargo mutants`
-  after the tests land and triage any survivors.
-
-Key test cases:
-- `make_session_dir` creates the three expected files; name matches the regex.
-- `read_session_metadata` returns default on missing file; parses present
-  fields; strips `//` and `/* */` comments.
-- `write_session_metadata` / `update_session_metadata` round-trips.
-- `EventStore::append` writes valid JSONL; each line round-trips through
-  `serde_json::from_str::<OmegaEvent>`.
-- `ContextStore::append` returns a 12-hex hash; written record round-trips;
-  two calls return different hashes.
-- `hash_from_str` rejects strings that aren't exactly 12 lowercase hex chars.
+`populate_context_post_run` reads `turn_end` from `events.jsonl` — same field
+names, same format. The oracle checks the container filesystem. No other
+adapter changes needed.
 
 ### Done when
 
-- `rust/crates/omega-store` builds cleanly (`just rust-gate`).
-- All integration tests pass with real file I/O.
-- `cargo mutants -p omega-store` reports 0 survived.
-- This section updated to a ✅ done record.
+- `just rust-gate` passes (all three new crates, clippy clean, tests pass).
+- `omega-cli run --instruction "list the files in the current directory" --model claude-sonnet-4-6`
+  completes end-to-end (requires `ANTHROPIC_API_KEY` — run manually, not in CI).
+- `cargo mutants -p omega-tools` and `cargo mutants -p omega-agent` report 0 missed.
+- This section updated to ✅ Done.
 
 ### Session setup
 
-**Model:** `claude-sonnet-4-6` — **Effort:** Medium
+**Model:** `claude-opus-4-7` — **Effort:** High
 
-(Straightforward port of well-understood TS code. The design is spelled
-out above. Sonnet handles async Rust file I/O and serde without needing
-Opus. Main risk is getting the JSONC comment stripping right — but the
-TS logic is trivial to translate.)
+(Most complex phase: ~3000 lines of TS to port, two new crates plus a binary,
+first live API integration. `opus-4-7` is the step-change improvement in
+agentic coding. High effort because wrong design decisions here propagate to
+1d.1 and 1e. Sonnet at high effort is the fallback if opus-4-7 is unavailable.)
 
 **Prompt:**
 
 > Continuing the Rust migration of Omega. Read
-> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1c session
-> prompt, and execute it.
+> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1d.0 session
+> prompt, and execute it. Before writing any code, state your intended
+> approach — including any adjustments to the plan you think are warranted
+> (different crate splits, reordered sub-tasks, scope cuts). The plan in
+> the doc is a strong prior but not a constraint; revise it if you see a
+> better path.
 
 ---
 
-## Phase 1d — `omega-agent` + CLI binary
+## Phase 1d.1 — `omega-agent` advanced features ⬜ Upcoming
 
-Ports `src/agent.ts` — the multi-turn conversation driver — to a new
-`rust/crates/omega-agent` crate. This is the most complex phase:
-multi-turn message management, tool execution, context hashing (using
-`omega-store`), compaction, session resumption, pause/continue logic.
+Add to the `omega-agent` crate built in Phase 1d.0:
 
-**Phase 1d is the first Harbor-testable milestone.** In addition to the
-library crate, this phase ships a minimal `omega-cli` binary:
+- **`setModel()` / `setEffort()`** — emit + persist `model_changed` / `effort_changed`.
+- **Pause/continue/abort** — `requestPause()`, `requestContinue()`, `abort()`,
+  the seam logic, `turn_paused` / `turn_continued` events.
+- **Session resumption** — `performResumption()`, `seedWithResumptionSummary()`,
+  `extractResumptionBasis()` (port `src/session-resume.ts`).
+- **Server-side compaction** — handle `Compacted` stop reason in stream
+  processing; emit `compacted` event; clear/reset history.
 
-```
-omega-cli run \
-  --instruction "Fix the failing tests" \
-  --model claude-sonnet-4-6 \
-  --session-dir /tmp/omega-session \
-  [--effort medium] \
-  [--max-turns 100]
-```
-
-The binary is a thin wrapper (~100 lines): parse args, call
-`omega-agent` with an auto-approve tool callback, stream response text
-to stdout, structured event lines to stderr (matching `cli.ts` format),
-exit 0 on `turn_end` / 1 on interruption. No web server, no WebSocket
-— Harbor points at this binary directly.
-
-### Harbor adapter update (done at end of Phase 1d)
-
-`bench/omega_agent.py` needs two lines changed:
-
-```python
-# install(): replace bun install with cargo build
-"git clone ... && cd omega && cargo build --release --bin omega-cli"
-
-# run(): replace the bun invocation
-f"{OMEGA_INSTALL_DIR}/target/release/omega-cli run "
-f"--instruction {shlex.quote(instruction)} "
-f"--model {shlex.quote(self._parsed_model_name)} "
-f"--session-dir {OMEGA_SESSION_DIR} {flags}"
-```
-
-Everything else in the adapter is unchanged: `populate_context_post_run`
-reads `turn_end` from `events.jsonl` — same field names, same format,
-because `omega-protocol` is shared. The oracle checks the container
-filesystem, not the agent implementation, so it works without any
-modification.
-
-**Parity criterion:** run the same oracle task batch that was used to
-validate TS Omega. If Harbor scores are statistically indistinguishable,
-Rust Omega has reached functional parity with the TS implementation —
-a stronger signal than any unit test.
-
-*Build time note:* `cargo build --release` adds ~2–5 min per task
-during initial validation (acceptable). For production benchmarking,
-publish a pre-built static binary to a GitHub release and have
-`install()` `curl` it instead of compiling.
-
-Scope and session prompt will be written once Phase 1c is done and the
-persistence API is stable.
+Session prompt will be written after Phase 1d.0 is complete and the core
+agent API is stable.
 
 ---
 
-## Phase 1e — `omega-server` (WebSocket + HTTP)
+## Phase 1e — `omega-server` (WebSocket + HTTP) ⬜ Upcoming
 
 Ports `src/web/server.ts` to a Rust binary crate:
 - `axum` (HTTP + WebSocket) or `tokio-tungstenite` + `hyper`
@@ -422,19 +464,20 @@ Ports `src/web/server.ts` to a Rust binary crate:
 - Static file serving (serves TS web UI bundle during Phase 1–2; Leptos
   WASM in Phase 3)
 
-Session prompt will be written once Phase 1d is done.
+Session prompt will be written once Phase 1d.1 is done.
 
 ---
 
-## Phase 1f — Bridge (`ts-rs`)
+## Phase 1f — Bridge (`ts-rs`) ⬜ Upcoming
 
 During the headless-Rust + TS-UI bridge period:
 
-- Add `#[derive(ts_rs::TS)]` to all `omega-protocol` types
+- Add `#[derive(ts_rs::TS)]` to all `omega-protocol` types.
 - `cargo test` generates `bindings/OmegaEvent.d.ts` etc.
-- TS web client imports from `bindings/` instead of `src/events.ts`
-- The generated `.d.ts` are committed so the UI is always type-checked against the Rust source
-- Deleted entirely in Phase 3 when Leptos replaces the TS client
+- TS web client imports from `bindings/` instead of `src/events.ts`.
+- The generated `.d.ts` are committed so the UI is always type-checked
+  against the Rust source.
+- Deleted entirely in Phase 3 when Leptos replaces the TS client.
 
 *Can be executed any time after omega-protocol is stable — i.e. now. But
 until the Rust server binary actually runs, the bridge adds friction for
@@ -442,30 +485,31 @@ no functional gain. Defer until the server is ready.*
 
 ---
 
-## Phase 2 — Rust as primary driver
+## Phase 2 — Rust as primary driver ⬜ Future
 
-- Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts` as the entry point
-- TS web client (`src/web/`) is still served, now talking to Rust over WebSocket
-- TS codebase is read-only at this point; all new features go into Rust
-- Parity criterion: all existing E2E tests pass against the Rust backend
-
----
-
-## Phase 3 — Leptos UI rewrite
-
-- Add `omega-web` crate to the workspace (`leptos`, `trunk` / `wasm-pack`)
-- Port `src/web/client/` component by component; Leptos fine-grained reactivity maps directly to SolidJS
-- `omega-web` imports types from `omega-protocol` directly — no `ts-rs` bridge needed
-- Once all components are ported: delete `src/`, delete `ts-rs` derives, delete `node_modules`
-- The repo becomes a pure Cargo workspace
+- Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts`.
+- TS web client (`src/web/`) still served, now talking to Rust over WebSocket.
+- TS codebase read-only; all new features go into Rust.
+- Parity criterion: all existing E2E tests pass against the Rust backend.
 
 ---
 
-## Phase 4 — `chromiumoxide` + LLM oracle, retire Playwright
+## Phase 3 — Leptos UI rewrite ⬜ Future
 
-- Replace Playwright E2E tests with `chromiumoxide` (Chrome DevTools Protocol, pure Rust)
-- LLM-as-oracle for snapshot review: a separate agent session compares rendered output against expected behaviour descriptions — reduces snapshot review load but is not the primary correctness mechanism; property-based assertions remain authoritative
-- `package.json`, `node_modules`, Playwright config deleted
+- Add `omega-web` crate (`leptos`, `trunk` / `wasm-pack`).
+- Port `src/web/client/` component by component.
+- `omega-web` imports types from `omega-protocol` directly — no `ts-rs` bridge.
+- Once all components ported: delete `src/`, delete `ts-rs` derives,
+  delete `node_modules`.
+
+---
+
+## Phase 4 — `chromiumoxide` + LLM oracle ⬜ Future
+
+- Replace Playwright E2E tests with `chromiumoxide` (Chrome DevTools Protocol).
+- LLM-as-oracle for snapshot review: a separate agent session compares
+  rendered output against expected behaviour descriptions.
+- `package.json`, `node_modules`, Playwright config deleted.
 
 ---
 
