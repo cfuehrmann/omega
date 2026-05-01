@@ -17,8 +17,8 @@ pub mod events;
 pub mod stream_signal;
 
 pub use events::{
-    ContinueMode, InterruptReason, LlmResponseUsage, LlmRetryReason,
-    OmegaEvent, ServerStopOutcome, TurnMetrics,
+    ContinueMode, InterruptReason, LlmResponseUsage, LlmRetryReason, OmegaEvent, ServerStopOutcome,
+    TurnMetrics,
 };
 pub use stream_signal::StreamSignal;
 

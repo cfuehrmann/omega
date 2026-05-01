@@ -480,8 +480,10 @@ mod tests {
         assert_eq!(v["usage"]["output_tokens"], 50);
         assert_eq!(v["usage"]["cache_creation_input_tokens"], 10);
         // None fields are absent, not null
-        assert!(v["usage"].get("cache_read_input_tokens").is_none()
-            || v["usage"]["cache_read_input_tokens"].is_null());
+        assert!(
+            v["usage"].get("cache_read_input_tokens").is_none()
+                || v["usage"]["cache_read_input_tokens"].is_null()
+        );
         // Optional event fields absent when None
         assert!(v.get("thinking").is_none() || v["thinking"].is_null());
     }
