@@ -7,13 +7,19 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-# Phase 1d.0a scaffold: dependencies are introduced as src/agent.rs grows.
-# Will be re-added as they become used (so `cargo machete` stays clean):
-#   omega-protocol, omega-core, omega-store, omega-tools,
-#   serde, serde_json,
-#   tokio (sync/time/macros/rt/fs/io-util),
-#   tokio-util (sync), async-stream, futures, chrono, rand.
+omega-protocol = { path = "../omega-protocol" }
+omega-core     = { path = "../omega-core" }
+omega-store    = { path = "../omega-store" }
+omega-tools    = { path = "../omega-tools" }
+
+async-stream = "0.3"
+chrono       = { version = "0.4", default-features = false, features = ["clock"] }
+futures      = "0.3"
+serde_json   = "1"
+tokio        = { version = "1", features = ["sync", "time", "macros", "rt", "fs"] }
+tokio-util   = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
-tempfile = "3"
-tokio    = { version = "1", features = ["full", "test-util"] }
+tempfile     = "3"
+tokio        = { version = "1", features = ["full", "test-util"] }
+async-trait  = "0.1"

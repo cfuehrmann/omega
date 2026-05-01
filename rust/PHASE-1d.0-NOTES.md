@@ -2,14 +2,134 @@
 
 ## CURRENT STATE (resume here)
 
-**Phase 1d.0a is mid-flight. Three crates scaffolded:**
-- `rust/crates/omega-tools/` — schemas, format_tool_call, dispatch table all REAL and tested. Tool bodies are STUBS returning `Err("<tool>: not yet implemented (Phase 1d.0b)")`. 14 unit tests pass.
-- `rust/crates/omega-agent/` — empty stub (just a comment lib.rs). Cargo.toml has many deps but they're all currently unused → machete fails.
-- `rust/crates/omega-cli/` — clap skeleton, parses `omega run --instruction ... --model ...`, prints stub message. Cargo.toml deps mostly unused → machete fails.
+**Phase 1d.0a DONE.**
 
-**Workspace builds. omega-tools tests + clippy clean. `just rust-gate` FAILS** because of machete on omega-agent/omega-cli unused deps. I just shrank omega-tools deps (removed serde) — TODO: do the same for omega-agent and omega-cli, OR add `[package.metadata.cargo-machete] ignored = [...]`.
+- `cargo test -p omega-agent`: 13 unit + 6 integration green.
+- `just rust-gate`: green.
+- `cargo mutants -p omega-agent`: **29 mutants — 20 caught, 6 unviable, 3 missed.** Misses are all in low-value helpers, not core logic:
+  1. `now_iso()` body replaced — timestamp helper not directly asserted; acceptable.
+  2. Same again with a different replacement.
+  3. `read_system_prompt_append` `match guard err.kind() == NotFound` — the graceful-fallback branch isn't exercised by a unit test (would need a permission-denied directory).
 
-**Next concrete step (resume point):** strip omega-agent and omega-cli down to only their currently-used deps so `just rust-gate` is green. Commit. Then start omega-agent implementation.
+  These are acceptable for a v1 slice. Tighten later if/when the helpers grow.
+
+### How far along
+- `cargo test -p omega-agent` is **GREEN** — 13 unit + 6 integration tests pass on first try.
+- `just rust-gate` **fails** with clippy lints, but only style — no real bugs.
+- Build of agent.rs lib: GREEN.
+
+### Resume here: fix the remaining clippy lints, then commit.
+
+#### Lib lints (in `crates/omega-agent/src/`):
+1. `agent.rs` line ~302: `serde_json::to_vec(&request).map(...).unwrap_or(0)` should become `.map_or(0, |v| ...)`. **Already attempted in last edit_file call; if not applied, redo.**
+2. `agent.rs`: tracking `Vec<Option<...>>` with `expect(...)` for tool results was replaced with `HashMap<String, (String, bool)>` keyed by tool_use id. **Already attempted in last edit_file call; if not applied, redo.**
+3. `agent.rs::send_message`: add `#[allow(clippy::too_many_lines)]` above pub fn. **Already attempted.**
+4. `error_classify.rs` line 34: `agent_error` should be backticked: `´agent_error´ message`.
+5. `system_prompt.rs::build_system_prompt`: collapse the nested `if let Some(extra) = ... { if !extra.is_empty() { ... } }` to `if let Some(extra) = ... && !extra.is_empty() { ... }`. **Already attempted.**
+
+#### Test lints (each test file + tests/common/mod.rs):
+Add at the top of each integration test file AND tests/common/mod.rs:
+```rust
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::doc_markdown, clippy::too_many_lines, clippy::wildcard_enum_match_arm)]
+```
+Files needing this: `tests/common/mod.rs`, `tests/single_text_turn.rs`, `tests/parallel_tools.rs`, `tests/retry_then_success.rs`, `tests/non_retryable.rs`, `tests/invalid_tool_json_nudge.rs`, `tests/dangling_tool_use_repair.rs`.
+
+Note: `tests/common/mod.rs` already has `#![allow(dead_code)]` — extend that line to add the clippy allows.
+
+Also possibly: `parallel_tools.rs` had a `using contains() instead of iter().any() is more efficient` warning — might need to switch `t.iter().filter(...).count()` style or just allow it.
+
+#### After fixes:
+1. `cd rust && cargo fmt --all && just rust-gate` — must be green.
+2. `cd rust && cargo mutants -p omega-agent` — record results (timeout 600s probably).
+3. `cd /home/carsten/omega/dev && git add -A && git commit -m "Phase 1d.0a: omega-agent core loop + MockProvider tests"`
+4. STOP. Report results to user. Tell them to start fresh Sonnet session for 1d.0b.
+
+### Files written this session (Opus, 1d.0a)
+- `rust/crates/omega-agent/Cargo.toml` — deps: omega-{protocol,core,store,tools}, async-stream, chrono, futures, serde_json, thiserror, tokio (sync/time/macros/rt/fs), tokio-util (rt). dev: tempfile, tokio-full, async-trait.
+- `rust/crates/omega-agent/src/config.rs` — `max_output_tokens_for_model` + tests. DONE.
+- `rust/crates/omega-agent/src/system_prompt.rs` — `build_system_prompt`, `read_system_prompt_append`, `system_prompt_append_path`. Verbatim port of TS core.ts. DONE + tests.
+- `rust/crates/omega-agent/src/error_classify.rs` — `is_invalid_tool_json` (Stream prefix `"malformed tool_use JSON"`), `is_context_too_long` (HTTP 429 with `"Extra usage is required for long context requests"` in body). DONE + tests.
+- `rust/crates/omega-agent/src/agent.rs` — Agent struct + AgentConfig + send_message stream. **HAS COMPILE BUG**: the LlmRetry arm in the provider stream loop uses `boxed_clone(boxed)` where `boxed` has already been moved by `match *boxed`. Must replace the entire match block with: `let event = *boxed; match event { ... OmegaEvent::LlmRetry(retry) => { text_buf.clear(); thinking_buf.clear(); let ev = OmegaEvent::LlmRetry(retry); let _ = self.event_store.append(&ev).await; yield AgentItem::event(ev); } ... }` and DELETE the `boxed_clone` helper at the bottom.
+
+### Still TODO this session before declaring 1d.0a done
+1. Fix agent.rs LlmRetry arm (above).
+2. Write `rust/crates/omega-agent/src/lib.rs` with: `pub mod agent; pub mod config; pub mod error_classify; pub mod system_prompt;` plus `pub use agent::{Agent, AgentConfig};`.
+3. Write `rust/crates/omega-agent/tests/common/mod.rs` with a `MockProvider` that implements `omega_core::Provider`. Holds `Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>` — each call pops the next prepared transcript and converts to a `BoxStream` via `futures::stream::iter`. Plus a helper `make_test_agent(provider) -> (Agent, TempDir)` that builds tempdir + ContextStore + EventStore + AgentConfig{model:"claude-sonnet-4-6", cwd: tempdir, system_prompt_append: None}.
+4. Write the 6 test files listed under "Tests" further down. Each is `tests/<name>.rs` with `mod common;` at top.
+5. `cd rust && cargo fmt && just rust-gate` — gate must be green.
+6. `cd rust && cargo mutants -p omega-agent` — record results.
+7. Commit with `git add -A && git commit -m "Phase 1d.0a: omega-agent core loop + MockProvider tests"`.
+8. STOP. Report results to user. Tell them to start fresh Sonnet session for 1d.0b.
+
+### MockProvider sketch
+```rust
+pub struct MockProvider {
+    responses: Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>,
+}
+impl MockProvider {
+    pub fn new() -> Self { Self { responses: Mutex::new(VecDeque::new()) } }
+    pub fn push(&self, items: Vec<Result<AgentItem, LlmError>>) {
+        self.responses.lock().unwrap().push_back(items);
+    }
+}
+impl Provider for MockProvider {
+    fn stream(&self, _req: LlmRequest) -> AgentItemStream {
+        let items = self.responses.lock().unwrap().pop_front()
+            .unwrap_or_default();
+        Box::pin(futures::stream::iter(items))
+    }
+}
+```
+
+### The 6 tests (checklist)
+1. **single_text_turn.rs** — single text reply.
+2. **parallel_tools.rs** — two ToolCalls dispatched in parallel, then second turn finishes.
+3. **retry_then_success.rs** — LlmRetry event in stream forwarded; turn completes.
+4. **non_retryable.rs** — HTTP 400 → LlmError + AgentError + TurnInterrupted{Error}.
+5. **invalid_tool_json_nudge.rs** — Stream error with `malformed tool_use JSON` prefix → nudge UserMessage appended, turn retries, succeeds.
+6. **dangling_tool_use_repair.rs** — history pre-seeded with dangling assistant tool_use; first event of new turn is synthetic ToolResult{is_error:true}.
+
+Use `omega_store::random_hash()` to forge ContextHashes for seed_history.
+
+- `omega-tools/` — schemas, format_tool_call, dispatch all REAL + tested. Tool bodies STUBBED until 1d.0b.
+- `omega-agent/` — was empty stub. NOW being implemented per the algorithm below.
+- `omega-cli/` — clap stub, will be wired in 1d.0b.
+- `just rust-gate` is green at the start of this session (post-commit `1c01f15`).
+
+**Resume point if context fills mid-implementation:** look in `rust/crates/omega-agent/src/` for what's been written. The structure is:
+```
+src/lib.rs            — pub use Agent, AgentConfig, MockProvider hooks
+src/config.rs         — max_output_tokens_for_model, OMEGA_VERSION
+src/system_prompt.rs  — corePrompt port + append loader
+src/error_classify.rs — is_invalid_tool_json, is_context_too_long
+src/agent.rs          — Agent struct, send_message stream
+tests/common/mod.rs   — MockProvider helper
+tests/{6 files}.rs    — the six MockProvider tests
+```
+
+**CRITICAL ARCHITECTURE NOTE I LEARNED reading omega-core:**
+- `RetryingProvider` (omega-core/src/retry.rs) ALREADY handles retry + emits `LlmRetry` events as `AgentItem::Event` items in the stream.
+- The agent does NOT implement its own retry loop. It just consumes the provider stream — `LlmRetry` events flow through transparently. Tests inject a mock provider that yields `LlmRetry` then `LlmResponse` to test the retry-then-success path.
+- This means Agent does NOT need `max_retry_attempts/retry_base_ms/retry_max_ms` fields (the original notes had them; ignore that part).
+- `is_invalid_tool_json` detection in Rust: AnthropicProvider in omega-core surfaces malformed tool JSON as `LlmError::Stream { message: "malformed tool_use JSON: ..." }` (see anthropic.rs line ~190). Match `message.starts_with("malformed tool_use JSON")`.
+- `is_context_too_long` detection: HTTP 429 with body containing `"Extra usage is required for long context requests"` (already in `LlmError::is_retryable` as a non-retryable case).
+
+**Provider/store types reference (verified by reading source):**
+- `omega_core::Provider::stream(&self, LlmRequest) -> AgentItemStream` (BoxStream<'static, Result<AgentItem, LlmError>>)
+- `AgentItem::{Signal(StreamSignal), Event(Box<OmegaEvent>)}`. Use `AgentItem::event(ev)` constructor.
+- `LlmRequest { model, messages: Vec<Message>, system: Option<String>, tools: Vec<ToolDefinition>, config: ModelConfig }`
+- `Message { role: Role, content: Vec<ContentBlock> }`. Role::{User, Assistant}.
+- `ContentBlock::{Text{text}, Thinking{thinking, signature: Option<String>}, ToolUse{id, name, input: Value}, ToolResult{tool_use_id, content, is_error}}`.
+- `omega_store::ContextStore::append(role, content) -> Result<ContextHash>` (async).
+- `omega_store::EventStore::append(&event) -> Result<()>` (async).
+- `omega_store::random_hash()` returns `ContextHash` (newtype wrapping 12-hex String, has `.as_ref() -> &str`).
+- `omega_tools::execute_tool(name, input, Option<&CancellationToken>) -> ToolResult { content: String, is_error: bool }`. NO duration_ms — agent times it itself with `Instant::now()`.
+- `omega_tools::tool_definitions() -> Vec<ToolDefinition>`.
+- `OmegaEvent` field naming: outer `type` snake_case; struct fields camelCase via serde.
+- `LlmResponseEvent.context_hash: ContextHash` (a String). Mutate after writing assistant record.
+- `TurnMetrics { input_tokens, output_tokens, cache_creation_tokens: Option<i64>, cache_read_tokens: Option<i64> }`.
+
+**TS reference algorithm captured in detail in section "send_message algorithm" below — port verbatim minus retry (RetryingProvider owns it).**
 
 ### Files written so far
 ```
