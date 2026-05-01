@@ -351,3 +351,173 @@ async fn propagates_beta_header() {
     let items = collect_ok(&provider, simple_request()).await;
     assert_eq!(items.len(), 1, "expected only the LlmResponse event");
 }
+
+// ---------------------------------------------------------------------------
+// parse_retry_after edge cases
+// ---------------------------------------------------------------------------
+
+/// `retry-after: 0` → `Some(Duration::ZERO)` — not None.
+/// Catches: `replace < with <=` and `replace < with ==` mutants.
+#[tokio::test]
+async fn parse_retry_after_zero_is_some_zero() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "0")
+                .set_body_string("{}"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let mut stream = provider.stream(simple_request());
+    match stream.next().await.expect("expected item") {
+        Err(LlmError::Http { retry_after, .. }) => {
+            assert_eq!(
+                retry_after,
+                Some(Duration::ZERO),
+                "retry-after:0 must give Some(ZERO)"
+            );
+        }
+        other => panic!("expected LlmError::Http, got {other:?}"),
+    }
+}
+
+/// `retry-after: -1` → `None` (negative delay is invalid).
+/// Catches: `replace || with &&` and `replace < with ==` mutants.
+#[tokio::test]
+async fn parse_retry_after_negative_is_none() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "-1")
+                .set_body_string("{}"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let mut stream = provider.stream(simple_request());
+    match stream.next().await.expect("expected item") {
+        Err(LlmError::Http { retry_after, .. }) => {
+            assert_eq!(retry_after, None, "retry-after:-1 must give None");
+        }
+        other => panic!("expected LlmError::Http, got {other:?}"),
+    }
+}
+
+/// `retry-after: inf` and `retry-after: nan` → `None` (non-finite is invalid).
+/// Catches: `delete ! in parse_retry_after` (which inverts the `is_finite` check).
+#[tokio::test]
+async fn parse_retry_after_nonfinite_is_none() {
+    for bad_value in &["inf", "nan", "-inf"] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", *bad_value)
+                    .set_body_string("{}"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+        let mut stream = provider.stream(simple_request());
+        match stream.next().await.expect("expected item") {
+            Err(LlmError::Http { retry_after, .. }) => {
+                assert_eq!(retry_after, None, "retry-after:{bad_value} must give None");
+            }
+            other => panic!("expected LlmError::Http, got {other:?}"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// now_iso produces valid RFC3339
+// ---------------------------------------------------------------------------
+
+/// `LlmResponse.time` and `LlmResponse.streaming_start` must be valid
+/// RFC3339 timestamps, not empty strings or nonsense.
+/// Catches: `replace now_iso -> String with String::new()` and
+/// `replace now_iso -> String with "xyzzy".into()` mutants.
+#[tokio::test]
+async fn response_event_time_fields_are_valid_rfc3339() {
+    let server = MockServer::start().await;
+    // Include a text block so `streaming_start` is populated.
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_ts",
+                    "model": "claude-sonnet-4-6",
+                    "usage": { "input_tokens": 1, "output_tokens": 0 }
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": { "type": "text", "text": "" }
+            }),
+        ),
+        (
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": { "type": "text_delta", "text": "Hi" }
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({ "type": "content_block_stop", "index": 0 }),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+                "usage": { "output_tokens": 1 }
+            }),
+        ),
+        ("message_stop", json!({ "type": "message_stop" })),
+    ]);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    let resp = items
+        .iter()
+        .find_map(|i| match i.as_event() {
+            Some(omega_protocol::OmegaEvent::LlmResponse(r)) => Some(r),
+            _ => None,
+        })
+        .expect("expected LlmResponse event");
+
+    chrono::DateTime::parse_from_rfc3339(&resp.time)
+        .expect("LlmResponse.time must be valid RFC3339");
+
+    if let Some(ss) = &resp.streaming_start {
+        chrono::DateTime::parse_from_rfc3339(ss)
+            .expect("LlmResponse.streaming_start must be valid RFC3339");
+    }
+}

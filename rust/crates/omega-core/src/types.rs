@@ -265,3 +265,51 @@ impl LlmError {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// `body()` must return the raw HTTP response body for Http errors.
+    #[test]
+    fn body_returns_http_body_text() {
+        let e = LlmError::Http {
+            status: 400,
+            body: "bad input".to_owned(),
+            retry_after: None,
+        };
+        assert_eq!(e.body(), "bad input");
+    }
+
+    /// `body()` must return the message for Stream errors.
+    #[test]
+    fn body_returns_stream_message() {
+        let e = LlmError::Stream {
+            message: "eof mid-stream".to_owned(),
+        };
+        assert_eq!(e.body(), "eof mid-stream");
+    }
+
+    /// `body()` must return the message for Transport errors.
+    #[test]
+    fn body_returns_transport_message() {
+        let e = LlmError::Transport {
+            message: "ECONNRESET".to_owned(),
+        };
+        assert_eq!(e.body(), "ECONNRESET");
+    }
+
+    /// `body()` must return the message for Other errors.
+    #[test]
+    fn body_returns_other_message() {
+        let e = LlmError::Other {
+            message: "unknown error".to_owned(),
+        };
+        assert_eq!(e.body(), "unknown error");
+    }
+}

@@ -567,4 +567,143 @@ mod tests {
             .count();
         assert_eq!(retries, 1);
     }
+
+    /// `error_body` in a `LlmRetry` event must be populated with the
+    /// parsed JSON from an HTTP error body.
+    /// Catches: `delete match arm LlmError::Http{body,..}` in `build_retry_event`.
+    #[tokio::test]
+    async fn error_body_populated_from_http_body() {
+        let inner = std::sync::Arc::new(ScriptedProvider::new(vec![
+            vec![Err(http_529())],
+            vec![Ok(AgentItem::Signal(StreamSignal::Text {
+                text: "ok".into(),
+            }))],
+        ]));
+        let r = RetryingProvider {
+            inner: inner.clone(),
+            config: RetryConfig::for_tests(3),
+        };
+        let items: Vec<_> = r.stream(dummy_request()).collect().await;
+        match items[0].as_ref().ok().and_then(AgentItem::as_event) {
+            Some(OmegaEvent::LlmRetry(ev)) => {
+                let body = ev
+                    .error_body
+                    .as_ref()
+                    .expect("error_body must be set for JSON HTTP body");
+                assert_eq!(body["type"], "error", "error_body type field");
+                assert_eq!(
+                    body["error"]["type"], "overloaded_error",
+                    "error_body inner type"
+                );
+            }
+            other => panic!("expected LlmRetry event, got {other:?}"),
+        }
+    }
+
+    /// `retry_at` in a `LlmRetry` event must not be earlier than `time`.
+    /// Catches: `replace + with - in build_retry_event`.
+    #[tokio::test]
+    async fn retry_at_is_not_before_event_time() {
+        let inner = std::sync::Arc::new(ScriptedProvider::new(vec![
+            vec![Err(http_529())],
+            vec![Ok(AgentItem::Signal(StreamSignal::Text {
+                text: "ok".into(),
+            }))],
+        ]));
+        let r = RetryingProvider {
+            inner: inner.clone(),
+            config: RetryConfig::for_tests(3),
+        };
+        let items: Vec<_> = r.stream(dummy_request()).collect().await;
+        match items[0].as_ref().ok().and_then(AgentItem::as_event) {
+            Some(OmegaEvent::LlmRetry(ev)) => {
+                let time = chrono::DateTime::parse_from_rfc3339(&ev.time)
+                    .expect("LlmRetry.time must be valid RFC3339");
+                let retry_at_str = ev.retry_at.as_ref().expect("LlmRetry.retry_at must be set");
+                let retry_at = chrono::DateTime::parse_from_rfc3339(retry_at_str)
+                    .expect("LlmRetry.retry_at must be valid RFC3339");
+                assert!(
+                    retry_at >= time,
+                    "retry_at ({retry_at}) must be >= time ({time})"
+                );
+            }
+            other => panic!("expected LlmRetry event, got {other:?}"),
+        }
+    }
+
+    /// Backoff must grow with each successive attempt.
+    /// Catches: `replace << with >> in compute_backoff`.
+    #[tokio::test]
+    async fn backoff_grows_on_second_attempt() {
+        let inner = std::sync::Arc::new(ScriptedProvider::new(vec![
+            vec![Err(http_529())],
+            vec![Err(http_529())],
+            vec![Ok(AgentItem::Signal(StreamSignal::Text {
+                text: "ok".into(),
+            }))],
+        ]));
+        // 4 max_attempts → up to 3 tries, so 2 retries are possible.
+        let r = RetryingProvider {
+            inner: inner.clone(),
+            config: RetryConfig::for_tests(4),
+        };
+        let items: Vec<_> = r.stream(dummy_request()).collect().await;
+
+        let wait_ms_list: Vec<i64> = items
+            .iter()
+            .filter_map(|i| i.as_ref().ok())
+            .filter_map(AgentItem::as_event)
+            .filter_map(|e| {
+                if let OmegaEvent::LlmRetry(ev) = e {
+                    Some(ev.wait_ms)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(wait_ms_list.len(), 2, "expected exactly 2 retry events");
+        assert!(
+            wait_ms_list[1] > wait_ms_list[0],
+            "second backoff ({}) must exceed first ({})",
+            wait_ms_list[1],
+            wait_ms_list[0]
+        );
+    }
+
+    /// With `jitter = true` and `initial_backoff = 1ms`, the correct computation
+    /// is `round(1 * 0.9..1.1) = 1ms`.  The `replace * with + in compute_backoff`
+    /// mutant gives `round(1 + 0.9..1.1) = 2ms`.
+    #[tokio::test]
+    async fn jitter_rounds_to_base_ms_not_double() {
+        let inner = std::sync::Arc::new(ScriptedProvider::new(vec![
+            vec![Err(http_529())],
+            vec![Ok(AgentItem::Signal(StreamSignal::Text {
+                text: "ok".into(),
+            }))],
+        ]));
+        let config = RetryConfig {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(16),
+            jitter: true,
+        };
+        let r = RetryingProvider {
+            inner: inner.clone(),
+            config,
+        };
+        let items: Vec<_> = r.stream(dummy_request()).collect().await;
+        match items[0].as_ref().ok().and_then(AgentItem::as_event) {
+            Some(OmegaEvent::LlmRetry(ev)) => {
+                // With 1ms base, correct: round(1 * [0.9,1.1]) = 1.
+                // `+ jitter` mutant: round(1 + [0.9,1.1]) = 2.
+                assert_eq!(
+                    ev.wait_ms, 1,
+                    "jitter on 1ms base must round to 1ms, got {}",
+                    ev.wait_ms
+                );
+            }
+            other => panic!("expected LlmRetry event, got {other:?}"),
+        }
+    }
 }
