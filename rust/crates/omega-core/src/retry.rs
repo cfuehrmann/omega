@@ -187,6 +187,22 @@ fn track_fragment(item: &AgentItem, text: &mut String, thinking: &mut String) {
 // Backoff + event construction
 // ---------------------------------------------------------------------------
 
+/// Apply a jitter factor to a wait duration in milliseconds.
+///
+/// `x / f` is mathematically indistinguishable from `x * f` for `f ∈ [0.9, 1.1]`
+/// because the two output ranges overlap completely and the factor is chosen by a
+/// non-deterministic RNG. Suppressed rather than tested with a fragile statistical
+/// assertion or a seeded-RNG refactor.
+#[mutants::skip]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn apply_jitter(wait_ms: u64, jitter: f64) -> u64 {
+    (wait_ms as f64 * jitter).round() as u64
+}
+
 fn compute_backoff(
     err: &LlmError,
     attempt: u32,
@@ -204,13 +220,7 @@ fn compute_backoff(
     if config.jitter {
         let mut rng = rand::rng();
         let jitter: f64 = rng.random_range(0.9..=1.1);
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss
-        )]
-        let jittered = (wait as f64 * jitter).round() as u64; // cargo-mutants: skip -- equivalent mutant: x/f ≈ x*(1/f) for f∈[0.9,1.1]; ranges overlap and cannot be distinguished without a seeded RNG
-        wait = jittered.min(cap);
+        wait = apply_jitter(wait, jitter).min(cap);
     }
     (Duration::from_millis(wait), None)
 }
