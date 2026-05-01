@@ -10,8 +10,8 @@
 |---|---|---|
 | 0 — Planning | ✅ Done | This document + architectural decisions |
 | 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`; honest types (no `#[serde(default)]` shims) |
-| 1b — `omega-core` (LLM loop) | 🔜 Next | Anthropic + Ollama providers, retry loop, streaming |
-| 1c — `omega-server` (WebSocket) | ⬜ Upcoming | tokio-tungstenite server, session dir, event store |
+| 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming; e2e retry tests (Phase 1b.6) replaced internal `ScriptedProvider`; 0 surviving mutants |
+| 1c — `omega-server` (WebSocket) | 🔜 Next | tokio-tungstenite server, session dir, event store |
 | 1d — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
 | 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
@@ -193,20 +193,63 @@ anthropic-beta: interleaved-thinking-2025-05-14   (older models)
 
 ---
 
-## Phase 1b.6 — replace `ScriptedProvider` retry tests with e2e integration tests (next)
+## Phase 1b.6 — replace `ScriptedProvider` retry tests with e2e integration tests ✅ Done
 
-### Motivation
+**Result:** `ScriptedProvider` and all in-module retry unit tests deleted;
+retry behaviour now exercised end-to-end through `AnthropicProvider` /
+`OllamaProvider` + `wiremock` + a custom flaky-TCP listener. `cargo mutants
+-p omega-core` reports **0 surviving mutants** (77 mutants tested: 56 caught,
+19 unviable, 2 timeouts — both timeouts are infinite-retry mutants that the
+auto-timeout catches).
 
-The retry unit tests in `retry.rs` use a `ScriptedProvider` — an in-module fake
-that returns scripted `Result` values directly, bypassing HTTP entirely. This
-creates two problems:
+| Outcome | Count | Notes |
+|---|---|---|
+| Caught by integration tests | 56 | new `tests/retry.rs` covers full retry policy through real providers |
+| Unviable (build failure) | 19 | unchanged from 1b.5 |
+| Timeouts | 2 | `retry.rs:139` (`+` → `*` makes `next_attempt` stay 0) and `retry.rs:140` (`\|\|` → `&&` makes giveup unreachable) — both produce infinite retry loops; cargo-mutants treats timeouts as caught |
 
-1. **Untested seam.** No test exercises the composition
+**What landed:**
+
+- `tests/retry.rs` (new, 14 tests) — every retry behaviour driven through
+  `RetryingProvider::new(AnthropicProvider::new(…), …)` plus one
+  `OllamaProvider` cross-check (`retries_a_500_then_succeeds_with_ollama`).
+  Sequential wiremock responses use `Mock::up_to_n_times(1)` mounted in
+  registration order.
+- `tests/common/mod.rs` (new) — shared helpers (`fast_retry_config`,
+  `fast_retry_config_with_jitter`, `simple_request`, `sse_body`,
+  `minimal_anthropic_sse`, `minimal_ollama_ndjson`).
+- `src/retry.rs` — entire `#[cfg(test)] mod tests` block deleted, along with
+  `ScriptedProvider`, `dummy_request`, `http_429`, `http_529`, `http_400`,
+  `http_429_retry_after`, and `RetryConfig::for_tests`. The retry source file
+  is now production code only (~253 lines, down from ~706).
+
+**Transport-error reachability (Step 2 conclusion):** *reachable*. Both
+`AnthropicProvider` and `OllamaProvider` map `reqwest::Client::send()`
+failures to `LlmError::Transport`, so a TCP connection that closes before
+any HTTP response triggers it. Reproduced in `retries_transport_errors`
+via an in-process `flaky_listener` Tokio task that drops the first
+incoming connection and serves a hand-rolled HTTP/1.1 SSE response
+(`Connection: close`) on the second.
+
+**Mid-stream retry path:** an HTTP-status retry (e.g. 529) cannot stream
+any text first because the failure happens at response-status time. To
+exercise the `text_fragment` path the test uses an Anthropic SSE
+`event: error` with `overloaded_error` payload *after* a couple of text
+deltas — the provider lifts that to `LlmError::Stream { message }` whose
+message contains `"overloaded_error"`, which `is_retryable` recognises.
+
+### Original prompt and motivation (kept for reference)
+
+The retry unit tests in `retry.rs` used a `ScriptedProvider` — an in-module fake
+that returned scripted `Result` values directly, bypassing HTTP entirely. This
+created two problems:
+
+1. **Untested seam.** No test exercised the composition
    `RetryingProvider::new(AnthropicProvider::new(…), config)`. If `AnthropicProvider`
-   produces an error shape that `RetryingProvider` doesn't recognise, all tests
-   stay green.
+   produced an error shape that `RetryingProvider` didn't recognise, all tests
+   stayed green.
 2. **Dead code hiding.** A branch reachable only through `ScriptedProvider` —
-   but never through a real provider — appears covered. e2e tests expose this:
+   but never through a real provider — appeared covered. e2e tests expose this:
    code that has no real production path simply won't be hit.
 
 The rule of thumb: whenever e2e tests can achieve full coverage, prefer them
