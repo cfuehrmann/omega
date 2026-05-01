@@ -6,15 +6,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::state::processes;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let raw_pid = input["pid"]
         .as_u64()
         .ok_or("write_stdin: pid is required")?;
-    let pid = u32::try_from(raw_pid)
-        .map_err(|_| format!("write_stdin: pid {raw_pid} out of range"))?;
+    let pid =
+        u32::try_from(raw_pid).map_err(|_| format!("write_stdin: pid {raw_pid} out of range"))?;
     let text = input["text"]
         .as_str()
         .ok_or("write_stdin: text is required")?;
@@ -36,9 +33,10 @@ pub async fn execute(
     }
 
     {
-        let stdin = entry.stdin.as_mut().ok_or_else(|| {
-            format!("Process {pid} has no writable stdin handle.")
-        })?;
+        let stdin = entry
+            .stdin
+            .as_mut()
+            .ok_or_else(|| format!("Process {pid} has no writable stdin handle."))?;
         stdin
             .write_all(&text_bytes)
             .await

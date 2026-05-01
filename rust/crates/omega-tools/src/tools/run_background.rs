@@ -6,12 +6,9 @@ use std::process::Stdio;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::state::{next_id, processes, BackgroundEntry};
+use crate::state::{BackgroundEntry, next_id, processes};
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let command = input["command"]
         .as_str()
         .ok_or("run_background: command is required")?;

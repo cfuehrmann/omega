@@ -10,10 +10,7 @@ use tokio_util::sync::CancellationToken;
 const DEFAULT_CONTEXT: u64 = 2;
 const DEFAULT_MAX_RESULTS: usize = 200;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let pattern = input["pattern"]
         .as_str()
         .ok_or("grep_files: pattern is required")?;
@@ -108,10 +105,7 @@ pub(crate) struct SubprocOutput {
     pub code: i32,
 }
 
-pub(crate) async fn run_subprocess(
-    cmd: &str,
-    args: &[String],
-) -> Result<SubprocOutput, String> {
+pub(crate) async fn run_subprocess(cmd: &str, args: &[String]) -> Result<SubprocOutput, String> {
     let output = Command::new(cmd)
         .args(args)
         .stdout(Stdio::piped())

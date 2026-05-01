@@ -51,3 +51,18 @@ static LOG_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub fn next_id() -> u64 {
     LOG_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::next_id;
+
+    #[test]
+    fn next_id_returns_unique_increasing_values() {
+        let a = next_id();
+        let b = next_id();
+        let c = next_id();
+        assert_ne!(a, b, "next_id must not return constant 0 or 1");
+        assert_ne!(b, c, "next_id must not return constant 0 or 1");
+        assert!(b > a && c > b, "next_id must be monotonically increasing");
+    }
+}

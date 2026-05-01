@@ -21,20 +21,15 @@ const FETCH_TIMEOUT_S: u64 = 15;
 static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 fn cache_dir() -> &'static PathBuf {
-    CACHE_DIR.get_or_init(|| {
-        std::env::temp_dir()
-            .join(format!("omega-webcache-{}", std::process::id()))
-    })
+    CACHE_DIR
+        .get_or_init(|| std::env::temp_dir().join(format!("omega-webcache-{}", std::process::id())))
 }
 
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let url_str = input["url"]
         .as_str()
         .ok_or("fetch_url: url is required")?
@@ -53,8 +48,8 @@ pub async fn execute(
         return Err("fetch_url: postprocess must not be empty".into());
     }
 
-    let parsed = reqwest::Url::parse(&url_str)
-        .map_err(|_| format!("fetch_url: invalid URL: {url_str}"))?;
+    let parsed =
+        reqwest::Url::parse(&url_str).map_err(|_| format!("fetch_url: invalid URL: {url_str}"))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(format!(
             "fetch_url: unsupported protocol: {}:",
@@ -117,13 +112,12 @@ pub async fn execute(
             .await
             .map_err(|e| format!("fetch_url: failed to read body: {e}"))?;
 
-        let text = if content_type.contains("text/html")
-            || content_type.contains("application/xhtml")
-        {
-            html_to_text(&body)
-        } else {
-            body
-        };
+        let text =
+            if content_type.contains("text/html") || content_type.contains("application/xhtml") {
+                html_to_text(&body)
+            } else {
+                body
+            };
 
         let cc = text.chars().count();
         tokio::fs::write(&cache_file, &text)
@@ -190,14 +184,10 @@ pub async fn execute(
 fn html_to_text(html: &str) -> String {
     use std::borrow::Cow;
 
-    let re_script = regex::Regex::new(r"(?si)<script[\s\S]*?</script>")
-        .expect("script regex");
-    let re_style = regex::Regex::new(r"(?si)<style[\s\S]*?</style>")
-        .expect("style regex");
-    let re_block = regex::Regex::new(
-        r"(?i)</?(?:p|div|br|li|h[1-6]|tr|td|th|blockquote)[^>]*>",
-    )
-    .expect("block regex");
+    let re_script = regex::Regex::new(r"(?si)<script[\s\S]*?</script>").expect("script regex");
+    let re_style = regex::Regex::new(r"(?si)<style[\s\S]*?</style>").expect("style regex");
+    let re_block = regex::Regex::new(r"(?i)</?(?:p|div|br|li|h[1-6]|tr|td|th|blockquote)[^>]*>")
+        .expect("block regex");
     let re_tags = regex::Regex::new(r"<[^>]+>").expect("tags regex");
     let re_spaces = regex::Regex::new(r"[ \t]+").expect("spaces regex");
     let re_newlines = regex::Regex::new(r"\n{3,}").expect("newlines regex");

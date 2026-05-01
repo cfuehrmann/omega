@@ -10,10 +10,7 @@ use super::grep_files::{has_command, run_subprocess};
 
 const DEFAULT_MAX_RESULTS: usize = 200;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let pattern = input["pattern"]
         .as_str()
         .ok_or("find_files: pattern is required")?;

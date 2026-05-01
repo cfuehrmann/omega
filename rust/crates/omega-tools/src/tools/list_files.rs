@@ -8,10 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_ENTRIES: usize = 1_000;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let path = input["path"]
         .as_str()
         .ok_or("list_files: path is required")?
@@ -20,7 +17,13 @@ pub async fn execute(
 
     let output = tokio::task::spawn_blocking(move || {
         let mut results: Vec<String> = Vec::new();
-        walk_sync(&path, std::path::Path::new(&path), 0, recursive, &mut results)?;
+        walk_sync(
+            &path,
+            std::path::Path::new(&path),
+            0,
+            recursive,
+            &mut results,
+        )?;
         let mut out = results.join("\n");
         if results.len() >= MAX_ENTRIES {
             // Write is infallible for String.

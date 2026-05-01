@@ -27,10 +27,7 @@ enum Outcome {
 }
 
 #[allow(clippy::too_many_lines)] // inherent complexity of a subprocess tool
-pub async fn execute(
-    input: Value,
-    cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result<String, String> {
     let command = input["command"]
         .as_str()
         .ok_or("run_command: command is required")?;
@@ -166,12 +163,10 @@ pub async fn execute(
     let suffix = match &outcome {
         Outcome::Aborted => "\n[killed by abort signal]".to_string(),
         Outcome::TimedOut => format!("\n[killed: timeout after {timeout_s}s]"),
-        Outcome::Finished(Some(status)) if !status.success() => {
-            status.code().map_or_else(
-                || "\n[process killed by signal]".to_string(),
-                |code| format!("\n[exit code: {code}]"),
-            )
-        }
+        Outcome::Finished(Some(status)) if !status.success() => status.code().map_or_else(
+            || "\n[process killed by signal]".to_string(),
+            |code| format!("\n[exit code: {code}]"),
+        ),
         Outcome::Finished(_) => {
             if stdout_capped || stderr_capped {
                 "\n[Output truncated at 100KB]".to_string()
@@ -202,10 +197,17 @@ pub async fn execute(
 }
 
 /// Send SIGKILL to the entire process group identified by `pgid`.
+///
+/// We go through the **shell's built-in** `kill` rather than the external
+/// `util-linux kill` binary.  On systems where `/usr/bin/kill` is the
+/// util-linux build, passing a negative PID (`-pgid`) causes it to do a
+/// process-name search instead of a process-group signal, silently failing.
+/// The POSIX shell built-in calls `kill(-pgid, SIGKILL)` correctly.
 fn kill_group(pgid: u32) {
-    let _ = std::process::Command::new("kill")
-        .args(["-KILL", &format!("-{pgid}")])
+    let _ = std::process::Command::new("sh")
+        .args(["-c", &format!("kill -9 -{pgid}")])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
         .status();
 }

@@ -11,10 +11,7 @@ use crate::state::processes;
 
 const POLL_INTERVAL_MS: u64 = 200;
 
-pub async fn execute(
-    input: Value,
-    cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result<String, String> {
     let log_file = input["logFile"]
         .as_str()
         .ok_or("wait_for_output: logFile is required")?
@@ -33,15 +30,13 @@ pub async fn execute(
         .as_u64()
         .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
 
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
 
     let pattern_re: Option<regex::Regex> = pattern_str.as_deref().map(|p| {
         regex::Regex::new(p).unwrap_or_else(|_| {
             // SAFETY: regex::escape always produces a valid pattern.
             #[allow(clippy::expect_used)]
-            regex::Regex::new(&regex::escape(p))
-                .expect("escaped regex is always valid")
+            regex::Regex::new(&regex::escape(p)).expect("escaped regex is always valid")
         })
     });
 
@@ -77,8 +72,8 @@ pub async fn execute(
             let matched = pattern_re
                 .as_ref()
                 .is_some_and(|re| re.is_match(&final_content));
-            let min_bytes_reached = effective_min_bytes
-                .is_some_and(|min| final_content.len() >= min);
+            let min_bytes_reached =
+                effective_min_bytes.is_some_and(|min| final_content.len() >= min);
             return Ok(serde_json::json!({
                 "output":          final_content,
                 "matched":         matched,
@@ -96,14 +91,13 @@ pub async fn execute(
         }
 
         let remaining = deadline.saturating_duration_since(now);
-        let sleep_dur =
-            std::time::Duration::from_millis(POLL_INTERVAL_MS).min(remaining);
+        let sleep_dur = std::time::Duration::from_millis(POLL_INTERVAL_MS).min(remaining);
 
         if let Some(ct) = cancel {
             tokio::select! {
-                () = tokio::time::sleep(sleep_dur) => {}
-                () = ct.cancelled() => {}
-        }
+                    () = tokio::time::sleep(sleep_dur) => {}
+                    () = ct.cancelled() => {}
+            }
         } else {
             tokio::time::sleep(sleep_dur).await;
         }
@@ -132,9 +126,7 @@ fn done(
 }
 
 async fn read_log(path: &str) -> String {
-    tokio::fs::read_to_string(path)
-        .await
-        .unwrap_or_default()
+    tokio::fs::read_to_string(path).await.unwrap_or_default()
 }
 
 async fn check_exit(pid: u32) -> Option<i32> {

@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use futures::StreamExt as _;
-use omega_agent::{Agent, AgentConfig, max_output_tokens_for_model, system_prompt::read_system_prompt_append, system_prompt::system_prompt_append_path};
+use omega_agent::{
+    Agent, AgentConfig, max_output_tokens_for_model, system_prompt::read_system_prompt_append,
+    system_prompt::system_prompt_append_path,
+};
 use omega_core::{AnthropicProvider, RetryConfig, RetryingProvider};
 use omega_protocol::{OmegaEvent, events::SessionStartedEvent};
 use omega_store::{ContextStore, EventStore, SESSIONS_ROOT, make_session_dir};
@@ -108,9 +111,7 @@ async fn run(
 
     // ---- System prompt -------------------------------------------------
     let spa_path = system_prompt_append_path(&cwd);
-    let system_prompt_append = read_system_prompt_append(&spa_path)
-        .await
-        .unwrap_or(None);
+    let system_prompt_append = read_system_prompt_append(&spa_path).await.unwrap_or(None);
     let max_tokens = max_output_tokens_for_model(&model);
     let system_prompt = omega_agent::build_system_prompt(
         &cwd.to_string_lossy(),
@@ -119,10 +120,10 @@ async fn run(
     );
 
     // ---- session_started event -----------------------------------------
-    let session_id = paths
-        .dir
-        .file_name()
-        .map_or_else(|| "unknown".to_owned(), |n| n.to_string_lossy().into_owned());
+    let session_id = paths.dir.file_name().map_or_else(
+        || "unknown".to_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    );
 
     let session_path = paths
         .dir
@@ -217,8 +218,7 @@ async fn run(
                         eprintln!("\n[tool: {}]", tc.name);
                     }
                     OmegaEvent::ToolResult(tr) => {
-                        let preview: String =
-                            tr.output.chars().take(120).collect();
+                        let preview: String = tr.output.chars().take(120).collect();
                         eprintln!(
                             "[result{}: {}…]",
                             if tr.is_error { " (error)" } else { "" },
@@ -238,6 +238,5 @@ async fn run(
 }
 
 fn now_iso() -> String {
-    chrono::Utc::now()
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

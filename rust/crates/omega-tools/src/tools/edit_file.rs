@@ -7,11 +7,10 @@
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
-    let path = input["path"].as_str().ok_or("edit_file: path is required")?;
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
+    let path = input["path"]
+        .as_str()
+        .ok_or("edit_file: path is required")?;
 
     let replacements = input["replacements"]
         .as_array()
@@ -35,12 +34,12 @@ pub async fn execute(
             String::new()
         };
 
-        let old_text = rep["old_text"].as_str().ok_or_else(|| {
-            format!("edit_file: replacement {}/{total} missing old_text", i + 1)
-        })?;
-        let new_text = rep["new_text"].as_str().ok_or_else(|| {
-            format!("edit_file: replacement {}/{total} missing new_text", i + 1)
-        })?;
+        let old_text = rep["old_text"]
+            .as_str()
+            .ok_or_else(|| format!("edit_file: replacement {}/{total} missing old_text", i + 1))?;
+        let new_text = rep["new_text"]
+            .as_str()
+            .ok_or_else(|| format!("edit_file: replacement {}/{total} missing new_text", i + 1))?;
 
         // Count byte-level occurrences matching the TypeScript indexOf+1 step.
         let count = count_occurrences(content.as_bytes(), old_text.as_bytes());
@@ -69,7 +68,9 @@ pub async fn execute(
 
         let old_lines = old_text.split('\n').count();
         let new_lines = new_text.split('\n').count();
-        summaries.push(format!("replaced {old_lines} line(s) with {new_lines} line(s)"));
+        summaries.push(format!(
+            "replaced {old_lines} line(s) with {new_lines} line(s)"
+        ));
     }
 
     tokio::fs::write(path, &content)

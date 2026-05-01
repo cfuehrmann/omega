@@ -8,10 +8,7 @@ use tokio_util::sync::CancellationToken;
 const MAX_OUTPUT_CHARS: usize = 8_000;
 const REQUEST_TIMEOUT_S: u64 = 10;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let query = input["query"]
         .as_str()
         .ok_or("web_search: query is required")?
@@ -23,8 +20,7 @@ pub async fn execute(
     }
 
     let api_key = std::env::var("BRAVE_SEARCH_API_KEY").map_err(|_| {
-        "BRAVE_SEARCH_API_KEY is not set. Web search requires a Brave Search API key."
-            .to_owned()
+        "BRAVE_SEARCH_API_KEY is not set. Web search requires a Brave Search API key.".to_owned()
     })?;
 
     let client = reqwest::Client::builder()

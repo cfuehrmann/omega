@@ -3,11 +3,10 @@
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-pub async fn execute(
-    input: Value,
-    _cancel: Option<&CancellationToken>,
-) -> Result<String, String> {
-    let path = input["path"].as_str().ok_or("write_file: path is required")?;
+pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
+    let path = input["path"]
+        .as_str()
+        .ok_or("write_file: path is required")?;
     let content = input["content"]
         .as_str()
         .ok_or("write_file: content is required")?;
