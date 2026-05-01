@@ -580,6 +580,48 @@ commit, or cohesive groups, each leaving `just rust-gate` green.
 
 ---
 
+## Phase 1d.0c — Mutant killing (`omega-tools`) ⬜ Next (injected)
+
+This is an interlude between 1d.0b and 1d.1: drive the 66 surviving mutants
+in `omega-tools` to zero (or as close as practically achievable) before
+tackling the more complex agent features.
+
+### Context
+
+The 1d.0b run left `cargo mutants -p omega-tools` at:
+- 87 caught, **66 missed**, 18 unviable, 1 timeout
+
+The missed mutants fall into recognisable categories:
+- Truncation-threshold comparisons (`>`, `>=`, `<`, `<=`) in `read_file`,
+  `list_files`, `grep_files`, `find_files`, `run_command`, `web_search`
+- Secondary format strings (the exact text of continuation / truncation messages)
+- `fetch_url` cache-hit path and HTML detection condition
+- `edit_file` occurrence-count logic edge cases
+- `wait_for_output` minBytes / pattern branch conditions
+
+### Done when
+
+- `cargo mutants -p omega-tools` shows **≤ 5 missed** mutants.
+- Every new or changed test passes in `just rust-gate`.
+- No test is written that asserts exact output strings that could change
+  (prefer structural / contains checks, not `==`).
+
+### Session setup — 1d.0c
+
+**Model:** `claude-sonnet-4-6` — **Effort:** Medium
+
+(Mechanical: read mutants report → add targeted tests → verify. No
+architectural risk. The tool surface and agent contract are frozen.)
+
+**Prompt:**
+
+> Read `/home/carsten/omega/dev/rust-migration.md` — specifically the
+> "Phase 1d.0c — Mutant killing" section — and execute it: drive the
+> surviving mutants in `omega-tools` to ≤ 5, leaving `just rust-gate`
+> green throughout.
+
+---
+
 ## Phase 1d.1 — `omega-agent` advanced features ⬜ Upcoming
 
 Add to the `omega-agent` crate built in Phase 1d.0:
