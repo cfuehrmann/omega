@@ -172,6 +172,58 @@ anthropic-beta: interleaved-thinking-2025-05-14   (older models)
 
 ---
 
+## Phase 1b.5 — mutation-test `omega-core` (next)
+
+### Session setup
+
+**Model:** `claude-sonnet-4-6` — **Effort:** Medium
+
+**Prompt:**
+
+> Continuing the Rust migration of Omega. Read
+> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1b.5 session
+> prompt, and execute it.
+
+### Task
+
+Run `cargo mutants` against `rust/crates/omega-core` and triage every
+surviving mutant. For each, choose **one** of:
+
+1. **Write a missing test** — the mutant exposes a real coverage gap.
+   This is the default outcome and what we want most of the time.
+2. **Remove dead-ish code** — the mutated branch turns out to be
+   unreachable, redundant, or a defensive check that no caller can
+   trigger. Delete it.
+3. **Disable the mutant** with `// cargo-mutants: skip — <reason>` (or
+   the equivalent attribute / `mutants.toml` entry). **This option
+   always requires discussion with the user before applying** — never
+   skip a mutant unilaterally. Typical legitimate reasons: equivalent
+   mutants, time-only behaviour (jitter, backoff scalars where the
+   contract is "some positive duration"), or harness-only code paths.
+
+### Workflow
+
+- `cd rust && cargo mutants -p omega-core --no-shuffle` (or scope to a
+  single file with `--file <path>` while iterating).
+- Work mutant-by-mutant. After each fix, re-run `just rust-gate` to
+  confirm everything still passes; the gate is the contract, mutation
+  testing is the audit on top of it.
+- Group commits by file or theme ("retry: cover Retry-After zero-wait
+  path", "anthropic: drop unreachable signature_delta on text block",
+  …) so review is incremental.
+- Stop and ask before applying any option-3 skip.
+
+### Done when
+
+- `cargo mutants -p omega-core` reports 0 surviving mutants (caught,
+  unviable, or explicitly skipped with a reason).
+- All commits passed `just rust-gate` via the pre-commit hook.
+- Update this file: replace this Phase 1b.5 section with a short
+  "✅ done" record (counts of caught / killed-by-new-test /
+  removed-as-dead / skipped-with-reason) and proceed to Phase 1c.
+
+---
+
 ## Phase 1c — `omega-server` (WebSocket)
 
 - `tokio` async runtime, `tokio-tungstenite` for WebSocket
