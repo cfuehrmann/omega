@@ -1,11 +1,7 @@
-//! One submodule per tool. Bodies are stubs in Phase 1d.0a; they are filled
-//! in by Phase 1d.0b. Keeping them in separate files keeps the diff for
-//! 1d.0b localised — tool by tool.
+//! One submodule per tool — Phase 1d.0b real implementations.
 //!
-//! The stubs are declared `async` so 1d.0b can fill them in without changing
-//! the dispatch signature. Until then, clippy would complain about "unused
-//! async"; suppress that here.
-#![allow(clippy::unused_async)]
+//! Each submodule contains a single `execute(input, cancel)` async function
+//! that is dispatched from [`crate::execute_tool`].
 
 pub mod edit_file;
 pub mod fetch_url;

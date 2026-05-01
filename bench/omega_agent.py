@@ -28,9 +28,13 @@ if TYPE_CHECKING:
     from harbor.models.agent.context import AgentContext
 
 OMEGA_VERSION = "v0.1.2"
+OMEGA_RUST_VERSION = "v0.1.2"  # kept in sync with OMEGA_VERSION during the migration
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
+OMEGA_RUST_INSTALL_DIR = "/home/agent/omega-rust"
+OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/rust/target/release/omega"
+OMEGA_RUST_SESSION_ROOT = "/tmp/omega-rust-sessions"
 # No Python-side timeout: harbor wraps run() with asyncio.wait_for(timeout=task.agent_timeout_sec),
 # which fires an AgentTimeoutError at the correct per-task deadline.  Adding our own inner
 # timeout_sec would fire earlier for long-deadline tasks (e.g. winning-avg-corewars has 3600 s)
@@ -219,3 +223,133 @@ class OmegaAgent(BaseInstalledAgent):
                     cache_write = metrics.get("cacheCreationTokens", 0) or 0
                     context.n_cache_tokens = cache_read + cache_write
                     break  # only one turn_end per session
+
+
+class OmegaRustAgent(OmegaAgent):
+    """Omega Rust binary, built from source in the task container.
+
+    This class supplements `OmegaAgent` (TypeScript / Bun) and shares its
+    ``populate_context_post_run`` implementation.  The install step compiles
+    the ``omega-cli`` crate instead of running ``bun install``.  The run step
+    invokes the native binary directly.
+
+    Usage
+    -----
+    harbor run -d terminal-bench@2.0 \\
+      --agent-import-path omega_agent:OmegaRustAgent \\
+      -m anthropic/claude-sonnet-4-6 \\
+      --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+    """
+
+    CLI_FLAGS = [
+        # --max-turns not yet implemented in Rust CLI; omit for now
+        CliFlag(
+            kwarg="effort",
+            cli="--effort",
+            type="enum",
+            choices=["low", "medium", "high"],
+            default="medium",
+        ),
+    ]
+
+    @staticmethod
+    def name() -> str:
+        return "omega-rust"
+
+    def version(self) -> str | None:
+        return OMEGA_RUST_VERSION.lstrip("v")
+
+    # ------------------------------------------------------------------
+    # Install
+    # ------------------------------------------------------------------
+
+    async def install(self, environment: "BaseEnvironment") -> None:
+        # 1. System build dependencies (libssl-dev needed for reqwest/openssl-sys).
+        await self.exec_as_root(
+            environment,
+            command=(
+                "apt-get update -qq"
+                " && apt-get install -y --no-install-recommends"
+                " curl git ca-certificates build-essential pkg-config"
+                " libssl-dev"
+            ),
+        )
+        # 2. Rust toolchain (minimal profile — no docs, no clippy etc.).
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs"
+                " | sh -s -- -y --profile minimal"
+            ),
+        )
+        # 3. Clone the repo at the pinned tag and compile the CLI binary.
+        #    The release profile produces a single self-contained binary.
+        await self.exec_as_agent(
+            environment,
+            command=(
+                f"git clone --branch {OMEGA_RUST_VERSION} --depth 1"
+                f" {OMEGA_REPO} {OMEGA_RUST_INSTALL_DIR}"
+                f" && cd {OMEGA_RUST_INSTALL_DIR}/rust"
+                f" && ~/.cargo/bin/cargo build -p omega-cli --release"
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Run
+    # ------------------------------------------------------------------
+
+    @with_prompt_template
+    async def run(
+        self,
+        instruction: str,
+        environment: "BaseEnvironment",
+        context: "AgentContext",
+    ) -> None:
+        if self._parsed_model_provider != "anthropic":
+            raise ValueError(
+                f"Omega is Anthropic-only; got provider "
+                f"'{self._parsed_model_provider}'. "
+                f"Pass e.g. -m anthropic/claude-sonnet-4-6."
+            )
+
+        timeout_sec = self._get_agent_timeout_sec()
+        if timeout_sec is not None:
+            minutes = int(timeout_sec) // 60
+            instruction = (
+                f"Time budget: {int(timeout_sec)} seconds ({minutes} minutes).\n\n"
+                + instruction
+            )
+
+        flags = self.build_cli_flags()
+        # Run omega, then copy the session files to fixed well-known paths so
+        # the finally block can download them without knowing the auto-generated
+        # session directory name.
+        cmd = (
+            f"mkdir -p {OMEGA_RUST_SESSION_ROOT}"
+            f" && cd /app 2>/dev/null || true"
+            f" && {OMEGA_RUST_BIN} run"
+            f" --instruction {shlex.quote(instruction)}"
+            f" --model {shlex.quote(self._parsed_model_name)}"
+            f" --session-root {OMEGA_RUST_SESSION_ROOT}"
+            f" {flags}"
+            # After the run (success or failure), publish the session files to
+            # fixed paths.  The semicolon ensures this runs even if omega exits
+            # non-zero (e.g. turn_interrupted).
+            f" ; SESS=$(ls -1t {OMEGA_RUST_SESSION_ROOT} | head -1)"
+            f" && cp {OMEGA_RUST_SESSION_ROOT}/$SESS/events.jsonl"
+            f"       /tmp/omega-rust-events.jsonl 2>/dev/null || true"
+            f" && cp {OMEGA_RUST_SESSION_ROOT}/$SESS/context.jsonl"
+            f"       /tmp/omega-rust-context.jsonl 2>/dev/null || true"
+        )
+
+        try:
+            await self.exec_as_agent(environment, command=cmd)
+        finally:
+            for src, dest in (
+                ("/tmp/omega-rust-events.jsonl", "events.jsonl"),
+                ("/tmp/omega-rust-context.jsonl", "context.jsonl"),
+            ):
+                try:
+                    await environment.download_file(src, self.logs_dir / dest)
+                except Exception:
+                    pass

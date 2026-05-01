@@ -1,12 +1,101 @@
-//! `list_files` tool \u2014 stub body for Phase 1d.0a.
-//!
-//! Real implementation lands in Phase 1d.0b. The signature here is the
-//! stable contract: `Result<String, String>` where `Ok` is the content
-//! sent back to the LLM and `Err` is converted to `is_error: true`.
+//! `list_files` — list directory entries, optionally recursive (DFS, dirs
+//! first, alphabetical within each tier).
+
+use std::fmt::Write as _;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-pub async fn execute(_input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
-    Err("list_files: not yet implemented (Phase 1d.0b)".into())
+const MAX_ENTRIES: usize = 1_000;
+
+pub async fn execute(
+    input: Value,
+    _cancel: Option<&CancellationToken>,
+) -> Result<String, String> {
+    let path = input["path"]
+        .as_str()
+        .ok_or("list_files: path is required")?
+        .to_owned();
+    let recursive = input["recursive"].as_bool().unwrap_or(false);
+
+    let output = tokio::task::spawn_blocking(move || {
+        let mut results: Vec<String> = Vec::new();
+        walk_sync(&path, std::path::Path::new(&path), 0, recursive, &mut results)?;
+        let mut out = results.join("\n");
+        if results.len() >= MAX_ENTRIES {
+            // Write is infallible for String.
+            let _ = write!(out, "\n\n[Truncated at {MAX_ENTRIES} entries]");
+        }
+        Ok::<String, String>(out)
+    })
+    .await
+    .map_err(|e| format!("list_files: task failed: {e}"))??;
+
+    Ok(output)
+}
+
+fn walk_sync(
+    base: &str,
+    dir: &std::path::Path,
+    depth: usize,
+    recursive: bool,
+    results: &mut Vec<String>,
+) -> Result<(), String> {
+    if results.len() >= MAX_ENTRIES {
+        return Ok(());
+    }
+
+    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
+        .map_err(|e| format!("list_files: cannot read directory {}: {e}", dir.display()))?
+        .filter_map(Result::ok)
+        .collect();
+
+    entries.sort_by(|a, b| {
+        let a_dir = a.file_type().is_ok_and(|ft| ft.is_dir());
+        let b_dir = b.file_type().is_ok_and(|ft| ft.is_dir());
+        match (a_dir, b_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.file_name().cmp(&b.file_name()),
+        }
+    });
+
+    for entry in entries {
+        if results.len() >= MAX_ENTRIES {
+            break;
+        }
+
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if name_str == "node_modules" {
+            continue;
+        }
+        if name_str.starts_with('.') && depth == 0 && !recursive {
+            continue;
+        }
+
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        let is_dir = ft.is_dir();
+
+        let full_path = entry.path();
+        let rel = full_path
+            .strip_prefix(base)
+            .unwrap_or(&full_path)
+            .to_string_lossy()
+            .into_owned();
+
+        if is_dir {
+            results.push(format!("{rel}/"));
+            if recursive && !name_str.starts_with(".git") && name_str != "node_modules" {
+                walk_sync(base, &full_path, depth + 1, recursive, results)?;
+            }
+        } else {
+            results.push(rel);
+        }
+    }
+
+    Ok(())
 }

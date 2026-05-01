@@ -11,6 +11,12 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-# Phase 1d.0b will re-introduce: omega-{protocol,core,store,tools,agent},
-# tokio (full), serde_json — alongside the agent wiring code that uses them.
+clap         = { version = "4", features = ["derive"] }
+tokio        = { version = "1", features = ["full"] }
+futures      = "0.3"
+chrono       = { version = "0.4", features = ["clock"] }
+omega-core   = { path = "../omega-core" }
+omega-store  = { path = "../omega-store" }
+omega-agent  = { path = "../omega-agent" }
+omega-protocol = { path = "../omega-protocol" }
+tokio-util   = { version = "0.7", features = ["rt"] }
