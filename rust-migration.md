@@ -10,8 +10,9 @@
 |---|---|---|
 | 0 — Planning | ✅ Done | This document + architectural decisions |
 | 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`; honest types (no `#[serde(default)]` shims) |
-| 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming; e2e retry tests (Phase 1b.6) replaced internal `ScriptedProvider`; 0 surviving mutants |
-| 1c — `omega-server` (WebSocket) | 🔜 Next | tokio-tungstenite server, session dir, event store |
+| 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming; 0 surviving mutants |
+| 1b.7 — Insta snapshot coverage | 🔜 Next | Wire-format reference snapshot, kitchen-sink request-body snapshots, id-redactor utility |
+| 1c — `omega-server` (WebSocket) | ⬜ Upcoming | tokio-tungstenite server, session dir, event store |
 | 1d — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
 | 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
@@ -70,287 +71,198 @@ The pre-commit hook routes automatically:
 
 ---
 
-## Phase 1b — `omega-core` (✅ done)
+## Phase 1b — `omega-core` ✅ Done
 
-**Status:** complete and committed (commit `22a8f17`).
+`rust/crates/omega-core` complete: `Provider` trait, `AnthropicProvider`
+(SSE), `OllamaProvider` (NDJSON), and a generic `RetryingProvider<P>` retry
+wrapper that honours `Retry-After` and emits `OmegaEvent::LlmRetry` with
+text/thinking fragments. Both providers built simultaneously to force a real
+abstraction. All tests wiremock-fronted; no live API calls. **0 surviving
+mutants.**
 
-**What landed:** `rust/crates/omega-core` with `Provider` trait,
-`AnthropicProvider` (SSE), `OllamaProvider` (NDJSON), and a generic
-`RetryingProvider<P>` retry wrapper that honours `Retry-After` and
-emits `OmegaEvent::LlmRetry` with text/thinking fragments. 17 omega-core
-tests (9 retry + 4 anthropic + 4 ollama) plus 17 omega-protocol tests —
-all green; no live API calls (wiremock-fronted). Implementation
-adjustments worth carrying forward:
+**Sub-phases:**
+
+- **1b.0** (commit `22a8f17`) — initial implementation. 17 omega-core tests
+  + 17 omega-protocol tests passing.
+- **1b.5** (commit `96620be`) — mutation tested with `cargo mutants`.
+  Killed 30 newly-discovered mutants by adding `LlmError::body()` unit
+  tests, retry-policy tests, and Ollama request-body tests. One documented
+  skip in `compute_backoff` (`replace * with /`): `x/f ≈ x*(1/f)` for
+  `f∈[0.9,1.1]`, so the mutant is statistically indistinguishable from the
+  original under RNG. Skip config in `rust/.cargo/mutants.toml`.
+- **1b.6** — replaced internal `ScriptedProvider` with e2e tests through
+  real providers + wiremock + a flaky-TCP listener. Deleted
+  `ScriptedProvider`, `dummy_request`, `http_*` helpers,
+  `RetryConfig::for_tests`, and the entire `#[cfg(test)] mod tests` block in
+  `src/retry.rs` (~450 lines). New `tests/retry.rs` (14 tests) and
+  `tests/common/mod.rs` (helpers). Two cargo-mutants timeouts (both
+  infinite-retry mutations the auto-timeout catches) treated as caught.
+
+**Implementation adjustments worth carrying forward:**
 
 - `AgentItem::Event` boxes `OmegaEvent` (large_enum_variant). Construct
   with `AgentItem::event(ev)` or `.into()`.
 - `Provider::stream` returns `BoxStream<'static, Result<AgentItem, LlmError>>`
-  (alias `AgentItemStream`) rather than `impl Stream` — ergonomic with
-  trait-object composition.
-- `context_hash` on emitted `LlmResponse`/`ToolCall` events is left empty;
+  (alias `AgentItemStream`) — ergonomic with trait-object composition.
+- `context_hash` on emitted `LlmResponse`/`ToolCall` events left empty;
   Phase 1c persistence layer fills it in.
-- Pre-existing clippy errors in `omega-protocol`'s test (now exposed by
-  `cargo clippy --all-targets`) fixed inline.
-
-### Session setup
-
-**Model:** `claude-opus-4-7` — **Effort:** High
-
-**Prompt:**
-
-> You are continuing the Rust migration of Omega. Context is in `/home/carsten/omega/dev/rust-migration.md`. The current state: Phase 1a (`omega-protocol`) is complete and committed. Phase 1b (`omega-core`) is next.
->
-> Build `rust/crates/omega-core` with the following contract:
->
-> - A `Provider` trait with a single `stream` method that takes an `LlmRequest` and returns `impl Stream<Item = Result<AgentItem, LlmError>>`
-> - `AgentItem` is either a `StreamSignal` (ephemeral text/thinking fragment) or an `OmegaEvent` (persisted event — `LlmResponse`, `ToolCall`, `LlmRetry`, `LlmError`)
-> - Two concrete providers built simultaneously: `AnthropicProvider` and `OllamaProvider`. Building both at once forces a real abstraction.
-> - A retry loop that wraps any `Provider`, emits `OmegaEvent::LlmRetry` on transient errors (429/529/500/503), respects `Retry-After` headers, uses exponential backoff with jitter
-> - No live API calls in tests — mock the HTTP layer. Use `insta` for snapshot assertions on serialized event sequences.
->
-> Reference implementations (read before writing any provider code):
-> - `/home/carsten/forgecode/crates/forge_repo/src/provider/anthropic.rs` — SSE streaming + beta headers pattern
-> - `/home/carsten/forgecode/crates/forge_app/src/dto/anthropic/request.rs` — request struct shape
-> - `/home/carsten/forgecode/crates/forge_repo/src/provider/provider_repo.rs` — provider dispatch
->
-> Workspace conventions already in place: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants` run manually to check coverage. All decisions in `rust-migration.md` are settled — do not re-litigate them. Run `just rust-gate` to verify before each commit.
-
-
-### Contract
-
-```rust
-// Input
-pub struct LlmRequest {
-    pub messages:  Vec<Message>,
-    pub tools:     Vec<ToolDefinition>,
-    pub model:     String,
-    pub config:    ModelConfig,    // max_tokens, thinking budget, etc.
-}
-
-// Output: an async stream
-// Item = Ok(AgentItem) | Err(LlmError)
-pub enum AgentItem {
-    Signal(StreamSignal),   // ephemeral — text/thinking fragments
-    Event(OmegaEvent),      // persisted — llm_response, tool_call, llm_retry, …
-}
-```
-
-### Provider abstraction
-
-```rust
-pub trait Provider: Send + Sync {
-    async fn stream(&self, req: LlmRequest)
-        -> impl Stream<Item = Result<AgentItem, LlmError>>;
-}
-
-pub struct AnthropicProvider { client: reqwest::Client, api_key: String }
-pub struct OllamaProvider    { client: reqwest::Client, base_url: String }
-```
-
-Both providers are built simultaneously. If only one is built first, the abstraction will be shaped by that provider.
-
-### Implementation plan
-
-1. **Types** — `Message`, `ToolDefinition`, `ModelConfig`, `LlmError` in `omega-core/src/types.rs`
-2. **Anthropic provider** — SSE streaming via `reqwest` + `eventsource-stream`; beta headers; request/response structs with serde; maps raw events to `AgentItem`
-3. **Ollama provider** — same shape, different wire format (OpenAI-compatible `/api/chat` with `"stream": true`)
-4. **Retry loop** — wraps any `Provider`; emits `OmegaEvent::LlmRetry` on transient errors (429/529/500/503); respects `retry-after` header; exponential backoff with jitter
-5. **Tests** — mock `reqwest` responses (no live API calls); assert `AgentItem` sequences match expected `OmegaEvent` shapes; use `insta` for snapshot tests of serialized events
-
-### Reference files (forgecode patterns)
-
-- `/home/carsten/forgecode/crates/forge_repo/src/provider/anthropic.rs` — SSE + beta headers
-- `/home/carsten/forgecode/crates/forge_app/src/dto/anthropic/request.rs` — request structs
-- `/home/carsten/forgecode/crates/forge_repo/src/provider/provider_repo.rs` — provider dispatch
-
-Beta headers currently in use:
-```
-anthropic-version: 2023-06-01
-anthropic-beta: structured-outputs-2025-11-13
-anthropic-beta: interleaved-thinking-2025-05-14   (older models)
-```
+- `LlmError::Transport` IS reachable through both real providers when
+  `reqwest::Client::send().await` fails (connection-refused, mid-stream
+  TCP close). Reproduced in `retries_transport_errors` via an in-process
+  flaky-listener Tokio task that drops the first connection and serves a
+  hand-rolled HTTP/1.1 SSE response (`Connection: close`) on the second.
+- An HTTP-status retry (e.g. 529) cannot stream text before failing — the
+  failure happens at response-status time. To exercise `text_fragment`
+  population on retry, emit an Anthropic SSE `event: error` with an
+  `overloaded_error` payload *after* a couple of text deltas; the
+  provider lifts that to `LlmError::Stream { message }` whose message
+  contains `"overloaded_error"`, which `is_retryable` recognises.
+- Sequential wiremock responses: mount multiple `Mock`s with
+  `.up_to_n_times(N)` in registration order. wiremock matches the first
+  un-exhausted mock — no stateful response builder needed.
 
 ---
 
-## Phase 1b.5 — mutation-test `omega-core` ✅ Done
+## Phase 1b.7 — Insta snapshot coverage for the wire-format contract 🔜 Next
 
-**Result:** `cargo mutants -p omega-core` reports **0 surviving mutants**
-(79 mutants tested: 60 caught, 19 unviable, 1 excluded).
+### Motivation
 
-| Outcome | Count | Notes |
-|---|---|---|
-| Killed by new tests | 30 | See commit `96620be` |
-| Equivalent / skipped | 1 | `replace * with / in compute_backoff` — `x/f ≈ x*(1/f)` for `f∈[0.9,1.1]`; ranges overlap; non-deterministic RNG makes them indistinguishable |
-| Dead code removed | 0 | — |
+`insta` is currently used in only two places — happy-path streaming
+snapshots in `tests/anthropic.rs` and `tests/ollama.rs`. Several
+high-value snapshot opportunities are unrealised:
 
-**New tests added** (all in `omega-core`):
-- `types`: 4 unit tests for `LlmError::body()` all variants
-- `retry`: `error_body_populated_from_http_body`, `retry_at_is_not_before_event_time`, `backoff_grows_on_second_attempt`, `jitter_rounds_to_base_ms_not_double`
-- `tests/anthropic`: `parse_retry_after_zero_is_some_zero`, `parse_retry_after_negative_is_none`, `parse_retry_after_nonfinite_is_none`, `response_event_time_fields_are_valid_rfc3339`
-- `tests/ollama`: `maps_429_to_http_error_with_retry_after`, `parse_retry_after_{zero,negative,nonfinite,subsecond}`, `with_client_custom_header_is_propagated`, `response_event_time_is_valid_rfc3339`, `request_body_{contains_user_text_message,thinking_only_message,tool_use_only_message,tool_result_no_extra_message,contains_tool_definitions}`
+1. **No catalogue of what each `OmegaEvent` variant looks like on disk.**
+   Per-variant unit tests in `omega-protocol/src/events.rs` pin serde
+   rules (snake_case `type` discriminator, camelCase fields, `None` ↦
+   absent), but no single artefact says "this is the wire format of every
+   event." When persistence shape changes, no diff surfaces it.
+2. **No request-body snapshot for either provider.** Existing
+   `request_body_*` tests spot-check individual fields against specific
+   mutants. Useful for mutant pinning, but no canonical "this `LlmRequest`
+   becomes this wire body" reference exists.
+3. **ID propagation across events is not visible in any snapshot.** Tool
+   call IDs flow through `tool_call → tool_result → llm_response` events;
+   nothing yet asserts they stay correlated when wired through real code.
 
-**Skip config:** `rust/.cargo/mutants.toml` with `exclude_re` entry.
+### Two principles to apply
 
----
+- **Equivalence via numbered placeholders.** A stateful redactor that
+  emits `[id_1]`, `[id_2]`, … makes "the same id" visible in the snapshot
+  text itself. If a future bug routes a different id through, the
+  placeholder number changes and the diff surfaces it. (For Omega this
+  matters most once events flow through the agent loop with random or
+  server-generated ids — Phase 1c+. The redactor utility is built now so
+  it's ready when needed.)
+- **Include input in the snapshot when the snapshot exists to assert a
+  *transformation*.** Without input, a snapshot reads as "X came out of
+  *something*" — reviewers must flip to the test source to make sense of
+  a diff. With input alongside, the snapshot is self-explanatory. *Don't*
+  include input when the snapshot is itself the catalogue (e.g. the
+  all-variants reference) — that just duplicates the test source.
 
-## Phase 1b.6 — replace `ScriptedProvider` retry tests with e2e integration tests ✅ Done
+### Tasks
 
-**Result:** `ScriptedProvider` and all in-module retry unit tests deleted;
-retry behaviour now exercised end-to-end through `AnthropicProvider` /
-`OllamaProvider` + `wiremock` + a custom flaky-TCP listener. `cargo mutants
--p omega-core` reports **0 surviving mutants** (77 mutants tested: 56 caught,
-19 unviable, 2 timeouts — both timeouts are infinite-retry mutants that the
-auto-timeout catches).
+#### Step 1 — `id_redactor()` helper in `tests/common/`
 
-| Outcome | Count | Notes |
-|---|---|---|
-| Caught by integration tests | 56 | new `tests/retry.rs` covers full retry policy through real providers |
-| Unviable (build failure) | 19 | unchanged from 1b.5 |
-| Timeouts | 2 | `retry.rs:139` (`+` → `*` makes `next_attempt` stay 0) and `retry.rs:140` (`\|\|` → `&&` makes giveup unreachable) — both produce infinite retry loops; cargo-mutants treats timeouts as caught |
+Small utility that returns a closure suitable for
+`insta::dynamic_redaction(|value, path| …)`. Internally maintains a
+`HashMap<String, usize>` mapping each unique value to a stable
+placeholder `[id_<n>]`. State scoped per call — constructed fresh per
+test so two snapshots don't share a numbering space.
 
-**What landed:**
+Decide where it lives once you see the consumers: probably
+`omega-core/tests/common/mod.rs` (which already exists) and a sibling in
+`omega-protocol/tests/common/mod.rs` (new). Don't put the helper in
+production code — it is test infrastructure only.
 
-- `tests/retry.rs` (new, 14 tests) — every retry behaviour driven through
-  `RetryingProvider::new(AnthropicProvider::new(…), …)` plus one
-  `OllamaProvider` cross-check (`retries_a_500_then_succeeds_with_ollama`).
-  Sequential wiremock responses use `Mock::up_to_n_times(1)` mounted in
-  registration order.
-- `tests/common/mod.rs` (new) — shared helpers (`fast_retry_config`,
-  `fast_retry_config_with_jitter`, `simple_request`, `sse_body`,
-  `minimal_anthropic_sse`, `minimal_ollama_ndjson`).
-- `src/retry.rs` — entire `#[cfg(test)] mod tests` block deleted, along with
-  `ScriptedProvider`, `dummy_request`, `http_429`, `http_529`, `http_400`,
-  `http_429_retry_after`, and `RetryConfig::for_tests`. The retry source file
-  is now production code only (~253 lines, down from ~706).
+#### Step 2 — All-22-variants `OmegaEvent` reference snapshot
 
-**Transport-error reachability (Step 2 conclusion):** *reachable*. Both
-`AnthropicProvider` and `OllamaProvider` map `reqwest::Client::send()`
-failures to `LlmError::Transport`, so a TCP connection that closes before
-any HTTP response triggers it. Reproduced in `retries_transport_errors`
-via an in-process `flaky_listener` Tokio task that drops the first
-incoming connection and serves a hand-rolled HTTP/1.1 SSE response
-(`Connection: close`) on the second.
+In `omega-protocol`, add an integration test (`tests/events_reference.rs`)
+that builds a `Vec<OmegaEvent>` containing one example of every variant.
+Include a deliberately correlated triple: a `ToolCallEvent` and matching
+`ToolResultEvent` sharing one id, plus an `LlmResponseEvent` whose
+`cleared_tool_uses` (when populated) references the same id. Apply
+`id_redactor` to id-bearing paths. Use `insta::assert_json_snapshot!`.
 
-**Mid-stream retry path:** an HTTP-status retry (e.g. 529) cannot stream
-any text first because the failure happens at response-status time. To
-exercise the `text_fragment` path the test uses an Anthropic SSE
-`event: error` with `overloaded_error` payload *after* a couple of text
-deltas — the provider lifts that to `LlmError::Stream { message }` whose
-message contains `"overloaded_error"`, which `is_retryable` recognises.
+This becomes the living "wire format reference" for the persistence
+contract. Reviewers can see at a glance what every variant looks like;
+the correlated triple proves id propagation is visible-by-default in
+future snapshots.
 
-### Original prompt and motivation (kept for reference)
+The existing per-variant rule tests stay — they pin specific mutants the
+catalogue snapshot wouldn't reliably catch.
 
-The retry unit tests in `retry.rs` used a `ScriptedProvider` — an in-module fake
-that returned scripted `Result` values directly, bypassing HTTP entirely. This
-created two problems:
+#### Step 3 — Per-provider request-body kitchen-sink snapshot
 
-1. **Untested seam.** No test exercised the composition
-   `RetryingProvider::new(AnthropicProvider::new(…), config)`. If `AnthropicProvider`
-   produced an error shape that `RetryingProvider` didn't recognise, all tests
-   stayed green.
-2. **Dead code hiding.** A branch reachable only through `ScriptedProvider` —
-   but never through a real provider — appeared covered. e2e tests expose this:
-   code that has no real production path simply won't be hit.
+In `omega-core/tests/anthropic.rs` and `omega-core/tests/ollama.rs`, add
+one `request_body_kitchen_sink` test each:
 
-The rule of thumb: whenever e2e tests can achieve full coverage, prefer them
-and delete the internal-seam tests. If e2e coverage is incomplete, ask *why*
-before writing a unit test — the answer is often "this code is dead".
+- Build an `LlmRequest` with: a multi-turn conversation (user text,
+  assistant tool_use, user tool_result — id-correlated), a system
+  prompt, two tool definitions, a non-default `ModelConfig`.
+- Drive through the provider, capture `received[0].body` from wiremock.
+- Snapshot a struct that includes both an input projection of the
+  `LlmRequest` *and* the output JSON wire body, so the transformation is
+  visible in the snapshot text.
+- Apply `id_redactor` to tool-id-bearing paths so the
+  `tool_use_id ↔ tool_use.id` correlation appears as `[id_1]` in both.
+
+The existing `request_body_*` mutant-pinned tests stay — they target
+specific mutants and are clearer as targeted assertions than as
+snapshots.
+
+#### Step 4 — *Optional* retrofit: file-pair pattern for streaming snapshots
+
+Lower priority. The two existing `streams_*` snapshots use a Rust DSL
+(`sse_body(&[("message_start", json!({...})), …])`) to build the
+SSE/NDJSON fixture inline. An alternative: move the fixture to
+`tests/fixtures/streams_kitchen_sink.{sse,ndjson}` (real wire bytes the
+provider would receive), have the test read the file and feed wiremock,
+and have the snapshot's header comment reference the fixture path.
+
+Pros: the snapshot + fixture file pair is self-contained living
+documentation of the parser; "what does Anthropic actually send?" is
+answerable by reading a single file. Cons: more invasive change; the
+current Rust DSL is fine.
+
+Skip if you're short on time or judge the current shape good enough.
+Don't agonise — the first three steps are the meat.
+
+#### Step 5 — Run `cargo mutants` and triage
+
+After the new snapshots land, run `cargo mutants -p omega-core` and
+`cargo mutants -p omega-protocol`. Expect both to still report 0
+surviving mutants. If any new survivors appear, triage with the same
+three-option framework as Phase 1b.5 (new test / dead code removal /
+documented skip). **Stop and discuss with the user before applying any
+skip.**
+
+### Done when
+
+- `id_redactor()` lives in a `common/` test module and is re-used.
+- An events-reference snapshot exists in `omega-protocol` showing all 22
+  variants with at least one correlated tool-id triple.
+- Each provider has a request-body kitchen-sink snapshot showing
+  `LlmRequest` → wire-body transformation with correlated ids.
+- `cargo mutants -p omega-core` and `cargo mutants -p omega-protocol`
+  both report 0 surviving mutants.
+- All commits passed `just rust-gate`.
+- This section updated to a ✅ done record.
 
 ### Session setup
 
-**Model:** `claude-opus-4-7` — **Effort:** High
+**Model:** `claude-sonnet-4-6` — **Effort:** Medium
 
-(Judgment calls arise: transport-error reachability, possible dead-code
-deletion, mutant triage after restructuring. The most capable model avoids
-back-and-forth on design questions.)
+(Design is laid out and patterns are established. Novel parts —
+`insta::dynamic_redaction` API, fixture-file mechanics — are well-trodden
+ground in the Rust community. Sonnet handles this comfortably; Opus is
+overkill.)
 
 **Prompt:**
 
 > Continuing the Rust migration of Omega. Read
-> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1b.6 session
+> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1b.7 session
 > prompt, and execute it.
-
-### Task
-
-#### Step 1 — Audit `ScriptedProvider` tests
-
-For every test in `retry.rs` that uses `ScriptedProvider`, answer: *can this
-be replaced by an integration test that goes through a real provider + wiremock?*
-
-The expected answer for almost all tests is yes. wiremock supports sequential
-responses: mount multiple `Mock`s with `.up_to_n_times(1)` in order, or use
-`Mock::given(…).respond_with(ResponseTemplate::…)` mounted repeatedly — the
-first mounted mock that matches fires first.
-
-For each test, rewrite it as an integration test in `tests/retry.rs` (create
-this file) that drives the full stack:
-
-```rust
-let provider = RetryingProvider::new(
-    AnthropicProvider::new("test-key").with_base_url(server.uri()),
-    RetryConfig::for_tests(n),
-);
-```
-
-Use both `AnthropicProvider` and `OllamaProvider` where the retry behaviour
-being tested is provider-agnostic — pick one and note why, or parameterise if
-it adds value without adding noise.
-
-#### Step 2 — Handle the transport-error case explicitly
-
-`retries_transport_errors` tests `LlmError::Transport`. Investigate:
-
-- Can `AnthropicProvider` or `OllamaProvider` actually produce
-  `LlmError::Transport` from a real HTTP exchange? (Look at how `reqwest`
-  errors are mapped — a connection-refused or mid-stream TCP close should
-  produce this.)
-- If yes: reproduce it via wiremock dropping the connection (wiring a
-  `ResponseTemplate` with `.set_delay(…)` and then a server shutdown, or
-  using `wiremock`'s `mount_as_scoped` to drop the guard mid-request).
-- If it turns out that the real providers *never* emit `LlmError::Transport`
-  from their current error-mapping code: that is dead code. Delete the
-  unreachable branch and the test.
-
-Document the conclusion with a comment either way.
-
-#### Step 3 — Delete `ScriptedProvider` and dead helpers
-
-Once every `ScriptedProvider`-based test has been replaced or deliberately
-retired, delete `ScriptedProvider`, `dummy_request`, `http_529`, `http_400`,
-`http_429`, `http_429_retry_after`, and `RetryConfig::for_tests` if they are
-no longer referenced. `cargo machete` and `cargo check` will confirm nothing
-lingers.
-
-If `RetryConfig::for_tests` is still useful in the new integration tests,
-keep it — but move it to a shared `tests/common/mod.rs` helper so it is
-clearly test-infrastructure rather than production code.
-
-#### Step 4 — Run `cargo mutants` and triage
-
-After the restructuring, run:
-
-```
-cargo mutants -p omega-core
-```
-
-Expect the surviving-mutant count to change — some mutants previously killed
-by `ScriptedProvider` tests may now survive (revealing genuinely undertested
-code or dead branches), and the new e2e tests may kill mutants that the old
-unit tests couldn't reach.
-
-Triage every surviving mutant using the same three-option framework as Phase
-1b.5 (new test / dead code removal / documented skip). **Stop and discuss with
-the user before applying any skip.**
-
-### Done when
-
-- `tests/retry.rs` exists and covers all retry behaviours through real
-  providers + wiremock.
-- `ScriptedProvider` and its associated helpers are deleted (or their survival
-  is explicitly justified).
-- `cargo mutants -p omega-core` reports 0 surviving mutants.
-- All commits passed `just rust-gate`.
-- This section is updated to a ✅ done record.
 
 ---
 
