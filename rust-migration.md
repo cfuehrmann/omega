@@ -42,9 +42,9 @@ dev/
 │       ├── omega-protocol/     ✅ done
 │       ├── omega-core/         ✅ done
 │       ├── omega-store/        ✅ done
-│       ├── omega-tools/        ⬜ next (Phase 1d.0)
-│       ├── omega-agent/        ⬜ next (Phase 1d.0 core + 1d.1 advanced)
-│       └── omega-cli/          ⬜ next (Phase 1d.0 binary)
+│       ├── omega-tools/        ⬜ next (Phase 1d.0a scaffold + 1d.0b bodies)
+│       ├── omega-agent/        ⬜ next (Phase 1d.0a core + 1d.1 advanced)
+│       └── omega-cli/          ⬜ next (Phase 1d.0a scaffold + 1d.0b wiring)
 ├── src/                        ← TypeScript (frozen; no new features)
 ├── Justfile                    ← just rust-gate for Rust-only commits
 └── package.json
@@ -135,13 +135,45 @@ that force each mutation's bounds check to access OOB memory.
 
 ---
 
-## Phase 1d.0 — `omega-tools` + `omega-agent` core + `omega-cli` ⬜ Next
+## Phase 1d.0 — `omega-tools` + `omega-agent` core + `omega-cli` ⬜ In progress
 
 This is the biggest phase. The TypeScript source spans ~3000 lines across
-`src/agent.ts` (1866 lines) and `src/tools.ts` (1102 lines). The session
-produces three new crates and the first Harbor-testable binary.
+`src/agent.ts` (1866 lines) and `src/tools.ts` (1102 lines). It produces three
+new crates and the first Harbor-testable binary.
 
-**Scope for this session (1d.0):**
+The phase is split into two sessions because the work divides cleanly along
+design-vs-mechanical lines: the agent loop and public APIs are design-heavy
+(Opus), the 12 tool implementations and CLI glue are mechanical (Sonnet).
+
+**Phase 1d.0a — design + agent core (Opus, this prompt):**
+- Scaffold `omega-tools` with full dispatch table, tool schemas, and stub tool
+  bodies (`ToolResult { is_error: true, content: "not yet implemented" }`).
+- Implement `omega-agent` end-to-end with `MockProvider` tests.
+- Scaffold `omega-cli` enough for `--help` and `cargo build` to succeed.
+- `cargo mutants -p omega-agent` → 0 missed.
+- `just rust-gate` green.
+
+**Phase 1d.0b — tool ports + CLI wiring (Sonnet, separate prompt):**
+- Implement the 12 tools with integration tests against real I/O in tempdirs.
+- `cargo mutants -p omega-tools` → 0 missed.
+- Finish `omega-cli run` wired to a real Anthropic provider.
+- Manual end-to-end smoke test with a real API key.
+- Harbor adapter changes in `bench/omega_agent.py`.
+
+**Scope adjustments accepted in 1d.0a vs original plan:**
+- Extended thinking is omitted entirely (`thinking_budget = None`); `effort`
+  is recorded in `session_started` but does not change request behaviour. The
+  current `omega-core` provider stream does not surface thinking-block
+  signatures, so preserving them across turns would require widening the
+  provider API. Deferred to **Phase 1d.1** along with `setEffort()`.
+- `cache_control` on the last human message is omitted. Requires extending
+  `omega_core::ContentBlock`. Deferred to **Phase 1d.1**.
+- `eager_input_streaming` flag on `write_file` / `edit_file` tool definitions
+  is omitted. Anthropic-specific UX field; behaviour identical without it.
+- The system-prompt append file IS implemented in 1d.0a (small, parity-
+  preserving — no reason to stub it).
+
+**Original full scope (kept for reference):**
 - `omega-tools` crate — all 13 tool implementations
 - `omega-agent` crate — core agent loop (multi-turn, tool dispatch, context
   hashing, event emission); no pause/resumption/compaction yet
@@ -355,11 +387,16 @@ assistant message has an unmatched `tool_use` block and inject a synthetic
 - Use `omega_core`'s wiremock pattern: inject a scripted `Provider` (or a
   simple mock) rather than hitting the real API.
 - Key scenarios: single-turn text response, tool-call loop (one tool, two
-  tools in parallel), error on non-retryable status, context-too-long.
+  tools in parallel), retryable error → retry → success, non-retryable error,
+  invalid-tool-JSON nudge (3-attempt), dangling-tool-use repair.
 - Use real `omega_store` with temp dirs (consistent with the project discipline).
 - Do NOT add `#[cfg(test)]` scripted providers inside the crate — put them in
   `tests/common/mod.rs` as a `MockProvider` that returns pre-canned
   `AgentItem` streams.
+- After the loop is feature-complete, run `cargo mutants -p omega-agent`. Pay
+  particular attention to the retry counter, the invalid-JSON 3-attempt
+  counter, the dangling-tool-use repair predicate, and the stop-reason
+  dispatch (`tool_use` vs `end_turn` vs unknown).
 
 ### `omega-cli` binary crate
 
@@ -393,7 +430,15 @@ USAGE: omega-cli run \
 
 No web server, no WebSocket. Harbor points at this binary directly.
 
-**Harbor adapter changes** (apply at end of Phase 1d.0):
+**Mutants checkpoints:**
+- End of 1d.0a: `cargo mutants -p omega-agent` → 0 missed (focus: retry,
+  invalid-JSON nudge, dangling-tool-use, stop-reason dispatch).
+- End of 1d.0b: `cargo mutants -p omega-tools` → 0 missed (focus:
+  `execute_edit_file` replace-once, `execute_read_file` clamping,
+  `execute_wait_for_output` exit/pattern/minBytes/timeout disambiguation,
+  `execute_run_command` exit/timeout branches, the dispatch table).
+
+**Harbor adapter changes** (apply at end of Phase 1d.0b):
 ```python
 # bench/omega_agent.py  install():
 "git clone ... && cargo build --release -p omega-cli"
@@ -408,32 +453,62 @@ f"--session-dir {OMEGA_SESSION_DIR}"
 names, same format. The oracle checks the container filesystem. No other
 adapter changes needed.
 
-### Done when
+### Done when (1d.0a)
 
-- `just rust-gate` passes (all three new crates, clippy clean, tests pass).
+- All three crates scaffolded and compiling.
+- `omega-tools` exposes the full dispatch + schemas; tool bodies stubbed.
+- `omega-agent` core loop fully implemented and tested with `MockProvider`.
+- `omega-cli --help` works.
+- `cargo mutants -p omega-agent` → 0 missed.
+- `just rust-gate` passes.
+- This section updated to note 1d.0a ✅ / 1d.0b ⬜.
+
+### Done when (1d.0b)
+
+- All 12 tools implemented with real I/O integration tests.
+- `cargo mutants -p omega-tools` → 0 missed.
 - `omega-cli run --instruction "list the files in the current directory" --model claude-sonnet-4-6`
   completes end-to-end (requires `ANTHROPIC_API_KEY` — run manually, not in CI).
-- `cargo mutants -p omega-tools` and `cargo mutants -p omega-agent` report 0 missed.
-- This section updated to ✅ Done.
+- Harbor adapter (`bench/omega_agent.py`) updated to invoke the Rust binary.
+- `just rust-gate` passes.
+- Phase 1d.0 marked ✅ Done.
 
-### Session setup
+### Session setup — 1d.0a
 
 **Model:** `claude-opus-4-7` — **Effort:** High
 
-(Most complex phase: ~3000 lines of TS to port, two new crates plus a binary,
-first live API integration. `opus-4-7` is the step-change improvement in
-agentic coding. High effort because wrong design decisions here propagate to
-1d.1 and 1e. Sonnet at high effort is the fallback if opus-4-7 is unavailable.)
+(Design-heavy half: API shapes, agent loop, event-ordering / context_hash
+fix-up, retry & invalid-JSON nudge logic. Wrong decisions here propagate to
+1d.1 and 1e.)
 
 **Prompt:**
 
 > Continuing the Rust migration of Omega. Read
-> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1d.0 session
+> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1d.0a session
 > prompt, and execute it. Before writing any code, state your intended
 > approach — including any adjustments to the plan you think are warranted
 > (different crate splits, reordered sub-tasks, scope cuts). The plan in
 > the doc is a strong prior but not a constraint; revise it if you see a
 > better path.
+
+### Session setup — 1d.0b
+
+**Model:** `claude-sonnet-4-6` — **Effort:** Medium
+
+(Mechanical half: 12 tool implementations following a clear test pattern,
+plus CLI clap glue and Harbor adapter changes. Low design risk; high line
+count. Sonnet at medium effort is the right tool.)
+
+**Prompt:**
+
+> Continuing Phase 1d.0 of the Rust migration. Phase 1d.0a (Opus) scaffolded
+> `omega-tools` with stub tool bodies and finished `omega-agent`. Read
+> `/home/carsten/omega/dev/rust-migration.md` and the working notes at
+> `/home/carsten/omega/dev/rust/PHASE-1d.0-NOTES.md` for context, then
+> implement Phase 1d.0b: port the 12 tool bodies (refer to `src/tools.ts`)
+> with real-I/O integration tests, run `cargo mutants -p omega-tools` to 0
+> missed, finish the `omega-cli run` subcommand, smoke-test it manually,
+> and update the Harbor adapter.
 
 ---
 
