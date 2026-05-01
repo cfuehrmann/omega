@@ -1,0 +1,12 @@
+# cargo-mutants configuration for the omega Rust workspace.
+# See https://mutants.rs/ for the full schema.
+
+# Equivalent mutants that cannot be distinguished by tests without
+# restructuring the production code (e.g. injecting a seeded RNG).
+exclude_re = [
+    # compute_backoff applies ±10% jitter via `wait * f` where f∈[0.9,1.1].
+    # `x / f` for f near 1.0 is mathematically indistinguishable from `x * f`
+    # across all reasonable backoff magnitudes: the two ranges [0.9x, 1.1x]
+    # and [x/1.1, x/0.9] overlap completely and the RNG is non-deterministic.
+    "replace \\* with / in compute_backoff",
+]

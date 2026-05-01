@@ -172,55 +172,24 @@ anthropic-beta: interleaved-thinking-2025-05-14   (older models)
 
 ---
 
-## Phase 1b.5 — mutation-test `omega-core` (next)
+## Phase 1b.5 — mutation-test `omega-core` ✅ Done
 
-### Session setup
+**Result:** `cargo mutants -p omega-core` reports **0 surviving mutants**
+(79 mutants tested: 60 caught, 19 unviable, 1 excluded).
 
-**Model:** `claude-sonnet-4-6` — **Effort:** Medium
+| Outcome | Count | Notes |
+|---|---|---|
+| Killed by new tests | 30 | See commit `96620be` |
+| Equivalent / skipped | 1 | `replace * with / in compute_backoff` — `x/f ≈ x*(1/f)` for `f∈[0.9,1.1]`; ranges overlap; non-deterministic RNG makes them indistinguishable |
+| Dead code removed | 0 | — |
 
-**Prompt:**
+**New tests added** (all in `omega-core`):
+- `types`: 4 unit tests for `LlmError::body()` all variants
+- `retry`: `error_body_populated_from_http_body`, `retry_at_is_not_before_event_time`, `backoff_grows_on_second_attempt`, `jitter_rounds_to_base_ms_not_double`
+- `tests/anthropic`: `parse_retry_after_zero_is_some_zero`, `parse_retry_after_negative_is_none`, `parse_retry_after_nonfinite_is_none`, `response_event_time_fields_are_valid_rfc3339`
+- `tests/ollama`: `maps_429_to_http_error_with_retry_after`, `parse_retry_after_{zero,negative,nonfinite,subsecond}`, `with_client_custom_header_is_propagated`, `response_event_time_is_valid_rfc3339`, `request_body_{contains_user_text_message,thinking_only_message,tool_use_only_message,tool_result_no_extra_message,contains_tool_definitions}`
 
-> Continuing the Rust migration of Omega. Read
-> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1b.5 session
-> prompt, and execute it.
-
-### Task
-
-Run `cargo mutants` against `rust/crates/omega-core` and triage every
-surviving mutant. For each, choose **one** of:
-
-1. **Write a missing test** — the mutant exposes a real coverage gap.
-   This is the default outcome and what we want most of the time.
-2. **Remove dead-ish code** — the mutated branch turns out to be
-   unreachable, redundant, or a defensive check that no caller can
-   trigger. Delete it.
-3. **Disable the mutant** with `// cargo-mutants: skip — <reason>` (or
-   the equivalent attribute / `mutants.toml` entry). **This option
-   always requires discussion with the user before applying** — never
-   skip a mutant unilaterally. Typical legitimate reasons: equivalent
-   mutants, time-only behaviour (jitter, backoff scalars where the
-   contract is "some positive duration"), or harness-only code paths.
-
-### Workflow
-
-- `cd rust && cargo mutants -p omega-core --no-shuffle` (or scope to a
-  single file with `--file <path>` while iterating).
-- Work mutant-by-mutant. After each fix, re-run `just rust-gate` to
-  confirm everything still passes; the gate is the contract, mutation
-  testing is the audit on top of it.
-- Group commits by file or theme ("retry: cover Retry-After zero-wait
-  path", "anthropic: drop unreachable signature_delta on text block",
-  …) so review is incremental.
-- Stop and ask before applying any option-3 skip.
-
-### Done when
-
-- `cargo mutants -p omega-core` reports 0 surviving mutants (caught,
-  unviable, or explicitly skipped with a reason).
-- All commits passed `just rust-gate` via the pre-commit hook.
-- Update this file: replace this Phase 1b.5 section with a short
-  "✅ done" record (counts of caught / killed-by-new-test /
-  removed-as-dead / skipped-with-reason) and proceed to Phase 1c.
+**Skip config:** `rust/.cargo/mutants.toml` with `exclude_re` entry.
 
 ---
 

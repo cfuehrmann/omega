@@ -209,7 +209,7 @@ fn compute_backoff(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss
         )]
-        let jittered = (wait as f64 * jitter).round() as u64;
+        let jittered = (wait as f64 * jitter).round() as u64; // cargo-mutants: skip -- equivalent mutant: x/f ≈ x*(1/f) for f∈[0.9,1.1]; ranges overlap and cannot be distinguished without a seeded RNG
         wait = jittered.min(cap);
     }
     (Duration::from_millis(wait), None)
