@@ -9,7 +9,7 @@
 | Phase | Status | Deliverable |
 |---|---|---|
 | 0 — Planning | ✅ Done | This document + architectural decisions |
-| 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips against TS-produced JSON |
+| 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`; honest types (no `#[serde(default)]` shims) |
 | 1b — `omega-core` (LLM loop) | 🔜 Next | Anthropic + Ollama providers, retry loop, streaming |
 | 1c — `omega-server` (WebSocket) | ⬜ Upcoming | tokio-tungstenite server, session dir, event store |
 | 1d — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
