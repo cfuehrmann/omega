@@ -3,10 +3,10 @@
 //! This crate owns the canonical Rust representation of every type that
 //! crosses a persistence or network boundary:
 //!
-//! - [`OmegaEvent`]    — the unified discriminated union written to
-//!                       `events.jsonl` and streamed over WebSocket.
-//! - [`StreamSignal`]  — ephemeral streaming primitives (text/thinking
-//!                       token fragments) that are never persisted.
+//! - [`OmegaEvent`] — the unified discriminated union written to
+//!   `events.jsonl` and streamed over WebSocket.
+//! - [`StreamSignal`] — ephemeral streaming primitives (text/thinking
+//!   token fragments) that are never persisted.
 //!
 //! All types implement `serde::Serialize` + `serde::Deserialize`.
 //! The JSON representation is intentionally close to the TypeScript
