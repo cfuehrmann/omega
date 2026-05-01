@@ -70,7 +70,27 @@ The pre-commit hook routes automatically:
 
 ---
 
-## Phase 1b — `omega-core` (next)
+## Phase 1b — `omega-core` (✅ done)
+
+**Status:** complete and committed (commit `22a8f17`).
+
+**What landed:** `rust/crates/omega-core` with `Provider` trait,
+`AnthropicProvider` (SSE), `OllamaProvider` (NDJSON), and a generic
+`RetryingProvider<P>` retry wrapper that honours `Retry-After` and
+emits `OmegaEvent::LlmRetry` with text/thinking fragments. 17 omega-core
+tests (9 retry + 4 anthropic + 4 ollama) plus 17 omega-protocol tests —
+all green; no live API calls (wiremock-fronted). Implementation
+adjustments worth carrying forward:
+
+- `AgentItem::Event` boxes `OmegaEvent` (large_enum_variant). Construct
+  with `AgentItem::event(ev)` or `.into()`.
+- `Provider::stream` returns `BoxStream<'static, Result<AgentItem, LlmError>>`
+  (alias `AgentItemStream`) rather than `impl Stream` — ergonomic with
+  trait-object composition.
+- `context_hash` on emitted `LlmResponse`/`ToolCall` events is left empty;
+  Phase 1c persistence layer fills it in.
+- Pre-existing clippy errors in `omega-protocol`'s test (now exposed by
+  `cargo clippy --all-targets`) fixed inline.
 
 ### Session setup
 
