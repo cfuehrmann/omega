@@ -178,6 +178,23 @@ During the headless-Rust + TS-UI bridge period:
 
 ---
 
+## Settled decisions — format and compatibility
+
+**No backward compatibility with old `events.jsonl` files.**
+The Rust implementation makes no attempt to parse log files written by the
+TypeScript agent. Data shapes are honest — every field that the struct declares
+is required in the JSON. There are no `#[serde(default)]` shims, no legacy
+field remapping, and no `Option` fields whose sole purpose is to paper over
+historical log gaps. Old logs are simply not supported by the Rust reader.
+
+Corollary: do not encode defaults into data shapes. Backward-compat shims
+belong at an explicit parsing boundary with their own tests, or not at all.
+The `cargo mutants` finding on `default_effort()` in the initial
+`omega-protocol` draft is the canonical example of why this matters —
+a default baked into a serde attribute is untestable by design.
+
+---
+
 ## What is intentionally deferred
 
 All of the following are post-parity improvements. Do not implement during port:

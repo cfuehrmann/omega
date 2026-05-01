@@ -1,0 +1,2 @@
+crates/omega-protocol/src/events.rs:115:5: replace default_effort -> String with String::new()
+crates/omega-protocol/src/events.rs:115:5: replace default_effort -> String with "xyzzy".into()

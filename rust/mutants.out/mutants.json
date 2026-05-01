@@ -1,0 +1,62 @@
+[
+  {
+    "package": "omega-protocol",
+    "file": "crates/omega-protocol/src/events.rs",
+    "function": {
+      "function_name": "default_effort",
+      "return_type": "-> String",
+      "span": {
+        "start": {
+          "line": 114,
+          "column": 1
+        },
+        "end": {
+          "line": 116,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 115,
+        "column": 5
+      },
+      "end": {
+        "line": 115,
+        "column": 20
+      }
+    },
+    "replacement": "String::new()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "omega-protocol",
+    "file": "crates/omega-protocol/src/events.rs",
+    "function": {
+      "function_name": "default_effort",
+      "return_type": "-> String",
+      "span": {
+        "start": {
+          "line": 114,
+          "column": 1
+        },
+        "end": {
+          "line": 116,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 115,
+        "column": 5
+      },
+      "end": {
+        "line": 115,
+        "column": 20
+      }
+    },
+    "replacement": "\"xyzzy\".into()",
+    "genre": "FnValue"
+  }
+]

@@ -102,17 +102,11 @@ pub struct SessionStartedEvent {
     pub time: ISOTimestamp,
     pub session_id: String,
     /// Session directory path relative to the Omega root (cwd).
-    #[serde(default)]
     pub path: String,
     pub model: String,
-    #[serde(default = "default_effort")]
     pub effort: String,
     /// The full system prompt text at session start.
     pub system_prompt: String,
-}
-
-fn default_effort() -> String {
-    "medium".into()
 }
 
 /// The server process started.

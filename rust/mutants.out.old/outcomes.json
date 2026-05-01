@@ -1,0 +1,168 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 4.714656849,
+          "process_status": "Success",
+          "argv": [
+            "/home/carsten/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=omega-protocol@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.201834499,
+          "process_status": "Success",
+          "argv": [
+            "/home/carsten/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=omega-protocol@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "omega-protocol",
+          "file": "crates/omega-protocol/src/events.rs",
+          "function": {
+            "function_name": "default_effort",
+            "return_type": "-> String",
+            "span": {
+              "start": {
+                "line": 114,
+                "column": 1
+              },
+              "end": {
+                "line": 116,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 115,
+              "column": 5
+            },
+            "end": {
+              "line": 115,
+              "column": 20
+            }
+          },
+          "replacement": "String::new()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__omega-protocol__src__events.rs_line_115_col_5.log",
+      "diff_path": "diff/crates__omega-protocol__src__events.rs_line_115_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.351597217,
+          "process_status": "Success",
+          "argv": [
+            "/home/carsten/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=omega-protocol@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.201811903,
+          "process_status": "Success",
+          "argv": [
+            "/home/carsten/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=omega-protocol@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "omega-protocol",
+          "file": "crates/omega-protocol/src/events.rs",
+          "function": {
+            "function_name": "default_effort",
+            "return_type": "-> String",
+            "span": {
+              "start": {
+                "line": 114,
+                "column": 1
+              },
+              "end": {
+                "line": 116,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 115,
+              "column": 5
+            },
+            "end": {
+              "line": 115,
+              "column": 20
+            }
+          },
+          "replacement": "\"xyzzy\".into()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__omega-protocol__src__events.rs_line_115_col_5_001.log",
+      "diff_path": "diff/crates__omega-protocol__src__events.rs_line_115_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.351726192,
+          "process_status": "Success",
+          "argv": [
+            "/home/carsten/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=omega-protocol@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.201492835,
+          "process_status": "Success",
+          "argv": [
+            "/home/carsten/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=omega-protocol@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 2,
+  "missed": 2,
+  "caught": 0,
+  "timeout": 0,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-05-01T14:32:56.10303062Z",
+  "end_time": "2026-05-01T14:33:02.136411936Z",
+  "cargo_mutants_version": "26.0.0"
+}

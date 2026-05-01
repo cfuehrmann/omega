@@ -1,0 +1,21 @@
+--- crates/omega-protocol/src/events.rs
++++ replace default_effort -> String with String::new()
+@@ -107,17 +107,17 @@
+     pub model: String,
+     #[serde(default = "default_effort")]
+     pub effort: String,
+     /// The full system prompt text at session start.
+     pub system_prompt: String,
+ }
+ 
+ fn default_effort() -> String {
+-    "medium".into()
++    String::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The server process started.
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct ServerStartedEvent {
+     pub time: ISOTimestamp,
+ }
+ 
