@@ -1,282 +1,236 @@
-# Phase 1d.0 — Working notes
+# Phase 1d.0 Notes — RESUMPTION CHECKLIST FIRST
 
-## Workspace layout (existing)
-- `/home/carsten/omega/dev/rust/` — workspace root (Cargo.toml at top)
-- `/home/carsten/omega/dev/rust/crates/{omega-protocol,omega-core,omega-store}/` — done
-- New crates to add: `omega-tools`, `omega-agent`, `omega-cli`
-- Workspace deps with edition=2024, lints: clippy::pedantic warn, unwrap/expect/panic warn
-- Gate: `cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete`
+## CURRENT STATE (resume here)
 
-## omega-protocol summary (rust/crates/omega-protocol/src/events.rs)
-- `OmegaEvent` (enum) variants seen: `SessionStarted`, `ServerStarted`, `ServerStopped`,
-  `UserMessage`, `LlmCall`, `LlmResponse`, `ToolCall`, `ToolResult`, `TurnEnd`,
-  `LlmError`, `AgentError`, `TurnInterrupted`, `Compacted`, `LlmRetry`,
-  `ModelChanged`, `EffortChanged`, `TransportError`, `ResumingSession`,
-  `SessionResumed`, `PauseRequested`, `TurnPaused`, `TurnContinued`.
-- `LlmCallEvent` fields: `time, url, model, context_hashes, cache_breakpoint_index,
-   request_bytes, request_summary?` (camelCase serde).
-- `LlmResponseEvent` fields: `time, stop_reason, cleared_tool_uses?, cleared_input_tokens?,
-   usage, context_hash, text?, thinking?, streaming_start?, response_summary?`.
-- `ToolCallEvent` fields: `time, id, name, input, context_hash`.
-- `ToolResultEvent` fields: `time, id, name, is_error, duration_ms, output`.
-- `TurnEndEvent` fields: `time, metrics:TurnMetrics`.
-- `LlmErrorEvent` fields: `time, url, error, http_status?`.
-- `LlmRetryEvent` fields: `time, attempt, http_status?, wait_ms, error, retry_at?,
-   error_body?, thinking_fragment?, text_fragment?, reason?`.
-- `UserMessageEvent`: `time, content`.
-- `SessionStartedEvent`: `time, session_id, path, model, effort, system_prompt`.
-- `TurnInterruptedEvent`: `time, reason?` where `InterruptReason` = enum
-- `ServerStoppedEvent`: `time, outcome:ServerStopOutcome, reason?`
-- `ISOTimestamp` is in omega-protocol; `ContextHash` is in omega-store.
-- `StreamSignal` lives in omega-protocol::stream_signal — `Text { text }`, `Thinking { text }`.
+**Phase 1d.0a is mid-flight. Three crates scaffolded:**
+- `rust/crates/omega-tools/` — schemas, format_tool_call, dispatch table all REAL and tested. Tool bodies are STUBS returning `Err("<tool>: not yet implemented (Phase 1d.0b)")`. 14 unit tests pass.
+- `rust/crates/omega-agent/` — empty stub (just a comment lib.rs). Cargo.toml has many deps but they're all currently unused → machete fails.
+- `rust/crates/omega-cli/` — clap skeleton, parses `omega run --instruction ... --model ...`, prints stub message. Cargo.toml deps mostly unused → machete fails.
 
-## omega-core summary
-- `Provider` trait: `fn stream(&self, request: LlmRequest) -> AgentItemStream`
-- `AgentItemStream = BoxStream<'static, Result<AgentItem, LlmError>>`
-- `AgentItem`: `Signal(StreamSignal)` or `Event(Box<OmegaEvent>)`, `From` impls
-- `LlmRequest`: `model, messages, system?, tools, config:ModelConfig`
-- `ModelConfig`: `max_tokens, temperature?, thinking_budget?`
-- `LlmError`: `Http{status,body,retry_after}`, `Stream{message}`, `Transport{message}`,
-   `Other{message}`. Has `is_retryable`, `retry_after`, `status`, `body`.
-- `Message`: `role, content:Vec<ContentBlock>`
-- `ContentBlock`: `Text{text}`, `Thinking{thinking,signature?}`,
-   `ToolUse{id,name,input}`, `ToolResult{tool_use_id,content,is_error}`
-- `Role`: User/Assistant
-- `AnthropicProvider`: builder `with_base_url`, `with_beta`, `with_client`. The provider
-  ALREADY:
-   - emits `LlmResponse` event (with text, thinking, usage, stop_reason) on message_stop
-   - emits `ToolCall` events (with empty context_hash) when content_block_stop fires for tool_use
-   - emits `Text/Thinking` StreamSignals during deltas
-   - context_hash is left empty — agent must rewrite events with the assistant's hash
-   - **never** emits `LlmCall`, `LlmRetry`, `LlmError` — those are agent-level.
-   - Errors come back as `Err(LlmError)`.
+**Workspace builds. omega-tools tests + clippy clean. `just rust-gate` FAILS** because of machete on omega-agent/omega-cli unused deps. I just shrank omega-tools deps (removed serde) — TODO: do the same for omega-agent and omega-cli, OR add `[package.metadata.cargo-machete] ignored = [...]`.
 
-So the agent needs to: build the request, call provider.stream, receive a stream of
-AgentItems, capture text/thinking/tool_calls, then synthesize llm_call/llm_response events
-WITH proper hashes. Wait — provider already emits LlmResponse... but with empty context_hash.
-The agent has to either replace context_hash on the event, or stop the provider from
-emitting LlmResponse (and synthesize itself). The TS structure: agent itself owns LlmResponse/LlmCall events. Looking at omega-core/anthropic.rs more carefully, it DOES emit LlmResponse, so the agent just needs to fix-up context_hash before persisting/yielding.
+**Next concrete step (resume point):** strip omega-agent and omega-cli down to only their currently-used deps so `just rust-gate` is green. Commit. Then start omega-agent implementation.
 
-Plan for events:
-1. Agent builds and emits `LlmCall` event (with context_hashes from history).
-2. Provider stream yields:
-   - `Signal(Text{text})` — pass through to consumer
-   - `Signal(Thinking{text})` — pass through
-   - `Event(ToolCall)` — agent will fix `context_hash` later (can't assign yet because
-     the assistant message hasn't been written; need to buffer until end)
-   - `Event(LlmResponse)` — same; needs context_hash set to assistant record hash
-3. After stream ends, agent reconstructs the full assistant `Message` from collected
-   text/thinking/tool_calls (or uses what provider gave it).
-
-Hmm, but provider already collects text/thinking and emits LlmResponse with text/thinking.
-But to emit the *Message* we need ContentBlocks, and the provider doesn't expose that
-re-assembled. Wait — provider emits ToolCall events one at a time per content_block_stop.
-So agent collects:
-- All text deltas (from Signal::Text) → one Text block
-- All thinking content (we need full text + signature; from Signal::Thinking we get the
-  thinking text but NOT the signature). LlmResponse event has `thinking: Option<String>` —
-  but signatures aren't in the signal stream. Look — actually thinking is multiple blocks
-  potentially each with their own signature. We need a richer interface.
-
-Wait — let's read the signature handling in provider more carefully... I saw it
-accumulates SignatureDelta into BlockAccum::Thinking { signature }. But it never emits
-a Signal::ThinkingSignature, and it never emits the assembled thinking blocks to the
-agent. The agent only gets the concatenated `all_thinking` string in LlmResponse.text/thinking.
-
-This is a problem: to send a continuation request, we need the assistant's thinking
-blocks WITH their signatures back. The provider only gives us concatenated text.
-
-**Workaround:** for Phase 1d.0 we can either:
-A. Extend the omega-core API to emit assembled assistant blocks alongside LlmResponse
-   (clean but invasive — touches omega-core).
-B. Don't preserve thinking blocks across turns (fine for headless run with thinking_budget=None).
-C. Skip extended thinking entirely — set `thinking_budget: None`.
-
-For Phase 1d.0 the spec says "no thinking" stuff isn't called out as omitted, but
-simplest is: thinking_budget=None for the CLI initially. The TS code uses thinking via
-"effort" on the API. The Anthropic Messages API takes `thinking: {type:enabled, budget_tokens:N}`.
-If we don't pass thinking config, the model won't return thinking blocks, so we don't need
-signatures. Effort levels in TS map to `output_config.effort` — but in the Rust core,
-the only thinking knob is `thinking_budget`.
-
-Actually the TS sets `thinking: {type:"enabled", budget_tokens: ...}` based on effort. Let
-me grep — no, I'll re-read. Actually let me check — TS sets `output_config.effort`, not
-thinking_budget.
-
-For now, Phase 1d.0 plan: pass `effort` as a string-typed agent setting that maps to NO
-thinking_budget in LlmRequest (the simplest path). Effort string is accepted but not used
-to configure thinking. Mark as TODO for 1d.1. The CLI accepts --effort but it's currently
-informational only.
-
-**Better approach:** I'll punt extended thinking entirely in 1d.0. ModelConfig.thinking_budget
-remains None. The Agent does NOT preserve thinking content across turns. Tests work.
-session_started event records effort string, but model never thinks.
-
-This IS a simplification vs TS, but the spec doc explicitly says: "What to omit from Phase 1d.0:
-... setModel/setEffort - Phase 1d.1". So full effort handling is 1d.1.
-
-Yet the LlmRequest already has thinking_budget — keep at None until 1d.1. effort is
-recorded in session_started for compatibility.
-
-## src/tools.ts — facts I need to preserve in Rust
-- 13 tools: read_file, write_file, edit_file, run_command, list_files, web_search,
-  fetch_url, grep_files, find_files, run_background, wait_for_output, write_stdin
-- `eager_input_streaming: true` is passed for `write_file` and `edit_file` in
-  toolDefinitions (Anthropic-specific). For Phase 1d.0 the omega-core ToolDefinition
-  doesn't have this field — we omit it; behavior is the same, just slightly less
-  responsive streaming. ACCEPTABLE.
-- Output cap: 100_000 chars universally.
-- run_command timeout default 120s, output cap 100KB per stream, killed via SIGKILL on PG.
-- list_files MAX_ENTRIES=1000, skip node_modules, skip .* at top-level when not recursive.
-- read_file: 2000 lines or 50KB cap; offset 1-indexed.
-- edit_file: must match exactly once; multiple replacements applied sequentially.
-- web_search: BRAVE_SEARCH_API_KEY required; 10 results; 8000-char cap.
-- fetch_url: SHA-256(href) cache key in `tmpdir/omega-webcache-<pid>/`; HTML→text.
-   Postprocess via `bash -c "$cmd < $cachefile"`. 8000-char cap on postprocess output.
-- grep_files: try rg, else grep; default ctx=2; case_sensitive default false; max_results=200.
-- find_files: try fd, else find; max_results=200.
-- run_background: bash -c, detached, stdout+stderr → tmp logfile, returns {pid, logFile}.
-   pid → ChildProcess tracked in module-level Map.
-- wait_for_output: poll every 200ms, stop on pattern (regex)/minBytes/exit/timeout.
-   If pattern is invalid regex, escape special chars and use literal.
-- write_stdin: lookup pid; write text; optionally close stdin.
-
-## src/cli.ts — CLI surface
+### Files written so far
 ```
-omega-cli run --instruction <text> --model <id> [--effort low|medium|high|max|xhigh]
-              [--session-dir <path>] [--max-turns <N>] [--help]
-```
-- Reads instruction from --instruction OR stdin (if not TTY).
-- Session dir: explicit or `.omega/sessions/<timestamp>/`.
-- Streams text deltas to stdout, structured logs to stderr.
-- After turn_end / interrupted: emit ServerStopped("clean"|"error"), flush, exit 0/1.
-- Counts llm_response events, aborts if reaches --max-turns.
-
-## src/system-prompt
-- `core.ts`: ~150 lines of literal prose template. Substitutes {cwd, maxOutputTokens}.
-- `append.ts`: reads `.omega/system-prompt-append.md`, returns null on ENOENT.
-- `index.ts`: concatenates `corePrompt(...) + "\n\n" + appendContent` if non-null.
-
-## src/config.ts — values to constify
-- `model: "claude-sonnet-4-6"` default
-- `MODEL_MAX_OUTPUT_TOKENS`: sonnet-4-6→64k, opus-4-6→128k, opus-4-7→128k. Fallback 64k.
-- `defaultEffort: "medium"`.
-- `retryBaseMs: 1000, retryMaxMs: 60000`.
-- `autoCompactThreshold: 750_000`, `toolResultClearTrigger: 100_000`,
-   `toolResultClearKeep: 10`, `toolResultClearAtLeast: 15_000`. (Not used in 1d.0.)
-- `COMPACTION_INSTRUCTIONS` — not used in 1d.0.
-- `defaultPort: 3000` — not used in 1d.0.
-
-## Approach, finalized
-
-### Crate structure
-Three new crates as the doc says:
-1. **omega-tools** — pure tool dispatch. No agent dependency. Uses omega-protocol only
-   for the ToolDefinition shape (actually it'll define its own ToolResult; tool defs
-   build into omega_core::ToolDefinition).
-2. **omega-agent** — Agent struct + send_message + system prompt + config consts.
-3. **omega-cli** — clap binary.
-
-### Scope cuts I'm making vs the doc
-- **Extended thinking signatures**: `thinking_budget: None` for now; `effort` recorded
-  in session_started but not wired into thinking config. This is a deliberate scope cut
-  vs a hypothetical "feature parity" goal, but the doc says setEffort is Phase 1d.1, so
-  we're just not pretending to implement what we omit.
-- **No Compacted handling**: doc says omit; if API ever returns Compacted stop_reason,
-  log + treat as turn_end.
-- **No pause/resume/interject**.
-- **System prompt append file**: implemented (it's small; no reason to skip).
-- **Cache control on last message**: implemented (small; affects perf significantly).
-
-### Sub-task order
-1. Scaffold omega-tools (Cargo.toml + lib.rs skeleton + per-tool modules).
-2. Implement tool schemas (raw JSON Schema constants) and `tool_definitions()`.
-3. Implement each tool one by one with tests:
-   read_file, write_file, edit_file, list_files, run_command, grep_files, find_files,
-   run_background, wait_for_output, write_stdin, web_search, fetch_url.
-4. Wire `execute_tool(name, input, signal)` dispatch.
-5. Scaffold omega-agent (Cargo.toml + lib.rs + system_prompt + config + agent).
-6. Port system prompt (literal text, two functions).
-7. Port elision helpers + retry helpers.
-8. Implement `Agent::send_message` as an async-stream returning `AgentItem`s.
-9. Tests with a `MockProvider` (in `tests/common/`).
-10. Scaffold omega-cli with clap and test the run subcommand.
-11. Run `just rust-gate`.
-
-### Public API design summary
-- `omega_tools::ToolResult { content: String, is_error: bool }` (no duration_ms — agent times)
-- `omega_tools::execute_tool(name: &str, input: Value, cancel: Option<&CancellationToken>)
-   -> ToolResult`
-- `omega_tools::tool_definitions() -> Vec<omega_core::ToolDefinition>`
-- `omega_tools::format_tool_call(name: &str, input: &Value) -> String`
-- `omega_agent::Agent::new(AgentConfig) -> Self`
-- `omega_agent::Agent::init() -> Result<()>`  (emits server_started + session_started)
-- `omega_agent::Agent::send_message(content, cancel) -> impl Stream<Item=AgentItem>`
-- `omega_agent::Agent::emit_server_stopped(outcome) -> Result<()>`
-- `omega_agent::config::DEFAULT_MODEL`, `max_output_tokens_for_model(&str) -> u32`,
-   `RETRY_BASE_MS`, `RETRY_MAX_MS`.
-- `omega_agent::system_prompt::build_system_prompt(cwd, max_output_tokens, append_content) -> String`
-- `omega_agent::system_prompt::read_system_prompt_append(cwd) -> Option<String>`
-
-### Background process state
-Module-level `OnceLock<tokio::sync::Mutex<HashMap<u32, BgProcess>>>`. BgProcess holds
-`tokio::process::Child` for stdin and the log path.
-
-### Web cache dir
-Module-level `OnceLock<PathBuf>` initialized as `std::env::temp_dir().join(format!("omega-webcache-{}", std::process::id()))`.
-
-### Cancellation
-Use `tokio_util::sync::CancellationToken` instead of bare AbortSignal. Already used in
-omega-core.
-
-### Test approach
-- omega-tools: real tempdir, real subprocess. e.g. `assert_cmd` for run_command
-  and `tempfile` for sandbox. Skip web tests if env vars missing.
-- omega-agent: in-process MockProvider in tests/common/mock_provider.rs. Returns scripted
-  AgentItem streams.
-- omega-cli: integration test using `assert_cmd` and a MOCK_API_BASE env var? Actually
-  no — for CLI, do a smoke test of --help only (no live API).
-
-### Risks
-- The agent loop is complex; getting the event ordering right (LlmCall before stream,
-  LlmResponse fix-up after, ToolCall fix-up, ToolResult per call, persistence
-  interleaved) needs care.
-- The `addCacheControlToLastMessage` logic mutates the messages array — but our
-  ContentBlock doesn't have cache_control. Adding it requires extending omega-core
-  ContentBlock. **Decision:** SKIP cache control breakpoints in 1d.0. Add in 1d.1.
-  This is a perf hit for Opus but functionally correct.
-- thinking blocks across turns: skipping (see above).
-- invalid tool JSON nudge: implement, mirroring TS.
-- dangling tool-use repair: implement.
-
-## Final agreement on mechanics
-
-The agent's main loop, per turn:
-```
-emit user_message + persist + append history (User msg) + write to ContextStore
-loop:
-  build LlmRequest from history (with system prompt + tools + max_tokens for model)
-  emit LlmCall event with context_hashes
-  for each AgentItem from provider.stream(req):
-    if Signal(text/thinking): yield through to consumer
-    if Event(ToolCall): collect (set context_hash later)
-    if Event(LlmResponse): collect for this iteration
-  on stream end:
-    write assistant Message to ContextStore -> get assistant_hash
-    re-emit LlmResponse with context_hash=assistant_hash
-    re-emit each ToolCall with context_hash=assistant_hash
-    push assistant Message to history
-    if no tool_calls -> emit turn_end + break
-    else:
-      for each ToolCall in parallel: execute_tool, build ToolResult, emit ToolResult
-      build user Message of ContentBlock::ToolResult, write to ContextStore, push to history
-      continue loop
-on retryable LlmError: emit LlmRetry, sleep w/ backoff, repeat
-on non-retryable: emit LlmError + turn_interrupted, break
-on cancel: emit turn_interrupted(reason=user_abort), break
+rust/Cargo.toml                                          (added 3 members)
+rust/crates/omega-tools/Cargo.toml
+rust/crates/omega-tools/src/lib.rs                       (dispatch + tests)
+rust/crates/omega-tools/src/schemas.rs                   (12 tools, real schemas, tests)
+rust/crates/omega-tools/src/format.rs                    (format_tool_call, real, tests)
+rust/crates/omega-tools/src/tools.rs                     (mod registry, #![allow(unused_async)])
+rust/crates/omega-tools/src/tools/{12 stub files}.rs
+rust/crates/omega-agent/Cargo.toml                       (deps unused; trim)
+rust/crates/omega-agent/src/lib.rs                       (one-line stub)
+rust/crates/omega-cli/Cargo.toml                         (deps mostly unused; trim)
+rust/crates/omega-cli/src/main.rs                        (clap stub)
 ```
 
-Aggregated TurnMetrics (input/output/cache_creation/cache_read tokens) accumulate
-across the turn; emitted in turn_end.
+### Quick fix to get gate green
+Edit `rust/crates/omega-agent/Cargo.toml` to drop everything except keep the section header:
+```toml
+[dependencies]
+# Phase 1d.0a: dependencies are introduced as agent.rs grows.
+# Will be added: omega-{protocol,core,store,tools}, serde, serde_json,
+# tokio (sync/time/macros/rt/fs/io-util), tokio-util, async-stream,
+# futures, chrono, rand.
+```
+Same for `omega-cli/Cargo.toml`:
+```toml
+[dependencies]
+clap  = { version = "4", features = ["derive"] }
+# Phase 1d.0a: agent wiring deps will be re-added in 1d.0b.
+```
+(omega-cli main.rs only uses clap right now; tokio is only needed once we actually `tokio::main` an agent run.)
 
-OK — I have a clear plan. Now to scaffold and implement.
+After that: `cd rust && cargo fmt && just rust-gate` should pass.
+
+---
+
+## PLAN (STILL VALID — agreed with user)
+
+Three new crates as specified:
+1. **omega-tools** — pure tool dispatch (DONE for 1d.0a as stubs; bodies in 1d.0b).
+2. **omega-agent** — Agent struct + send_message + system_prompt + config (1d.0a Opus work, in progress).
+3. **omega-cli** — clap binary (1d.0b).
+
+User AGREED to split:
+- **1d.0a (this session, Opus)**: scaffolding + omega-agent core loop with MockProvider tests + mutants on omega-agent. Tool bodies STAY STUBS.
+- **1d.0b (next session, Sonnet)**: implement 12 tool bodies + integration tests + mutants on omega-tools + finalize omega-cli + Harbor adapter + manual e2e smoke.
+
+Mutants checkpoints: `cargo mutants -p omega-agent` end of 1d.0a; `cargo mutants -p omega-tools` end of 1d.0b.
+
+### Adjustments (still valid):
+- Extended-thinking signatures: SKIP (omega-core stream doesn't surface them; effort in 1d.0a is recorded but doesn't change request).
+- cache_control on last message: SKIP (1d.1).
+- eager_input_streaming flag: SKIP (omega-core doesn't model it).
+- system-prompt append file: IMPLEMENT (30 lines, parity-preserving).
+- Compacted stop reason: log + treat as end_turn.
+- Pause/resume/interject/abort: SKIP (1d.1) — but plumb CancellationToken through.
+
+---
+
+## WHAT TO BUILD IN omega-agent (1d.0a remainder)
+
+### Module layout
+```
+src/lib.rs          — pub use Agent, AgentConfig, etc.
+src/config.rs       — constants: OMEGA_VERSION, MAX_OUTPUT_TOKENS_*, COMPACTION thresholds
+src/system_prompt.rs — core prompt text + append loader + builder
+src/elide.rs        — request/response summarisation (for llm_call/llm_response audit fields)
+src/error_classify.rs — is_invalid_tool_json, is_context_too_long
+src/agent.rs        — Agent struct, init(), send_message()
+tests/common/mod.rs — MockProvider helper
+tests/*.rs          — six tests (see "Tests" below)
+```
+
+### Agent struct fields (1d.0a minimal)
+```rust
+pub struct Agent {
+    provider: Box<dyn Provider + Send + Sync>,
+    context_store: ContextStore,
+    event_store: EventStore,
+    session_dir: PathBuf,
+    session_id: String,                  // 12 hex chars
+    model: String,
+    effort: String,                      // recorded only
+    max_retry_attempts: Option<u32>,
+    retry_base_ms: u64,                  // 1000
+    retry_max_ms: u64,                   // 60_000
+    history: Vec<Message>,
+    context_hashes: Vec<ContextHash>,
+    session_input_tokens: i64,
+    session_output_tokens: i64,
+    session_cache_creation_tokens: i64,
+    session_cache_read_tokens: i64,
+    system_prompt_append: Option<String>,
+}
+```
+
+### Verified protocol facts
+- `TurnMetrics { input_tokens: i64, output_tokens: i64, cache_creation_tokens: Option<i64>, cache_read_tokens: Option<i64> }` (camelCase).
+- `LlmResponseUsage` keeps Anthropic snake_case: `input_tokens`, `output_tokens`, `cache_creation_input_tokens` (Option), `cache_read_input_tokens` (Option), `service_tier` (Option).
+- `InterruptReason::{Aborted, Error}` (snake_case).
+- `ServerStopOutcome::{Clean, Error}`.
+- `ContentBlock::{Text{text}, Thinking{thinking, signature:Option<String>}, ToolUse{id,name,input}, ToolResult{tool_use_id,content,is_error}}`.
+- `ContextHash` is a newtype around 12-hex-char String. `random_hash()` and `hash_from_str()`.
+- `ContextStore::append(role, content) -> Result<ContextHash>` (async).
+- `EventStore::append(&event)` (async).
+- `make_session_dir(root) -> Result<SessionPaths { dir, context_file, events_file }>` (async); `SESSIONS_ROOT = ".omega/sessions"`.
+- AnthropicProvider's stream emits: `Signal(Text)/Signal(Thinking)` deltas, then `Event(ToolCall)` per tool block (with empty context_hash), then ONE `Event(LlmResponse)` on message_stop (also empty context_hash), and includes `text`, `thinking`, `streaming_start`, `usage`, `stop_reason` fields.
+
+### send_message algorithm (full pseudocode in earlier notes — kept for resume)
+
+```
+async-stream! {
+  // 1. Dangling tool_use repair: if last assistant has tool_use blocks
+  //    without matching tool_result, append synthetic tool_results to history
+  //    and emit ToolResult(is_error=true) events.
+
+  // 2. Append user message to context_store, emit UserMessage event.
+
+  // 3. Outer agentic loop:
+  let mut continue_loop = true;
+  let mut feedback_attempts = 0u32;
+  let mut tot_input=0; tot_output=0; tot_cache_creation=0; tot_cache_read=0;
+  while continue_loop {
+    continue_loop = false;
+    // 3a. Build LlmRequest (model, messages=history, system=core+append,
+    //     tools=tool_definitions(), config{max_tokens, thinking:None}).
+    // 3b. Emit LlmCall event with context_hashes snapshot, request_summary.
+    // 3c. Drain provider stream with retry:
+    //     - LlmError retryable → emit LlmRetry, sleep with jittered backoff, loop.
+    //     - LlmError invalid_tool_json → break with err, handled below.
+    //     - LlmError other non-retryable → break with err.
+    //     - Stream completes → collect text, thinking, tool_uses[], llm_response_proto, usage.
+    // 3d. Error handling:
+    //     - aborted → emit TurnInterrupted(Aborted), return.
+    //     - invalid_tool_json AND feedback_attempts < 2:
+    //         feedback_attempts++; append nudge user-msg ("Your tool input was malformed... fix and retry");
+    //         emit UserMessage(nudge); continue_loop = true; continue.
+    //     - context_too_long → emit AgentError("Context too large..."), TurnInterrupted(Error), return.
+    //     - retryable_exhausted → emit AgentError("Anthropic rate limit..."), TurnInterrupted(Error), return.
+    //     - other → emit AgentError("API error: ..."), TurnInterrupted(Error), return.
+    // 3e. Build assistant Message blocks: thinking? + text? + tool_uses (in order).
+    //     Append to context_store → assistant_hash. Push to history + context_hashes.
+    // 3f. Mutate llm_response_proto.context_hash = assistant_hash; store + yield.
+    //     Accumulate token totals.
+    // 3g. If stop_reason == "tool_use" and tool_uses non-empty:
+    //     - Emit ToolCall events with assistant_hash filled in.
+    //     - Dispatch all tool_uses concurrently (FuturesUnordered).
+    //     - As each completes: measure duration via Instant, emit ToolResult event.
+    //     - Build tool_result Message of ContentBlock::ToolResult{tool_use_id,content,is_error}.
+    //     - Append to context_store + history + context_hashes.
+    //     - continue_loop = true; continue.
+    // 3h. Else: emit TurnEnd with TurnMetrics; loop ends.
+  }
+}
+```
+
+### Tests (target ≥ 1 per branch)
+1. `tests/single_text_turn.rs` — mock returns one text turn; assert events:
+   UserMessage, LlmCall, LlmResponse, TurnEnd. Verify context_hash on
+   LlmResponse equals assistant message hash.
+2. `tests/parallel_tools.rs` — mock turn-1 returns two ToolUse blocks (stop=tool_use);
+   turn-2 returns text (stop=end_turn). Assert: ToolCall x2, ToolResult x2 (in any
+   order but all four events present), then second LlmResponse + TurnEnd.
+3. `tests/retry_then_success.rs` — mock returns retryable error, then success.
+   Assert LlmRetry event before LlmResponse.
+4. `tests/non_retryable.rs` — mock returns non-retryable LlmError.
+   Assert LlmError, AgentError, TurnInterrupted(Error).
+5. `tests/invalid_tool_json_nudge.rs` — mock returns invalid_tool_json error
+   then text-success. Assert nudge UserMessage emitted, eventually TurnEnd.
+6. `tests/dangling_tool_use_repair.rs` — pre-seed Agent.history with assistant
+   message containing ToolUse, then call send_message. Assert synthetic
+   ToolResult(is_error=true) events emitted before user message event.
+
+### Key TS reference points (line numbers in src/agent.ts)
+- 1112–1130: send_message signature + abort plumbing.
+- 1142–1190: dangling tool_use repair.
+- 1192–1199: append user msg to history + emit user_message event.
+- 1290–1340: build streamParams, stream call.
+- 1350–1410: error handling + feedback recovery.
+- 1473–1510: append assistant message, emit llm_response with context_hash.
+- 1670–1716: tool_call emission + concurrent dispatch + tool_result.
+- 1758–1770: append tool_results to history; continue_loop = true.
+
+### invalid_tool_json detection (port from agent.ts errFields/policy)
+TS condition: error message contains `messages.` AND `input` AND one of:
+- `did not match the expected pattern`
+- `invalid_request_error.*tool_input` (regex)
+- `JSON parse error` (case-insensitive)
+And HTTP status is 400. Map to LlmError variant inspection.
+
+### context_too_long detection
+HTTP 429 with body containing `prompt is too long` (TS isContextTooLong helper).
+Or HTTP 400 with `prompt is too long`.
+
+### System prompt
+Core prompt is in `src/system-prompt/core.ts`. Append in `src/system-prompt/append.ts`
+loads from `<cwd>/.omega/system-prompt-append.md` if present (return `Ok(None)` if not).
+Actual content of core prompt: I haven't transcribed it yet but it's a multi-paragraph
+description of Omega's role + tool guidance. Just port verbatim — read the TS file and
+turn it into a Rust `const CORE_PROMPT: &str = "...";` or `include_str!`.
+
+`buildSystemPrompt(maxOutputTokens) → String` substitutes `${MAX_OUTPUT_TOKENS}`
+placeholder in core prompt with the actual number, then concatenates append (if any)
+with a `\n\n---\n\n` separator.
+
+### Config constants (port from src/config.ts)
+- `max_output_tokens_for_model(model)` — sonnet=8192, opus=16384 (verify).
+- `tool_result_clear_trigger`, `tool_result_clear_keep`, `tool_result_clear_at_least`
+  — used by context_management edits in TS but irrelevant for 1d.0a since we're not
+  passing context_management. SKIP for 1d.0a.
+
+---
+
+## NEXT-MODEL HANDOFF SUGGESTION
+
+Once 1d.0a is committed: STOP this Opus session. The remaining work is:
+- 1d.0b in a new Sonnet session with the same notes file. Tools are pure I/O ports;
+  one tool at a time + integration test.
+- Or, finish 1d.0a in this Opus session before stopping (if user wants).
+
+When to stop within 1d.0a: I expect to need a fresh Opus session if context fills.
+If that happens, mark progress in this notes file under "CURRENT STATE" and tell the
+user to start a fresh Opus session pointing at this file.

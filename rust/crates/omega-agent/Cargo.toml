@@ -1,0 +1,19 @@
+[package]
+name    = "omega-agent"
+version = "0.1.0"
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Phase 1d.0a scaffold: dependencies are introduced as src/agent.rs grows.
+# Will be re-added as they become used (so `cargo machete` stays clean):
+#   omega-protocol, omega-core, omega-store, omega-tools,
+#   serde, serde_json,
+#   tokio (sync/time/macros/rt/fs/io-util),
+#   tokio-util (sync), async-stream, futures, chrono, rand.
+
+[dev-dependencies]
+tempfile = "3"
+tokio    = { version = "1", features = ["full", "test-util"] }

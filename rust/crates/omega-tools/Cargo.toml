@@ -1,0 +1,20 @@
+[package]
+name    = "omega-tools"
+version = "0.1.0"
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+omega-core = { path = "../omega-core" }
+serde_json = "1"
+tokio      = { version = "1", features = ["sync", "time", "macros", "rt", "rt-multi-thread", "process", "io-util", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# Phase 1d.0b will add: serde, regex, reqwest, scraper, libc/nix — introduce them
+# alongside the tool implementations that need them so cargo-machete stays clean.
+
+[dev-dependencies]
+tempfile = "3"
+tokio    = { version = "1", features = ["full", "test-util"] }
