@@ -11,7 +11,7 @@
 | 0 — Planning | ✅ Done | This document + architectural decisions |
 | 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`; honest types (no `#[serde(default)]` shims) |
 | 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming; 0 surviving mutants |
-| 1b.7 — Insta snapshot coverage | 🔜 Next | Wire-format reference snapshot, kitchen-sink request-body snapshots, id-redactor utility |
+| 1b.7 — Insta snapshot coverage | ✅ Done | `id_redactor` helper (omega-protocol + omega-core), all-22-variants reference snapshot, Anthropic + Ollama kitchen-sink wire-body snapshots; 0 survived mutants, 2 expected timeouts in retry loop |
 | 1c — `omega-server` (WebSocket) | ⬜ Upcoming | tokio-tungstenite server, session dir, event store |
 | 1d — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
