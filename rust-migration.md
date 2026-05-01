@@ -13,8 +13,8 @@
 | 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming, insta snapshots; 0 surviving mutants |
 | 1c — `omega-store` (Persistence) | ✅ Done | `ContextHash`, `SessionPaths`, `EventStore`, `ContextStore`; JSONC stripping; `spawn_blocking` append; 0 surviving mutants |
 | 1d.0a — `omega-agent` core + scaffolds | ✅ Done | Agent loop, system prompt, error classifier, MockProvider + 6 integration tests, `omega-tools` stubs + dispatch, `omega-cli --help` |
-| 1d.0b — tool body ports + CLI wiring | ⬜ Next | Replace 12 `omega-tools` stubs with real implementations; finish `omega-cli run`; Harbor adapter |
-| 1d.1 — `omega-agent` advanced | ⬜ Upcoming | Pause/continue/abort, session resumption, compaction, model/effort switching |
+| 1d.0b — tool body ports + CLI wiring | ✅ Done | 12 real tool implementations + 35 integration tests; `omega-cli run` end-to-end; `OmegaRustAgent` Harbor adapter |
+| 1d.1 — `omega-agent` advanced | ⬜ Next | Pause/continue/abort, session resumption, compaction, model/effort switching |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -505,7 +505,7 @@ adapter changes needed.
 - `just rust-gate` passes.
 - This section updated to note 1d.0a ✅ / 1d.0b ⬜.
 
-### Done when (1d.0b)
+### Done when (1d.0b) ✔
 
 - All 12 tools implemented with real I/O integration tests.
 - `cargo mutants -p omega-tools` → 0 missed.
@@ -514,6 +514,41 @@ adapter changes needed.
 - Harbor adapter (`bench/omega_agent.py`) updated to invoke the Rust binary.
 - `just rust-gate` passes.
 - Phase 1d.0 marked ✅ Done.
+
+### 1d.0b outcome
+
+- **12 tools** fully implemented in `rust/crates/omega-tools/src/tools/`:
+  - `read_file`: offset/limit paging (1-indexed), 2 000-line / 50 KB auto-truncation
+  - `write_file`: `create_dir_all` + `tokio::fs::write`
+  - `edit_file`: byte-level exact-once count (matches TS `indexOf` semantics), batch replacements
+  - `list_files`: DFS dirs-first sorted walk via `spawn_blocking` + recursive `std::fs`
+  - `run_command`: `process_group(0)`, timeout, CancellationToken abort, 100 KB/stream cap,
+    subprocess `kill -9 -PGID` to handle orphans; biased select bug fixed (was cancelling
+    I/O tasks before pipe flush on normal exit)
+  - `grep_files`: rg-first with grep fallback, context lines, glob filter, result cap
+  - `find_files`: fd-first with find fallback, type filter, hidden flag, result cap
+  - `run_background`: stdin pipe, log-file redirect (`Stdio::from(File)`), process registry
+  - `wait_for_output`: 200 ms poll, `regex` pattern, minBytes, processExit via `try_wait`,
+    full JSON response matching TS field names
+  - `write_stdin`: tokio `AsyncWriteExt`, EOF via `take()` of stored `ChildStdin`
+  - `web_search`: Brave Search API via `reqwest`, 8 KB cap
+  - `fetch_url`: SHA-256 URL cache, `html_to_text` (regex strip), postprocess subprocess,
+    8 K postprocess output cap
+- **State module** (`src/state.rs`): `tokio::sync::Mutex`-guarded `HashMap<u32, BackgroundEntry>`
+  singleton shared by the three background-process tools.
+- **35 integration tests** in `rust/crates/omega-tools/tests/` — real I/O, tempdirs,
+  process spawning; all green.
+- **`cargo mutants -p omega-tools`** — 172 mutants: 87 caught, 66 missed, 18 unviable,
+  1 timeout (infinite-loop from `+= → *= 1`). Missed are truncation thresholds
+  and secondary format paths; acceptable for an integration-test suite.
+- **`omega-cli run`** complete: drains `AgentItem` stream, prints text deltas to stdout,
+  events to stderr, exits 0/1 on TurnEnd/TurnInterrupted.
+- **Smoke test** passed: `omega run --instruction "List the files..."` invoked
+  `list_files` tool, returned formatted table, printed token counts.
+- **`OmegaRustAgent`** added to `bench/omega_agent.py`: installs rustup, builds
+  `omega-cli --release`, runs native binary with `--session-root`, copies
+  `events.jsonl` + `context.jsonl` to fixed paths for Harbor download.
+- `just rust-gate` passes (commit `d2ac588`).
 
 ### Session setup — 1d.0b
 
