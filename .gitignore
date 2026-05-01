@@ -4,6 +4,10 @@ node_modules
 # Rust build artifacts
 rust/target/
 
+# cargo-mutants output
+rust/mutants.out/
+rust/mutants.out.old/
+
 # output
 out
 dist
