@@ -161,6 +161,12 @@ release:
     git push origin "$VERSION"
     echo "✅  Released $VERSION"
 
+# Rust-only quality gate: format check + Clippy + cargo test.
+# Runs via the pre-commit hook when only rust/ files are staged.
+# Run manually: just rust-gate
+rust-gate:
+    cd rust && cargo fmt --check && cargo clippy && cargo test
+
 # Install git hooks (pre-commit test gate)
 install-hooks:
     cp scripts/pre-commit .git/hooks/pre-commit
