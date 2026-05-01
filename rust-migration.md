@@ -12,8 +12,10 @@
 | 1a — `omega-protocol` | ✅ Done | `rust/crates/omega-protocol`: all 22 `OmegaEvent` variants, `StreamSignal`, serde round-trips; workspace tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`; honest types (no `#[serde(default)]` shims) |
 | 1b — `omega-core` (LLM loop) | ✅ Done | Anthropic + Ollama providers, retry loop, streaming; 0 surviving mutants |
 | 1b.7 — Insta snapshot coverage | ✅ Done | `id_redactor` helper (omega-protocol + omega-core), all-22-variants reference snapshot, Anthropic + Ollama kitchen-sink wire-body snapshots; 0 survived mutants, 2 expected timeouts in retry loop |
-| 1c — `omega-server` (WebSocket) | ⬜ Upcoming | tokio-tungstenite server, session dir, event store |
-| 1d — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
+| 1c — `omega-store` (Persistence) | ⬜ Next | Session dir, EventStore, ContextStore, ContextHash |
+| 1d — `omega-agent` + CLI binary | ⬜ Upcoming | Multi-turn loop, tool execution, compaction, context hashing; **first Harbor-testable binary** |
+| 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
+| 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
 | 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
@@ -123,161 +125,308 @@ mutants.**
 
 ---
 
-## Phase 1b.7 — Insta snapshot coverage for the wire-format contract 🔜 Next
+## Phase 1b.7 — Insta snapshot coverage ✅ Done
 
-### Motivation
+`id_redactor` helper added to both `omega-protocol/tests/common/mod.rs`
+(new) and `omega-core/tests/common/mod.rs`. Uses `Arc<Mutex<HashMap>>`
+so multiple `r.redaction()` calls share numbering — same id value gets
+`[id_1]` whether it appears at `.id` or `.tool_use_id`.
 
-`insta` is currently used in only two places — happy-path streaming
-snapshots in `tests/anthropic.rs` and `tests/ollama.rs`. Several
-high-value snapshot opportunities are unrealised:
+All-22-variants reference snapshot in `omega-protocol/tests/events_reference.rs`
+shows every `OmegaEvent` shape; correlated ToolCall + ToolResult triple
+proves id propagation is visible. Per-provider kitchen-sink snapshots in
+`omega-core/tests/anthropic.rs` and `omega-core/tests/ollama.rs` show
+`LlmRequest → wire-body` transformation with correlated `[id_1]`. Ollama
+snapshot clearly shows that `flatten_message` strips tool ids.
 
-1. **No catalogue of what each `OmegaEvent` variant looks like on disk.**
-   Per-variant unit tests in `omega-protocol/src/events.rs` pin serde
-   rules (snake_case `type` discriminator, camelCase fields, `None` ↦
-   absent), but no single artefact says "this is the wire format of every
-   event." When persistence shape changes, no diff surfaces it.
-2. **No request-body snapshot for either provider.** Existing
-   `request_body_*` tests spot-check individual fields against specific
-   mutants. Useful for mutant pinning, but no canonical "this `LlmRequest`
-   becomes this wire body" reference exists.
-3. **ID propagation across events is not visible in any snapshot.** Tool
-   call IDs flow through `tool_call → tool_result → llm_response` events;
-   nothing yet asserts they stay correlated when wired through real code.
+`cargo mutants`: 56 caught, 19 unviable, 2 timeouts (retry-termination
+mutants cause infinite loops — expected), **0 survived**.
 
-### Two principles to apply
+---
 
-- **Equivalence via numbered placeholders.** A stateful redactor that
-  emits `[id_1]`, `[id_2]`, … makes "the same id" visible in the snapshot
-  text itself. If a future bug routes a different id through, the
-  placeholder number changes and the diff surfaces it. (For Omega this
-  matters most once events flow through the agent loop with random or
-  server-generated ids — Phase 1c+. The redactor utility is built now so
-  it's ready when needed.)
-- **Include input in the snapshot when the snapshot exists to assert a
-  *transformation*.** Without input, a snapshot reads as "X came out of
-  *something*" — reviewers must flip to the test source to make sense of
-  a diff. With input alongside, the snapshot is self-explanatory. *Don't*
-  include input when the snapshot is itself the catalogue (e.g. the
-  all-variants reference) — that just duplicates the test source.
+## Phase 1c — `omega-store` (Persistence) 🔜 Next
 
-### Tasks
+### What this phase builds
 
-#### Step 1 — `id_redactor()` helper in `tests/common/`
+A new `rust/crates/omega-store` crate that owns all filesystem persistence:
+session directories, the event log (`events.jsonl`), and the context log
+(`context.jsonl`). It mirrors `src/session-dir.ts`, `src/event-store.ts`,
+`src/context-store.ts`, and `src/context-hash.ts`.
 
-Small utility that returns a closure suitable for
-`insta::dynamic_redaction(|value, path| …)`. Internally maintains a
-`HashMap<String, usize>` mapping each unique value to a stable
-placeholder `[id_<n>]`. State scoped per call — constructed fresh per
-test so two snapshots don't share a numbering space.
+This is the right next step because:
+- It's a clean dependency leaf: `omega-store` → `omega-core` → `omega-protocol`
+- The agent loop (Phase 1d) needs it to persist events and context records
+- The TS source is small (~370 lines total) and well-understood
+- Real file-I/O tests keep it honest without mock complexity
 
-Decide where it lives once you see the consumers: probably
-`omega-core/tests/common/mod.rs` (which already exists) and a sibling in
-`omega-protocol/tests/common/mod.rs` (new). Don't put the helper in
-production code — it is test infrastructure only.
+### Source reference
 
-#### Step 2 — All-22-variants `OmegaEvent` reference snapshot
+Read these TS files before implementing:
+- `src/context-hash.ts` — hash type + `randomHash()`
+- `src/session-dir.ts` — session folder layout, naming, metadata read/write
+- `src/event-store.ts` — `appendEvent`
+- `src/context-store.ts` — `ContextRecord`, `appendContextMessage`
 
-In `omega-protocol`, add an integration test (`tests/events_reference.rs`)
-that builds a `Vec<OmegaEvent>` containing one example of every variant.
-Include a deliberately correlated triple: a `ToolCallEvent` and matching
-`ToolResultEvent` sharing one id, plus an `LlmResponseEvent` whose
-`cleared_tool_uses` (when populated) references the same id. Apply
-`id_redactor` to id-bearing paths. Use `insta::assert_json_snapshot!`.
+### Crate structure
 
-This becomes the living "wire format reference" for the persistence
-contract. Reviewers can see at a glance what every variant looks like;
-the correlated triple proves id propagation is visible-by-default in
-future snapshots.
+```
+rust/crates/omega-store/
+├── Cargo.toml
+└── src/
+    ├── lib.rs           (pub-use all public items)
+    ├── context_hash.rs  (ContextHash type, random_hash())
+    ├── session_dir.rs   (SessionPaths, make_session_dir, metadata I/O)
+    ├── event_store.rs   (EventStore: append OmegaEvent → events.jsonl)
+    └── context_store.rs (ContextRecord, append → context.jsonl → returns hash)
+```
 
-The existing per-variant rule tests stay — they pin specific mutants the
-catalogue snapshot wouldn't reliably catch.
+### Module contracts
 
-#### Step 3 — Per-provider request-body kitchen-sink snapshot
+#### `context_hash`
 
-In `omega-core/tests/anthropic.rs` and `omega-core/tests/ollama.rs`, add
-one `request_body_kitchen_sink` test each:
+```rust
+/// 12 lowercase hex characters (6 random bytes). PK of context.jsonl records;
+/// FK in events.jsonl (LlmCallEvent.context_hashes, ToolCallEvent.context_hash, etc.)
+pub struct ContextHash(String);   // newtype; derives Serialize/Deserialize transparently
 
-- Build an `LlmRequest` with: a multi-turn conversation (user text,
-  assistant tool_use, user tool_result — id-correlated), a system
-  prompt, two tool definitions, a non-default `ModelConfig`.
-- Drive through the provider, capture `received[0].body` from wiremock.
-- Snapshot a struct that includes both an input projection of the
-  `LlmRequest` *and* the output JSON wire body, so the transformation is
-  visible in the snapshot text.
-- Apply `id_redactor` to tool-id-bearing paths so the
-  `tool_use_id ↔ tool_use.id` correlation appears as `[id_1]` in both.
+pub fn random_hash() -> ContextHash;   // 6 bytes from rand or getrandom, hex-encoded
+pub fn hash_from_str(s: &str) -> Result<ContextHash>; // validates 12 hex chars
+```
 
-The existing `request_body_*` mutant-pinned tests stay — they target
-specific mutants and are clearer as targeted assertions than as
-snapshots.
+`ContextHash` must satisfy `[0-9a-f]{12}`. `hash_from_str` returns an error
+on invalid input (validated by unit test). Implement `Display`, `AsRef<str>`,
+`From<ContextHash> for String`.
 
-#### Step 4 — *Optional* retrofit: file-pair pattern for streaming snapshots
+#### `session_dir`
 
-Lower priority. The two existing `streams_*` snapshots use a Rust DSL
-(`sse_body(&[("message_start", json!({...})), …])`) to build the
-SSE/NDJSON fixture inline. An alternative: move the fixture to
-`tests/fixtures/streams_kitchen_sink.{sse,ndjson}` (real wire bytes the
-provider would receive), have the test read the file and feed wiremock,
-and have the snapshot's header comment reference the fixture path.
+Session folders live under a configurable root (default `.omega/sessions`).
+Folder name format: `YYYY-MM-DDTHH-MM-SS-mmm-<hex8>` (millisecond precision
++ 4 random bytes as 8 hex chars). `ls`-by-name order = chronological order.
 
-Pros: the snapshot + fixture file pair is self-contained living
-documentation of the parser; "what does Anthropic actually send?" is
-answerable by reading a single file. Cons: more invasive change; the
-current Rust DSL is fine.
+```rust
+pub const SESSIONS_ROOT: &str = ".omega/sessions";
 
-Skip if you're short on time or judge the current shape good enough.
-Don't agonise — the first three steps are the meat.
+/// Regex matching all three historical name formats (see TS source):
+/// - YYYY-MM-DDTHH-MM-SS                  (legacy, second precision)
+/// - YYYY-MM-DDTHH-MM-SS-<hex8>           (v2, second + suffix)
+/// - YYYY-MM-DDTHH-MM-SS-mmm-<hex8>       (current, millisecond + suffix)
+pub fn session_dir_re() -> &'static Regex;
 
-#### Step 5 — Run `cargo mutants` and triage
+pub fn make_session_dir_name(now: DateTime<Utc>) -> String;
 
-After the new snapshots land, run `cargo mutants -p omega-core` and
-`cargo mutants -p omega-protocol`. Expect both to still report 0
-surviving mutants. If any new survivors appear, triage with the same
-three-option framework as Phase 1b.5 (new test / dead code removal /
-documented skip). **Stop and discuss with the user before applying any
-skip.**
+pub struct SessionPaths {
+    pub dir:          PathBuf,
+    pub context_file: PathBuf,
+    pub events_file:  PathBuf,
+}
+
+/// Creates <root>/<name>/ plus empty context.jsonl, events.jsonl,
+/// and session.jsonc (containing `{}`). Returns SessionPaths.
+pub async fn make_session_dir(root: &Path) -> Result<SessionPaths>;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name:         Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description:  Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<String>,
+}
+
+/// Reads session.jsonc; returns SessionMetadata::default() if absent or
+/// unparseable. Strip `// …` and `/* … */` comments before parsing
+/// (same logic as the TS implementation — a single regex pass suffices).
+pub async fn read_session_metadata(dir: &Path) -> SessionMetadata;
+
+pub async fn write_session_metadata(dir: &Path, meta: &SessionMetadata) -> Result<()>;
+
+/// Merges patch into existing metadata (None patch fields leave the
+/// existing value unchanged).
+pub async fn update_session_metadata(dir: &Path, patch: SessionMetadata) -> Result<()>;
+```
+
+JSONC comment stripping: the TS does it with two regex replacements.
+In Rust, pull in no extra crate — strip `// … \n` and `/* … */` with
+`regex` (already in the workspace) or simple `str` manipulation, then
+pass to `serde_json::from_str`. Keep this a private helper.
+
+#### `event_store`
+
+```rust
+/// Wraps the events.jsonl path; created once per session.
+pub struct EventStore {
+    path: PathBuf,
+}
+
+impl EventStore {
+    pub fn new(path: PathBuf) -> Self;
+
+    /// Serialise `event` with serde_json and append as a single line to
+    /// events.jsonl. Creates parent dirs if needed (defensive; the
+    /// session dir creator already does this).
+    pub async fn append(&self, event: &OmegaEvent) -> Result<()>;
+}
+```
+
+No UI-only field stripping needed — the Rust `OmegaEvent` type has no
+UI-only fields (that concern was TS-specific; Rust derives are honest).
+
+#### `context_store`
+
+```rust
+/// The on-disk shape of a context.jsonl record.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ContextRecord {
+    pub hash:    ContextHash,
+    pub time:    String,          // ISO 8601 UTC, same format as ISOTimestamp in events
+    pub role:    Role,            // reuse omega_core::types::Role
+    pub content: Vec<ContentBlock>, // reuse omega_core::types::ContentBlock
+}
+
+/// Wraps the context.jsonl path; created once per session.
+pub struct ContextStore {
+    path: PathBuf,
+}
+
+impl ContextStore {
+    pub fn new(path: PathBuf) -> Self;
+
+    /// Build a ContextRecord (random hash, current UTC time), append to
+    /// context.jsonl, return the hash. The caller uses it as the FK in
+    /// LlmCallEvent.context_hashes etc.
+    pub async fn append(&self, role: Role, content: Vec<ContentBlock>) -> Result<ContextHash>;
+
+    /// Build a record without writing — for testing the shape without I/O.
+    pub fn build_record(role: Role, content: Vec<ContentBlock>) -> ContextRecord;
+}
+```
+
+`ContextStore` depends on `omega-core` (for `Role` and `ContentBlock`).  
+Add `omega-core = { path = "../omega-core" }` to `omega-store/Cargo.toml`.
+
+### Testing strategy
+
+- Use **real file I/O** with a temp dir per test (use `tempfile` crate or
+  just `std::env::temp_dir()` with a unique suffix).
+- Do not mock the filesystem.
+- Integration tests in `tests/` (one file per module: `tests/session_dir.rs`,
+  `tests/event_store.rs`, `tests/context_store.rs`).
+- Aim for the same coverage discipline as `omega-core`: run `cargo mutants`
+  after the tests land and triage any survivors.
+
+Key test cases:
+- `make_session_dir` creates the three expected files; name matches the regex.
+- `read_session_metadata` returns default on missing file; parses present
+  fields; strips `//` and `/* */` comments.
+- `write_session_metadata` / `update_session_metadata` round-trips.
+- `EventStore::append` writes valid JSONL; each line round-trips through
+  `serde_json::from_str::<OmegaEvent>`.
+- `ContextStore::append` returns a 12-hex hash; written record round-trips;
+  two calls return different hashes.
+- `hash_from_str` rejects strings that aren't exactly 12 lowercase hex chars.
 
 ### Done when
 
-- `id_redactor()` lives in a `common/` test module and is re-used.
-- An events-reference snapshot exists in `omega-protocol` showing all 22
-  variants with at least one correlated tool-id triple.
-- Each provider has a request-body kitchen-sink snapshot showing
-  `LlmRequest` → wire-body transformation with correlated ids.
-- `cargo mutants -p omega-core` and `cargo mutants -p omega-protocol`
-  both report 0 surviving mutants.
-- All commits passed `just rust-gate`.
+- `rust/crates/omega-store` builds cleanly (`just rust-gate`).
+- All integration tests pass with real file I/O.
+- `cargo mutants -p omega-store` reports 0 survived.
 - This section updated to a ✅ done record.
 
 ### Session setup
 
 **Model:** `claude-sonnet-4-6` — **Effort:** Medium
 
-(Design is laid out and patterns are established. Novel parts —
-`insta::dynamic_redaction` API, fixture-file mechanics — are well-trodden
-ground in the Rust community. Sonnet handles this comfortably; Opus is
-overkill.)
+(Straightforward port of well-understood TS code. The design is spelled
+out above. Sonnet handles async Rust file I/O and serde without needing
+Opus. Main risk is getting the JSONC comment stripping right — but the
+TS logic is trivial to translate.)
 
 **Prompt:**
 
 > Continuing the Rust migration of Omega. Read
-> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1b.7 session
+> `/home/carsten/omega/dev/rust-migration.md`, find the Phase 1c session
 > prompt, and execute it.
 
 ---
 
-## Phase 1c — `omega-server` (WebSocket)
+## Phase 1d — `omega-agent` + CLI binary
 
-- `tokio` async runtime, `tokio-tungstenite` for WebSocket
-- Session directory creation (mirrors `src/session-dir.ts`)
-- Event store: append-only writes to `events.jsonl` (mirrors `src/event-store.ts`)
-- Context store: append-only writes to `context.jsonl` (mirrors `src/context-store.ts`)
-- WebSocket message handler: receives user messages, drives `omega-core` agent loop, fans out `OmegaEvent`s to all connected clients
-- HTTP server for static asset serving (Leptos WASM bundle in Phase 3; TS bundle in Phase 1–2)
+Ports `src/agent.ts` — the multi-turn conversation driver — to a new
+`rust/crates/omega-agent` crate. This is the most complex phase:
+multi-turn message management, tool execution, context hashing (using
+`omega-store`), compaction, session resumption, pause/continue logic.
+
+**Phase 1d is the first Harbor-testable milestone.** In addition to the
+library crate, this phase ships a minimal `omega-cli` binary:
+
+```
+omega-cli run \
+  --instruction "Fix the failing tests" \
+  --model claude-sonnet-4-6 \
+  --session-dir /tmp/omega-session \
+  [--effort medium] \
+  [--max-turns 100]
+```
+
+The binary is a thin wrapper (~100 lines): parse args, call
+`omega-agent` with an auto-approve tool callback, stream response text
+to stdout, structured event lines to stderr (matching `cli.ts` format),
+exit 0 on `turn_end` / 1 on interruption. No web server, no WebSocket
+— Harbor points at this binary directly.
+
+### Harbor adapter update (done at end of Phase 1d)
+
+`bench/omega_agent.py` needs two lines changed:
+
+```python
+# install(): replace bun install with cargo build
+"git clone ... && cd omega && cargo build --release --bin omega-cli"
+
+# run(): replace the bun invocation
+f"{OMEGA_INSTALL_DIR}/target/release/omega-cli run "
+f"--instruction {shlex.quote(instruction)} "
+f"--model {shlex.quote(self._parsed_model_name)} "
+f"--session-dir {OMEGA_SESSION_DIR} {flags}"
+```
+
+Everything else in the adapter is unchanged: `populate_context_post_run`
+reads `turn_end` from `events.jsonl` — same field names, same format,
+because `omega-protocol` is shared. The oracle checks the container
+filesystem, not the agent implementation, so it works without any
+modification.
+
+**Parity criterion:** run the same oracle task batch that was used to
+validate TS Omega. If Harbor scores are statistically indistinguishable,
+Rust Omega has reached functional parity with the TS implementation —
+a stronger signal than any unit test.
+
+*Build time note:* `cargo build --release` adds ~2–5 min per task
+during initial validation (acceptable). For production benchmarking,
+publish a pre-built static binary to a GitHub release and have
+`install()` `curl` it instead of compiling.
+
+Scope and session prompt will be written once Phase 1c is done and the
+persistence API is stable.
 
 ---
 
-## Phase 1d — Bridge (`ts-rs`)
+## Phase 1e — `omega-server` (WebSocket + HTTP)
+
+Ports `src/web/server.ts` to a Rust binary crate:
+- `axum` (HTTP + WebSocket) or `tokio-tungstenite` + `hyper`
+- Session creation, listing, resumption via HTTP endpoints
+- WebSocket fan-out: all connected clients receive each `OmegaEvent`
+- History replay on reconnect (reads `events.jsonl`)
+- Static file serving (serves TS web UI bundle during Phase 1–2; Leptos
+  WASM in Phase 3)
+
+Session prompt will be written once Phase 1d is done.
+
+---
+
+## Phase 1f — Bridge (`ts-rs`)
 
 During the headless-Rust + TS-UI bridge period:
 
@@ -286,6 +435,10 @@ During the headless-Rust + TS-UI bridge period:
 - TS web client imports from `bindings/` instead of `src/events.ts`
 - The generated `.d.ts` are committed so the UI is always type-checked against the Rust source
 - Deleted entirely in Phase 3 when Leptos replaces the TS client
+
+*Can be executed any time after omega-protocol is stable — i.e. now. But
+until the Rust server binary actually runs, the bridge adds friction for
+no functional gain. Defer until the server is ready.*
 
 ---
 
