@@ -72,6 +72,30 @@ The pre-commit hook routes automatically:
 
 ## Phase 1b — `omega-core` (next)
 
+### Session setup
+
+**Model:** `claude-opus-4-7` — **Effort:** High
+
+**Prompt:**
+
+> You are continuing the Rust migration of Omega. Context is in `/home/carsten/omega/dev/rust-migration.md`. The current state: Phase 1a (`omega-protocol`) is complete and committed. Phase 1b (`omega-core`) is next.
+>
+> Build `rust/crates/omega-core` with the following contract:
+>
+> - A `Provider` trait with a single `stream` method that takes an `LlmRequest` and returns `impl Stream<Item = Result<AgentItem, LlmError>>`
+> - `AgentItem` is either a `StreamSignal` (ephemeral text/thinking fragment) or an `OmegaEvent` (persisted event — `LlmResponse`, `ToolCall`, `LlmRetry`, `LlmError`)
+> - Two concrete providers built simultaneously: `AnthropicProvider` and `OllamaProvider`. Building both at once forces a real abstraction.
+> - A retry loop that wraps any `Provider`, emits `OmegaEvent::LlmRetry` on transient errors (429/529/500/503), respects `Retry-After` headers, uses exponential backoff with jitter
+> - No live API calls in tests — mock the HTTP layer. Use `insta` for snapshot assertions on serialized event sequences.
+>
+> Reference implementations (read before writing any provider code):
+> - `/home/carsten/forgecode/crates/forge_repo/src/provider/anthropic.rs` — SSE streaming + beta headers pattern
+> - `/home/carsten/forgecode/crates/forge_app/src/dto/anthropic/request.rs` — request struct shape
+> - `/home/carsten/forgecode/crates/forge_repo/src/provider/provider_repo.rs` — provider dispatch
+>
+> Workspace conventions already in place: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants` run manually to check coverage. All decisions in `rust-migration.md` are settled — do not re-litigate them. Run `just rust-gate` to verify before each commit.
+
+
 ### Contract
 
 ```rust
