@@ -324,7 +324,7 @@ describe("contextHashes matches full compactedContextHistory", () => {
 
     // Each hash must appear as a hash in context.jsonl
     const contextRecords = readContextRecords(contextFile);
-    const contextHashSet = new Set(contextRecords.map(r => r.hash));
+    const contextHashSet = new Set<string>(contextRecords.map(r => r.hash));
     for (const h of llmCalls[2]!.contextHashes) {
       expect(contextHashSet.has(h)).toBe(true);
     }

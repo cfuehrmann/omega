@@ -1,462 +1,130 @@
 /**
  * OmegaEvent — the single unified event type for Omega.
  *
- * Replaces the former split between `AgentEvent` (streamed, ephemeral) and
- * `SessionEvent` (persisted). Every `OmegaEvent` is both streamed to UI
- * consumers and written to `.omega/sessions/<timestamp>/events.jsonl`.
+ * All types are generated from the Rust source via ts-rs (→ rust/bindings/).
+ * This file re-exports them, augmenting each event struct with the `type`
+ * discriminator field for backward compatibility with TypeScript consumers
+ * that construct typed event objects.
  *
- * Naming authority: persisted names win (EU-3 design rule). The `events.jsonl`
- * file is the single source of truth. Stream-facing names conform to it, not
- * the other way around.
+ * Background: the generated struct types don't include the `type` field
+ * (it lives on the Rust enum, not on each variant struct).  We intersect it
+ * back in here so existing code like:
+ *   const e: SessionStartedEvent = { type: "session_started", ... }
+ * continues to type-check without modification.
  *
  * `StreamSignal` is the separate union for genuinely ephemeral rendering
- * primitives that are never persisted: currently only `text` (streaming token
- * fragments). The `sendMessage` generator yields `OmegaEvent | StreamSignal`.
+ * primitives that are never persisted: currently only `text` / `thinking`
+ * (streaming token fragments). The agent yields `OmegaEvent | StreamSignal`.
+ *
+ * ─── Regenerate bindings ──────────────────────────────────────────────────
+ *   just rust-bindings          # re-runs ts-rs, writes rust/bindings/
+ *   git diff --exit-code rust/bindings/   # drift check (also in rust-gate)
+ * ──────────────────────────────────────────────────────────────────────────
  */
-
-
-
-import type { ISOTimestamp } from "./iso-timestamp.js";
-import type { ContextHash } from "./context-hash.js";
 
 // ---------------------------------------------------------------------------
 // StreamSignal — ephemeral, never persisted
 // ---------------------------------------------------------------------------
 
 /** A raw streaming text fragment from the LLM. Never written to events.jsonl. */
-export interface TextSignal {
-  type: "text";
-  text: string;
-}
+export type TextSignal = { type: "text"; text: string };
 
 /** A raw streaming thinking fragment from the LLM. Never written to events.jsonl. */
-export interface ThinkingSignal {
-  type: "thinking";
-  text: string;
-}
+export type ThinkingSignal = { type: "thinking"; text: string };
 
+/**
+ * Streaming signal — union of ephemeral fragment types.
+ * Defined locally so that TextSignal / ThinkingSignal are referenced here
+ * (the generated rust/bindings/StreamSignal.ts has the same shape).
+ */
 export type StreamSignal = TextSignal | ThinkingSignal;
 
 // ---------------------------------------------------------------------------
-// OmegaEvent variants — all persisted, all rendered
+// Sub-types (not enum variants — no discriminator needed)
 // ---------------------------------------------------------------------------
 
-/** The session started (first event in every session). */
-export interface SessionStartedEvent {
-  type: "session_started";
-  time: ISOTimestamp;
-  sessionId: string;
-  /** Session directory path relative to the Omega root (cwd). */
-  path: string;
-  model: string;
-  effort: string;
-  /** The full system prompt text at session start. */
-  systemPrompt: string;
-}
-
-/**
- * The server process started. Emitted on every server start, including future
- * resumptions of an existing session. Pairs with server_stopped.
- */
-export interface ServerStartedEvent {
-  type: "server_started";
-  time: ISOTimestamp;
-}
-
-/**
- * The server process stopped cleanly. Pairs with server_started.
- * Absence of this event after server_started means the process crashed.
- * Note: does NOT imply the session ended — sessions may be resumed across
- * server restarts in the future.
- */
-export interface ServerStoppedEvent {
-  type: "server_stopped";
-  time: ISOTimestamp;
-  /** "clean" = normal shutdown; "error" = stopped due to a hard error. */
-  outcome: "clean" | "error";
-  /** Human-readable reason, e.g. the error message on "error" outcome. */
-  reason?: string;
-}
-
-/** A user message submitted to the agent. */
-export interface UserMessageEvent {
-  type: "user_message";
-  time: ISOTimestamp;
-  content: string;
-}
-
-/** An outgoing API call to an LLM. */
-export interface LlmCallEvent {
-  type: "llm_call";
-  time: ISOTimestamp;
-  url: string;
-  model: string;
-  /**
-   * Ordered hashes (12 lowercase hex chars each) of every MessageParam in the
-   * `buildSentContext()` view actually sent with this call. Cross-references
-   * entries in `context.jsonl`. Reflects the truncated view, not the full log.
-   */
-  contextHashes: ContextHash[];
-  /**
-   * Index (0-based) of the message in the sent context that received the
-   * `cache_control: { type: "ephemeral" }` breakpoint for Anthropic prompt
-   * caching. Always the last message index (contextHashes.length - 1).
-   */
-  cacheBreakpointIndex: number | null;
-  /**
-   * Serialized byte size of the full request payload sent to the provider.
-   * Measured as JSON.stringify(payload).length at the call site, before any
-   * elision. Useful for estimating upstream network cost.
-   */
-  requestBytes: number;
-  /**
-   * Elided summary of the request sent to the provider. Large repetitive
-   * fields (system prompt, messages, tool definitions) are replaced with
-   * compact descriptors. Persisted to events.jsonl.
-   */
-  requestSummary?: Record<string, unknown>;
-}
-
-/** An LLM response received by the agent. */
-export interface LlmResponseEvent {
-  type: "llm_response";
-  time: ISOTimestamp;
-  stopReason: string;
-  /**
-   * Number of tool use/result pairs the server cleared from the context before
-   * processing this response. Absent when no clearing occurred.
-   */
-  clearedToolUses?: number;
-  /** Approximate input tokens saved by server-side clearing. */
-  clearedInputTokens?: number;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    /** Tokens written to the prompt cache this call (billed at 1.25× base). */
-    cache_creation_input_tokens?: number | null;
-    /** Tokens served from the prompt cache this call (billed at 0.1× base). */
-    cache_read_input_tokens?: number | null;
-    /** Service tier used for this request; absent or "standard" is the baseline. */
-    service_tier?: string | null;
-  };
-  /**
-   * FK into `context.jsonl` — the hash of the assistant record written for
-   * this response. Content is intentionally omitted from the event itself;
-   * look it up via this hash.
-   */
-  contextHash: ContextHash;
-  /**
-   * The full assembled assistant text for this response, if any.
-   * Absent for tool-only responses (stop_reason "tool_use" with no text block).
-   * Replaces the former separate `assistant_text` event.
-   */
-  text?: string;
-  /**
-   * The full assembled thinking content for this response, if any.
-   * Multiple thinking blocks are concatenated with a divider.
-   * Persisted so thinking survives session replay and is inspectable.
-   */
-  thinking?: string;
-  /** ISO timestamp of the first streaming text delta — when text visibly began arriving. */
-  streamingStart?: ISOTimestamp;
-  /**
-   * Elided summary of the provider response envelope. The content field is
-   * omitted (it lives in context.jsonl via contextHash); all other envelope
-   * fields (id, model, stop_reason, usage, type, role) are kept verbatim.
-   * Persisted to events.jsonl.
-   */
-  responseSummary?: Record<string, unknown>;
-}
-
-/** A tool invocation by the agent. */
-export interface ToolCallEvent {
-  type: "tool_call";
-  time: ISOTimestamp;
-  id: string;
-  name: string;
-  /** Tool input parameters. */
-  input: unknown;
-  /** Hash of the assistant context.jsonl record containing this tool_use block. */
-  contextHash: ContextHash;
-}
-
-/** The result of a tool invocation. */
-export interface ToolResultEvent {
-  type: "tool_result";
-  time: ISOTimestamp;
-  id: string;
-  name: string;
-  isError: boolean;
-  durationMs: number;
-  /** Full text output of the tool. */
-  output: string;
-}
-
-/** Per-turn token and cache metrics, attached to TurnEndEvent. */
-export interface TurnMetrics {
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-}
-
-/** End of a user turn — aggregate metrics. */
-export interface TurnEndEvent {
-  type: "turn_end";
-  time: ISOTimestamp;
-  metrics: TurnMetrics;
-}
-
-/** A non-retryable LLM provider call error. */
-export interface LlmErrorEvent {
-  type: "llm_error";
-  time: ISOTimestamp;
-  url: string;
-  error: string;
-  httpStatus?: number;
-}
-
-/** A generic agent-level error. */
-export interface AgentErrorEvent {
-  type: "agent_error";
-  time: ISOTimestamp;
-  error: string;
-}
-
-/** The user interrupted an in-flight turn, or the turn ended due to an error. */
-export interface TurnInterruptedEvent {
-  type: "turn_interrupted";
-  time: ISOTimestamp;
-  /**
-   * Why the turn ended without a normal turn_end:
-   * - "aborted"  — user pressed Abort
-   * - "error"    — agent terminated due to an unrecoverable API/auth error
-   * - undefined  — legacy / synthetic crash-recovery record (server restart mid-turn)
-   */
-  reason?: "aborted" | "error";
-}
-
-/**
- * Server-side compaction fired during this turn. Emitted once per response
- * that contains a compaction block. The full usage object from the API
- * response is preserved verbatim (including usage.iterations when present,
- * which breaks down the compaction iteration vs. the main iteration costs).
- */
-export interface CompactedEvent {
-  type: "compacted";
-  time: ISOTimestamp;
-  /**
-   * Full usage object from the API response. When compaction fires,
-   * usage.iterations is an array with one compaction entry and one message
-   * entry. The top-level input_tokens/output_tokens reflect only the main
-   * (non-compaction) iteration. Sum across iterations for the true total.
-   */
-  usage: unknown;
-}
-
-/** LLM provider call retried after a transient error. */
-export interface LlmRetryEvent {
-  type: "llm_retry";
-  time: ISOTimestamp;
-  /** Retry attempt number, 1-based (first retry = 1). */
-  attempt: number;
-  httpStatus?: number;
-  /** Milliseconds to wait before the next attempt. */
-  waitMs: number;
-  /** Human-readable error message from the provider. */
-  error: string;
-  /** ISO timestamp of when the next attempt will be made (time + waitMs). */
-  retryAt?: ISOTimestamp;
-  /**
-   * Full structured error body from the provider (e.g. Anthropic's
-   * `{ type, error: { type, message } }` envelope), preserved verbatim
-   * for post-mortem inspection. Absent when the error has no body
-   * (pure network / SDK errors).
-   */
-  errorBody?: unknown;
-  /**
-   * Partial thinking content that had accumulated in the stream before
-   * the error fired. Absent when no thinking deltas arrived before the
-   * interruption. Persisted so the fragment is visible after page reload.
-   * Never sent to the LLM — only the signed thinking blocks in the
-   * successful response's `content` array ever reach the API.
-   */
-  thinkingFragment?: string;
-  /**
-   * Partial text content that had accumulated in the stream before the
-   * error fired. Absent when no text deltas arrived before the
-   * interruption. Same lifecycle as thinkingFragment.
-   */
-  textFragment?: string;
-  /**
-   * Why the retry fired. Absent for ordinary policy-driven retries (the
-   * common case — transient 429/529/500/503, stream restart, etc.).
-   * `"retry-after"` when the provider sent a `retry-after` response header:
-   * the retry is server-directed and bypasses policy classification + any
-   * policy attempt cap, retrying unboundedly while the server keeps asking.
-   */
-  reason?: "retry-after";
-}
-
-
-
-/** The operator switched the active model. */
-export interface ModelChangedEvent {
-  type: "model_changed";
-  time: ISOTimestamp;
-  model: string;
-}
-
-/** The operator changed the thinking effort level. */
-export interface EffortChangedEvent {
-  type: "effort_changed";
-  time: ISOTimestamp;
-  effort: string;
-}
-
-/**
- * Session resumption has started — basis extracted, LLM call about to fire.
- *
- * Logged after the new session dir is created and the basis is extracted
- * from the previous session's events, but before the summarisation LLM call.
- * Absence of a matching `session_resumed` at a later offset means resumption
- * was attempted but did not complete (inspect `llm_error` in between).
- */
-export interface ResumingSessionEvent {
-  type: "resuming_session";
-  time: ISOTimestamp;
-  /**
-   * Relative folder name (within SESSIONS_ROOT) of the session being
-   * resumed. Relative for portability.
-   */
-  resumedFrom: string;
-  /** Human-readable name of the session being resumed, if one exists. */
-  name?: string;
-  /**
-   * The extracted basis text that will be sent to the LLM for summarisation.
-   */
-  basis: string;
-}
-
-/**
- * The session was seeded with a summary of a previous session.
- *
- * Emitted once at the start of a resumed session, after the summarisation
- * LLM call completes successfully and the agent has been seeded.
- * The basis is already recorded in the preceding `resuming_session` event.
- */
-export interface SessionResumedEvent {
-  type: "session_resumed";
-  time: ISOTimestamp;
-  /**
-   * Relative folder name (within SESSIONS_ROOT) of the session being
-   * resumed. Relative for portability — moving the project directory
-   * does not break the lineage chain.
-   */
-  resumedFrom: string;
-  /**
-   * The summary produced by the LLM from the basis. This text is also
-   * injected into the new session's LLM context as the opening message.
-   */
-  summary: string;
-}
+export type { TurnMetrics } from "../rust/bindings/TurnMetrics.js";
+export type { LlmResponseUsage } from "../rust/bindings/LlmResponseUsage.js";
+export type { ServerStopOutcome } from "../rust/bindings/ServerStopOutcome.js";
+export type { InterruptReason } from "../rust/bindings/InterruptReason.js";
+export type { ContinueMode } from "../rust/bindings/ContinueMode.js";
+export type { LlmRetryReason } from "../rust/bindings/LlmRetryReason.js";
 
 // ---------------------------------------------------------------------------
-// Pause / resume / interject (UX-1/UX-2 replacement)
+// OmegaEvent variant types
+//
+// Each generated struct type is intersected with { type: "<discriminator>" }
+// to restore the discriminator field that lives on the Rust enum.
 // ---------------------------------------------------------------------------
 
-/**
- * The user has requested a pause. Emitted immediately on Esc from `Running`.
- * The agent finishes the current tool batch before transitioning to `Paused`
- * (emitting `turn_paused`).
- */
-export interface PauseRequestedEvent {
-  type: "pause_requested";
-  time: ISOTimestamp;
-}
+import type { SessionStartedEvent as _SessionStartedEvent } from "../rust/bindings/SessionStartedEvent.js";
+export type SessionStartedEvent = { type: "session_started" } & _SessionStartedEvent;
 
-/**
- * The agent has reached a clean seam and the turn is now paused.
- * Emitted after all tool_results from the current tool batch have been
- * appended to history. The next action is either `turn_continued`
- * (resume, optionally with an interjection user_message) or
- * `turn_interrupted{reason:"aborted"}`.
- */
-export interface TurnPausedEvent {
-  type: "turn_paused";
-  time: ISOTimestamp;
-}
+import type { ServerStartedEvent as _ServerStartedEvent } from "../rust/bindings/ServerStartedEvent.js";
+export type ServerStartedEvent = { type: "server_started" } & _ServerStartedEvent;
 
-/**
- * The paused turn is resuming. `mode` distinguishes a user-visible Continue
- * click from the (client-local) pre-commit path where the user clicked
- * Continue while still in `PauseRequested` and the seam hadn't yet landed.
- * From the log's perspective, `"auto"` means zero dwell time in `Paused`.
- *
- * The interjection (if any) rides as a preceding `user_message` event
- * between `turn_paused` and `turn_continued`.
- */
-export interface TurnContinuedEvent {
-  type: "turn_continued";
-  time: ISOTimestamp;
-  mode: "manual" | "auto";
-}
+import type { ServerStoppedEvent as _ServerStoppedEvent } from "../rust/bindings/ServerStoppedEvent.js";
+export type ServerStoppedEvent = { type: "server_stopped" } & _ServerStoppedEvent;
 
-/**
- * A transport-layer error emitted by the web server.
- *
- * Distinct from `agent_error` (agent application logic) and `llm_error`
- * (LLM provider call failures). Covers WebSocket protocol violations and
- * unhandled server exceptions that are not attributable to the agent:
- *   - client sent invalid JSON
- *   - client sent a message while a turn was already in progress
- *   - unhandled exception in the message handler
- *
- * `context` is an optional tag identifying the server code path that raised
- * the error (e.g. "handleMessage", "websocket_message_handler"), useful for
- * post-mortem analysis and LLM-assisted log inspection.
- *
- * Persisted best-effort: if the events file itself is unwritable the event
- * is still sent over the WebSocket so the UI shows it, but the write is
- * silently skipped.
- */
-export interface TransportErrorEvent {
-  type: "transport_error";
-  time: ISOTimestamp;
-  error: string;
-  context?: string;
-}
+import type { UserMessageEvent as _UserMessageEvent } from "../rust/bindings/UserMessageEvent.js";
+export type UserMessageEvent = { type: "user_message" } & _UserMessageEvent;
 
+import type { LlmCallEvent as _LlmCallEvent } from "../rust/bindings/LlmCallEvent.js";
+export type LlmCallEvent = { type: "llm_call" } & _LlmCallEvent;
 
+import type { LlmResponseEvent as _LlmResponseEvent } from "../rust/bindings/LlmResponseEvent.js";
+export type LlmResponseEvent = { type: "llm_response" } & _LlmResponseEvent;
 
-// ---------------------------------------------------------------------------
-// Exhaustiveness helper
-// ---------------------------------------------------------------------------
+import type { ToolCallEvent as _ToolCallEvent } from "../rust/bindings/ToolCallEvent.js";
+export type ToolCallEvent = { type: "tool_call" } & _ToolCallEvent;
+
+import type { ToolResultEvent as _ToolResultEvent } from "../rust/bindings/ToolResultEvent.js";
+export type ToolResultEvent = { type: "tool_result" } & _ToolResultEvent;
+
+import type { TurnEndEvent as _TurnEndEvent } from "../rust/bindings/TurnEndEvent.js";
+export type TurnEndEvent = { type: "turn_end" } & _TurnEndEvent;
+
+import type { LlmErrorEvent as _LlmErrorEvent } from "../rust/bindings/LlmErrorEvent.js";
+export type LlmErrorEvent = { type: "llm_error" } & _LlmErrorEvent;
+
+import type { AgentErrorEvent as _AgentErrorEvent } from "../rust/bindings/AgentErrorEvent.js";
+export type AgentErrorEvent = { type: "agent_error" } & _AgentErrorEvent;
+
+import type { TurnInterruptedEvent as _TurnInterruptedEvent } from "../rust/bindings/TurnInterruptedEvent.js";
+export type TurnInterruptedEvent = { type: "turn_interrupted" } & _TurnInterruptedEvent;
+
+import type { CompactedEvent as _CompactedEvent } from "../rust/bindings/CompactedEvent.js";
+export type CompactedEvent = { type: "compacted" } & _CompactedEvent;
+
+import type { LlmRetryEvent as _LlmRetryEvent } from "../rust/bindings/LlmRetryEvent.js";
+export type LlmRetryEvent = { type: "llm_retry" } & _LlmRetryEvent;
+
+import type { ModelChangedEvent as _ModelChangedEvent } from "../rust/bindings/ModelChangedEvent.js";
+export type ModelChangedEvent = { type: "model_changed" } & _ModelChangedEvent;
+
+import type { EffortChangedEvent as _EffortChangedEvent } from "../rust/bindings/EffortChangedEvent.js";
+export type EffortChangedEvent = { type: "effort_changed" } & _EffortChangedEvent;
+
+import type { TransportErrorEvent as _TransportErrorEvent } from "../rust/bindings/TransportErrorEvent.js";
+export type TransportErrorEvent = { type: "transport_error" } & _TransportErrorEvent;
+
+import type { ResumingSessionEvent as _ResumingSessionEvent } from "../rust/bindings/ResumingSessionEvent.js";
+export type ResumingSessionEvent = { type: "resuming_session" } & _ResumingSessionEvent;
+
+import type { SessionResumedEvent as _SessionResumedEvent } from "../rust/bindings/SessionResumedEvent.js";
+export type SessionResumedEvent = { type: "session_resumed" } & _SessionResumedEvent;
+
+import type { PauseRequestedEvent as _PauseRequestedEvent } from "../rust/bindings/PauseRequestedEvent.js";
+export type PauseRequestedEvent = { type: "pause_requested" } & _PauseRequestedEvent;
+
+import type { TurnPausedEvent as _TurnPausedEvent } from "../rust/bindings/TurnPausedEvent.js";
+export type TurnPausedEvent = { type: "turn_paused" } & _TurnPausedEvent;
+
+import type { TurnContinuedEvent as _TurnContinuedEvent } from "../rust/bindings/TurnContinuedEvent.js";
+export type TurnContinuedEvent = { type: "turn_continued" } & _TurnContinuedEvent;
 
 // ---------------------------------------------------------------------------
-// OmegaEvent — the unified discriminated union
+// OmegaEvent — the unified discriminated union, generated from Rust
 // ---------------------------------------------------------------------------
 
-export type OmegaEvent =
-  | SessionStartedEvent
-  | ServerStartedEvent
-  | ServerStoppedEvent
-  | UserMessageEvent
-  | LlmCallEvent
-  | LlmResponseEvent
-  | ToolCallEvent
-  | ToolResultEvent
-  | TurnEndEvent
-  | LlmErrorEvent
-  | AgentErrorEvent
-  | TurnInterruptedEvent
-  | CompactedEvent
-  | LlmRetryEvent
-  | ModelChangedEvent
-  | EffortChangedEvent
-  | TransportErrorEvent
-  | ResumingSessionEvent
-  | SessionResumedEvent
-  | PauseRequestedEvent
-  | TurnPausedEvent
-  | TurnContinuedEvent;
+export type { OmegaEvent } from "../rust/bindings/OmegaEvent.js";

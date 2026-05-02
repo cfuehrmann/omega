@@ -6,6 +6,12 @@ edition.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Enables ts-rs bindings; also activates omega-core/ts-bindings (which
+# in turn activates omega-protocol/ts-bindings) so ContextRecord's
+# Role and ContentBlock fields can reference their generated types.
+ts-bindings = ["dep:ts-rs", "omega-core/ts-bindings"]
+
 [dependencies]
 omega-core     = { path = "../omega-core" }
 omega-protocol = { path = "../omega-protocol" }
@@ -16,6 +22,7 @@ chrono         = { version = "0.4", default-features = false, features = ["clock
 rand           = "0.9"
 regex          = "1"
 thiserror      = "2"
+ts-rs          = { version = "12", optional = true, features = ["serde-compat"] }
 
 [dev-dependencies]
 tokio    = { version = "1", features = ["full"] }

@@ -30,9 +30,10 @@ const TurnMetricsSchema = z.object({
 const LlmResponseUsageSchema = z.object({
   input_tokens: z.number().int(),
   output_tokens: z.number().int(),
-  cache_creation_input_tokens: z.number().int().nullable().optional(),
-  cache_read_input_tokens: z.number().int().nullable().optional(),
-  service_tier: z.string().nullable().optional(),
+  // Rust serializer uses skip_serializing_if so None → absent (never null).
+  cache_creation_input_tokens: z.number().int().optional(),
+  cache_read_input_tokens: z.number().int().optional(),
+  service_tier: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,7 @@ const LlmRetrySchema = z.object({
   errorBody: z.unknown().optional(),
   thinkingFragment: z.string().optional(),
   textFragment: z.string().optional(),
+  reason: z.enum(["retry-after"]).optional(),
 });
 
 const ModelChangedSchema = z.object({

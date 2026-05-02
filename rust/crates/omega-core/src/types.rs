@@ -19,6 +19,8 @@ use serde_json::Value;
 /// Role of a [`Message`] in the conversation history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum Role {
     User,
     Assistant,
@@ -30,6 +32,8 @@ pub enum Role {
 /// type the agent sends or receives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum ContentBlock {
     /// A text block.
     Text { text: String },
@@ -40,12 +44,15 @@ pub enum ContentBlock {
     Thinking {
         thinking: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-bindings", ts(optional))]
         signature: Option<String>,
     },
     /// A tool invocation by the assistant.
     ToolUse {
         id: String,
         name: String,
+        /// Arbitrary JSON input parameters supplied by the LLM.
+        #[cfg_attr(feature = "ts-bindings", ts(type = "unknown"))]
         input: Value,
     },
     /// The result of a tool invocation, sent back as a user message.

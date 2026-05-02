@@ -1,0 +1,13 @@
+# Configuration for the omega-protocol workspace.
+#
+# TS_RS_EXPORT_DIR: all ts-rs #[ts(export)] types write to rust/bindings/.
+#   relative = true  →  path resolved relative to this file's directory
+#   "../bindings"    →  rust/.cargo/../bindings  =  rust/bindings/
+#
+# TS_RS_LARGE_INT: map i64/u64/i128/u128 to TypeScript `number` (not bigint).
+#   All token counts, byte counts, and millisecond durations in omega-protocol
+#   are well within Number.MAX_SAFE_INTEGER; the TS client treats them as number.
+
+[env]
+TS_RS_EXPORT_DIR = { value = "../bindings", relative = true }
+TS_RS_LARGE_INT  = "number"

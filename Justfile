@@ -161,11 +161,29 @@ release:
     git push origin "$VERSION"
     echo "✅  Released $VERSION"
 
-# Rust-only quality gate: format check + Clippy + cargo test.
+# Generate TypeScript bindings from Rust types via ts-rs.
+# Exports all types annotated with #[ts(export)] to rust/bindings/.
+# Re-run whenever Rust types change; then commit the updated .ts files.
+rust-bindings:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    EXPORT_DIR="$(pwd)/rust/bindings"
+    mkdir -p "$EXPORT_DIR"
+    export TS_RS_EXPORT_DIR="$EXPORT_DIR"
+    export TS_RS_LARGE_INT="number"
+    cd rust
+    cargo test -p omega-protocol --features ts-bindings -- export_bindings
+    cargo test -p omega-core     --features ts-bindings -- export_bindings
+    cargo test -p omega-store    --features ts-bindings -- export_bindings
+
+# Rust-only quality gate: format check + Clippy + cargo test + bindings drift.
 # Runs via the pre-commit hook when only rust/ files are staged.
 # Run manually: just rust-gate
 rust-gate:
     cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
+    just rust-bindings
+    @echo "=== bindings drift check ==="
+    git diff --exit-code rust/bindings/ || (echo "\n❌  rust/bindings/ is out of date — run \`just rust-bindings\` and commit."; exit 1)
 
 # Install git hooks (pre-commit test gate)
 install-hooks:

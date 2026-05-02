@@ -17,6 +17,8 @@ use crate::{Result, StoreError};
 /// string with [`hash_from_str`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ContextHash(String);
 
 impl ContextHash {

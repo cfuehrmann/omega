@@ -24,6 +24,8 @@ use crate::{ContextHash, Result, StoreError, random_hash};
 ///
 /// Extends a conversation message with persistence metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ContextRecord {
     /// Unique primary key: 12 lowercase hex characters (6 random bytes).
     pub hash: ContextHash,
