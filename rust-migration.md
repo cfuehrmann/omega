@@ -15,8 +15,8 @@
 | 1d.0a — `omega-agent` core + scaffolds | ✅ Done | Agent loop, system prompt, error classifier, MockProvider + 6 integration tests, `omega-tools` stubs + dispatch, `omega-cli --help` |
 | 1d.0b — tool body ports + CLI wiring | ✅ Done | 12 real tool implementations + 35 integration tests; `omega-cli run` end-to-end; `OmegaRustAgent` Harbor adapter |
 | 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
-| 1d.0d — eliminate external binary deps | ⬜ Next | Replace `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; kill Group A mutants; document accepted remainder |
-| 1d.1 — `omega-agent` advanced | ⬜ Upcoming | Pause/continue/abort, session resumption, compaction, model/effort switching |
+| 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; killed Group A mutants; 16 → 7 missed |
+| 1d.1 — `omega-agent` advanced | ⬜ Next | Pause/continue/abort, session resumption, compaction, model/effort switching |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -209,14 +209,14 @@ wait_for_output.rs:76:75  replace >= with < in execute
   instead of `-1`, a signal-killed subprocess is treated as "no matches found"
   (exit 1 = not-an-error) instead of a real error. Triggering this reliably
   requires engineering a mid-run signal kill with precise timing — hard without
-  a specialised test harness. This will become a non-issue after the Phase 1d.0d
-  rewrite (no subprocess to kill).
+  a specialised test harness. Became a non-issue after the Phase 1d.0d
+  rewrite (no subprocess to kill); only the `fetch_url` postprocess call remains.
 - **`has_command → false`** (forces fallback): With `has_command` always returning
   false, `grep_files` uses grep and `find_files` uses find. For every test pattern
   we use, grep/find produce output close enough to rg/fd that `contains()`
   assertions pass either way. Killing this would require format-specific
   assertions (e.g. checking for `--no-heading` in output) that couple tests to
-  implementation details. Also becomes a non-issue after Phase 1d.0d.
+  implementation details. Became a non-issue after Phase 1d.0d (functions deleted).
 - **`wait_for_output` exit-branch `>= → <`** (line 76): The exit-branch
   `minBytesReached` computation is only reached when the process exits AND the
   main-loop `>=` check hasn't fired yet (content was below the threshold at
@@ -243,190 +243,37 @@ live key in CI or a reqwest mock — neither is worth doing for four mutants.
 
 ---
 
-## Phase 1d.0d — Eliminate external binary dependencies (`omega-tools`) ⬜ Next
+## Phase 1d.0d — Eliminate external binary dependencies (`omega-tools`) ✅
 
-This phase resolves **Group A** by removing the `rg`/`fd` subprocess approach
-entirely, replacing both tools with pure-Rust implementations built on the
-BurntSushi crate family that powers ripgrep. Groups B–D are accepted as-is
-(documented above).
+Replaced `rg`/`fd` subprocesses in `find_files.rs` and `grep_files.rs` with
+pure-Rust implementations using `ignore::WalkBuilder` + `globset::Glob` +
+`regex::RegexBuilder`. `has_command`, all fallback branches, and the
+`run_subprocess` / `SubprocOutput` helpers were deleted from both tool files.
+`SubprocOutput`/`run_subprocess` remain in `fetch_url.rs` for its bash
+postprocess call.
 
-### Why this matters beyond mutant count
+Additional tests written to cover type-filter guards (`"f"`, `"d"`, `"l"`),
+gap-separator `--` logic, 1-indexed line numbers, and `:`/`-` separator
+characters in `grep_files` output.
 
-- **Portability**: works in any environment — minimal containers, NixOS with
-  a locked PATH, future Windows support — with zero external tooling.
-- **No subprocess overhead**: no fork/exec for every grep or find call.
-- **No fallback paths**: the entire `has_command` / fallback branch structure
-  disappears, taking all 5 Group A mutants and 3 Group C mutants with it.
-- **Simpler error model**: no subprocess exit-code parsing; errors are typed
-  Rust values.
+One equivalent mutation (`!ft.is_file()` in `grep_files`) was isolated into
+`not_a_regular_file()` and suppressed with `#[mutants::skip]` + comment.
 
-### Crates to add
+**Final: 7 missed** (down from 16), all accepted:
 
-```toml
-# rust/crates/omega-tools/Cargo.toml
-ignore  = "0.4"    # BurntSushi's directory-walking engine (the core of ripgrep)
-globset = "0.4"    # BurntSushi's compiled glob matching (already used by ignore)
-```
-
-`regex` is already a dependency. No other new crates needed.
-
-The `ignore` crate is literally the directory-traversal half of ripgrep — it
-handles hidden-file filtering, `.gitignore`/`.ignore` rules, and symlink
-policy. `globset` handles the `*.rs`-style pattern matching. Together they
-give us fd's semantics without the binary.
-
-### Step 1 — Rewrite `find_files.rs`
-
-Replace the current `fd`/`find` subprocess with a `spawn_blocking` closure
-using `ignore::WalkBuilder` + `globset::Glob`.
-
-The `WalkBuilder` API maps directly onto the tool's parameters:
-
-| Tool parameter | WalkBuilder method |
-|---|---|
-| `hidden = false` (default) | `.hidden(true)` — skip dotfiles |
-| `hidden = true` | `.hidden(false).git_ignore(false).ignore(false)` |
-| `type = "f"` | filter `entry.file_type().is_file()` |
-| `type = "d"` | filter `entry.file_type().is_dir()` |
-
-The glob pattern is compiled with `Glob::new(pattern)?.compile_matcher()`
-and tested against `entry.file_name()` (basename only, matching fd semantics).
-
-Output format is unchanged: one path per line, truncation notice if
-`lines.len() > max_results`. The `run_subprocess`, `has_command`, and the
-entire `else` block disappear.
-
-Expected: ≈ 80 lines of implementation; all existing `find_files_*` tests
-continue to pass; the 5 mutants from the find fallback disappear; `find_files.rs:55:34`
-(exit-code 1, Group B) also disappears since there's no subprocess exit code.
-
-### Step 2 — Rewrite `grep_files.rs`
-
-Replace the `rg`/`grep` subprocess with a `spawn_blocking` closure using
-`ignore::WalkBuilder` (for traversal + glob filtering) and `regex::RegexBuilder`
-(for case-sensitivity). Implement context-window logic manually.
-
-The output format must match rg's `--no-heading --with-filename --line-number`
-style exactly, since the LLM prompt references it:
-
-```
-# match line
-path/to/file.rs:42:    let x = foo;
-
-# context lines use '-' instead of ':'
-path/to/file.rs:41-    // context before
-path/to/file.rs:43-    // context after
-
-# separator between non-adjacent match groups
---
-```
-
-Implementation sketch:
-
-```rust
-fn search_file(
-    path: &Path,
-    re: &Regex,
-    context: usize,
-    results: &mut Vec<String>,
-    max: usize,
-) -> bool /* hit limit */ {
-    let Ok(text) = std::fs::read_to_string(path) else { return false };
-    let lines: Vec<&str> = text.lines().collect();
-    let mut prev_end: Option<usize> = None;
-
-    for (i, line) in lines.iter().enumerate() {
-        if !re.is_match(line) { continue; }
-
-        let start = i.saturating_sub(context);
-        let end   = (i + context + 1).min(lines.len());
-
-        if prev_end.map_or(false, |e| start > e) {
-            results.push("--".into());
-        }
-        for (j, &l) in lines[start..end].iter().enumerate() {
-            let lnum = start + j + 1;
-            let sep  = if start + j == i { ':' } else { '-' };
-            results.push(format!("{}:{lnum}{sep}{l}", path.display()));
-            if results.len() >= max { return true; }
-        }
-        prev_end = Some(end);
-    }
-    false
-}
-```
-
-For glob filtering, pass the glob to `WalkBuilder` via
-`WalkBuilder::new(path).add_custom_ignore_filename(…)` — or simpler, build
-a `GlobMatcher` from the `file_glob` parameter and filter entries manually
-after walking.
-
-Binary files: `std::fs::read_to_string` returns an error for files with
-invalid UTF-8; silently skip those entries (matches rg's default behaviour).
-
-The `run_subprocess`, `has_command`, and the entire `else` / fallback block
-disappear. `SubprocOutput` stays in `fetch_url.rs` where it is still used for
-the bash postprocess call.
-
-Expected: ≈ 160 lines; all existing `grep_files_*` tests pass; Group A
-mutants (all 5), Group C `has_command`/`run_subprocess` mutants (2 of 3) and
-the `grep_files.rs:44:26` Group B mutant all disappear.
-
-### Post-rewrite mutant projection
-
-After Phase 1d.0d the expected surviving count is **≤ 7**:
-
-| Mutant | Group | Status after 1d.0d |
+| Mutant | File | Reason accepted |
 |---|---|---|
-| `grep_files` fallback ×4 | A | ✅ Gone (code deleted) |
-| `find_files` fallback ×1 | A | ✅ Gone (code deleted) |
-| `depth + 1 → *` | B | Remains (equivalent) |
-| `context_lines > 0 → >=` | B | ✅ Gone (rg flag gone) |
-| `has_command → true` | B | ✅ Gone (function gone) |
-| `fd exit-code 1` | B | ✅ Gone (no subprocess) |
-| `has_command → false` | C | ✅ Gone (function gone) |
-| `run_subprocess delete -` | C | ✅ Gone (mostly; fetch_url still uses it) |
-| `wait_for_output >= → <` | C | Remains (timing) |
-| `web_search` ×4 | D | Remains (API key) |
-
-That leaves `depth + 1 → *`, `wait_for_output`, and the 4 web_search mutants
-— all documented and accepted.
-
-### Done when
-
-- `cargo mutants -p omega-tools` shows ≤ 7 missed (down from 16), with the
-  delta explained entirely by deleted code.
-- All existing integration tests (`cargo test -p omega-tools`) pass unchanged.
-- `grep_files` output format is validated by running the existing
-  `grep_files_context_lines_show_surrounding` and `grep_files_glob_filter`
-  tests — no new tests should be necessary.
-- `has_command` and the `run_subprocess` helper are removed from
-  `grep_files.rs` / `find_files.rs`. `run_subprocess` and `SubprocOutput`
-  remain in `fetch_url.rs` only.
-- `just rust-gate` passes.
-
-### Session setup — 1d.0d
-
-**Model:** `claude-sonnet-4-6` — **Effort:** Medium
-
-The plan is fully specified above. The main risk is getting the grep output
-format exactly right — but the existing tests (`grep_files_context_lines_show_surrounding`,
-`grep_files_finds_match`, `grep_files_glob_filter`, `grep_files_max_results_truncation`)
-lock it down completely. Sonnet with medium effort is sufficient; escalate to
-`claude-opus-4-7` only if the context-lines implementation proves subtler than
-expected.
-
-**Prompt:**
-
-> Read `/home/carsten/omega/dev/rust-migration.md` — specifically the
-> "Phase 1d.0d — Eliminate external binary dependencies" section — and
-> execute it. Rewrite `find_files.rs` first (simpler), then `grep_files.rs`,
-> keeping `just rust-gate` green throughout. After both rewrites, run
-> `cargo mutants -p omega-tools` and confirm the Group A mutants are gone.
+| `delete -` in `run_subprocess` | `fetch_url.rs` | Signal-kill timing; requires precise subprocess teardown harness |
+| `replace + with *` in `walk_sync` | `list_files.rs` | `depth` is unused when `recursive=true`; truly equivalent |
+| `replace >= with <` in `execute` | `wait_for_output.rs` | Race window between last poll and process exit; needs fake clock |
+| `delete !` in `execute` | `web_search.rs` | Requires live Brave API key |
+| `replace > with ==` in `execute` | `web_search.rs` | Requires live Brave API key |
+| `replace > with <` in `execute` | `web_search.rs` | Requires live Brave API key |
+| `replace > with >=` in `execute` | `web_search.rs` | Requires live Brave API key |
 
 ---
 
-## Phase 1d.1 — `omega-agent` advanced features ⬜ Upcoming
+## Phase 1d.1 — `omega-agent` advanced features ⬜ Next
 
 Add to the `omega-agent` crate built in Phase 1d.0:
 
@@ -438,7 +285,7 @@ Add to the `omega-agent` crate built in Phase 1d.0:
 - **Server-side compaction** — handle `Compacted` stop reason; emit `compacted`
   event; clear/reset history.
 
-Session prompt will be written after Phase 1d.0d is complete.
+Session prompt to be written once scope is confirmed.
 
 ---
 
