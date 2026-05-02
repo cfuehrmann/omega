@@ -292,7 +292,7 @@ bar set by 1d.0d.
 |---|---|---|
 | 1d.1a | `set_model` / `set_effort` + `active_model` / `active_effort` state + `extract_last_model_and_effort` pure helper | ✅ Done |
 | 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ✅ Done |
-| 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ⬜ Next |
+| 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ✅ Done |
 | 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ⬜ |
 | 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ⬜ |
 
@@ -347,6 +347,39 @@ bar set by 1d.0d.
   `group_into_turns` so including vs. excluding the event from the slice
   produces identical output. `cargo mutants -f session_resume.rs`:
   **57 mutants, 55 caught, 2 unviable, 0 missed**.
+
+- **1d.1c** (commit `0e2493d`) — added two methods on `Agent` that close
+  the resumption loop. `seed_with_resumption_summary(summary, resumed_from)`
+  emits a `SessionResumed` event then injects a synthetic user (canned
+  preamble + summary) and assistant (canned ack) message pair into both
+  in-memory `history` and the persistent context store, preserving the
+  user/assistant alternation Anthropic expects. `perform_resumption(basis,
+  resumed_from, name, cancel)` makes a one-shot LLM call (hard-coded
+  `RESUMPTION_MODEL = "claude-sonnet-4-6"`, `system =
+  RESUMPTION_SUMMARY_INSTRUCTIONS`, `messages = [{user, basis}]`, no
+  tools, `cache_breakpoint_index = null`) and streams `ResumingSession
+  → LlmCall → signals → LlmResponse → SessionResumed`. The basis
+  user-record is appended to `context.jsonl` but **not** to in-memory
+  `history` (matches TS `performResumption`). On terminal `LlmError` the
+  stream yields `LlmError` and stops; on cancellation it stops cleanly
+  without `TurnInterrupted` (resumption is not a user turn). The pure
+  helpers ported in 1d.1b (`extract_summary_from_response`,
+  `extract_description_from_response`, `extract_resumption_basis`)
+  compose with the new methods. **Deferred:** `capEffortForModel` —
+  effort isn't on `LlmRequest` yet (consistent with the 1d.1a deferral
+  note); parity will be restored when `omega-core` wires effort. Tests:
+  9 + 25, covering full event-order pinning, basis-only on the wire,
+  `LlmCall` shape (Anthropic URL, resumption model, single context_hash,
+  null cache breakpoint), `LlmResponse.context_hash` matching the on-disk
+  assistant record, both `<summary>` and fallback-trim summary paths,
+  thinking-block persistence, `LlmRetry` partial-buffer clearing,
+  pre-cancellation leaving history untouched, and a subsequent
+  `send_message` consuming the seeded pair. `cargo mutants -f`:
+  `session_resume.rs` **57 mutants, 55 caught, 2 unviable, 0 missed**;
+  `agent.rs` **20 mutants, 8 caught, 12 unviable, 0 missed** — the
+  `Pin<Box<dyn Stream>>` return type makes most function-body mutants
+  compile-fail (same coverage limitation as `send_message` from prior
+  phases).
 
 ### Explicit deferrals (not part of 1d.1)
 
