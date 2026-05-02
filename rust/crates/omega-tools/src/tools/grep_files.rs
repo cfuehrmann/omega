@@ -40,9 +40,11 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
         .map_or(DEFAULT_MAX_RESULTS, |n| {
             usize::try_from(n).unwrap_or(DEFAULT_MAX_RESULTS)
         });
-    // context_lines is capped at usize::MAX (a line count larger than any
-    // file) so the saturating cast is lossless for any realistic input.
-    let context = usize::try_from(context_lines).unwrap_or(usize::MAX);
+    // context_lines comes from JSON and is meaningful only as a line count
+    // (files don't have u64::MAX lines), so treat the value as a usize
+    // directly, saturating at usize::MAX on hypothetical 32-bit targets.
+    #[allow(clippy::cast_possible_truncation)]
+    let context = context_lines.min(usize::MAX as u64) as usize;
 
     let (result_lines, truncated) = tokio::task::spawn_blocking(move || {
         search(
