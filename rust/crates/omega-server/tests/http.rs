@@ -98,53 +98,136 @@ async fn health_returns_200_with_json_status_ok() {
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder routes — /context, /files still return 501.
-// /api/sessions and /ws are NO LONGER placeholders.  /ws is exercised by
-// the dedicated `tests/ws.rs` integration suite (Phase 1e.2).
+// GET /api/files — file-completion suggestions (Phase 1e.4)
 // ---------------------------------------------------------------------------
 
+/// `GET /api/files?prefix=<absolute-prefix>` returns the matching entries
+/// in the prefix's directory, with directories first.
+///
+/// Uses an absolute prefix so the test is independent of the (process-global)
+/// current working directory.
 #[tokio::test]
-async fn non_session_placeholder_routes_return_501() {
+async fn get_api_files_returns_completions_for_absolute_prefix() {
     let tmp = TempDir::new().expect("tempdir");
+    let seed = tmp.path().join("seed");
+    std::fs::create_dir(&seed).expect("create seed dir");
+    std::fs::write(seed.join("hello.txt"), "").expect("write hello.txt");
+    std::fs::write(seed.join("help.md"), "").expect("write help.md");
+    std::fs::create_dir(seed.join("helpers")).expect("mkdir helpers");
+    std::fs::write(seed.join("world.txt"), "").expect("write world.txt");
+
     let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
     let addr = spawn_server(state).await;
-    let client = http_client();
 
-    for path in ["/context", "/files"] {
-        let resp = client
-            .get(format!("http://{addr}{path}"))
-            .send()
-            .await
-            .unwrap_or_else(|e| panic!("GET {path}: {e}"));
-        assert_eq!(
-            resp.status().as_u16(),
-            501,
-            "expected 501 for {path}, got {}",
-            resp.status(),
-        );
-    }
+    let prefix = format!("{}/hel", seed.display());
+    let resp = http_client()
+        .get(format!("http://{addr}/api/files"))
+        .query(&[("prefix", &prefix)])
+        .send()
+        .await
+        .expect("GET /api/files");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Vec<String> = resp.json().await.expect("json");
+
+    // Directories first, then alphabetical files.
+    let dir_part = format!("{}/", seed.display());
+    assert_eq!(
+        body,
+        vec![
+            format!("{dir_part}helpers/"),
+            format!("{dir_part}hello.txt"),
+            format!("{dir_part}help.md"),
+        ],
+    );
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/context — context-record lookup by hash (Phase 1e.4)
+// ---------------------------------------------------------------------------
+
+/// `GET /api/context?hashes=h1,h2` returns exactly the records whose
+/// hashes are listed, in request order.
 #[tokio::test]
-async fn non_session_placeholders_accept_post_too() {
+async fn get_api_context_returns_records_in_request_order() {
+    use omega_core::ContentBlock;
+    use omega_core::Role;
+    use omega_store::ContextStore;
+
     let tmp = TempDir::new().expect("tempdir");
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
+    let sessions_root = tmp.path().join("sessions");
+    let state = make_test_state(sessions_root.clone(), tmp.path().to_path_buf());
     let addr = spawn_server(state).await;
     let client = http_client();
 
-    for path in ["/context", "/files"] {
-        let resp = client
-            .post(format!("http://{addr}{path}"))
-            .send()
-            .await
-            .unwrap_or_else(|e| panic!("POST {path}: {e}"));
-        assert_eq!(
-            resp.status().as_u16(),
-            501,
-            "expected 501 for POST {path}, got {}",
-            resp.status(),
-        );
-    }
+    // Create a session so AppState has a context_file pointer.
+    let r = client
+        .post(format!("http://{addr}/api/sessions"))
+        .send()
+        .await
+        .expect("POST /api/sessions");
+    assert_eq!(r.status().as_u16(), 201);
+    let body: serde_json::Value = r.json().await.expect("json");
+    let dir_name = body["dir"].as_str().expect("dir").to_owned();
+
+    // Append three records directly via ContextStore so the test does
+    // not depend on any specific Anthropic-side hashing scheme.
+    let context_file = sessions_root.join(&dir_name).join("context.jsonl");
+    let store = ContextStore::new(context_file);
+    let h_a = store
+        .append(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "alpha".to_owned(),
+            }],
+        )
+        .await
+        .expect("append alpha");
+    let h_b = store
+        .append(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "bravo".to_owned(),
+            }],
+        )
+        .await
+        .expect("append bravo");
+    let h_c = store
+        .append(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "charlie".to_owned(),
+            }],
+        )
+        .await
+        .expect("append charlie");
+
+    // Request c, a (in that order); b must not appear, and order must be c-then-a.
+    let hashes = format!("{},{}", h_c.as_ref(), h_a.as_ref());
+    let resp = client
+        .get(format!("http://{addr}/api/context"))
+        .query(&[("hashes", hashes.as_str())])
+        .send()
+        .await
+        .expect("GET /api/context");
+    assert_eq!(resp.status().as_u16(), 200);
+    let arr: Vec<serde_json::Value> = resp.json().await.expect("json");
+    assert_eq!(arr.len(), 2, "expected 2 records, got {arr:?}");
+    assert_eq!(arr[0]["hash"].as_str().unwrap(), h_c.as_ref());
+    assert_eq!(arr[1]["hash"].as_str().unwrap(), h_a.as_ref());
+    assert!(
+        !arr.iter().any(|v| v["hash"].as_str() == Some(h_b.as_ref())),
+        "b must not be present",
+    );
+
+    // No hashes parameter → empty array.
+    let resp = client
+        .get(format!("http://{addr}/api/context"))
+        .send()
+        .await
+        .expect("GET /api/context (no hashes)");
+    assert_eq!(resp.status().as_u16(), 200);
+    let arr: Vec<serde_json::Value> = resp.json().await.expect("json");
+    assert!(arr.is_empty(), "empty hashes must yield []");
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +513,89 @@ async fn get_sessions_includes_metadata_after_rename() {
     assert_eq!(
         entry["name"].as_str().expect("name field"),
         "my-renamed-session"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — Phase 1e.4
+// ---------------------------------------------------------------------------
+
+/// Send SIGTERM to a real `omega-server` child process and verify that:
+///
+/// 1. The process exits cleanly (status code 0 — no panic, no abort).
+/// 2. The active session's `events.jsonl` ends with a `server_stopped`
+///    event, written by [`omega_server::perform_shutdown`].
+#[tokio::test]
+async fn graceful_shutdown_writes_server_stopped_and_exits_clean() {
+    use std::process::Stdio;
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    // Pick a free port — the binary does not advertise its bound port,
+    // so we choose one explicitly and accept the small race window.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let tmp = TempDir::new().expect("tempdir");
+    let sessions_root = tmp.path().join("sessions");
+    let public_dir = tmp.path().to_path_buf();
+
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        .arg("--public-dir")
+        .arg(&public_dir)
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+
+    // Wait for the server to be ready (poll /health).
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    // Create a session — server_stopped is only written when one exists.
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/sessions"))
+        .send()
+        .await
+        .expect("POST /api/sessions");
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: serde_json::Value = resp.json().await.expect("json");
+    let dir_name = body["dir"].as_str().expect("dir").to_owned();
+
+    // SIGTERM → graceful shutdown.
+    let pid = nix::unistd::Pid::from_raw(
+        i32::try_from(child.id().expect("child has pid")).expect("pid fits in i32"),
+    );
+    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).expect("send SIGTERM");
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("server did not exit within 10 s of SIGTERM")
+        .expect("child wait");
+    assert!(status.success(), "server exit was not clean: {status:?}");
+
+    // events.jsonl must contain the server_stopped record.
+    let events_file = sessions_root.join(&dir_name).join("events.jsonl");
+    let content = std::fs::read_to_string(&events_file).expect("read events.jsonl");
+    assert!(
+        content.contains("\"type\":\"server_stopped\""),
+        "events.jsonl must contain server_stopped record; got:\n{content}",
     );
 }
 

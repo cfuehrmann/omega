@@ -7,32 +7,34 @@
 //! every persisted `OmegaEvent` from `events.jsonl` is pushed through the
 //! new socket before `Ready`, filtering out the types in [`REPLAY_EXCLUDE`].
 //!
-//! Route map (after 1e.3):
+//! Route map (after 1e.4):
 //!
 //! - `GET  /health`        — liveness probe
 //! - `GET  /api/sessions`  — list sessions
 //! - `POST /api/sessions`  — create session
+//! - `GET  /api/context`   — context-record lookup by hash
+//! - `GET  /api/files`     — file-completion suggestions
 //! - `GET  /ws`            — WebSocket upgrade
-//! - `/context`, `/files`  — placeholder (1e.4)
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use axum::{
     Json, Router,
     extract::{
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{any, get},
+    routing::get,
 };
 use futures::{SinkExt, StreamExt};
 use omega_agent::{Agent, AgentConfig};
-use omega_store::{ContextStore, EventStore, session_dir_re};
+use omega_store::{ContextRecord, ContextStore, EventStore, SessionMetadata, session_dir_re};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
@@ -76,8 +78,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/api/sessions", get(get_sessions).post(post_session))
         .route("/ws", get(ws_handler))
-        .route("/context", any(not_implemented))
-        .route("/files", any(not_implemented))
+        .route("/api/context", get(get_context))
+        .route("/api/files", get(get_files))
         .fallback_service(ServeDir::new(public_dir))
         .with_state(state)
 }
@@ -89,11 +91,6 @@ pub fn build_router(state: AppState) -> Router {
 /// `GET /health` — liveness probe.
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
-}
-
-/// Placeholder for routes whose real implementation lands in later sub-phases.
-async fn not_implemented() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +221,7 @@ async fn create_active_session(state: &AppState) -> Result<(ActiveSession, Strin
         controls,
         paths,
         ws_tx: None,
+        current_turn: None,
     };
     Ok((session, dir_name))
 }
@@ -272,6 +270,13 @@ enum ClientFrame {
     Abort,
     /// Drop any prior session and create a fresh one on the same WS.
     Reset,
+    /// Resume a prior session: spawn a new session and synthesise a
+    /// summary of `session_dir`'s history via the resumption LLM call.
+    #[serde(rename_all = "camelCase")]
+    ResumeSession { session_dir: String },
+    /// Rename the active session by writing `name` into its
+    /// `session.jsonc` metadata.
+    RenameSession { name: String },
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -417,6 +422,10 @@ async fn dispatch_client_frame(
         ClientFrame::Continue { content } => handle_continue(state, content).await,
         ClientFrame::Abort => handle_abort(state).await,
         ClientFrame::Reset => handle_reset(state, tx).await,
+        ClientFrame::ResumeSession { session_dir } => {
+            handle_resume_session(state, tx, session_dir).await
+        }
+        ClientFrame::RenameSession { name } => handle_rename_session(state, name).await,
     }
 }
 
@@ -437,7 +446,7 @@ async fn handle_user_message(
     };
 
     let tx_for_turn = tx.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let mut guard = agent.lock().await;
         let cancel = CancellationToken::new();
         let mut stream = guard.send_message(content, cancel);
@@ -450,6 +459,18 @@ async fn handle_user_message(
             }
         }
     });
+
+    // Stash the JoinHandle so graceful shutdown can `join` it (with a
+    // 2 s deadline) after requesting abort.  A previous turn's handle —
+    // if any — is dropped here; that does not abort it (Tokio detaches
+    // a JoinHandle that goes out of scope without `abort()`), so the
+    // prior turn keeps draining as before.
+    {
+        let mut slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_mut() {
+            active.current_turn = Some(handle);
+        }
+    }
     Ok(())
 }
 
@@ -503,6 +524,248 @@ async fn handle_reset(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Resu
     *state.active_session.lock().await = Some(session);
     let _ = tx.send(WsMessage::Ready);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// resume_session — load prior session events, build a fresh session, and
+// stream the resumption summary turn through `tx`.
+// ---------------------------------------------------------------------------
+
+async fn handle_resume_session(
+    state: &AppState,
+    tx: &UnboundedSender<WsMessage>,
+    session_dir: String,
+) -> Result<(), String> {
+    if !session_dir_re().is_match(&session_dir) {
+        return Err(format!("invalid sessionDir: {session_dir}"));
+    }
+
+    // Tell any in-flight turn to wind down so the orphan agent doesn't
+    // keep using the soon-to-be-replaced session paths.
+    {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            active.controls.request_abort();
+        }
+    }
+
+    // Load the prior session's events and metadata.
+    let prev_dir = state.sessions_root.join(&session_dir);
+    let prev_events_file = prev_dir.join("events.jsonl");
+    let prev_estore = EventStore::new(prev_events_file);
+    let raw_events = prev_estore
+        .read_all()
+        .await
+        .map_err(|e| format!("read prior events: {e}"))?;
+    let prior_events: Vec<OmegaEvent> = raw_events
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    let basis = omega_agent::extract_resumption_basis(&prior_events);
+    let prev_meta = omega_store::read_session_metadata(&prev_dir).await;
+
+    // Build the new session and install ws_tx.
+    let (mut session, _new_dir_name) = create_active_session(state).await?;
+    session.ws_tx = Some(tx.clone());
+    let agent = Arc::clone(&session.agent);
+    let new_dir = session.paths.dir.clone();
+    *state.active_session.lock().await = Some(session);
+
+    // Drive the resumption stream inline so events are persisted and
+    // the WS frames arrive in order before history replay + Ready.
+    {
+        let mut guard = agent.lock().await;
+        let cancel = CancellationToken::new();
+        let mut stream =
+            guard.perform_resumption(basis, session_dir.clone(), prev_meta.name.clone(), cancel);
+        while let Some(item) = stream.next().await {
+            let _ = tx.send(WsMessage::Item(Box::new(item)));
+        }
+    }
+
+    // Persist the resumed-from pointer in the new session's metadata so
+    // a subsequent `GET /api/sessions` shows the link.
+    let _ = omega_store::update_session_metadata(
+        &new_dir,
+        SessionMetadata {
+            resumed_from: Some(session_dir),
+            ..SessionMetadata::default()
+        },
+    )
+    .await;
+
+    replay_history(state, tx).await;
+    let _ = tx.send(WsMessage::Ready);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// rename_session — write `name` into the active session's session.jsonc.
+// ---------------------------------------------------------------------------
+
+async fn handle_rename_session(state: &AppState, name: String) -> Result<(), String> {
+    let dir = {
+        let slot = state.active_session.lock().await;
+        slot.as_ref().map(|a| a.paths.dir.clone())
+    };
+    let Some(dir) = dir else {
+        return Err("no active session \u{2014} send `reset` first".to_owned());
+    };
+    omega_store::update_session_metadata(
+        &dir,
+        SessionMetadata {
+            name: Some(name),
+            ..SessionMetadata::default()
+        },
+    )
+    .await
+    .map_err(|e| format!("update_session_metadata: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/context?hashes=h1,h2 — look up context records by hash.
+// ---------------------------------------------------------------------------
+
+/// Query string for `GET /api/context`.
+#[derive(Debug, Deserialize)]
+pub struct ContextQuery {
+    /// Comma-separated list of context-record hashes.
+    pub hashes: Option<String>,
+}
+
+async fn get_context(
+    State(state): State<AppState>,
+    Query(q): Query<ContextQuery>,
+) -> Json<Vec<ContextRecord>> {
+    let raw = q.hashes.unwrap_or_default();
+    let wanted: Vec<&str> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if wanted.is_empty() {
+        return Json(Vec::new());
+    }
+
+    let context_file = {
+        let slot = state.active_session.lock().await;
+        slot.as_ref().map(|a| a.paths.context_file.clone())
+    };
+    let Some(context_file) = context_file else {
+        return Json(Vec::new());
+    };
+
+    let store = ContextStore::new(context_file);
+    let records = store.read_all().await.unwrap_or_default();
+    let mut by_hash: HashMap<String, ContextRecord> = HashMap::with_capacity(records.len());
+    for r in records {
+        by_hash.insert(r.hash.as_ref().to_owned(), r);
+    }
+    // Preserve request order; drop misses (mirrors TS lookupContextRecords).
+    let out: Vec<ContextRecord> = wanted
+        .into_iter()
+        .filter_map(|h| by_hash.remove(h))
+        .collect();
+    Json(out)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/files?prefix=p — path completions relative to the cwd.
+// ---------------------------------------------------------------------------
+
+/// Query string for `GET /api/files`.
+#[derive(Debug, Deserialize)]
+pub struct FilesQuery {
+    /// Path prefix to complete.  Absolute paths bypass `cwd`.
+    pub prefix: Option<String>,
+}
+
+async fn get_files(Query(q): Query<FilesQuery>) -> Json<Vec<String>> {
+    let prefix = q.prefix.unwrap_or_default();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    Json(list_files_for_completion(&prefix, &cwd).await)
+}
+
+/// Maximum number of completion suggestions returned by `GET /api/files`.
+///
+/// Mirrors the TS server's hard-cap.
+pub(crate) const MAX_FILE_COMPLETIONS: usize = 50;
+
+/// Comparator: directories sort before files; ties (and same-kind pairs)
+/// break alphabetically. Extracted from `list_files_for_completion` so the
+/// three branches can be exercised directly by tests — the in-place call
+/// inside `sort_by` only routes inputs through the `(true, false)` arm for
+/// some sort schedules, which makes end-to-end verification fragile.
+fn dir_first_then_alpha(
+    a_name: &str,
+    a_is_dir: bool,
+    b_name: &str,
+    b_is_dir: bool,
+) -> std::cmp::Ordering {
+    match (a_is_dir, b_is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a_name.cmp(b_name),
+    }
+}
+
+/// Compute path completions matching `prefix` relative to `cwd`.
+///
+/// Matches the TS `listFilesForCompletion` helper:
+///
+/// 1. Split `prefix` at the last `/`; the left part (incl. the slash) is
+///    the directory portion to read, the right part is the name filter.
+/// 2. Absolute prefixes (`prefix.starts_with('/')`) read the literal
+///    directory; relative prefixes are joined onto `cwd`.
+/// 3. Entries are kept if `name.starts_with(filter)`; sorted with
+///    directories first then alphabetically, capped at
+///    [`MAX_FILE_COMPLETIONS`].
+/// 4. Each result is `"{dir_part}{name}{slash_if_dir}"` so the client
+///    can paste the suggestion verbatim.
+pub(crate) async fn list_files_for_completion(prefix: &str, cwd: &Path) -> Vec<String> {
+    let last_slash = prefix.rfind('/');
+    let (dir_part, filter) = match last_slash {
+        Some(idx) => (&prefix[..=idx], &prefix[idx + 1..]),
+        None => ("", prefix),
+    };
+    let is_abs = prefix.starts_with('/');
+    let target_dir: PathBuf = if is_abs {
+        if dir_part.is_empty() {
+            PathBuf::from("/")
+        } else {
+            PathBuf::from(dir_part)
+        }
+    } else if dir_part.is_empty() {
+        cwd.to_path_buf()
+    } else {
+        cwd.join(dir_part)
+    };
+
+    let mut entries: Vec<(String, bool)> = Vec::new();
+    let Ok(mut rd) = tokio::fs::read_dir(&target_dir).await else {
+        return Vec::new();
+    };
+    while let Ok(Some(e)) = rd.next_entry().await {
+        // non-UTF-8 names are skipped, mirroring TS readdir.
+        let Ok(name) = e.file_name().into_string() else {
+            continue;
+        };
+        if !filter.is_empty() && !name.starts_with(filter) {
+            continue;
+        }
+        let is_dir = e.file_type().await.is_ok_and(|t| t.is_dir());
+        entries.push((name, is_dir));
+    }
+    // Directories first, then alphabetical by name.
+    entries.sort_by(|a, b| dir_first_then_alpha(&a.0, a.1, &b.0, b.1));
+    entries.truncate(MAX_FILE_COMPLETIONS);
+    entries
+        .into_iter()
+        .map(|(name, is_dir)| {
+            let suffix = if is_dir { "/" } else { "" };
+            format!("{dir_part}{name}{suffix}")
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +850,30 @@ mod tests {
     fn client_frame_unknown_type_rejected() {
         let r = serde_json::from_str::<ClientFrame>(r#"{"type":"nope"}"#);
         assert!(r.is_err(), "unknown discriminator must be rejected");
+    }
+
+    #[test]
+    fn client_frame_resume_session_parses_camel_case() {
+        let f: ClientFrame = serde_json::from_str(
+            r#"{"type":"resume_session","sessionDir":"2025-01-01T00-00-00-000-deadbeef"}"#,
+        )
+        .unwrap();
+        match f {
+            ClientFrame::ResumeSession { session_dir } => {
+                assert_eq!(session_dir, "2025-01-01T00-00-00-000-deadbeef");
+            }
+            other => panic!("expected ResumeSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn client_frame_rename_session_parses() {
+        let f: ClientFrame =
+            serde_json::from_str(r#"{"type":"rename_session","name":"my-name"}"#).unwrap();
+        match f {
+            ClientFrame::RenameSession { name } => assert_eq!(name, "my-name"),
+            other => panic!("expected RenameSession, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------
@@ -742,5 +1029,129 @@ mod tests {
         // Just must not panic / not create a session.
         clear_ws_tx(&state).await;
         assert!(state.active_session.lock().await.is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // list_files_for_completion
+    // -----------------------------------------------------------------
+
+    use super::{MAX_FILE_COMPLETIONS, list_files_for_completion};
+
+    #[tokio::test]
+    async fn list_files_returns_dirs_first_then_alphabetical() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path();
+        std::fs::write(cwd.join("alpha.txt"), "").unwrap();
+        std::fs::write(cwd.join("bravo.txt"), "").unwrap();
+        std::fs::create_dir(cwd.join("zulu")).unwrap();
+        std::fs::create_dir(cwd.join("charlie")).unwrap();
+
+        let out = list_files_for_completion("", cwd).await;
+        assert_eq!(
+            out,
+            vec![
+                "charlie/".to_owned(),
+                "zulu/".to_owned(),
+                "alpha.txt".to_owned(),
+                "bravo.txt".to_owned(),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn list_files_filters_by_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path();
+        std::fs::write(cwd.join("hello.txt"), "").unwrap();
+        std::fs::write(cwd.join("help.md"), "").unwrap();
+        std::fs::write(cwd.join("world.txt"), "").unwrap();
+
+        let out = list_files_for_completion("hel", cwd).await;
+        assert_eq!(out, vec!["hello.txt".to_owned(), "help.md".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn list_files_with_subdir_prefix_includes_dir_part_in_results() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path();
+        std::fs::create_dir(cwd.join("sub")).unwrap();
+        std::fs::write(cwd.join("sub/foo.txt"), "").unwrap();
+        std::fs::write(cwd.join("sub/bar.txt"), "").unwrap();
+
+        let out = list_files_for_completion("sub/", cwd).await;
+        assert_eq!(
+            out,
+            vec!["sub/bar.txt".to_owned(), "sub/foo.txt".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_files_absolute_prefix_bypasses_cwd() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("hello.txt"), "").unwrap();
+        std::fs::write(tmp.path().join("help.md"), "").unwrap();
+
+        // Use a clearly-distinct cwd that does not contain the test files.
+        let cwd = std::env::temp_dir();
+        let prefix = format!("{}/hel", tmp.path().display());
+        let out = list_files_for_completion(&prefix, &cwd).await;
+        let dir = format!("{}/", tmp.path().display());
+        assert_eq!(
+            out,
+            vec![format!("{dir}hello.txt"), format!("{dir}help.md")],
+        );
+    }
+
+    #[tokio::test]
+    async fn list_files_unreadable_directory_returns_empty() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path().join("does-not-exist");
+        let out = list_files_for_completion("", &cwd).await;
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_files_caps_at_max_completions() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path();
+        for i in 0..(MAX_FILE_COMPLETIONS + 5) {
+            std::fs::write(cwd.join(format!("file-{i:03}.txt")), "").unwrap();
+        }
+        let out = list_files_for_completion("", cwd).await;
+        assert_eq!(out.len(), MAX_FILE_COMPLETIONS);
+    }
+
+    /// Directories must sort before files — even when the directory
+    /// name alphabetically follows the file name.  Calling the
+    /// comparator directly exercises every arm regardless of the
+    /// underlying sort algorithm's comparison schedule.
+    #[test]
+    fn dir_first_then_alpha_directory_precedes_file() {
+        use super::dir_first_then_alpha;
+        use std::cmp::Ordering;
+
+        // (true, false) arm — dir name *after* file name alphabetically.
+        assert_eq!(
+            dir_first_then_alpha("zzz_dir", true, "aaa.txt", false),
+            Ordering::Less,
+        );
+        // (false, true) arm — file name *before* dir name alphabetically.
+        assert_eq!(
+            dir_first_then_alpha("aaa.txt", false, "zzz_dir", true),
+            Ordering::Greater,
+        );
+        // Same kind — alphabetical order applies.
+        assert_eq!(
+            dir_first_then_alpha("aaa.txt", false, "bbb.txt", false),
+            Ordering::Less,
+        );
+        assert_eq!(
+            dir_first_then_alpha("zzz.txt", false, "aaa.txt", false),
+            Ordering::Greater,
+        );
+        assert_eq!(
+            dir_first_then_alpha("abc", true, "abc", true),
+            Ordering::Equal,
+        );
     }
 }

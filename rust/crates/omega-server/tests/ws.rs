@@ -638,6 +638,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         controls,
         paths,
         ws_tx: None,
+        current_turn: None,
     };
 
     let state = make_test_state(Arc::clone(&provider), sessions_root);
@@ -703,5 +704,134 @@ async fn reconnect_after_reset_replays_init_events_then_ready() {
         types.len(),
         3,
         "expected exactly [server_started, session_started, ready]; got {types:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1e.4 — rename_session updates the active session's metadata.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rename_session_updates_metadata_for_active_session() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    let state = make_test_state(provider, sessions_root.clone());
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    let _ = recv_until_type(&mut ws, "ready").await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "rename_session", "name": "my-name" }),
+    )
+    .await;
+    // No frame is emitted on success.  Give the server a moment to write
+    // the metadata file before reading it back.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let entry = sessions_root
+        .read_dir()
+        .expect("sessions_root readable")
+        .next()
+        .expect("a session dir must exist")
+        .expect("dir entry");
+    let meta = omega_store::read_session_metadata(&entry.path()).await;
+    assert_eq!(
+        meta.name.as_deref(),
+        Some("my-name"),
+        "name must be updated; got {meta:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1e.4 — resume_session aborts current turn, runs the resumption
+// summary call against the target session's events, and replays history
+// of the new (resumed) session including the resuming_session event.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn resume_session_emits_resuming_session_event_for_target_dir() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    std::fs::create_dir_all(&sessions_root).unwrap();
+
+    // Pre-create session B with a valid session_dir name + an events.jsonl
+    // containing one session_started event so extract_resumption_basis
+    // has something to operate on.
+    let session_b_name = "2024-12-31T00-00-00-000-cafefeed";
+    let session_b_dir = sessions_root.join(session_b_name);
+    std::fs::create_dir_all(&session_b_dir).unwrap();
+    let events_b = session_b_dir.join("events.jsonl");
+    std::fs::write(
+        &events_b,
+        "{\"type\":\"session_started\",\"time\":\"2024-12-31T00:00:00.000Z\",\"cwd\":\"/tmp\",\"model\":\"claude-sonnet-4-6\",\"effort\":\"medium\"}\n",
+    )
+    .expect("write session B events.jsonl");
+
+    let provider = Arc::new(MockProvider::new());
+    // Resumption summary turn: a single end_turn LLM response with summary text.
+    provider.push(vec![Ok(llm_response(
+        "end_turn",
+        Some("<summary>resumed-context</summary>"),
+    ))]);
+
+    let state = make_test_state(Arc::clone(&provider), sessions_root.clone());
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    // Reset creates session A (does not invoke the LLM).
+    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    let _ = recv_until_type(&mut ws, "ready").await;
+
+    // Resume from session B.
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "resume_session", "sessionDir": session_b_name }),
+    )
+    .await;
+    let frames = recv_until_type(&mut ws, "ready").await;
+    let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
+
+    // The resumption stream must include `resuming_session` referencing B.
+    let resuming = frames
+        .iter()
+        .find(|v| v["type"] == "resuming_session")
+        .unwrap_or_else(|| panic!("expected resuming_session frame; got {types:?}"));
+    assert_eq!(
+        resuming["resumedFrom"].as_str(),
+        Some(session_b_name),
+        "resuming_session.resumed_from must point to B; got {resuming:?}",
+    );
+    // And it must complete with `session_resumed` before the final ready.
+    assert!(
+        types.contains(&"session_resumed"),
+        "expected session_resumed in stream; got {types:?}",
+    );
+    assert_eq!(
+        types.last().copied(),
+        Some("ready"),
+        "ready must be the last frame; got {types:?}",
+    );
+
+    // The newly-created session must record the resume link in its
+    // metadata so a subsequent `GET /api/sessions` exposes it.
+    let new_dir = std::fs::read_dir(&sessions_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.is_dir() && p.file_name().and_then(|n| n.to_str()) != Some(session_b_name))
+        .expect("new session dir created on resume");
+    let meta = omega_store::read_session_metadata(&new_dir).await;
+    assert_eq!(
+        meta.resumed_from.as_deref(),
+        Some(session_b_name),
+        "resumed_from must point to B; got {meta:?}",
     );
 }

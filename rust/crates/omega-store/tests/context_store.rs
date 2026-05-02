@@ -190,3 +190,90 @@ async fn append_creates_parent_dirs_if_needed() {
         "context.jsonl should be created inside nested dirs"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ContextStore::read_all (real I/O)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn read_all_propagates_non_notfound_io_error() {
+    let dir = tempfile::tempdir().unwrap();
+    // Placing a *directory* at the path produces an IsADirectory I/O error
+    // (not NotFound) when read_to_string is called — must propagate as Err.
+    let path = dir.path().join("context.jsonl");
+    std::fs::create_dir(&path).unwrap();
+    let store = ContextStore::new(path);
+    let result = store.read_all().await;
+    assert!(
+        result.is_err(),
+        "non-NotFound I/O error must propagate as Err, not return empty Vec",
+    );
+}
+
+#[tokio::test]
+async fn read_all_returns_empty_vec_when_file_missing() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+
+    #[allow(clippy::unwrap_used)]
+    let records = store.read_all().await.unwrap();
+    assert!(records.is_empty());
+}
+
+#[tokio::test]
+async fn read_all_returns_empty_vec_for_empty_file() {
+    let (_guard, path) = temp_context_file();
+    std::fs::write(&path, "").unwrap();
+    let store = ContextStore::new(path);
+
+    #[allow(clippy::unwrap_used)]
+    let records = store.read_all().await.unwrap();
+    assert!(records.is_empty());
+}
+
+#[tokio::test]
+async fn read_all_round_trips_appended_records() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+
+    #[allow(clippy::unwrap_used)]
+    let h1 = store
+        .append(Role::User, vec![text_block("first")])
+        .await
+        .unwrap();
+    #[allow(clippy::unwrap_used)]
+    let h2 = store
+        .append(Role::Assistant, vec![text_block("second")])
+        .await
+        .unwrap();
+
+    #[allow(clippy::unwrap_used)]
+    let records = store.read_all().await.unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].hash, h1);
+    assert_eq!(records[0].role, Role::User);
+    assert_eq!(records[1].hash, h2);
+    assert_eq!(records[1].role, Role::Assistant);
+}
+
+#[tokio::test]
+async fn read_all_skips_blank_and_malformed_lines() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path.clone());
+    #[allow(clippy::unwrap_used)]
+    store
+        .append(Role::User, vec![text_block("ok")])
+        .await
+        .unwrap();
+    // Inject a malformed line + a blank line.
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str("\n");
+    text.push_str("not json\n");
+    text.push_str("\n");
+    std::fs::write(&path, text).unwrap();
+
+    #[allow(clippy::unwrap_used)]
+    let records = store.read_all().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].role, Role::User);
+}

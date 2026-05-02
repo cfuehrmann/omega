@@ -248,7 +248,7 @@ tokio-tungstenite = "0.26"    # dev-dependency for test WS client only
 | 1e.1 | ✅ Done | `ActiveSession`, `AppState`, `serve()`, `POST /api/sessions`, `GET /api/sessions` |
 | 1e.2 | ✅ Done | WebSocket upgrade; `user_message` → turn → event stream; `pause`/`continue`/`abort`/`reset` |
 | 1e.3 | ✅ Done | History replay on reconnect (filtered `events.jsonl` push before `Ready`) |
-| 1e.4 | ⬜ Upcoming | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
+| 1e.4 | ✅ Done | `resume_session`; `rename_session`; `GET /api/context`; `GET /api/files`; graceful shutdown |
 
 ### Phase 1e.0 — done (concise record)
 
@@ -456,6 +456,80 @@ reconnect.
 - `omega-server/src/router.rs`: 23 caught, 9 unviable, **1 equivalent**:
   same `Message::Close` arm as 1e.2 — deletion leaves identical behaviour
   via the `while let None` exit path; documented in source comment.
+
+**Carry-forward into 1e.4:** resolved — see 1e.4 record below.
+
+### Phase 1e.4 — done (concise record)
+
+**Scope:** Remaining WS frames (`resume_session`, `rename_session`),
+HTTP routes (`GET /api/context`, `GET /api/files`), and graceful
+shutdown on SIGINT/SIGTERM.
+
+**`ContextStore::read_all()`** added to `omega-store`: reads
+`context.jsonl` line-by-line, skips blanks/malformed, returns
+`Ok(vec![])` when file absent, propagates non-NotFound I/O errors.
+Mirrors `EventStore::read_all` semantics.
+
+**New `ClientFrame` variants in `router.rs`:**
+- `ResumeSession { session_dir }` (serde camelCase: `sessionDir`).
+  Aborts the active turn, loads the target session's `events.jsonl`,
+  derives `basis` via `omega_agent::extract_resumption_basis`, reads
+  prior `name`, creates a fresh active session, drives
+  `agent.perform_resumption(basis, session_dir, name, cancel)` to
+  completion, writes `resumed_from` into the new session's metadata,
+  replays history, then `Ready`.
+- `RenameSession { name }`. Calls `omega_store::update_session_metadata`
+  on the active session's `paths.dir` — no agent interaction.
+
+**New HTTP routes:**
+- `GET /api/context?hashes=h1,h2` — `ContextStore::read_all` filtered by
+  the requested hash set, **preserving request order**, dropping misses.
+- `GET /api/files?prefix=p` — path completions matching `prefix` against
+  cwd (or absolute root for `/`-prefixed inputs). Sorted directories-first
+  then alphabetically, capped at `MAX_FILE_COMPLETIONS = 50`. The
+  comparator `dir_first_then_alpha` is extracted as a free function so
+  every match arm is mutation-tested directly — embedded `sort_by`
+  closures don't reliably exercise all branches.
+
+**Graceful shutdown in `lib.rs`:** `serve` now wraps `axum::serve` with
+`with_graceful_shutdown(shutdown_signal(state))`. `wait_for_signal`
+selects on SIGINT and SIGTERM (Unix) or `ctrl_c()` (other). On signal,
+`perform_shutdown` snapshots `(controls, events_file, current_turn)`
+from the active session under one lock, calls `controls.request_abort()`,
+awaits the turn handle with `TURN_DRAIN_DEADLINE = 2s`, then appends a
+`server_stopped` event (`outcome: Clean`, `reason: None`) before
+`axum::serve` returns. New `current_turn: Option<JoinHandle<()>>` field
+on `ActiveSession` is populated by `handle_user_message` after spawning.
+
+**Tests added:**
+- `omega-store/tests/context_store.rs` — 5 `read_all` tests (empty,
+  multi-record round-trip, malformed-line skip, missing-file → empty,
+  non-NotFound I/O error propagation).
+- `omega-server/src/router.rs` (unit) — `ClientFrame` parse tests for
+  both new variants; `dir_first_then_alpha` exercises all three arms
+  directly; six `list_files_for_completion` tests covering filter,
+  trailing-slash on dirs, absolute prefix, dir-prefix, max-cap,
+  unreadable-dir.
+- `omega-server/tests/http.rs` — `/api/context` returns records in
+  request order; `/api/files` returns absolute-prefix completions;
+  graceful-shutdown spawns the release binary, sends SIGTERM via
+  `nix::sys::signal::kill`, asserts exit-0 and `server_stopped` in
+  `events.jsonl`.
+- `omega-server/tests/ws.rs` — `rename_session` updates metadata;
+  `resume_session` emits `resuming_session` referencing the source dir
+  and writes `resumed_from` into the new session's metadata.
+
+**Workspace lint constraint:** `unsafe_code = forbid` is non-overridable,
+so the SIGTERM test uses `nix` (safe wrappers) rather than raw `libc`.
+
+**`cargo mutants -f`:**
+- `omega-store/src/context_store.rs`: 5 caught, 3 unviable, **0 missed**.
+- `omega-server/src/session.rs`: 0 mutants (struct field only).
+- `omega-server/src/router.rs`: 42 caught, 23 unviable, **1 equivalent**:
+  same `Message::Close` arm carried forward from 1e.2/1e.3.
+- `omega-server/src/lib.rs`: 6 caught, **0 missed**. `now_iso` is pinned
+  by an explicit format-shape assertion (length 24, ISO-8601 separators,
+  trailing `Z`).
 
 ---
 

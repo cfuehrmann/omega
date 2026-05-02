@@ -10,6 +10,7 @@ use omega_agent::{Agent, ControlHandle};
 use omega_store::SessionPaths;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinHandle;
 
 use crate::ws_message::WsMessage;
 
@@ -34,4 +35,10 @@ pub struct ActiveSession {
     /// fanned-out) on every reconnect, matching the TS server's
     /// single-WS-at-a-time model.
     pub ws_tx: Option<UnboundedSender<WsMessage>>,
+    /// Handle to the currently-running turn task, if any.
+    ///
+    /// Set when [`router::handle_user_message`] spawns a turn-driving task
+    /// and consumed by graceful shutdown so the server can `join` the task
+    /// (with a 2 s deadline) after requesting abort.  `None` between turns.
+    pub current_turn: Option<JoinHandle<()>>,
 }

@@ -93,6 +93,31 @@ impl ContextStore {
         Ok(hash)
     }
 
+    /// Read every parseable [`ContextRecord`] from `context.jsonl`.
+    ///
+    /// Each non-blank line is parsed as a [`ContextRecord`]; blank lines
+    /// or malformed JSON are silently skipped — mirrors the TS
+    /// `lookupContextRecords` reader in `src/web/server.ts`.
+    ///
+    /// Returns an empty `Vec` when the file does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only for I/O failures other than "file not found".
+    pub async fn read_all(&self) -> Result<Vec<ContextRecord>> {
+        let text = match tokio::fs::read_to_string(&self.path).await {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(StoreError::Io(e)),
+        };
+        let records = text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        Ok(records)
+    }
+
     /// Build a [`ContextRecord`] without writing it — useful for testing the
     /// record shape without I/O.
     #[must_use]
