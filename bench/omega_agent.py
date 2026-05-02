@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
 
-OMEGA_VERSION = "v0.1.2"
-OMEGA_RUST_VERSION = "v0.1.2"  # kept in sync with OMEGA_VERSION during the migration
+OMEGA_VERSION = "v0.1.4"
+OMEGA_RUST_VERSION = "v0.1.4"  # kept in sync with OMEGA_VERSION during the migration
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
