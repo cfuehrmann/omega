@@ -15,8 +15,8 @@
 | 1d.0a — `omega-agent` core + scaffolds | ✅ Done | Agent loop, system prompt, error classifier, MockProvider + 6 integration tests, `omega-tools` stubs + dispatch, `omega-cli --help` |
 | 1d.0b — tool body ports + CLI wiring | ✅ Done | 12 real tool implementations + 35 integration tests; `omega-cli run` end-to-end; `OmegaRustAgent` Harbor adapter |
 | 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
-| 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; killed Group A mutants; 16 → 7 missed |
-| 1d.1 — `omega-agent` advanced | ⬜ Next | Pause/continue/abort, session resumption, compaction, model/effort switching |
+| 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries (sentinels → `Option`, depth → `is_root`, extracted pure helpers); **0 missed** across `omega-tools` |
+| 1d.1 — `omega-agent` advanced | ⬜ **Next** | Pause/continue/abort, session resumption, compaction, model/effort switching |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -243,6 +243,14 @@ live key in CI or a reqwest mock — neither is worth doing for four mutants.
 
 ---
 
+> **Forward note.** All 16 surviving mutants from Phase 1d.0c were eliminated
+> by the time Phase 1d.0d closed: the 9 reachable-only-via-fallback mutants
+> (Groups A + the rg/fd ones in B/C) by the `ignore`/`globset`/`regex` rewrite,
+> and the remaining 7 (`fetch_url` sentinel, `list_files` depth, `wait_for_output`
+> exit-branch, `web_search` ×4) by the small refactors documented below.
+
+---
+
 ## Phase 1d.0d — Eliminate external binary dependencies (`omega-tools`) ✅
 
 Replaced `rg`/`fd` subprocesses in `find_files.rs` and `grep_files.rs` with
@@ -266,7 +274,7 @@ seam:
 
 | Original survivor | File | Refactor |
 |---|---|---|
-| `delete -` in `run_subprocess` | `fetch_url.rs` | Replaced the `unwrap_or(-1)` sentinel with `code: Option<i32>` (`None` = killed by signal). Signal kill is now reported as `[killed by signal]`; integration test invokes a `kill -KILL $` postprocess. |
+| `delete -` in `run_subprocess` | `fetch_url.rs` | Replaced the `unwrap_or(-1)` sentinel with `code: Option<i32>` (`None` = killed by signal). Signal kill is now reported as `[killed by signal]`; integration test invokes a postprocess that signal-kills its bash shell with `kill -KILL` on its own PID (literal `$`, written as `concat!("kill -KILL $", "$")` in the test source so the dollar pair survives JSON/markdown round-trips). |
 | `replace + with *` in `walk_sync` | `list_files.rs` | Replaced the `depth: usize` counter with `is_root: bool`. The dotfile filter still hides `.foo` only at the top level of a non-recursive listing, but the arithmetic mutant has nothing to mutate. |
 | `replace >= with <` in `execute` (post-exit `min_bytes_reached`) | `wait_for_output.rs` | Hoisted the in-loop and post-exit predicates into a single `evaluate(content, pattern, min_bytes) -> (bool, bool)` helper, with direct unit tests pinning the `len() >= min` boundary at exact equality and one byte below. |
 | `delete !` + 3 truncation mutants in `execute` | `web_search.rs` | Extracted `check_status(StatusCode) -> Result<(), String>` and `render_results(&Value) -> String`. Pure unit tests on synthetic JSON pin both the 2xx/non-2xx branch and the `> MAX_OUTPUT_CHARS` truncation boundary at exact equality and one above. No live API key, no mock HTTP server. |
