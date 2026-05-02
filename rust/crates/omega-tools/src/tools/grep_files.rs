@@ -40,9 +40,9 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
         .map_or(DEFAULT_MAX_RESULTS, |n| {
             usize::try_from(n).unwrap_or(DEFAULT_MAX_RESULTS)
         });
-    // Safe: context_lines is a user-supplied line count; values that wouldn't
-    // fit in usize are nonsensical and fall back to a large-but-bounded value.
-    let context = usize::try_from(context_lines).unwrap_or(usize::MAX / 2);
+    // context_lines is capped at usize::MAX (a line count larger than any
+    // file) so the saturating cast is lossless for any realistic input.
+    let context = usize::try_from(context_lines).unwrap_or(usize::MAX);
 
     let (result_lines, truncated) = tokio::task::spawn_blocking(move || {
         search(
