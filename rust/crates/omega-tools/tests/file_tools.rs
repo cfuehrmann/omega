@@ -1099,3 +1099,34 @@ async fn grep_files_non_adjacent_match_groups_separated_by_dashes() {
         "non-adjacent match groups must be separated by '--': {out}"
     );
 }
+
+#[tokio::test]
+async fn grep_files_adjacent_match_groups_not_separated_by_dashes() {
+    // When the context window of the second match begins exactly where the
+    // first one ended (want_start == prev_end), the groups are adjacent and
+    // must NOT be separated by '--'.
+    // Kills the `> → >=` mutation on `if want_start > pe`.
+    //
+    // File layout with context=1:
+    //   MATCH at line 1 (i=0): want_end = 0 + 1 + 1 = 2
+    //   MATCH at line 4 (i=3): want_start = 3 - 1 = 2   ← exactly == prev_end
+    //   With `>`: 2 > 2 is false → no separator.  Good.
+    //   With `>=`: 2 >= 2 is true → separator added.  Caught.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), "MATCH\nline2\nline3\nMATCH\n").unwrap();
+
+    let out = exec(
+        "grep_files",
+        json!({
+            "pattern": "MATCH",
+            "path": dir.path().to_str().unwrap(),
+            "context_lines": 1
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains("\n--\n"),
+        "exactly-adjacent groups must not produce a '--' separator: {out}"
+    );
+}
