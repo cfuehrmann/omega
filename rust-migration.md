@@ -290,8 +290,8 @@ bar set by 1d.0d.
 
 | Sub-phase | Deliverable | Status |
 |---|---|---|
-| 1d.1a | `set_model` / `set_effort` + `active_model` / `active_effort` state + `extract_last_model_and_effort` pure helper | ⬜ Next |
-| 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ⬜ |
+| 1d.1a | `set_model` / `set_effort` + `active_model` / `active_effort` state + `extract_last_model_and_effort` pure helper | ✅ Done |
+| 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ⬜ Next |
 | 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ⬜ |
 | 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ⬜ |
 | 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ⬜ |
@@ -314,6 +314,23 @@ bar set by 1d.0d.
   extended where needed (e.g. a `BlockingProvider` for the pause seam test
   that holds the LLM stream open on a `tokio::sync::Notify` until the test
   releases it). No real time-based synchronisation in tests.
+
+### Progress notes
+
+- **1d.1a** (commit `2d5db0c`) — added `Agent::set_model` / `set_effort` /
+  `active_model()` / `active_effort()`, plus `pub const DEFAULT_EFFORT =
+  "medium"`. `send_message` reads `active_model` (was `config.model`) so
+  switches take effect from the next turn.  Effort is stored but **not yet
+  threaded onto `LlmRequest`** — that is provider-shape work owned by
+  `omega-core` and remains deferred. New `omega_agent::session_resume`
+  module hosts `extract_last_model_and_effort` (left-to-right scan,
+  latest-wins) with seven inline unit tests. Nine integration tests pin
+  field mutation, persistence, defaults, key independence, and that the
+  next `send_message` sends the new model on the wire (captured via
+  `MockProvider::take_requests`). Persistence tests now assert the
+  RFC3339-with-`Z` shape on `time`, killing pre-existing `now_iso`
+  mutants. `cargo mutants -f` on `agent.rs` and `session_resume.rs`:
+  **26 mutants, 0 missed** (7 unviable).
 
 ### Explicit deferrals (not part of 1d.1)
 
