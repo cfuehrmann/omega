@@ -17,6 +17,7 @@ pub use agent::{Agent, AgentConfig, DEFAULT_EFFORT};
 pub use config::max_output_tokens_for_model;
 pub use error_classify::{is_context_too_long, is_invalid_tool_json};
 pub use session_resume::{
+    RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
     extract_description_from_response, extract_last_model_and_effort, extract_resumption_basis,
     extract_summary_from_response,
 };

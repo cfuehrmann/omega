@@ -4,10 +4,61 @@
 //! agent or the LLM. Phase 1d.1a ports [`extract_last_model_and_effort`];
 //! Phase 1d.1b adds [`extract_resumption_basis`],
 //! [`extract_summary_from_response`], and [`extract_description_from_response`].
+//! Phase 1d.1c adds the [`RESUMPTION_SUMMARY_INSTRUCTIONS`] system prompt
+//! and the [`RESUMPTION_MODEL`] / [`RESUMPTION_EFFORT`] defaults consumed
+//! by [`Agent::perform_resumption`](crate::Agent::perform_resumption).
 
 use std::collections::HashMap;
 
 use omega_protocol::{OmegaEvent, events::InterruptReason};
+
+// ---------------------------------------------------------------------------
+// Resumption-call configuration (Phase 1d.1c)
+// ---------------------------------------------------------------------------
+
+/// System prompt used by [`Agent::perform_resumption`](crate::Agent::perform_resumption).
+///
+/// Mirrors `RESUMPTION_SUMMARY_INSTRUCTIONS` in `src/session-resume.ts` —
+/// kept verbatim so summary quality matches the TS implementation.
+pub const RESUMPTION_SUMMARY_INSTRUCTIONS: &str = "\
+Summarise the coding session history below so it can be continued in a new session.
+
+Produce a concise summary (1000\u{2013}2000 words) covering exactly what a developer needs to continue the work seamlessly:
+
+1. **Current state** (snapshot, not narrative): which files were changed and how they currently stand, what constants/config values are set to, which plan items are done vs. pending.
+
+2. **Next step**: the single most important thing to do next, as specifically as possible (exact file, function, or test name).
+
+3. **Key decisions**: conclusions that should not be re-litigated \u{2014} design choices made, approaches confirmed or rejected, and why.
+
+4. **Learnings / what not to do**: anything tried that failed and why, so the same dead ends are not re-explored.
+
+5. **Technical anchors**: specific file paths, function/type/constant names, commit hashes, and test names relevant to continuing the work.
+
+You must wrap your summary in a <summary></summary> block.
+
+Additionally, produce a one-line description (max 80 chars) of what the session accomplished, wrapped in a <description></description> block. This is used for display in the session picker \u{2014} be specific and concrete, not vague. Example: \"Added JWT auth middleware and login endpoint tests\".";
+
+/// Model used for the resumption summarisation call.
+///
+/// Mirrors `config.resumptionModel` in `src/config.ts`. Sonnet 4.6 is the
+/// right balance of speed/cost/quality for what is fundamentally a
+/// reading-comprehension task.
+pub const RESUMPTION_MODEL: &str = "claude-sonnet-4-6";
+
+/// Thinking-effort level for the resumption summarisation call.
+///
+/// Mirrors `config.resumptionEffort` in `src/config.ts`. `\"low\"` is
+/// intentional \u2014 summarisation does not need extended reasoning.
+///
+/// Phase 1d.1c stores this for parity but the value is not yet wired
+/// onto `LlmRequest` (effort plumbing is deferred to `omega-core`).
+pub const RESUMPTION_EFFORT: &str = "low";
+
+/// Maximum output tokens for the resumption summarisation call.
+///
+/// Mirrors the `max_tokens: 4096` literal in `src/agent.ts::performResumption`.
+pub const RESUMPTION_MAX_TOKENS: u32 = 4096;
 
 // ---------------------------------------------------------------------------
 // Private helpers — basis extraction

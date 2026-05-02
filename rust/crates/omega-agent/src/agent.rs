@@ -34,8 +34,8 @@ use omega_core::{
 use omega_protocol::StreamSignal;
 use omega_protocol::events::{
     AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
-    ModelChangedEvent, ToolCallEvent, ToolResultEvent, TurnEndEvent, TurnInterruptedEvent,
-    UserMessageEvent,
+    ModelChangedEvent, ResumingSessionEvent, SessionResumedEvent, ToolCallEvent, ToolResultEvent,
+    TurnEndEvent, TurnInterruptedEvent, UserMessageEvent,
 };
 use omega_protocol::{InterruptReason, OmegaEvent, TurnMetrics};
 
@@ -46,6 +46,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::max_output_tokens_for_model;
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
+use crate::session_resume::{
+    RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
+    extract_summary_from_response,
+};
 use crate::system_prompt::build_system_prompt;
 
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -59,6 +63,17 @@ const INVALID_TOOL_JSON_NUDGE: &str = "Your previous response could not be parse
 
 const DANGLING_TOOL_USE_RESULT: &str =
     "[not executed: previous turn was interrupted before this tool ran]";
+
+/// Canned preamble injected before the resumption summary in the synthetic
+/// user seed message.  Mirrors the literal in `Agent.seedWithResumptionSummary`
+/// in `src/agent.ts`.
+const SEED_USER_PREAMBLE: &str =
+    "The following is context from the previous session to provide continuity:\n\n";
+
+/// Canned acknowledgement used as the synthetic assistant seed message.
+/// Mirrors the literal in `Agent.seedWithResumptionSummary` in `src/agent.ts`.
+const SEED_ASSISTANT_ACK: &str =
+    "Understood. I have reviewed the context from the previous session and am ready to continue.";
 
 /// Default thinking-effort level when none is explicitly set.
 ///
@@ -182,6 +197,73 @@ impl Agent {
     pub fn seed_history(&mut self, history: Vec<Message>, hashes: Vec<ContextHash>) {
         self.history = history;
         self.context_hashes = hashes;
+    }
+
+    /// Seed this session with a summary of a previous session.
+    ///
+    /// Persists a `SessionResumed` event (carrying the `summary` and the
+    /// id of the session it was distilled from), then injects two
+    /// synthetic messages into the in-memory history and into
+    /// `context.jsonl`:
+    ///
+    /// 1. a `user` message containing the canned preamble plus the summary
+    ///    text — makes the LLM aware of prior context from turn 1; and
+    /// 2. an `assistant` message with the canned acknowledgement — keeps
+    ///    the conversation in the user/assistant alternation pattern that
+    ///    Anthropic expects.
+    ///
+    /// Returns the persisted `SessionResumed` event so the caller can fan
+    /// it out to the UI without re-reading the event log.
+    ///
+    /// Mirrors `Agent.seedWithResumptionSummary` in `src/agent.ts`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`omega_store::StoreError`] if appending either of the two
+    /// synthetic context records fails. The `SessionResumed` event is
+    /// emitted before any context-store work, so the caller may still see
+    /// it on the wire even when this method errors.
+    pub async fn seed_with_resumption_summary(
+        &mut self,
+        summary: String,
+        resumed_from: String,
+    ) -> Result<OmegaEvent, omega_store::StoreError> {
+        let ev = OmegaEvent::SessionResumed(SessionResumedEvent {
+            time: now_iso(),
+            resumed_from,
+            summary: summary.clone(),
+        });
+        let _ = self.event_store.append(&ev).await;
+
+        // Synthetic user message: preamble + summary.
+        let user_blocks = vec![ContentBlock::Text {
+            text: format!("{SEED_USER_PREAMBLE}{summary}"),
+        }];
+        let user_hash = self
+            .context_store
+            .append(Role::User, user_blocks.clone())
+            .await?;
+        self.history.push(Message {
+            role: Role::User,
+            content: user_blocks,
+        });
+        self.context_hashes.push(user_hash);
+
+        // Synthetic assistant acknowledgement.
+        let assistant_blocks = vec![ContentBlock::Text {
+            text: SEED_ASSISTANT_ACK.to_owned(),
+        }];
+        let assistant_hash = self
+            .context_store
+            .append(Role::Assistant, assistant_blocks.clone())
+            .await?;
+        self.history.push(Message {
+            role: Role::Assistant,
+            content: assistant_blocks,
+        });
+        self.context_hashes.push(assistant_hash);
+
+        Ok(ev)
     }
 
     /// Borrow the in-memory history (read-only — used by tests and
@@ -708,6 +790,278 @@ impl Agent {
                 let _ = self.event_store.append(&te).await;
                 yield AgentItem::event(te);
                 return;
+            }
+        })
+    }
+
+    /// Run the one-shot summarisation call that distils a previous
+    /// session into a continuation summary, then seed this session's
+    /// history with that summary.
+    ///
+    /// Mirrors `Agent.performResumption` in `src/agent.ts`.
+    ///
+    /// Order of effects (matched verbatim against the TS reference):
+    ///
+    /// 1. The `basis` is written to `context.jsonl` as a `user` record
+    ///    so it is hash-addressable for the upcoming `LlmCall`. Note
+    ///    that the basis is **not** pushed onto in-memory `history` —
+    ///    it exists only as a context record so the LLM sees it for
+    ///    this single call but the seeded session does not carry it
+    ///    forward into subsequent turns.
+    /// 2. A `ResumingSession` event is emitted (carrying `basis`,
+    ///    `resumed_from`, and an optional `name`).
+    /// 3. An `LlmCall` event is emitted with `cache_breakpoint_index =
+    ///    None` (no caching: this is a one-off prompt) and
+    ///    `context_hashes = [user_basis_hash]`.
+    /// 4. The provider stream is drained; `Signal` items are forwarded,
+    ///    `LlmRetry` events clear partial buffers and are forwarded.
+    /// 5. The assembled assistant text is written to `context.jsonl`
+    ///    and the `LlmResponse` event is emitted with its
+    ///    `context_hash` filled in.
+    /// 6. The summary is extracted from the response text via
+    ///    [`extract_summary_from_response`] and passed to
+    ///    [`Self::seed_with_resumption_summary`], which emits the final
+    ///    `SessionResumed` event and seeds the synthetic user/assistant
+    ///    message pair into history.
+    ///
+    /// **Cancellation:** mirrors the TS contract — if the cancel token
+    /// fires mid-stream, the method stops cleanly without emitting
+    /// `TurnInterrupted` (resumption is not a user turn).
+    ///
+    /// **Errors:** if the provider yields a terminal `LlmError`, the
+    /// stream emits `LlmError` and ends — no `LlmResponse`,
+    /// no `SessionResumed`. Callers detect failure by the absence of
+    /// `SessionResumed`.
+    #[allow(clippy::too_many_lines)] // single async generator; mirrors send_message shape
+    pub fn perform_resumption<'a>(
+        &'a mut self,
+        basis: String,
+        resumed_from: String,
+        name: Option<String>,
+        cancel: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
+        Box::pin(stream! {
+            // -----------------------------------------------------------------
+            // Step 1: persist the basis as a user context record.
+            // (Not pushed onto in-memory history — matches TS.)
+            // -----------------------------------------------------------------
+            let basis_blocks = vec![ContentBlock::Text {
+                text: basis.clone(),
+            }];
+            let user_hash = match self
+                .context_store
+                .append(Role::User, basis_blocks)
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    let ev = OmegaEvent::AgentError(AgentErrorEvent {
+                        time: now_iso(),
+                        error: format!("context_store append failed: {e}"),
+                    });
+                    let _ = self.event_store.append(&ev).await;
+                    yield AgentItem::event(ev);
+                    return;
+                }
+            };
+
+            // -----------------------------------------------------------------
+            // Step 2: emit ResumingSession.
+            // -----------------------------------------------------------------
+            let resuming_ev = OmegaEvent::ResumingSession(ResumingSessionEvent {
+                time: now_iso(),
+                resumed_from: resumed_from.clone(),
+                name: name.clone(),
+                basis: basis.clone(),
+            });
+            let _ = self.event_store.append(&resuming_ev).await;
+            yield AgentItem::event(resuming_ev);
+
+            // -----------------------------------------------------------------
+            // Step 3: build the resumption request.
+            //
+            // System prompt = RESUMPTION_SUMMARY_INSTRUCTIONS (verbatim TS).
+            // Messages = [{ user, basis }] only — prior history is irrelevant
+            //   because the basis already carries the carry-forward context.
+            // -----------------------------------------------------------------
+            let request = LlmRequest {
+                model: RESUMPTION_MODEL.to_owned(),
+                messages: vec![Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text { text: basis.clone() }],
+                }],
+                system: Some(RESUMPTION_SUMMARY_INSTRUCTIONS.to_owned()),
+                tools: Vec::new(),
+                config: ModelConfig {
+                    max_tokens: RESUMPTION_MAX_TOKENS,
+                    temperature: None,
+                    thinking_budget: None,
+                },
+            };
+
+            // -----------------------------------------------------------------
+            // Step 4: emit LlmCall.
+            //   context_hashes = [user_basis_hash]
+            //   cache_breakpoint_index = None (no caching for one-off call)
+            // -----------------------------------------------------------------
+            let request_bytes = serde_json::to_vec(&request)
+                .map_or(0, |v| i64::try_from(v.len()).unwrap_or(i64::MAX));
+            let call_ev = OmegaEvent::LlmCall(LlmCallEvent {
+                time: now_iso(),
+                url: ANTHROPIC_URL.to_owned(),
+                model: RESUMPTION_MODEL.to_owned(),
+                context_hashes: vec![user_hash.as_ref().to_owned()],
+                cache_breakpoint_index: None,
+                request_bytes,
+                request_summary: None,
+            });
+            let _ = self.event_store.append(&call_ev).await;
+            yield AgentItem::event(call_ev);
+
+            // -----------------------------------------------------------------
+            // Step 5: drain the provider stream.
+            // -----------------------------------------------------------------
+            let mut provider_stream = self.provider.stream(request);
+            let mut text_buf = String::new();
+            let mut thinking_buf = String::new();
+            let mut llm_response: Option<LlmResponseEvent> = None;
+            let mut stream_error: Option<LlmError> = None;
+
+            while let Some(item) = provider_stream.next().await {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                match item {
+                    Ok(AgentItem::Signal(sig)) => {
+                        match &sig {
+                            StreamSignal::Text { text } => text_buf.push_str(text),
+                            StreamSignal::Thinking { text } => thinking_buf.push_str(text),
+                        }
+                        yield AgentItem::Signal(sig);
+                    }
+                    Ok(AgentItem::Event(boxed)) => {
+                        let event = *boxed;
+                        match event {
+                            OmegaEvent::LlmResponse(lr) => {
+                                llm_response = Some(lr);
+                            }
+                            OmegaEvent::LlmRetry(retry) => {
+                                text_buf.clear();
+                                thinking_buf.clear();
+                                let ev = OmegaEvent::LlmRetry(retry);
+                                let _ = self.event_store.append(&ev).await;
+                                yield AgentItem::event(ev);
+                            }
+                            other => {
+                                // Resumption is a one-shot summarisation
+                                // call without tools — ToolCalls would be a
+                                // provider/server bug. Forward unmodified
+                                // for traceability.
+                                let _ = self.event_store.append(&other).await;
+                                yield AgentItem::event(other);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        stream_error = Some(err);
+                        break;
+                    }
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // Step 6: cancellation — mirror TS, clean stop, no TurnInterrupted.
+            // -----------------------------------------------------------------
+            if cancel.is_cancelled() {
+                return;
+            }
+
+            // -----------------------------------------------------------------
+            // Step 7: terminal stream error.
+            // -----------------------------------------------------------------
+            if let Some(err) = stream_error {
+                let llm_err_ev = OmegaEvent::LlmError(LlmErrorEvent {
+                    time: now_iso(),
+                    url: ANTHROPIC_URL.to_owned(),
+                    error: err.to_string(),
+                    http_status: err.status(),
+                });
+                let _ = self.event_store.append(&llm_err_ev).await;
+                yield AgentItem::event(llm_err_ev);
+                return;
+            }
+
+            // -----------------------------------------------------------------
+            // Step 8: provider must have emitted an LlmResponse.
+            // -----------------------------------------------------------------
+            let Some(mut lr) = llm_response else {
+                let ae = OmegaEvent::AgentError(AgentErrorEvent {
+                    time: now_iso(),
+                    error: "Provider stream ended without LlmResponse".to_owned(),
+                });
+                let _ = self.event_store.append(&ae).await;
+                yield AgentItem::event(ae);
+                return;
+            };
+
+            // -----------------------------------------------------------------
+            // Step 9: persist the assistant context record.
+            // -----------------------------------------------------------------
+            let assembled_text = std::mem::take(&mut text_buf);
+            let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
+            if !thinking_buf.is_empty() {
+                assistant_blocks.push(ContentBlock::Thinking {
+                    thinking: std::mem::take(&mut thinking_buf),
+                    signature: None,
+                });
+            }
+            if !assembled_text.is_empty() {
+                assistant_blocks.push(ContentBlock::Text {
+                    text: assembled_text.clone(),
+                });
+            }
+            let assistant_hash = match self
+                .context_store
+                .append(Role::Assistant, assistant_blocks)
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    let ev = OmegaEvent::AgentError(AgentErrorEvent {
+                        time: now_iso(),
+                        error: format!("context_store append failed: {e}"),
+                    });
+                    let _ = self.event_store.append(&ev).await;
+                    yield AgentItem::event(ev);
+                    return;
+                }
+            };
+
+            // -----------------------------------------------------------------
+            // Step 10: emit LlmResponse with hash filled.
+            // -----------------------------------------------------------------
+            lr.context_hash = assistant_hash.as_ref().to_owned();
+            let response_ev = OmegaEvent::LlmResponse(lr);
+            let _ = self.event_store.append(&response_ev).await;
+            yield AgentItem::event(response_ev);
+
+            // -----------------------------------------------------------------
+            // Step 11: extract summary, seed history, emit SessionResumed.
+            // -----------------------------------------------------------------
+            let summary = extract_summary_from_response(&assembled_text);
+            match self
+                .seed_with_resumption_summary(summary, resumed_from)
+                .await
+            {
+                Ok(ev) => yield AgentItem::event(ev),
+                Err(e) => {
+                    let ae = OmegaEvent::AgentError(AgentErrorEvent {
+                        time: now_iso(),
+                        error: format!("context_store append failed: {e}"),
+                    });
+                    let _ = self.event_store.append(&ae).await;
+                    yield AgentItem::event(ae);
+                }
             }
         })
     }

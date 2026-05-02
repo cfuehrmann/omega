@@ -202,6 +202,10 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::AgentError(_) => "AgentError",
                 OmegaEvent::TurnInterrupted(_) => "TurnInterrupted",
                 OmegaEvent::LlmRetry(_) => "LlmRetry",
+                OmegaEvent::ResumingSession(_) => "ResumingSession",
+                OmegaEvent::SessionResumed(_) => "SessionResumed",
+                OmegaEvent::ModelChanged(_) => "ModelChanged",
+                OmegaEvent::EffortChanged(_) => "EffortChanged",
                 _ => "OtherEvent",
             },
         })
