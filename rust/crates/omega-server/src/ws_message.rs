@@ -66,6 +66,15 @@ pub enum WsMessage {
         /// Directory name (basename) of the deleted session.
         session_dir: String,
     },
+    /// Broadcast after a successful rename, so the client can update its
+    /// display name without a full session reload.
+    /// Mirrors the TS server's `{ type: "session_renamed", sessionDir, name }` frame.
+    SessionRenamed {
+        /// Directory name (basename) of the renamed session.
+        session_dir: String,
+        /// New human-readable name written into `session.jsonc`.
+        name: String,
+    },
 }
 
 impl WsMessage {
@@ -125,6 +134,11 @@ impl WsMessage {
             Self::SessionDeleted { session_dir } => serde_json::json!({
                 "type": "session_deleted",
                 "sessionDir": session_dir,
+            }),
+            Self::SessionRenamed { session_dir, name } => serde_json::json!({
+                "type": "session_renamed",
+                "sessionDir": session_dir,
+                "name": name,
             }),
         }
     }
@@ -330,5 +344,39 @@ mod tests {
         let v = WsMessage::Item(Box::new(ev)).to_json();
         assert_eq!(v["type"], "turn_end");
         assert_eq!(v["time"], "2024-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn session_deleted_serialises_with_session_dir_camel_case() {
+        let v = WsMessage::SessionDeleted {
+            session_dir: "2025-01-01T00-00-00-000-deadbeef".to_owned(),
+        }
+        .to_json();
+        assert_eq!(v["type"], "session_deleted");
+        assert_eq!(v["sessionDir"], "2025-01-01T00-00-00-000-deadbeef");
+        assert_eq!(v.as_object().unwrap().len(), 2, "no extra fields");
+    }
+
+    #[test]
+    fn session_renamed_serialises_with_session_dir_and_name() {
+        let v = WsMessage::SessionRenamed {
+            session_dir: "2025-01-01T00-00-00-000-deadbeef".to_owned(),
+            name: "my-renamed-session".to_owned(),
+        }
+        .to_json();
+        assert_eq!(v["type"], "session_renamed");
+        assert_eq!(v["sessionDir"], "2025-01-01T00-00-00-000-deadbeef");
+        assert_eq!(v["name"], "my-renamed-session");
+        assert_eq!(v.as_object().unwrap().len(), 3, "no extra fields");
+    }
+
+    #[test]
+    fn session_renamed_to_text_round_trips_through_json() {
+        let m = WsMessage::SessionRenamed {
+            session_dir: "d".to_owned(),
+            name: "n".to_owned(),
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
+        assert_eq!(parsed, m.to_json());
     }
 }

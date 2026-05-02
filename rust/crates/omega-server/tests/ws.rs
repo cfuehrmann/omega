@@ -769,9 +769,20 @@ async fn rename_session_updates_metadata_for_active_session() {
         serde_json::json!({ "type": "rename_session", "name": "my-name" }),
     )
     .await;
-    // No frame is emitted on success.  Give the server a moment to write
-    // the metadata file before reading it back.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The server broadcasts a session_renamed envelope after the disk write.
+    let frame = recv_json(&mut ws).await;
+    assert_eq!(
+        frame["type"], "session_renamed",
+        "expected session_renamed frame; got {frame:?}"
+    );
+    assert_eq!(
+        frame["name"], "my-name",
+        "name field must match; got {frame:?}"
+    );
+    let session_dir_val = frame["sessionDir"]
+        .as_str()
+        .expect("sessionDir must be a string");
+    assert!(!session_dir_val.is_empty(), "sessionDir must be non-empty");
 
     let entry = sessions_root
         .read_dir()
@@ -779,6 +790,12 @@ async fn rename_session_updates_metadata_for_active_session() {
         .next()
         .expect("a session dir must exist")
         .expect("dir entry");
+    // The sessionDir in the envelope must match the on-disk session folder name.
+    assert_eq!(
+        session_dir_val,
+        entry.file_name().to_str().unwrap(),
+        "sessionDir in envelope must be the basename of the session dir",
+    );
     let meta = omega_store::read_session_metadata(&entry.path()).await;
     assert_eq!(
         meta.name.as_deref(),

@@ -41,6 +41,7 @@ export default defineConfig({
       testIgnore: [
         "**/real-server-replay.spec.ts",
         "**/pause-resume-interject.spec.ts",
+        "**/web-ui-rename-session.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -56,6 +57,7 @@ export default defineConfig({
       testMatch: [
         "**/real-server-replay.spec.ts",
         "**/pause-resume-interject.spec.ts",
+        "**/web-ui-rename-session.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

@@ -550,7 +550,7 @@ async fn dispatch_client_frame(
         ClientFrame::ResumeSession { session_dir } => {
             handle_resume_session(state, tx, session_dir).await
         }
-        ClientFrame::RenameSession { name } => handle_rename_session(state, name).await,
+        ClientFrame::RenameSession { name } => handle_rename_session(state, tx, name).await,
         ClientFrame::SetModel { model } => handle_set_model(state, tx, model).await,
         ClientFrame::SetEffort { effort } => handle_set_effort(state, tx, effort).await,
         ClientFrame::DeleteSession { session_dir } => {
@@ -899,7 +899,11 @@ async fn handle_resume_session(
 // rename_session — write `name` into the active session's session.jsonc.
 // ---------------------------------------------------------------------------
 
-async fn handle_rename_session(state: &AppState, name: String) -> Result<(), String> {
+async fn handle_rename_session(
+    state: &AppState,
+    tx: &UnboundedSender<WsMessage>,
+    name: String,
+) -> Result<(), String> {
     let (dir, info_cache_arc) = {
         let slot = state.active_session.lock().await;
         match slot.as_ref() {
@@ -917,7 +921,7 @@ async fn handle_rename_session(state: &AppState, name: String) -> Result<(), Str
     omega_store::update_session_metadata(
         &dir,
         SessionMetadata {
-            name: Some(name),
+            name: Some(name.clone()),
             ..SessionMetadata::default()
         },
     )
@@ -926,6 +930,11 @@ async fn handle_rename_session(state: &AppState, name: String) -> Result<(), Str
     if let Some(arc) = info_cache_arc {
         arc.lock().await.name = Some(new_name);
     }
+    let session_dir = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let _ = tx.send(WsMessage::SessionRenamed { session_dir, name });
     Ok(())
 }
 
