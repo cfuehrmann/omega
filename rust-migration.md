@@ -247,7 +247,7 @@ tokio-tungstenite = "0.26"    # dev-dependency for test WS client only
 | 1e.0 | ✅ Done | Crate skeleton; `GET /health`; `ServeDir` static serving; placeholder routes returning 501 |
 | 1e.1 | ✅ Done | `ActiveSession`, `AppState`, `serve()`, `POST /api/sessions`, `GET /api/sessions` |
 | 1e.2 | ✅ Done | WebSocket upgrade; `user_message` → turn → event stream; `pause`/`continue`/`abort`/`reset` |
-| 1e.3 | ⬜ Upcoming | History replay on reconnect; `resume_session` |
+| 1e.3 | ⬜ Upcoming | History replay on reconnect (filtered `events.jsonl` push before `Ready`) |
 | 1e.4 | ⬜ Upcoming | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
 
 ### Phase 1e.0 — done (concise record)
