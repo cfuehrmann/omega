@@ -293,7 +293,7 @@ bar set by 1d.0d.
 | 1d.1a | `set_model` / `set_effort` + `active_model` / `active_effort` state + `extract_last_model_and_effort` pure helper | ✅ Done |
 | 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ✅ Done |
 | 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ✅ Done |
-| 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ⬜ |
+| 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ✅ Done |
 | 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ⬜ |
 
 ### Order rationale
@@ -380,6 +380,50 @@ bar set by 1d.0d.
   `Pin<Box<dyn Stream>>` return type makes most function-body mutants
   compile-fail (same coverage limitation as `send_message` from prior
   phases).
+
+- **1d.1d** — server-side compaction wired end-to-end across
+  `omega-core` and `omega-agent`. **omega-core** changes: `LlmRequest`
+  gains optional `context_management: Option<serde_json::Value>` (opaque
+  pass-through — the Anthropic edits-array shape evolves often, and
+  this isn't persisted, so a typed struct would be premature
+  ossification); `AnthropicRequestBody` plumbs the field with
+  `skip_serializing_if = Option::is_none`; the SSE parser gains a
+  `ContentBlockStart::Compaction` variant (silently consumed — no
+  `BlockAccum` sink, the matching `compaction_delta` falls through the
+  existing match-no-accum path), a `compaction_seen: bool` flag, a
+  `usage_value: serde_json::Map` captured via a second JSON parse on
+  `message_start` and merged on `message_delta` (preserves nested
+  `iterations[]` arrays verbatim), plus `MessageDeltaContextMgmt`
+  carrying `applied_edits[]` with an `AppliedEdit::ClearToolUses`
+  variant that populates `cleared_tool_uses` /
+  `cleared_input_tokens` on the resulting `LlmResponse`. On
+  `message_stop`, if `compaction_seen` the parser yields
+  `OmegaEvent::Compacted { time, usage }` strictly **before**
+  `OmegaEvent::LlmResponse`. The agent does **not** yet set
+  `context_management` on outgoing requests — that is owned by a
+  later phase per the deferrals list. **omega-agent** changes: a
+  new `OmegaEvent::Compacted` arm in the `send_message` drain loop
+  clears both `history` and `context_hashes` (mirrors
+  `src/agent.ts:1432–1453`), persists the event, and forwards it.
+  The clear runs before the same turn's `LlmResponse` is processed,
+  so the post-compaction history holds only the new assistant
+  summary. Tests: 8 new omega-core integration tests in
+  `tests/anthropic.rs` (request-shape emit/omit, ordered
+  Compacted-then-LlmResponse, `iterations[]` round-trip, applied-edits
+  match vs. ignore, no-Compacted on plain turns, RFC3339 time check),
+  plus 5 new omega-agent tests in `tests/compaction.rs` (history+hash
+  clearing with a follow-up turn that pins the cleared
+  `context_hashes` via `LlmCall.contextHashes` length, `events.jsonl`
+  usage round-trip, post-compaction wire payload via
+  `MockProvider::take_requests`, stream order at the agent layer,
+  control test for non-compacting turns). `cargo mutants -f`:
+  `types.rs` **18 mutants, 14 caught, 4 unviable, 0 missed**;
+  `anthropic.rs` **19 mutants, 12 caught, 7 unviable, 0 missed**;
+  `agent.rs` **20 mutants, 8 caught, 12 unviable, 0 missed** — the
+  hot-path branches inside `stream_impl` (`async_stream::try_stream!`
+  macro) and `send_message` (`Pin<Box<dyn Stream>>` return) are not
+  mutated by cargo-mutants and are covered by the integration tests
+  instead, same constraint as 1d.1a/c.
 
 ### 1d.1d pre-flight notes
 

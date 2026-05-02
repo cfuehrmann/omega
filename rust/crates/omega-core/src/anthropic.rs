@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use eventsource_stream::Eventsource;
 use futures::stream::TryStreamExt;
-use omega_protocol::events::{LlmResponseEvent, ToolCallEvent};
+use omega_protocol::events::{CompactedEvent, LlmResponseEvent, ToolCallEvent};
 use omega_protocol::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -136,6 +136,11 @@ fn stream_impl(
         let mut service_tier: Option<String> = None;
         let mut stop_reason = String::from("unknown");
         let mut streaming_start: Option<String> = None;
+        // Server-side compaction tracking (mirrors src/agent.ts:1432–1469).
+        let mut compaction_seen = false;
+        let mut usage_value: serde_json::Map<String, Value> = serde_json::Map::new();
+        let mut cleared_tool_uses: Option<i64> = None;
+        let mut cleared_input_tokens: Option<i64> = None;
 
         while let Some(ev) = futures::StreamExt::next(&mut sse).await {
             let ev = ev.map_err(|e| LlmError::Stream { message: e.to_string() })?;
@@ -149,9 +154,25 @@ fn stream_impl(
                     cache_creation = parsed.message.usage.cache_creation_input_tokens.or(cache_creation);
                     cache_read = parsed.message.usage.cache_read_input_tokens.or(cache_read);
                     service_tier = parsed.message.usage.service_tier.or(service_tier);
+                    // Capture the raw usage object verbatim so the
+                    // Compacted event can carry every field Anthropic
+                    // sends (e.g. `iterations[]`, `service_tier`).  The
+                    // typed parse above already proved the data is
+                    // valid JSON, so this second parse cannot fail.
+                    let raw: Value = parse_data(&ev.data)?;
+                    if let Some(obj) = raw
+                        .get("message")
+                        .and_then(|m| m.get("usage"))
+                        .and_then(Value::as_object)
+                    {
+                        usage_value.clone_from(obj);
+                    }
                 }
                 "content_block_start" => {
                     let parsed: ContentBlockStartData = parse_data(&ev.data)?;
+                    if matches!(&parsed.content_block, ContentBlockStart::Compaction) {
+                        compaction_seen = true;
+                    }
                     if let Some(accum) = BlockAccum::from_start(parsed.content_block) {
                         blocks.insert(parsed.index, accum);
                     }
@@ -214,13 +235,43 @@ fn stream_impl(
                     if parsed.usage.cache_read_input_tokens.is_some() {
                         cache_read = parsed.usage.cache_read_input_tokens;
                     }
+                    // Merge the raw usage object so the Compacted event
+                    // (if any) carries the final iteration breakdown.
+                    let raw: Value = parse_data(&ev.data)?;
+                    if let Some(obj) = raw.get("usage").and_then(Value::as_object) {
+                        for (k, v) in obj {
+                            usage_value.insert(k.clone(), v.clone());
+                        }
+                    }
+                    // Extract applied_edits for clear_tool_uses_20250919
+                    // — mirrors src/agent.ts:1455–1469.  First matching
+                    // edit wins.
+                    if let Some(cm) = parsed.context_management {
+                        for edit in cm.applied_edits {
+                            if let AppliedEdit::ClearToolUses {
+                                cleared_tool_uses: tu,
+                                cleared_input_tokens: it,
+                            } = edit
+                            {
+                                cleared_tool_uses = tu;
+                                cleared_input_tokens = it;
+                                break;
+                            }
+                        }
+                    }
                 }
                 "message_stop" => {
+                    if compaction_seen {
+                        yield AgentItem::event(OmegaEvent::Compacted(CompactedEvent {
+                            time: now_iso(),
+                            usage: Value::Object(usage_value.clone()),
+                        }));
+                    }
                     yield AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
                         time: now_iso(),
                         stop_reason: stop_reason.clone(),
-                        cleared_tool_uses: None,
-                        cleared_input_tokens: None,
+                        cleared_tool_uses,
+                        cleared_input_tokens,
                         usage: LlmResponseUsage {
                             input_tokens,
                             output_tokens,
@@ -307,7 +358,7 @@ impl BlockAccum {
                 name,
                 partial_json: String::new(),
             }),
-            ContentBlockStart::Unknown => None,
+            ContentBlockStart::Compaction | ContentBlockStart::Unknown => None,
         }
     }
 }
@@ -332,6 +383,11 @@ struct AnthropicRequestBody<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
+    /// Forwarded verbatim into the Anthropic request body.  See
+    /// `LlmRequest.context_management` for the rationale behind opaque
+    /// pass-through.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_management: Option<&'a Value>,
 }
 
 #[derive(Serialize)]
@@ -353,6 +409,7 @@ fn build_request_body(req: &LlmRequest) -> AnthropicRequestBody<'_> {
             .config
             .thinking_budget
             .map(|budget_tokens| ThinkingConfig::Enabled { budget_tokens }),
+        context_management: req.context_management.as_ref(),
     }
 }
 
@@ -403,6 +460,10 @@ enum ContentBlockStart {
         #[serde(default)]
         input: Value,
     },
+    /// Server-side compaction summary block.  Carries `content` /
+    /// `encrypted_content` we don't read — the agent reacts to its
+    /// presence, not its payload (see `src/agent.ts:1432–1453`).
+    Compaction,
     #[serde(other)]
     Unknown,
 }
@@ -441,6 +502,32 @@ struct ContentBlockStopData {
 struct MessageDeltaData {
     delta: MessageDeltaInner,
     usage: AnthropicDeltaUsage,
+    /// Anthropic's per-turn record of any `context_management` edits
+    /// it applied server-side.  Optional — absent on plain turns.
+    #[serde(default)]
+    context_management: Option<MessageDeltaContextMgmt>,
+}
+
+#[derive(Deserialize)]
+struct MessageDeltaContextMgmt {
+    #[serde(default)]
+    applied_edits: Vec<AppliedEdit>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AppliedEdit {
+    /// The only edit type we react to today — see
+    /// `src/agent.ts:1455–1469`.
+    #[serde(rename = "clear_tool_uses_20250919")]
+    ClearToolUses {
+        #[serde(default)]
+        cleared_tool_uses: Option<i64>,
+        #[serde(default)]
+        cleared_input_tokens: Option<i64>,
+    },
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Deserialize)]

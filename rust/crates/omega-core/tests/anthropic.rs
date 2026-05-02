@@ -41,6 +41,7 @@ fn simple_request() -> LlmRequest {
             temperature: None,
             thinking_budget: None,
         },
+        context_management: None,
     }
 }
 
@@ -183,6 +184,7 @@ async fn request_body_kitchen_sink() {
             temperature: Some(0.5),
             thinking_budget: None,
         },
+        context_management: None,
     };
 
     // Serialise input *before* consuming `req`.
@@ -654,4 +656,528 @@ async fn response_event_time_fields_are_valid_rfc3339() {
         chrono::DateTime::parse_from_rfc3339(ss)
             .expect("LlmResponse.streaming_start must be valid RFC3339");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Server-side context compaction (Phase 1d.1d)
+//
+// These tests exercise the request-shape opt-in (`context_management`),
+// the SSE compaction-block parser, the `applied_edits` extraction, and the
+// `Compacted → LlmResponse` ordering at the provider level.  They mirror
+// the TS reference points at `src/agent.ts:1432–1469` and the SSE shape
+// captured in `src/compacted.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// Build a minimal happy-path SSE envelope.  Used by tests that don't need
+/// to vary the wire response.
+fn happy_envelope() -> String {
+    sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_cm",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 1, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {"output_tokens": 1}
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ])
+}
+
+/// Mount a happy-path mock that simply records the request body.
+async fn mount_happy(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(happy_envelope())
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(server)
+        .await;
+}
+
+/// When `LlmRequest.context_management` is `Some(...)`, the wire body
+/// must carry it verbatim.  Establishes the agent-to-provider seam for
+/// future per-turn context-management wiring.
+#[tokio::test]
+async fn request_body_emits_context_management_when_set() {
+    let server = MockServer::start().await;
+    mount_happy(&server).await;
+
+    let cm = json!({
+        "edits": [
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": {"type": "input_tokens", "value": 750_000},
+                "keep": {"type": "tool_uses", "value": 6}
+            }
+        ]
+    });
+    let mut req = simple_request();
+    req.context_management = Some(cm.clone());
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    collect_ok(&provider, req).await;
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("wiremock recorded requests");
+    let wire: Value = serde_json::from_slice(&received[0].body).expect("wire body JSON");
+    assert_eq!(
+        wire["context_management"], cm,
+        "context_management must be forwarded verbatim into the wire body"
+    );
+}
+
+/// When `context_management` is `None`, the field must be absent from
+/// the wire body — `skip_serializing_if = Option::is_none`.
+#[tokio::test]
+async fn request_body_omits_context_management_when_none() {
+    let server = MockServer::start().await;
+    mount_happy(&server).await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    collect_ok(&provider, simple_request()).await;
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("wiremock recorded requests");
+    let wire: Value = serde_json::from_slice(&received[0].body).expect("wire body JSON");
+    assert!(
+        wire.get("context_management").is_none(),
+        "context_management must be absent when None — got {wire}"
+    );
+}
+
+/// SSE shape with a `compaction` content block followed by a regular
+/// text block must yield, in order:
+///   1. `Signal::Text` for each text delta,
+///   2. `OmegaEvent::Compacted`,
+///   3. `OmegaEvent::LlmResponse`.
+///
+/// Mirrors `src/agent.ts:1432–1453`.  Catches mutants that:
+///   - flip the `compaction_seen = true` assignment,
+///   - swap the order so `LlmResponse` precedes `Compacted`,
+///   - delete the `if compaction_seen` guard (would emit Compacted on
+///     every turn — counter-tested by `non_compacting_response_emits_no_compacted`).
+#[tokio::test]
+async fn compaction_block_yields_compacted_then_llm_response() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_compact",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 80_500, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "compaction", "content": null, "encrypted_content": null}
+            }),
+        ),
+        (
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "compaction_delta", "content": "summary text", "encrypted_content": ""}
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""}
+            }),
+        ),
+        (
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "Hello"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({"type": "content_block_stop", "index": 1}),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {"output_tokens": 50}
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    // Expect: Text("Hello"), Compacted, LlmResponse — in that order.
+    use omega_protocol::OmegaEvent;
+    let mut iter = items.iter();
+
+    match iter.next().expect("first item") {
+        AgentItem::Signal(omega_protocol::StreamSignal::Text { text }) => {
+            assert_eq!(text, "Hello", "text-delta surfaces normally");
+        }
+        other => panic!("expected text Signal, got {other:?}"),
+    }
+    match iter.next().expect("second item").as_event() {
+        Some(OmegaEvent::Compacted(c)) => {
+            assert_eq!(
+                c.usage["input_tokens"], 80_500,
+                "Compacted.usage carries input_tokens from message_start"
+            );
+        }
+        other => panic!("expected Compacted event second, got {other:?}"),
+    }
+    match iter.next().expect("third item").as_event() {
+        Some(OmegaEvent::LlmResponse(_)) => {}
+        other => panic!("expected LlmResponse event third, got {other:?}"),
+    }
+    assert!(iter.next().is_none(), "no further items expected");
+}
+
+/// `Compacted.usage` must carry every field Anthropic sends — including
+/// nested arrays like `iterations[]` — verbatim.  Catches mutants that
+/// drop unrecognised fields when capturing usage.
+#[tokio::test]
+async fn compaction_usage_carries_iterations_verbatim() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_iter",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {
+                        "input_tokens": 80_500,
+                        "output_tokens": 0,
+                        "service_tier": "standard"
+                    }
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "compaction"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {
+                    "output_tokens": 350,
+                    "iterations": [
+                        {"type": "compaction", "input_tokens": 80_000, "output_tokens": 300},
+                        {"type": "message",    "input_tokens": 500,    "output_tokens": 50}
+                    ]
+                }
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_protocol::OmegaEvent;
+    let compacted = items
+        .iter()
+        .find_map(|i| match i.as_event() {
+            Some(OmegaEvent::Compacted(c)) => Some(c),
+            _ => None,
+        })
+        .expect("Compacted event present");
+
+    // input_tokens from message_start, output_tokens from message_delta.
+    assert_eq!(compacted.usage["input_tokens"], 80_500);
+    assert_eq!(compacted.usage["output_tokens"], 350);
+    assert_eq!(compacted.usage["service_tier"], "standard");
+    let iters = compacted.usage["iterations"]
+        .as_array()
+        .expect("iterations array preserved");
+    assert_eq!(iters.len(), 2);
+    assert_eq!(iters[0]["type"], "compaction");
+    assert_eq!(iters[0]["input_tokens"], 80_000);
+    assert_eq!(iters[1]["type"], "message");
+    assert_eq!(iters[1]["output_tokens"], 50);
+}
+
+/// `applied_edits` containing `clear_tool_uses_20250919` must populate
+/// `LlmResponse.cleared_tool_uses` and `cleared_input_tokens`.
+/// Mirrors `src/agent.ts:1455–1469`.
+#[tokio::test]
+async fn applied_edits_populates_cleared_fields() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_ae",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 100, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {"output_tokens": 5},
+                "context_management": {
+                    "applied_edits": [
+                        {
+                            "type": "clear_tool_uses_20250919",
+                            "cleared_tool_uses": 7,
+                            "cleared_input_tokens": 42_000
+                        }
+                    ]
+                }
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_protocol::OmegaEvent;
+    let resp = items
+        .iter()
+        .find_map(|i| match i.as_event() {
+            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            _ => None,
+        })
+        .expect("LlmResponse present");
+
+    assert_eq!(resp.cleared_tool_uses, Some(7));
+    assert_eq!(resp.cleared_input_tokens, Some(42_000));
+}
+
+/// `applied_edits` containing only edits we don't react to must leave
+/// `cleared_*` as `None`.  Catches mutants that flip the type-tag
+/// match (e.g. accept any edit, or accept the wrong one).
+#[tokio::test]
+async fn applied_edits_other_type_leaves_cleared_fields_none() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_other",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 100, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {"output_tokens": 5},
+                "context_management": {
+                    "applied_edits": [
+                        {
+                            "type": "clear_thinking_20251015",
+                            "cleared_tool_uses": 99,
+                            "cleared_input_tokens": 99_999
+                        }
+                    ]
+                }
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_protocol::OmegaEvent;
+    let resp = items
+        .iter()
+        .find_map(|i| match i.as_event() {
+            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            _ => None,
+        })
+        .expect("LlmResponse present");
+
+    assert!(
+        resp.cleared_tool_uses.is_none(),
+        "non-matching edit must not populate cleared_tool_uses"
+    );
+    assert!(
+        resp.cleared_input_tokens.is_none(),
+        "non-matching edit must not populate cleared_input_tokens"
+    );
+}
+
+/// Plain text-only response must NOT emit a `Compacted` event.
+/// Counter-test for `compaction_block_yields_compacted_then_llm_response` —
+/// catches a mutant that hard-codes `compaction_seen = true`.
+#[tokio::test]
+async fn non_compacting_response_emits_no_compacted() {
+    let server = MockServer::start().await;
+    mount_happy(&server).await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_protocol::OmegaEvent;
+    assert!(
+        !items
+            .iter()
+            .any(|i| matches!(i.as_event(), Some(OmegaEvent::Compacted(_)))),
+        "no Compacted event should appear on a plain turn"
+    );
+}
+
+/// `Compacted.time` must be a valid RFC3339 timestamp, not an empty
+/// string or placeholder.  Catches the standard `now_iso → ""` and
+/// `now_iso → "xyzzy"` mutants on the new code path.
+#[tokio::test]
+async fn compacted_event_time_is_valid_rfc3339() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_t",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 1, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "compaction"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                "usage": {"output_tokens": 1}
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_protocol::OmegaEvent;
+    let compacted = items
+        .iter()
+        .find_map(|i| match i.as_event() {
+            Some(OmegaEvent::Compacted(c)) => Some(c),
+            _ => None,
+        })
+        .expect("Compacted event present");
+
+    chrono::DateTime::parse_from_rfc3339(&compacted.time)
+        .expect("Compacted.time must be valid RFC3339");
 }

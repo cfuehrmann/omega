@@ -35,6 +35,7 @@ fn simple_request() -> LlmRequest {
             temperature: None,
             thinking_budget: None,
         },
+        context_management: None,
     }
 }
 
@@ -157,6 +158,7 @@ async fn request_body_kitchen_sink() {
             temperature: Some(0.5),
             thinking_budget: None,
         },
+        context_management: None,
     };
 
     // Serialise input *before* consuming `req`.
@@ -620,6 +622,7 @@ async fn request_body_contains_user_text_message() {
         system: None,
         tools: vec![],
         config: ModelConfig::default(),
+        context_management: None,
     };
 
     let provider = OllamaProvider::new().with_base_url(server.uri());
@@ -662,6 +665,7 @@ async fn request_body_thinking_only_message_is_included() {
         system: None,
         tools: vec![],
         config: ModelConfig::default(),
+        context_management: None,
     };
 
     let provider = OllamaProvider::new().with_base_url(server.uri());
@@ -705,6 +709,7 @@ async fn request_body_tool_use_only_message_is_included() {
         system: None,
         tools: vec![],
         config: ModelConfig::default(),
+        context_management: None,
     };
 
     let provider = OllamaProvider::new().with_base_url(server.uri());
@@ -750,6 +755,7 @@ async fn request_body_tool_result_has_no_extra_empty_message() {
         system: None,
         tools: vec![],
         config: ModelConfig::default(),
+        context_management: None,
     };
 
     let provider = OllamaProvider::new().with_base_url(server.uri());
@@ -803,6 +809,7 @@ async fn request_body_contains_tool_definitions() {
             }),
         }],
         config: ModelConfig::default(),
+        context_management: None,
     };
 
     let provider = OllamaProvider::new().with_base_url(server.uri());

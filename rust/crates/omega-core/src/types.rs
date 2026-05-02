@@ -112,6 +112,16 @@ pub struct LlmRequest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
     pub config: ModelConfig,
+    /// Provider-specific context-management configuration (Anthropic
+    /// `context_management` request field). Opaque pass-through: the
+    /// shape of `edits[]` evolves on Anthropic's side, and forcing
+    /// strong typing here would require frequent updates without
+    /// catching real bugs. Forwarded verbatim into the request body
+    /// when `Some`.
+    ///
+    /// Mirrors `src/agent.ts:1280–1306` in the TypeScript reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Value>,
 }
 
 // ---------------------------------------------------------------------------

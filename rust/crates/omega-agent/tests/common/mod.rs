@@ -206,6 +206,7 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::SessionResumed(_) => "SessionResumed",
                 OmegaEvent::ModelChanged(_) => "ModelChanged",
                 OmegaEvent::EffortChanged(_) => "EffortChanged",
+                OmegaEvent::Compacted(_) => "Compacted",
                 _ => "OtherEvent",
             },
         })

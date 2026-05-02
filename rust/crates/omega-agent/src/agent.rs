@@ -434,6 +434,7 @@ impl Agent {
                         temperature: None,
                         thinking_budget: None,
                     },
+                    context_management: None,
                 };
 
                 // --- Emit LlmCall ------------------------------------------
@@ -502,9 +503,22 @@ impl Agent {
                                     let _ = self.event_store.append(&ev).await;
                                     yield AgentItem::event(ev);
                                 }
+                                OmegaEvent::Compacted(c) => {
+                                    // Server-side compaction fired — discard
+                                    // prior history (including the user msg
+                                    // that triggered this turn) so the next
+                                    // call sends only from this compaction
+                                    // block onward.  Mirrors
+                                    // src/agent.ts:1432–1453.
+                                    self.history.clear();
+                                    self.context_hashes.clear();
+                                    let ev = OmegaEvent::Compacted(c);
+                                    let _ = self.event_store.append(&ev).await;
+                                    yield AgentItem::event(ev);
+                                }
                                 other => {
                                     // Forward unmodified — provider may emit
-                                    // Compacted, etc.
+                                    // future event types we don't yet model.
                                     let _ = self.event_store.append(&other).await;
                                     yield AgentItem::event(other);
                                 }
@@ -897,6 +911,7 @@ impl Agent {
                     temperature: None,
                     thinking_budget: None,
                 },
+                context_management: None,
             };
 
             // -----------------------------------------------------------------

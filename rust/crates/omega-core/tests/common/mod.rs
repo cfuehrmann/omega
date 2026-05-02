@@ -120,6 +120,7 @@ pub fn simple_request(model: &str) -> LlmRequest {
             temperature: None,
             thinking_budget: None,
         },
+        context_management: None,
     }
 }
 
