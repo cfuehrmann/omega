@@ -51,8 +51,8 @@ pub const RESUMPTION_MODEL: &str = "claude-sonnet-4-6";
 /// Mirrors `config.resumptionEffort` in `src/config.ts`. `\"low\"` is
 /// intentional \u2014 summarisation does not need extended reasoning.
 ///
-/// Phase 1d.1c stores this for parity but the value is not yet wired
-/// onto `LlmRequest` (effort plumbing is deferred to `omega-core`).
+/// Threaded onto the resumption `LlmRequest` as `config.effort` via
+/// [`cap_effort_for_model`](crate::config::cap_effort_for_model).
 pub const RESUMPTION_EFFORT: &str = "low";
 
 /// Maximum output tokens for the resumption summarisation call.

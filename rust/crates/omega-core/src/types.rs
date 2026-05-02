@@ -89,9 +89,22 @@ pub struct ModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     /// Anthropic extended-thinking budget (tokens).  `None` disables
-    /// thinking.  Ignored by [`OllamaProvider`](crate::OllamaProvider).
+    /// explicit-budget thinking.  Ignored by
+    /// [`OllamaProvider`](crate::OllamaProvider).
+    /// When [`Self::adaptive_thinking`] is `true` this field is ignored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<u32>,
+    /// Enable Anthropic adaptive thinking
+    /// (`{ "type": "adaptive", "display": "summarized" }`).
+    /// Takes precedence over [`Self::thinking_budget`] when `true`.
+    /// Ignored by [`OllamaProvider`](crate::OllamaProvider).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adaptive_thinking: bool,
+    /// Thinking-effort level forwarded as `output_config.effort` in the
+    /// Anthropic request body.  `None` omits the field entirely.
+    /// Ignored by [`OllamaProvider`](crate::OllamaProvider).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 impl Default for ModelConfig {
@@ -100,6 +113,8 @@ impl Default for ModelConfig {
             max_tokens: 4096,
             temperature: None,
             thinking_budget: None,
+            adaptive_thinking: false,
+            effort: None,
         }
     }
 }

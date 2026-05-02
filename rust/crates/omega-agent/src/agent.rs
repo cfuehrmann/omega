@@ -45,11 +45,11 @@ use omega_tools::{execute_tool, tool_definitions};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::max_output_tokens_for_model;
+use crate::config::{cap_effort_for_model, max_output_tokens_for_model};
 use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
 use crate::session_resume::{
-    RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
+    RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
     extract_summary_from_response,
 };
 use crate::system_prompt::build_system_prompt;
@@ -123,9 +123,9 @@ pub struct Agent {
     /// switch takes effect from the next call onward.
     active_model: String,
     /// Currently selected thinking-effort level.  Initialised to
-    /// [`DEFAULT_EFFORT`]; mutated by [`Agent::set_effort`].  Phase
-    /// 1d.1a stores it but does not yet thread it onto `LlmRequest` —
-    /// the request-shape work belongs to `omega-core` and is deferred.
+    /// [`DEFAULT_EFFORT`]; mutated by [`Agent::set_effort`].
+    /// Threaded onto every `LlmRequest` as `config.effort` via
+    /// [`cap_effort_for_model`].
     active_effort: String,
     /// In-memory mirror of `context.jsonl`; sent verbatim as the
     /// `messages` array on every API call.
@@ -535,6 +535,14 @@ impl Agent {
                         max_tokens,
                         temperature: None,
                         thinking_budget: None,
+                        adaptive_thinking: true,
+                        effort: Some(
+                            cap_effort_for_model(
+                                &self.active_effort,
+                                &self.active_model,
+                            )
+                            .to_owned(),
+                        ),
                     },
                     context_management: None,
                 };
@@ -1128,6 +1136,10 @@ impl Agent {
                     max_tokens: RESUMPTION_MAX_TOKENS,
                     temperature: None,
                     thinking_budget: None,
+                    adaptive_thinking: true,
+                    effort: Some(
+                        cap_effort_for_model(RESUMPTION_EFFORT, RESUMPTION_MODEL).to_owned(),
+                    ),
                 },
                 context_management: None,
             };

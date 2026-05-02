@@ -117,8 +117,7 @@ pub fn simple_request(model: &str) -> LlmRequest {
         tools: vec![],
         config: ModelConfig {
             max_tokens: 1024,
-            temperature: None,
-            thinking_budget: None,
+            ..Default::default()
         },
         context_management: None,
     }

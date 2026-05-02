@@ -38,8 +38,7 @@ fn simple_request() -> LlmRequest {
         tools: vec![],
         config: ModelConfig {
             max_tokens: 1024,
-            temperature: None,
-            thinking_budget: None,
+            ..Default::default()
         },
         context_management: None,
     }
@@ -182,7 +181,7 @@ async fn request_body_kitchen_sink() {
         config: ModelConfig {
             max_tokens: 2_048,
             temperature: Some(0.5),
-            thinking_budget: None,
+            ..Default::default()
         },
         context_management: None,
     };
@@ -207,6 +206,115 @@ async fn request_body_kitchen_sink() {
             ".**.id"          => r.redaction(),
             ".**.tool_use_id" => r.redaction(),
         }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Request body: adaptive thinking + effort
+// ---------------------------------------------------------------------------
+
+/// Assert that `adaptive_thinking: true` + `effort` are forwarded to the
+/// Anthropic wire body as `thinking: { type: "adaptive", display: "summarized" }`
+/// and `output_config: { effort: "high" }`.
+#[tokio::test]
+async fn request_body_adaptive_thinking() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header("content-type", "text/event-stream")
+                .set_body_string(sse_body(&[
+                    (
+                        "message_start",
+                        json!({
+                            "type": "message_start",
+                            "message": {
+                                "id": "msg_01",
+                                "model": "claude-sonnet-4-6",
+                                "usage": {
+                                    "input_tokens": 10,
+                                    "output_tokens": 0
+                                }
+                            }
+                        }),
+                    ),
+                    (
+                        "content_block_start",
+                        json!({
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""}
+                        }),
+                    ),
+                    (
+                        "content_block_delta",
+                        json!({
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "ok"}
+                        }),
+                    ),
+                    (
+                        "content_block_stop",
+                        json!({"type": "content_block_stop", "index": 0}),
+                    ),
+                    (
+                        "message_delta",
+                        json!({
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "end_turn"},
+                            "usage": {"output_tokens": 1}
+                        }),
+                    ),
+                    ("message_stop", json!({"type": "message_stop"})),
+                ])),
+        )
+        .mount(&server)
+        .await;
+
+    let req = LlmRequest {
+        model: "claude-sonnet-4-6".to_owned(),
+        messages: vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "Hi".to_owned(),
+            }],
+        }],
+        system: None,
+        tools: vec![],
+        config: ModelConfig {
+            max_tokens: 1024,
+            adaptive_thinking: true,
+            effort: Some("high".to_owned()),
+            ..Default::default()
+        },
+        context_management: None,
+    };
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    collect_ok(&provider, req).await;
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("wiremock recorded requests");
+    let wire_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("wire body is valid JSON");
+
+    let thinking = &wire_body["thinking"];
+    assert_eq!(
+        thinking["type"], "adaptive",
+        "thinking.type must be adaptive"
+    );
+    assert_eq!(
+        thinking["display"], "summarized",
+        "thinking.display must be summarized"
+    );
+    let output_config = &wire_body["output_config"];
+    assert_eq!(
+        output_config["effort"], "high",
+        "output_config.effort must be high"
     );
 }
 

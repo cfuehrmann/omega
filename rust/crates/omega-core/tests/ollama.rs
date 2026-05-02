@@ -32,8 +32,7 @@ fn simple_request() -> LlmRequest {
         tools: vec![],
         config: ModelConfig {
             max_tokens: 1024,
-            temperature: None,
-            thinking_budget: None,
+            ..Default::default()
         },
         context_management: None,
     }
@@ -156,7 +155,7 @@ async fn request_body_kitchen_sink() {
         config: ModelConfig {
             max_tokens: 2_048,
             temperature: Some(0.5),
-            thinking_budget: None,
+            ..Default::default()
         },
         context_management: None,
     };

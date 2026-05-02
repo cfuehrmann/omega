@@ -160,6 +160,19 @@ Before implementing a non-trivial change, state your chosen approach and the
 alternatives you considered, then proceed. If the user raises a design
 question — before, during, or after — stop and discuss before continuing.
 
+## LLM Provider
+
+Omega is Anthropic-only. The supported models are:
+
+- `claude-sonnet-4-6` — default, fast
+- `claude-opus-4-6` — slower, more capable
+- `claude-opus-4-7` — most capable; step-change improvement in agentic coding over 4.6
+
+To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
+to get an indexed list of all docs pages (each entry links to a `.md` URL), find the
+relevant page, then fetch that specific `.md` URL with `fetch_url`. Individual pages fit
+comfortably within the 20 000-char `fetch_url` limit.
+
 ## Bug fixes
 
 When fixing a bug, write a failing test that reproduces it first (red), then
@@ -199,6 +212,16 @@ mod tests {
         let p = build_system_prompt("/tmp/proj", 12_345, None);
         assert!(p.contains("Your working directory is /tmp/proj."));
         assert!(p.contains("output token budget is 12345 tokens"));
+    }
+
+    #[test]
+    fn core_prompt_contains_llm_provider_docs_url() {
+        let p = build_system_prompt("/tmp/proj", 64_000, None);
+        assert!(
+            p.contains("platform.claude.com/llms.txt"),
+            "system prompt must contain the Anthropic docs URL so the agent uses fetch_url \
+             instead of guessing docs.anthropic.com (which is JS-rendered and unreachable)"
+        );
     }
 
     #[test]

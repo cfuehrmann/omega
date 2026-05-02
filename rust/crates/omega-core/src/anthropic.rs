@@ -383,6 +383,10 @@ struct AnthropicRequestBody<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
+    /// Adaptive-thinking effort level.  Serialises to
+    /// `{ "effort": "..." }` inside the `output_config` key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<OutputConfig<'a>>,
     /// Forwarded verbatim into the Anthropic request body.  See
     /// `LlmRequest.context_management` for the rationale behind opaque
     /// pass-through.
@@ -394,9 +398,30 @@ struct AnthropicRequestBody<'a> {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ThinkingConfig {
     Enabled { budget_tokens: u32 },
+    Adaptive { display: String },
+}
+
+/// Serialises to `{ "effort": "..." }` inside `output_config`.
+#[derive(Serialize)]
+struct OutputConfig<'a> {
+    effort: &'a str,
 }
 
 fn build_request_body(req: &LlmRequest) -> AnthropicRequestBody<'_> {
+    let thinking = if req.config.adaptive_thinking {
+        Some(ThinkingConfig::Adaptive {
+            display: "summarized".to_owned(),
+        })
+    } else {
+        req.config
+            .thinking_budget
+            .map(|budget_tokens| ThinkingConfig::Enabled { budget_tokens })
+    };
+    let output_config = req
+        .config
+        .effort
+        .as_deref()
+        .map(|effort| OutputConfig { effort });
     AnthropicRequestBody {
         model: &req.model,
         max_tokens: req.config.max_tokens,
@@ -405,10 +430,8 @@ fn build_request_body(req: &LlmRequest) -> AnthropicRequestBody<'_> {
         messages: &req.messages,
         tools: &req.tools,
         temperature: req.config.temperature,
-        thinking: req
-            .config
-            .thinking_budget
-            .map(|budget_tokens| ThinkingConfig::Enabled { budget_tokens }),
+        thinking,
+        output_config,
         context_management: req.context_management.as_ref(),
     }
 }
