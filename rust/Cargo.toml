@@ -6,6 +6,7 @@ members  = [
   "crates/omega-tools",
   "crates/omega-agent",
   "crates/omega-cli",
+  "crates/omega-server",
 ]
 resolver = "2"
 
