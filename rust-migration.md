@@ -17,9 +17,9 @@
 | 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
 | 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries; **0 missed** across `omega-tools` |
 | 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
-| 1e — `omega-server` (WebSocket) | 🟡 In progress | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
-| 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
-| 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
+| 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
+| 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
+| 2 — Rust as primary driver | ⬜ Next | TS UI talks to Rust backend; TS CLI retired |
 | 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -533,17 +533,122 @@ so the SIGTERM test uses `nix` (safe wrappers) rather than raw `libc`.
 
 ---
 
-## Phase 1f — Bridge (`ts-rs`) ⬜ Upcoming
+## Phase 1f — Bridge (`ts-rs`) ✅ Done
 
-`#[derive(ts_rs::TS)]` on all `omega-protocol` types. Committed `.d.ts` bindings so the
-TS web client stays type-checked against the Rust protocol. Deleted entirely in Phase 3.
+### Concise record
+
+**ts-rs 12** added as an optional dep behind the `ts-bindings` feature flag in
+`omega-protocol`, `omega-core`, and `omega-store`. **35 `.d.ts` files** generated to
+`rust/bindings/` and committed.
+
+**Types exported:**
+- `omega-protocol` (30): `OmegaEvent`, all 22 variant structs, `StreamSignal`,
+  `TurnMetrics`, `LlmResponseUsage`, `ServerStopOutcome`, `InterruptReason`,
+  `ContinueMode`, `LlmRetryReason`.
+- `omega-core` (2): `Role`, `ContentBlock`.
+- `omega-store` (3): `ContextRecord`, `SessionMetadata`, `ContextHash`.
+
+**Key decisions:**
+- `serde-compat` (on by default in ts-rs 12) reads existing `rename_all` /
+  `skip_serializing_if` / `tag` serde attributes — no annotation duplication.
+- `#[ts(optional)]` added *explicitly* to every `Option<T>` field that has
+  `skip_serializing_if = "Option::is_none"` because ts-rs only auto-optionalises
+  when `#[serde(default)]` is also on the field — and no defaults are permitted
+  (see settled decisions).
+- `#[ts(type = "unknown")]` on every `serde_json::Value` field — avoids pulling
+  in the `serde-json-impl` feature.
+- `TS_RS_LARGE_INT = "number"` in `rust/.cargo/config.toml` → all `i64` fields
+  become `number` in TypeScript (token counts, byte counts, etc.).
+- `TS_RS_EXPORT_DIR = "../bindings"` (relative to `rust/.cargo/`) funnels all
+  three crates' output into the single `rust/bindings/` directory.
+
+**`just rust-bindings` recipe:** runs
+`cargo test -p omega-{protocol,core,store} --features ts-bindings -- export_bindings`
+sequentially; the ts-rs `#[ts(export)]` derive macro emits one `export_bindings_*`
+test per type that writes the `.ts` file.
+
+**Drift guard in `just rust-gate`:**
+```
+just rust-bindings
+git diff --exit-code rust/bindings/
+```
+Stale bindings (Rust type changed without regenerating) fail the pre-commit gate.
+
+**TypeScript changes:**
+- `src/events.ts` rewritten as thin re-exports from `rust/bindings/`. Each event
+  struct type is intersected with `{ type: "X" }` to restore the discriminator
+  field for backward compatibility (generated struct types lack it — the tag lives
+  on the Rust enum). `StreamSignal` is defined locally as `TextSignal | ThinkingSignal`
+  (same shape as generated; keeps the named aliases referenced).
+- `events.schema.ts`: removed `.nullable()` from the three optional
+  `LlmResponseUsage` fields — Rust serialises `None` as *absent*, never `null`;
+  added missing `reason` field to `LlmRetrySchema`.
+- `context-hash.test.ts`: widened `Set<ContextHash>` to `Set<string>` because
+  the generated `LlmCallEvent.contextHashes` is `Array<string>` (the
+  omega-protocol `ContextHash` is a type alias, not a newtype).
+- `knip.json`: `src/events.ts` added as an entry point (all exports are public
+  events API).
+- `src/rust-bindings-roundtrip.test.ts`: 5 tests verifying that Rust-serialised
+  JSON validates against the TypeScript zod schemas and that the generated types
+  type-check correctly (`session_started`, `turn_end` + metrics, `llm_response` +
+  usage, `StreamSignal` shape, `llm_retry` with `reason`).
+
+**Bar:** `cargo build -p omega-server --release` ✅ · `just rust-gate` ✅ ·
+`bun test` 559+5 ✅ · `just test-browser` 109/109 ✅.
 
 ---
 
-## Phase 2 — Rust as primary driver ⬜ Future
+## Phase 2 — Rust as primary driver ⬜ Next
 
 Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts`.
-TS web client still served; all new features in Rust.
+TS web client still served by the Rust binary; all new features in Rust.
+
+### Prerequisite audit (what must be true before cutting over)
+
+**1. HTTP contract verification.**  
+The TS server exposes routes under `/sessions`, `/context`, `/files` (no `/api/`
+prefix). The Rust server uses `/api/sessions`, `/api/context`, `/api/files`.
+The web client's `fetch()` calls in `src/web/client/` must be updated to match
+the Rust paths — or the Rust router aliased — before the cut-over.
+
+**2. `session_info` WS message.**  
+The TS server emits `{ type: "session_info", dir, model, effort, cwd, name? }`
+after the `ready` message. The web client reads `model` and `effort` from this
+message to populate the model-picker UI (`src/web/client/state.ts:
+hostInfo.model`). The Rust server does *not* currently emit this message;
+without it the UI model/effort display will be blank on first connect.
+
+**3. E2E tests against the Rust binary.**  
+Playwright currently points at the TS dev server (`bun src/cli.ts`).
+The `webServer` entry in `playwright.config.ts` must be updated to build and
+start `omega-server` instead. All 109 browser tests must pass against the Rust
+binary before retiring the TS server.
+
+**4. Model/effort in `reset` and `POST /api/sessions`.**  
+The web client sends `{ type: "reset", model, effort }` when the user switches
+model or starts fresh. The Rust handler currently hard-codes `claude-sonnet-4-6`
+and ignores these fields. The `SessionConfig` / `AgentConfig` path needs wiring
+so the chosen model/effort is passed through to `Agent::init()`.
+
+**5. Graceful-shutdown smoke test in the E2E suite.**  
+The Playwright `globalTeardown` currently kills the TS process. With the Rust
+binary the SIGTERM path (implemented in 1e.4) should be exercised at least once
+in a real test run to confirm clean shutdown.
+
+### Suggested decomposition
+
+| Sub-phase | Deliverable |
+|---|---|
+| 2a | Wire `model`/`effort` from `reset` + `POST /api/sessions` through `AgentConfig`; emit `session_info` WS message |
+| 2b | Align URL paths (`/api/*` vs `/`) or update web-client fetch calls; run E2E suite against Rust binary |
+| 2c | Cut over: update `playwright.config.ts` + Justfile to use `omega-server`; retire `src/web/server.ts` + `src/cli.ts` |
+
+### What is NOT required before cutting over
+
+- Leptos rewrite (Phase 3)
+- Multi-session server
+- `capEffortForModel` and effort threading onto `LlmRequest`
+- `context_management` request shape
 
 ---
 
