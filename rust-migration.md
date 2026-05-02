@@ -16,7 +16,7 @@
 | 1d.0b — tool body ports + CLI wiring | ✅ Done | 12 real tool implementations + 35 integration tests; `omega-cli run` end-to-end; `OmegaRustAgent` Harbor adapter |
 | 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
 | 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries (sentinels → `Option`, depth → `is_root`, extracted pure helpers); **0 missed** across `omega-tools` |
-| 1d.1 — `omega-agent` advanced | ⬜ **Next** | Pause/continue/abort, session resumption, compaction, model/effort switching |
+| 1d.1 — `omega-agent` advanced | 🟡 In progress | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -281,19 +281,52 @@ seam:
 
 ---
 
-## Phase 1d.1 — `omega-agent` advanced features ⬜ Next
+## Phase 1d.1 — `omega-agent` advanced features ⬜ In progress
 
-Add to the `omega-agent` crate built in Phase 1d.0:
+Add to the `omega-agent` crate built in Phase 1d.0. Decomposed into five
+sub-phases, ordered smallest-surface → highest-concurrency. Each sub-phase
+closes with `cargo mutants -f <touched files>` at **0 missed**, holding the
+bar set by 1d.0d.
 
-- **`setModel()` / `setEffort()`** — emit + persist `model_changed` / `effort_changed`.
-- **Pause/continue/abort** — `requestPause()`, `requestContinue()`, `abort()`,
-  the seam logic, `turn_paused` / `turn_continued` events.
-- **Session resumption** — `performResumption()`, `seedWithResumptionSummary()`,
-  `extractResumptionBasis()` (port `src/session-resume.ts`).
-- **Server-side compaction** — handle `Compacted` stop reason; emit `compacted`
-  event; clear/reset history.
+| Sub-phase | Deliverable | Status |
+|---|---|---|
+| 1d.1a | `set_model` / `set_effort` + `active_model` / `active_effort` state + `extract_last_model_and_effort` pure helper | ⬜ Next |
+| 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ⬜ |
+| 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ⬜ |
+| 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ⬜ |
+| 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ⬜ |
 
-Session prompt to be written once scope is confirmed.
+### Order rationale
+
+- **a → b** are pure helpers, easy to mutation-test exhaustively, land fast.
+- **c** depends on (a) — resumption needs the active-model/effort fields.
+- **d** is independent of (a)–(c) but is the only cross-crate sub-phase
+  (touches `omega-core`); doing it before pause keeps the provider/agent
+  contract honest before pause control layers on top.
+- **e** lands last — the seam is the riskiest mutation-testing target;
+  doing it after the rest of the loop is settled means nothing is moving
+  under it.
+
+### Test seam strategy
+
+- Pure helpers get inline `#[cfg(test)]` unit tests pinning each branch.
+- Agent-method behaviour uses the existing `MockProvider` scaffolding,
+  extended where needed (e.g. a `BlockingProvider` for the pause seam test
+  that holds the LLM stream open on a `tokio::sync::Notify` until the test
+  releases it). No real time-based synchronisation in tests.
+
+### Explicit deferrals (not part of 1d.1)
+
+The TS agent has three further features that are intentionally **out of
+scope** for this phase. Reopen if any turn out to be wrong calls:
+
+- `max_tokens` thinking-budget no-output recovery and `max_tokens`
+  mid-tool-call recovery (the `maxTokensRecoveries` counter).
+- The `activeGeneration` superseded-generator guard — irrelevant until a
+  multi-WS server (1e) holds the agent.
+- Anthropic prompt-cache breakpoints / `context_management` request shape —
+  those are LLM-request-shape concerns owned by `omega-core`'s
+  `AnthropicProvider`, not this phase.
 
 ---
 
