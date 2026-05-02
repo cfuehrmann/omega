@@ -829,6 +829,9 @@ function EventBlock(props: { event: ServerMessage; turnEvents: ServerMessage[]; 
           <div class="block-label-row">
             <span class="block-label">llm_call</span>
             <div class="block-btn-group">
+              <Show when={e.requestSummary?.thinking}>
+                <button class="block-expand-btn thinking-btn" onClick={openRaw} title="Thinking enabled — view payload">thinking</button>
+              </Show>
               <button class="block-expand-btn" onClick={openMessages} title="View context messages">messages (+{deltaCount})</button>
               <button class="block-expand-btn" onClick={openRaw}      title="View API payload">payload</button>
             </div>

@@ -18,6 +18,8 @@
 | 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries; **0 missed** across `omega-tools` |
 | 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
+| **BUG-A** — adaptive thinking + effort | 🔴 **Top priority** | Wire `thinking: adaptive` + `output_config.effort` into every Anthropic call |
+| **BUG-B** — system prompt missing LLM Provider section | 🔴 **Top priority** | Add `platform.claude.com/llms.txt` guidance to `system_prompt.rs` |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
 | 2d — `session_renamed` envelope | ⬜ Next | Fix: rename UI shows the saved name |
@@ -821,6 +823,101 @@ the canonical example — a serde default is untestable by design.
 
 ---
 
+---
+
+## BUG-A — Adaptive thinking + effort not sent to Anthropic 🔴 Top priority
+
+**Observed:** Session `2026-05-02T22-49-42-372-4d68835d` — every `llm_response` has
+`thinking: False`. The agent produced zero thinking blocks across 50+ API calls.
+
+**Root cause:** Two gaps, both deferred in Phase 1d.1:
+
+1. `ThinkingConfig` in `omega-core/src/anthropic.rs` only has `Enabled { budget_tokens }`
+   (the old explicit-budget form). There is no `Adaptive { display: String }` variant.
+   `ModelConfig.thinking_budget` is always `None` in `agent.rs`, so no `thinking` field
+   is ever included in the Anthropic request body.
+
+2. `ModelConfig` has no `effort` field; `output_config: { effort }` is therefore never
+   serialised. The TS agent sends it on every turn via
+   `output_config: { effort: capEffortForModel(this.activeEffort, activeModel) }`.
+
+**Fix — three files:**
+
+*`omega-core/src/types.rs`*
+- Add `pub adaptive_thinking: bool` to `ModelConfig`. Default `false` (keeps existing
+  tests passing with zero code changes). Ignore on non-Anthropic providers.
+- Add `pub effort: Option<String>` to `ModelConfig`.
+
+*`omega-core/src/anthropic.rs`*
+- Add `Adaptive { display: String }` to `ThinkingConfig`.
+- Map `config.adaptive_thinking == true` → `ThinkingConfig::Adaptive { display: "summarized" }`.
+- Add `output_config` struct (serialises as `{ "effort": "..." }`, skipped when effort is
+  `None`) to `AnthropicRequestBody`.
+- Regenerate/update the `anthropic__request_body_kitchen_sink` snapshot.
+
+*`omega-agent/src/agent.rs`*
+- In both the main-turn `LlmRequest` builder and the resumption-summary builder, set
+  `config.adaptive_thinking = true` and `config.effort = Some(capEffortForModel(active_effort, model))`.
+- `capEffortForModel` logic: `xhigh` only for `claude-opus-4-7`; `max` only for
+  `claude-opus-4-6`/`claude-opus-4-7`; otherwise cap at `high`. Mirror `src/agent.ts`.
+
+**Tests:** Add an omega-agent integration test that constructs a `MockProvider` response
+and asserts the `LlmRequest` received by the provider contains
+`thinking_type == Adaptive` and a non-None `effort`. Add/update `omega-core` unit tests
+for the new serialisation shapes.
+
+**No protocol or persistence changes needed** — thinking/effort are request-only fields;
+the response side (`LlmResponseEvent`, context storage) is unaffected.
+
+---
+
+## BUG-B — Rust system prompt missing `## LLM Provider` section 🔴 Top priority
+
+**Observed:** Session `2026-05-02T22-49-42-372-4d68835d`:
+- `web_search` → `BRAVE_SEARCH_API_KEY is not set` (no Brave key in env).
+- `fetch_url` to `https://docs.anthropic.com/...` → `request failed` (JS-rendered,
+  Cloudflare-blocked; plain HTTP fails).
+- `fetch_url` to `https://raw.githubusercontent.com/...` → succeeded (plain HTTP works).
+
+**Root cause:** `rust/crates/omega-agent/src/system_prompt.rs` (`core_prompt()`) is missing
+the `## LLM Provider` section that lives in `AGENT.md`. That section tells the agent:
+> *To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
+> to get an indexed list of all docs pages (each entry links to a `.md` URL), find the
+> relevant page, then fetch that specific `.md` URL with `fetch_url`.  Individual pages fit
+> comfortably within the 20 000-char `fetch_url` limit.*
+
+Without this guidance the agent guesses `docs.anthropic.com` URLs which are JS-rendered and
+fail. `platform.claude.com/*.md` URLs return static Markdown and are reliably fetchable.
+The Brave-key gap is a separate ops issue (set `BRAVE_SEARCH_API_KEY` in the server
+environment), but the model can work around it entirely via `fetch_url` +
+`platform.claude.com` if the system prompt points it there.
+
+**Fix — one file:**
+
+*`omega-core/src/system_prompt.rs`* (`core_prompt()` function)
+- Add the `## LLM Provider` section verbatim from `AGENT.md`, placed between `## Design
+  discipline` and `## Bug fixes` (matching the order in `AGENT.md`). Section text:
+
+```
+### LLM Provider
+
+Omega is Anthropic-only. The supported models are:
+
+- `claude-sonnet-4-6` — default, fast
+- `claude-opus-4-6` — slower, more capable
+- `claude-opus-4-7` — most capable; step-change improvement in agentic coding over 4.6
+
+To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
+to get an indexed list of all docs pages (each entry links to a `.md` URL), find the
+relevant page, then fetch that specific `.md` URL with `fetch_url`. Individual pages fit
+comfortably within the 20 000-char `fetch_url` limit.
+```
+
+**Tests:** Update the existing `core_prompt_substitutes_cwd_and_tokens` test (or add a
+sibling) to assert that `"platform.claude.com/llms.txt"` appears in the prompt.
+
+---
+
 ## What is intentionally deferred
 
 All of the following are post-parity improvements. Do not implement during port:
@@ -832,6 +929,6 @@ All of the following are post-parity improvements. Do not implement during port:
 - `insta` snapshot tests for rendered Leptos components
 - Rate-limit backpressure to UI
 - Multi-session server (beyond TS parity)
-- `capEffortForModel` and effort threading onto `LlmRequest`
+- ~~`capEffortForModel` and effort threading onto `LlmRequest`~~ → **see BUG-A above**
 - `context_management` request shape (auto-compaction trigger)
 - `max_tokens` thinking-budget recovery (`maxTokensRecoveries`)
