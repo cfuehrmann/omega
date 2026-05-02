@@ -18,8 +18,8 @@
 | 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries; **0 missed** across `omega-tools` |
 | 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
-| **BUG-A** — adaptive thinking + effort | 🔴 **Top priority** | Wire `thinking: adaptive` + `output_config.effort` into every Anthropic call |
-| **BUG-B** — system prompt missing LLM Provider section | 🔴 **Top priority** | Add `platform.claude.com/llms.txt` guidance to `system_prompt.rs` |
+| **BUG-A** — adaptive thinking + effort | ✅ Done | Wire `thinking: adaptive` + `output_config.effort` into every Anthropic call |
+| **BUG-B** — system prompt missing LLM Provider section | ✅ Done | Add `platform.claude.com/llms.txt` guidance to `system_prompt.rs` |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
 | 2d — `session_renamed` envelope | ⬜ Next | Fix: rename UI shows the saved name |
