@@ -247,7 +247,7 @@ tokio-tungstenite = "0.26"    # dev-dependency for test WS client only
 | 1e.0 | ✅ Done | Crate skeleton; `GET /health`; `ServeDir` static serving; placeholder routes returning 501 |
 | 1e.1 | ✅ Done | `ActiveSession`, `AppState`, `serve()`, `POST /api/sessions`, `GET /api/sessions` |
 | 1e.2 | ✅ Done | WebSocket upgrade; `user_message` → turn → event stream; `pause`/`continue`/`abort`/`reset` |
-| 1e.3 | ⬜ Upcoming | History replay on reconnect (filtered `events.jsonl` push before `Ready`) |
+| 1e.3 | ✅ Done | History replay on reconnect (filtered `events.jsonl` push before `Ready`) |
 | 1e.4 | ⬜ Upcoming | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
 
 ### Phase 1e.0 — done (concise record)
@@ -406,14 +406,56 @@ placeholder-501 lists (it is now a real WS route; non-upgrade GETs return
     not a behavioural guarantee.
   - `lib.rs`: 1 mutant — 1 caught, **0 missed**.
 
-**Carry-forward into 1e.3:** `ActiveSession::ws_tx` is currently *write-only*.
-1e.3 history replay must read it inside `handle_socket` (or a dedicated
-`replay_history` helper) and push every persisted `OmegaEvent` from
-`events.jsonl` before the read loop starts. The current `install_ws_tx`
-becomes the natural insertion point. Also: `handle_user_message` captures
-`tx` at dispatch time — mid-turn reconnects will not receive the running
-turn's events. If multi-WS-per-turn delivery is wanted, switch to reading
-`active.ws_tx` from the slot inside the turn task's forwarding loop.
+**Carry-forward into 1e.3:** resolved — see 1e.3 record below.
+
+### Phase 1e.3 — done (concise record)
+
+**Scope:** History replay on WebSocket reconnect. On every WS upgrade
+(before `Ready`), the server streams persisted events from `events.jsonl`
+through the new socket, filtered by `REPLAY_EXCLUDE`.
+
+**`EventStore::read_all()`** added to `omega-store`: reads all parseable
+JSON objects line-by-line; skips blank or malformed lines (mirrors TS
+`loadReplayEvents`); returns `Ok(vec![])` when the file is absent;
+propagates non-NotFound I/O errors as `Err`.
+
+**New symbols in `router.rs`:**
+- `REPLAY_EXCLUDE: &[&str]` — `["ready", "text"]`; doc comment cites
+  `src/web/server.ts` line by name.
+- `pub fn should_replay(event_type: &str) -> bool` — pure helper;
+  `!REPLAY_EXCLUDE.contains(&event_type)`; unit-testable without WS.
+- `async fn replay_history(state, tx)` — holds the session lock only to
+  clone `events_file`; does all file I/O without the lock; deserialises
+  each surviving `Value` as `OmegaEvent` and sends `WsMessage::Item`.
+
+**Sequencing in `handle_socket`:** `install_ws_tx` (installs sender into
+slot) → `replay_history` (file read, no lock held) → `WsMessage::Ready`.
+`ws_tx` is installed *before* replay so any concurrent turn's live events
+reach the new socket interleaved after the replay batch — no race.
+
+**Updated existing test:** `reconnect_new_ws_receives_ready` now uses
+`recv_until_type("ready")` instead of asserting the first frame is `ready`,
+because init events (server_started + session_started) precede `ready` on
+reconnect.
+
+**Tests:** 19 new tests total across three files:
+- `omega-store/tests/event_store.rs` — 8 tests: missing file, empty file,
+  malformed-line skip, order preservation, round-trip, non-NotFound I/O
+  error propagation (dir-as-file catches the `NotFound`-guard mutant).
+- `omega-server/src/router.rs` (unit) — 8 `should_replay` tests: both
+  excluded types (`ready`, `text`) + representative included types
+  (server_started, session_started, user_message, turn_end, llm_response,
+  tool_call, empty string).
+- `omega-server/tests/ws.rs` — 3 WS integration tests: full-turn replay
+  with synthetic `{"type":"text"}` injected into `events.jsonl` (verifies
+  filter live), empty-events-file → just Ready, init-only → server_started
+  + session_started + Ready.
+
+**`cargo mutants -f`:**
+- `omega-store/src/event_store.rs`: 7/7 caught, **0 missed**.
+- `omega-server/src/router.rs`: 23 caught, 9 unviable, **1 equivalent**:
+  same `Message::Close` arm as 1e.2 — deletion leaves identical behaviour
+  via the `while let None` exit path; documented in source comment.
 
 ---
 
