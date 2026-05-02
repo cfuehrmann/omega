@@ -482,6 +482,117 @@ assistant message has been appended for this turn — same ordering as TS
   post-compaction messages on the wire.
 - Mutation bar: `cargo mutants -f` on every touched file, **0 missed**.
 
+### 1d.1e pre-flight notes
+
+omega-agent-only. Protocol is ready (`PauseRequestedEvent`,
+`TurnPausedEvent`, `TurnContinuedEvent`, `ContinueMode::{Manual,Auto}`
+shipped in 1a). No cross-crate change.
+
+**TS reference points:**
+
+- `src/agent.ts:505–587` — pause/continue/abort state fields and
+  the three control methods.
+- `src/agent.ts:1105–1140` — turn-entry pause-state reset and
+  `turnAbort` plumbing (external signal forwarded into a fresh
+  per-turn AbortController).
+- `src/agent.ts:1765–1832` — the seam: fires only after
+  `appendToHistory(tool_results)`; emits `turn_paused`, suspends on
+  `pausedResolver` if `pendingContinue` is null, post-wake checks
+  abort first, optionally appends interjection + emits `user_message`,
+  then `turn_continued{mode}`.
+- `src/agent.ts:1850–1869` — turn-exit `finally` clears
+  pause-control state and fires the resolver if the generator
+  unwinds while still suspended.
+
+**Architectural choice — separate `ControlHandle`, not methods on
+`Agent`.** TS puts `requestPause` / `requestContinue` / `requestAbort`
+on the Agent class. In Rust, `Agent::send_message(&mut self, …)`
+exclusively borrows the agent for the lifetime of the returned
+`Pin<Box<dyn Stream>>`, so external code (server, tests) cannot call
+any other `&self` method on the same `Agent` while a turn runs. The
+clean translation is a cloneable `ControlHandle` (`Arc`-backed)
+returned by `Agent::controls()` before the turn starts. The handle
+carries the three control methods.
+
+**Concurrency primitives:**
+
+- `Arc<std::sync::Mutex<ControlState>>` for `pause_requested`,
+  `pending_continue`, `suspended` — brief critical sections, no need
+  for an async mutex.
+- `Arc<tokio::sync::Notify>` for the seam suspend/wake. Reusable
+  across multiple pause cycles in one turn (which TS allows). Lost-
+  wakeup is handled by re-checking `pending_continue` under the
+  state lock after waking. `oneshot` would force a fresh channel per
+  cycle; `watch` is over-spec'd; a manual `Mutex<Option<Waker>>`
+  reinvents what `Notify` already provides.
+- `Arc<Mutex<CancellationToken>>` for the turn-scoped abort token.
+  Replaced with a fresh token at every `send_message` entry;
+  `request_abort` locks, clones, calls `cancel()`. The existing
+  `cancel: CancellationToken` parameter on `send_message` is kept
+  for explicit external cancellation and forwarded into the
+  controls' turn-cancel via a `tokio::select!` task aborted by the
+  turn-exit guard.
+
+**State-reset strategy:** turn-entry clear at the top of the
+`stream!` body, plus a `TurnGuard` RAII struct whose `Drop` impl
+re-clears state and calls `notify.notify_one()` if `suspended` is
+still true. Drop-guard is the only mechanism — `async_stream::stream!`
+offers no `finally`-like hook — and it covers the caller-drops-stream-
+mid-suspend path.
+
+**Internal refactor:** `Agent.event_store: EventStore` becomes
+`Arc<EventStore>` so `ControlHandle` can clone the Arc and log
+`PauseRequested` directly. omega-agent-internal change only; public
+constructor signature unchanged.
+
+**Event-ordering invariants** (pinned by tests):
+
+```
+… ToolResult …
+TurnPaused                          ← only after tool_results appended
+UserMessage{content}                ← only if request_continue had content
+TurnContinued{mode}                 ← mode=Manual if seam was suspended,
+                                       Auto if request_continue beat the seam
+LlmCall                             ← next call sees the interjection
+```
+
+`PauseRequested` is logged by `request_pause` itself and lands in
+`events.jsonl` even when no turn is running. Abort during pause
+yields `TurnPaused → TurnInterrupted{aborted}` and stops.
+
+**Test seam:** integration tests use the existing `MockProvider`
+plus a new `BlockingProvider` (in `tests/common/mod.rs`) that holds
+the stream parked on a `Notify` between transcripts — needed for
+multi-cycle-in-one-turn and drop-guard tests. The basic pause/
+continue/abort tests just call `request_pause` before polling the
+stream (deterministic since async streams advance only under poll).
+
+**Branches `cargo mutants -f` cannot reach** (same `Pin<Box<dyn Stream>>`
+limitation as 1d.1a/c/d — covered by integration tests):
+
+- `pause_requested` reset at seam entry
+- `TurnPaused` emission
+- `pending_continue.is_none()` suspend-or-skip
+- post-wake `cancel.is_cancelled()` abort branch
+- interjection `is_some()` → `UserMessage` emission
+- `mode` selection (Manual when suspended, Auto when not)
+- `TurnContinued` emission
+- turn-entry state-reset and `TurnGuard::drop` cleanup
+
+Mutants in `controls.rs` (the three methods, the handle, `TurnGuard`)
+*are* visited by cargo-mutants and covered directly.
+
+**Test plan:** 14 integration tests covering manual/auto continue
+with and without interjection (×4), abort-during-pause, idempotent
+`request_pause` (already-pending and while-suspended), no-turn-
+running logging, state-reset between turns, drop-guard cleanup,
+full events.jsonl ordering, multiple pause cycles in one turn,
+abort without prior pause, and `request_continue` without prior
+pause as inert.
+
+**Mutation bar:** `cargo mutants -f` on `controls.rs` and `agent.rs`,
+**0 missed** (modulo the unviable stream-body branches above).
+
 ### Explicit deferrals (not part of 1d.1)
 
 The TS agent has three further features that are intentionally **out of
