@@ -19,8 +19,8 @@
 | 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
-| 2 — Rust as primary driver | 🟡 In progress | TS UI talks to Rust backend; TS CLI retired |
-| 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
+| 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
+| 3 — Leptos UI rewrite | ⬜ Next | SolidJS → Leptos; TS deleted |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -598,7 +598,7 @@ Stale bindings (Rust type changed without regenerating) fail the pre-commit gate
 
 ---
 
-## Phase 2 — Rust as primary driver 🟡 In progress
+## Phase 2 — Rust as primary driver ✅ Done
 
 Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts`.
 TS web client still served by the Rust binary; all new features in Rust.
@@ -609,7 +609,7 @@ TS web client still served by the Rust binary; all new features in Rust.
 |---|---|---|
 | 2a | ✅ Done | Wire `model`/`effort` from `reset` + `POST /api/sessions` through `AgentConfig`; emit `session_info` WS message |
 | 2b | ✅ Done | Align URL paths (`/api/*` vs `/`) or update web-client fetch calls; switch replay to `history` frame |
-| 2c | ⬜ Next | Cut over: update `playwright.config.ts` + Justfile to use `omega-server`; retire `src/web/server.ts` + `src/cli.ts` |
+| 2c | ✅ Done | Cut over: Playwright + Justfile use `omega-server`; `src/cli.ts` + `src/web/server.ts` deleted |
 
 ### Phase 2a + 2b — done (concise record)
 
@@ -653,29 +653,99 @@ for `Reset { model, effort }` parsing.
 
 **Bar:** `just rust-gate` ✅ · `just test` (559 bun + 109 Playwright) ✅.
 
-### Phase 2c — cut-over (next)
+### Phase 2c — done (concise record)
 
-All prerequisites cleared by 2a/2b. Remaining work:
+**Scope:** Playwright real-server project, Justfile, and production `just server`
+recipe all cut over to the Rust `omega-server` binary. `src/cli.ts` and
+`src/web/server.ts` deleted; the TS web client (SolidJS) is now served by the
+Rust binary in production. Net diff: **+1022 / −2710 lines**, 29 files.
 
-1. Update `playwright.config.ts` `webServer` to build and run `omega-server`
-   instead of `bun src/cli.ts`. The Rust binary needs `--public-dir
-   src/web/public` (built by `just web-build`) and `--sessions-root
-   .omega/test-sessions` for parity with the TS test server.
-2. Verify all 109 browser tests pass against the Rust binary.
-3. Exercise the SIGTERM graceful-shutdown path at least once in the E2E run
-   (the Playwright teardown should send SIGTERM, not SIGKILL).
-4. Delete `src/cli.ts` and `src/web/server.ts`. Remove the `/api/` aliases
-   added to `src/web/server.ts` and `e2e/fixtures/test-server.ts` in 2b.
-   `e2e/fixtures/test-server.ts` itself stays — it's the in-test mock used
-   by spec files that need a non-real backend, not the production server.
-5. Update `Justfile` recipes that still reference the TS server entry point.
+**New crate `omega-mock-server`** at `rust/crates/omega-mock-server/`. Wires
+`omega_server::serve` through a deterministic `MockProvider` that mirrors the
+(now-deleted) `e2e/fixtures/real-server.ts` routing — `MULTI_TOOL_TEST`,
+`CONCURRENT_TOOLS_TEST`, `LONG_STREAM_TEST`, `TWO_PAUSES_TEST`,
+`abort_sleep_test`, `RESUME_BASIS_TEST`, default `pong`, plus the resumption
+summary/description path. Per-turn call index tracking gives the multi-tool
+tests one tool per LLM round. Includes a control HTTP API
+(`/control/llm-calls`, `/control/reset-calls`) on port 3004 for replay specs.
 
-### What is NOT required before cutting over
+**Justfile.** New `rust-build-server` and `rust-build-mock-server` recipes;
+`test`, `test-browser`, `test-browser-log`, and `e2e` depend on them. `just
+server` runs the release `omega-server` binary directly.
 
-- Leptos rewrite (Phase 3)
-- Multi-session server
-- `capEffortForModel` and effort threading onto `LlmRequest`
-- `context_management` request shape
+**`playwright.config.ts`.** `real-server` `webServer` command builds and runs
+`mock-omega-server`. Both projects set
+`gracefulShutdown = { signal: "SIGTERM", timeout: 5000 }` — every CI run
+exercises the 1e.4 SIGTERM path.
+
+**Rust router additions for parity with the deleted TS server:**
+- `ClientFrame::UserMessage` accepts both `"user_message"` and `"message"`
+  via `#[serde(alias)]` (the SolidJS client sends the latter).
+- New variants + handlers: `SetModel`, `SetEffort`, `DeleteSession`. Each
+  refreshes `ActiveSession::info_cache` so subsequent `SessionInfo` broadcasts
+  reflect the change.
+- `WsMessage::SessionInfo` gained `turnState` (idle / running /
+  pause_requested / paused). `WsMessage::SessionDeleted` added.
+- `ActiveSession` gained `turn_state: Arc<Mutex<String>>` and
+  `info_cache: Arc<Mutex<SessionInfoCache>>` so any handler can broadcast a
+  fresh `SessionInfo` *without* locking the agent (which is held by the
+  streaming task for the whole turn — naive `build_session_info` deadlocked).
+- A pure helper `next_turn_state_for(&OmegaEvent)` lets the streaming loop
+  derive transitions from the events it already forwards (`UserMessage` →
+  running, `TurnPaused` → paused, `TurnContinued` → running, `TurnEnd` /
+  `TurnInterrupted` → idle).
+- `handle_user_message` and `handle_resume_session` route streamed events
+  through `send_to_active(&state.active_session, msg)` — looking up the
+  *current* `ws_tx` per send rather than capturing a clone — so events emitted
+  after a browser reload reach the new connection. Fixes the
+  pause-during-turn → reload → continue path.
+- `handle_pause` broadcasts the `pause_requested` event itself (the agent's
+  `request_pause` persists but does *not* yield through the stream) plus the
+  resulting `pause_requested` `turnState` transition.
+
+**TS deletes:**
+- `src/cli.ts`, `src/cli.test.ts`
+- `src/web/server.ts` — helpers (`closeOpenTurn`, `shouldLogEvent`,
+  `listFilesForCompletion`) extracted to `src/web/server-helpers.ts`,
+  imported by the surviving `e2e/fixtures/test-server.ts` mock and two
+  related unit tests
+- `e2e/fixtures/real-server.ts` — replaced by `mock-omega-server`
+- Obsolete TS server tests covered by Rust integration tests:
+  `src/entry.test.ts`, `src/web/context-lookup.test.ts`,
+  `src/web/reset-init-events.test.ts`, `src/web/pause-ws.test.ts`
+- Dead exports after the deletes: `makeDefaultCreateMessageStream`
+  (src/agent.ts), `readEnvPort` (src/env.ts)
+- `/api/` aliases added in 2b to `src/web/server.ts` and
+  `e2e/fixtures/test-server.ts` (the `test-server.ts` aliases were the
+  only remaining ones; `test-server.ts` itself stays as the chromium
+  events-only mock fixture)
+
+**`knip.json`.** Scope extended to `e2e/` (`"e2e/**/*.spec.ts"` and
+`"e2e/fixtures/test-server.ts"` as entries; `"e2e/**/*.ts"` in `project`)
+so `test-server.ts` and the spec files count as consumers of the surviving
+web / session helpers.
+
+**Bar:** `just rust-gate` ✅ · 109/109 browser tests ✅ ·
+533/533 TS unit tests ✅ · pre-commit gate exit-0.
+
+**Followup deferred (not blocking):** `bench/omega_agent.py` still references
+the deleted `src/cli.ts`. Should be retargeted at `rust/target/release/omega`
+(the omega-cli binary). Bench is not on the test path.
+
+### Running the UI in real life
+
+With Phase 2 complete, the Rust binary is the production server:
+
+```
+export ANTHROPIC_API_KEY=...
+just web-build              # bundles the SolidJS client into src/web/public/
+just rust-build-server      # builds rust/target/release/omega-server
+just server                 # runs it on port 3000
+```
+
+`just server` accepts pass-through args (`just server --port 4000
+--sessions-root /tmp/omega-sessions`). The binary uses `AnthropicProvider` —
+production LLM, real cost. Sessions persist to `.omega/sessions/` by default.
 
 ---
 
