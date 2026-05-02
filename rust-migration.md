@@ -17,7 +17,7 @@
 | 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
 | 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries; **0 missed** across `omega-tools` |
 | 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
-| 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
+| 1e — `omega-server` (WebSocket) | 🟡 In progress | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
 | 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
@@ -242,13 +242,39 @@ tokio-tungstenite = "0.26"    # dev-dependency for test WS client only
 
 ### Decomposition
 
-| Sub-phase | Deliverable |
-|---|---|
-| 1e.0 | Crate skeleton; `GET /health`; `ServeDir` static serving; placeholder routes returning 501 |
-| 1e.1 | `ActiveSession` + session create/reset; `POST` (implicit via `reset` msg) + `GET /sessions` |
-| 1e.2 | WebSocket upgrade; `user_message` → turn → event stream to client; `{ type: "ready" }` |
-| 1e.3 | History replay on reconnect; `pause` / `continue` / `abort` client messages |
-| 1e.4 | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
+| Sub-phase | Status | Deliverable |
+|---|---|---|
+| 1e.0 | ✅ Done | Crate skeleton; `GET /health`; `ServeDir` static serving; placeholder routes returning 501 |
+| 1e.1 | ⬜ Upcoming | `ActiveSession` + session create/reset; `POST` (implicit via `reset` msg) + `GET /sessions` |
+| 1e.2 | ⬜ Upcoming | WebSocket upgrade; `user_message` → turn → event stream to client; `{ type: "ready" }` |
+| 1e.3 | ⬜ Upcoming | History replay on reconnect; `pause` / `continue` / `abort` client messages |
+| 1e.4 | ⬜ Upcoming | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
+
+### Phase 1e.0 — done (concise record)
+
+New binary crate `rust/crates/omega-server/`. Stack: axum 0.8 (`ws` feature
+ready for 1e.2), tower-http 0.6 (`fs`), clap derive, tokio `full`.
+
+- `build_router(public_dir: &Path) -> Router`: `GET /health` → 200
+  `{"status":"ok"}`; `/api/sessions`, `/ws`, `/context`, `/files` →
+  `501` via `any(...)` (all methods, not just GET); `ServeDir` as
+  `fallback_service` for static assets.
+- `Args` (clap): `--port` (3000), `--sessions-root` (`.omega/sessions`),
+  `--public-dir` (`src/web/public/`). Defaults match the TS server and
+  `omega_store::SESSIONS_ROOT`.
+- `main` is pure glue (`#[mutants::skip]`); all behaviour lives in
+  testable helpers (`build_router`, `Args`).
+- 8 integration tests in `tests/http.rs`, all binding `127.0.0.1:0`
+  (parallel-safe). Live smoke test against the release binary confirmed
+  `/health` → 200 and all four placeholders → 501.
+- `cargo mutants -p omega-server`: 6 mutants — 2 caught, 4 unviable,
+  **0 missed**.
+
+**Carry-forward into 1e.1:** `main.rs` bind/serve glue is currently
+`#[mutants::skip]`'d; refactor to `serve(listener, state)` in lib.rs once
+there is real shared state to wire. `DEFAULT_SESSIONS_ROOT` is duplicated
+as a `&str` literal — assert against `omega_store::SESSIONS_ROOT` when
+that crate becomes a dependency in 1e.1.
 
 ---
 
