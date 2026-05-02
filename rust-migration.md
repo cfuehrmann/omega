@@ -16,7 +16,7 @@
 | 1d.0b — tool body ports + CLI wiring | ✅ Done | 12 real tool implementations + 35 integration tests; `omega-cli run` end-to-end; `OmegaRustAgent` Harbor adapter |
 | 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
 | 1d.0d — eliminate external binary deps | ✅ Done | Replaced `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; refactored remaining boundaries (sentinels → `Option`, depth → `is_root`, extracted pure helpers); **0 missed** across `omega-tools` |
-| 1d.1 — `omega-agent` advanced | 🟡 In progress | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
+| 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -281,7 +281,7 @@ seam:
 
 ---
 
-## Phase 1d.1 — `omega-agent` advanced features ⬜ In progress
+## Phase 1d.1 — `omega-agent` advanced features ✅ Done
 
 Add to the `omega-agent` crate built in Phase 1d.0. Decomposed into five
 sub-phases, ordered smallest-surface → highest-concurrency. Each sub-phase
