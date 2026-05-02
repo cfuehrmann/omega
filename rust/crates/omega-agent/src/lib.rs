@@ -16,7 +16,10 @@ pub mod system_prompt;
 pub use agent::{Agent, AgentConfig, DEFAULT_EFFORT};
 pub use config::max_output_tokens_for_model;
 pub use error_classify::{is_context_too_long, is_invalid_tool_json};
-pub use session_resume::extract_last_model_and_effort;
+pub use session_resume::{
+    extract_description_from_response, extract_last_model_and_effort, extract_resumption_basis,
+    extract_summary_from_response,
+};
 pub use system_prompt::{
     build_system_prompt, read_system_prompt_append, system_prompt_append_path,
 };
