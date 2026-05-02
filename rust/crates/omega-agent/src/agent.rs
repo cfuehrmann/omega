@@ -90,6 +90,10 @@ pub const DEFAULT_EFFORT: &str = "medium";
 pub struct AgentConfig {
     /// Model id passed to the provider on every API call.
     pub model: String,
+    /// Initial thinking-effort level.  `None` falls back to
+    /// [`DEFAULT_EFFORT`].  Phase 2a wires this through from the
+    /// `POST /api/sessions` body and the `reset` client frame.
+    pub effort: Option<String>,
     /// Working directory interpolated into the system prompt.
     pub cwd: PathBuf,
     /// Pre-loaded contents of `<cwd>/.omega/system-prompt-append.md`,
@@ -146,6 +150,10 @@ impl Agent {
         config: AgentConfig,
     ) -> Self {
         let active_model = config.model.clone();
+        let active_effort = config
+            .effort
+            .clone()
+            .unwrap_or_else(|| DEFAULT_EFFORT.to_owned());
         let event_store = Arc::new(event_store);
         let controls = ControlHandle::new(Arc::clone(&event_store));
         Self {
@@ -155,7 +163,7 @@ impl Agent {
             controls,
             config,
             active_model,
-            active_effort: DEFAULT_EFFORT.to_owned(),
+            active_effort,
             history: Vec::new(),
             context_hashes: Vec::new(),
         }

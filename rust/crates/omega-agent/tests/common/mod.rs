@@ -123,6 +123,7 @@ pub fn make_test_agent() -> (Agent, Arc<MockProvider>, TempDir) {
         EventStore::new(events_path),
         AgentConfig {
             model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
             cwd: cwd.clone(),
             system_prompt_append: None,
             session_dir: cwd,

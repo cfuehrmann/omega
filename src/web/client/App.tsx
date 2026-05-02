@@ -540,7 +540,7 @@ function ActiveModal() {
             () => d.contextHashes.join(","),
             async (hashParam) => {
               if (!hashParam) return [];
-              const res = await fetch(`/context?hashes=${encodeURIComponent(hashParam)}`);
+              const res = await fetch(`/api/context?hashes=${encodeURIComponent(hashParam)}`);
               if (!res.ok) return [];
               return res.json() as Promise<Array<{ hash: string; time?: string; role: string; content: unknown }>>;
             },
@@ -1385,7 +1385,7 @@ function SessionPickerModal() {
     isOpen,
     async (open: boolean) => {
       if (!open) return [];
-      const res = await fetch("/sessions");
+      const res = await fetch("/api/sessions");
       if (!res.ok) return [];
       return res.json() as Promise<SessionItem[]>;
     },
@@ -1798,7 +1798,7 @@ function InputRow() {
   async function queryCompletion(prefix: string) {
     const seq = ++fetchSeq;
     try {
-      const res = await fetch(`/files?prefix=${encodeURIComponent(prefix)}`);
+      const res = await fetch(`/api/files?prefix=${encodeURIComponent(prefix)}`);
       if (seq !== fetchSeq) return;
       if (!res.ok) { closeCompletion(); return; }
       const items: string[] = await res.json() as string[];

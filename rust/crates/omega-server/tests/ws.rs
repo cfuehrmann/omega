@@ -546,7 +546,9 @@ async fn reconnect_replays_turn_events_filters_text_ready_last() {
     drop(ws1);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Reconnect: verify replay.
+    // Reconnect: verify the Phase 2a replay sequence is
+    // session_info → history(…) → ready, and that history.events
+    // contains the persisted events with `text` filtered out.
     let mut ws2 = connect(addr).await;
     let replay_frames = recv_until_type(&mut ws2, "ready").await;
     let replay_types: Vec<&str> = replay_frames
@@ -554,43 +556,51 @@ async fn reconnect_replays_turn_events_filters_text_ready_last() {
         .filter_map(|v| v["type"].as_str())
         .collect();
 
-    // 1. No "text" frames in replay (filter must suppress them).
+    assert_eq!(
+        replay_types,
+        vec!["session_info", "history", "ready"],
+        "outer replay sequence must be session_info → history → ready; got {replay_types:?}",
+    );
+
+    let history = replay_frames
+        .iter()
+        .find(|v| v["type"] == "history")
+        .expect("history frame must be present");
+    let history_events = history["events"]
+        .as_array()
+        .expect("history.events must be an array");
+    let event_types: Vec<&str> = history_events
+        .iter()
+        .filter_map(|v| v["type"].as_str())
+        .collect();
+
+    // 1. No "text" entries in history (filter must suppress them).
     assert!(
-        !replay_types.contains(&"text"),
-        "text entries must be filtered from replay; got {replay_types:?}"
+        !event_types.contains(&"text"),
+        "text entries must be filtered from history.events; got {event_types:?}",
     );
 
-    // 2. "ready" is the last frame.
+    // 2. Expected event types are present in the correct relative order.
     assert_eq!(
-        replay_types.last().copied(),
-        Some("ready"),
-        "ready must arrive last; got {replay_types:?}"
-    );
-
-    // 3. Expected event types are present in the correct relative order.
-    assert_eq!(
-        replay_types[0], "server_started",
-        "first replay event must be server_started"
+        event_types[0], "server_started",
+        "first event in history must be server_started; got {event_types:?}",
     );
     assert_eq!(
-        replay_types[1], "session_started",
-        "second replay event must be session_started"
+        event_types[1], "session_started",
+        "second event in history must be session_started; got {event_types:?}",
     );
     for ty in &["user_message", "llm_call", "llm_response", "turn_end"] {
         assert!(
-            replay_types.contains(ty),
-            "replay must contain {ty}; got {replay_types:?}"
+            event_types.contains(ty),
+            "history.events must contain {ty}; got {event_types:?}",
         );
     }
 
-    // 4. Replay order matches on-disk order: turn_end appears before ready.
-    let turn_end_pos = replay_types
-        .iter()
-        .position(|&t| t == "turn_end")
-        .expect("turn_end must be in replay");
-    assert!(
-        turn_end_pos < replay_types.len() - 1,
-        "turn_end must precede ready"
+    // 3. turn_end must be the last persisted event in history.
+    assert_eq!(
+        event_types.last().copied(),
+        Some("turn_end"),
+        "turn_end must be last in history.events; got {event_types:?}",
     );
 }
 
@@ -627,6 +637,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         estore,
         AgentConfig {
             model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
             cwd: tmp.path().to_path_buf(),
             system_prompt_append: None,
             session_dir,
@@ -647,12 +658,30 @@ async fn replay_with_empty_events_file_yields_only_ready() {
     let addr = spawn_server(state).await;
     let mut ws = connect(addr).await;
 
-    // Session exists but events.jsonl is empty → replay sends nothing,
-    // so the very first frame must be "ready".
-    let first = recv_json(&mut ws).await;
+    // Session exists but events.jsonl is empty.  After Phase 2a the
+    // server emits SessionInfo → History(events=[]) → Ready even when
+    // no persisted events would be replayed.
+    let frames = recv_until_type(&mut ws, "ready").await;
+    let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
     assert_eq!(
-        first["type"], "ready",
-        "empty events.jsonl must yield only ready; got {first}"
+        types,
+        vec!["session_info", "history", "ready"],
+        "empty events.jsonl must yield session_info → history → ready; got {types:?}",
+    );
+    let history = frames
+        .iter()
+        .find(|v| v["type"] == "history")
+        .expect("history frame must be present");
+    assert_eq!(
+        history["events"],
+        serde_json::json!([]),
+        "history.events must be empty for an empty events.jsonl",
+    );
+    assert!(
+        history
+            .as_object()
+            .is_some_and(|o| !o.contains_key("streaming")),
+        "streaming flag must be omitted when no turn is in flight; got {history}",
     );
 }
 
@@ -679,31 +708,32 @@ async fn reconnect_after_reset_replays_init_events_then_ready() {
     drop(ws1);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Reconnect: should get server_started + session_started + ready,
-    // in that order, with no other events.
+    // Reconnect: outer frames are session_info → history → ready, and
+    // history.events holds the init pair [server_started, session_started].
     let mut ws2 = connect(addr).await;
     let frames = recv_until_type(&mut ws2, "ready").await;
     let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
 
     assert_eq!(
-        types.first().copied(),
-        Some("server_started"),
-        "first replayed event must be server_started; got {types:?}"
+        types,
+        vec!["session_info", "history", "ready"],
+        "outer replay sequence must be session_info → history → ready; got {types:?}",
     );
+
+    let history = frames
+        .iter()
+        .find(|v| v["type"] == "history")
+        .expect("history frame must be present");
+    let event_types: Vec<&str> = history["events"]
+        .as_array()
+        .expect("history.events must be an array")
+        .iter()
+        .filter_map(|v| v["type"].as_str())
+        .collect();
     assert_eq!(
-        types.get(1).copied(),
-        Some("session_started"),
-        "second replayed event must be session_started; got {types:?}"
-    );
-    assert_eq!(
-        types.last().copied(),
-        Some("ready"),
-        "ready must arrive last; got {types:?}"
-    );
-    assert_eq!(
-        types.len(),
-        3,
-        "expected exactly [server_started, session_started, ready]; got {types:?}"
+        event_types,
+        vec!["server_started", "session_started"],
+        "history.events must be exactly [server_started, session_started]; got {event_types:?}",
     );
 }
 

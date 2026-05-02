@@ -249,8 +249,8 @@ Bun.serve({
     if (srv.upgrade(req)) return undefined as any;
     const url = new URL(req.url);
 
-    // File completion: GET /files?prefix=... (mirrors real server)
-    if (url.pathname === "/files" && req.method === "GET") {
+    // File completion: GET /files (legacy) or /api/files (mirrors real server)
+    if ((url.pathname === "/files" || url.pathname === "/api/files") && req.method === "GET") {
       const prefix = url.searchParams.get("prefix") ?? "";
       const items = await listFilesForCompletion(prefix);
       return new Response(JSON.stringify(items), {
@@ -258,8 +258,8 @@ Bun.serve({
       });
     }
 
-    // Session listing: GET /sessions (mirrors real server)
-    if (url.pathname === "/sessions" && req.method === "GET") {
+    // Session listing: GET /sessions (legacy) or /api/sessions (mirrors real server)
+    if ((url.pathname === "/sessions" || url.pathname === "/api/sessions") && req.method === "GET") {
       const sessions = await listSessions();
       return new Response(JSON.stringify(sessions), {
         headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },

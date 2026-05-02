@@ -39,7 +39,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
 
-use omega_core::AgentItem;
 use omega_protocol::OmegaEvent;
 
 use crate::AppState;
@@ -183,7 +182,11 @@ async fn get_sessions(State(state): State<AppState>) -> Response {
 /// Create a brand-new session on disk + an `ActiveSession` ready to be
 /// installed in the slot.  Shared by `POST /api/sessions` and the `reset`
 /// WebSocket frame.  Returns `(session, dir_name)`.
-async fn create_active_session(state: &AppState) -> Result<(ActiveSession, String), String> {
+async fn create_active_session(
+    state: &AppState,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(ActiveSession, String), String> {
     let paths = omega_store::make_session_dir(&state.sessions_root)
         .await
         .map_err(|e| format!("make_session_dir failed: {e}"))?;
@@ -198,7 +201,8 @@ async fn create_active_session(state: &AppState) -> Result<(ActiveSession, Strin
     let event_store = EventStore::new(paths.events_file.clone());
     let cwd = std::env::current_dir().unwrap_or_default();
     let config = AgentConfig {
-        model: "claude-sonnet-4-6".to_owned(),
+        model: model.unwrap_or_else(|| "claude-sonnet-4-6".to_owned()),
+        effort,
         cwd,
         system_prompt_append: None,
         session_dir: paths.dir.clone(),
@@ -230,8 +234,25 @@ async fn create_active_session(state: &AppState) -> Result<(ActiveSession, Strin
 // `POST /api/sessions`
 // ---------------------------------------------------------------------------
 
-async fn post_session(State(state): State<AppState>) -> Response {
-    match create_active_session(&state).await {
+/// Optional JSON body for `POST /api/sessions`.
+///
+/// Both fields are optional; absent fields fall back to defaults
+/// (`claude-sonnet-4-6` / [`omega_agent::DEFAULT_EFFORT`]).  The
+/// endpoint also accepts a request with no body at all (legacy).
+#[derive(Debug, Default, Deserialize)]
+struct PostSessionBody {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+async fn post_session(
+    State(state): State<AppState>,
+    body: Option<Json<PostSessionBody>>,
+) -> Response {
+    let PostSessionBody { model, effort } = body.map(|Json(b)| b).unwrap_or_default();
+    match create_active_session(&state, model, effort).await {
         Ok((session, dir_name)) => {
             *state.active_session.lock().await = Some(session);
             (
@@ -269,7 +290,14 @@ enum ClientFrame {
     /// Cancel the in-flight turn.
     Abort,
     /// Drop any prior session and create a fresh one on the same WS.
-    Reset,
+    /// Optional `model` / `effort` are wired into [`AgentConfig`] for
+    /// the new session; absent fields fall back to defaults.
+    Reset {
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
+    },
     /// Resume a prior session: spawn a new session and synthesise a
     /// summary of `session_dir`'s history via the resumption LLM call.
     #[serde(rename_all = "camelCase")]
@@ -283,42 +311,86 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-/// Read `events.jsonl` for the active session (if any) and push each
-/// event that passes [`should_replay`] through `tx` as a
-/// [`WsMessage::Item`] frame.
+/// Build a [`WsMessage::SessionInfo`] frame for the given active session.
 ///
-/// The session lock is held **only** long enough to clone the
-/// `events_file` path.  All file I/O happens outside the lock so a
-/// concurrently-running turn is not blocked during replay.
-///
-/// `tx` must already be installed in the session slot before calling
-/// this function so that events emitted by a concurrent turn also
-/// reach the new socket — they are interleaved after the replay batch.
-async fn replay_history(state: &AppState, tx: &UnboundedSender<WsMessage>) {
-    // Briefly acquire the lock to copy the file path; drop immediately.
-    let events_file = {
-        let slot = state.active_session.lock().await;
-        slot.as_ref().map(|a| a.paths.events_file.clone())
+/// Reads `model`/`effort` from the agent (briefly locking it) and the
+/// `name` from `session.jsonc` if present.  `cwd` falls back to `"."`
+/// if the process cwd cannot be read.
+async fn build_session_info(active: &ActiveSession) -> WsMessage {
+    let dir = active
+        .paths
+        .dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (model, effort) = {
+        let guard = active.agent.lock().await;
+        (
+            guard.active_model().to_owned(),
+            guard.active_effort().to_owned(),
+        )
     };
-    let Some(events_file) = events_file else {
-        return;
-    };
+    let cwd = std::env::current_dir().map_or_else(|_| ".".to_owned(), |p| p.display().to_string());
+    let meta = omega_store::read_session_metadata(&active.paths.dir).await;
+    WsMessage::SessionInfo {
+        dir,
+        model,
+        effort,
+        cwd,
+        name: meta.name,
+    }
+}
 
-    let store = EventStore::new(events_file);
+/// Read `events.jsonl` for `events_file`, drop entries that fail
+/// [`should_replay`], deserialise the rest, and return them as the
+/// `events` vec for a [`WsMessage::History`] frame.
+///
+/// Pure file I/O — does not touch the session slot.
+async fn read_history_events(events_file: &Path) -> Vec<OmegaEvent> {
+    let store = EventStore::new(events_file.to_path_buf());
     let Ok(raw_events) = store.read_all().await else {
-        return;
+        return Vec::new();
     };
-
+    let mut out = Vec::with_capacity(raw_events.len());
     for v in raw_events {
         let event_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
         if !should_replay(event_type) {
             continue;
         }
-        let Ok(event) = serde_json::from_value::<OmegaEvent>(v) else {
-            continue;
-        };
-        let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(event)))));
+        if let Ok(event) = serde_json::from_value::<OmegaEvent>(v) {
+            out.push(event);
+        }
     }
+    out
+}
+
+/// Send `SessionInfo → History` for the active session, if any.
+///
+/// The `streaming` flag is set when a turn is currently in flight
+/// (its `JoinHandle` exists and has not finished).  `tx` is the per-
+/// connection sender; on disconnect the send fails silently.
+async fn send_session_info_and_history(state: &AppState, tx: &UnboundedSender<WsMessage>) {
+    // Brief lock: snapshot session_info + path + streaming status.
+    let snapshot: Option<(WsMessage, PathBuf, bool)> = {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            let info = build_session_info(active).await;
+            let events_file = active.paths.events_file.clone();
+            let streaming = active
+                .current_turn
+                .as_ref()
+                .is_some_and(|h| !h.is_finished());
+            Some((info, events_file, streaming))
+        } else {
+            None
+        }
+    };
+    let Some((session_info, events_file, streaming)) = snapshot else {
+        return;
+    };
+    let _ = tx.send(session_info);
+    let events = read_history_events(&events_file).await;
+    let _ = tx.send(WsMessage::History { events, streaming });
 }
 
 /// Per-connection driver.
@@ -350,13 +422,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     });
 
     // Install tx FIRST so any concurrent turn's events also reach this
-    // socket during and after replay.
+    // socket during and after the SessionInfo+History batch.
     install_ws_tx(&state, tx.clone()).await;
 
-    // Replay persisted events (no lock held during file I/O).
-    replay_history(&state, &tx).await;
+    // SessionInfo → History (no-op when no session is active).
+    send_session_info_and_history(&state, &tx).await;
 
-    // Ready frame signals end-of-replay to the client.
+    // Ready frame signals end-of-batch to the client.
     let _ = tx.send(WsMessage::Ready);
 
     // Read loop.
@@ -421,7 +493,7 @@ async fn dispatch_client_frame(
         ClientFrame::Pause => handle_pause(state).await,
         ClientFrame::Continue { content } => handle_continue(state, content).await,
         ClientFrame::Abort => handle_abort(state).await,
-        ClientFrame::Reset => handle_reset(state, tx).await,
+        ClientFrame::Reset { model, effort } => handle_reset(state, tx, model, effort).await,
         ClientFrame::ResumeSession { session_dir } => {
             handle_resume_session(state, tx, session_dir).await
         }
@@ -508,8 +580,13 @@ async fn handle_abort(state: &AppState) -> Result<(), String> {
 }
 
 /// Drop any existing session, build a fresh one, install `tx` into its
-/// slot, and emit a new `Ready`.
-async fn handle_reset(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Result<(), String> {
+/// slot, and emit `SessionInfo → History([]) → ResetDone → Ready`.
+async fn handle_reset(
+    state: &AppState,
+    tx: &UnboundedSender<WsMessage>,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
     // Tell any in-flight turn to wind down so the orphan agent doesn't
     // keep using the cwd / disk paths after we replace the slot.
     {
@@ -519,9 +596,12 @@ async fn handle_reset(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Resu
         }
     }
 
-    let (mut session, _dir_name) = create_active_session(state).await?;
+    let (mut session, _dir_name) = create_active_session(state, model, effort).await?;
     session.ws_tx = Some(tx.clone());
     *state.active_session.lock().await = Some(session);
+
+    send_session_info_and_history(state, tx).await;
+    let _ = tx.send(WsMessage::ResetDone);
     let _ = tx.send(WsMessage::Ready);
     Ok(())
 }
@@ -565,14 +645,19 @@ async fn handle_resume_session(
     let prev_meta = omega_store::read_session_metadata(&prev_dir).await;
 
     // Build the new session and install ws_tx.
-    let (mut session, _new_dir_name) = create_active_session(state).await?;
+    let (mut session, _new_dir_name) = create_active_session(state, None, None).await?;
     session.ws_tx = Some(tx.clone());
     let agent = Arc::clone(&session.agent);
     let new_dir = session.paths.dir.clone();
     *state.active_session.lock().await = Some(session);
 
+    // SessionInfo + History (just the init events) up front so the UI
+    // immediately switches identity to the new session, mirroring the
+    // TS server's `ws.cork(…)` triple-send before perform_resumption.
+    send_session_info_and_history(state, tx).await;
+
     // Drive the resumption stream inline so events are persisted and
-    // the WS frames arrive in order before history replay + Ready.
+    // streamed live to the client between the History batch and Ready.
     {
         let mut guard = agent.lock().await;
         let cancel = CancellationToken::new();
@@ -594,7 +679,6 @@ async fn handle_resume_session(
     )
     .await;
 
-    replay_history(state, tx).await;
     let _ = tx.send(WsMessage::Ready);
     Ok(())
 }
@@ -841,9 +925,29 @@ mod tests {
     }
 
     #[test]
-    fn client_frame_reset_parses() {
+    fn client_frame_reset_without_fields_parses_with_none_defaults() {
         let f: ClientFrame = serde_json::from_str(r#"{"type":"reset"}"#).unwrap();
-        assert!(matches!(f, ClientFrame::Reset));
+        match f {
+            ClientFrame::Reset { model, effort } => {
+                assert_eq!(model, None);
+                assert_eq!(effort, None);
+            }
+            other => panic!("expected Reset, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn client_frame_reset_with_model_and_effort_parses() {
+        let f: ClientFrame =
+            serde_json::from_str(r#"{"type":"reset","model":"claude-opus-4-7","effort":"high"}"#)
+                .unwrap();
+        match f {
+            ClientFrame::Reset { model, effort } => {
+                assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
+                assert_eq!(effort.as_deref(), Some("high"));
+            }
+            other => panic!("expected Reset, got {other:?}"),
+        }
     }
 
     #[test]
@@ -972,7 +1076,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let state = test_state(&tmp);
 
-        let (session, _) = create_active_session(&state).await.unwrap();
+        let (session, _) = create_active_session(&state, None, None).await.unwrap();
         *state.active_session.lock().await = Some(session);
 
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
@@ -1006,7 +1110,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let state = test_state(&tmp);
 
-        let (mut session, _) = create_active_session(&state).await.unwrap();
+        let (mut session, _) = create_active_session(&state, None, None).await.unwrap();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
         session.ws_tx = Some(tx);
         *state.active_session.lock().await = Some(session);

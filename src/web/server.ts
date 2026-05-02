@@ -829,16 +829,17 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
       if (srv.upgrade(req, { data: undefined })) return undefined as any;
       const url = new URL(req.url);
 
-      // Session listing: GET /sessions
-      if (url.pathname === "/sessions" && req.method === "GET") {
+      // Session listing: GET /sessions (legacy) or GET /api/sessions
+      // (matches the Rust server's `/api/` prefix; Phase 2b alignment).
+      if ((url.pathname === "/sessions" || url.pathname === "/api/sessions") && req.method === "GET") {
         const sessions = await listSessions();
         return new Response(JSON.stringify(sessions), {
           headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
         });
       }
 
-      // File completion: GET /files?prefix=...
-      if (url.pathname === "/files" && req.method === "GET") {
+      // File completion: GET /files (legacy) or GET /api/files
+      if ((url.pathname === "/files" || url.pathname === "/api/files") && req.method === "GET") {
         const prefix = url.searchParams.get("prefix") ?? "";
         const items = await listFilesForCompletion(prefix);
         return new Response(JSON.stringify(items), {
@@ -846,8 +847,8 @@ export async function runWebApp(opts: WebAppOptions = {}): Promise<void> {
         });
       }
 
-      // Context record lookup: GET /context?hashes=abc123,def456,...
-      if (url.pathname === "/context" && req.method === "GET") {
+      // Context record lookup: GET /context (legacy) or GET /api/context
+      if ((url.pathname === "/context" || url.pathname === "/api/context") && req.method === "GET") {
         const raw = url.searchParams.get("hashes") ?? "";
         const hashes = raw.split(",").map(h => h.trim()).filter(Boolean);
         if (hashes.length === 0 || !currentSessionPaths) {

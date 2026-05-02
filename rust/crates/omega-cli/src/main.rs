@@ -158,6 +158,7 @@ async fn run(
     // ---- Agent ---------------------------------------------------------
     let config = AgentConfig {
         model,
+        effort: None,
         cwd: cwd.clone(),
         system_prompt_append,
         session_dir: paths.dir.clone(),
