@@ -291,8 +291,8 @@ bar set by 1d.0d.
 | Sub-phase | Deliverable | Status |
 |---|---|---|
 | 1d.1a | `set_model` / `set_effort` + `active_model` / `active_effort` state + `extract_last_model_and_effort` pure helper | ✅ Done |
-| 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ⬜ Next |
-| 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ⬜ |
+| 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ✅ Done |
+| 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ⬜ Next |
 | 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ⬜ |
 | 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ⬜ |
 
@@ -331,6 +331,22 @@ bar set by 1d.0d.
   RFC3339-with-`Z` shape on `time`, killing pre-existing `now_iso`
   mutants. `cargo mutants -f` on `agent.rs` and `session_resume.rs`:
   **26 mutants, 0 missed** (7 unviable).
+
+- **1d.1b** (commit `ba9396d`) — added three public pure helpers to
+  `omega_agent::session_resume`: `extract_resumption_basis` (groups events
+  into turns, pairs tool calls with results by ID, renders carry-forward
+  context from the last `session_resumed` event), `extract_summary_from_response`
+  (parses `<summary>…</summary>`, falls back to trimmed full text), and
+  `extract_description_from_response` (parses `<description>…</description>`,
+  hard-capped at 120 chars, `None` when absent). Supporting private helpers:
+  `first_meaningful_line`, `primary_tool_arg` (port of `primaryToolArg` from
+  `tools.schema.ts`), `group_into_turns`, `project_turn`, `extract_block`,
+  and `slice_start_after`. One equivalent mutation (`i + 1 → i * 1` in the
+  post-`session_resumed` slice-start calculation) suppressed with
+  `#[mutants::skip]` — `session_resumed` events are transparent to
+  `group_into_turns` so including vs. excluding the event from the slice
+  produces identical output. `cargo mutants -f session_resume.rs`:
+  **57 mutants, 55 caught, 2 unviable, 0 missed**.
 
 ### Explicit deferrals (not part of 1d.1)
 
