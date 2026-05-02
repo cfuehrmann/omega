@@ -30,7 +30,7 @@ import { join } from "path";
 import { readFileSync, existsSync } from "fs";
 import { readFile, writeFile, readdir, rm, mkdir } from "fs/promises";
 import type { ServerWebSocket } from "bun";
-import { closeOpenTurn, shouldLogEvent, listFilesForCompletion } from "../../src/web/server.js";
+import { closeOpenTurn, shouldLogEvent, listFilesForCompletion } from "../../src/web/server-helpers.js";
 import { appendEvent } from "../../src/event-store.js";
 import {
   makeSessionDir,
@@ -195,7 +195,7 @@ function sendWs(event: object): void {
 }
 
 // ---------------------------------------------------------------------------
-// Session listing — mirrors real server's GET /sessions
+// Session listing — mirrors real server's GET /api/sessions
 // ---------------------------------------------------------------------------
 
 /** Convert a session folder name to an ISO timestamp string. */
@@ -249,8 +249,8 @@ Bun.serve({
     if (srv.upgrade(req)) return undefined as any;
     const url = new URL(req.url);
 
-    // File completion: GET /files (legacy) or /api/files (mirrors real server)
-    if ((url.pathname === "/files" || url.pathname === "/api/files") && req.method === "GET") {
+    // File completion: GET /api/files (matches Rust omega-server)
+    if (url.pathname === "/api/files" && req.method === "GET") {
       const prefix = url.searchParams.get("prefix") ?? "";
       const items = await listFilesForCompletion(prefix);
       return new Response(JSON.stringify(items), {
@@ -258,8 +258,8 @@ Bun.serve({
       });
     }
 
-    // Session listing: GET /sessions (legacy) or /api/sessions (mirrors real server)
-    if ((url.pathname === "/sessions" || url.pathname === "/api/sessions") && req.method === "GET") {
+    // Session listing: GET /api/sessions (matches Rust omega-server)
+    if (url.pathname === "/api/sessions" && req.method === "GET") {
       const sessions = await listSessions();
       return new Response(JSON.stringify(sessions), {
         headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },

@@ -39,10 +39,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
 
+use omega_core::AgentItem;
 use omega_protocol::OmegaEvent;
+use omega_protocol::events::PauseRequestedEvent;
 
 use crate::AppState;
-use crate::session::ActiveSession;
+use crate::session::{ActiveSession, SessionInfoCache};
 use crate::ws_message::WsMessage;
 
 // ---------------------------------------------------------------------------
@@ -220,12 +222,25 @@ async fn create_active_session(
         .map_err(|e| format!("agent.init() failed: {e}"))?;
 
     let controls = agent.controls();
+    let active_model = agent.active_model().to_owned();
+    let active_effort = agent.active_effort().to_owned();
+    let cwd_string =
+        std::env::current_dir().map_or_else(|_| ".".to_owned(), |p| p.display().to_string());
+    let info_cache = SessionInfoCache {
+        dir: dir_name.clone(),
+        model: active_model,
+        effort: active_effort,
+        cwd: cwd_string,
+        name: None,
+    };
     let session = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
         paths,
         ws_tx: None,
         current_turn: None,
+        turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
+        info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
     };
     Ok((session, dir_name))
 }
@@ -278,6 +293,9 @@ async fn post_session(
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientFrame {
     /// Send a user message → drive one agent turn.
+    /// Accepts both `"user_message"` (canonical) and `"message"`
+    /// (alias used by the `SolidJS` client) as the discriminator.
+    #[serde(alias = "message")]
     UserMessage { content: String },
     /// Pause the in-flight turn at the next pause seam.
     Pause,
@@ -305,6 +323,17 @@ enum ClientFrame {
     /// Rename the active session by writing `name` into its
     /// `session.jsonc` metadata.
     RenameSession { name: String },
+    /// Switch the active model on the live agent. Mirrors the TS server's
+    /// `set_model` handler: persists a `model_changed` event and may
+    /// auto-reset the effort to `"medium"` if the chosen model doesn't
+    /// support the current effort tier.
+    SetModel { model: String },
+    /// Switch the active thinking-effort level on the live agent.
+    SetEffort { effort: String },
+    /// Delete a session directory under `sessions_root`.
+    /// Mirrors the TS server's `delete_session` handler.
+    #[serde(rename_all = "camelCase")]
+    DeleteSession { session_dir: String },
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -313,32 +342,42 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
 
 /// Build a [`WsMessage::SessionInfo`] frame for the given active session.
 ///
-/// Reads `model`/`effort` from the agent (briefly locking it) and the
-/// `name` from `session.jsonc` if present.  `cwd` falls back to `"."`
-/// if the process cwd cannot be read.
+/// Reads dir/model/effort/cwd/name from the cached `info_cache` (kept
+/// in sync by `handle_set_model` / `handle_set_effort` /
+/// `handle_rename_session`), so this never locks the agent.  Avoiding
+/// the agent lock matters because some callers run while the streaming
+/// task already holds it.
 async fn build_session_info(active: &ActiveSession) -> WsMessage {
-    let dir = active
-        .paths
-        .dir
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let (model, effort) = {
-        let guard = active.agent.lock().await;
-        (
-            guard.active_model().to_owned(),
-            guard.active_effort().to_owned(),
-        )
-    };
-    let cwd = std::env::current_dir().map_or_else(|_| ".".to_owned(), |p| p.display().to_string());
-    let meta = omega_store::read_session_metadata(&active.paths.dir).await;
+    let cache = active.info_cache.lock().await.clone();
+    let turn_state = active.turn_state.lock().await.clone();
+    cache_into_message(cache, turn_state)
+}
+
+/// Project a [`SessionInfoCache`] into a [`WsMessage::SessionInfo`] with
+/// the given turn state.  Used by the per-turn streaming loop and by
+/// `handle_pause` to broadcast updates without locking the agent.
+fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage {
     WsMessage::SessionInfo {
-        dir,
-        model,
-        effort,
-        cwd,
-        name: meta.name,
+        dir: cache.dir,
+        model: cache.model,
+        effort: cache.effort,
+        cwd: cache.cwd,
+        name: cache.name,
+        turn_state,
     }
+}
+
+/// Map an [`OmegaEvent`] variant to the next derived turn state, if it
+/// represents a transition. Mirrors `deriveTurnState()` in the (now-deleted)
+/// TS server and the test-server fixture (`e2e/fixtures/test-server.ts`).
+fn next_turn_state_for(event: &OmegaEvent) -> Option<&'static str> {
+    Some(match event {
+        OmegaEvent::UserMessage(_) | OmegaEvent::TurnContinued(_) => "running",
+        OmegaEvent::PauseRequested(_) => "pause_requested",
+        OmegaEvent::TurnPaused(_) => "paused",
+        OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_) => "idle",
+        _ => return None,
+    })
 }
 
 /// Read `events.jsonl` for `events_file`, drop entries that fail
@@ -471,6 +510,20 @@ async fn clear_ws_tx(state: &AppState) {
     }
 }
 
+/// Forward one [`WsMessage`] to whichever WebSocket is currently
+/// installed in `active_session.ws_tx`.  Drops the message silently if
+/// the slot is empty (no client connected) or the channel is closed
+/// (stale tx).  Used by the per-turn streaming task so events emitted
+/// after a browser reload still reach the new connection.
+async fn send_to_active(slot: &Arc<tokio::sync::Mutex<Option<ActiveSession>>>, msg: WsMessage) {
+    let guard = slot.lock().await;
+    if let Some(active) = guard.as_ref()
+        && let Some(tx) = &active.ws_tx
+    {
+        let _ = tx.send(msg);
+    }
+}
+
 /// Parse one text frame and dispatch it.  Errors bubble back to the
 /// caller, which forwards them as a `WsMessage::AgentError` frame.
 async fn dispatch_text_frame(
@@ -490,7 +543,7 @@ async fn dispatch_client_frame(
 ) -> Result<(), String> {
     match frame {
         ClientFrame::UserMessage { content } => handle_user_message(content, state, tx).await,
-        ClientFrame::Pause => handle_pause(state).await,
+        ClientFrame::Pause => handle_pause(state, tx).await,
         ClientFrame::Continue { content } => handle_continue(state, content).await,
         ClientFrame::Abort => handle_abort(state).await,
         ClientFrame::Reset { model, effort } => handle_reset(state, tx, model, effort).await,
@@ -498,36 +551,141 @@ async fn dispatch_client_frame(
             handle_resume_session(state, tx, session_dir).await
         }
         ClientFrame::RenameSession { name } => handle_rename_session(state, name).await,
+        ClientFrame::SetModel { model } => handle_set_model(state, tx, model).await,
+        ClientFrame::SetEffort { effort } => handle_set_effort(state, tx, effort).await,
+        ClientFrame::DeleteSession { session_dir } => {
+            handle_delete_session(state, tx, session_dir).await
+        }
     }
 }
 
-/// Spawn a task that drives one agent turn and forwards every yielded
-/// item through `tx`.  We don't await the task: pause/continue/abort
-/// frames must be processable while the turn is in flight.
-async fn handle_user_message(
-    content: String,
+/// Models that accept thinking-effort `"max"` (Opus tier).
+const MAX_EFFORT_MODELS: &[&str] = &["claude-opus-4-6", "claude-opus-4-7"];
+/// Models that accept thinking-effort `"xhigh"` (Opus 4.7 only).
+const XHIGH_EFFORT_MODELS: &[&str] = &["claude-opus-4-7"];
+
+async fn handle_set_model(
     state: &AppState,
     tx: &UnboundedSender<WsMessage>,
+    model: String,
 ) -> Result<(), String> {
-    let agent = {
+    let (agent, info_cache_arc) = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
             return Err("no active session — send `reset` first".to_owned());
         };
-        Arc::clone(&active.agent)
+        (Arc::clone(&active.agent), Arc::clone(&active.info_cache))
+    };
+    let (model_event, effort_reset) = {
+        let mut guard = agent.lock().await;
+        let model_event = guard.set_model(model.clone()).await;
+        let current_effort = guard.active_effort().to_owned();
+        let needs_reset = (current_effort == "max" && !MAX_EFFORT_MODELS.contains(&model.as_str()))
+            || (current_effort == "xhigh" && !XHIGH_EFFORT_MODELS.contains(&model.as_str()));
+        let effort_event = if needs_reset {
+            Some(guard.set_effort("medium".to_owned()).await)
+        } else {
+            None
+        };
+        (model_event, effort_event)
+    };
+    {
+        let mut cache = info_cache_arc.lock().await;
+        cache.model = model;
+        if effort_reset.is_some() {
+            "medium".clone_into(&mut cache.effort);
+        }
+    }
+    let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(
+        model_event,
+    )))));
+    if let Some(ev) = effort_reset {
+        let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(ev)))));
+    }
+    Ok(())
+}
+
+async fn handle_set_effort(
+    state: &AppState,
+    tx: &UnboundedSender<WsMessage>,
+    effort: String,
+) -> Result<(), String> {
+    let (agent, info_cache_arc) = {
+        let slot = state.active_session.lock().await;
+        let Some(active) = slot.as_ref() else {
+            return Err("no active session — send `reset` first".to_owned());
+        };
+        (Arc::clone(&active.agent), Arc::clone(&active.info_cache))
+    };
+    let new_effort = effort.clone();
+    let event = {
+        let mut guard = agent.lock().await;
+        guard.set_effort(effort).await
+    };
+    info_cache_arc.lock().await.effort = new_effort;
+    let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(event)))));
+    Ok(())
+}
+
+async fn handle_delete_session(
+    state: &AppState,
+    tx: &UnboundedSender<WsMessage>,
+    session_dir: String,
+) -> Result<(), String> {
+    if !session_dir_re().is_match(&session_dir) {
+        return Err(format!("invalid sessionDir: {session_dir}"));
+    }
+    let full_dir = state.sessions_root.join(&session_dir);
+    tokio::fs::remove_dir_all(&full_dir)
+        .await
+        .map_err(|e| format!("delete session: {e}"))?;
+    let _ = tx.send(WsMessage::SessionDeleted { session_dir });
+    Ok(())
+}
+
+/// Spawn a task that drives one agent turn and forwards every yielded
+/// item to whichever WebSocket is currently installed in
+/// `active_session.ws_tx`.  We don't await the task: pause/continue/abort
+/// frames must be processable while the turn is in flight.  Looking up
+/// `ws_tx` on each send (rather than capturing a clone) lets a paused
+/// turn survive a browser reload — events emitted *after* the new
+/// connection takes over still reach the client.
+async fn handle_user_message(
+    content: String,
+    state: &AppState,
+    _tx: &UnboundedSender<WsMessage>,
+) -> Result<(), String> {
+    let (agent, turn_state, info_cache_arc) = {
+        let slot = state.active_session.lock().await;
+        let Some(active) = slot.as_ref() else {
+            return Err("no active session — send `reset` first".to_owned());
+        };
+        (
+            Arc::clone(&active.agent),
+            Arc::clone(&active.turn_state),
+            Arc::clone(&active.info_cache),
+        )
     };
 
-    let tx_for_turn = tx.clone();
+    let slot_arc = Arc::clone(&state.active_session);
     let handle = tokio::spawn(async move {
         let mut guard = agent.lock().await;
         let cancel = CancellationToken::new();
         let mut stream = guard.send_message(content, cancel);
         while let Some(item) = stream.next().await {
-            if tx_for_turn.send(WsMessage::Item(Box::new(item))).is_err() {
-                // Receiver gone — client disconnected.  Drain the stream
-                // so the agent finishes and persists events to disk.
-                while stream.next().await.is_some() {}
-                break;
+            let next = match &item {
+                AgentItem::Event(ev) => next_turn_state_for(ev),
+                AgentItem::Signal(_) => None,
+            };
+            send_to_active(&slot_arc, WsMessage::Item(Box::new(item))).await;
+            if let Some(target) = next {
+                let mut ts = turn_state.lock().await;
+                if *ts != target {
+                    target.clone_into(&mut ts);
+                    let cache = info_cache_arc.lock().await.clone();
+                    let info = cache_into_message(cache, target.to_owned());
+                    send_to_active(&slot_arc, info).await;
+                }
             }
         }
     });
@@ -546,14 +704,53 @@ async fn handle_user_message(
     Ok(())
 }
 
-async fn handle_pause(state: &AppState) -> Result<(), String> {
-    let controls = {
+async fn handle_pause(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Result<(), String> {
+    // Snapshot what we need without holding the active_session lock across
+    // the request_pause call (which itself acquires locks).
+    let snapshot = {
         let slot = state.active_session.lock().await;
-        slot.as_ref().map(|a| a.controls.clone())
+        match slot.as_ref() {
+            Some(active) => Some((
+                active.controls.clone(),
+                Arc::clone(&active.turn_state),
+                Arc::clone(&active.info_cache),
+            )),
+            None => None,
+        }
     };
-    if let Some(controls) = controls {
-        controls.request_pause().await;
+    let Some((controls, turn_state_arc, info_cache_arc)) = snapshot else {
+        return Ok(());
+    };
+
+    // Only act when a turn is actually running, mirroring the TS server's
+    // gate on `currentTurnState === "running"`.
+    {
+        let ts = turn_state_arc.lock().await;
+        if ts.as_str() != "running" {
+            return Ok(());
+        }
     }
+
+    controls.request_pause().await;
+
+    // The pause_requested event is persisted by request_pause but not
+    // yielded on the agent stream, so broadcast it here so the client sees
+    // the new entry immediately rather than waiting for a reconnect.
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let pause_event = OmegaEvent::PauseRequested(PauseRequestedEvent { time: now });
+    let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(
+        pause_event,
+    )))));
+
+    {
+        let mut ts = turn_state_arc.lock().await;
+        if ts.as_str() != "pause_requested" {
+            "pause_requested".clone_into(&mut ts);
+            let cache = info_cache_arc.lock().await.clone();
+            let _ = tx.send(cache_into_message(cache, "pause_requested".to_owned()));
+        }
+    }
+
     Ok(())
 }
 
@@ -648,6 +845,8 @@ async fn handle_resume_session(
     let (mut session, _new_dir_name) = create_active_session(state, None, None).await?;
     session.ws_tx = Some(tx.clone());
     let agent = Arc::clone(&session.agent);
+    let turn_state_arc = Arc::clone(&session.turn_state);
+    let info_cache_arc = Arc::clone(&session.info_cache);
     let new_dir = session.paths.dir.clone();
     *state.active_session.lock().await = Some(session);
 
@@ -664,7 +863,20 @@ async fn handle_resume_session(
         let mut stream =
             guard.perform_resumption(basis, session_dir.clone(), prev_meta.name.clone(), cancel);
         while let Some(item) = stream.next().await {
+            let next = match &item {
+                AgentItem::Event(ev) => next_turn_state_for(ev),
+                AgentItem::Signal(_) => None,
+            };
             let _ = tx.send(WsMessage::Item(Box::new(item)));
+            if let Some(target) = next {
+                let mut ts = turn_state_arc.lock().await;
+                if *ts != target {
+                    target.clone_into(&mut ts);
+                    let cache = info_cache_arc.lock().await.clone();
+                    let info = cache_into_message(cache, target.to_owned());
+                    let _ = tx.send(info);
+                }
+            }
         }
     }
 
@@ -688,13 +900,20 @@ async fn handle_resume_session(
 // ---------------------------------------------------------------------------
 
 async fn handle_rename_session(state: &AppState, name: String) -> Result<(), String> {
-    let dir = {
+    let (dir, info_cache_arc) = {
         let slot = state.active_session.lock().await;
-        slot.as_ref().map(|a| a.paths.dir.clone())
+        match slot.as_ref() {
+            Some(active) => (
+                Some(active.paths.dir.clone()),
+                Some(Arc::clone(&active.info_cache)),
+            ),
+            None => (None, None),
+        }
     };
     let Some(dir) = dir else {
         return Err("no active session \u{2014} send `reset` first".to_owned());
     };
+    let new_name = name.clone();
     omega_store::update_session_metadata(
         &dir,
         SessionMetadata {
@@ -703,7 +922,11 @@ async fn handle_rename_session(state: &AppState, name: String) -> Result<(), Str
         },
     )
     .await
-    .map_err(|e| format!("update_session_metadata: {e}"))
+    .map_err(|e| format!("update_session_metadata: {e}"))?;
+    if let Some(arc) = info_cache_arc {
+        arc.lock().await.name = Some(new_name);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

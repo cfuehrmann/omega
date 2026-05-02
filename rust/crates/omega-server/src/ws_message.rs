@@ -45,6 +45,9 @@ pub enum WsMessage {
         cwd: String,
         /// Optional human-readable session name; omitted when `None`.
         name: Option<String>,
+        /// Current derived turn state (`idle` / `running` / `pause_requested` / `paused`).
+        /// Projected to the JSON key `turnState` to match the TS contract.
+        turn_state: String,
     },
     /// Persisted history batch sent on connect / reset / resume.
     /// `streaming` is omitted on the wire when `false` — matches the TS
@@ -57,6 +60,12 @@ pub enum WsMessage {
     },
     /// Acknowledgement that a `reset` client frame has been processed.
     ResetDone,
+    /// Acknowledgement that a session directory has been deleted on disk.
+    /// Mirrors the TS server's `{ type: "session_deleted", sessionDir }` frame.
+    SessionDeleted {
+        /// Directory name (basename) of the deleted session.
+        session_dir: String,
+    },
 }
 
 impl WsMessage {
@@ -84,13 +93,18 @@ impl WsMessage {
                 effort,
                 cwd,
                 name,
+                turn_state,
             } => {
-                let mut obj = serde_json::Map::with_capacity(6);
+                let mut obj = serde_json::Map::with_capacity(7);
                 obj.insert("type".to_owned(), serde_json::Value::from("session_info"));
                 obj.insert("dir".to_owned(), serde_json::Value::from(dir.clone()));
                 obj.insert("model".to_owned(), serde_json::Value::from(model.clone()));
                 obj.insert("effort".to_owned(), serde_json::Value::from(effort.clone()));
                 obj.insert("cwd".to_owned(), serde_json::Value::from(cwd.clone()));
+                obj.insert(
+                    "turnState".to_owned(),
+                    serde_json::Value::from(turn_state.clone()),
+                );
                 if let Some(n) = name {
                     obj.insert("name".to_owned(), serde_json::Value::from(n.clone()));
                 }
@@ -108,6 +122,10 @@ impl WsMessage {
                 serde_json::Value::Object(obj)
             }
             Self::ResetDone => serde_json::json!({ "type": "reset_done" }),
+            Self::SessionDeleted { session_dir } => serde_json::json!({
+                "type": "session_deleted",
+                "sessionDir": session_dir,
+            }),
         }
     }
 
@@ -193,6 +211,7 @@ mod tests {
             effort: "medium".to_owned(),
             cwd: "/tmp".to_owned(),
             name: None,
+            turn_state: "idle".to_owned(),
         }
         .to_json();
         assert_eq!(v["type"], "session_info");
@@ -202,7 +221,8 @@ mod tests {
         assert_eq!(v["cwd"], "/tmp");
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("name"), "name must be omitted when None");
-        assert_eq!(obj.len(), 5, "unexpected extra fields: {obj:?}");
+        assert_eq!(obj.len(), 6, "unexpected extra fields: {obj:?}");
+        assert_eq!(obj["turnState"], "idle");
     }
 
     #[test]
@@ -213,6 +233,7 @@ mod tests {
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
             name: Some("my-session".to_owned()),
+            turn_state: "running".to_owned(),
         }
         .to_json();
         assert_eq!(v["name"], "my-session");
@@ -226,6 +247,7 @@ mod tests {
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
             name: Some("n".to_owned()),
+            turn_state: "idle".to_owned(),
         };
         let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
         assert_eq!(parsed, m.to_json());

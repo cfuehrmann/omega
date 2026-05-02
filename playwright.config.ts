@@ -10,10 +10,12 @@ import { defineConfig, devices } from "@playwright/test";
  *    but bypasses the Agent entirely. Covers UI rendering, reconnect logic,
  *    history replay from injected events, etc.
  *
- * 2. "real-server" — runs against the real production server (port 3003)
- *    started with a mock CreateMessageStream. Catches bugs in the production
- *    server code path (Agent constructor args, file paths, etc.) that the
- *    test-server cannot detect.
+ * 2. "real-server" — runs against the real production omega-server (Rust,
+ *    port 3003) wrapped by the mock-omega-server fixture binary, which
+ *    injects a deterministic mock LLM provider and exposes a control HTTP
+ *    API on port 3004 (/control/llm-calls, /control/reset-calls). Catches
+ *    bugs in the production server code path (router, persistence,
+ *    SIGTERM teardown, etc.) that the test-server cannot detect.
  *
  * Run: npx playwright test
  *   or: just e2e
@@ -62,19 +64,25 @@ export default defineConfig({
     },
   ],
 
-  // Start both servers before running tests
+  // Start both servers before running tests.
+  // The real-server entry uses the Rust mock-omega-server fixture binary;
+  // build it ahead of time with `just rust-build-mock-server` (recipe
+  // `test-browser` and friends do this automatically).
   webServer: [
     {
       command: "bun run e2e/fixtures/test-server.ts",
       port: 3001,
       reuseExistingServer: false,
       timeout: 15000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
     },
     {
-      command: "bun run e2e/fixtures/real-server.ts",
+      command:
+        "rust/target/release/mock-omega-server --port 3003 --ctrl-port 3004 --public-dir src/web/public --sessions-root .omega/test-sessions",
       port: 3003,
       reuseExistingServer: false,
       timeout: 15000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 5000 },
     },
   ],
 });

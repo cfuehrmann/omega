@@ -11,7 +11,7 @@ import { test as base, expect } from "@playwright/test";
 
 const CTRL = "http://localhost:3002";
 
-export interface ServerHelper {
+interface ServerHelper {
   /** Send a JSON event to the browser WebSocket client */
   sendEvent(event: object): Promise<void>;
   /** Drain and return all messages received from the browser */
@@ -108,7 +108,7 @@ async function setResumeDelay(delayMs: number): Promise<void> {
   });
 }
 
-export interface Fixtures {
+interface Fixtures {
   server: ServerHelper;
 }
 

@@ -18,6 +18,7 @@ test:
     set -uo pipefail
     cd src/web && npx vite build || exit $?
     cd ../..
+    (cd rust && cargo build --release -p omega-mock-server) || exit $?
     CORE_OUT=$(mktemp); BROWSER_OUT=$(mktemp)
     bun test >"$CORE_OUT" 2>&1 & CORE_PID=$!
     npx playwright test >"$BROWSER_OUT" 2>&1 && BROWSER_EXIT=0 || BROWSER_EXIT=$?
@@ -43,18 +44,18 @@ test-fast:
 test-core-watch:
     bun test --watch
 
-# Run browser (Playwright) tests — builds frontend first
-test-browser: web-build
+# Run browser (Playwright) tests — builds frontend + Rust binaries first
+test-browser: web-build rust-build-mock-server
     npx playwright test
 
 # Run browser tests with headed browser (useful for debugging)
-test-browser-debug: web-build
+test-browser-debug: web-build rust-build-mock-server
     npx playwright test --headed
 
 # Run browser tests, saving full verbose output to a timestamped log file.
 # Use this when debugging failures: the log path is printed, then inspect
 # with read_file / grep_files. Never re-run just to see more output.
-test-browser-log: web-build
+test-browser-log: web-build rust-build-mock-server
     #!/usr/bin/env bash
     LOG="test-output/playwright-$(date +%Y%m%d-%H%M%S).log"
     mkdir -p test-output
@@ -120,10 +121,19 @@ gate:
 web-build:
     cd src/web && npx vite build
 
-# Start the web server (serves built client + WebSocket on :3000)
-# Pass --port <n> to use a different port: just server --port 3001
-server *args:
-    bun run src/web/server.ts {{args}}
+# Build the production omega-server (Rust) — release binary at rust/target/release/omega-server
+rust-build-server:
+    cd rust && cargo build --release -p omega-server
+
+# Build the mock omega-server used by Playwright real-server tests.
+# Release binary at rust/target/release/mock-omega-server.
+rust-build-mock-server:
+    cd rust && cargo build --release -p omega-mock-server
+
+# Start the web server (serves built client + WebSocket on :3000).
+# Pass any omega-server CLI args, e.g. just server --port 3001
+server *args: rust-build-server
+    rust/target/release/omega-server {{args}}
 
 # Start Vite dev server for web client (:5173, proxies WS to :3000)
 # Run `just server` in another terminal first.

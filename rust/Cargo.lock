@@ -1292,6 +1292,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "omega-mock-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "futures",
+ "omega-core",
+ "omega-protocol",
+ "omega-server",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "omega-protocol"
 version = "0.1.0"
 dependencies = [

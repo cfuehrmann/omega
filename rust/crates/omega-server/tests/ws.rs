@@ -644,12 +644,21 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         },
     );
     let controls = agent.controls();
+    let info_cache = omega_server::session::SessionInfoCache {
+        dir: "2025-01-01T00-00-00-000-deadbeef".to_owned(),
+        model: "claude-sonnet-4-6".to_owned(),
+        effort: omega_agent::DEFAULT_EFFORT.to_owned(),
+        cwd: tmp.path().display().to_string(),
+        name: None,
+    };
     let active = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
         paths,
         ws_tx: None,
         current_turn: None,
+        turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
+        info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
     };
 
     let state = make_test_state(Arc::clone(&provider), sessions_root);

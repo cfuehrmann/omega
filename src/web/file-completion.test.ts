@@ -17,7 +17,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { listFilesForCompletion } from "./server.js";
+import { listFilesForCompletion } from "./server-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers

@@ -27,25 +27,6 @@ export type { CreateMessageStream } from "./create-message-stream.js";
 /**
  * Create a CreateMessageStream backed by the real Anthropic API.
  *
- * This is the single place where the Anthropic client is constructed for
- * production use. `maxRetries: 0` disables the SDK's built-in retry so that
- * Omega's own retry loop (in `streamLlmCall`) is the sole retry mechanism —
- * avoiding silent double-retry, keeping every attempt visible in the event
- * log, and preserving abort-signal integration between retries.
- *
- * The API key check lives here so that the error surfaces at the earliest
- * possible moment (server startup), not on the first API call.
- */
-export function makeDefaultCreateMessageStream(): CreateMessageStream {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is not set. Set it in the environment to use Omega.",
-    );
-  }
-  const client = new Anthropic({ maxRetries: 0 });
-  return (params) => client.beta.messages.stream(params);
-}
-
 // --- Request / response elision helpers ---
 
 /** Count total characters across all text blocks in a system array or string. */
@@ -587,8 +568,8 @@ export class Agent {
 
   /**
    * Production: new Agent(createMessageStream, contextFile, eventsFile, sessionDir)
-   *   — pass the result of makeDefaultCreateMessageStream(); context appended to
-   *     .omega/sessions/<ts>/context.jsonl
+   *   — pass a `CreateMessageStream` from the Anthropic SDK; context
+   *     appended to .omega/sessions/<ts>/context.jsonl
    * Test: new Agent(mockCreateMessageStream, contextFile, eventsFile)
    *   — uses mock provider; context file and events file are disabled unless
    *     explicit paths are given.

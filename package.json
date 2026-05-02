@@ -3,8 +3,6 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/web/server.ts",
-    "run": "bun run src/cli.ts run",
     "web:build": "cd src/web && npx vite build",
     "web:dev": "cd src/web && npx vite",
     "check": "bun test && bunx knip"

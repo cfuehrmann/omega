@@ -14,7 +14,6 @@
 import { z } from "zod";
 
 const PositiveInt = z.coerce.number().int().positive();
-const PortNumber  = z.coerce.number().int().min(1).max(65535);
 
 /**
  * Read a positive-integer environment variable.
@@ -51,19 +50,3 @@ export function readEnvOptionalPositiveInt(name: string): number | undefined {
   return result.data;
 }
 
-/**
- * Read the PORT environment variable.
- * Returns `defaultVal` when absent or empty.
- * Throws when present but outside the valid port range (1–65535).
- */
-export function readEnvPort(defaultVal: number): number {
-  const raw = process.env.PORT;
-  if (raw === undefined || raw === "") return defaultVal;
-  const result = PortNumber.safeParse(raw);
-  if (!result.success) {
-    throw new Error(
-      `Invalid env var PORT: expected a port number (1–65535), got "${raw}"`,
-    );
-  }
-  return result.data;
-}

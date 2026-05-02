@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { closeOpenTurn, shouldLogEvent } from "./server.js";
+import { closeOpenTurn, shouldLogEvent } from "./server-helpers.js";
 import { dispatch, state, computeRenderGroups } from "./client/state.js";
 import { now } from "../iso-timestamp.js";
 
