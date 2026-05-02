@@ -20,7 +20,7 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
         walk_sync(
             &path,
             std::path::Path::new(&path),
-            0,
+            true, // is_root
             recursive,
             &mut results,
         )?;
@@ -40,7 +40,7 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
 fn walk_sync(
     base: &str,
     dir: &std::path::Path,
-    depth: usize,
+    is_root: bool,
     recursive: bool,
     results: &mut Vec<String>,
 ) -> Result<(), String> {
@@ -74,7 +74,10 @@ fn walk_sync(
         if name_str == "node_modules" {
             continue;
         }
-        if name_str.starts_with('.') && depth == 0 && !recursive {
+        // Hide dotfiles only at the top level of a non-recursive listing.
+        // Recursive listings show everything under non-VCS directories so the
+        // caller can see hidden files inside ordinary subdirectories.
+        if name_str.starts_with('.') && is_root && !recursive {
             continue;
         }
 
@@ -93,7 +96,7 @@ fn walk_sync(
         if is_dir {
             results.push(format!("{rel}/"));
             if recursive && !name_str.starts_with(".git") && name_str != "node_modules" {
-                walk_sync(base, &full_path, depth + 1, recursive, results)?;
+                walk_sync(base, &full_path, false, recursive, results)?;
             }
         } else {
             results.push(rel);

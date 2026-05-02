@@ -259,17 +259,17 @@ characters in `grep_files` output.
 One equivalent mutation (`!ft.is_file()` in `grep_files`) was isolated into
 `not_a_regular_file()` and suppressed with `#[mutants::skip]` + comment.
 
-**Final: 7 missed** (down from 16), all accepted:
+**Final: 0 missed** across these four files (61 mutants, 59 caught, 2
+unviable). The 7 survivors recorded earlier were eliminated by small
+refactors that turned each "untestable" boundary into a directly testable
+seam:
 
-| Mutant | File | Reason accepted |
+| Original survivor | File | Refactor |
 |---|---|---|
-| `delete -` in `run_subprocess` | `fetch_url.rs` | Signal-kill timing; requires precise subprocess teardown harness |
-| `replace + with *` in `walk_sync` | `list_files.rs` | `depth` is unused when `recursive=true`; truly equivalent |
-| `replace >= with <` in `execute` | `wait_for_output.rs` | Race window between last poll and process exit; needs fake clock |
-| `delete !` in `execute` | `web_search.rs` | Requires live Brave API key |
-| `replace > with ==` in `execute` | `web_search.rs` | Requires live Brave API key |
-| `replace > with <` in `execute` | `web_search.rs` | Requires live Brave API key |
-| `replace > with >=` in `execute` | `web_search.rs` | Requires live Brave API key |
+| `delete -` in `run_subprocess` | `fetch_url.rs` | Replaced the `unwrap_or(-1)` sentinel with `code: Option<i32>` (`None` = killed by signal). Signal kill is now reported as `[killed by signal]`; integration test invokes a `kill -KILL $` postprocess. |
+| `replace + with *` in `walk_sync` | `list_files.rs` | Replaced the `depth: usize` counter with `is_root: bool`. The dotfile filter still hides `.foo` only at the top level of a non-recursive listing, but the arithmetic mutant has nothing to mutate. |
+| `replace >= with <` in `execute` (post-exit `min_bytes_reached`) | `wait_for_output.rs` | Hoisted the in-loop and post-exit predicates into a single `evaluate(content, pattern, min_bytes) -> (bool, bool)` helper, with direct unit tests pinning the `len() >= min` boundary at exact equality and one byte below. |
+| `delete !` + 3 truncation mutants in `execute` | `web_search.rs` | Extracted `check_status(StatusCode) -> Result<(), String>` and `render_results(&Value) -> String`. Pure unit tests on synthetic JSON pin both the 2xx/non-2xx branch and the `> MAX_OUTPUT_CHARS` truncation boundary at exact equality and one above. No live API key, no mock HTTP server. |
 
 ---
 

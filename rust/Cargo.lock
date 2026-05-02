@@ -1226,6 +1226,7 @@ dependencies = [
  "globset",
  "hex",
  "ignore",
+ "mutants",
  "omega-core",
  "regex",
  "reqwest",

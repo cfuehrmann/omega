@@ -58,22 +58,21 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
         }
 
         let content = read_log(&log_file).await;
+        let (matched, min_bytes_reached) =
+            evaluate(&content, pattern_re.as_ref(), effective_min_bytes);
 
-        if pattern_re.as_ref().is_some_and(|re| re.is_match(&content)) {
+        if matched {
             return Ok(done(content, true, false, false, None));
         }
 
-        if effective_min_bytes.is_some_and(|min| content.len() >= min) {
+        if min_bytes_reached {
             return Ok(done(content, false, true, false, None));
         }
 
         if let Some(exit_code) = check_exit(pid).await {
             let final_content = read_log(&log_file).await;
-            let matched = pattern_re
-                .as_ref()
-                .is_some_and(|re| re.is_match(&final_content));
-            let min_bytes_reached =
-                effective_min_bytes.is_some_and(|min| final_content.len() >= min);
+            let (matched, min_bytes_reached) =
+                evaluate(&final_content, pattern_re.as_ref(), effective_min_bytes);
             return Ok(serde_json::json!({
                 "output":          final_content,
                 "matched":         matched,
@@ -135,5 +134,73 @@ async fn check_exit(pid: u32) -> Option<i32> {
     match entry.child.try_wait() {
         Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
         _ => None,
+    }
+}
+
+/// Evaluate the two completion conditions against a snapshot of the log.
+///
+/// Hoisted out of [`execute`] so the same expression is shared by the
+/// in-loop check and the post-exit recomputation. With both call sites
+/// going through this single function, the `len() >= min` predicate is
+/// covered by one direct unit test instead of needing two integration
+/// tests that race against process exit.
+fn evaluate(
+    content: &str,
+    pattern: Option<&regex::Regex>,
+    min_bytes: Option<usize>,
+) -> (bool, bool) {
+    let matched = pattern.is_some_and(|re| re.is_match(content));
+    let min_bytes_reached = min_bytes.is_some_and(|min| content.len() >= min);
+    (matched, min_bytes_reached)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::evaluate;
+
+    #[test]
+    fn evaluate_no_pattern_no_min_bytes_returns_false_false() {
+        assert_eq!(evaluate("anything", None, None), (false, false));
+    }
+
+    #[test]
+    fn evaluate_pattern_matches_when_present() {
+        let re = regex::Regex::new("READY").unwrap();
+        assert_eq!(evaluate("server READY now", Some(&re), None), (true, false));
+    }
+
+    #[test]
+    fn evaluate_pattern_does_not_match_when_absent() {
+        let re = regex::Regex::new("READY").unwrap();
+        assert_eq!(
+            evaluate("server starting up", Some(&re), None),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn evaluate_min_bytes_fires_at_exact_threshold() {
+        // Pins the `len() >= min` boundary: 5 bytes vs. min=5 must fire.
+        // Kills the `>= → <` mutation directly at the helper.
+        assert_eq!(evaluate("abcde", None, Some(5)), (false, true));
+    }
+
+    #[test]
+    fn evaluate_min_bytes_fires_when_above_threshold() {
+        assert_eq!(evaluate("abcdefghij", None, Some(5)), (false, true));
+    }
+
+    #[test]
+    fn evaluate_min_bytes_does_not_fire_below_threshold() {
+        // Pins the strict-less branch: 4 bytes vs. min=5 must NOT fire.
+        // Kills the `>= → >` mutation (4 > 5 is false, same as prod —
+        // but 5 > 5 differs, which is covered by the previous test).
+        assert_eq!(evaluate("abcd", None, Some(5)), (false, false));
+    }
+
+    #[test]
+    fn evaluate_both_conditions_can_be_true_simultaneously() {
+        let re = regex::Regex::new("ok").unwrap();
+        assert_eq!(evaluate("all ok now", Some(&re), Some(3)), (true, true));
     }
 }

@@ -259,6 +259,37 @@ async fn fetch_url_successful_postprocess_not_marked_as_error() {
 }
 
 #[tokio::test]
+async fn fetch_url_postprocess_killed_by_signal_reports_signal_error() {
+    // A bash postprocess that signal-kills itself has no exit code.
+    // The output must be an in-band postprocess error — NOT a silent success
+    // path that drops the failure on the floor.
+    //
+    // Kills the `delete -` mutation on the (former) `unwrap_or(-1)` sentinel
+    // by removing the sentinel altogether: a `code: Option<i32>` field with
+    // `None` for signal-kill collapses both pre- and post-mutation behaviours
+    // into a single, observably-correct `[killed by signal]` notice.
+    let out = exec(
+        "fetch_url",
+        json!({
+            "url":         "https://example.com",
+            // "$" expands inside bash -c to its own PID; this kills the bash
+            // postprocess shell with SIGKILL so its `output.status.code()` is None.
+            "postprocess": concat!("kill -KILL $", "$")
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("[killed by signal]") || out.contains("[error]"),
+        "expected signal-kill marker in output: {out}"
+    );
+    assert!(
+        !out.contains("[exit code"),
+        "signal-killed bash must not be reported as an exit code: {out}"
+    );
+}
+
+#[tokio::test]
 async fn fetch_url_postprocess_exit_1_not_marked_as_error() {
     // grep exits 1 when there are no matches; this is NOT an error.
     // Kills the `!= 1 → == 1` mutation on `pp_is_error = code != 0 && code != 1`.

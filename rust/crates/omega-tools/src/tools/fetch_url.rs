@@ -16,7 +16,10 @@ use tokio_util::sync::CancellationToken;
 struct SubprocOutput {
     stdout: String,
     stderr: String,
-    code: i32,
+    /// `Some(code)` for a normal exit; `None` when killed by a signal.
+    /// Modelled as `Option` rather than a magic `-1` sentinel so the two
+    /// conditions never collide with a legitimate shell exit code.
+    code: Option<i32>,
 }
 
 async fn run_subprocess(cmd: &str, args: &[String]) -> Result<SubprocOutput, String> {
@@ -35,7 +38,7 @@ async fn run_subprocess(cmd: &str, args: &[String]) -> Result<SubprocOutput, Str
     Ok(SubprocOutput {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        code: output.status.code().unwrap_or(-1),
+        code: output.status.code(),
     })
 }
 
@@ -159,11 +162,17 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
     let bash_cmd = format!("{postprocess} < '{cache_str}'");
     let out = run_subprocess("bash", &["-c".into(), bash_cmd]).await?;
 
-    let pp_is_error = out.code != 0 && out.code != 1;
+    // Treat exit codes 0 and 1 as success (grep, diff, and friends use 1 for
+    // "no match" / "differs" — not a real error). Anything else, plus a
+    // signal kill (`code = None`), is surfaced as a postprocess error.
+    let pp_is_error = !matches!(out.code, Some(0 | 1));
 
     let mut pp_text = if pp_is_error {
         if out.stderr.trim().is_empty() {
-            format!("[exit code {}]", out.code)
+            match out.code {
+                Some(c) => format!("[exit code {c}]"),
+                None => "[killed by signal]".to_owned(),
+            }
         } else {
             out.stderr.trim().to_owned()
         }

@@ -42,25 +42,41 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
         .await
         .map_err(|e| format!("web_search: request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!(
-            "Brave Search API error: HTTP {}",
-            response.status()
-        ));
-    }
+    check_status(response.status())?;
 
     let data: Value = response
         .json()
         .await
         .map_err(|e| format!("web_search: failed to parse response: {e}"))?;
 
+    Ok(render_results(&data))
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers — split out so they can be unit-tested without a live API key
+// or a mock HTTP server. These exist so cargo-mutants can attack the boundary
+// logic (status check, truncation threshold) at function granularity.
+// ---------------------------------------------------------------------------
+
+/// Convert a Brave API HTTP status into either `Ok(())` (2xx) or a formatted
+/// `Err(String)` describing the failure. Pure; no I/O.
+fn check_status(status: reqwest::StatusCode) -> Result<(), String> {
+    if !status.is_success() {
+        return Err(format!("Brave Search API error: HTTP {status}"));
+    }
+    Ok(())
+}
+
+/// Render the parsed Brave response body into the user-facing string,
+/// applying the [`MAX_OUTPUT_CHARS`] truncation guard. Pure; no I/O.
+fn render_results(data: &Value) -> String {
     let results = data["web"]["results"]
         .as_array()
         .cloned()
         .unwrap_or_default();
 
     if results.is_empty() {
-        return Ok("No results found.".to_owned());
+        return "No results found.".to_owned();
     }
 
     let mut lines = vec!["Results:".to_owned()];
@@ -82,8 +98,130 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
             .char_indices()
             .nth(MAX_OUTPUT_CHARS)
             .map_or(output.len(), |(i, _)| i);
-        return Ok(format!("{}\n[truncated]", &output[..end]));
+        return format!("{}\n[truncated]", &output[..end]);
     }
 
-    Ok(output)
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_OUTPUT_CHARS, check_status, render_results};
+    use serde_json::json;
+
+    // -- check_status --------------------------------------------------------
+
+    #[test]
+    fn check_status_ok_for_2xx() {
+        // Kills the `delete !` mutation (which would invert the success path).
+        assert!(check_status(reqwest::StatusCode::OK).is_ok());
+        assert!(check_status(reqwest::StatusCode::CREATED).is_ok());
+        assert!(check_status(reqwest::StatusCode::NO_CONTENT).is_ok());
+    }
+
+    #[test]
+    fn check_status_err_for_non_2xx() {
+        // Kills the `delete !` mutation (with `!` removed, 5xx would be Ok).
+        let err = check_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR).unwrap_err();
+        assert!(err.contains("Brave"), "got: {err}");
+        assert!(err.contains("500"), "got: {err}");
+    }
+
+    #[test]
+    fn check_status_err_for_4xx() {
+        let err = check_status(reqwest::StatusCode::UNAUTHORIZED).unwrap_err();
+        assert!(err.contains("401"), "got: {err}");
+    }
+
+    // -- render_results: empty / shape ---------------------------------------
+
+    #[test]
+    fn render_results_empty_returns_no_results_marker() {
+        assert_eq!(render_results(&json!({})), "No results found.");
+        assert_eq!(
+            render_results(&json!({ "web": { "results": [] } })),
+            "No results found."
+        );
+    }
+
+    #[test]
+    fn render_results_single_result_includes_all_fields() {
+        let data = json!({
+            "web": { "results": [
+                { "url": "https://example.com", "title": "Example", "description": "A demo site." }
+            ]}
+        });
+        let out = render_results(&data);
+        assert!(out.starts_with("Results:"), "{out}");
+        assert!(out.contains("https://example.com"), "{out}");
+        assert!(out.contains("Example"), "{out}");
+        assert!(out.contains("A demo site."), "{out}");
+    }
+
+    // -- render_results: truncation boundary ---------------------------------
+
+    /// Build a response whose rendered output is approximately `target_chars`
+    /// characters long. Each result contributes a known number of chars; we
+    /// pad the description of the last result to land on the requested length.
+    fn rendered_of_length(target_chars: usize) -> serde_json::Value {
+        // "Results:" header plus one result: "• u\n  t\n  d".
+        // We use a single result and tune `description` to hit the target.
+        let prefix = "Results:\n• u\n  t\n  "; // count chars (• is one char)
+        let prefix_chars = prefix.chars().count();
+        assert!(target_chars > prefix_chars, "target too small");
+        let desc_len = target_chars - prefix_chars;
+        let desc = "x".repeat(desc_len);
+        json!({
+            "web": { "results": [
+                { "url": "u", "title": "t", "description": desc }
+            ]}
+        })
+    }
+
+    #[test]
+    fn render_results_exactly_max_chars_not_truncated() {
+        // Pins the strict `>` boundary: exactly MAX_OUTPUT_CHARS must NOT
+        // truncate. Kills the `> → >=` mutation (which would truncate at
+        // equality) and `> → ==` (which truncates only at exact equality).
+        let data = rendered_of_length(MAX_OUTPUT_CHARS);
+        let out = render_results(&data);
+        assert_eq!(
+            out.chars().count(),
+            MAX_OUTPUT_CHARS,
+            "setup: rendered length must equal MAX_OUTPUT_CHARS"
+        );
+        assert!(
+            !out.contains("[truncated]"),
+            "exactly MAX_OUTPUT_CHARS must not be truncated"
+        );
+    }
+
+    #[test]
+    fn render_results_above_max_chars_is_truncated() {
+        // Output length > MAX_OUTPUT_CHARS must trigger truncation.
+        // Kills the `> → <` mutation (which would never truncate large output)
+        // and `> → ==` (which only truncates at exact equality).
+        let data = rendered_of_length(MAX_OUTPUT_CHARS + 100);
+        let out = render_results(&data);
+        assert!(
+            out.contains("[truncated]"),
+            "output > MAX_OUTPUT_CHARS must be truncated, got len={}",
+            out.chars().count()
+        );
+    }
+
+    #[test]
+    fn render_results_well_below_max_chars_not_truncated() {
+        // A small response must never carry a truncation notice.
+        // Kills the `> → <` and `> → ==` mutations: with `<`, every short
+        // output would be truncated; with `==`, nothing would be unless the
+        // length matched exactly.
+        let data = json!({
+            "web": { "results": [
+                { "url": "https://example.com", "title": "t", "description": "d" }
+            ]}
+        });
+        let out = render_results(&data);
+        assert!(!out.contains("[truncated]"), "short output: {out}");
+    }
 }
