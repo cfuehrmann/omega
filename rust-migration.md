@@ -20,7 +20,8 @@
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
-| 3 — Leptos UI rewrite | ⬜ Next | SolidJS → Leptos; TS deleted |
+| 2d — `session_renamed` envelope | ⬜ Next | Fix: rename UI shows the saved name |
+| 3 — Leptos UI rewrite | ⬜ After 2d | SolidJS → Leptos; TS deleted |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -610,6 +611,7 @@ TS web client still served by the Rust binary; all new features in Rust.
 | 2a | ✅ Done | Wire `model`/`effort` from `reset` + `POST /api/sessions` through `AgentConfig`; emit `session_info` WS message |
 | 2b | ✅ Done | Align URL paths (`/api/*` vs `/`) or update web-client fetch calls; switch replay to `history` frame |
 | 2c | ✅ Done | Cut over: Playwright + Justfile use `omega-server`; `src/cli.ts` + `src/web/server.ts` deleted |
+| 2d | ⬜ Next | Broadcast `session_renamed` envelope from `handle_rename_session` so the rename UI updates |
 
 ### Phase 2a + 2b — done (concise record)
 
@@ -731,6 +733,52 @@ web / session helpers.
 **Followup deferred (not blocking):** `bench/omega_agent.py` still references
 the deleted `src/cli.ts`. Should be retargeted at `rust/target/release/omega`
 (the omega-cli binary). Bench is not on the test path.
+
+### Phase 2d — `session_renamed` envelope on rename (next)
+
+**Bug.** Renaming a session in the UI accepts the input and saves on disk,
+but the name field empties out again afterwards. Reproduces against the
+Rust backend; the user reports the same UX existed against the deleted TS
+server too — long-standing, surfaced by the cut-over.
+
+**Diagnosis.** `handle_rename_session` (`rust/crates/omega-server/src/router.rs`)
+updates `session.jsonc` on disk and refreshes `ActiveSession::info_cache`,
+but sends *nothing* on the WebSocket. The SolidJS client expects a
+`{type: "session_renamed", sessionDir, name}` envelope — already declared
+in `src/web/protocol.ts:128`, handled in `src/web/client/state.ts:829`
+(updates `sessionName` if the dir matches) and `src/web/client/App.tsx:265`
+(updates the picker's renamed-sessions map). Without that frame the
+client's `sessionName` keeps its previous value (typically `""` for a
+fresh session).
+
+The Rust `WsMessage` enum has *no* `SessionRenamed` variant — grep returns
+zero matches across `rust/crates/`. The existing test
+`rename_session_updates_metadata_for_active_session`
+(`rust/crates/omega-server/tests/ws.rs:754`) enshrines the bug with a
+comment reading *"No frame is emitted on success"* — it asserts only the
+on-disk metadata.
+
+**Fix (server-side only):**
+
+1. Add `SessionRenamed { session_dir: String, name: String }` to
+   `WsMessage` in `omega-protocol/src/ws_message.rs` (mirror the existing
+   `SessionDeleted` variant: same `ts-rs` derives, same `#[serde(rename_all
+   = "camelCase")]` so the wire field is `sessionDir`).
+2. In `handle_rename_session`, after the disk write + cache refresh, send
+   `WsMessage::SessionRenamed { session_dir: <basename of paths.dir>, name }`
+   on `tx`. Use the *relative* dir name to match the client's matching logic
+   (`state.sessionDir.endsWith("/" + event.sessionDir)`).
+3. Update the existing test to assert the new envelope is received in
+   addition to the on-disk write — drop the misleading comment.
+4. Add a Playwright spec (e.g. `e2e/web-ui-rename-session.spec.ts`) that
+   drives the rename UI end-to-end and asserts the displayed name persists
+   after save. This is the real-world failure mode and it's not currently
+   covered — hence the bug surviving Phase 2c's gate.
+
+No client changes needed (the handler already exists). No protocol
+renegotiation — client and server protocol files have been out of sync
+since before the cut-over. Estimated diff: ~30 LOC across
+`ws_message.rs`, `router.rs`, the unit test, plus the new Playwright spec.
 
 ### Running the UI in real life
 
