@@ -18,6 +18,10 @@ reqwest = { version = "0.12", features = ["json"] }
 sha2    = "0.10"
 hex     = "0.4"
 
+# Phase 1d.0d additions — pure-Rust replacements for rg/fd subprocesses.
+ignore  = "0.4"   # BurntSushi's directory-traversal engine (the core of ripgrep)
+globset = "0.4"   # BurntSushi's compiled glob matching
+
 [dev-dependencies]
 tempfile = "3"
 tokio    = { version = "1", features = ["full", "test-util"] }

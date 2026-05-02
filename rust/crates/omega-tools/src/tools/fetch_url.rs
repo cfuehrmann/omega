@@ -9,7 +9,35 @@ use serde_json::Value;
 use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 
-use super::grep_files::run_subprocess;
+// ---------------------------------------------------------------------------
+// Subprocess helper (used only by this module for the postprocess call)
+// ---------------------------------------------------------------------------
+
+struct SubprocOutput {
+    stdout: String,
+    stderr: String,
+    code: i32,
+}
+
+async fn run_subprocess(cmd: &str, args: &[String]) -> Result<SubprocOutput, String> {
+    use std::process::Stdio;
+    use tokio::process::Command;
+
+    let output = Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("{cmd}: {e}"))?;
+
+    Ok(SubprocOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code: output.status.code().unwrap_or(-1),
+    })
+}
 
 const POSTPROCESS_MAX_CHARS: usize = 8_000;
 const FETCH_TIMEOUT_S: u64 = 15;
