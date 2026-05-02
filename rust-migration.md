@@ -294,7 +294,7 @@ bar set by 1d.0d.
 | 1d.1b | Session-resumption **pure** helpers: `extract_resumption_basis`, `extract_summary_from_response`, `extract_description_from_response` | ✅ Done |
 | 1d.1c | `perform_resumption` + `seed_with_resumption_summary` on `Agent` (one-shot LLM call + history seeding) | ✅ Done |
 | 1d.1d | Server-side compaction — `omega-core` provider detects compaction content-block; agent clears `history` + `context_hashes` on `Compacted` event | ✅ Done |
-| 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ⬜ |
+| 1d.1e | Pause / continue / abort + the seam — `request_pause` / `request_continue` / `request_abort`; seam fires only after a tool batch's `tool_results` are appended; emits `pause_requested` / `turn_paused` / `turn_continued{mode}` | ✅ Done |
 
 ### Order rationale
 
@@ -424,6 +424,53 @@ bar set by 1d.0d.
   macro) and `send_message` (`Pin<Box<dyn Stream>>` return) are not
   mutated by cargo-mutants and are covered by the integration tests
   instead, same constraint as 1d.1a/c.
+
+- **1d.1e** — pause / continue / abort wired in `omega-agent` only
+  (no cross-crate change; protocol was already prepared in 1a). New
+  `controls.rs` module exposes a clonable, `Arc`-backed `ControlHandle`
+  carrying `Mutex<ControlState>` (`pause_requested`, `pending_continue`,
+  `suspended`), a `tokio::sync::Notify` for the suspend/wake handshake,
+  a `Mutex<CancellationToken>` swapped fresh on every `send_message`
+  entry, and an `Arc<EventStore>` so `request_pause` can append
+  `PauseRequested` even when no turn is running. The three control
+  methods live **only** on the handle — not on `Agent` — because
+  `Agent::send_message(&mut self, …)` exclusively borrows the agent
+  for the lifetime of its returned stream, so any external caller
+  must hold a cloned handle obtained from `Agent::controls()` before
+  the turn begins. In `send_message`: turn-entry shadows `cancel`
+  with a merged token that fires when *either* the external param or
+  the controls' turn-cancel cancels (forwarder spawn aborted via
+  `JoinHandle`), a `TurnGuard` RAII clears state and fires `Notify`
+  on drop (covers normal completion, error return, *and* caller-drop
+  of the stream mid-suspend), and a pause seam after every
+  `tool_results` append takes the pause request, decides-and-marks
+  `suspended` **before** yielding `TurnPaused` (so any
+  `request_continue` observing `TurnPaused` already sees
+  `suspended=true` and resolves to `mode=Manual` rather than racing
+  the agent), then suspends via `tokio::select!` over
+  `notify().notified()` and `cancel.cancelled()`, with abort winning
+  over continue, an optional interleaved `UserMessage` for
+  interjections, and a final `TurnContinued{mode}`. Tests: 15
+  integration tests in `tests/pause_continue_abort.rs` covering
+  manual / auto continue, with / without interjection, abort during
+  pause, abort during tool dispatch, multi-cycle pauses in one turn,
+  drop-guard cleanup, state reset between turns, idempotent
+  `request_pause`, `events.jsonl` ordering, the no-running-turn
+  pause-logging path, and an explicit `tokio::join!`-driven race
+  test that exercises the genuine `notify().notified()` await branch
+  (earlier tests all set `pending_continue` before the suspend loop
+  starts, so `pending_continue_ready()` returns true on the first
+  iteration and the await is never reached). `cargo mutants -f`:
+  `controls.rs` + `agent.rs` together — **47 mutants, 23 caught,
+  22 unviable, 0 missed, 2 timeouts**. The two timeouts
+  (`pending_continue_ready -> false` and
+  `notify -> Box::leak(Box::new(Default::default()))`) are real
+  detections via test hang — the race test waits forever for a
+  wake-up that the mutant has broken — and are caught by
+  cargo-mutants' per-mutant test timeout. The hot-path branches
+  inside the seam itself sit inside `send_message`'s
+  `Pin<Box<dyn Stream>>` body and are not visited by cargo-mutants;
+  the integration tests cover them, same constraint as 1d.1a/c/d.
 
 ### 1d.1d pre-flight notes
 
