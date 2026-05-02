@@ -8,6 +8,10 @@ expression: project(&items)
     "type": "thinking"
   },
   {
+    "signature": "sig123",
+    "type": "thinking_block_complete"
+  },
+  {
     "text": "Hello",
     "type": "text"
   },

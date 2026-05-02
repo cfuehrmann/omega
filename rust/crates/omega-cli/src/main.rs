@@ -185,8 +185,10 @@ async fn run(
                 omega_protocol::StreamSignal::Text { text } => {
                     print!("{text}");
                 }
-                omega_protocol::StreamSignal::Thinking { .. } => {
-                    // Thinking blocks are not shown by default in CLI.
+                omega_protocol::StreamSignal::Thinking { .. }
+                | omega_protocol::StreamSignal::ThinkingBlockComplete { .. } => {
+                    // Thinking blocks and their completion signals are not
+                    // shown in CLI output.
                 }
             },
             omega_core::AgentItem::Event(boxed) => {

@@ -574,7 +574,12 @@ impl Agent {
                 // --- Drain the provider stream -----------------------------
                 let mut provider_stream = self.provider.stream(request);
                 let mut text_buf = String::new();
-                let mut thinking_buf = String::new();
+                // `current_thinking` accumulates text for the thinking block
+                // currently streaming.  `completed_thinking_blocks` holds
+                // (thinking_text, signature) for each block that has finished;
+                // each becomes one ContentBlock::Thinking in the context record.
+                let mut current_thinking = String::new();
+                let mut completed_thinking_blocks: Vec<(String, String)> = Vec::new();
                 let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
                 let mut llm_response: Option<LlmResponseEvent> = None;
                 let mut stream_error: Option<LlmError> = None;
@@ -585,11 +590,25 @@ impl Agent {
                     }
                     match item {
                         Ok(AgentItem::Signal(sig)) => {
-                            match &sig {
-                                StreamSignal::Text { text } => text_buf.push_str(text),
-                                StreamSignal::Thinking { text } => thinking_buf.push_str(text),
+                            let forward = match &sig {
+                                StreamSignal::Text { text } => {
+                                    text_buf.push_str(text);
+                                    true
+                                }
+                                StreamSignal::Thinking { text } => {
+                                    current_thinking.push_str(text);
+                                    true
+                                }
+                                StreamSignal::ThinkingBlockComplete { signature } => {
+                                    let thinking = std::mem::take(&mut current_thinking);
+                                    completed_thinking_blocks
+                                        .push((thinking, signature.clone()));
+                                    false // internal signal, not forwarded to UI
+                                }
+                            };
+                            if forward {
+                                yield AgentItem::Signal(sig);
                             }
-                            yield AgentItem::Signal(sig);
                         }
                         Ok(AgentItem::Event(boxed)) => {
                             let event = *boxed;
@@ -608,7 +627,8 @@ impl Agent {
                                     // accumulated and forward the event so the
                                     // UI can roll back.
                                     text_buf.clear();
-                                    thinking_buf.clear();
+                                    current_thinking.clear();
+                                    completed_thinking_blocks.clear();
                                     let ev = OmegaEvent::LlmRetry(retry);
                                     let _ = self.event_store.append(&ev).await;
                                     yield AgentItem::event(ev);
@@ -742,10 +762,10 @@ impl Agent {
 
                 // --- Build + persist the assistant context record ---------
                 let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-                if !thinking_buf.is_empty() {
+                for (thinking, signature) in completed_thinking_blocks.drain(..) {
                     assistant_blocks.push(ContentBlock::Thinking {
-                        thinking: std::mem::take(&mut thinking_buf),
-                        signature: None,
+                        thinking,
+                        signature: Some(signature),
                     });
                 }
                 if !text_buf.is_empty() {
@@ -1168,7 +1188,8 @@ impl Agent {
             // -----------------------------------------------------------------
             let mut provider_stream = self.provider.stream(request);
             let mut text_buf = String::new();
-            let mut thinking_buf = String::new();
+            let mut current_thinking = String::new();
+            let mut completed_thinking_blocks: Vec<(String, String)> = Vec::new();
             let mut llm_response: Option<LlmResponseEvent> = None;
             let mut stream_error: Option<LlmError> = None;
 
@@ -1178,11 +1199,25 @@ impl Agent {
                 }
                 match item {
                     Ok(AgentItem::Signal(sig)) => {
-                        match &sig {
-                            StreamSignal::Text { text } => text_buf.push_str(text),
-                            StreamSignal::Thinking { text } => thinking_buf.push_str(text),
+                        let forward = match &sig {
+                            StreamSignal::Text { text } => {
+                                text_buf.push_str(text);
+                                true
+                            }
+                            StreamSignal::Thinking { text } => {
+                                current_thinking.push_str(text);
+                                true
+                            }
+                            StreamSignal::ThinkingBlockComplete { signature } => {
+                                let thinking = std::mem::take(&mut current_thinking);
+                                completed_thinking_blocks
+                                    .push((thinking, signature.clone()));
+                                false
+                            }
+                        };
+                        if forward {
+                            yield AgentItem::Signal(sig);
                         }
-                        yield AgentItem::Signal(sig);
                     }
                     Ok(AgentItem::Event(boxed)) => {
                         let event = *boxed;
@@ -1192,7 +1227,8 @@ impl Agent {
                             }
                             OmegaEvent::LlmRetry(retry) => {
                                 text_buf.clear();
-                                thinking_buf.clear();
+                                current_thinking.clear();
+                                completed_thinking_blocks.clear();
                                 let ev = OmegaEvent::LlmRetry(retry);
                                 let _ = self.event_store.append(&ev).await;
                                 yield AgentItem::event(ev);
@@ -1254,10 +1290,10 @@ impl Agent {
             // -----------------------------------------------------------------
             let assembled_text = std::mem::take(&mut text_buf);
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-            if !thinking_buf.is_empty() {
+            for (thinking, signature) in completed_thinking_blocks.drain(..) {
                 assistant_blocks.push(ContentBlock::Thinking {
-                    thinking: std::mem::take(&mut thinking_buf),
-                    signature: None,
+                    thinking,
+                    signature: Some(signature),
                 });
             }
             if !assembled_text.is_empty() {

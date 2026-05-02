@@ -3,4 +3,4 @@
 /**
  * A raw streaming fragment from the LLM.  Never persisted.
  */
-export type StreamSignal = { "type": "text", text: string, } | { "type": "thinking", text: string, };
+export type StreamSignal = { "type": "text", text: string, } | { "type": "thinking", text: string, } | { "type": "thinking_block_complete", signature: string, };

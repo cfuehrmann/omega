@@ -657,6 +657,11 @@ async fn forwards_thinking_signals_and_persists_to_assistant_record() {
         Ok(AgentItem::Signal(StreamSignal::Thinking {
             text: "let me think".to_owned(),
         })),
+        // ThinkingBlockComplete terminates the block and carries the signature
+        // that Anthropic requires when echoing the block in the next API call.
+        Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            signature: "sig-abc".to_owned(),
+        })),
         Ok(AgentItem::Signal(StreamSignal::Text {
             text: "<summary>S</summary>".to_owned(),
         })),
@@ -677,7 +682,9 @@ async fn forwards_thinking_signals_and_persists_to_assistant_record() {
     let items = collect_stream(stream).await;
 
     let tags = tags(&items);
+    // Thinking deltas are forwarded; ThinkingBlockComplete is not (internal).
     assert!(tags.contains(&"Signal:Thinking"));
+    assert!(!tags.contains(&"Signal:ThinkingBlockComplete"));
 
     // Assistant record contains both a Thinking and a Text block.
     let raw =
@@ -689,6 +696,8 @@ async fn forwards_thinking_signals_and_persists_to_assistant_record() {
     assert_eq!(blocks.len(), 2, "expected thinking + text blocks");
     assert_eq!(blocks[0]["type"], "thinking");
     assert_eq!(blocks[0]["thinking"], "let me think");
+    // Signature must be persisted for the next API call.
+    assert_eq!(blocks[0]["signature"], "sig-abc");
     assert_eq!(blocks[1]["type"], "text");
 }
 

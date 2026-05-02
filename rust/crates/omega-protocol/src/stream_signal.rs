@@ -15,6 +15,10 @@ pub enum StreamSignal {
     Text { text: String },
     /// A thinking (extended reasoning) token fragment.
     Thinking { text: String },
+    /// Emitted when a thinking block finishes streaming.  Carries the
+    /// cryptographic signature Anthropic requires when the thinking block is
+    /// echoed back in the next API call.  Never forwarded to the UI.
+    ThinkingBlockComplete { signature: String },
 }
 
 #[cfg(test)]

@@ -206,21 +206,29 @@ fn stream_impl(
                 }
                 "content_block_stop" => {
                     let parsed: ContentBlockStopData = parse_data(&ev.data)?;
-                    if let Some(BlockAccum::ToolUse { id, name, partial_json }) = blocks.remove(&parsed.index) {
-                        let input: Value = if partial_json.is_empty() {
-                            Value::Object(serde_json::Map::new())
-                        } else {
-                            serde_json::from_str(&partial_json).map_err(|e| LlmError::Stream {
-                                message: format!("malformed tool_use JSON: {e}"),
-                            })?
-                        };
-                        yield AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
-                            time: now_iso(),
-                            id,
-                            name,
-                            input,
-                            context_hash: String::new(),
-                        }));
+                    match blocks.remove(&parsed.index) {
+                        Some(BlockAccum::Thinking { signature, .. }) => {
+                            yield AgentItem::Signal(
+                                StreamSignal::ThinkingBlockComplete { signature },
+                            );
+                        }
+                        Some(BlockAccum::ToolUse { id, name, partial_json }) => {
+                            let input: Value = if partial_json.is_empty() {
+                                Value::Object(serde_json::Map::new())
+                            } else {
+                                serde_json::from_str(&partial_json).map_err(|e| LlmError::Stream {
+                                    message: format!("malformed tool_use JSON: {e}"),
+                                })?
+                            };
+                            yield AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
+                                time: now_iso(),
+                                id,
+                                name,
+                                input,
+                                context_hash: String::new(),
+                            }));
+                        }
+                        _ => {}
                     }
                 }
                 "message_delta" => {
