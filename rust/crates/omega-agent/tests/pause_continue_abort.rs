@@ -411,6 +411,26 @@ async fn request_pause_logs_with_no_turn_running() {
 
     let events_path = tmp.path().join("events.jsonl");
     assert_eq!(count_pause_requested(&events_path), 1);
+
+    // The persisted PauseRequested event must carry a non-empty,
+    // ISO-8601-shaped `time` field.  This guards against accidental
+    // regressions in the now_iso() helper.
+    let raw = std::fs::read_to_string(&events_path).unwrap();
+    let line = raw
+        .lines()
+        .find(|l| l.contains("\"pause_requested\""))
+        .expect("expected a pause_requested event");
+    let v: serde_json::Value = serde_json::from_str(line).unwrap();
+    let time = v["time"].as_str().expect("time must be a string");
+    assert!(!time.is_empty(), "time must not be empty: {line}");
+    // ISO 8601 starts with a 4-digit year.
+    assert!(
+        time.chars().take(4).all(|c| c.is_ascii_digit()),
+        "time must start with a 4-digit year: {time}"
+    );
+    // Smoke-check it parses as a chrono datetime.
+    chrono::DateTime::parse_from_rfc3339(time)
+        .unwrap_or_else(|e| panic!("time must be valid RFC3339: {time}: {e}"));
 }
 
 // ---------------------------------------------------------------------------
@@ -679,6 +699,58 @@ async fn request_pause_while_suspended_is_idempotent() {
 
     let events_path = tmp.path().join("events.jsonl");
     assert_eq!(count_pause_requested(&events_path), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Test 15 — notify path is actually exercised when request_continue races
+// with the agent already inside the suspend `tokio::select!`.
+//
+// All earlier tests call `request_continue` *before* the agent enters the
+// suspend loop, so `pending_continue_ready()` returns true on the first
+// iteration and the loop never awaits `notify().notified()`.  This test
+// uses `tokio::join!` to drive the stream concurrently with a delayed
+// `request_continue`, ensuring the agent reaches the await before the
+// wake-up arrives — the only path that actually exercises
+// `ControlHandle::notify()` and `pending_continue_ready()` returning false.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn notify_path_exercised_when_continue_races_suspend() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    let scratch = write_scratch(_tmp.path());
+    arrange_one_cycle_transcript(&provider, &scratch);
+
+    let handle = agent.controls();
+    let mut stream = agent.send_message("hi".into(), CancellationToken::new());
+    let _ = drive_to_pre_seam(&mut stream).await;
+    handle.request_pause().await;
+    let between = drive_until(&mut stream, |it| is_event(it, "TurnPaused")).await;
+
+    // Now: suspended=true, pending_continue=None.  Drive the stream and
+    // fire request_continue from a sibling future on the same task.  The
+    // stream future will enter the suspend loop, find pending_continue
+    // still None, and await `notify().notified()`.  The sibling future
+    // sleeps briefly to ensure the await is reached, then notifies.
+    let drain_handle = handle.clone();
+    let (post, ()) = tokio::join!(collect_stream(stream), async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drain_handle.request_continue(None);
+    });
+
+    let combined: Vec<_> = between.iter().chain(post.iter()).cloned().collect();
+    let t = tags(&combined);
+    assert!(t.contains(&"TurnPaused"), "missing TurnPaused: {t:?}");
+    assert!(t.contains(&"TurnContinued"), "missing TurnContinued: {t:?}");
+
+    // Mode must be Manual — request_continue saw suspended=true.
+    let mode = post.iter().find_map(|it| match it {
+        AgentItem::Event(b) => match b.as_ref() {
+            omega_protocol::OmegaEvent::TurnContinued(t) => Some(t.mode.clone()),
+            _ => None,
+        },
+        _ => None,
+    });
+    assert_eq!(mode, Some(omega_protocol::ContinueMode::Manual));
 }
 
 // ---------------------------------------------------------------------------
