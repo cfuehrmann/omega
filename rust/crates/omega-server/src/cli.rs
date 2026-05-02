@@ -15,10 +15,9 @@ use clap::Parser;
 pub const DEFAULT_PORT: u16 = 3000;
 
 /// Default sessions root, relative to the process cwd.
-/// Matches [`omega_store::SESSIONS_ROOT`] without the cross-crate dep —
-/// the constant value is asserted against `omega_store` in an integration
-/// test once 1e.1 wires up real session I/O.
-pub const DEFAULT_SESSIONS_ROOT: &str = ".omega/sessions";
+/// Re-exports [`omega_store::SESSIONS_ROOT`] so that callers have a single
+/// canonical constant and tests can assert they are identical.
+pub const DEFAULT_SESSIONS_ROOT: &str = omega_store::SESSIONS_ROOT;
 
 /// Default static-assets directory, relative to the process cwd.
 /// Matches the directory `vite build` writes to (`src/web/public/`).

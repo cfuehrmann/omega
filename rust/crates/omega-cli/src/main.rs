@@ -160,6 +160,7 @@ async fn run(
         model,
         cwd: cwd.clone(),
         system_prompt_append,
+        session_dir: paths.dir.clone(),
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
 

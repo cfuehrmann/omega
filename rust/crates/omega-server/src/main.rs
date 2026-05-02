@@ -1,16 +1,20 @@
 //! `omega-server` binary entry point.
 //!
-//! Phase 1e.0: parses CLI flags, logs the resolved configuration, binds
-//! `0.0.0.0:<port>`, and serves the router from `omega_server::build_router`.
-//! All real session/agent/WebSocket handling lands in 1e.1 – 1e.4.
+//! Phase 1e.1: parses CLI flags, constructs the real Anthropic provider,
+//! builds [`AppState`], and delegates to [`omega_server::serve`].
+//!
+//! All logic lives in `lib.rs` helpers; `main` is pure glue marked
+//! `#[mutants::skip]` because mutation-testing the bind/serve wiring would
+//! require a real process spawn — `build_router`, `AppState`, and all
+//! handlers are covered by integration tests instead.
+
+use std::sync::Arc;
 
 use clap::Parser as _;
-use omega_server::{Args, build_router};
+use omega_core::{AnthropicProvider, RetryConfig, RetryingProvider};
+use omega_server::{AppState, Args, serve};
 
-/// All logic lives in helpers in `lib.rs`; `main` is pure glue. Marked
-/// `#[mutants::skip]` because mutating the bind/serve glue cannot be
-/// caught without spawning a real process — `build_router` and `Args`
-/// are exhaustively covered by integration tests instead.
+/// All logic lives in helpers in `lib.rs`; `main` is pure glue.
 #[mutants::skip]
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -21,7 +25,19 @@ async fn main() -> std::io::Result<()> {
         args.sessions_root.display(),
         args.public_dir.display(),
     );
+
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|e| std::io::Error::other(format!("ANTHROPIC_API_KEY env var: {e}")))?;
+    let inner = AnthropicProvider::new(api_key);
+    let provider = Arc::new(RetryingProvider::new(
+        inner,
+        RetryConfig {
+            max_attempts: 4,
+            ..RetryConfig::default()
+        },
+    ));
+
+    let state = AppState::new(provider, args.sessions_root, args.public_dir);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port)).await?;
-    let app = build_router(&args.public_dir);
-    axum::serve(listener, app).await
+    serve(listener, state).await
 }

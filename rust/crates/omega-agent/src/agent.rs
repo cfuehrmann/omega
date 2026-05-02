@@ -34,8 +34,9 @@ use omega_core::{
 use omega_protocol::StreamSignal;
 use omega_protocol::events::{
     AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
-    ModelChangedEvent, ResumingSessionEvent, SessionResumedEvent, ToolCallEvent, ToolResultEvent,
-    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    ModelChangedEvent, ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent,
+    SessionStartedEvent, ToolCallEvent, ToolResultEvent, TurnContinuedEvent, TurnEndEvent,
+    TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
 use omega_protocol::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
@@ -94,6 +95,9 @@ pub struct AgentConfig {
     /// Pre-loaded contents of `<cwd>/.omega/system-prompt-append.md`,
     /// if the file exists.  Pass `None` to skip the append section.
     pub system_prompt_append: Option<String>,
+    /// Path to the session directory (the parent of `events.jsonl`).
+    /// Used by [`Agent::init`] to write the `session_started` event.
+    pub session_dir: PathBuf,
 }
 
 /// The agentic loop.
@@ -155,6 +159,49 @@ impl Agent {
             history: Vec::new(),
             context_hashes: Vec::new(),
         }
+    }
+
+    /// Write `server_started` and `session_started` events to `events.jsonl`.
+    ///
+    /// Must be called once after construction and before any turns.  Mirrors
+    /// `Agent.init()` in `src/agent.ts`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialisation or the file write fails.
+    pub async fn init(&self) -> omega_store::Result<()> {
+        // 1. server_started
+        let server_started = OmegaEvent::ServerStarted(ServerStartedEvent { time: now_iso() });
+        self.event_store.append(&server_started).await?;
+
+        // 2. session_started
+        let session_id = self.config.session_dir.file_name().map_or_else(
+            || "unknown".to_owned(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        let path = self
+            .config
+            .session_dir
+            .strip_prefix(&self.config.cwd)
+            .unwrap_or(&self.config.session_dir)
+            .to_string_lossy()
+            .into_owned();
+        let max_tokens = max_output_tokens_for_model(&self.active_model);
+        let system_prompt = build_system_prompt(
+            &self.config.cwd.to_string_lossy(),
+            max_tokens,
+            self.config.system_prompt_append.as_deref(),
+        );
+        let session_started = OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: now_iso(),
+            session_id,
+            path,
+            model: self.active_model.clone(),
+            effort: self.active_effort.clone(),
+            system_prompt,
+        });
+        self.event_store.append(&session_started).await?;
+        Ok(())
     }
 
     /// Borrow a clone of the pause/continue/abort control handle.
