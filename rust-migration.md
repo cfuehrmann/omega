@@ -245,7 +245,7 @@ tokio-tungstenite = "0.26"    # dev-dependency for test WS client only
 | Sub-phase | Status | Deliverable |
 |---|---|---|
 | 1e.0 | ✅ Done | Crate skeleton; `GET /health`; `ServeDir` static serving; placeholder routes returning 501 |
-| 1e.1 | ⬜ Upcoming | `ActiveSession` + session create/reset; `POST` (implicit via `reset` msg) + `GET /sessions` |
+| 1e.1 | ✅ Done | `ActiveSession`, `AppState`, `serve()`, `POST /api/sessions`, `GET /api/sessions` |
 | 1e.2 | ⬜ Upcoming | WebSocket upgrade; `user_message` → turn → event stream to client; `{ type: "ready" }` |
 | 1e.3 | ⬜ Upcoming | History replay on reconnect; `pause` / `continue` / `abort` client messages |
 | 1e.4 | ⬜ Upcoming | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
@@ -270,11 +270,53 @@ ready for 1e.2), tower-http 0.6 (`fs`), clap derive, tokio `full`.
 - `cargo mutants -p omega-server`: 6 mutants — 2 caught, 4 unviable,
   **0 missed**.
 
-**Carry-forward into 1e.1:** `main.rs` bind/serve glue is currently
-`#[mutants::skip]`'d; refactor to `serve(listener, state)` in lib.rs once
-there is real shared state to wire. `DEFAULT_SESSIONS_ROOT` is duplicated
-as a `&str` literal — assert against `omega_store::SESSIONS_ROOT` when
-that crate becomes a dependency in 1e.1.
+**Carry-forward into 1e.1:** resolved — see 1e.1 record below.
+
+### Phase 1e.1 — done (concise record)
+
+`omega-store` and `omega-agent` added as `omega-server` dependencies.
+`DEFAULT_SESSIONS_ROOT` in `cli.rs` is now `omega_store::SESSIONS_ROOT` (alias,
+no duplicate literal).
+
+**`omega-agent` changes:** `AgentConfig` gains `session_dir: PathBuf`;
+`Agent::init()` writes `server_started` + `session_started` events to
+`events.jsonl` (model, effort, system prompt recorded). Direct unit tests
+in `omega-agent/tests/init.rs` (2 tests). `omega-cli` updated to thread
+`session_dir` through.
+
+**New structs:** `ActiveSession { agent: Arc<Mutex<Agent>>, controls:
+ControlHandle, paths: SessionPaths, ws_tx: Option<UnboundedSender<Value>> }`
+(placeholder `Value` type; concrete WS message type lands in 1e.2).
+`AppState { active_session: Arc<Mutex<Option<ActiveSession>>>, sessions_root,
+public_dir, provider: Arc<dyn Provider> }` — threaded via `Router::with_state`.
+
+**`pub async fn serve(listener, state)`** extracted into `lib.rs`; `main` is
+still `#[mutants::skip]` pure glue but is now smaller (calls `serve()`).
+`MockProvider` lives in `omega-server/tests/` for integration tests.
+
+**`POST /api/sessions`:** `make_session_dir` → `Agent::new` + `init()` →
+slot replace → `201 Created` with `{ "dir": "<folder-name>" }` JSON body.
+
+**`GET /api/sessions`:** reads `sessions_root`, filters by
+`omega_store::session_dir_re()`, sorts newest-first, attaches
+`read_session_metadata` per entry. Returns `[]` if root missing.
+`folder_name_to_timestamp` converts `2025-07-11T09-14-22-037-…` →
+`2025-07-11T09:14:22.037Z`.
+
+14 integration tests in `tests/http.rs` (5 carried from 1e.0, 9 new):
+POST→201 + `events.jsonl` non-empty, GET→`[]` for missing root, GET after
+2 POSTs → length 2, newest-first ordering, metadata-after-rename,
+`serve()` direct call (catches the `Ok(())` replacement mutant).
+
+`cargo mutants -p omega-server`: 14 mutants — 8 caught, 6 unviable, **0 missed**.
+`cargo mutants -p omega-agent --file …/agent.rs`: 22 mutants — 9 caught,
+13 unviable, **0 missed**.
+
+**Carry-forward into 1e.2:** `ws_tx` is `Option<UnboundedSender<serde_json::Value>>`
+— replace `Value` with a concrete `WsMessage` type when the WebSocket handler
+lands. The `POST /api/sessions` handler hard-codes `model: "claude-sonnet-4-6"`
+and `cwd: env::current_dir()` — wire through proper config when 1e.2 adds the
+full reset/resume flow.
 
 ---
 
