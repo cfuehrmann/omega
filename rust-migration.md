@@ -19,7 +19,7 @@
 | 1d.1 — `omega-agent` advanced | ✅ Done | Pause/continue/abort, session resumption, compaction, model/effort switching (decomposed 1d.1a–e) |
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
-| 2 — Rust as primary driver | ⬜ Next | TS UI talks to Rust backend; TS CLI retired |
+| 2 — Rust as primary driver | 🟡 In progress | TS UI talks to Rust backend; TS CLI retired |
 | 3 — Leptos UI rewrite | ⬜ Future | SolidJS → Leptos; TS deleted |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -598,50 +598,77 @@ Stale bindings (Rust type changed without regenerating) fail the pre-commit gate
 
 ---
 
-## Phase 2 — Rust as primary driver ⬜ Next
+## Phase 2 — Rust as primary driver 🟡 In progress
 
 Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts`.
 TS web client still served by the Rust binary; all new features in Rust.
 
-### Prerequisite audit (what must be true before cutting over)
+### Decomposition
 
-**1. HTTP contract verification.**  
-The TS server exposes routes under `/sessions`, `/context`, `/files` (no `/api/`
-prefix). The Rust server uses `/api/sessions`, `/api/context`, `/api/files`.
-The web client's `fetch()` calls in `src/web/client/` must be updated to match
-the Rust paths — or the Rust router aliased — before the cut-over.
+| Sub-phase | Status | Deliverable |
+|---|---|---|
+| 2a | ✅ Done | Wire `model`/`effort` from `reset` + `POST /api/sessions` through `AgentConfig`; emit `session_info` WS message |
+| 2b | ✅ Done | Align URL paths (`/api/*` vs `/`) or update web-client fetch calls; switch replay to `history` frame |
+| 2c | ⬜ Next | Cut over: update `playwright.config.ts` + Justfile to use `omega-server`; retire `src/web/server.ts` + `src/cli.ts` |
 
-**2. `session_info` WS message.**  
-The TS server emits `{ type: "session_info", dir, model, effort, cwd, name? }`
-after the `ready` message. The web client reads `model` and `effort` from this
-message to populate the model-picker UI (`src/web/client/state.ts:
-hostInfo.model`). The Rust server does *not* currently emit this message;
-without it the UI model/effort display will be blank on first connect.
+### Phase 2a + 2b — done (concise record)
 
-**3. E2E tests against the Rust binary.**  
-Playwright currently points at the TS dev server (`bun src/cli.ts`).
-The `webServer` entry in `playwright.config.ts` must be updated to build and
-start `omega-server` instead. All 109 browser tests must pass against the Rust
-binary before retiring the TS server.
+Delivered together in one commit (`214817b`).
 
-**4. Model/effort in `reset` and `POST /api/sessions`.**  
-The web client sends `{ type: "reset", model, effort }` when the user switches
-model or starts fresh. The Rust handler currently hard-codes `claude-sonnet-4-6`
-and ignores these fields. The `SessionConfig` / `AgentConfig` path needs wiring
-so the chosen model/effort is passed through to `Agent::init()`.
+**Three new `WsMessage` variants** (`omega-server/src/ws_message.rs`):
+- `SessionInfo { dir, model, effort, cwd, name: Option<String> }` — `name`
+  field omitted from JSON when `None`. Wire shape matches the TS server's
+  `buildSessionInfo()`.
+- `History { events: Vec<OmegaEvent>, streaming: bool }` — `streaming` field
+  omitted when `false` (matches TS `...(isStreaming ? { streaming: true } : {})`).
+- `ResetDone` — `{"type":"reset_done"}`.
+Each variant has dedicated unit tests.
 
-**5. Graceful-shutdown smoke test in the E2E suite.**  
-The Playwright `globalTeardown` currently kills the TS process. With the Rust
-binary the SIGTERM path (implemented in 1e.4) should be exercised at least once
-in a real test run to confirm clean shutdown.
+**Replaced per-event replay with a single `History` frame.** Emit sequences in
+`router.rs`:
+- WS connect (active session): `SessionInfo → History(events, streaming=isTurnStreaming) → Ready`
+- WS connect (no session): `Ready` only
+- `reset`: `SessionInfo → History([]) → ResetDone → Ready`
+- `resume_session`: `SessionInfo → History(init events) → [live resumption Items] → Ready`
 
-### Suggested decomposition
+`is_streaming` computed via `JoinHandle::is_finished()` on the optional
+`current_turn`. The `REPLAY_EXCLUDE` filter (`ready`, `text`) is applied when
+building `History.events` exactly as it was for per-event replay.
 
-| Sub-phase | Deliverable |
-|---|---|
-| 2a | Wire `model`/`effort` from `reset` + `POST /api/sessions` through `AgentConfig`; emit `session_info` WS message |
-| 2b | Align URL paths (`/api/*` vs `/`) or update web-client fetch calls; run E2E suite against Rust binary |
-| 2c | Cut over: update `playwright.config.ts` + Justfile to use `omega-server`; retire `src/web/server.ts` + `src/cli.ts` |
+**Model / effort wiring.** `AgentConfig` gained `effort: Option<String>`;
+`Agent::new` falls back to `DEFAULT_EFFORT` when `None`. `POST /api/sessions`
+accepts an optional JSON body `{ model?, effort? }`. `ClientFrame::Reset` gained
+optional `model` / `effort` fields, plumbed into `create_active_session`.
+
+**URL alignment.** `App.tsx` switched its three `fetch()` calls (`/sessions`,
+`/context`, `/files`) to the `/api/` prefix. To keep Playwright (still on the
+TS server until Phase 2c) green, both `src/web/server.ts` and
+`e2e/fixtures/test-server.ts` now accept the legacy *and* `/api/`-prefixed
+paths. The aliases retire with the TS server in 2c.
+
+**Test updates.** `tests/ws.rs` replay assertions rewritten to expect the outer
+sequence `[session_info, history, ready]` and to inspect `history.events`
+instead of individually replayed `Item` frames. Three router unit tests added
+for `Reset { model, effort }` parsing.
+
+**Bar:** `just rust-gate` ✅ · `just test` (559 bun + 109 Playwright) ✅.
+
+### Phase 2c — cut-over (next)
+
+All prerequisites cleared by 2a/2b. Remaining work:
+
+1. Update `playwright.config.ts` `webServer` to build and run `omega-server`
+   instead of `bun src/cli.ts`. The Rust binary needs `--public-dir
+   src/web/public` (built by `just web-build`) and `--sessions-root
+   .omega/test-sessions` for parity with the TS test server.
+2. Verify all 109 browser tests pass against the Rust binary.
+3. Exercise the SIGTERM graceful-shutdown path at least once in the E2E run
+   (the Playwright teardown should send SIGTERM, not SIGKILL).
+4. Delete `src/cli.ts` and `src/web/server.ts`. Remove the `/api/` aliases
+   added to `src/web/server.ts` and `e2e/fixtures/test-server.ts` in 2b.
+   `e2e/fixtures/test-server.ts` itself stays — it's the in-test mock used
+   by spec files that need a non-real backend, not the production server.
+5. Update `Justfile` recipes that still reference the TS server entry point.
 
 ### What is NOT required before cutting over
 
