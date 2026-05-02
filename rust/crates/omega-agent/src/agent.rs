@@ -33,8 +33,9 @@ use omega_core::{
 };
 use omega_protocol::StreamSignal;
 use omega_protocol::events::{
-    AgentErrorEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent, ToolCallEvent, ToolResultEvent,
-    TurnEndEvent, TurnInterruptedEvent, UserMessageEvent,
+    AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
+    ModelChangedEvent, ToolCallEvent, ToolResultEvent, TurnEndEvent, TurnInterruptedEvent,
+    UserMessageEvent,
 };
 use omega_protocol::{InterruptReason, OmegaEvent, TurnMetrics};
 
@@ -58,6 +59,11 @@ const INVALID_TOOL_JSON_NUDGE: &str = "Your previous response could not be parse
 
 const DANGLING_TOOL_USE_RESULT: &str =
     "[not executed: previous turn was interrupted before this tool ran]";
+
+/// Default thinking-effort level when none is explicitly set.
+///
+/// Matches `src/agent.ts` (`activeEffort = "medium"`).
+pub const DEFAULT_EFFORT: &str = "medium";
 
 // ---------------------------------------------------------------------------
 // Agent
@@ -83,6 +89,15 @@ pub struct Agent {
     context_store: ContextStore,
     event_store: EventStore,
     config: AgentConfig,
+    /// Currently selected model id.  Initialised from `config.model`;
+    /// mutated by [`Agent::set_model`].  Read on every API call so a
+    /// switch takes effect from the next call onward.
+    active_model: String,
+    /// Currently selected thinking-effort level.  Initialised to
+    /// [`DEFAULT_EFFORT`]; mutated by [`Agent::set_effort`].  Phase
+    /// 1d.1a stores it but does not yet thread it onto `LlmRequest` —
+    /// the request-shape work belongs to `omega-core` and is deferred.
+    active_effort: String,
     /// In-memory mirror of `context.jsonl`; sent verbatim as the
     /// `messages` array on every API call.
     history: Vec<Message>,
@@ -105,14 +120,60 @@ impl Agent {
         event_store: EventStore,
         config: AgentConfig,
     ) -> Self {
+        let active_model = config.model.clone();
         Self {
             provider,
             context_store,
             event_store,
             config,
+            active_model,
+            active_effort: DEFAULT_EFFORT.to_owned(),
             history: Vec::new(),
             context_hashes: Vec::new(),
         }
+    }
+
+    /// Switch the active model.  Persists a [`ModelChangedEvent`] and
+    /// returns it so callers can fan it out to the UI without a second
+    /// load from disk.  Subsequent [`Agent::send_message`] calls send
+    /// the new model.
+    ///
+    /// Mirrors `Agent.setModel` in `src/agent.ts`.
+    pub async fn set_model(&mut self, model: String) -> OmegaEvent {
+        self.active_model = model.clone();
+        let ev = OmegaEvent::ModelChanged(ModelChangedEvent {
+            time: now_iso(),
+            model,
+        });
+        let _ = self.event_store.append(&ev).await;
+        ev
+    }
+
+    /// Switch the active thinking-effort level.  Persists an
+    /// [`EffortChangedEvent`] and returns it.
+    ///
+    /// Mirrors `Agent.setEffort` in `src/agent.ts`.
+    pub async fn set_effort(&mut self, effort: String) -> OmegaEvent {
+        self.active_effort = effort.clone();
+        let ev = OmegaEvent::EffortChanged(EffortChangedEvent {
+            time: now_iso(),
+            effort,
+        });
+        let _ = self.event_store.append(&ev).await;
+        ev
+    }
+
+    /// Currently selected model id.  Reflects the most recent
+    /// `set_model` call (or `config.model` if none has happened).
+    #[must_use]
+    pub fn active_model(&self) -> &str {
+        &self.active_model
+    }
+
+    /// Currently selected thinking-effort level.
+    #[must_use]
+    pub fn active_effort(&self) -> &str {
+        &self.active_effort
     }
 
     /// Pre-seed the in-memory history (used by resumption and tests).
@@ -275,14 +336,14 @@ impl Agent {
                     return;
                 }
 
-                let max_tokens = max_output_tokens_for_model(&self.config.model);
+                let max_tokens = max_output_tokens_for_model(&self.active_model);
                 let system = build_system_prompt(
                     &self.config.cwd.to_string_lossy(),
                     max_tokens,
                     self.config.system_prompt_append.as_deref(),
                 );
                 let request = LlmRequest {
-                    model: self.config.model.clone(),
+                    model: self.active_model.clone(),
                     messages: self.history.clone(),
                     system: Some(system),
                     tools: tool_definitions(),
@@ -304,7 +365,7 @@ impl Agent {
                 let call_ev = OmegaEvent::LlmCall(LlmCallEvent {
                     time: now_iso(),
                     url: ANTHROPIC_URL.to_owned(),
-                    model: self.config.model.clone(),
+                    model: self.active_model.clone(),
                     context_hashes: self
                         .context_hashes
                         .iter()
