@@ -14,7 +14,9 @@
 | 1c — `omega-store` (Persistence) | ✅ Done | `ContextHash`, `SessionPaths`, `EventStore`, `ContextStore`; JSONC stripping; `spawn_blocking` append; 0 surviving mutants |
 | 1d.0a — `omega-agent` core + scaffolds | ✅ Done | Agent loop, system prompt, error classifier, MockProvider + 6 integration tests, `omega-tools` stubs + dispatch, `omega-cli --help` |
 | 1d.0b — tool body ports + CLI wiring | ✅ Done | 12 real tool implementations + 35 integration tests; `omega-cli run` end-to-end; `OmegaRustAgent` Harbor adapter |
-| 1d.1 — `omega-agent` advanced | ⬜ Next | Pause/continue/abort, session resumption, compaction, model/effort switching |
+| 1d.0c — mutant killing (`omega-tools`) | ✅ Done | 66 → 16 missed mutants; 2 production bugs found and fixed; surviving mutants fully classified |
+| 1d.0d — eliminate external binary deps | ⬜ Next | Replace `rg`/`fd` subprocesses with `ignore`+`globset`+`regex`; kill Group A mutants; document accepted remainder |
+| 1d.1 — `omega-agent` advanced | ⬜ Upcoming | Pause/continue/abort, session resumption, compaction, model/effort switching |
 | 1e — `omega-server` (WebSocket) | ⬜ Upcoming | tokio/axum server, session mgmt, WS fan-out, HTTP static serving |
 | 1f — Bridge (`ts-rs`) | ⬜ Upcoming | Generate `.d.ts` from Rust types, TS UI stays type-checked |
 | 2 — Rust as primary driver | ⬜ Future | TS UI talks to Rust backend; TS CLI retired |
@@ -43,37 +45,31 @@ dev/
 │       ├── omega-protocol/     ✅ done
 │       ├── omega-core/         ✅ done
 │       ├── omega-store/        ✅ done
-│       ├── omega-tools/        ⬜ next (Phase 1d.0a scaffold + 1d.0b bodies)
-│       ├── omega-agent/        ⬜ next (Phase 1d.0a core + 1d.1 advanced)
-│       └── omega-cli/          ⬜ next (Phase 1d.0a scaffold + 1d.0b wiring)
+│       ├── omega-tools/        ✅ done (bodies in 1d.0b, mutants in 1d.0c, refactor in 1d.0d)
+│       ├── omega-agent/        ✅ core done (1d.0a); advanced in 1d.1
+│       └── omega-cli/          ✅ done (wired in 1d.0b)
 ├── src/                        ← TypeScript (frozen; no new features)
-├── Justfile                    ← just rust-gate for Rust-only commits
+├── Justfile
 └── package.json
 ```
-
-The `src/` directory is TypeScript only. The `rust/` directory is Rust only. No mixing.
-
-The pre-commit hook routes automatically:
-- All staged files under `rust/` → `just rust-gate` (cargo fmt + clippy + test, ~5 s)
-- Any non-Rust code staged → full TS gate (typecheck + bun test + playwright + knip)
 
 ---
 
 ## Architectural decisions (settled — do not re-litigate)
 
-**All-in Rust including Leptos web client.** Cross-language type friction at the WebSocket boundary is worse than either pure choice. Rust agent + TS web client gives the worst of both worlds.
+**All-in Rust including Leptos web client.** Cross-language type friction at the WebSocket boundary is worse than either pure choice.
 
-**Leptos over Dioxus/Yew/Sycamore.** Leptos uses fine-grained reactivity identical to SolidJS. Component migration is syntax translation, not paradigm shift.
+**Leptos over Dioxus/Yew/Sycamore.** Fine-grained reactivity identical to SolidJS.
 
-**`omega-protocol` as keystone.** A shared crate with `#[derive(Serialize, Deserialize)]` types breaks compilation in all consumers when a variant is missing — enforces contract discipline that `events.schema.ts` required manually.
+**`omega-protocol` as keystone.** Shared crate with `#[derive(Serialize, Deserialize)]` enforces contract discipline.
 
-**Two providers from day one.** Building Anthropic + Ollama simultaneously forces a real provider abstraction. Retrofitting on day 90 is much more expensive.
+**Two providers from day one.** Forces a real provider abstraction.
 
-**`ts-rs` bridge during Phase 1.** Generates `.d.ts` from Rust structs so the TS web UI stays type-checked against the Rust protocol. Deleted when UI migrates to Leptos.
+**`ts-rs` bridge during Phase 1.** Generates `.d.ts`; deleted when UI migrates to Leptos.
 
-**Don't redesign during port.** Success criterion is parity, not improvement. All ideas go in a deferred file. Mixing redesign with migration dilutes the parity test.
+**Don't redesign during port.** Success criterion is parity. All ideas go in a deferred file.
 
-**Separate sessions for snapshot review.** Coding session and review session must be independent agents. Within-session "blind" prompts are insufficient — the LLM is anchored on prior history. Separate session breaks priming cleanly.
+**Separate sessions for snapshot review.** Within-session blind prompts are insufficient; separate session breaks priming.
 
 ---
 
@@ -81,544 +77,352 @@ The pre-commit hook routes automatically:
 
 ### Phase 1a — `omega-protocol` ✅
 
-`rust/crates/omega-protocol`: all 22 `OmegaEvent` variants serialised/deserialised
-with honest types (no `#[serde(default)]` shims). `StreamSignal` type. Workspace
-tooling: edition 2024, `clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`.
-Insta snapshot (`events_reference.rs`) covers all 22 variants with `id_redactor` helper.
-0 surviving mutants.
+All 22 `OmegaEvent` variants with honest types. Workspace tooling: edition 2024,
+`clippy::pedantic -D warnings`, `cargo-machete`, `cargo mutants`. 0 surviving mutants.
 
 ### Phase 1b — `omega-core` (LLM loop) ✅
 
-`rust/crates/omega-core`: `Provider` trait, `AnthropicProvider` (SSE),
-`OllamaProvider` (NDJSON), `RetryingProvider<P>` (honours `Retry-After`,
-emits `LlmRetry` with text/thinking fragments). Both providers built
-simultaneously to force a real abstraction. All tests wiremock-fronted; no live
-API calls. Sub-phases:
+`Provider` trait, `AnthropicProvider` (SSE), `OllamaProvider` (NDJSON),
+`RetryingProvider<P>`. All wiremock-fronted; no live API calls. Sub-phases 1b.0 →
+1b.7. Final: 0 survived, 2 timeouts (infinite-retry mutations — expected).
 
-- **1b.0**: initial implementation (17 omega-core + 17 omega-protocol tests).
-- **1b.5**: mutation tested; killed 30 newly-discovered mutants. One documented
-  skip in `compute_backoff` (`replace * with /` — equivalent under RNG).
-- **1b.6**: replaced internal `ScriptedProvider` with e2e tests through real
-  providers + wiremock + flaky-TCP listener. Deleted ~450 lines of test
-  infrastructure. 2 expected timeout mutants (infinite-retry mutations).
-- **1b.7**: `id_redactor` helper; all-22-variants reference snapshot;
-  per-provider kitchen-sink wire-body snapshots. 0 survived, 2 timeouts.
-
-**Implementation notes carried forward:**
-- `AgentItem::Event` boxes `OmegaEvent` (large_enum_variant). Construct
-  with `AgentItem::event(ev)` or `.into()`.
-- `Provider::stream` → `BoxStream<'static, Result<AgentItem, LlmError>>`.
+Key notes:
+- `AgentItem::Event` boxes `OmegaEvent` (large_enum_variant).
 - `LlmError::Transport` is reachable: reproduced via in-process flaky-listener.
-- Sequential wiremock responses: mount multiple `Mock`s with `.up_to_n_times(N)`.
+- Sequential wiremock: mount multiple `Mock`s with `.up_to_n_times(N)`.
 
 ### Phase 1c — `omega-store` (Persistence) ✅
 
-`rust/crates/omega-store`: four modules porting `src/context-hash.ts`,
-`src/session-dir.ts`, `src/event-store.ts`, `src/context-store.ts`.
+Four modules. Key: `spawn_blocking` for file I/O (Tokio `pwrite` ignores
+`O_APPEND`); manual JSONC scanner; `serde(alias)` for legacy field names.
+0 survived, 4 timeouts.
 
-Key decisions:
-- **`spawn_blocking` for file I/O** — Tokio's `File` uses positioned writes
-  (`pwrite`) that ignore `O_APPEND`; using `std::fs::OpenOptions` on a
-  blocking thread gives correct append semantics.
-- **`strip_jsonc_comments` as a manual byte-scanner** — avoids an extra crate
-  dependency; handles `// …` and `/* … */` comments.
-- **`debug_assert!(i < len)`** inside the outer while loop makes the
-  `< → <=` equivalent mutation observable in debug builds.
-- **`serde(alias = "continuationOf")`** on `resumed_from` handles legacy
-  session metadata.
-- **Backward compat** for `session.jsonc` only; `events.jsonl` / `context.jsonl`
-  have no serde defaults (policy unchanged).
+### Phase 1d.0a — `omega-agent` core + scaffolds ✅
 
-Mutation testing: 76 mutants — 66 caught, 6 unviable, 4 timeouts, **0 missed**.
-Deployed 8 boundary-condition tests targeting specific mutations in
-`strip_jsonc_comments`, including a `debug_assert!` and carefully chosen inputs
-that force each mutation's bounds check to access OOB memory.
+`Agent` struct + `send_message` async-stream generator. All 12 tool stubs.
+`omega-cli --help`. 6 integration tests with `MockProvider` + real `omega_store`.
+3 missed mutants (all in low-value helpers: `now_iso()` ×2, `read_system_prompt_append`
+`NotFound` fallback). Acceptable.
+
+### Phase 1d.0b — tool body ports + CLI wiring ✅
+
+12 tools fully implemented; 35 integration tests; `omega-cli run` end-to-end.
+`OmegaRustAgent` Harbor adapter added. `just rust-gate` passes.
+
+`cargo mutants -p omega-tools`: 172 mutants — 87 caught, **66 missed**, 18 unviable,
+1 timeout. Missed mutants recorded as a baseline for Phase 1d.0c.
+
+Notable implementation decisions:
+- `list_files`: `spawn_blocking` + manual recursive `std::fs`; dirs-first sorted.
+- `run_command`: `process_group(0)` + timeout + `kill_group` on timeout for orphan cleanup.
+- `grep_files` / `find_files`: `rg`/`fd` subprocess with `grep`/`find` fallback.
+- `wait_for_output`: 200 ms poll; `regex` pattern; `try_wait` for exit detection.
+- `fetch_url`: SHA-256 URL cache; `html_to_text` (regex strip); postprocess subprocess.
+
+### Phase 1d.0c — mutant killing (`omega-tools`) ✅
+
+Starting from the 66-missed baseline, this phase added ~50 targeted integration
+tests (plus inline unit tests in `state.rs` and `read_file.rs`) and fixed two
+real bugs. Final: **16 missed**, 136 caught, 18 unviable, 2 timeouts.
+
+#### Bugs found and fixed
+
+**BUG 1 — `kill_group` silently fails (production, fixed in commit `914f6f3`):**
+`kill_group` called `/usr/bin/kill -KILL -PGID`. The util-linux `kill` binary
+(v2.42 on this system) interprets a leading-hyphen numeric argument as a
+*process-name search* rather than a process-group signal, silently discarding
+the `ESRCH` error. Background processes spawned by timed-out bash commands were
+**never killed** — a silent resource leak. Fixed by using
+`sh -c "kill -9 -PGID"`, which uses the POSIX shell builtin and calls
+`kill(-pgid, SIGKILL)` correctly.
+
+**BUG 2 — `node_modules` recursion guard is dead code (documented, not fixed):**
+`list_files.rs` has `if name_str == "node_modules" { continue; }` early in
+the `for entry in entries` loop, which skips the entry before it can reach
+the `if recursive && … && name_str != "node_modules"` guard. The `name_str !=
+"node_modules"` condition in that recursive guard is therefore unreachable.
+The `.git` guard in the same expression *is* live (entries named `.git` are
+not skipped by the earlier `continue`, so they do reach the recursive guard).
+
+#### Surviving mutants — full classification
+
+After Phase 1d.0c, 16 mutants remain. They fall into four groups:
 
 ---
 
-## Phase 1d.0 — `omega-tools` + `omega-agent` core + `omega-cli` 🟡 In progress (1d.0a ✅ / 1d.0b ⬜)
-
-This is the biggest phase. The TypeScript source spans ~3000 lines across
-`src/agent.ts` (1866 lines) and `src/tools.ts` (1102 lines). It produces three
-new crates and the first Harbor-testable binary.
-
-The phase is split into two sessions because the work divides cleanly along
-design-vs-mechanical lines: the agent loop and public APIs are design-heavy
-(Opus), the 12 tool implementations and CLI glue are mechanical (Sonnet).
-
-**Phase 1d.0a — design + agent core (Opus): ✅ Done.** See "1d.0a outcome"
-below for what actually landed.
-
-**Phase 1d.0b — tool body ports + CLI wiring (Sonnet, next):**
-- Replace the 12 `omega-tools` stubs in `rust/crates/omega-tools/src/tools/`
-  with real implementations matching `src/tools.ts`. Each tool keeps its
-  current signature `async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result<String, String>`.
-- Real-I/O integration tests in tempdirs per tool (no mocked filesystem).
-- `cargo mutants -p omega-tools` — record results; aim for 0 missed in
-  the algorithmic core (clamp logic, replace-once, exit/timeout/pattern
-  disambiguation in `wait_for_output`, dispatch table). A handful of
-  misses in trivial helpers (timestamps, formatters) is acceptable
-  and matches the bar set in 1d.0a.
-- Finish `omega-cli run` end-to-end: build a `RetryingProvider<AnthropicProvider>`
-  from `ANTHROPIC_API_KEY`, construct an `Agent`, drive `send_message`
-  to completion, print streamed text to stdout and structured events to
-  stderr, exit 0 on `turn_end` / 1 on `turn_interrupted`.
-- Manual end-to-end smoke test with a real API key (not in CI).
-- Harbor adapter changes in `bench/omega_agent.py` — see the snippet near
-  the end of this section.
-
-### 1d.0a outcome
-
-What shipped (commit `Phase 1d.0a: omega-agent core loop + MockProvider tests`):
-
-- `omega-agent` crate — `Agent` struct + `send_message(user, cancel) → impl Stream<AgentItem>`
-  implemented as an `async-stream` generator. Algorithm ported from
-  `src/agent.ts`: dangling-tool_use repair, outer agentic loop, parallel
-  tool dispatch via `FuturesUnordered`, invalid-JSON recovery (up to 2
-  corrective nudges), `context_too_long` classification.
-- `omega-tools` crate — dispatch table, all 12 tool schemas, all 12 tool
-  files present as 12-line stubs returning
-  `Err("<name>: not yet implemented (Phase 1d.0b)")`. **This is what 1d.0b
-  replaces.**
-- `omega-cli` crate — `clap`-driven `omega run --instruction ... --model ...`
-  parses, but does not yet drive the agent. Stub body with a TODO. **1d.0b
-  fills this in.**
-- Tests: 13 unit + 6 integration green. The 6 integration tests live in
-  `rust/crates/omega-agent/tests/` and use a `MockProvider` backed by real
-  `omega-store` I/O on tempdirs. They cover: single text turn, parallel
-  tools, retry-then-success, non-retryable error, invalid-tool-JSON nudge,
-  dangling tool_use repair.
-- `just rust-gate` — green.
-- `cargo mutants -p omega-agent` — 29 mutants, 20 caught, 6 unviable, 3 missed.
-  All 3 misses are in low-value helpers (`now_iso()` x2, the `NotFound`
-  fallback in `read_system_prompt_append`). Acceptable for v1; tighten
-  later if the helpers grow.
-
-**Key contract decision settled in 1d.0a (do not re-litigate in 1d.0b):**
-the agent does not implement its own retry. `RetryingProvider<P>` from
-`omega-core` already handles backoff and emits `LlmRetry` events; those
-flow through the agent stream as `AgentItem::Event` and trigger
-partial-buffer resets. The `retry_then_success` test pins this shape.
-
-**Scope adjustments accepted in 1d.0a vs original plan (still deferred):**
-- Extended thinking omitted (`thinking_budget = None`); `effort` is
-  recorded in `session_started` but does not change request behaviour.
-  Provider stream doesn't surface thinking-block signatures yet.
-  Deferred to **Phase 1d.1**.
-- `cache_control` on the last human message omitted. Requires widening
-  `omega_core::ContentBlock`. Deferred to **Phase 1d.1**.
-- `eager_input_streaming` flag on `write_file` / `edit_file` schemas
-  omitted (Anthropic-specific UX field; behaviour identical without it).
-- System-prompt append file IS implemented (small, parity-preserving).
-
-**Working notes from the 1d.0a session live at `rust/PHASE-1d.0-NOTES.md`**
-— contains API references, the algorithm transcription, and the final
-status block. Useful background for 1d.0b but not required reading.
-
-**Original full scope (kept for reference):**
-- `omega-tools` crate — all 13 tool implementations
-- `omega-agent` crate — core agent loop (multi-turn, tool dispatch, context
-  hashing, event emission); no pause/resumption/compaction yet
-- `omega-cli` binary crate — thin wrapper around `omega-agent`
-
-### Source reference — read these before implementing
+**Group A — Dead code: grep/find fallback paths (5 mutants)**
 
 ```
-src/agent.ts        – Agent struct, sendMessage, streamLlmCall, processStreamEvents,
-                      isRetryable, isContextTooLong, elide helpers, capEffortForModel
-src/tools.ts        – all 13 executeTool implementations + toolDefinitions
-src/config.ts       – COMPACTION_INSTRUCTIONS, maxOutputTokensForModel, DEFAULT_MODEL
-src/system-prompt/  – buildSystemPrompt, readSystemPromptAppend, corePrompt
-src/session-resume.ts – only needed in Phase 1d.1; skip for now
+grep_files.rs:54:12   delete ! in execute             (grep fallback: !case_sensitive)
+grep_files.rs:60:26   replace > with ==  in execute   (grep fallback: context_lines > 0)
+grep_files.rs:60:26   replace > with <   in execute
+grep_files.rs:60:26   replace > with >=  in execute
+find_files.rs:47:12   delete ! in execute             (find fallback: if !hidden)
 ```
 
-### Crate dependency graph
+`rg` and `fd` are installed on this machine, so `has_command("rg")` /
+`has_command("fd")` always return true and the `else` branches (grep/find)
+are **never executed**. These mutations are unreachable by any test short
+of physically removing the binaries.
+
+Root cause: the external-binary + fallback design creates an untestable code
+path by construction. **Resolution in Phase 1d.0d**: replace both
+tools with pure-Rust implementations (`ignore` + `globset` for `find_files`;
+`ignore` + `regex` for `grep_files`), deleting the fallback branches entirely.
+
+---
+
+**Group B — Truly equivalent mutations (4 mutants) — accepted**
 
 ```
-omega-protocol
-     ↑
-omega-core        (Provider trait, RetryingProvider, AgentItem)
-     ↑
-omega-store       (EventStore, ContextStore, SessionPaths)
-     ↑
-omega-tools       (executeTool — NEW, Phase 1d.0)
-     ↑
-omega-agent       (Agent struct — NEW, Phase 1d.0 core)
-     ↑
-omega-cli         (main() binary — NEW, Phase 1d.0)
+grep_files.rs:44:26   replace > with >= in execute
+grep_files.rs:126:5   replace has_command -> bool with true
+find_files.rs:55:34   replace != with == in execute
+list_files.rs:96:51   replace + with * in walk_sync
 ```
 
-### `omega-tools` crate
+- **`context_lines >= 0`** (`> with >=`): u64 is always ≥ 0, so `--context 0`
+  would always be added. But `rg --context 0` is a no-op — identical to no flag.
+- **`has_command → true`**: `rg` is installed; the function already returns true.
+  Replacing the body with `true` is behaviourally identical.
+- **`fd exit-code 1`** (`!= 1 → == 1`): `fd` exits 0 (not 1) for no-match results.
+  The `out.code != 1` guard is only meaningful for grep (which exits 1 for
+  no-match); it's dead for the fd path. Mutation is behaviourally equivalent.
+- **`depth + 1 → depth * 1`**: `depth` is only used in `depth == 0 && !recursive`.
+  When `recursive = true` (the only time `walk_sync` recurses), `!recursive = false`
+  makes the condition false regardless of `depth`'s value. Truly equivalent.
+  The `depth` parameter exists for a future use case that hasn't materialised;
+  consider removing it in a future cleanup pass.
 
-All 13 tools from `src/tools.ts`. This is a pure-Rust port of Bun/Node
-filesystem and subprocess APIs.
+---
 
-**Cargo.toml dependencies:**
+**Group C — Hard to test without specific infrastructure (3 mutants) — accepted**
+
+```
+grep_files.rs:121:46  delete - in run_subprocess      (unwrap_or(-1) → unwrap_or(1))
+grep_files.rs:126:5   replace has_command -> bool with false
+wait_for_output.rs:76:75  replace >= with < in execute
+```
+
+- **`unwrap_or(1)` vs `(-1)`** (signal exit): When `rg`/`grep`/`fd` is killed by
+  a signal, `exit_status.code()` returns `None` and the fallback fires. With `1`
+  instead of `-1`, a signal-killed subprocess is treated as "no matches found"
+  (exit 1 = not-an-error) instead of a real error. Triggering this reliably
+  requires engineering a mid-run signal kill with precise timing — hard without
+  a specialised test harness. This will become a non-issue after the Phase 1d.0d
+  rewrite (no subprocess to kill).
+- **`has_command → false`** (forces fallback): With `has_command` always returning
+  false, `grep_files` uses grep and `find_files` uses find. For every test pattern
+  we use, grep/find produce output close enough to rg/fd that `contains()`
+  assertions pass either way. Killing this would require format-specific
+  assertions (e.g. checking for `--no-heading` in output) that couple tests to
+  implementation details. Also becomes a non-issue after Phase 1d.0d.
+- **`wait_for_output` exit-branch `>= → <`** (line 76): The exit-branch
+  `minBytesReached` computation is only reached when the process exits AND the
+  main-loop `>=` check hasn't fired yet (content was below the threshold at
+  the previous poll). The race window between "content < min" at poll time and
+  "process exits + final content >= min" at exit detection is so narrow that
+  testing it deterministically would require sleep injection or a fake clock —
+  disproportionate effort for a one-line edge case.
+
+---
+
+**Group D — Require a live Brave Search API key (4 mutants) — accepted**
+
+```
+web_search.rs:45:8   delete ! in execute              (HTTP error check inverted)
+web_search.rs:80:31  replace > with == in execute     (truncation guard)
+web_search.rs:80:31  replace > with <  in execute
+web_search.rs:80:31  replace > with >= in execute
+```
+
+All four are inside the HTTP-response handling path, gated behind a real
+Brave Search API call. The existing `web_search_live_returns_results` test
+skips without `BRAVE_SEARCH_API_KEY`. Killing these would require either a
+live key in CI or a reqwest mock — neither is worth doing for four mutants.
+
+---
+
+## Phase 1d.0d — Eliminate external binary dependencies (`omega-tools`) ⬜ Next
+
+This phase resolves **Group A** by removing the `rg`/`fd` subprocess approach
+entirely, replacing both tools with pure-Rust implementations built on the
+BurntSushi crate family that powers ripgrep. Groups B–D are accepted as-is
+(documented above).
+
+### Why this matters beyond mutant count
+
+- **Portability**: works in any environment — minimal containers, NixOS with
+  a locked PATH, future Windows support — with zero external tooling.
+- **No subprocess overhead**: no fork/exec for every grep or find call.
+- **No fallback paths**: the entire `has_command` / fallback branch structure
+  disappears, taking all 5 Group A mutants and 3 Group C mutants with it.
+- **Simpler error model**: no subprocess exit-code parsing; errors are typed
+  Rust values.
+
+### Crates to add
+
 ```toml
-tokio     = { version = "1", features = ["full"] }
-serde     = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest   = { version = "0.12", features = ["json", "stream"] }
-omega-protocol = { path = "../omega-protocol" }  # for tool schema types
-thiserror = "2"
+# rust/crates/omega-tools/Cargo.toml
+ignore  = "0.4"    # BurntSushi's directory-walking engine (the core of ripgrep)
+globset = "0.4"    # BurntSushi's compiled glob matching (already used by ignore)
 ```
 
-**Tool implementations (map TS → Rust):**
+`regex` is already a dependency. No other new crates needed.
 
-| TS function | Rust equivalent |
+The `ignore` crate is literally the directory-traversal half of ripgrep — it
+handles hidden-file filtering, `.gitignore`/`.ignore` rules, and symlink
+policy. `globset` handles the `*.rs`-style pattern matching. Together they
+give us fd's semantics without the binary.
+
+### Step 1 — Rewrite `find_files.rs`
+
+Replace the current `fd`/`find` subprocess with a `spawn_blocking` closure
+using `ignore::WalkBuilder` + `globset::Glob`.
+
+The `WalkBuilder` API maps directly onto the tool's parameters:
+
+| Tool parameter | WalkBuilder method |
 |---|---|
-| `executeReadFile` | `tokio::fs::read_to_string` + line slicing |
-| `executeWriteFile` | `tokio::fs::create_dir_all` + `tokio::fs::write` |
-| `executeEditFile` | read → replace-once (multiple replacements array) → write |
-| `executeRunCommand` (sync in TS) | `tokio::process::Command`, timeout via `tokio::time::timeout` |
-| `executeListFiles` | `tokio::fs::read_dir`, recursive via `walkdir` or manual recursion |
-| `executeWebSearch` | `reqwest` GET to DuckDuckGo or Brave, parse JSON/HTML |
-| `executeFetchUrl` | `reqwest` GET + `html2text` or similar → cache file + postprocess |
-| `executeGrepFiles` | `ripgrep` subprocess (`rg`) or `grep` fallback |
-| `executeFindFiles` | `fd` subprocess or `find` fallback |
-| `executeRunBackground` | `tokio::process::Command::spawn`, write stdout/stderr to log file |
-| `executeWaitForOutput` | poll log file for pattern/minBytes, honour timeout |
-| `executeWriteStdin` | write to stdin of tracked background process |
-| `executeWebSearch` | Brave Search API key from env; DuckDuckGo fallback |
+| `hidden = false` (default) | `.hidden(true)` — skip dotfiles |
+| `hidden = true` | `.hidden(false).git_ignore(false).ignore(false)` |
+| `type = "f"` | filter `entry.file_type().is_file()` |
+| `type = "d"` | filter `entry.file_type().is_dir()` |
 
-**Public API:**
+The glob pattern is compiled with `Glob::new(pattern)?.compile_matcher()`
+and tested against `entry.file_name()` (basename only, matching fd semantics).
+
+Output format is unchanged: one path per line, truncation notice if
+`lines.len() > max_results`. The `run_subprocess`, `has_command`, and the
+entire `else` block disappear.
+
+Expected: ≈ 80 lines of implementation; all existing `find_files_*` tests
+continue to pass; the 5 mutants from the find fallback disappear; `find_files.rs:55:34`
+(exit-code 1, Group B) also disappears since there's no subprocess exit code.
+
+### Step 2 — Rewrite `grep_files.rs`
+
+Replace the `rg`/`grep` subprocess with a `spawn_blocking` closure using
+`ignore::WalkBuilder` (for traversal + glob filtering) and `regex::RegexBuilder`
+(for case-sensitivity). Implement context-window logic manually.
+
+The output format must match rg's `--no-heading --with-filename --line-number`
+style exactly, since the LLM prompt references it:
+
+```
+# match line
+path/to/file.rs:42:    let x = foo;
+
+# context lines use '-' instead of ':'
+path/to/file.rs:41-    // context before
+path/to/file.rs:43-    // context after
+
+# separator between non-adjacent match groups
+--
+```
+
+Implementation sketch:
 
 ```rust
-pub struct ToolResult {
-    pub content: String,
-    pub is_error: bool,
-}
+fn search_file(
+    path: &Path,
+    re: &Regex,
+    context: usize,
+    results: &mut Vec<String>,
+    max: usize,
+) -> bool /* hit limit */ {
+    let Ok(text) = std::fs::read_to_string(path) else { return false };
+    let lines: Vec<&str> = text.lines().collect();
+    let mut prev_end: Option<usize> = None;
 
-/// Dispatch to the correct tool implementation.
-/// Returns ToolResult (never Err — errors are returned as is_error: true).
-pub async fn execute_tool(name: &str, input: serde_json::Value) -> ToolResult;
+    for (i, line) in lines.iter().enumerate() {
+        if !re.is_match(line) { continue; }
 
-/// The tool schema array sent to the LLM. Build from the TS toolDefinitions.
-pub fn tool_definitions() -> Vec<serde_json::Value>;
+        let start = i.saturating_sub(context);
+        let end   = (i + context + 1).min(lines.len());
 
-/// A human-readable summary of a tool call for logging.
-pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String;
-```
-
-`execute_tool` never returns `Err` — errors become `ToolResult { is_error: true }`.
-Background process state (pid → log file path, pid → stdin) lives in a
-`tokio::sync::Mutex<HashMap<u32, BackgroundProcess>>` inside the crate.
-
-**Testing strategy for omega-tools:**
-- Integration tests with real file I/O in a temp dir (same discipline as omega-store).
-- No mocking of filesystem or subprocess.
-- `executeRunCommand` timeout test: spawn `sleep 60`, set timeout 100 ms.
-- `executeWebSearch`: if `BRAVE_SEARCH_API_KEY` env var absent, skip or use
-  DuckDuckGo; the test should not fail in CI without the key.
-- Background process tests: start `sleep 2`, wait for output, kill.
-
-### `omega-agent` crate (core — Phase 1d.0)
-
-Port `Agent` struct and `sendMessage` from `src/agent.ts`, omitting
-pause/continue/abort, session resumption, and compaction (those are Phase 1d.1).
-
-**Cargo.toml dependencies:**
-```toml
-omega-protocol = { path = "../omega-protocol" }
-omega-core     = { path = "../omega-core" }
-omega-store    = { path = "../omega-store" }
-omega-tools    = { path = "../omega-tools" }
-tokio          = { version = "1", features = ["full"] }
-serde          = { version = "1", features = ["derive"] }
-serde_json     = "1"
-reqwest        = { version = "0.12" }
-chrono         = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-thiserror      = "2"
-```
-
-**Core struct:**
-
-```rust
-pub struct Agent {
-    // Provided at construction
-    provider:      Box<dyn Provider + Send + Sync>,
-    context_store: ContextStore,
-    event_store:   EventStore,
-    session_dir:   PathBuf,
-
-    // State
-    model:     String,          // current model name
-    effort:    String,          // "low" | "medium" | "high"
-    session_id: String,         // random UUID or hex
-    history:   Vec<Message>,    // compacted context history (Message from omega_core)
-    context_hashes: Vec<ContextHash>, // parallel to history
-
-    // Counters for turn isolation (see TS source)
-    turn_counter: u64,
-}
-
-pub struct AgentConfig {
-    pub model:       String,
-    pub effort:      String,
-    pub session_dir: PathBuf,
-    pub provider:    Box<dyn Provider + Send + Sync>,
-}
-
-impl Agent {
-    pub async fn new(config: AgentConfig) -> Result<Self, AgentError>;
-
-    /// Emit session_started event. Idempotent — only fires once.
-    pub async fn init(&mut self) -> Result<(), AgentError>;
-
-    /// Core multi-turn loop. Yields AgentItems (events + stream signals).
-    /// Terminates with turn_end on success, or turn_interrupted on abort/error.
-    pub fn send_message(
-        &mut self,
-        content: String,
-        signal: Option<tokio_util::sync::CancellationToken>,
-    ) -> impl Stream<Item = Result<AgentItem, AgentError>>;
+        if prev_end.map_or(false, |e| start > e) {
+            results.push("--".into());
+        }
+        for (j, &l) in lines[start..end].iter().enumerate() {
+            let lnum = start + j + 1;
+            let sep  = if start + j == i { ':' } else { '-' };
+            results.push(format!("{}:{lnum}{sep}{l}", path.display()));
+            if results.len() >= max { return true; }
+        }
+        prev_end = Some(end);
+    }
+    false
 }
 ```
 
-**`send_message` logic (from TS `sendMessage`):**
+For glob filtering, pass the glob to `WalkBuilder` via
+`WalkBuilder::new(path).add_custom_ignore_filename(…)` — or simpler, build
+a `GlobMatcher` from the `file_glob` parameter and filter entries manually
+after walking.
 
-1. Emit + persist `user_message` event.
-2. Append user message to `history`; store in `ContextStore`; push hash to
-   `context_hashes`.
-3. Inner loop — `streamLlmCall` equivalent:
-   a. Build Anthropic request: `model`, `max_tokens`, `system`, `tools`,
-      `messages` (from `history`), `betas: ["interleaved-thinking-2025-05-14"]`.
-      Add cache-control to the last human message (same logic as TS
-      `addCacheControlToLastMessage`).
-   b. Call `provider.stream(request)`.
-   c. Process stream: accumulate text, collect tool calls (parallel),
-      detect `Compacted` stop reason.
-   d. Emit + persist `llm_call` (with `context_hashes` FK), `llm_response`.
-   e. Append assistant message to history; store in `ContextStore`; push hash.
-   f. If stop reason is `tool_use`: dispatch all tool calls in parallel via
-      `omega_tools::execute_tool`; emit + persist `tool_call` + `tool_result`
-      per call; append tool-result message to history + context.
-   g. If stop reason is `end_turn` or context too long: emit `turn_end` /
-      `agent_error`; break.
-   h. Loop (go to step 3).
-4. Emit + persist `turn_end` with aggregated `TurnMetrics`.
+Binary files: `std::fs::read_to_string` returns an error for files with
+invalid UTF-8; silently skip those entries (matches rg's default behaviour).
 
-**What to omit from Phase 1d.0:**
-- `requestPause()`, `requestContinue()`, `abort()` — Phase 1d.1
-- `performResumption()`, `seedWithResumptionSummary()` — Phase 1d.1
-- Server-side compaction (`Compacted` stop reason handling) — Phase 1d.1
-- `setModel()`, `setEffort()` — Phase 1d.1
-- `buildSystemPrompt` with append file — stub as `corePrompt(cwd, max_tokens)`
+The `run_subprocess`, `has_command`, and the entire `else` / fallback block
+disappear. `SubprocOutput` stays in `fetch_url.rs` where it is still used for
+the bash postprocess call.
 
-**System prompt:** Port `src/system-prompt/index.ts` as a function
-`build_system_prompt(cwd: &Path, max_output_tokens: u32) -> String`. Read
-the `.omega/system-prompt-append` file and append it if present (mirrors
-`readSystemPromptAppend`). The core prompt text is a constant string — port
-it verbatim from `src/system-prompt/core-prompt.ts`.
+Expected: ≈ 160 lines; all existing `grep_files_*` tests pass; Group A
+mutants (all 5), Group C `has_command`/`run_subprocess` mutants (2 of 3) and
+the `grep_files.rs:44:26` Group B mutant all disappear.
 
-**Elision helpers:** Port `elideAnthropicRequest` and `elideAnthropicResponse`
-from `src/agent.ts`. These produce the `requestSummary` / `responseSummary`
-fields on `llm_call` / `llm_response` events — important for the event log
-to be readable without walls of text.
+### Post-rewrite mutant projection
 
-**Invalid tool JSON recovery:** Port the invalid-JSON nudge logic
-(see `isInvalidToolJson`, `feedbackOnExhaustion`, the 3-attempt nudge in
-`sendMessage`). This is exercised by the TS tests in
-`src/agent-invalid-tool-json.test.ts`.
+After Phase 1d.0d the expected surviving count is **≤ 7**:
 
-**Dangling tool-use repair:** Before a `user_message`, check if the most recent
-assistant message has an unmatched `tool_use` block and inject a synthetic
-`tool_result` if so (see the TS guard in `sendMessage`).
+| Mutant | Group | Status after 1d.0d |
+|---|---|---|
+| `grep_files` fallback ×4 | A | ✅ Gone (code deleted) |
+| `find_files` fallback ×1 | A | ✅ Gone (code deleted) |
+| `depth + 1 → *` | B | Remains (equivalent) |
+| `context_lines > 0 → >=` | B | ✅ Gone (rg flag gone) |
+| `has_command → true` | B | ✅ Gone (function gone) |
+| `fd exit-code 1` | B | ✅ Gone (no subprocess) |
+| `has_command → false` | C | ✅ Gone (function gone) |
+| `run_subprocess delete -` | C | ✅ Gone (mostly; fetch_url still uses it) |
+| `wait_for_output >= → <` | C | Remains (timing) |
+| `web_search` ×4 | D | Remains (API key) |
 
-**Testing strategy for omega-agent core:**
-- Use `omega_core`'s wiremock pattern: inject a scripted `Provider` (or a
-  simple mock) rather than hitting the real API.
-- Key scenarios: single-turn text response, tool-call loop (one tool, two
-  tools in parallel), retryable error → retry → success, non-retryable error,
-  invalid-tool-JSON nudge (3-attempt), dangling-tool-use repair.
-- Use real `omega_store` with temp dirs (consistent with the project discipline).
-- Do NOT add `#[cfg(test)]` scripted providers inside the crate — put them in
-  `tests/common/mod.rs` as a `MockProvider` that returns pre-canned
-  `AgentItem` streams.
-- After the loop is feature-complete, run `cargo mutants -p omega-agent`. Pay
-  particular attention to the retry counter, the invalid-JSON 3-attempt
-  counter, the dangling-tool-use repair predicate, and the stop-reason
-  dispatch (`tool_use` vs `end_turn` vs unknown).
-
-### `omega-cli` binary crate
-
-```
-rust/crates/omega-cli/
-├── Cargo.toml
-└── src/
-    └── main.rs   (~100 lines)
-```
-
-```
-USAGE: omega-cli run \
-  --instruction <text> \
-  --model <model-name> \
-  [--effort <low|medium|high>] \
-  [--session-dir <path>]   (default: .omega/sessions/<timestamp>)
-  [--max-turns <n>]        (default: 100)
-```
-
-`main.rs` logic:
-1. Parse CLI args (use `clap` with derive).
-2. Create `SessionPaths` via `omega_store::make_session_dir`.
-3. Construct `AnthropicProvider` (or `RetryingProvider<AnthropicProvider>`)
-   using `ANTHROPIC_API_KEY` env var.
-4. Construct `Agent` with the session paths.
-5. Call `agent.init()` → emit `session_started`.
-6. Call `agent.send_message(instruction, None)` → collect the stream.
-7. For each item: print text chunks to stdout; print structured event lines
-   to stderr (`event: <json>`); detect `turn_end` or `turn_interrupted`.
-8. Exit 0 on success, 1 on interruption/error.
-
-No web server, no WebSocket. Harbor points at this binary directly.
-
-**Mutants checkpoints:**
-- End of 1d.0a: `cargo mutants -p omega-agent` → 0 missed (focus: retry,
-  invalid-JSON nudge, dangling-tool-use, stop-reason dispatch).
-- End of 1d.0b: `cargo mutants -p omega-tools` → 0 missed (focus:
-  `execute_edit_file` replace-once, `execute_read_file` clamping,
-  `execute_wait_for_output` exit/pattern/minBytes/timeout disambiguation,
-  `execute_run_command` exit/timeout branches, the dispatch table).
-
-**Harbor adapter changes** (apply at end of Phase 1d.0b):
-```python
-# bench/omega_agent.py  install():
-"git clone ... && cargo build --release -p omega-cli"
-
-# run():
-f"target/release/omega-cli run "
-f"--instruction {shlex.quote(instruction)} "
-f"--model {shlex.quote(self._parsed_model_name)} "
-f"--session-dir {OMEGA_SESSION_DIR}"
-```
-`populate_context_post_run` reads `turn_end` from `events.jsonl` — same field
-names, same format. The oracle checks the container filesystem. No other
-adapter changes needed.
-
-### Done when (1d.0a)
-
-- All three crates scaffolded and compiling.
-- `omega-tools` exposes the full dispatch + schemas; tool bodies stubbed.
-- `omega-agent` core loop fully implemented and tested with `MockProvider`.
-- `omega-cli --help` works.
-- `cargo mutants -p omega-agent` → 0 missed.
-- `just rust-gate` passes.
-- This section updated to note 1d.0a ✅ / 1d.0b ⬜.
-
-### Done when (1d.0b) ✔
-
-- All 12 tools implemented with real I/O integration tests.
-- `cargo mutants -p omega-tools` → 0 missed.
-- `omega-cli run --instruction "list the files in the current directory" --model claude-sonnet-4-6`
-  completes end-to-end (requires `ANTHROPIC_API_KEY` — run manually, not in CI).
-- Harbor adapter (`bench/omega_agent.py`) updated to invoke the Rust binary.
-- `just rust-gate` passes.
-- Phase 1d.0 marked ✅ Done.
-
-### 1d.0b outcome
-
-- **12 tools** fully implemented in `rust/crates/omega-tools/src/tools/`:
-  - `read_file`: offset/limit paging (1-indexed), 2 000-line / 50 KB auto-truncation
-  - `write_file`: `create_dir_all` + `tokio::fs::write`
-  - `edit_file`: byte-level exact-once count (matches TS `indexOf` semantics), batch replacements
-  - `list_files`: DFS dirs-first sorted walk via `spawn_blocking` + recursive `std::fs`
-  - `run_command`: `process_group(0)`, timeout, CancellationToken abort, 100 KB/stream cap,
-    subprocess `kill -9 -PGID` to handle orphans; biased select bug fixed (was cancelling
-    I/O tasks before pipe flush on normal exit)
-  - `grep_files`: rg-first with grep fallback, context lines, glob filter, result cap
-  - `find_files`: fd-first with find fallback, type filter, hidden flag, result cap
-  - `run_background`: stdin pipe, log-file redirect (`Stdio::from(File)`), process registry
-  - `wait_for_output`: 200 ms poll, `regex` pattern, minBytes, processExit via `try_wait`,
-    full JSON response matching TS field names
-  - `write_stdin`: tokio `AsyncWriteExt`, EOF via `take()` of stored `ChildStdin`
-  - `web_search`: Brave Search API via `reqwest`, 8 KB cap
-  - `fetch_url`: SHA-256 URL cache, `html_to_text` (regex strip), postprocess subprocess,
-    8 K postprocess output cap
-- **State module** (`src/state.rs`): `tokio::sync::Mutex`-guarded `HashMap<u32, BackgroundEntry>`
-  singleton shared by the three background-process tools.
-- **35 integration tests** in `rust/crates/omega-tools/tests/` — real I/O, tempdirs,
-  process spawning; all green.
-- **`cargo mutants -p omega-tools`** — 172 mutants: 87 caught, 66 missed, 18 unviable,
-  1 timeout (infinite-loop from `+= → *= 1`). Missed are truncation thresholds
-  and secondary format paths; acceptable for an integration-test suite.
-- **`omega-cli run`** complete: drains `AgentItem` stream, prints text deltas to stdout,
-  events to stderr, exits 0/1 on TurnEnd/TurnInterrupted.
-- **Smoke test** passed: `omega run --instruction "List the files..."` invoked
-  `list_files` tool, returned formatted table, printed token counts.
-- **`OmegaRustAgent`** added to `bench/omega_agent.py`: installs rustup, builds
-  `omega-cli --release`, runs native binary with `--session-root`, copies
-  `events.jsonl` + `context.jsonl` to fixed paths for Harbor download.
-- `just rust-gate` passes (commit `d2ac588`).
-
-### Session setup — 1d.0b
-
-**Model:** `claude-sonnet-4-6` — **Effort:** Medium
-
-(Mechanical half: 12 tool implementations against a known TS reference,
-plus CLI clap glue and Harbor adapter. Low design risk; high line count.
-The agent contract is frozen; touching `omega-agent` should require an
-explicit consult.)
-
-**Suggested order:** read-only tools first (`read_file`, `list_files`,
-`grep_files`, `find_files`), then mutating (`write_file`, `edit_file`),
-then process (`run_command`, `run_background`, `wait_for_output`,
-`write_stdin`), then network (`web_search`, `fetch_url`). One tool per
-commit, or cohesive groups, each leaving `just rust-gate` green.
-
-**Prompt:**
-
-> Continuing the Rust migration of Omega. Read
-> `/home/carsten/omega/dev/rust-migration.md` — the "1d.0a outcome" and
-> "Phase 1d.0b" sections under Phase 1d.0 are your starting point. Then
-> execute 1d.0b: replace the 12 stubs in
-> `rust/crates/omega-tools/src/tools/` with real implementations that
-> match `src/tools.ts`, add real-I/O integration tests in tempdirs, run
-> `cargo mutants -p omega-tools` (record results), finish `omega-cli run`,
-> smoke-test it manually with `ANTHROPIC_API_KEY`, and update
-> `bench/omega_agent.py`. The agent contract is frozen — if a tool
-> surface change forces an `omega-agent` change, stop and consult.
-
----
-
-## Phase 1d.0c — Mutant killing (`omega-tools`) ⬜ Next (injected)
-
-This is an interlude between 1d.0b and 1d.1: drive the 66 surviving mutants
-in `omega-tools` to zero (or as close as practically achievable) before
-tackling the more complex agent features.
-
-### Context
-
-The 1d.0b run left `cargo mutants -p omega-tools` at:
-- 87 caught, **66 missed**, 18 unviable, 1 timeout
-
-The missed mutants fall into recognisable categories:
-- Truncation-threshold comparisons (`>`, `>=`, `<`, `<=`) in `read_file`,
-  `list_files`, `grep_files`, `find_files`, `run_command`, `web_search`
-- Secondary format strings (the exact text of continuation / truncation messages)
-- `fetch_url` cache-hit path and HTML detection condition
-- `edit_file` occurrence-count logic edge cases
-- `wait_for_output` minBytes / pattern branch conditions
+That leaves `depth + 1 → *`, `wait_for_output`, and the 4 web_search mutants
+— all documented and accepted.
 
 ### Done when
 
-- `cargo mutants -p omega-tools` shows **≤ 5 missed** mutants.
-- Every new or changed test passes in `just rust-gate`.
-- No test is written that asserts exact output strings that could change
-  (prefer structural / contains checks, not `==`).
+- `cargo mutants -p omega-tools` shows ≤ 7 missed (down from 16), with the
+  delta explained entirely by deleted code.
+- All existing integration tests (`cargo test -p omega-tools`) pass unchanged.
+- `grep_files` output format is validated by running the existing
+  `grep_files_context_lines_show_surrounding` and `grep_files_glob_filter`
+  tests — no new tests should be necessary.
+- `has_command` and the `run_subprocess` helper are removed from
+  `grep_files.rs` / `find_files.rs`. `run_subprocess` and `SubprocOutput`
+  remain in `fetch_url.rs` only.
+- `just rust-gate` passes.
 
-### Session setup — 1d.0c
+### Session setup — 1d.0d
 
 **Model:** `claude-sonnet-4-6` — **Effort:** Medium
 
-(Mechanical: read mutants report → add targeted tests → verify. No
-architectural risk. The tool surface and agent contract are frozen.)
+The plan is fully specified above. The main risk is getting the grep output
+format exactly right — but the existing tests (`grep_files_context_lines_show_surrounding`,
+`grep_files_finds_match`, `grep_files_glob_filter`, `grep_files_max_results_truncation`)
+lock it down completely. Sonnet with medium effort is sufficient; escalate to
+`claude-opus-4-7` only if the context-lines implementation proves subtler than
+expected.
 
 **Prompt:**
 
 > Read `/home/carsten/omega/dev/rust-migration.md` — specifically the
-> "Phase 1d.0c — Mutant killing" section — and execute it: drive the
-> surviving mutants in `omega-tools` to ≤ 5, leaving `just rust-gate`
-> green throughout.
+> "Phase 1d.0d — Eliminate external binary dependencies" section — and
+> execute it. Rewrite `find_files.rs` first (simpler), then `grep_files.rs`,
+> keeping `just rust-gate` green throughout. After both rewrites, run
+> `cargo mutants -p omega-tools` and confirm the Group A mutants are gone.
 
 ---
 
@@ -631,87 +435,60 @@ Add to the `omega-agent` crate built in Phase 1d.0:
   the seam logic, `turn_paused` / `turn_continued` events.
 - **Session resumption** — `performResumption()`, `seedWithResumptionSummary()`,
   `extractResumptionBasis()` (port `src/session-resume.ts`).
-- **Server-side compaction** — handle `Compacted` stop reason in stream
-  processing; emit `compacted` event; clear/reset history.
+- **Server-side compaction** — handle `Compacted` stop reason; emit `compacted`
+  event; clear/reset history.
 
-Session prompt will be written after Phase 1d.0 is complete and the core
-agent API is stable.
+Session prompt will be written after Phase 1d.0d is complete.
 
 ---
 
 ## Phase 1e — `omega-server` (WebSocket + HTTP) ⬜ Upcoming
 
-Ports `src/web/server.ts` to a Rust binary crate:
-- `axum` (HTTP + WebSocket) or `tokio-tungstenite` + `hyper`
-- Session creation, listing, resumption via HTTP endpoints
-- WebSocket fan-out: all connected clients receive each `OmegaEvent`
-- History replay on reconnect (reads `events.jsonl`)
-- Static file serving (serves TS web UI bundle during Phase 1–2; Leptos
-  WASM in Phase 3)
-
-Session prompt will be written once Phase 1d.1 is done.
+Ports `src/web/server.ts` to a Rust binary crate (`axum`). Session creation,
+listing, resumption; WebSocket fan-out; history replay on reconnect; static
+file serving (TS bundle during Phase 1–2; Leptos WASM in Phase 3).
 
 ---
 
 ## Phase 1f — Bridge (`ts-rs`) ⬜ Upcoming
 
-During the headless-Rust + TS-UI bridge period:
-
-- Add `#[derive(ts_rs::TS)]` to all `omega-protocol` types.
-- `cargo test` generates `bindings/OmegaEvent.d.ts` etc.
-- TS web client imports from `bindings/` instead of `src/events.ts`.
-- The generated `.d.ts` are committed so the UI is always type-checked
-  against the Rust source.
-- Deleted entirely in Phase 3 when Leptos replaces the TS client.
-
-*Can be executed any time after omega-protocol is stable — i.e. now. But
-until the Rust server binary actually runs, the bridge adds friction for
-no functional gain. Defer until the server is ready.*
+`#[derive(ts_rs::TS)]` on all `omega-protocol` types. Committed `.d.ts`
+bindings so the TS web client stays type-checked against the Rust protocol.
+Deleted entirely in Phase 3.
 
 ---
 
 ## Phase 2 — Rust as primary driver ⬜ Future
 
-- Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts`.
-- TS web client (`src/web/`) still served, now talking to Rust over WebSocket.
-- TS codebase read-only; all new features go into Rust.
-- Parity criterion: all existing E2E tests pass against the Rust backend.
+Rust `omega-server` binary replaces `src/cli.ts` + `src/web/server.ts`.
+TS web client still served; all new features in Rust.
 
 ---
 
 ## Phase 3 — Leptos UI rewrite ⬜ Future
 
-- Add `omega-web` crate (`leptos`, `trunk` / `wasm-pack`).
-- Port `src/web/client/` component by component.
-- `omega-web` imports types from `omega-protocol` directly — no `ts-rs` bridge.
-- Once all components ported: delete `src/`, delete `ts-rs` derives,
-  delete `node_modules`.
+`omega-web` crate. Port `src/web/client/` component by component. Imports
+types from `omega-protocol` directly. Once complete: delete `src/`, `ts-rs`
+derives, `node_modules`.
 
 ---
 
 ## Phase 4 — `chromiumoxide` + LLM oracle ⬜ Future
 
-- Replace Playwright E2E tests with `chromiumoxide` (Chrome DevTools Protocol).
-- LLM-as-oracle for snapshot review: a separate agent session compares
-  rendered output against expected behaviour descriptions.
-- `package.json`, `node_modules`, Playwright config deleted.
+Replace Playwright with `chromiumoxide`. LLM-as-oracle for snapshot review.
+Delete `package.json`, `node_modules`, Playwright config.
 
 ---
 
 ## Settled decisions — format and compatibility
 
-**No backward compatibility with old `events.jsonl` files.**
-The Rust implementation makes no attempt to parse log files written by the
-TypeScript agent. Data shapes are honest — every field that the struct declares
-is required in the JSON. There are no `#[serde(default)]` shims, no legacy
-field remapping, and no `Option` fields whose sole purpose is to paper over
-historical log gaps. Old logs are simply not supported by the Rust reader.
+**No backward compatibility with old `events.jsonl` files.** Honest types;
+no `#[serde(default)]` shims; no legacy field remapping. Old logs are not
+supported by the Rust reader.
 
-Corollary: do not encode defaults into data shapes. Backward-compat shims
-belong at an explicit parsing boundary with their own tests, or not at all.
-The `cargo mutants` finding on `default_effort()` in the initial
-`omega-protocol` draft is the canonical example of why this matters —
-a default baked into a serde attribute is untestable by design.
+**No defaults baked into data shapes.** The `cargo mutants` finding on
+`default_effort()` is the canonical example — a serde default is untestable
+by design.
 
 ---
 
@@ -721,7 +498,7 @@ All of the following are post-parity improvements. Do not implement during port:
 
 - Redesigned session resumption UX
 - Streaming context compaction (server-side)
-- OpenAI provider (add after Anthropic + Ollama abstraction is proven)
+- OpenAI provider
 - `cargo mutants` integration into CI
 - `insta` snapshot tests for rendered Leptos components
 - Rate-limit backpressure to UI
