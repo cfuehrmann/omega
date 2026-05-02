@@ -381,6 +381,63 @@ bar set by 1d.0d.
   compile-fail (same coverage limitation as `send_message` from prior
   phases).
 
+### 1d.1d pre-flight notes
+
+1d.1d is the first **cross-crate** sub-phase: it touches `omega-core`
+(provider request shape + stream parser) and `omega-agent` (history
+clearing on `Compacted` event). The protocol is already prepared —
+`OmegaEvent::Compacted` and `LlmResponseEvent.cleared_tool_uses` /
+`cleared_input_tokens` exist in `omega-protocol` since 1a.
+
+**TS reference points:**
+
+- `src/agent.ts:1432–1453` — compaction-block detection in `response.content`,
+  history+hashes cleared, `Compacted` event emitted, **then** assistant
+  response appended (so its hash points to the post-compaction record).
+- `src/agent.ts:1455–1469` — `applied_edits` parsing for
+  `clear_tool_uses_20250919`; populates `cleared_tool_uses` /
+  `cleared_input_tokens` on the resulting `LlmResponse`.
+- `src/config.ts` — `autoCompactThreshold = 750_000`,
+  `COMPACTION_INSTRUCTIONS` (verbatim Anthropic-cookbook prompt).
+
+**Request shape (omega-core):** add an optional `context_management`
+field on `LlmRequest` carrying `edits[]` with the compaction trigger
+(`input_tokens` threshold), `instructions` (= `COMPACTION_INSTRUCTIONS`),
+and `keep` (`{ type: "tool_uses", value: 6 }`). `build_request_body`
+emits it when present.
+
+**Stream parser (omega-core::anthropic):**
+
+- On `content_block_start` with `content_block.type == "compaction"`,
+  set a `compaction_seen` flag (don't emit yet — we need ordering).
+- On `message_delta`, parse `context_management.applied_edits[]`. The
+  `clear_tool_uses_20250919` entry — when present — populates
+  `cleared_tool_uses` and `cleared_input_tokens` on the `LlmResponseEvent`
+  emitted at `message_stop`.
+- On `message_stop`, if `compaction_seen`, yield `OmegaEvent::Compacted`
+  **before** `OmegaEvent::LlmResponse`. The agent then handles ordering.
+
+**Agent reaction (omega-agent):** in the `send_message` event-drain loop,
+on `OmegaEvent::Compacted`: clear `history` + `context_hashes`, persist
+the event, forward it to the caller. Do **not** clear after the
+assistant message has been appended for this turn — same ordering as TS
+(clear → emit `Compacted` → append assistant → emit `LlmResponse`).
+
+**Test seam strategy:**
+
+- `omega-core::anthropic::tests` — feed a synthetic SSE byte stream
+  including a `content_block_start` with `type: compaction` and a
+  `message_delta` carrying `applied_edits` with `clear_tool_uses_20250919`.
+  Assert the provider yields `Compacted`, then `LlmResponse` with
+  `cleared_tool_uses` / `cleared_input_tokens` populated.
+- `omega-agent::tests` — `MockProvider` yields `Compacted` then
+  `LlmResponse` for a turn. Assert: history cleared and re-populated with
+  exactly the new assistant message; `context_hashes.len() == 1` after
+  the turn; `Compacted` and `LlmResponse` both persisted to
+  `events.jsonl` in that order; the next `send_message` sends only the
+  post-compaction messages on the wire.
+- Mutation bar: `cargo mutants -f` on every touched file, **0 missed**.
+
 ### Explicit deferrals (not part of 1d.1)
 
 The TS agent has three further features that are intentionally **out of
