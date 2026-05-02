@@ -951,3 +951,151 @@ async fn find_files_fewer_than_max_results_not_truncated() {
         "2 files with max_results=10 must not be truncated: {out}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// find_files — type filter (kills all 9 type-guard mutations)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn find_files_type_filter_files_only() {
+    // type="f" must include files and exclude directories.
+    // Kills the `guard with true` (no results), `guard with false` (dirs leak
+    // through), and `delete !` (only dirs would appear) mutations on the
+    // `Some("f") if !ft.is_file()` guard.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("file.txt"), "").unwrap();
+    std::fs::create_dir(dir.path().join("subdir")).unwrap();
+
+    let out = exec(
+        "find_files",
+        json!({ "pattern": "*", "path": dir.path().to_str().unwrap(), "type": "f" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("file.txt"),
+        "files must be included with type=f: {out}"
+    );
+    assert!(
+        !out.contains("subdir"),
+        "dirs must be excluded with type=f: {out}"
+    );
+}
+
+#[tokio::test]
+async fn find_files_type_filter_dirs_only() {
+    // type="d" must include directories and exclude files.
+    // Kills all three guard mutations on `Some("d") if !ft.is_dir()`.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("file.txt"), "").unwrap();
+    std::fs::create_dir(dir.path().join("subdir")).unwrap();
+
+    let out = exec(
+        "find_files",
+        json!({ "pattern": "*", "path": dir.path().to_str().unwrap(), "type": "d" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("subdir"),
+        "dirs must be included with type=d: {out}"
+    );
+    assert!(
+        !out.contains("file.txt"),
+        "files must be excluded with type=d: {out}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn find_files_type_filter_symlinks_only() {
+    // type="l" must include symlinks and exclude regular files.
+    // Kills all three guard mutations on `Some("l") if !ft.is_symlink()`.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("real.txt");
+    std::fs::write(&file, "").unwrap();
+    std::os::unix::fs::symlink(&file, dir.path().join("link.txt")).unwrap();
+
+    let out = exec(
+        "find_files",
+        json!({ "pattern": "*", "path": dir.path().to_str().unwrap(), "type": "l" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("link.txt"),
+        "symlinks must be included with type=l: {out}"
+    );
+    assert!(
+        !out.contains("real.txt"),
+        "regular files must be excluded with type=l: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// grep_files — output format: line numbers, separators, gap marker
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn grep_files_match_line_uses_colon_context_line_uses_dash() {
+    // Match lines must use ':' and context lines must use '-' as the
+    // separator between the line number and line text.
+    // Kills the `== → !=` mutation on `if j == i { ':' } else { '-' }`.
+    // Also kills the `+ → *` mutation on `let lnum = j + 1` (line numbers
+    // must be 1-indexed: line 2 appears as ':2:').
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), "before\nMATCH\nafter\n").unwrap();
+
+    let out = exec(
+        "grep_files",
+        json!({
+            "pattern": "MATCH",
+            "path": dir.path().to_str().unwrap(),
+            "context_lines": 1
+        }),
+    )
+    .await
+    .unwrap();
+
+    // Match is on line 2 (1-indexed) → must appear as ":2:MATCH".
+    assert!(
+        out.contains(":2:MATCH"),
+        "match line must use :N: format: {out}"
+    );
+    // Context lines (lines 1 and 3) must use '-' as separator.
+    assert!(
+        out.contains(":1-before") || out.contains(":3-after"),
+        "context lines must use :N- format: {out}"
+    );
+}
+
+#[tokio::test]
+async fn grep_files_non_adjacent_match_groups_separated_by_dashes() {
+    // Two matches with a gap of more than context_lines between them must be
+    // separated by a '--' line in the output.
+    // Kills the `> → ==`, `> → <`, and `> → >=` mutations on
+    // `if want_start > pe { results.push("--") }`.
+    let dir = tempfile::tempdir().unwrap();
+    // Lines: MATCH(1), gap(2..5), MATCH(6). With context=1, window for first
+    // match ends at line 2, window for second starts at line 5 — gap of 3.
+    std::fs::write(
+        dir.path().join("f.txt"),
+        "MATCH\ngap2\ngap3\ngap4\ngap5\nMATCH\n",
+    )
+    .unwrap();
+
+    let out = exec(
+        "grep_files",
+        json!({
+            "pattern": "MATCH",
+            "path": dir.path().to_str().unwrap(),
+            "context_lines": 1
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("\n--\n") || out.starts_with("--") || out.ends_with("--"),
+        "non-adjacent match groups must be separated by '--': {out}"
+    );
+}
