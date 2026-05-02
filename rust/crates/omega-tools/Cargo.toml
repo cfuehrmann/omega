@@ -21,6 +21,7 @@ hex     = "0.4"
 # Phase 1d.0d additions — pure-Rust replacements for rg/fd subprocesses.
 ignore  = "0.4"   # BurntSushi's directory-traversal engine (the core of ripgrep)
 globset = "0.4"   # BurntSushi's compiled glob matching
+mutants = "0.0.3" # #[mutants::skip] attribute for equivalent-mutation suppression
 
 [dev-dependencies]
 tempfile = "3"

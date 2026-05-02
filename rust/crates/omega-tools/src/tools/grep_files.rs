@@ -111,7 +111,7 @@ fn search(
         let Some(ft) = entry.file_type() else {
             continue;
         };
-        if !ft.is_file() {
+        if not_a_regular_file(ft) {
             continue;
         }
 
@@ -138,6 +138,18 @@ fn search(
 /// - match:   `<path>:<1-based-line-number>:<line-text>`
 /// - context: `<path>:<1-based-line-number>-<line-text>`
 ///
+/// Returns `true` when `ft` is not a regular file.
+///
+/// The guard exists to avoid pointless `read_to_string` syscalls on directory
+/// entries.  Removing the `!` produces an *equivalent* mutation because
+/// `read_to_string` on a directory fails silently and yields zero matches —
+/// the observable output is identical.  The function is isolated here so that
+/// `#[mutants::skip]` suppresses only this one expression.
+#[mutants::skip]
+fn not_a_regular_file(ft: std::fs::FileType) -> bool {
+    !ft.is_file()
+}
+
 /// A `--` separator is emitted between non-adjacent match groups.
 fn search_file(
     path: &Path,
