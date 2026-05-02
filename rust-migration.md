@@ -168,7 +168,7 @@ Key notes:
 
 ---
 
-## Phase 1e — `omega-server` (WebSocket + HTTP) ⬜ Upcoming
+## Phase 1e — `omega-server` (WebSocket + HTTP) 🟡 In progress
 
 New binary crate `omega-server`. Ports `src/web/server.ts` (954 lines) to axum/tokio.
 
@@ -246,8 +246,8 @@ tokio-tungstenite = "0.26"    # dev-dependency for test WS client only
 |---|---|---|
 | 1e.0 | ✅ Done | Crate skeleton; `GET /health`; `ServeDir` static serving; placeholder routes returning 501 |
 | 1e.1 | ✅ Done | `ActiveSession`, `AppState`, `serve()`, `POST /api/sessions`, `GET /api/sessions` |
-| 1e.2 | ⬜ Upcoming | WebSocket upgrade; `user_message` → turn → event stream to client; `{ type: "ready" }` |
-| 1e.3 | ⬜ Upcoming | History replay on reconnect; `pause` / `continue` / `abort` client messages |
+| 1e.2 | ✅ Done | WebSocket upgrade; `user_message` → turn → event stream; `pause`/`continue`/`abort`/`reset` |
+| 1e.3 | ⬜ Upcoming | History replay on reconnect; `resume_session` |
 | 1e.4 | ⬜ Upcoming | `resume_session`; `rename_session`; `GET /context`; `GET /files`; graceful shutdown |
 
 ### Phase 1e.0 — done (concise record)
@@ -317,6 +317,103 @@ POST→201 + `events.jsonl` non-empty, GET→`[]` for missing root, GET after
 lands. The `POST /api/sessions` handler hard-codes `model: "claude-sonnet-4-6"`
 and `cwd: env::current_dir()` — wire through proper config when 1e.2 adds the
 full reset/resume flow.
+
+### Phase 1e.2 — done (concise record)
+
+**Scope:** WebSocket upgrade route, `user_message` turn dispatch, `pause` /
+`continue` / `abort` / `reset` control frames, `agent_error` envelope on
+handler errors. History replay on reconnect deferred to 1e.3.
+
+**New module `src/ws_message.rs`:** `WsMessage` enum (`Ready`,
+`AgentError(String)`, `Item(Box<AgentItem>)`) with `to_json()` + `to_text()`.
+Untagged `AgentItem` serialisation gives the wire shape — `text`/`thinking`
+signals, every `OmegaEvent` variant, all forwarded verbatim. 8 unit tests.
+
+**`ActiveSession::ws_tx`:** type changed from
+`Option<UnboundedSender<serde_json::Value>>` to
+`Option<UnboundedSender<WsMessage>>`. The slot field is currently *write-only*
+— nothing reads it back yet. 1e.3 history replay will read it from inside
+the WS handshake to push the persisted event log to the new socket.
+
+**`/ws` route (`router.rs::ws_handler` + `handle_socket`):** axum 0.8
+`WebSocketUpgrade`. Per connection:
+  1. Build `mpsc::unbounded_channel::<WsMessage>` and spawn a writer task that
+     drains the receiver into the WS sink (closes on `send` error).
+  2. If the slot already holds a session, install `tx` into its `ws_tx`.
+  3. Send `WsMessage::Ready`.
+  4. Read loop: `Message::Text` → `dispatch_text_frame`; `Message::Close` →
+     break; binary/ping/pong ignored. Handler errors emit
+     `WsMessage::AgentError(e)` instead of closing.
+  5. Disconnect cleanup: `ws_tx = None` in slot; drop the local sender so the
+     writer task exits.
+
+**Frame parsing:** `enum ClientFrame` with `#[serde(tag = "type",
+rename_all = "snake_case")]` covers `user_message`, `pause`, `continue`
+(optional `content`), `abort`, `reset`. Unknown discriminators are rejected
+at parse time.
+
+**`user_message`:** acquires the agent `Arc<Mutex<Agent>>`, calls
+`send_message(content, CancellationToken::new())`, drains the resulting
+`AgentItemStream` into the WS channel. The whole turn runs in a *spawned*
+task so `pause` / `abort` frames can be processed by the read loop
+concurrently. The lock is held for the duration of the turn (per task spec
+— single-session, single-WS, single concurrent turn).
+
+**`pause` / `continue` / `abort`:** dispatched to
+`ControlHandle::request_pause()` / `request_continue(content)` /
+`request_abort()`. No-ops when no session is active.
+
+**`reset`:** aborts any in-flight turn (so the orphan agent doesn't keep the
+cwd / disk paths busy), runs `create_active_session` (the helper now shared
+with `POST /api/sessions`), installs the *existing* WS `tx` into the new
+session's slot, emits a fresh `Ready`.
+
+**Tests:** `tests/ws.rs` — 7 integration tests using `tokio-tungstenite 0.26`
+as the WS client + a local `MockProvider` (with optional per-item delay):
+  1. Happy path: `reset` → `user_message` → `text` + `turn_end` frames.
+  2. First reset creates the on-disk session dir.
+  3. Pause during a turn → `turn_paused`; `continue` resumes → `turn_end`.
+  4. Abort during a turn → `turn_interrupted` (mock pads turn 2 with
+     `end_turn` so the test fails if `request_abort` is mutated away —
+     without abort the agent runs to natural completion).
+  5. Disconnect + reconnect — new WS gets `Ready`.
+  6. Garbage payload → `agent_error` frame, socket stays open.
+  7. `user_message` without a prior session → `agent_error`.
+  Plus 4 direct unit tests in `router::tests` for `install_ws_tx` /
+  `clear_ws_tx` (these helpers have no observable contract until 1e.3, so
+  they are tested directly to keep mutation testing honest).
+
+**Race-control trick:** the spawned turn task drains the agent stream as
+fast as possible, so `pause` over the WS may race the post-tool-results
+seam. The `MockProvider` exposes `set_item_delay(Duration)` which wraps the
+stream with `.then(|x| async move { sleep(d).await; x })`. A 30 ms delay
+is enough headroom for a localhost WS round-trip; the abort test reuses
+the same knob.
+
+**Existing test fixups:** `tests/http.rs` dropped `/ws` from the
+placeholder-501 lists (it is now a real WS route; non-upgrade GETs return
+426/400 from axum, not 501). Two doc comments fixed for the
+`clippy::doc_markdown` lint that became hard-error after a clippy bump.
+
+**`cargo mutants -p omega-server -f`** (per file):
+  - `ws_message.rs`: 3 mutants — 3 caught, **0 missed**.
+  - `session.rs`: 0 mutants (struct field type alias only).
+  - `router.rs`: 28 mutants — 18 caught, 9 unviable, **1 equivalent**:
+    `delete match arm Message::Close(_) in handle_socket`. Without the
+    explicit arm, `Close` falls through to `_ => continue` and the next
+    `reader.next().await` returns `None` because the socket is actually
+    closed — the loop exits anyway. The arm is a one-poll-faster shortcut,
+    not a behavioural guarantee.
+  - `lib.rs`: 1 mutant — 1 caught, **0 missed**.
+
+**Carry-forward into 1e.3:** `ActiveSession::ws_tx` is currently *write-only*.
+1e.3 history replay must read it inside `handle_socket` (or a dedicated
+`replay_history` helper) and push every persisted `OmegaEvent` from
+`events.jsonl` before the read loop starts. The current `install_ws_tx`
+becomes the natural insertion point. Also: `handle_user_message` captures
+`tx` at dispatch time — mid-turn reconnects will not receive the running
+turn's events. If multi-WS-per-turn delivery is wanted, switch to reading
+`active.ws_tx` from the slot inside the turn task's forwarding loop.
 
 ---
 

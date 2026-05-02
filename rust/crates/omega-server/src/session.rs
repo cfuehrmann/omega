@@ -1,7 +1,8 @@
 //! `ActiveSession` — the server's in-memory representation of the one live session.
 //!
-//! Phase 1e.1: struct definition only.  The WebSocket sender type is a
-//! `serde_json::Value` placeholder; the concrete WS-message type lands in 1e.2.
+//! Phase 1e.2: the placeholder `UnboundedSender<serde_json::Value>` is replaced
+//! with the concrete [`UnboundedSender<WsMessage>`](crate::ws_message::WsMessage),
+//! which the WebSocket writer task drains and serialises.
 
 use std::sync::Arc;
 
@@ -9,6 +10,8 @@ use omega_agent::{Agent, ControlHandle};
 use omega_store::SessionPaths;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
+
+use crate::ws_message::WsMessage;
 
 /// All state belonging to the currently-active session.
 ///
@@ -27,8 +30,8 @@ pub struct ActiveSession {
     pub paths: SessionPaths,
     /// WebSocket broadcast channel to the connected browser client.
     ///
-    /// `None` until a WebSocket connection upgrades (1e.2).  The element type
-    /// is `serde_json::Value` as a placeholder; the concrete `WsEvent` type
-    /// lands in Phase 1e.2.
-    pub ws_tx: Option<UnboundedSender<serde_json::Value>>,
+    /// `None` until a WebSocket connection upgrades.  Replaced (not
+    /// fanned-out) on every reconnect, matching the TS server's
+    /// single-WS-at-a-time model.
+    pub ws_tx: Option<UnboundedSender<WsMessage>>,
 }

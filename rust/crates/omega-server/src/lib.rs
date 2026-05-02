@@ -15,6 +15,7 @@
 pub mod cli;
 pub mod router;
 pub mod session;
+pub mod ws_message;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use tokio::sync::Mutex;
 pub use cli::Args;
 pub use router::build_router;
 pub use session::ActiveSession;
+pub use ws_message::WsMessage;
 
 /// Shared state threaded through the Axum router via [`Router::with_state`].
 ///

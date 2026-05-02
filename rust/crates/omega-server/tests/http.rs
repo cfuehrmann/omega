@@ -98,8 +98,9 @@ async fn health_returns_200_with_json_status_ok() {
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder routes — /ws, /context, /files must still return 501.
-// /api/sessions is NO LONGER a placeholder in 1e.1.
+// Placeholder routes — /context, /files still return 501.
+// /api/sessions and /ws are NO LONGER placeholders.  /ws is exercised by
+// the dedicated `tests/ws.rs` integration suite (Phase 1e.2).
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -109,7 +110,7 @@ async fn non_session_placeholder_routes_return_501() {
     let addr = spawn_server(state).await;
     let client = http_client();
 
-    for path in ["/ws", "/context", "/files"] {
+    for path in ["/context", "/files"] {
         let resp = client
             .get(format!("http://{addr}{path}"))
             .send()
@@ -131,7 +132,7 @@ async fn non_session_placeholders_accept_post_too() {
     let addr = spawn_server(state).await;
     let client = http_client();
 
-    for path in ["/ws", "/context", "/files"] {
+    for path in ["/context", "/files"] {
         let resp = client
             .post(format!("http://{addr}{path}"))
             .send()
@@ -240,7 +241,7 @@ fn args_reject_invalid_port() {
 // ---------------------------------------------------------------------------
 
 /// POST /api/sessions → 201 Created; returned dir exists on disk and
-/// events.jsonl is non-empty (proof that Agent::init() ran).
+/// `events.jsonl` is non-empty (proof that `Agent::init()` ran).
 #[tokio::test]
 async fn post_session_creates_dir_and_returns_201() {
     let tmp = TempDir::new().expect("tempdir");
@@ -439,7 +440,7 @@ async fn get_sessions_includes_metadata_after_rename() {
 /// Calling `omega_server::serve` actually starts the Axum server.
 ///
 /// This test exists solely to catch the `replace serve → Ok(())` mutant:
-/// if `serve` short-circuits without calling `axum::serve`, the TcpListener
+/// if `serve` short-circuits without calling `axum::serve`, the `TcpListener`
 /// is dropped and the GET returns `ECONNREFUSED`.
 #[tokio::test]
 async fn serve_function_starts_real_http_listener() {
