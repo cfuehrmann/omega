@@ -35,9 +35,9 @@ use omega_protocol::StreamSignal;
 use omega_protocol::events::{
     AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
     ModelChangedEvent, ResumingSessionEvent, SessionResumedEvent, ToolCallEvent, ToolResultEvent,
-    TurnEndEvent, TurnInterruptedEvent, UserMessageEvent,
+    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
-use omega_protocol::{InterruptReason, OmegaEvent, TurnMetrics};
+use omega_protocol::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
 use omega_tools::{execute_tool, tool_definitions};
@@ -45,6 +45,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::max_output_tokens_for_model;
+use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
 use crate::session_resume::{
     RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
@@ -102,7 +103,12 @@ pub struct AgentConfig {
 pub struct Agent {
     provider: Arc<dyn Provider>,
     context_store: ContextStore,
-    event_store: EventStore,
+    event_store: Arc<EventStore>,
+    /// Pause / continue / abort handle.  Cloned out via
+    /// [`Agent::controls`] **before** the caller starts a turn so the
+    /// clone can be used to fire control events while `send_message`
+    /// holds an exclusive borrow on the agent.
+    controls: ControlHandle,
     config: AgentConfig,
     /// Currently selected model id.  Initialised from `config.model`;
     /// mutated by [`Agent::set_model`].  Read on every API call so a
@@ -136,16 +142,32 @@ impl Agent {
         config: AgentConfig,
     ) -> Self {
         let active_model = config.model.clone();
+        let event_store = Arc::new(event_store);
+        let controls = ControlHandle::new(Arc::clone(&event_store));
         Self {
             provider,
             context_store,
             event_store,
+            controls,
             config,
             active_model,
             active_effort: DEFAULT_EFFORT.to_owned(),
             history: Vec::new(),
             context_hashes: Vec::new(),
         }
+    }
+
+    /// Borrow a clone of the pause/continue/abort control handle.
+    ///
+    /// Callers should obtain the handle **before** invoking
+    /// [`Agent::send_message`]; `send_message` exclusively borrows
+    /// `&mut self` for the lifetime of its returned stream, so any
+    /// `&self` method (including this one) cannot be called
+    /// concurrently. The returned handle stays valid across multiple
+    /// turns — the underlying turn-cancel token is rotated automatically.
+    #[must_use]
+    pub fn controls(&self) -> ControlHandle {
+        self.controls.clone()
     }
 
     /// Switch the active model.  Persists a [`ModelChangedEvent`] and
@@ -286,6 +308,31 @@ impl Agent {
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
         Box::pin(stream! {
+            // -----------------------------------------------------------------
+            // Step 0: turn-entry pause-control reset + cancel forwarder.
+            //
+            // `reset_for_turn` clears any pause state left from prior turns
+            // and installs a fresh turn-scoped cancel token. We forward the
+            // external `cancel` parameter into that turn-token via a spawned
+            // task so any cancellation source feeds through one merged token.
+            // The `TurnGuard` runs on body-drop (normal completion, error,
+            // or caller-drops-stream-mid-suspend) and re-clears state +
+            // aborts the forwarder.
+            // -----------------------------------------------------------------
+            let turn_cancel = self.controls.reset_for_turn();
+            let forwarder = {
+                let external = cancel.clone();
+                let turn_for_fwd = turn_cancel.clone();
+                tokio::spawn(async move {
+                    external.cancelled().await;
+                    turn_for_fwd.cancel();
+                })
+            };
+            let _turn_guard = TurnGuard::new(&self.controls, Some(forwarder));
+            // Shadow the parameter so every downstream `cancel.is_cancelled()`
+            // check and `cancel.clone()` for tool dispatch uses the merged token.
+            let cancel = turn_cancel;
+
             // -----------------------------------------------------------------
             // Step 1: dangling tool_use repair.
             //
@@ -779,6 +826,122 @@ impl Agent {
                             return;
                         }
                     }
+
+                    // -----------------------------------------------------
+                    // Pause seam.  Mirrors src/agent.ts:1765–1832 — fires
+                    // only after the current tool batch's results are
+                    // appended, so the next LlmCall sees a complete
+                    // tool_use/tool_result pair.
+                    // -----------------------------------------------------
+                    if self.controls.take_pause_request() {
+                        // Decide and mark `suspended` BEFORE yielding
+                        // TurnPaused.  Any consumer that observes the
+                        // TurnPaused event must see `suspended=true` so a
+                        // follow-up `request_continue` resolves to
+                        // mode=Manual rather than racing the agent.
+                        let need_suspend = self.controls.try_enter_suspend();
+                        let paused_ev = OmegaEvent::TurnPaused(TurnPausedEvent {
+                            time: now_iso(),
+                        });
+                        let _ = self.event_store.append(&paused_ev).await;
+                        yield AgentItem::event(paused_ev);
+
+                        // Suspend loop: wait for Continue/Abort wake or
+                        // a cancel.  Skipped entirely when continue
+                        // arrived before the seam (need_suspend=false).
+                        if need_suspend {
+                            // Wait for either a Continue/Abort wake or a
+                            // cancel.  Re-check `pending_continue` under
+                            // lock at the top of each iteration so a
+                            // notify that arrived between create-future
+                            // and await is still observed.
+                            loop {
+                                if self.controls.pending_continue_ready()
+                                    || cancel.is_cancelled()
+                                {
+                                    break;
+                                }
+                                tokio::select! {
+                                    () = self.controls.notify().notified() => {}
+                                    () = cancel.cancelled() => {}
+                                }
+                            }
+                            self.controls.exit_suspend();
+                        }
+
+                        // Abort wins over Continue if both fired — a click-
+                        // race resolves to the kill switch.
+                        if cancel.is_cancelled() {
+                            let ti = OmegaEvent::TurnInterrupted(
+                                TurnInterruptedEvent {
+                                    time: now_iso(),
+                                    reason: Some(InterruptReason::Aborted),
+                                },
+                            );
+                            let _ = self.event_store.append(&ti).await;
+                            yield AgentItem::event(ti);
+                            return;
+                        }
+
+                        // Take the pending continue (if any) and emit the
+                        // optional interjection + TurnContinued.
+                        let cont = self.controls.take_pending_continue();
+                        let interjection = cont
+                            .as_ref()
+                            .and_then(|c| c.content.as_ref())
+                            .filter(|s| !s.is_empty())
+                            .cloned();
+                        let mode = cont
+                            .map_or(ContinueMode::Auto, |c| c.mode);
+
+                        if let Some(text) = interjection {
+                            let blocks = vec![ContentBlock::Text {
+                                text: text.clone(),
+                            }];
+                            match self
+                                .context_store
+                                .append(Role::User, blocks.clone())
+                                .await
+                            {
+                                Ok(hash) => {
+                                    self.history.push(Message {
+                                        role: Role::User,
+                                        content: blocks,
+                                    });
+                                    self.context_hashes.push(hash);
+                                }
+                                Err(e) => {
+                                    let ev = OmegaEvent::AgentError(
+                                        AgentErrorEvent {
+                                            time: now_iso(),
+                                            error: format!(
+                                                "context_store append failed: {e}"
+                                            ),
+                                        },
+                                    );
+                                    let _ = self.event_store.append(&ev).await;
+                                    yield AgentItem::event(ev);
+                                    return;
+                                }
+                            }
+                            let user_ev = OmegaEvent::UserMessage(
+                                UserMessageEvent {
+                                    time: now_iso(),
+                                    content: text,
+                                },
+                            );
+                            let _ = self.event_store.append(&user_ev).await;
+                            yield AgentItem::event(user_ev);
+                        }
+
+                        let cont_ev = OmegaEvent::TurnContinued(TurnContinuedEvent {
+                            time: now_iso(),
+                            mode,
+                        });
+                        let _ = self.event_store.append(&cont_ev).await;
+                        yield AgentItem::event(cont_ev);
+                    }
+
                     continue;
                 }
 

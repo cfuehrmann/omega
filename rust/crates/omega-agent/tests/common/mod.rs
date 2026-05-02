@@ -28,7 +28,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
-use omega_protocol::events::LlmResponseEvent;
+use omega_protocol::events::{LlmResponseEvent, ToolCallEvent};
 use omega_protocol::{LlmResponseUsage, OmegaEvent};
 use omega_store::{ContextStore, EventStore};
 use tempfile::TempDir;
@@ -134,6 +134,27 @@ pub fn make_test_agent() -> (Agent, Arc<MockProvider>, TempDir) {
 // Convenience constructors for common AgentItem shapes
 // ---------------------------------------------------------------------------
 
+/// Build a transcript for a single LLM call that returns a `tool_use`
+/// stop reason: one `ToolCall` event followed by an `LlmResponse` with
+/// `stop_reason = "tool_use"`.  The agent will dispatch the named tool
+/// and then hit the post-tool_results seam on its next loop iteration.
+pub fn make_tool_use_items(
+    tool_id: &str,
+    tool_name: &str,
+    input: serde_json::Value,
+) -> Vec<Result<AgentItem, LlmError>> {
+    vec![
+        Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
+            time: "2024-01-01T00:00:00.000Z".to_owned(),
+            id: tool_id.to_owned(),
+            name: tool_name.to_owned(),
+            input,
+            context_hash: String::new(),
+        }))),
+        Ok(make_llm_response("tool_use", None, 10, 5)),
+    ]
+}
+
 /// Build a default `LlmResponseEvent` with sensible test values.
 ///
 /// `context_hash` is left empty so the agent fills it in (matching real
@@ -207,6 +228,9 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::ModelChanged(_) => "ModelChanged",
                 OmegaEvent::EffortChanged(_) => "EffortChanged",
                 OmegaEvent::Compacted(_) => "Compacted",
+                OmegaEvent::PauseRequested(_) => "PauseRequested",
+                OmegaEvent::TurnPaused(_) => "TurnPaused",
+                OmegaEvent::TurnContinued(_) => "TurnContinued",
                 _ => "OtherEvent",
             },
         })
