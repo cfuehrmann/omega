@@ -1,12 +1,13 @@
 //! Axum router construction and route handlers.
 //!
 //! Phase 1e.0–1e.1 implemented `GET /health`, `GET /api/sessions`, and
-//! `POST /api/sessions`.  Phase 1e.2 adds the `/ws` route: WebSocket
+//! `POST /api/sessions`.  Phase 1e.2 added the `/ws` route: WebSocket
 //! upgrade, `user_message` turn dispatch, and pause / continue / abort /
-//! reset control frames.  History replay on reconnect is deliberately
-//! deferred to 1e.3.
+//! reset control frames.  Phase 1e.3 adds history replay on reconnect:
+//! every persisted `OmegaEvent` from `events.jsonl` is pushed through the
+//! new socket before `Ready`, filtering out the types in [`REPLAY_EXCLUDE`].
 //!
-//! Route map (after 1e.2):
+//! Route map (after 1e.3):
 //!
 //! - `GET  /health`        — liveness probe
 //! - `GET  /api/sessions`  — list sessions
@@ -36,9 +37,33 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
 
+use omega_core::AgentItem;
+use omega_protocol::OmegaEvent;
+
 use crate::AppState;
 use crate::session::ActiveSession;
 use crate::ws_message::WsMessage;
+
+// ---------------------------------------------------------------------------
+// History replay — filter constants and helper
+// ---------------------------------------------------------------------------
+
+/// Event types excluded from WebSocket history replay.
+///
+/// Source: `src/web/server.ts` — `const REPLAY_EXCLUDE = new Set(["ready", "text"])`.
+/// - `ready` — server-sent after history batch; meaningless to replay.
+/// - `text`  — streaming text fragments; assembled response is in `context.jsonl`.
+const REPLAY_EXCLUDE: &[&str] = &["ready", "text"];
+
+/// Returns `true` if an event whose serialised `type` is `event_type` should
+/// be included in history replay.
+///
+/// Pure function — unit-testable without a WebSocket connection.
+/// See [`REPLAY_EXCLUDE`] for the excluded set.
+#[must_use]
+pub fn should_replay(event_type: &str) -> bool {
+    !REPLAY_EXCLUDE.contains(&event_type)
+}
 
 // ---------------------------------------------------------------------------
 // Router construction
@@ -253,15 +278,56 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+/// Read `events.jsonl` for the active session (if any) and push each
+/// event that passes [`should_replay`] through `tx` as a
+/// [`WsMessage::Item`] frame.
+///
+/// The session lock is held **only** long enough to clone the
+/// `events_file` path.  All file I/O happens outside the lock so a
+/// concurrently-running turn is not blocked during replay.
+///
+/// `tx` must already be installed in the session slot before calling
+/// this function so that events emitted by a concurrent turn also
+/// reach the new socket — they are interleaved after the replay batch.
+async fn replay_history(state: &AppState, tx: &UnboundedSender<WsMessage>) {
+    // Briefly acquire the lock to copy the file path; drop immediately.
+    let events_file = {
+        let slot = state.active_session.lock().await;
+        slot.as_ref().map(|a| a.paths.events_file.clone())
+    };
+    let Some(events_file) = events_file else {
+        return;
+    };
+
+    let store = EventStore::new(events_file);
+    let Ok(raw_events) = store.read_all().await else {
+        return;
+    };
+
+    for v in raw_events {
+        let event_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if !should_replay(event_type) {
+            continue;
+        }
+        let Ok(event) = serde_json::from_value::<OmegaEvent>(v) else {
+            continue;
+        };
+        let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(event)))));
+    }
+}
+
 /// Per-connection driver.
 ///
 /// 1. Build a fresh `mpsc::UnboundedSender<WsMessage>`; spawn a writer
 ///    task that drains the receiver into the WS sink.
-/// 2. If a session already exists, install `tx` into its `ws_tx` slot.
-/// 3. Send `WsMessage::Ready`.
-/// 4. Read loop: parse client frames, dispatch.  Handler errors emit a
+/// 2. Install `tx` into the active session's `ws_tx` slot **before**
+///    replay so events from a concurrently-running turn reach this socket.
+/// 3. Replay persisted events from `events.jsonl` (filtered via
+///    [`should_replay`]) — without holding the session lock.
+/// 4. Send `WsMessage::Ready` to signal end-of-replay.
+/// 5. Read loop: parse client frames, dispatch.  Handler errors emit a
 ///    `WsMessage::AgentError` frame instead of closing the socket.
-/// 5. On disconnect, clear `ws_tx` from the slot (best-effort).
+/// 6. On disconnect, clear `ws_tx` from the slot (best-effort).
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sink, mut reader) = socket.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
@@ -278,10 +344,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         let _ = sink.close().await;
     });
 
-    // Install tx into the session slot if we already have one.
+    // Install tx FIRST so any concurrent turn's events also reach this
+    // socket during and after replay.
     install_ws_tx(&state, tx.clone()).await;
 
-    // Initial ready frame.
+    // Replay persisted events (no lock held during file I/O).
+    replay_history(&state, &tx).await;
+
+    // Ready frame signals end-of-replay to the client.
     let _ = tx.send(WsMessage::Ready);
 
     // Read loop.
@@ -289,6 +359,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         let Ok(frame) = frame else { break };
         let text = match frame {
             Message::Text(t) => t.to_string(),
+            // cargo-mutants: deleting this arm is equivalent — the close
+            // frame would fall through to `_ => continue`, and the next
+            // `reader.next()` returns None (stream end), exiting the while-let
+            // identically.  Classified as equivalent, not a real miss.
             Message::Close(_) => break,
             // Binary / Ping / Pong are ignored — TS server only speaks JSON text.
             _ => continue,
@@ -551,6 +625,60 @@ mod tests {
             tmp.path().to_path_buf(),
         )
     }
+
+    // -----------------------------------------------------------------
+    // Unit tests for should_replay
+    // -----------------------------------------------------------------
+
+    use super::should_replay;
+
+    #[test]
+    fn should_replay_excludes_ready() {
+        assert!(!should_replay("ready"), "\"ready\" must be excluded");
+    }
+
+    #[test]
+    fn should_replay_excludes_text() {
+        assert!(!should_replay("text"), "\"text\" must be excluded");
+    }
+
+    #[test]
+    fn should_replay_includes_server_started() {
+        assert!(should_replay("server_started"));
+    }
+
+    #[test]
+    fn should_replay_includes_session_started() {
+        assert!(should_replay("session_started"));
+    }
+
+    #[test]
+    fn should_replay_includes_user_message() {
+        assert!(should_replay("user_message"));
+    }
+
+    #[test]
+    fn should_replay_includes_turn_end() {
+        assert!(should_replay("turn_end"));
+    }
+
+    #[test]
+    fn should_replay_includes_llm_response() {
+        assert!(should_replay("llm_response"));
+    }
+
+    #[test]
+    fn should_replay_includes_tool_call() {
+        assert!(should_replay("tool_call"));
+    }
+
+    #[test]
+    fn should_replay_includes_empty_string() {
+        // An unknown / empty type should pass through (not excluded).
+        assert!(should_replay(""));
+    }
+
+    // -----------------------------------------------------------------
 
     #[tokio::test]
     async fn install_ws_tx_sets_slot_when_session_present() {

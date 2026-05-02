@@ -30,6 +30,32 @@ impl EventStore {
         Self { path }
     }
 
+    /// Read all parseable event objects from `events.jsonl`.
+    ///
+    /// Each non-blank line is parsed as a [`serde_json::Value`].  Lines
+    /// that are blank or contain malformed JSON are silently skipped —
+    /// mirrors the TypeScript `loadReplayEvents` behaviour in
+    /// `src/web/server.ts`.
+    ///
+    /// Returns an empty `Vec` if the file does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only for I/O failures other than "file not found".
+    pub async fn read_all(&self) -> Result<Vec<serde_json::Value>> {
+        let text = match tokio::fs::read_to_string(&self.path).await {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(StoreError::Io(e)),
+        };
+        let events = text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        Ok(events)
+    }
+
     /// Serialise `event` as a JSON line and append it to `events.jsonl`.
     ///
     /// Creates the file and any missing parent directories if they do not

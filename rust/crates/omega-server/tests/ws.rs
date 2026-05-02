@@ -1,4 +1,4 @@
-//! Integration tests for the `/ws` WebSocket route (Phase 1e.2).
+//! Integration tests for the `/ws` WebSocket route (Phase 1e.2 + 1e.3).
 //!
 //! Each test:
 //! 1. Builds an [`AppState`] backed by an in-memory `MockProvider`.
@@ -26,10 +26,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt, stream::BoxStream};
+use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_protocol::events::{LlmResponseEvent, ToolCallEvent};
 use omega_protocol::{LlmResponseUsage, OmegaEvent, StreamSignal};
-use omega_server::{AppState, build_router};
+use omega_server::{ActiveSession, AppState, build_router};
+use omega_store::{ContextStore, EventStore, SessionPaths};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as TMessage;
@@ -400,9 +402,16 @@ async fn reconnect_new_ws_receives_ready() {
     // reconnect arrives — keeps the assertion crisp.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Reconnect — new WS must accept and emit `ready`.
+    // Reconnect — new WS must accept; with history replay active, the session
+    // init events (server_started + session_started) arrive first, then ready.
     let mut ws2 = connect(addr).await;
-    assert_eq!(recv_json(&mut ws2).await["type"], "ready");
+    let frames = recv_until_type(&mut ws2, "ready").await;
+    assert_eq!(
+        frames.last().unwrap()["type"],
+        "ready",
+        "ready must arrive last; got {:?}",
+        frames
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -460,4 +469,239 @@ async fn user_message_without_session_yields_agent_error() {
     let v = recv_json(&mut ws).await;
     assert_eq!(v["type"], "agent_error");
     assert!(v["message"].as_str().unwrap().contains("no active session"));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1e.3 — History replay on reconnect
+// ---------------------------------------------------------------------------
+
+/// Return the lexicographically latest sub-directory of `root`.
+/// Session dirs sort by timestamp, so the latest is the most-recently created.
+fn latest_session_dir(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut entries: Vec<_> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    entries.last().map(|e| e.path())
+}
+
+// ---------------------------------------------------------------------------
+// 8. Reconnect after a full turn replays events in order,
+//    text signals are filtered out, Ready arrives last.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn reconnect_replays_turn_events_filters_text_ready_last() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    // One turn: a text signal followed by an end_turn response.
+    provider.push(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            text: "hello".to_owned(),
+        })),
+        Ok(llm_response("end_turn", Some("hello"))),
+    ]);
+
+    let state = make_test_state(Arc::clone(&provider), sessions_root.clone());
+    let addr = spawn_server(state).await;
+
+    // First WS: reset + user_message, wait for turn_end.
+    let mut ws1 = connect(addr).await;
+    assert_eq!(recv_json(&mut ws1).await["type"], "ready");
+    send_json(&mut ws1, serde_json::json!({ "type": "reset" })).await;
+    let _ = recv_until_type(&mut ws1, "ready").await;
+    send_json(
+        &mut ws1,
+        serde_json::json!({ "type": "user_message", "content": "hi" }),
+    )
+    .await;
+    let live_frames = recv_until_type(&mut ws1, "turn_end").await;
+
+    // The live stream must have contained at least one text frame.
+    assert!(
+        live_frames.iter().any(|v| v["type"] == "text"),
+        "live stream must include text frames; got {:?}",
+        live_frames.iter().map(|v| &v["type"]).collect::<Vec<_>>(),
+    );
+
+    // Inject a synthetic \"text\" line into events.jsonl to verify the filter
+    // works even when the excluded type appears on disk.
+    let session_dir = latest_session_dir(&sessions_root).expect("session dir must exist");
+    let events_path = session_dir.join("events.jsonl");
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&events_path)
+            .unwrap();
+        f.write_all(b"{\"type\":\"text\",\"text\":\"injected-noise\"}\n")
+            .unwrap();
+    }
+
+    // Disconnect.
+    ws1.close(None).await.ok();
+    drop(ws1);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Reconnect: verify replay.
+    let mut ws2 = connect(addr).await;
+    let replay_frames = recv_until_type(&mut ws2, "ready").await;
+    let replay_types: Vec<&str> = replay_frames
+        .iter()
+        .filter_map(|v| v["type"].as_str())
+        .collect();
+
+    // 1. No "text" frames in replay (filter must suppress them).
+    assert!(
+        !replay_types.contains(&"text"),
+        "text entries must be filtered from replay; got {replay_types:?}"
+    );
+
+    // 2. "ready" is the last frame.
+    assert_eq!(
+        replay_types.last().copied(),
+        Some("ready"),
+        "ready must arrive last; got {replay_types:?}"
+    );
+
+    // 3. Expected event types are present in the correct relative order.
+    assert_eq!(
+        replay_types[0], "server_started",
+        "first replay event must be server_started"
+    );
+    assert_eq!(
+        replay_types[1], "session_started",
+        "second replay event must be session_started"
+    );
+    for ty in &["user_message", "llm_call", "llm_response", "turn_end"] {
+        assert!(
+            replay_types.contains(ty),
+            "replay must contain {ty}; got {replay_types:?}"
+        );
+    }
+
+    // 4. Replay order matches on-disk order: turn_end appears before ready.
+    let turn_end_pos = replay_types
+        .iter()
+        .position(|&t| t == "turn_end")
+        .expect("turn_end must be in replay");
+    assert!(
+        turn_end_pos < replay_types.len() - 1,
+        "turn_end must precede ready"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 9. Empty events.jsonl → reconnect → just Ready, no replay frames.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn replay_with_empty_events_file_yields_only_ready() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    let sessions_root = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&sessions_root).await.unwrap();
+
+    // Build a session dir manually with an empty events.jsonl.
+    // We deliberately skip agent.init() so nothing is written to the file.
+    let session_dir = sessions_root.join("2025-01-01T00-00-00-000-deadbeef");
+    tokio::fs::create_dir_all(&session_dir).await.unwrap();
+    let events_file = session_dir.join("events.jsonl");
+    let context_file = session_dir.join("context.jsonl");
+    tokio::fs::write(&events_file, b"").await.unwrap();
+    tokio::fs::write(&context_file, b"").await.unwrap();
+
+    let paths = SessionPaths {
+        dir: session_dir.clone(),
+        context_file: context_file.clone(),
+        events_file: events_file.clone(),
+    };
+    let cstore = ContextStore::new(context_file);
+    let estore = EventStore::new(events_file);
+    let agent = Agent::new(
+        Arc::clone(&provider) as Arc<dyn Provider>,
+        cstore,
+        estore,
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            cwd: tmp.path().to_path_buf(),
+            system_prompt_append: None,
+            session_dir,
+        },
+    );
+    let controls = agent.controls();
+    let active = ActiveSession {
+        agent: Arc::new(tokio::sync::Mutex::new(agent)),
+        controls,
+        paths,
+        ws_tx: None,
+    };
+
+    let state = make_test_state(Arc::clone(&provider), sessions_root);
+    *state.active_session.lock().await = Some(active);
+
+    let addr = spawn_server(state).await;
+    let mut ws = connect(addr).await;
+
+    // Session exists but events.jsonl is empty → replay sends nothing,
+    // so the very first frame must be "ready".
+    let first = recv_json(&mut ws).await;
+    assert_eq!(
+        first["type"], "ready",
+        "empty events.jsonl must yield only ready; got {first}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 10. Reconnect after reset with no turns replays init events, then Ready.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn reconnect_after_reset_replays_init_events_then_ready() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    let state = make_test_state(Arc::clone(&provider), tmp.path().join("sessions"));
+    let addr = spawn_server(state).await;
+
+    // First connection: reset creates a session (writes server_started +
+    // session_started via agent.init()).  No user_message is sent.
+    let mut ws1 = connect(addr).await;
+    assert_eq!(recv_json(&mut ws1).await["type"], "ready"); // pre-session ready
+    send_json(&mut ws1, serde_json::json!({ "type": "reset" })).await;
+    let _ = recv_until_type(&mut ws1, "ready").await; // ready after reset
+
+    // Disconnect.
+    ws1.close(None).await.ok();
+    drop(ws1);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Reconnect: should get server_started + session_started + ready,
+    // in that order, with no other events.
+    let mut ws2 = connect(addr).await;
+    let frames = recv_until_type(&mut ws2, "ready").await;
+    let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
+
+    assert_eq!(
+        types.first().copied(),
+        Some("server_started"),
+        "first replayed event must be server_started; got {types:?}"
+    );
+    assert_eq!(
+        types.get(1).copied(),
+        Some("session_started"),
+        "second replayed event must be session_started; got {types:?}"
+    );
+    assert_eq!(
+        types.last().copied(),
+        Some("ready"),
+        "ready must arrive last; got {types:?}"
+    );
+    assert_eq!(
+        types.len(),
+        3,
+        "expected exactly [server_started, session_started, ready]; got {types:?}"
+    );
 }
