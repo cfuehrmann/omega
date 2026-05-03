@@ -127,57 +127,66 @@ flowchart LR
 
 ### TEST-ARCH-1 — `omega-cli` e2e via subprocess + HTTP fake (BUG-C)
 
-**Status:** 🔴 first step — unblocks the rest of this plan.
+**Status:** ✅ **Done.** `just rust-mutants-cli` reports 17 caught, 0 missed.
 
-Cross-reference: BUG-C section in `rust-migration.md`. Constraints, mutant
-checklist, and `nutriterm`-style snapshot pattern are documented there; this
-ticket inherits all of them.
+Landed:
 
-**Scope:**
+- `ANTHROPIC_BASE_URL` and `OMEGA_RETRY_INITIAL_MS` env-var hooks in
+  `omega-cli/src/main.rs`.
+- `omega-cli/tests/common/mod.rs` — axum SSE fake with `MockResponse::{Text,
+  ToolUse, HttpError}` on a 127.0.0.1 random port; task aborted on drop.
+- `omega-cli/tests/cli.rs` — six tests covering `--help`, missing API key,
+  happy text turn, tool-use round trip, retry exhaustion, and a
+  belt-and-braces stderr snapshot.
+- Dev-deps: `assert_cmd`, `insta`, `tempfile`, `axum`, `serde_json`.
 
-- Add a one-line `ANTHROPIC_BASE_URL` env-var hook in `omega-cli/src/main.rs`:
-  if set, call `AnthropicProvider::with_base_url(...)`. Documented as test
-  infrastructure + corporate-proxy support; matches Anthropic's official-SDK
-  env-var convention.
-- (Optional, if needed for the retry test) `OMEGA_RETRY_INITIAL_MS` env-var
-  hook for the initial retry backoff. Keep the test runtime in milliseconds
-  rather than seconds.
-- New `omega-cli/tests/common/mod.rs` — axum-based Anthropic-shaped SSE
-  fixture. Per-test scripted responses (text reply, tool-use+result,
-  non-retryable 400, retryable-N-times-then-OK). Bound on a random port.
-- New `omega-cli/tests/cli.rs` mirroring `nutriterm/tests/cli.rs`:
-  `assert_cmd::cargo_bin_cmd!("omega")`, `insta` snapshot assertions,
-  `TempDir` for `--session-root`, path normalisation helper.
+The retry-exhaustion test asserts on the `waitMs` field of persisted
+`llm_retry` events, which is what makes the `initial_backoff` field mutant
+observable from outside the binary. The `now_iso` mutants are killed by
+reading `events.jsonl` and checking the `session_started.time` field looks
+like an ISO-8601 timestamp.
 
-**Success criterion:** `just rust-mutants-cli` reports zero missed mutants in
-`crates/omega-cli/`. Use the current `rust/mutants.out/missed.txt` lines under
-`crates/omega-cli/` as the concrete checklist.
-
-**Out of scope:** lib split of `omega-cli`, mock-bin crate, retiring any
-existing tests.
+Cross-reference: BUG-C section in `rust-migration.md`.
 
 ---
 
 ### TEST-ARCH-2 — `omega-server` Rust-level WS-protocol tests
 
-**Status:** ⬜ blocked on TEST-ARCH-1 landing (so the HTTP fake is already extracted).
+**Status:** ✅ **Done.** Mutation run on `crates/omega-server/src/router.rs`
+reports 1 missed, 67 caught — the missed mutant is the documented
+equivalent (`Message::Close(_)` arm in `handle_socket`, where deletion
+falls through to identical behaviour via the next `reader.next()` returning
+`None`).
 
-The HTTP fake from TEST-ARCH-1 should be promoted to a shared location
-(workspace-internal `omega-test-fixtures` crate, or `omega-server`'s own
-`tests/common/`). Then write Rust integration tests that:
+Landed:
 
-- Subprocess `omega-server` with `ANTHROPIC_BASE_URL` pointing at the fake.
-- Open a raw WebSocket via `tokio-tungstenite`.
-- Drive it with the protocol the browser would send (start session, send
-  instruction, pause, resume, set model, …).
-- Snapshot the WS frames received back.
+- `ANTHROPIC_BASE_URL` env-var hook in `omega-server/src/main.rs` (mirrors
+  the omega-cli hook).
+- `omega-server/tests/common/mod.rs` — the same axum SSE fake as omega-cli,
+  duplicated for now (TEST-ARCH-3 will consolidate or retire one copy).
+- `omega-server/tests/ws_router.rs` — 16 tests using `tokio-tungstenite` raw
+  WS client + `MockProvider` for in-process WS-routing coverage; one
+  subprocess test (`e2e_full_turn_via_http_fake`) validates the
+  `ANTHROPIC_BASE_URL` hook end-to-end.
+- Insta snapshots for `model_changed`, `effort_changed`, `session_deleted`,
+  and the post-`turn_end` `session_info(turnState="idle")` frames, with
+  `time` / `dir` / `cwd` redacted.
+- Dev-deps added: `insta`, `axum`, `assert_cmd`.
 
-Aim for coverage of every `handle_*` arm in `omega-server/src/router.rs`. The
-existing `mutants.out/missed.txt` lines under `crates/omega-server/router.rs`
-form the concrete checklist for this step.
+Two production bugs surfaced and were fixed as part of this work:
 
-**Success criterion:** Rust-only mutation run on `omega-server` passes (or is
-within a small accepted-misses set) — without invoking Playwright.
+- **BUG-S1**: ABBA deadlock in `send_session_info_and_history` (held
+  `active_session` across `info_cache`/`turn_state` await; streaming task
+  held `turn_state` and needed `active_session`). Fixed by extracting Arc
+  handles before releasing `active_session`.
+- **BUG-S2**: `session_info.turnState` stayed `"idle"` during session
+  resumption because `perform_resumption` never yields
+  state-changing events. Fixed by bracketing the resumption stream with
+  explicit `"running"` / `"idle"` transitions in `handle_resume_session`,
+  and removing the now-dead `PauseRequested` arm from `next_turn_state_for`.
+
+**Out of scope (deferred):** retiring `omega-mock-server` (TEST-ARCH-3) and
+the `omega-agent/tests/` MockProvider suite (TEST-ARCH-4).
 
 ---
 

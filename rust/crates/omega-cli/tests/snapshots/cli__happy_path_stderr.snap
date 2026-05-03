@@ -1,0 +1,7 @@
+---
+source: crates/omega-cli/tests/cli.rs
+expression: stderr
+---
+Session: [SESSION_DIR]
+.
+[turn complete | in=7 out=2 cache_hit=0 cache_write=0]

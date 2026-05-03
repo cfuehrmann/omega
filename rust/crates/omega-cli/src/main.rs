@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use futures::StreamExt as _;
@@ -146,11 +147,29 @@ async fn run(
     }
 
     // ---- Provider ------------------------------------------------------
-    let anthropic = AnthropicProvider::new(api_key);
+    // ANTHROPIC_BASE_URL: documented Anthropic-SDK env var. Used by
+    // tests to point at a local axum SSE fake, and by users to route
+    // through corporate proxies.
+    let anthropic = if let Ok(u) = std::env::var("ANTHROPIC_BASE_URL") {
+        AnthropicProvider::new(api_key).with_base_url(u)
+    } else {
+        AnthropicProvider::new(api_key)
+    };
+    // OMEGA_RETRY_INITIAL_MS: test-only knob for the initial retry
+    // backoff. Production uses the default (500 ms) — keeping retry
+    // tests bounded to single-digit milliseconds.
+    let initial_backoff = std::env::var("OMEGA_RETRY_INITIAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            RetryConfig::default().initial_backoff,
+            Duration::from_millis,
+        );
     let provider = Arc::new(RetryingProvider::new(
         anthropic,
         RetryConfig {
             max_attempts: 4,
+            initial_backoff,
             ..RetryConfig::default()
         },
     ));
