@@ -95,6 +95,11 @@ async fn send_message_llm_call_has_request_summary() {
         system.contains("block"),
         "system descriptor must mention 'block': {system}"
     );
+    // singular: first send_message has exactly 1 system block
+    assert!(
+        system.starts_with("[1 block,"),
+        "system must use singular 'block' for a single block: {system}"
+    );
 
     // tools is an array of elided objects
     let tools = summary["tools"].as_array().expect("tools must be an array");
