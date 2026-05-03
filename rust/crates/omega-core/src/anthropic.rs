@@ -141,6 +141,11 @@ fn stream_impl(
         let mut usage_value: serde_json::Map<String, Value> = serde_json::Map::new();
         let mut cleared_tool_uses: Option<i64> = None;
         let mut cleared_input_tokens: Option<i64> = None;
+        // Fields from message_start used to build response_summary.
+        let mut msg_id = String::new();
+        let mut msg_type = String::from("message");
+        let mut msg_role = String::from("assistant");
+        let mut msg_model = String::new();
 
         while let Some(ev) = futures::StreamExt::next(&mut sse).await {
             let ev = ev.map_err(|e| LlmError::Stream { message: e.to_string() })?;
@@ -154,6 +159,10 @@ fn stream_impl(
                     cache_creation = parsed.message.usage.cache_creation_input_tokens.or(cache_creation);
                     cache_read = parsed.message.usage.cache_read_input_tokens.or(cache_read);
                     service_tier = parsed.message.usage.service_tier.or(service_tier);
+                    msg_id = parsed.message.id;
+                    msg_type = parsed.message.msg_type;
+                    msg_role = parsed.message.role;
+                    msg_model = parsed.message.model;
                     // Capture the raw usage object verbatim so the
                     // Compacted event can carry every field Anthropic
                     // sends (e.g. `iterations[]`, `service_tier`).  The
@@ -291,7 +300,24 @@ fn stream_impl(
                         text: if all_text.is_empty() { None } else { Some(all_text.clone()) },
                         thinking: if all_thinking.is_empty() { None } else { Some(all_thinking.clone()) },
                         streaming_start: streaming_start.clone(),
-                        response_summary: None,
+                        // Mirror TS `elideAnthropicResponse`: keep all
+                        // envelope fields verbatim; omit content (lives in
+                        // context.jsonl).
+                        response_summary: Some(serde_json::json!({
+                            "id": msg_id,
+                            "type": msg_type,
+                            "role": msg_role,
+                            "model": msg_model,
+                            "stop_reason": stop_reason,
+                            "usage": {
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                                "cache_creation_input_tokens": cache_creation,
+                                "cache_read_input_tokens": cache_read,
+                                "service_tier": service_tier,
+                            },
+                            "content": "[elided — use context hash]",
+                        })),
                     }));
                     break;
                 }
@@ -456,7 +482,27 @@ struct MessageStartData {
 
 #[derive(Deserialize)]
 struct MessageStartInner {
+    #[serde(default)]
+    id: String,
+    /// Always `"message"` in the Anthropic API; default in case it is
+    /// absent from test fixtures.
+    #[serde(default = "default_message_type")]
+    #[serde(rename = "type")]
+    msg_type: String,
+    /// Always `"assistant"` for responses; default in case it is absent.
+    #[serde(default = "default_assistant_role")]
+    role: String,
+    #[serde(default)]
+    model: String,
     usage: AnthropicStartUsage,
+}
+
+fn default_message_type() -> String {
+    "message".to_owned()
+}
+
+fn default_assistant_role() -> String {
+    "assistant".to_owned()
 }
 
 #[derive(Deserialize)]

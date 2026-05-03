@@ -32,6 +32,21 @@ expression: project(&items)
   },
   {
     "contextHash": "",
+    "responseSummary": {
+      "content": "[elided — use context hash]",
+      "id": "msg_01",
+      "model": "claude-sonnet-4-6",
+      "role": "assistant",
+      "stop_reason": "tool_use",
+      "type": "message",
+      "usage": {
+        "cache_creation_input_tokens": 10,
+        "cache_read_input_tokens": 5,
+        "input_tokens": 25,
+        "output_tokens": 87,
+        "service_tier": "standard"
+      }
+    },
     "stopReason": "tool_use",
     "streamingStart": "[time]",
     "text": "Hello, world!",
