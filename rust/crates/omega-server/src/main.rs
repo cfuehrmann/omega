@@ -28,7 +28,15 @@ async fn main() -> std::io::Result<()> {
 
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|e| std::io::Error::other(format!("ANTHROPIC_API_KEY env var: {e}")))?;
-    let inner = AnthropicProvider::new(api_key);
+
+    // ANTHROPIC_BASE_URL: documented Anthropic-SDK env var — lets tests (and
+    // corporate proxies) point the provider at a local SSE fake instead of
+    // the real API.  Mirror of the same hook in omega-cli/src/main.rs.
+    let inner = if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
+        AnthropicProvider::new(api_key).with_base_url(url)
+    } else {
+        AnthropicProvider::new(api_key)
+    };
     let provider = Arc::new(RetryingProvider::new(
         inner,
         RetryConfig {

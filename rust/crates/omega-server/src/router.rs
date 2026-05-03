@@ -340,17 +340,20 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-/// Build a [`WsMessage::SessionInfo`] frame for the given active session.
+/// Build a [`WsMessage::SessionInfo`] frame from Arc refs to the
+/// `info_cache` and `turn_state` slabs.
 ///
-/// Reads dir/model/effort/cwd/name from the cached `info_cache` (kept
-/// in sync by `handle_set_model` / `handle_set_effort` /
-/// `handle_rename_session`), so this never locks the agent.  Avoiding
-/// the agent lock matters because some callers run while the streaming
-/// task already holds it.
-async fn build_session_info(active: &ActiveSession) -> WsMessage {
-    let cache = active.info_cache.lock().await.clone();
-    let turn_state = active.turn_state.lock().await.clone();
-    cache_into_message(cache, turn_state)
+/// Takes `Arc` refs rather than `&ActiveSession` so callers can call
+/// this **without holding `active_session.lock()`** — holding that
+/// lock across an `.await` on `info_cache` or `turn_state` creates an
+/// ABBA deadlock with the streaming task (see BUG-S1, now fixed).
+async fn build_session_info(
+    info_cache: &Arc<tokio::sync::Mutex<crate::session::SessionInfoCache>>,
+    turn_state: &Arc<tokio::sync::Mutex<String>>,
+) -> WsMessage {
+    let cache = info_cache.lock().await.clone();
+    let ts = turn_state.lock().await.clone();
+    cache_into_message(cache, ts)
 }
 
 /// Project a [`SessionInfoCache`] into a [`WsMessage::SessionInfo`] with
@@ -370,10 +373,13 @@ fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage 
 /// Map an [`OmegaEvent`] variant to the next derived turn state, if it
 /// represents a transition. Mirrors `deriveTurnState()` in the (now-deleted)
 /// TS server and the test-server fixture (`e2e/fixtures/test-server.ts`).
+///
+/// `PauseRequested` is intentionally absent: it is never yielded by
+/// `send_message` or `perform_resumption` streams — `handle_pause`
+/// creates and sends it directly, then updates `turn_state` manually.
 fn next_turn_state_for(event: &OmegaEvent) -> Option<&'static str> {
     Some(match event {
         OmegaEvent::UserMessage(_) | OmegaEvent::TurnContinued(_) => "running",
-        OmegaEvent::PauseRequested(_) => "pause_requested",
         OmegaEvent::TurnPaused(_) => "paused",
         OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_) => "idle",
         _ => return None,
@@ -408,25 +414,42 @@ async fn read_history_events(events_file: &Path) -> Vec<OmegaEvent> {
 /// The `streaming` flag is set when a turn is currently in flight
 /// (its `JoinHandle` exists and has not finished).  `tx` is the per-
 /// connection sender; on disconnect the send fails silently.
+///
+/// **Lock discipline (BUG-S1 fix):** `active_session` is held only long
+/// enough to clone the `Arc` handles and cheap fields, then released
+/// *before* awaiting `info_cache` or `turn_state`.  Holding
+/// `active_session` across those inner awaits caused an ABBA deadlock
+/// with the streaming task's turn-state update block.
 async fn send_session_info_and_history(state: &AppState, tx: &UnboundedSender<WsMessage>) {
-    // Brief lock: snapshot session_info + path + streaming status.
-    let snapshot: Option<(WsMessage, PathBuf, bool)> = {
+    // Brief lock: extract Arc handles + cheap fields, then release.
+    // Do NOT await any inner lock (info_cache, turn_state) while holding
+    // active_session — see the lock-discipline note above.
+    type Snapshot = (
+        Arc<tokio::sync::Mutex<crate::session::SessionInfoCache>>,
+        Arc<tokio::sync::Mutex<String>>,
+        PathBuf,
+        bool,
+    );
+    let snapshot: Option<Snapshot> = {
         let slot = state.active_session.lock().await;
-        if let Some(active) = slot.as_ref() {
-            let info = build_session_info(active).await;
-            let events_file = active.paths.events_file.clone();
-            let streaming = active
-                .current_turn
-                .as_ref()
-                .is_some_and(|h| !h.is_finished());
-            Some((info, events_file, streaming))
-        } else {
-            None
-        }
-    };
-    let Some((session_info, events_file, streaming)) = snapshot else {
+        slot.as_ref().map(|active| {
+            (
+                Arc::clone(&active.info_cache),
+                Arc::clone(&active.turn_state),
+                active.paths.events_file.clone(),
+                active
+                    .current_turn
+                    .as_ref()
+                    .is_some_and(|h| !h.is_finished()),
+            )
+        })
+    }; // active_session lock released here
+
+    let Some((info_cache_arc, turn_state_arc, events_file, streaming)) = snapshot else {
         return;
     };
+    // Safe to await inner locks now that active_session is released.
+    let session_info = build_session_info(&info_cache_arc, &turn_state_arc).await;
     let _ = tx.send(session_info);
     let events = read_history_events(&events_file).await;
     let _ = tx.send(WsMessage::History { events, streaming });
@@ -857,27 +880,35 @@ async fn handle_resume_session(
 
     // Drive the resumption stream inline so events are persisted and
     // streamed live to the client between the History batch and Ready.
+    //
+    // BUG-S2 fix: `perform_resumption` never yields state-changing events
+    // (UserMessage, TurnEnd, …), so `next_turn_state_for` always returns
+    // None inside the loop — `turnState` would stay "idle" throughout the
+    // summarisation LLM call.  Bracket the stream with explicit "running"
+    // → "idle" transitions so the UI can show a spinner.
+    {
+        let mut ts = turn_state_arc.lock().await;
+        "running".clone_into(&mut ts);
+        let cache = info_cache_arc.lock().await.clone();
+        let _ = tx.send(cache_into_message(cache, "running".to_owned()));
+    }
     {
         let mut guard = agent.lock().await;
         let cancel = CancellationToken::new();
         let mut stream =
             guard.perform_resumption(basis, session_dir.clone(), prev_meta.name.clone(), cancel);
         while let Some(item) = stream.next().await {
-            let next = match &item {
-                AgentItem::Event(ev) => next_turn_state_for(ev),
-                AgentItem::Signal(_) => None,
-            };
+            // next_turn_state_for returns None for all resumption events;
+            // turn-state transitions are handled by the explicit brackets
+            // above and below this loop.
             let _ = tx.send(WsMessage::Item(Box::new(item)));
-            if let Some(target) = next {
-                let mut ts = turn_state_arc.lock().await;
-                if *ts != target {
-                    target.clone_into(&mut ts);
-                    let cache = info_cache_arc.lock().await.clone();
-                    let info = cache_into_message(cache, target.to_owned());
-                    let _ = tx.send(info);
-                }
-            }
         }
+    }
+    {
+        let mut ts = turn_state_arc.lock().await;
+        "idle".clone_into(&mut ts);
+        let cache = info_cache_arc.lock().await.clone();
+        let _ = tx.send(cache_into_message(cache, "idle".to_owned()));
     }
 
     // Persist the resumed-from pointer in the new session's metadata so

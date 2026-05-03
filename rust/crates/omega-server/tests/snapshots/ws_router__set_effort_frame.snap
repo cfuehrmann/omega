@@ -1,0 +1,9 @@
+---
+source: crates/omega-server/tests/ws_router.rs
+expression: "serde_json::to_string_pretty(&redact(frame)).unwrap()"
+---
+{
+  "effort": "low",
+  "time": "[REDACTED]",
+  "type": "effort_changed"
+}

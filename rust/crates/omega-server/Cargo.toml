@@ -28,6 +28,8 @@ futures      = "0.3"          # StreamExt for forwarding agent stream to WS
 chrono       = { version = "0.4", default-features = false, features = ["clock"] }  # ISO timestamps for server_stopped
 
 [dev-dependencies]
+assert_cmd        = "2"
+insta             = { version = "1", features = ["json", "redactions"] }
 reqwest           = { version = "0.12", default-features = false, features = ["json"] }
 tempfile          = "3"
 tokio             = { version = "1", features = ["full"] }

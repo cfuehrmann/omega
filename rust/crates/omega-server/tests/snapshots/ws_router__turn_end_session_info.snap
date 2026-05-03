@@ -1,0 +1,12 @@
+---
+source: crates/omega-server/tests/ws_router.rs
+expression: "serde_json::to_string_pretty(&redact(info)).unwrap()"
+---
+{
+  "cwd": "[REDACTED]",
+  "dir": "[REDACTED]",
+  "effort": "medium",
+  "model": "claude-sonnet-4-6",
+  "turnState": "idle",
+  "type": "session_info"
+}

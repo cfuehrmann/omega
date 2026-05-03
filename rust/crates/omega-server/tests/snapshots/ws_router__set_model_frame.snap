@@ -1,0 +1,9 @@
+---
+source: crates/omega-server/tests/ws_router.rs
+expression: "serde_json::to_string_pretty(&redact(frame)).unwrap()"
+---
+{
+  "model": "claude-opus-4-6",
+  "time": "[REDACTED]",
+  "type": "model_changed"
+}
