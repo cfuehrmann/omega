@@ -115,6 +115,12 @@ const ProtocolEnvelopeSchema = z.discriminatedUnion("type", [
      * defaults to "idle" when absent).
      */
     turnState: TurnStateSchema.optional(),
+    /**
+     * True when the server detected uncommitted git changes at session
+     * creation time.  The client shows a blocking modal until acknowledged.
+     * Optional for backwards compatibility; absent means false.
+     */
+    hasPendingChanges: z.boolean().optional(),
   }),
   /**
    * History replay batch. When `streaming` is true the server has an
@@ -147,7 +153,7 @@ export const ServerMessageSchema = z.union([
   | StreamSignal
   | { type: "ready"; streaming?: boolean }
   | { type: "reset_done" }
-  | { type: "session_info"; dir: string; model: string; effort: string; cwd: string; name?: string; turnState?: TurnState }
+  | { type: "session_info"; dir: string; model: string; effort: string; cwd: string; name?: string; turnState?: TurnState; hasPendingChanges?: boolean }
   | { type: "history"; events: OmegaEvent[]; streaming?: boolean }
   | { type: "session_deleted"; sessionDir: string }
   | { type: "session_renamed"; sessionDir: string; name: string }

@@ -80,7 +80,7 @@ export default defineConfig({
     },
     {
       command:
-        "rust/target/release/mock-omega-server --port 3003 --ctrl-port 3004 --public-dir src/web/public --sessions-root .omega/test-sessions",
+        "OMEGA_ALLOW_DIRTY=1 rust/target/release/mock-omega-server --port 3003 --ctrl-port 3004 --public-dir src/web/public --sessions-root .omega/test-sessions",
       port: 3003,
       reuseExistingServer: false,
       timeout: 15000,

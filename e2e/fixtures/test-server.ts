@@ -122,6 +122,7 @@ function buildSessionInfo(): Record<string, unknown> {
     effort: "medium",
     cwd: process.cwd(),
     turnState: currentTurnState,
+    hasPendingChanges,
   };
 }
 
@@ -130,6 +131,12 @@ function buildSessionInfo(): Record<string, unknown> {
  * can observe the "resuming…" state. 0 = instant.
  */
 let resumeDelayMs = 0;
+
+/**
+ * When true, `buildSessionInfo()` includes `hasPendingChanges: true`.
+ * Set via `POST /control/set-pending-changes`.
+ */
+let hasPendingChanges = false;
 
 /**
  * Current session directory paths — created by makeSessionDir() on startup
@@ -446,6 +453,9 @@ Bun.serve({
       currentAgentId = 1;
       currentTurnState = "idle";
       resumeDelayMs = 0;
+      // Note: hasPendingChanges is NOT reset here — it is configured
+      // independently via POST /control/set-pending-changes and
+      // reflects per-test setup, not per-session teardown.
       // Delete only sessions created by this server — not those belonging to
       // concurrent bun-test agents sharing .omega/test-sessions/.
       for (const dir of ownedSessionDirs) {
@@ -487,6 +497,13 @@ Bun.serve({
     if (req.method === "POST" && url.pathname === "/control/set-resume-delay") {
       const body = await req.json() as { delayMs: number };
       resumeDelayMs = body.delayMs;
+      return new Response("ok");
+    }
+
+    // Configure whether the next session_info reports pending git changes
+    if (req.method === "POST" && url.pathname === "/control/set-pending-changes") {
+      const body = await req.json() as { hasPendingChanges: boolean };
+      hasPendingChanges = body.hasPendingChanges;
       return new Response("ok");
     }
 

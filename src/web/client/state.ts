@@ -165,6 +165,16 @@ interface AppState {
    * Never sent to the server — it's purely a UI promise.
    */
   preCommitted: boolean;
+  /**
+   * True when the server reported uncommitted git changes at session start.
+   * Drives the pending-changes blocking modal.
+   */
+  hasPendingChanges: boolean;
+  /**
+   * True once the user has dismissed the pending-changes modal for this
+   * session.  Reset on `reset_done` (new session).  Client-local only.
+   */
+  pendingChangesAcknowledged: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +207,8 @@ const [state, setState] = createStore<AppState>({
   cwd: "",
   turnState: "idle",
   preCommitted: false,
+  hasPendingChanges: false,
+  pendingChangesAcknowledged: false,
 });
 
 /**
@@ -205,6 +217,11 @@ const [state, setState] = createStore<AppState>({
  */
 export function setPreCommitted(v: boolean): void {
   setState("preCommitted", v);
+}
+
+/** Acknowledge the pending-changes modal for this session. */
+export function acknowledgePendingChanges(): void {
+  setState("pendingChangesAcknowledged", true);
 }
 
 export { state };
@@ -644,6 +661,7 @@ export function dispatch(event: ServerMessage): void {
       setState("liveEffort", event.effort);
       setState("cwd", event.cwd);
       setState("turnState", event.turnState ?? "idle");
+      setState("hasPendingChanges", event.hasPendingChanges ?? false);
       break;
 
     case "reset_done":
@@ -669,6 +687,8 @@ export function dispatch(event: ServerMessage): void {
       setState("sessionName", "");
       setState("turnState", "idle");
       setState("preCommitted", false);
+      setState("hasPendingChanges", false);
+      setState("pendingChangesAcknowledged", false);
       break;
 
     case "user_message":

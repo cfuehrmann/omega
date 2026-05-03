@@ -202,6 +202,9 @@ async fn create_active_session(
     let context_store = ContextStore::new(paths.context_file.clone());
     let event_store = EventStore::new(paths.events_file.clone());
     let cwd = std::env::current_dir().unwrap_or_default();
+    // Check for pending git changes before moving `cwd` into AgentConfig.
+    let has_pending_changes = git_has_pending_changes(&cwd);
+    let cwd_string = cwd.display().to_string();
     let config = AgentConfig {
         model: model.unwrap_or_else(|| "claude-sonnet-4-6".to_owned()),
         effort,
@@ -224,14 +227,13 @@ async fn create_active_session(
     let controls = agent.controls();
     let active_model = agent.active_model().to_owned();
     let active_effort = agent.active_effort().to_owned();
-    let cwd_string =
-        std::env::current_dir().map_or_else(|_| ".".to_owned(), |p| p.display().to_string());
     let info_cache = SessionInfoCache {
         dir: dir_name.clone(),
         model: active_model,
         effort: active_effort,
         cwd: cwd_string,
         name: None,
+        has_pending_changes,
     };
     let session = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
@@ -369,6 +371,7 @@ fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage 
         cwd: cache.cwd,
         name: cache.name,
         turn_state,
+        has_pending_changes: cache.has_pending_changes,
     }
 }
 
@@ -1551,5 +1554,82 @@ mod tests {
             dir_first_then_alpha("abc", true, "abc", true),
             Ordering::Equal,
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Git pending-changes check
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if `git status --porcelain` reports any uncommitted changes
+/// in `cwd`; `false` if the tree is clean, git is not installed, or `cwd` is
+/// not inside a git repository (fail-open: absence of git is not a blocker).
+///
+/// When the `OMEGA_ALLOW_DIRTY` environment variable is set (any value), the
+/// check is skipped and `false` is returned — used when running the real
+/// server binary in a test environment where the working tree may be dirty.
+#[must_use]
+pub fn git_has_pending_changes(cwd: &std::path::Path) -> bool {
+    if std::env::var("OMEGA_ALLOW_DIRTY").is_ok() {
+        return false;
+    }
+    std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod git_tests {
+    use super::git_has_pending_changes;
+    use std::process::Command;
+
+    fn git(args: &[&str], cwd: &std::path::Path) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "t@t.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "t@t.com")
+            .status()
+            .expect("git");
+        assert!(status.success());
+    }
+
+    #[test]
+    fn clean_repo_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        git(&["init", "-b", "main"], dir.path());
+        git(&["commit", "--allow-empty", "-m", "init"], dir.path());
+        assert!(!git_has_pending_changes(dir.path()));
+    }
+
+    #[test]
+    fn untracked_file_returns_true() {
+        let dir = tempfile::tempdir().unwrap();
+        git(&["init", "-b", "main"], dir.path());
+        git(&["commit", "--allow-empty", "-m", "init"], dir.path());
+        std::fs::write(dir.path().join("new.txt"), "x").unwrap();
+        assert!(git_has_pending_changes(dir.path()));
+    }
+
+    #[test]
+    fn staged_change_returns_true() {
+        let dir = tempfile::tempdir().unwrap();
+        git(&["init", "-b", "main"], dir.path());
+        git(&["commit", "--allow-empty", "-m", "init"], dir.path());
+        std::fs::write(dir.path().join("staged.txt"), "y").unwrap();
+        git(&["add", "staged.txt"], dir.path());
+        assert!(git_has_pending_changes(dir.path()));
+    }
+
+    #[test]
+    fn non_git_directory_returns_false() {
+        // Not a git repo → fail open (return false, do not block the session).
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!git_has_pending_changes(dir.path()));
     }
 }

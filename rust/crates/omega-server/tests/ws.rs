@@ -650,6 +650,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         effort: omega_agent::DEFAULT_EFFORT.to_owned(),
         cwd: tmp.path().display().to_string(),
         name: None,
+        has_pending_changes: false,
     };
     let active = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),

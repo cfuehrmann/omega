@@ -49,6 +49,12 @@ enum Command {
         /// Override session root directory (default: `<cwd>/.omega/sessions`).
         #[arg(long)]
         session_root: Option<String>,
+
+        /// Allow running when there are uncommitted git changes in the
+        /// working tree.  Without this flag the command exits with an
+        /// error if `git status --porcelain` reports any pending changes.
+        #[arg(long)]
+        allow_dirty: bool,
     },
 }
 
@@ -61,7 +67,8 @@ async fn main() {
             model,
             effort,
             session_root,
-        } => run(instruction, model, effort, session_root).await,
+            allow_dirty,
+        } => run(instruction, model, effort, session_root, allow_dirty).await,
     };
     std::process::exit(exit_code);
 }
@@ -72,6 +79,7 @@ async fn run(
     model: String,
     effort: String,
     session_root: Option<String>,
+    allow_dirty: bool,
 ) -> i32 {
     // ---- API key -------------------------------------------------------
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
@@ -90,6 +98,18 @@ async fn run(
             return 1;
         }
     };
+
+    // ---- Pending-changes gate ------------------------------------------
+    // Refuse to run if the working tree has uncommitted changes, unless the
+    // caller explicitly opted in with --allow-dirty.
+    if !allow_dirty && git_has_pending_changes(&cwd) {
+        eprintln!(
+            "omega: there are uncommitted changes in the working tree.\n\
+             Commit or stash them before running omega, or pass --allow-dirty \
+             to proceed anyway."
+        );
+        return 1;
+    }
 
     // ---- Session directory ---------------------------------------------
     let root = session_root
@@ -262,4 +282,64 @@ async fn run(
 
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Returns `true` if `git status --porcelain` reports any uncommitted changes
+/// in `cwd`.  Returns `false` if the tree is clean, git is absent, or `cwd`
+/// is not a repository (fail-open).
+///
+/// When `OMEGA_ALLOW_DIRTY` is set, the check is skipped and `false` is
+/// returned — used by test harnesses running against a dirty working tree.
+fn git_has_pending_changes(cwd: &std::path::Path) -> bool {
+    if std::env::var("OMEGA_ALLOW_DIRTY").is_ok() {
+        return false;
+    }
+    std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_has_pending_changes;
+    use std::process::Command;
+
+    fn git(args: &[&str], cwd: &std::path::Path) {
+        let s = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "t@t.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "t@t.com")
+            .status()
+            .expect("git");
+        assert!(s.success());
+    }
+
+    #[test]
+    fn clean_repo_not_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        git(&["init", "-b", "main"], dir.path());
+        git(&["commit", "--allow-empty", "-m", "init"], dir.path());
+        assert!(!git_has_pending_changes(dir.path()));
+    }
+
+    #[test]
+    fn untracked_file_is_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        git(&["init", "-b", "main"], dir.path());
+        git(&["commit", "--allow-empty", "-m", "init"], dir.path());
+        std::fs::write(dir.path().join("x.txt"), "x").unwrap();
+        assert!(git_has_pending_changes(dir.path()));
+    }
+
+    #[test]
+    fn non_git_dir_not_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!git_has_pending_changes(dir.path()));
+    }
 }

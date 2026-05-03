@@ -25,6 +25,10 @@ pub struct SessionInfoCache {
     pub effort: String,
     pub cwd: String,
     pub name: Option<String>,
+    /// Whether the working tree had uncommitted changes when this session
+    /// was created.  Computed once by `git status --porcelain` and carried
+    /// in every `session_info` broadcast so the client can show a warning.
+    pub has_pending_changes: bool,
 }
 
 /// All state belonging to the currently-active session.

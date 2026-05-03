@@ -34,6 +34,8 @@ interface ServerHelper {
   createPastSession(opts?: { metadata?: Record<string, string>; events?: object[] }): Promise<{ dir: string }>;
   /** Set the artificial delay (ms) for resume_session handling */
   setResumeDelay(delayMs: number): Promise<void>;
+  /** Set whether the next session_info reports pending git changes */
+  setPendingChanges(hasPendingChanges: boolean): Promise<void>;
 }
 
 async function sendEvent(event: object): Promise<void> {
@@ -108,6 +110,14 @@ async function setResumeDelay(delayMs: number): Promise<void> {
   });
 }
 
+async function setPendingChanges(hasPendingChanges: boolean): Promise<void> {
+  await fetch(`${CTRL}/control/set-pending-changes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hasPendingChanges }),
+  });
+}
+
 interface Fixtures {
   server: ServerHelper;
 }
@@ -115,7 +125,8 @@ interface Fixtures {
 export const test = base.extend<Fixtures>({
   server: async ({}, use) => {
     await reset();
-    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId, loadFixture, createPastSession, setResumeDelay };
+    await setPendingChanges(false); // ensure clean state for every test
+    const helper: ServerHelper = { sendEvent, drainMessages, nextMessage, reset, save, load, diskSnapshot, agentId, loadFixture, createPastSession, setResumeDelay, setPendingChanges };
     await use(helper);
   },
 });

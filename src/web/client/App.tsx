@@ -1,6 +1,6 @@
 import { For, Show, ErrorBoundary, createEffect, onCleanup, createSignal, onMount, createMemo, createResource } from "solid-js";
 import type { JSX } from "solid-js";
-import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, setPreCommitted, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
+import { state, dispatch, setConnecting, handleDisconnect, zeroMetrics, zeroDurations, computeRenderGroups, setPreCommitted, acknowledgePendingChanges, type RenderGroup, type StickyMetrics, type DurationMetrics } from "./state";
 import { ServerMessageSchema, type ServerMessage, type ClientMessage, type OmegaModel, type OmegaEffort, type TurnState } from "../protocol";
 import { primaryToolArg } from "../../tools.schema.js";
 import { marked } from "marked";
@@ -476,6 +476,46 @@ function TokenLegend() {
               <tr><td><code>total</code></td><td>Total turn duration (LLM + tools + overhead)</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PendingChangesModal — blocking acknowledgment gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Shown when the server reports `hasPendingChanges: true` at session start.
+ * Blocks all interaction until the user explicitly acknowledges.
+ * Dismissed by clicking "Proceed" and never shown again for this session.
+ */
+function PendingChangesModal() {
+  return (
+    <Show when={state.hasPendingChanges && !state.pendingChangesAcknowledged}>
+      <div class="modal-backdrop" data-testid="pending-changes-backdrop">
+        <div class="modal pending-changes-modal" data-testid="pending-changes-modal">
+          <div class="modal-header">
+            <span class="modal-title">⚠ Uncommitted changes</span>
+          </div>
+          <div class="modal-section-label">
+            This working tree has uncommitted changes.
+          </div>
+          <div class="modal-body pending-changes-body">
+            Omega started this session with a dirty working tree. Proceed only
+            if you intend to commit or stash these changes before asking Omega
+            to write any code.
+          </div>
+          <div class="pending-changes-actions">
+            <button
+              class="input-btn send-btn"
+              data-testid="pending-changes-ok-btn"
+              onClick={acknowledgePendingChanges}
+            >
+              Proceed anyway
+            </button>
+          </div>
         </div>
       </div>
     </Show>
@@ -2081,7 +2121,7 @@ function InputRow() {
           onBlur={() => setTimeout(closeCompletion, 150)}
           placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline, ↑↓/Tab to navigate)"
           rows={1}
-          disabled={!state.connected}
+          disabled={!state.connected || (state.hasPendingChanges && !state.pendingChangesAcknowledged)}
         />
       </div>
       <button
@@ -2206,6 +2246,7 @@ export function App() {
   return (
     <div class="app">
       <TokenLegend />
+      <PendingChangesModal />
       <ActiveModal />
       <SessionPickerModal />
       <div class="feed-wrapper">

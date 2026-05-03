@@ -48,6 +48,9 @@ pub enum WsMessage {
         /// Current derived turn state (`idle` / `running` / `pause_requested` / `paused`).
         /// Projected to the JSON key `turnState` to match the TS contract.
         turn_state: String,
+        /// Whether the working tree had uncommitted changes when this session
+        /// was created.  Always present on the wire as `hasPendingChanges`.
+        has_pending_changes: bool,
     },
     /// Persisted history batch sent on connect / reset / resume.
     /// `streaming` is omitted on the wire when `false` — matches the TS
@@ -103,8 +106,9 @@ impl WsMessage {
                 cwd,
                 name,
                 turn_state,
+                has_pending_changes,
             } => {
-                let mut obj = serde_json::Map::with_capacity(7);
+                let mut obj = serde_json::Map::with_capacity(8);
                 obj.insert("type".to_owned(), serde_json::Value::from("session_info"));
                 obj.insert("dir".to_owned(), serde_json::Value::from(dir.clone()));
                 obj.insert("model".to_owned(), serde_json::Value::from(model.clone()));
@@ -113,6 +117,10 @@ impl WsMessage {
                 obj.insert(
                     "turnState".to_owned(),
                     serde_json::Value::from(turn_state.clone()),
+                );
+                obj.insert(
+                    "hasPendingChanges".to_owned(),
+                    serde_json::Value::from(*has_pending_changes),
                 );
                 if let Some(n) = name {
                     obj.insert("name".to_owned(), serde_json::Value::from(n.clone()));
@@ -226,6 +234,7 @@ mod tests {
             cwd: "/tmp".to_owned(),
             name: None,
             turn_state: "idle".to_owned(),
+            has_pending_changes: false,
         }
         .to_json();
         assert_eq!(v["type"], "session_info");
@@ -235,8 +244,24 @@ mod tests {
         assert_eq!(v["cwd"], "/tmp");
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("name"), "name must be omitted when None");
-        assert_eq!(obj.len(), 6, "unexpected extra fields: {obj:?}");
+        assert_eq!(obj.len(), 7, "unexpected extra fields: {obj:?}");
         assert_eq!(obj["turnState"], "idle");
+        assert_eq!(obj["hasPendingChanges"], false);
+    }
+
+    #[test]
+    fn session_info_has_pending_changes_true_appears_on_wire() {
+        let v = WsMessage::SessionInfo {
+            dir: "d".to_owned(),
+            model: "m".to_owned(),
+            effort: "e".to_owned(),
+            cwd: "/c".to_owned(),
+            name: None,
+            turn_state: "idle".to_owned(),
+            has_pending_changes: true,
+        }
+        .to_json();
+        assert_eq!(v["hasPendingChanges"], true);
     }
 
     #[test]
@@ -248,6 +273,7 @@ mod tests {
             cwd: "/c".to_owned(),
             name: Some("my-session".to_owned()),
             turn_state: "running".to_owned(),
+            has_pending_changes: false,
         }
         .to_json();
         assert_eq!(v["name"], "my-session");
@@ -262,6 +288,7 @@ mod tests {
             cwd: "/c".to_owned(),
             name: Some("n".to_owned()),
             turn_state: "idle".to_owned(),
+            has_pending_changes: false,
         };
         let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
         assert_eq!(parsed, m.to_json());
