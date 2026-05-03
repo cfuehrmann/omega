@@ -493,7 +493,7 @@ function TokenLegend() {
  */
 function PendingChangesModal() {
   return (
-    <Show when={state.hasPendingChanges && !state.pendingChangesAcknowledged}>
+    <Show when={state.hasPendingChanges && !state.pendingChangesAcknowledged && state.events.length === 0}>
       <div class="modal-backdrop" data-testid="pending-changes-backdrop">
         <div class="modal pending-changes-modal" data-testid="pending-changes-modal">
           <div class="modal-header">
@@ -2121,7 +2121,7 @@ function InputRow() {
           onBlur={() => setTimeout(closeCompletion, 150)}
           placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline, ↑↓/Tab to navigate)"
           rows={1}
-          disabled={!state.connected || (state.hasPendingChanges && !state.pendingChangesAcknowledged)}
+          disabled={!state.connected || (state.hasPendingChanges && !state.pendingChangesAcknowledged && state.events.length === 0)}
         />
       </div>
       <button

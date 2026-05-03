@@ -71,6 +71,35 @@ test("no pending-changes modal when working tree is clean", async ({ page, serve
 });
 
 // ---------------------------------------------------------------------------
+// Regression test: no false-positive modal when the session already has history
+//
+// If hasPendingChanges is true but the session already has events (i.e. the
+// agent has already started working), the modal must NOT appear — dirty git is
+// intentional / already accepted at that point.  This covers the browser-
+// refresh false-positive: the server's cached hasPendingChanges value can
+// outlive the git cleanup, so the client guards on `events.length === 0`.
+// ---------------------------------------------------------------------------
+
+test("no pending-changes modal when session already has history (git may be stale-dirty)", async ({ page, server }) => {
+  // Server will keep reporting hasPendingChanges: true (simulating a stale
+  // cached value that was set when the session was created and hasn't been
+  // re-checked since the user cleaned up git).
+  await server.setPendingChanges(true);
+
+  // Inject a user_message event into the session's events file *before* the
+  // page loads — simulating a session where work has already started.
+  // sendEvent persists to disk even without an active WebSocket connection.
+  await server.sendEvent({ type: "user_message", content: "hello" });
+
+  await page.goto("/");
+  await page.locator(CONNECTED_SELECTOR).waitFor({ timeout: 5000 });
+
+  // Modal must not appear: the session has history, so the warning is moot.
+  await expect(page.getByTestId("pending-changes-modal")).not.toBeVisible();
+  await expect(page.locator("textarea")).toBeEnabled();
+});
+
+// ---------------------------------------------------------------------------
 // Test: modal appears after a reset (new session) when working tree is dirty
 //
 // This is the regression test for the bug where reset_done cleared
