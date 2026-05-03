@@ -4,10 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 
 # This crate exists *only* to provide a deterministic test fixture binary
-# (`mock-omega-server`) for the Playwright real-server suite.  It wraps the
-# production `omega-server` with a hard-coded `MockProvider` that mirrors the
-# routing logic from the historical `e2e/fixtures/real-server.ts` fixture, plus
-# a tiny control HTTP server on a separate port for test inspection.
+# (`mock-omega-server`) for the Playwright real-server suite. It hosts the
+# production `omega-server` together with an internal axum-based
+# Anthropic-shaped SSE fake on a random 127.0.0.1 port, plus a tiny
+# control HTTP server on a separate port for test scripting / inspection.
 #
 # Not shipped to end users.  Not depended on by any other crate.
 
@@ -19,12 +19,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-axum         = { version = "0.8" }
-clap         = { version = "4", features = ["derive"] }
-futures      = "0.3"
-serde        = { version = "1", features = ["derive"] }
-serde_json   = "1"
-tokio        = { version = "1", features = ["full"] }
-omega-core     = { path = "../omega-core" }
-omega-protocol = { path = "../omega-protocol" }
-omega-server   = { path = "../omega-server" }
+axum                = { version = "0.8" }
+clap                = { version = "4", features = ["derive"] }
+tokio               = { version = "1", features = ["full"] }
+omega-core          = { path = "../omega-core" }
+omega-server        = { path = "../omega-server" }
+omega-test-fixtures = { path = "../omega-test-fixtures" }

@@ -15,6 +15,7 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { SCRIPTS, loadScript } from "./fixtures/real-server-control";
 
 // Shorthand for waiting until the Ω button is in "connected" state.
 const connectedDot = (page: import("@playwright/test").Page) =>
@@ -58,6 +59,7 @@ async function ensureSession(page: import("@playwright/test").Page) {
 }
 
 test("events persist through the real server and replay after page reload", async ({ page }) => {
+  await loadScript(SCRIPTS.pong());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await ensureSession(page);
@@ -92,6 +94,7 @@ test("events persist through the real server and replay after page reload", asyn
 // ---------------------------------------------------------------------------
 
 test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly", async ({ page }) => {
+  await loadScript(SCRIPTS.abortSleep());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await ensureSession(page);
@@ -117,6 +120,7 @@ test("abort during run_command kills subprocess and shows '⊘ Aborted' quickly"
 });
 
 test("session dir shown in sessions button persists after reload", async ({ page }) => {
+  await loadScript(SCRIPTS.pong());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await ensureSession(page);
@@ -152,6 +156,7 @@ test("session dir shown in sessions button persists after reload", async ({ page
 // ---------------------------------------------------------------------------
 
 test("model picker button updates immediately after switching model while idle", async ({ page }) => {
+  await loadScript(SCRIPTS.pong());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await ensureSession(page);

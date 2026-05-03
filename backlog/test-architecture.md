@@ -83,11 +83,12 @@ flowchart LR
 1. **Each binary is tested through its outermost user-visible surface.**
    - `omega-cli` → stdout, stderr, exit code, files written under `--session-root`.
    - `omega-server` → WebSocket frames in/out, plus (post-Leptos) rendered HTML.
-2. **One fake LLM, plugged in at the HTTP boundary.** An Anthropic-shaped axum
-   server serving scriptable `/v1/messages` SSE, addressed via the
-   `ANTHROPIC_BASE_URL` env var (already supported by
-   `AnthropicProvider::with_base_url`; the env-var hook is one line per
-   binary). Both CLI and server tests use the same fake.
+2. **One LLM mocking boundary, ever.** All fakes plug into
+   `omega_core::AnthropicProvider::with_base_url`, either directly or via the
+   `ANTHROPIC_BASE_URL` env-var hook in each binary's `main.rs`. No parallel
+   `Provider`-trait injection, no `Agent`-level seams, no `RetryingProvider`
+   swap-outs. See "LLM mocking: one boundary, two fixture libs" below for
+   why two libraries are deliberate.
 3. **Coverage of orchestration modules flows down from the e2e tier.** A
    surviving mutant in `omega-agent::send_message` after both e2e suites have
    run is a dead-code signal, not a missing test.
@@ -107,6 +108,50 @@ flowchart LR
 
 ---
 
+## LLM mocking: one boundary, two fixture libs
+
+This section records the conclusion of a recurring design discussion so it
+doesn't have to happen again.
+
+### Rules
+
+1. **One mocking boundary, ever.** Every fake LLM in this repo plugs into
+   `omega_core::AnthropicProvider::with_base_url`, either directly or via
+   the `ANTHROPIC_BASE_URL` env-var hook in each binary's `main.rs`. No
+   parallel `Provider`-trait injection, no `Agent`-level seams, no
+   `RetryingProvider` swap-outs. (TEST-ARCH-3 finished enforcing this.)
+2. **Two fixture *implementations* behind that boundary, by deliberate
+   choice:**
+   - `omega-core/tests/{anthropic,ollama,retry}.rs` use **`wiremock`**.
+     Their job is leaf-parser / retry-policy testing: "given this exact
+     wire response, does the parser do the right thing?". Declarative
+     `(matcher, response)` is the natural shape; `wiremock`'s
+     `up_to_n_times` covers the retry-sequencing case cleanly.
+   - All binary-level e2e tests (`omega-cli`, `omega-server`,
+     `omega-mock-server`) use the **`omega-test-fixtures`** axum SSE
+     fake. Their job needs FIFO queue semantics and streaming responses
+     with timed deltas (the `LONG_STREAM_TEST` case), which `wiremock`
+     cannot do without contortion.
+3. **No more than one copy of each fixture.** The axum fake lives in
+   `omega-test-fixtures` and is consumed by re-export from each test
+   crate's `common/mod.rs`. Forked copies are a regression — fix on sight.
+
+### Why not unify on one library?
+
+Neither library can comfortably take over the other's territory:
+
+- `wiremock` cannot stream timed SSE chunks. Hard requirement for
+  `LONG_STREAM_TEST` and any other pause-during-stream scenario.
+- The axum fake *can* do everything `wiremock` does, but at ~3× the
+  boilerplate per leaf-parser test (~30 tests in `omega-core/tests/` would
+  need rewriting). Stylistic uniformity isn't worth the churn.
+
+If this calculus changes (e.g. `wiremock` gains streaming support, or the
+leaf-parser tests start needing axum-only features), revisit. Until then:
+keep both, document the split, stop discussing it.
+
+---
+
 ## Status quo vs. target
 
 | Surface | Status quo | Target |
@@ -116,10 +161,11 @@ flowchart LR
 | `omega-store` I/O | unit tests | unchanged |
 | `omega-tools` per-tool | integration tests with `tempdir` | unchanged (leaf carve-out) |
 | `omega-agent` Agent loop | dedicated MockProvider tests in `omega-agent/tests/` | retired — coverage flows down from CLI + server e2e |
-| `omega-cli` binary | **no tests** (BUG-C) | subprocess + HTTP fake via `ANTHROPIC_BASE_URL` |
-| `omega-server` binary (Rust-side) | none | subprocess + raw-WS client + same HTTP fake |
-| `omega-server` binary (browser-side) | full Playwright suite via `omega-mock-server` (Provider-trait injection) | trimmed Playwright suite + Leptos HTML snapshots; Provider-trait injection retired |
-| `omega-mock-server` | binary fixture for Playwright | retired or repurposed as a thin wrapper around the HTTP fake |
+| `omega-cli` binary | subprocess + HTTP fake via `ANTHROPIC_BASE_URL` | unchanged |
+| `omega-server` binary (Rust-side) | subprocess + raw-WS client + same HTTP fake | unchanged |
+| `omega-server` binary (browser-side) | Playwright via `omega-mock-server`, hosting an internal SSE fake + real `AnthropicProvider` | trimmed Playwright suite + Leptos HTML snapshots (post-Phase 3) |
+| `omega-mock-server` | thin Playwright wrapper: real `omega-server` + internal SSE fake on `127.0.0.1:0` + control HTTP API on `:3004` | unchanged |
+| LLM HTTP fake implementation | single `omega-test-fixtures` workspace dev-helper crate | unchanged |
 
 ---
 
@@ -127,94 +173,63 @@ flowchart LR
 
 ### TEST-ARCH-1 — `omega-cli` e2e via subprocess + HTTP fake (BUG-C)
 
-**Status:** ✅ **Done.** `just rust-mutants-cli` reports 17 caught, 0 missed.
+**Status:** ✅ **Done.** 17 caught, 0 missed.
 
-Landed:
-
-- `ANTHROPIC_BASE_URL` and `OMEGA_RETRY_INITIAL_MS` env-var hooks in
-  `omega-cli/src/main.rs`.
-- `omega-cli/tests/common/mod.rs` — axum SSE fake with `MockResponse::{Text,
-  ToolUse, HttpError}` on a 127.0.0.1 random port; task aborted on drop.
-- `omega-cli/tests/cli.rs` — six tests covering `--help`, missing API key,
-  happy text turn, tool-use round trip, retry exhaustion, and a
-  belt-and-braces stderr snapshot.
-- Dev-deps: `assert_cmd`, `insta`, `tempfile`, `axum`, `serde_json`.
-
-The retry-exhaustion test asserts on the `waitMs` field of persisted
-`llm_retry` events, which is what makes the `initial_backoff` field mutant
-observable from outside the binary. The `now_iso` mutants are killed by
-reading `events.jsonl` and checking the `session_started.time` field looks
-like an ISO-8601 timestamp.
-
-Cross-reference: BUG-C section in `rust-migration.md`.
+`ANTHROPIC_BASE_URL` + `OMEGA_RETRY_INITIAL_MS` env hooks; axum SSE fake on a
+random port; six tests in `omega-cli/tests/cli.rs` (`--help`, missing key,
+happy turn, tool-use round trip, retry exhaustion, stderr snapshot).
+Dev-deps: `assert_cmd`, `insta`, `tempfile`, `axum`.
 
 ---
 
 ### TEST-ARCH-2 — `omega-server` Rust-level WS-protocol tests
 
-**Status:** ✅ **Done.** Mutation run on `crates/omega-server/src/router.rs`
-reports 1 missed, 67 caught — the missed mutant is the documented
-equivalent (`Message::Close(_)` arm in `handle_socket`, where deletion
-falls through to identical behaviour via the next `reader.next()` returning
-`None`).
+**Status:** ✅ **Done.** 67 caught, 1 missed (documented equivalent:
+`Message::Close` arm — deletion falls through to identical behaviour via
+the next `reader.next()` returning `None`).
 
-Landed:
-
-- `ANTHROPIC_BASE_URL` env-var hook in `omega-server/src/main.rs` (mirrors
-  the omega-cli hook).
-- `omega-server/tests/common/mod.rs` — the same axum SSE fake as omega-cli,
-  duplicated for now (TEST-ARCH-3 will consolidate or retire one copy).
-- `omega-server/tests/ws_router.rs` — 16 tests using `tokio-tungstenite` raw
-  WS client + `MockProvider` for in-process WS-routing coverage; one
-  subprocess test (`e2e_full_turn_via_http_fake`) validates the
-  `ANTHROPIC_BASE_URL` hook end-to-end.
-- Insta snapshots for `model_changed`, `effort_changed`, `session_deleted`,
-  and the post-`turn_end` `session_info(turnState="idle")` frames, with
-  `time` / `dir` / `cwd` redacted.
-- Dev-deps added: `insta`, `axum`, `assert_cmd`.
-
-Two production bugs surfaced and were fixed as part of this work:
-
-- **BUG-S1**: ABBA deadlock in `send_session_info_and_history` (held
-  `active_session` across `info_cache`/`turn_state` await; streaming task
-  held `turn_state` and needed `active_session`). Fixed by extracting Arc
-  handles before releasing `active_session`.
-- **BUG-S2**: `session_info.turnState` stayed `"idle"` during session
-  resumption because `perform_resumption` never yields
-  state-changing events. Fixed by bracketing the resumption stream with
-  explicit `"running"` / `"idle"` transitions in `handle_resume_session`,
-  and removing the now-dead `PauseRequested` arm from `next_turn_state_for`.
-
-**Out of scope (deferred):** retiring `omega-mock-server` (TEST-ARCH-3) and
-the `omega-agent/tests/` MockProvider suite (TEST-ARCH-4).
+`ANTHROPIC_BASE_URL` hook in `omega-server/src/main.rs`; 16 in-process WS
+tests + one subprocess e2e test; insta snapshots for key frames with
+`time`/`dir`/`cwd` redacted. Two production bugs fixed: **BUG-S1** (ABBA
+deadlock in `send_session_info_and_history`); **BUG-S2**
+(`session_info.turnState` stayed `"idle"` during resumption).
 
 ---
 
 ### TEST-ARCH-3 — Retire / repurpose `omega-mock-server`
 
-**Status:** ⬜ blocked on TEST-ARCH-2.
+**Status:** ✅ **Done.** Outcome: option B (repurpose as a thin Playwright
+wrapper around the HTTP fake), plus the workspace-wide axum-fake
+de-duplication that was the second half of this task.
 
-Once TEST-ARCH-2 lands, `omega-server` is exercisable via the HTTP fake at the
-real-Anthropic boundary. The Provider-trait-injected mock binary
-(`omega-mock-server`) is then a parallel pattern doing the same job less
-faithfully (skips AnthropicProvider HTTP/SSE code path).
+What shipped:
 
-Two options:
+- `omega-mock-server` no longer injects a `Provider` trait. It hosts the
+  production [`omega_server::serve`] driven by a real
+  [`omega_core::AnthropicProvider`] whose base URL points at an internal
+  Anthropic-shaped SSE fake on a random `127.0.0.1` port. The full HTTP/SSE
+  code path (request serialisation, `reqwest`, SSE parser) now runs under
+  every Playwright test.
+- The Playwright control surface keeps its 3004 port: `POST /control/script`
+  loads a per-test queue of `MockResponse`s, `GET /control/llm-calls`
+  returns captured requests, `POST /control/reset-calls` clears the
+  history. TS-side helper at `e2e/fixtures/real-server-control.ts`.
+- New workspace dev-helper crate **`omega-test-fixtures`** — single
+  source of the LLM HTTP fake. The previously forked copies in
+  `omega-cli/tests/common/`, `omega-server/tests/common/`, and
+  `omega-mock-server/src/fake.rs` (847 lines combined) collapsed into one
+  ~530-line crate consumed by all three call-sites.
 
-A. **Retire** `omega-mock-server` outright. Migrate the Playwright suite to
-   use the production `omega-server` binary with `ANTHROPIC_BASE_URL` set.
-B. **Repurpose** `omega-mock-server` as a thin Playwright-only wrapper that
-   hosts the HTTP fake on the side, so Playwright still talks to a single
-   convenient subprocess.
-
-Decide at the time based on Playwright-fixture ergonomics. Either way, the
-underlying LLM fake becomes one implementation across the whole codebase.
+**Success criterion (met):**
+`grep -r "MockProvider" rust/crates/omega-mock-server/` returns no results;
+all 116 Playwright browser tests (`just test-browser`) pass; `just rust-gate`
+passes.
 
 ---
 
 ### TEST-ARCH-4 — Retire `omega-agent/tests/` MockProvider suite
 
-**Status:** ⬜ blocked on TEST-ARCH-1 + TEST-ARCH-2 landing.
+**Status:** ⬜ Ready (TEST-ARCH-1 + TEST-ARCH-2 done).
 
 The six existing `omega-agent/tests/*.rs` files date from Phase 1d.0a, when
 the agent loop had no downstream e2e coverage. Once TEST-ARCH-1 and

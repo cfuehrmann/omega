@@ -1282,7 +1282,6 @@ name = "omega-cli"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "axum",
  "chrono",
  "clap",
  "futures",
@@ -1291,6 +1290,7 @@ dependencies = [
  "omega-core",
  "omega-protocol",
  "omega-store",
+ "omega-test-fixtures",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1324,12 +1324,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
- "futures",
  "omega-core",
- "omega-protocol",
  "omega-server",
- "serde",
- "serde_json",
+ "omega-test-fixtures",
  "tokio",
 ]
 
@@ -1359,6 +1356,7 @@ dependencies = [
  "omega-core",
  "omega-protocol",
  "omega-store",
+ "omega-test-fixtures",
  "regex",
  "reqwest",
  "serde",
@@ -1385,6 +1383,17 @@ dependencies = [
  "thiserror",
  "tokio",
  "ts-rs",
+]
+
+[[package]]
+name = "omega-test-fixtures"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -14,9 +14,11 @@ Umbrella plan for bringing every test surface in Omega onto a single, honest
 pattern: test through the outermost user-visible surface of each binary; fake
 only the LLM (Anthropic-shaped HTTP at `ANTHROPIC_BASE_URL`); let coverage of
 orchestration modules flow down from the e2e tier; keep dedicated unit tests
-only for leaf utilities (SSE parser, per-tool I/O). Six steps; the first
-(TEST-ARCH-1, same work as `rust-migration.md`'s BUG-C) is blocking the rest
-and should be done now. The last two are gated on the Leptos rewrite.
+only for leaf utilities (SSE parser, per-tool I/O). Six steps; TEST-ARCH-1
+(CLI e2e) and TEST-ARCH-2 (server WS-protocol tests) are done. TEST-ARCH-3
+(retire `omega-mock-server`) and TEST-ARCH-4 (retire `omega-agent` MockProvider
+suite) are now unblocked. TEST-ARCH-5 and TEST-ARCH-6 are gated on the Leptos
+rewrite.
 
 ---
 

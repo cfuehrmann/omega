@@ -21,8 +21,12 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
-
-const CONTROL_URL = "http://localhost:3004";
+import {
+  SCRIPTS,
+  getCalls,
+  loadScript,
+  resetCalls,
+} from "./fixtures/real-server-control";
 
 const connectedDot = (page: Page) =>
   page.locator('[data-testid="omega-btn"][data-status="connected"]');
@@ -85,15 +89,6 @@ interface ProjectedCall {
   messages: Array<{ role: string; content: string }>;
 }
 
-async function resetCalls(): Promise<void> {
-  await fetch(`${CONTROL_URL}/control/reset-calls`, { method: "POST" });
-}
-
-async function getCalls(): Promise<ProjectedCall[]> {
-  const res = await fetch(`${CONTROL_URL}/control/llm-calls`);
-  return (await res.json()) as ProjectedCall[];
-}
-
 // ---------------------------------------------------------------------------
 
 test.beforeEach(async () => {
@@ -102,6 +97,7 @@ test.beforeEach(async () => {
 
 // 1.
 test("multi-tool: pause during 2nd tool; turn_paused only after its result; interjection reaches next LLM call", async ({ page }) => {
+  await loadScript(SCRIPTS.multiTool());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -132,6 +128,7 @@ test("multi-tool: pause during 2nd tool; turn_paused only after its result; inte
 
 // 2.
 test("concurrent tools: pause waits for the slow tool before turn_paused", async ({ page }) => {
+  await loadScript(SCRIPTS.concurrentTools());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -157,6 +154,7 @@ test("concurrent tools: pause waits for the slow tool before turn_paused", async
 
 // 3.
 test("pause + browser reload + manual continue: interjection lands on next LLM call", async ({ page }) => {
+  await loadScript(SCRIPTS.multiTool());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -190,6 +188,7 @@ test("pause + browser reload + manual continue: interjection lands on next LLM c
 
 // 4.
 test("pre-commit + browser reload: pre-commit drops, paused turnState survives", async ({ page }) => {
+  await loadScript(SCRIPTS.multiTool());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -225,6 +224,7 @@ test("pre-commit + browser reload: pre-commit drops, paused turnState survives",
 
 // 5.
 test("two pauses in one turn: both interjections appear in the feed and in later LLM calls", async ({ page }) => {
+  await loadScript(SCRIPTS.twoPauses());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -272,6 +272,7 @@ test("two pauses in one turn: both interjections appear in the feed and in later
 
 // 6.
 test("pause during LLM stream does not truncate the assistant message", async ({ page }) => {
+  await loadScript(SCRIPTS.longStream());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -296,6 +297,7 @@ test("pause during LLM stream does not truncate the assistant message", async ({
 
 // 7.
 test("session resume basis includes interjection as 'User (mid-turn): ...'", async ({ page }) => {
+  await loadScript(SCRIPTS.resumeBasis());
   await page.goto("/");
   await connectedDot(page).waitFor({ timeout: 5000 });
   await openNewSession(page);
@@ -413,6 +415,7 @@ test("reload while Paused: no transient ⊘ Interrupted block ever renders", asy
   await openNewSession(page);
 
   // Trigger a pausable multi-tool turn (same scenario as test 3).
+  await loadScript(SCRIPTS.multiTool());
   await page.locator("textarea").fill("MULTI_TOOL_TEST flash probe");
   await page.locator("textarea").press("Enter");
 

@@ -1,0 +1,23 @@
+[package]
+name        = "omega-test-fixtures"
+version     = "0.1.0"
+edition.workspace = true
+publish     = false
+
+# Anthropic-shaped axum SSE fake — shared dev-helper crate.
+#
+# Single source of the LLM HTTP fake used by every binary-level test in
+# the workspace (omega-cli, omega-server, omega-mock-server). The fake
+# plugs into the canonical mocking boundary: `omega_core::AnthropicProvider::with_base_url`.
+#
+# Not depended on by any production crate. Not published.
+
+[lints]
+workspace = true
+
+[dependencies]
+axum       = { version = "0.8" }
+futures    = "0.3"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio      = { version = "1", features = ["sync", "time", "rt", "macros", "net"] }
