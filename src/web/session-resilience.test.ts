@@ -481,3 +481,53 @@ describe("resumption llm_call does not override liveModel", () => {
     expect(state.liveModel).toBe("claude-opus-4-6");
   });
 });
+
+// ---------------------------------------------------------------------------
+// reset_done must NOT clobber liveModel/liveEffort set by the prior
+// session_info frame (regression: BUG-W1).
+//
+// Server frame order on reset is `session_info → history → reset_done → ready`.
+// session_info sets liveModel + liveEffort from the new agent's active values.
+// reset_done used to overwrite them with "" / "medium", so the model/effort
+// buttons went blank after reset until the next user_message triggered a
+// fresh session_info(turnState="running").
+// ---------------------------------------------------------------------------
+
+describe("reset_done preserves session_info-derived liveModel/liveEffort", () => {
+  it("liveModel and liveEffort stay at the values session_info just set", () => {
+    // Reset to a known state.
+    dispatch({ type: "history", events: [] });
+
+    // Server's reset frame sequence: session_info first, then reset_done.
+    dispatch({
+      type: "session_info",
+      dir: "2025-01-01T00-00-00-000-deadbeef",
+      model: "claude-opus-4-7",
+      effort: "high",
+      cwd: "/tmp",
+      turnState: "idle",
+    } as any);
+    expect(state.liveModel).toBe("claude-opus-4-7");
+    expect(state.liveEffort).toBe("high");
+
+    dispatch({ type: "reset_done" } as any);
+
+    // The fix: liveModel / liveEffort must be preserved.
+    expect(state.liveModel).toBe("claude-opus-4-7");
+    expect(state.liveEffort).toBe("high");
+  });
+
+  it("reset_done still clears events and turn-scoped state", () => {
+    // Belt-and-braces: ensure the minimal-fix didn't accidentally drop
+    // the rest of the reset_done clears.
+    dispatch({
+      type: "history",
+      events: [{ type: "user_message", time: now(), content: "leftover" }],
+    });
+    dispatch({ type: "reset_done" } as any);
+    expect(state.events).toEqual([]);
+    expect(state.streaming).toBe(false);
+    expect(state.retrying).toBe(false);
+    expect(state.lastTurnEnd).toBeNull();
+  });
+});

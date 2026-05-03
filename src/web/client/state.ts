@@ -647,7 +647,14 @@ export function dispatch(event: ServerMessage): void {
       break;
 
     case "reset_done":
-      // Server has created a new agent — clear all UI state
+      // Server has created a new agent — clear all UI state.
+      //
+      // We do NOT clear `liveModel` / `liveEffort` here: the server sends a
+      // `session_info` frame immediately *before* `reset_done` carrying the
+      // new session's model and effort, and clearing them here would clobber
+      // the just-set values (user-visible symptom: model/effort buttons go
+      // blank after reset until the first user_message triggers a fresh
+      // `session_info(turnState="running")`).
       setState("events", []);
       setState("streamingText", "");
       setState("streamingThinking", "");
@@ -659,8 +666,6 @@ export function dispatch(event: ServerMessage): void {
       setState("compactionTotals", zeroMetrics());
       setState("liveTurn", null);
       setState("liveDurations", zeroDurations());
-      setState("liveModel", "");
-      setState("liveEffort", "medium");
       setState("sessionName", "");
       setState("turnState", "idle");
       setState("preCommitted", false);
