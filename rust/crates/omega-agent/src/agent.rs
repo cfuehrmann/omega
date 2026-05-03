@@ -566,7 +566,7 @@ impl Agent {
                         .collect(),
                     cache_breakpoint_index,
                     request_bytes,
-                    request_summary: None,
+                    request_summary: Some(elide_request(&request)),
                 });
                 let _ = self.event_store.append(&call_ev).await;
                 yield AgentItem::event(call_ev);
@@ -1178,7 +1178,7 @@ impl Agent {
                 context_hashes: vec![user_hash.as_ref().to_owned()],
                 cache_breakpoint_index: None,
                 request_bytes,
-                request_summary: None,
+                request_summary: Some(elide_request(&request)),
             });
             let _ = self.event_store.append(&call_ev).await;
             yield AgentItem::event(call_ev);
@@ -1354,4 +1354,92 @@ impl Agent {
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Build an elided (non-wall-of-text) summary of an [`LlmRequest`] for
+/// the `request_summary` field of [`LlmCallEvent`].
+///
+/// Mirrors `elideAnthropicRequest` in the TypeScript reference
+/// (`src/agent.ts`, commits 50622a9 / 5f1e40a).
+///
+/// * `system`  → `"[N block(s), X chars]"`
+/// * `tools`   → array of `{name, description: "[N chars]", input_schema:
+///               "[elided]"}`
+/// * `messages` → `"[N message(s), X chars]"`
+/// * Top-level scalar fields (`model`, `max_tokens`, `thinking`, …) are
+///   forwarded verbatim.
+fn elide_request(req: &LlmRequest) -> Value {
+    use serde_json::{Map, json};
+
+    // ---- system ---------------------------------------------------------
+    let system_val = if let Some(sys) = &req.system {
+        let blocks = 1usize; // always a single string block in our agent
+        let chars = sys.chars().count();
+        let label = if blocks == 1 { "block" } else { "blocks" };
+        Value::String(format!("[{blocks} {label}, {chars} chars]"))
+    } else {
+        Value::Null
+    };
+
+    // ---- tools ----------------------------------------------------------
+    let tools_val: Vec<Value> = req
+        .tools
+        .iter()
+        .map(|t| {
+            let desc_chars = t.description.chars().count();
+            json!({
+                "name": t.name,
+                "description": format!("[{desc_chars} chars]"),
+                "input_schema": "[elided]",
+            })
+        })
+        .collect();
+
+    // ---- messages -------------------------------------------------------
+    let msg_count = req.messages.len();
+    let msg_label = if msg_count == 1 {
+        "message"
+    } else {
+        "messages"
+    };
+    let msg_chars = serde_json::to_string(&req.messages).map_or(0, |s| s.chars().count());
+    let messages_val = Value::String(format!("[{msg_count} {msg_label}, {msg_chars} chars]"));
+
+    // ---- top-level scalars ----------------------------------------------
+    let mut map = Map::new();
+    map.insert("model".to_owned(), Value::String(req.model.clone()));
+    map.insert(
+        "max_tokens".to_owned(),
+        Value::Number(req.config.max_tokens.into()),
+    );
+    if let Some(n) = req
+        .config
+        .temperature
+        .and_then(|t| serde_json::Number::from_f64(f64::from(t)))
+    {
+        map.insert("temperature".to_owned(), Value::Number(n));
+    }
+    // thinking: adaptive or budget
+    if req.config.adaptive_thinking {
+        map.insert("thinking".to_owned(), json!({ "type": "adaptive" }));
+    } else if let Some(budget) = req.config.thinking_budget {
+        map.insert(
+            "thinking".to_owned(),
+            json!({ "type": "enabled", "budget_tokens": budget }),
+        );
+    }
+    if let Some(effort) = &req.config.effort {
+        map.insert("effort".to_owned(), Value::String(effort.clone()));
+    }
+    if let Some(cm) = &req.context_management {
+        map.insert("context_management".to_owned(), cm.clone());
+    }
+    // elided compound fields
+    map.insert("system".to_owned(), system_val);
+    if !tools_val.is_empty() {
+        map.insert("tools".to_owned(), Value::Array(tools_val));
+    }
+    map.insert("messages".to_owned(), messages_val);
+
+    Value::Object(map)
 }
