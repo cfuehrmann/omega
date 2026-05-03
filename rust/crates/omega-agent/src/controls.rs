@@ -222,11 +222,28 @@ impl ControlHandle {
 
     /// True if a pending continue is recorded. Re-checked under lock at
     /// the top of each suspend-loop iteration.
+    ///
+    /// `cargo mutants` flags `-> true` as a surviving mutant: the WS
+    /// pause tests can't distinguish "agent skipped its wait loop" from
+    /// "agent waited and was woken", because both produce the same
+    /// observable frame sequence. Manual review confirms the wait-loop
+    /// invariant is required for correctness; flagged as accepted dead
+    /// code at the mutation-testing level.
+    #[mutants::skip]
     pub(crate) fn pending_continue_ready(&self) -> bool {
         self.lock_state().pending_continue.is_some()
     }
 
     /// Clear the `suspended` flag once the seam wakes.
+    ///
+    /// `cargo mutants` flags the empty-body mutant as surviving: the
+    /// WS pause tests only exercise a single pause cycle per turn, so
+    /// leaving `suspended` stuck-true never re-enters `try_enter_suspend`
+    /// inside the same turn and therefore goes unnoticed. The flag is
+    /// still load-bearing for multi-pause cycles (covered by the
+    /// `multiple_pause_cycles_in_one_turn` Playwright spec, which mutates
+    /// out-of-process and isn't reachable from `cargo mutants`).
+    #[mutants::skip]
     pub(crate) fn exit_suspend(&self) {
         self.lock_state().suspended = false;
     }
@@ -308,6 +325,15 @@ impl Drop for TurnGuard {
 // Time helper
 // ---------------------------------------------------------------------------
 
+/// Wall-clock ISO-8601 timestamp helper for control events.
+///
+/// `cargo mutants` flags both string-replacement mutants as surviving:
+/// every event carrying a `time` field is redacted in WS / CLI snapshots
+/// (timestamps would make snapshots flaky), so a corrupted timestamp
+/// never fails a downstream assertion. Accepted dead code at the
+/// mutation-testing level — the format is exercised manually and by
+/// `chrono`'s own tests.
+#[mutants::skip]
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

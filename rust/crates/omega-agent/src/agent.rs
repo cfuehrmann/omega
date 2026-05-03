@@ -1443,3 +1443,90 @@ fn elide_request(req: &LlmRequest) -> Value {
 
     Value::Object(map)
 }
+
+#[cfg(test)]
+mod elide_request_tests {
+    //! Inline carve-out tests for [`elide_request`].
+    //!
+    //! `elide_request` is a private pure function whose pluralisation
+    //! and empty-tools branches are not directly observable downstream
+    //! (CLI/server e2e tests don't snapshot `LlmCall.request_summary`).
+    //! These tests pin the four branches that survive `cargo mutants
+    //! -p omega-agent --test-workspace true` otherwise.
+
+    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
+    use super::elide_request;
+    use omega_core::{ContentBlock, LlmRequest, Message, ModelConfig, Role, ToolDefinition};
+
+    fn user_msg(text: &str) -> Message {
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }],
+        }
+    }
+
+    fn make_request(messages: Vec<Message>, tools: Vec<ToolDefinition>) -> LlmRequest {
+        LlmRequest {
+            model: "claude-sonnet-4-6".to_owned(),
+            messages,
+            system: Some("hello".to_owned()),
+            tools,
+            config: ModelConfig::default(),
+            context_management: None,
+        }
+    }
+
+    #[test]
+    fn singular_message_label() {
+        let req = make_request(vec![user_msg("hi")], vec![]);
+        let v = elide_request(&req);
+        let s = v["messages"].as_str().expect("string");
+        assert!(s.starts_with("[1 message,"), "singular: {s}");
+        assert!(!s.contains("messages,"), "plural leaked: {s}");
+    }
+
+    #[test]
+    fn plural_messages_label() {
+        let req = make_request(vec![user_msg("a"), user_msg("b")], vec![]);
+        let v = elide_request(&req);
+        let s = v["messages"].as_str().expect("string");
+        assert!(s.starts_with("[2 messages,"), "plural: {s}");
+    }
+
+    #[test]
+    fn singular_system_block_label() {
+        let req = make_request(vec![user_msg("hi")], vec![]);
+        let v = elide_request(&req);
+        let s = v["system"].as_str().expect("string");
+        assert!(s.starts_with("[1 block,"), "singular: {s}");
+        assert!(!s.contains("blocks,"), "plural leaked: {s}");
+    }
+
+    #[test]
+    fn empty_tools_omits_tools_key() {
+        let req = make_request(vec![user_msg("hi")], vec![]);
+        let v = elide_request(&req);
+        assert!(
+            v.as_object().expect("object").get("tools").is_none(),
+            "empty tools must not produce a `tools` key, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn non_empty_tools_includes_tools_key() {
+        let tool = ToolDefinition {
+            name: "read_file".to_owned(),
+            description: "reads a file".to_owned(),
+            input_schema: serde_json::json!({}),
+        };
+        let req = make_request(vec![user_msg("hi")], vec![tool]);
+        let v = elide_request(&req);
+        let arr = v["tools"].as_array().expect("tools array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["name"], "read_file");
+        assert_eq!(arr[0]["description"], "[12 chars]");
+    }
+}

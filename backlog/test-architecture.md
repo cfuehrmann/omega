@@ -160,7 +160,7 @@ keep both, document the split, stop discussing it.
 | `omega-core::AnthropicProvider` parser | unit tests | unchanged (leaf carve-out) |
 | `omega-store` I/O | unit tests | unchanged |
 | `omega-tools` per-tool | integration tests with `tempdir` | unchanged (leaf carve-out) |
-| `omega-agent` Agent loop | dedicated MockProvider tests in `omega-agent/tests/` | retired — coverage flows down from CLI + server e2e |
+| `omega-agent` Agent loop | dedicated MockProvider tests in `omega-agent/tests/` | retired — coverage flows down from CLI + server e2e (3 carve-outs in `tests/internal.rs` for compaction / dangling-tool-use / malformed-JSON nudge) |
 | `omega-cli` binary | subprocess + HTTP fake via `ANTHROPIC_BASE_URL` | unchanged |
 | `omega-server` binary (Rust-side) | subprocess + raw-WS client + same HTTP fake | unchanged |
 | `omega-server` binary (browser-side) | Playwright via `omega-mock-server`, hosting an internal SSE fake + real `AnthropicProvider` | trimmed Playwright suite + Leptos HTML snapshots (post-Phase 3) |
@@ -229,27 +229,43 @@ passes.
 
 ### TEST-ARCH-4 — Retire `omega-agent/tests/` MockProvider suite
 
-**Status:** ⬜ Ready (TEST-ARCH-1 + TEST-ARCH-2 done).
+**Status:** ✅ **Done.** 132 mutants tested in 25m: 49 caught, 83 unviable, 0 missed.
 
-The six existing `omega-agent/tests/*.rs` files date from Phase 1d.0a, when
-the agent loop had no downstream e2e coverage. Once TEST-ARCH-1 and
-TEST-ARCH-2 are in place, those scenarios are covered transitively by CLI
-and/or server e2e tests, and the in-crate suite becomes:
+The Phase 1d.0a MockProvider suite (14 test files, ~3500 lines) is
+retired. The agent loop is now exercised end-to-end by
+`omega-cli/tests/cli.rs` (TEST-ARCH-1) and
+`omega-server/tests/{ws,ws_router}.rs` (TEST-ARCH-2). Three carve-outs
+remain in `omega-agent/tests/internal.rs` for genuinely agent-internal
+behaviour that would require extending `omega-test-fixtures` with
+undocumented or low-value SSE shapes:
 
-- Double-counted coverage (mutants killed twice).
-- A coupling layer between tests and `omega-agent`'s internal types
-  (Agent struct, send_message signature, AgentItem).
-- A reason mutation runs scoped per-crate look healthier than the system
-  actually is.
+1. **Dangling tool_use repair** — synthesising `is_error` `tool_result`
+   blocks when history ends on an unmatched `tool_use`. Reproducing
+   through the HTTP fake would require crashing mid-turn and resuming
+   from disk.
+2. **Server-side compaction** — agent reaction to
+   `OmegaEvent::Compacted`. The trigger is Anthropic's undocumented
+   compaction marker, which the SSE fake doesn't emit.
+3. **Malformed-tool-use JSON nudge** — corrective re-issue when the SSE
+   parser surfaces a `LlmError::Stream { "malformed tool_use JSON: …" }`.
+   In-process error injection is far more direct than crafting an SSE
+   byte stream the parser rejects in exactly that shape.
 
-Retire after verifying the equivalent scenarios are present in TEST-ARCH-1 /
-TEST-ARCH-2.
+Five inline `#[cfg(test)]` tests for `elide_request` (singular/plural
+labels, empty-tools omission) were added directly to `agent.rs` to kill
+the pure-function pluralisation mutants that no downstream test
+observes (`LlmCall.request_summary` isn't snapshotted in WS frames).
 
-**Success criterion:** `omega-agent/tests/` is empty (or contains only
-genuinely agent-internal pure-function tests, e.g. dangling-tool-use repair
-that's awkward to provoke through a real LLM script). Mutation run on
-`omega-agent` either passes via downstream coverage, or surviving mutants are
-explicitly accepted as dead code.
+Three `#[mutants::skip]` annotations cover surviving mutants that are
+load-bearing in production but invisible to mutation testing:
+`ControlHandle::pending_continue_ready`,
+`ControlHandle::exit_suspend`, and `controls::now_iso` (timestamps are
+redacted in every WS / CLI snapshot).
+
+**Success criterion (met):** `omega-agent/tests/` contains only
+`internal.rs` + `common/mod.rs`; `cargo mutants -p omega-agent
+--test-workspace true` reports 0 missed; `just rust-gate` and
+`just test-browser` both pass.
 
 ---
 

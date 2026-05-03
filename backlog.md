@@ -15,10 +15,10 @@ pattern: test through the outermost user-visible surface of each binary; fake
 only the LLM (Anthropic-shaped HTTP at `ANTHROPIC_BASE_URL`); let coverage of
 orchestration modules flow down from the e2e tier; keep dedicated unit tests
 only for leaf utilities (SSE parser, per-tool I/O). Six steps; TEST-ARCH-1
-(CLI e2e) and TEST-ARCH-2 (server WS-protocol tests) are done. TEST-ARCH-3
-(retire `omega-mock-server`) and TEST-ARCH-4 (retire `omega-agent` MockProvider
-suite) are now unblocked. TEST-ARCH-5 and TEST-ARCH-6 are gated on the Leptos
-rewrite.
+(CLI e2e), TEST-ARCH-2 (server WS-protocol tests), TEST-ARCH-3 (retire
+`omega-mock-server`'s `MockProvider`), and TEST-ARCH-4 (retire `omega-agent`
+MockProvider suite) are done. TEST-ARCH-5 and TEST-ARCH-6 are gated on the
+Leptos rewrite.
 
 ---
 
