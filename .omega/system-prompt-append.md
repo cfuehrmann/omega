@@ -39,6 +39,11 @@ If the project has no test setup yet, it's worth discussing early — good
 test structure is much easier to establish at the start than to retrofit
 later.
 
+- **Commit before reporting back.** When working on this project (Omega itself),
+  always finish a task with `git add -A && git commit -m "..."` before
+  declaring it done. The pre-commit hook runs the gate; a committed exit code 0
+  is the proof of correctness. Reporting back without committing defeats the
+  gate entirely.
 - **Never bypass the gate** — no `--no-verify`, no rationalizing failures as
   "flaky". A test that passes alone but fails in the gate is a real bug. Fix it.
 - `just gate` runs as the **pre-commit hook** — do not run it separately.

@@ -1577,8 +1577,7 @@ pub fn git_has_pending_changes(cwd: &std::path::Path) -> bool {
         .args(["status", "--porcelain"])
         .current_dir(cwd)
         .output()
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false)
+        .is_ok_and(|o| !o.stdout.is_empty())
 }
 
 #[cfg(test)]
