@@ -764,9 +764,23 @@ async fn rename_session_updates_metadata_for_active_session() {
     send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
+    // The active session's directory is the only one in `sessions_root`.
+    let active_dir = sessions_root
+        .read_dir()
+        .expect("sessions_root readable")
+        .next()
+        .expect("a session dir must exist")
+        .expect("dir entry")
+        .file_name()
+        .into_string()
+        .expect("utf-8 dir name");
     send_json(
         &mut ws,
-        serde_json::json!({ "type": "rename_session", "name": "my-name" }),
+        serde_json::json!({
+            "type": "rename_session",
+            "sessionDir": active_dir,
+            "name": "my-name",
+        }),
     )
     .await;
     // The server broadcasts a session_renamed envelope after the disk write.
@@ -801,6 +815,81 @@ async fn rename_session_updates_metadata_for_active_session() {
         meta.name.as_deref(),
         Some("my-name"),
         "name must be updated; got {meta:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Regression: rename_session must target the *client-provided* session_dir,
+// not the currently active session.
+//
+// Earlier versions of the Rust router declared `RenameSession { name }`
+// (without `session_dir`); serde silently dropped the client's `sessionDir`
+// field and the handler always renamed whichever session was active. From
+// the picker that produced two failure modes:
+//   1. With no active session yet: rename appeared to do nothing.
+//   2. After starting a new session: renaming a *previous* session in the
+//      picker actually renamed the new (active) one.
+// This test pre-creates an inactive session on disk, asks the server to
+// rename it while a *different* session is active, and asserts that only
+// the targeted session's metadata changed.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn rename_session_targets_client_provided_dir_not_active_session() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    std::fs::create_dir_all(&sessions_root).unwrap();
+
+    // Pre-create an inactive session B on disk with an empty events.jsonl
+    // (its existence is enough; we never load it as the active session).
+    let session_b_name = "2024-12-31T00-00-00-000-deadbeef";
+    let session_b_dir = sessions_root.join(session_b_name);
+    std::fs::create_dir_all(&session_b_dir).unwrap();
+    std::fs::write(session_b_dir.join("events.jsonl"), "").unwrap();
+
+    let provider = Arc::new(MockProvider::new());
+    let state = make_test_state(provider, sessions_root.clone());
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    // Make session A the active session.
+    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    let _ = recv_until_type(&mut ws, "ready").await;
+    let session_a_name = std::fs::read_dir(&sessions_root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().into_string().unwrap())
+        .find(|n| n != session_b_name)
+        .expect("active session A on disk");
+
+    // Rename the *inactive* session B from the picker. The active session
+    // is A — the bug would silently rename A instead.
+    send_json(
+        &mut ws,
+        serde_json::json!({
+            "type": "rename_session",
+            "sessionDir": session_b_name,
+            "name": "renamed-b",
+        }),
+    )
+    .await;
+    let frame = recv_json(&mut ws).await;
+    assert_eq!(frame["type"], "session_renamed", "got: {frame:?}");
+    assert_eq!(frame["sessionDir"], session_b_name, "got: {frame:?}");
+    assert_eq!(frame["name"], "renamed-b", "got: {frame:?}");
+
+    let meta_b = omega_store::read_session_metadata(&session_b_dir).await;
+    assert_eq!(
+        meta_b.name.as_deref(),
+        Some("renamed-b"),
+        "target session B must have the new name; got {meta_b:?}",
+    );
+    let meta_a = omega_store::read_session_metadata(&sessions_root.join(&session_a_name)).await;
+    assert_eq!(
+        meta_a.name, None,
+        "active session A must NOT be touched; got {meta_a:?}",
     );
 }
 

@@ -320,9 +320,11 @@ enum ClientFrame {
     /// summary of `session_dir`'s history via the resumption LLM call.
     #[serde(rename_all = "camelCase")]
     ResumeSession { session_dir: String },
-    /// Rename the active session by writing `name` into its
-    /// `session.jsonc` metadata.
-    RenameSession { name: String },
+    /// Rename the session at `session_dir` by writing `name` into its
+    /// `session.jsonc` metadata. The target need NOT be the currently
+    /// active session — the picker lets users rename any session.
+    #[serde(rename_all = "camelCase")]
+    RenameSession { session_dir: String, name: String },
     /// Switch the active model on the live agent. Mirrors the TS server's
     /// `set_model` handler: persists a `model_changed` event and may
     /// auto-reset the effort to `"medium"` if the chosen model doesn't
@@ -573,7 +575,9 @@ async fn dispatch_client_frame(
         ClientFrame::ResumeSession { session_dir } => {
             handle_resume_session(state, tx, session_dir).await
         }
-        ClientFrame::RenameSession { name } => handle_rename_session(state, tx, name).await,
+        ClientFrame::RenameSession { session_dir, name } => {
+            handle_rename_session(state, tx, session_dir, name).await
+        }
         ClientFrame::SetModel { model } => handle_set_model(state, tx, model).await,
         ClientFrame::SetEffort { effort } => handle_set_effort(state, tx, effort).await,
         ClientFrame::DeleteSession { session_dir } => {
@@ -927,30 +931,38 @@ async fn handle_resume_session(
 }
 
 // ---------------------------------------------------------------------------
-// rename_session — write `name` into the active session's session.jsonc.
+// rename_session — write `name` into the target session's session.jsonc.
+//
+// The target is the session directory named by the *client-provided*
+// `session_dir`, NOT necessarily the currently active session. The picker
+// must be able to rename any session — including ones that aren't loaded.
+// If the target happens to be the active session, we also refresh its
+// in-memory info_cache so subsequent `session_info` frames carry the new
+// name.
 // ---------------------------------------------------------------------------
 
 async fn handle_rename_session(
     state: &AppState,
     tx: &UnboundedSender<WsMessage>,
+    session_dir: String,
     name: String,
 ) -> Result<(), String> {
-    let (dir, info_cache_arc) = {
+    if !session_dir_re().is_match(&session_dir) {
+        return Err(format!("invalid sessionDir: {session_dir}"));
+    }
+    let full_dir = state.sessions_root.join(&session_dir);
+
+    // If the target is the active session, grab its info_cache so we can
+    // update it after the disk write.
+    let info_cache_arc = {
         let slot = state.active_session.lock().await;
-        match slot.as_ref() {
-            Some(active) => (
-                Some(active.paths.dir.clone()),
-                Some(Arc::clone(&active.info_cache)),
-            ),
-            None => (None, None),
-        }
+        slot.as_ref().and_then(|active| {
+            (active.paths.dir == full_dir).then(|| Arc::clone(&active.info_cache))
+        })
     };
-    let Some(dir) = dir else {
-        return Err("no active session \u{2014} send `reset` first".to_owned());
-    };
-    let new_name = name.clone();
+
     omega_store::update_session_metadata(
-        &dir,
+        &full_dir,
         SessionMetadata {
             name: Some(name.clone()),
             ..SessionMetadata::default()
@@ -958,13 +970,10 @@ async fn handle_rename_session(
     )
     .await
     .map_err(|e| format!("update_session_metadata: {e}"))?;
+
     if let Some(arc) = info_cache_arc {
-        arc.lock().await.name = Some(new_name);
+        arc.lock().await.name = Some(name.clone());
     }
-    let session_dir = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let _ = tx.send(WsMessage::SessionRenamed { session_dir, name });
     Ok(())
 }
@@ -1235,12 +1244,34 @@ mod tests {
 
     #[test]
     fn client_frame_rename_session_parses() {
-        let f: ClientFrame =
-            serde_json::from_str(r#"{"type":"rename_session","name":"my-name"}"#).unwrap();
+        let f: ClientFrame = serde_json::from_str(
+            r#"{"type":"rename_session","sessionDir":"SESSION-7","name":"my-name"}"#,
+        )
+        .unwrap();
         match f {
-            ClientFrame::RenameSession { name } => assert_eq!(name, "my-name"),
+            ClientFrame::RenameSession { session_dir, name } => {
+                assert_eq!(session_dir, "SESSION-7");
+                assert_eq!(name, "my-name");
+            }
             other => panic!("expected RenameSession, got {other:?}"),
         }
+    }
+
+    /// Regression: the client always sends `sessionDir` alongside `name`.
+    /// If serde silently dropped the field (e.g. because the variant
+    /// forgot to declare it), `handle_rename_session` would fall back to
+    /// the *active* session — which is exactly the bug that kept
+    /// regressing in the picker. This test fails fast if anyone removes
+    /// `session_dir` from the variant.
+    #[test]
+    fn client_frame_rename_session_requires_session_dir() {
+        let err =
+            serde_json::from_str::<ClientFrame>(r#"{"type":"rename_session","name":"my-name"}"#)
+                .expect_err("sessionDir must be required");
+        assert!(
+            err.to_string().contains("sessionDir") || err.to_string().contains("session_dir"),
+            "error must mention the missing sessionDir field; got: {err}"
+        );
     }
 
     // -----------------------------------------------------------------
