@@ -4,6 +4,22 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ---
 
+## P0 — Top priority
+
+### TEST-ARCH — Test architecture & web-surface honesty
+
+**[backlog/test-architecture.md](backlog/test-architecture.md)**
+
+Umbrella plan for bringing every test surface in Omega onto a single, honest
+pattern: test through the outermost user-visible surface of each binary; fake
+only the LLM (Anthropic-shaped HTTP at `ANTHROPIC_BASE_URL`); let coverage of
+orchestration modules flow down from the e2e tier; keep dedicated unit tests
+only for leaf utilities (SSE parser, per-tool I/O). Six steps; the first
+(TEST-ARCH-1, same work as `rust-migration.md`'s BUG-C) is blocking the rest
+and should be done now. The last two are gated on the Leptos rewrite.
+
+---
+
 ## P2 — Medium priority
 
 ### SCHEMA-1 — Event field audit (error events first)
