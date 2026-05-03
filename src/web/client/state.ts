@@ -687,7 +687,11 @@ export function dispatch(event: ServerMessage): void {
       setState("sessionName", "");
       setState("turnState", "idle");
       setState("preCommitted", false);
-      setState("hasPendingChanges", false);
+      // hasPendingChanges is intentionally NOT cleared here.
+      // The server sends session_info BEFORE reset_done; that message already
+      // set hasPendingChanges to the correct value for the new session.
+      // Clearing it here would wipe the flag and prevent the modal from
+      // appearing when the user creates a new session in a dirty working tree.
       setState("pendingChangesAcknowledged", false);
       break;
 

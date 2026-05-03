@@ -69,3 +69,33 @@ test("no pending-changes modal when working tree is clean", async ({ page, serve
   await expect(page.getByTestId("pending-changes-modal")).not.toBeVisible();
   await expect(page.locator("textarea")).toBeEnabled();
 });
+
+// ---------------------------------------------------------------------------
+// Test: modal appears after a reset (new session) when working tree is dirty
+//
+// This is the regression test for the bug where reset_done cleared
+// hasPendingChanges, so the modal never appeared on a fresh new session —
+// only showing after a manual browser refresh.
+// ---------------------------------------------------------------------------
+
+test("pending-changes modal appears after new-session reset when working tree is dirty", async ({ page, server }) => {
+  // Start with a dirty tree.
+  await server.setPendingChanges(true);
+  await page.goto("/");
+  // Wait for the initial modal to appear (confirms hasPendingChanges works on first connect).
+  await page.getByTestId("pending-changes-modal").waitFor({ timeout: 5000 });
+
+  // Dismiss the modal.
+  await page.getByTestId("pending-changes-ok-btn").click();
+  await expect(page.getByTestId("pending-changes-modal")).not.toBeVisible();
+
+  // Open the session picker and create a new session — this sends `reset` to
+  // the server, which responds with session_info (hasPendingChanges: true) +
+  // history + reset_done. The modal must reappear for the new session.
+  await page.getByTestId("sessions-btn").click(); // open session picker
+  await page.getByTestId("session-picker-new").click();
+
+  // After reset the modal must reappear because the new session was also
+  // created with a dirty working tree.
+  await expect(page.getByTestId("pending-changes-modal")).toBeVisible({ timeout: 5000 });
+});
