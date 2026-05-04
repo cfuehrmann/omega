@@ -24,7 +24,8 @@
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
 | 2d — `session_renamed` envelope | ✅ Done | Server emits `session_renamed` after rename; rename UI updates without reload |
 | 3.0 — Leptos scaffold | ✅ Done | `frontends/leptos/` crate; `/leptos/` mount on `omega-server`; smoke spec green |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0 done; 3.1–3.7 ahead) |
+| 3.1 — Protocol + reactive store | ✅ Done | Typed `WsMessage` parsing; `SessionStore` reducer; `/leptos/` debug dump |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.1 done; 3.2–3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -821,8 +822,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | Sub-phase | Status | Deliverable |
 |---|---|---|
 | 3.0 | ✅ Done | `frontends/leptos/` crate scaffold; `/leptos/` mount on `omega-server`; hello-world page that renders `Ready` from a real `/ws` connection |
-| 3.1 | ⬜ Next | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
-| 3.2 | ⬜ | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
+| 3.1 | ✅ Done | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
+| 3.2 | ⬜ Next | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
 | 3.3 | ⬜ | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
 | 3.4 | ⬜ | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
 | 3.5 | ⬜ | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
@@ -924,58 +925,140 @@ guard in `rust-gate` exit clean.
   policy for binaries). Compile time on a cold cache is ~40s; subsequent
   builds are sub-second incremental.
 
-### Phase 3.1 — protocol + WS client (next)
+### Phase 3.1 — done (concise record)
 
-**Goal.** Replace the `serde_json::Value` frame parser with strongly-typed
-`WsMessage` deserialisation, and stand up a single reactive store that all
-future components subscribe to. No visible UI beyond a debug dump.
+**Scope:** Replace the 3.0 `serde_json::Value` frame parser with strongly-typed
+`WsMessage` deserialisation, stand up a single reactive `SessionStore`, render a
+live JSON debug dump at `/leptos/`. No visible UI controls; this is the
+protocol smoke surface.
 
-**Deliverables:**
+**Decision — protocol shape (Option B “parallel client-side enums”).** Lifting
+`omega-server::WsMessage` into `omega-protocol` was rejected because
+`WsMessage::Item(Box<AgentItem>)` carries a `#[serde(untagged)]`,
+`Serialize`-only payload by design — making it `Deserialize`-able would force a
+redesign of `AgentItem` and pollute the protocol crate with a transport-level
+concern. Instead, `frontends/leptos/src/protocol.rs` declares a single flat
+tagged enum that re-uses every typed event/signal struct from
+`omega_protocol`. Duplication is purely at the variant-listing layer (~30
+idents); field types remain the single source of truth. Same approach for the
+write-path `ClientFrame` (no callers in 3.1; locked-in for 3.2's composer).
 
-1. **Client-side `WsMessage` enum.** Either re-export from `omega-protocol`
-   (preferred if the server-only variants can be split out) or define in
-   `frontends/leptos/src/protocol.rs` as a parallel enum re-using
-   `omega_protocol::OmegaEvent` for `Item` payloads. Decide during
-   implementation; record the choice.
-2. **`WsClient` struct** wrapping `web_sys::WebSocket` with:
-   - typed `send(&ClientFrame)` (mirror of the server's `ClientFrame`
-     enum — same split-or-share decision as `WsMessage`).
-   - `on_message` callback yielding `Result<WsMessage, serde_json::Error>`.
-   - reconnection on close (with backoff).
-   - StoredValue-managed `Closure` lifetimes (no `forget`).
-3. **`SessionStore`** — a single struct of `RwSignal`s mirroring the
-   TS `state` shape: `connected: bool`, `session_info: Option<SessionInfo>`,
-   `events: Vec<OmegaEvent>`, `turn_state: TurnState`, `streaming: bool`,
-   plus the `text`/`thinking` accumulators. Reducer-style `apply(WsMessage)`
-   updates the relevant signals. Lives in `provide_context` so descendants
-   can `use_context::<SessionStore>()`.
-4. **Debug view** at `/leptos/` showing JSON-pretty-printed values of every
-   field in the store. Locks the deserialise path under a smoke spec
-   without committing to component shapes. Existing 3.0 hello-world
-   becomes a footnote, deleted at 3.2.
-5. **Snapshot test** of `SessionStore::apply` against a fixture
-   `events.jsonl` so the reducer is unit-testable without a browser.
-   This is the seed for TEST-ARCH-5 (insta-driven Leptos component tests
-   that lands properly in 3.6).
+**Wire-shape collision noted and resolved client-side.** Server emits both
+envelope `WsMessage::AgentError("msg")` and forwarded
+`OmegaEvent::AgentError(AgentErrorEvent)` under `type: "agent_error"`.
+Disambiguated client-side via an `#[serde(untagged)]` `AgentErrorPayload` that
+matches by structure (`{message}` vs `{time, error}` are disjoint). **No
+omega-server changes required.**
 
-**Out of scope:** any session-picker UI, any send buttons, any styling.
+**`SessionStore` (`src/store.rs`).** RwSignal-per-field struct — canonical
+Leptos shape, fine-grained reactivity, signals are slotmap handles so the
+store is `Copy`. Eight fields: `connected`, `session_info`, `turn_state`,
+`streaming`, `events`, `streaming_text`, `streaming_thinking`,
+`transport_errors`. `apply(WsMessage)` is the reducer; `snapshot()` returns a
+POD `SessionState` for the JSON dump and as the assertion target in tests.
+`reactive_stores::Store` was rejected as overkill for eight flat fields; one
+big `RwSignal<State>` was rejected because every field touch would re-run all
+subscribers.
 
-**Acceptance:**
-- `localhost:3000/leptos/` shows a JSON dump of the store, updated live
-  as WS frames arrive.
-- `cargo test -p omega-web --target wasm32-unknown-unknown` (via
-  `wasm-bindgen-test`) covers `SessionStore::apply` and the
-  `WsMessage` deserialise path. Add `wasm-bindgen-test` to the gate.
-- Existing 3.0 smoke spec still green (will be retargeted at the new
-  testid in the same commit).
+**`WsClient` (`src/ws.rs`).** `StoredValue<WsState, LocalStorage>` owns the
+four JS-bridged closures (`onopen`, `onmessage`, `onclose`, `onerror`) plus
+the socket and reconnect bookkeeping. `LocalStorage` because `WebSocket` and
+`Closure` are `!Send + !Sync`; CSR is single-threaded so this is correct.
+Reconnect on `onclose` with exponential back-off (`0.5 s × 2^(attempt-1)`,
+capped at 30 s, ±20 % multiplicative jitter); counter resets on `onopen`.
+The `send(&ClientFrame)` write path is wired but unused in 3.1 (3.2 hooks up
+the composer).
 
-**Open questions to resolve in 3.1:**
-- Server-only `WsMessage` variants (`SessionDeleted`, `SessionRenamed`,
-  `ResetDone`) — lift into `omega-protocol` or define a superset on the
-  client?
-- `wasm-bindgen-test` test runner setup for the gate — needs `wasm-pack`
-  or `cargo test --target wasm32-unknown-unknown` with a headless browser.
-  Pick the lighter integration.
+**Debug view (`src/main.rs::DebugView`).** Reads every signal in one move
+closure (so leptos's reactive graph subscribes us to all of them in one shot)
+and pretty-prints `store.snapshot()` into
+`<pre data-testid="leptos-debug-store">`. Replaces the 3.0
+`<ul data-testid="leptos-frames">` hello-world.
+
+**Test runner.** `wasm-bindgen-test 0.3.70` (exact-pinned to the existing
+`wasm-bindgen 0.2.120`) running under `wasm-bindgen-test-runner` with the
+default Node backend. Lighter than chromedriver/wasm-pack; sufficient because
+`SessionStore::apply` is pure Rust + serde — no DOM, no WS in the test path.
+New `frontends/leptos/.cargo/config.toml` declares the runner; new just
+recipe `web-leptos-test` does `rustup target add wasm32-unknown-unknown`,
+`cargo install --locked --version =0.2.120 wasm-bindgen-cli` (idempotent),
+then `cargo test --target wasm32-unknown-unknown`. Wired into `rust-gate`
+as a sibling step (after `web-leptos-build`, before the `cargo` block).
+
+**47 wasm-bindgen-tests** across the three new modules:
+- `protocol.rs`: 21 tests — every envelope variant (Ready, ResetDone,
+  SessionDeleted, SessionRenamed, SessionInfo with/without `name`, History
+  with/without `streaming`), the `agent_error` envelope/event
+  disambiguation, all three stream-signal tags, two representative event
+  variants, `into_omega_event` mapping correctness, and four
+  `ClientFrame` serialisation shapes.
+- `store.rs`: 20 tests — each reducer rule, every `apply_event_side_effects`
+  match arm (`UserMessage`, `TurnEnd`, `TurnInterrupted`, `PauseRequested`,
+  `TurnPaused`, `TurnContinued`, `LlmResponse`), and a fixture-driven
+  end-to-end replay of a realistic frame sequence (`ready` → `session_info`
+  → `history` → `user_message` → `text`×2 → `turn_end`).
+- `ws.rs`: 6 tests — pure back-off math via injected `Jitter` trait
+  (deterministic `FixedJitter` + sequence-driven `SeqJitter`). Validates
+  base delay, doubling, exponent cap, 30 s ceiling, jitter bounds, and
+  one-sample-per-attempt invariant.
+
+**Mutation testing baseline** (`cargo mutants -- --target wasm32-unknown-unknown`,
+run from `frontends/leptos/`):
+- `protocol.rs`: 2 mutants — 1 caught, 1 unviable, **0 missed**.
+- `store.rs`: 9 mutants — 9 caught, **0 missed**. The four gaps from the
+  initial run (`PauseRequested`/`TurnPaused`/`TurnContinued`/`LlmResponse`
+  match arms in `apply_event_side_effects`) were real and were closed in
+  the same commit.
+- `ws.rs`: 29 mutants — 9 caught, **20 missed**. Every miss is in
+  JS-interop code (`WebSocket::new`, `set_timeout`, `clear_timeout`,
+  `RandomJitter::factor`, `ws_url_from_window`, `WsClient::send`/`connect`/
+  `schedule_reconnect`). Catching them requires a headless-browser harness
+  (`wasm_bindgen_test_configure!(run_in_browser)` plus chromedriver) and
+  was deferred — the missing coverage is at the DOM/WS edge, not in
+  pure logic. The 9-caught half is exactly the pure `backoff_delay_ms`
+  function and its `Jitter` trait, which were extracted specifically to
+  be unit-testable without DOM mocks.
+
+Not wired into `just rust-gate` — a wasm32 mutants run takes ~3 min/file.
+Re-runnable manually: `cd frontends/leptos && cargo mutants --file src/<f>.rs -- --target wasm32-unknown-unknown`.
+
+**Pinned versions** (verified against crates.io, no resolution conflicts):
+```toml
+wasm-bindgen-test = "=0.3.70"   # hard-pins wasm-bindgen = "=0.2.120"
+wasm-bindgen-cli  = "=0.2.120"  # installed by `just web-leptos-test`
+```
+No other version changes; `serde` was promoted from a transitive dep to an
+explicit `"1" + features = ["derive"]` direct dep on the leptos side.
+
+**Smoke spec retargeted.** `e2e/leptos-smoke.spec.ts` now asserts
+`[data-testid="leptos-debug-store"]` contains `"connected": true` and
+`"transportErrors": []`, replacing the 3.0 `<li>ready</li>` assertion. The
+bare-redirect spec is unchanged.
+
+**Bar:** `just rust-gate` ✅ (incl. `web-leptos-build` and `web-leptos-test`,
+47/47 wasm tests) · `just test-browser` 118/118 (109 chromium + 7 real-server
++ 2 leptos-smoke) · `cargo clippy --target wasm32-unknown-unknown -- -D warnings`
+clean on the leptos crate.
+
+**Carry-forward into 3.2:**
+- `WsClient::send(&ClientFrame)` exists but has no callers; 3.2 wires it to a
+  session-picker UI.
+- `provide_context::<SessionStore>` is set up at the App root so 3.2
+  components can `use_context::<SessionStore>()` without restructuring.
+- `transport_errors` accumulates envelope `agent_error` messages forever; if
+  3.2 surfaces transient connection errors prominently, consider a TTL or
+  user-dismissable model.
+- The trunk asset bundle is now noticeably larger than 3.0's (the wasm has
+  grown from hello-world to leptos + serde-driven `WsMessage` parsing). If
+  3.2's bundle ergonomics matter, consider `wasm-opt` via `[profile.release]`
+  flags or a separate `web-leptos-build-debug` recipe for dev iterations.
+- `wasm-bindgen-test-runner` requires `node` on PATH (no Bun-as-node shim
+  worked: bun lacks `document` + Node-specific globals the wasm-bindgen
+  shim relies on). Node is now a build-time dep alongside
+  `wasm-bindgen-cli`. If 3.4+ wants to also exercise the JS-interop
+  surface in `ws.rs` (the 20 missed mutants), upgrade to
+  `wasm_bindgen_test_configure!(run_in_browser)` and add chromedriver to
+  the gate.
 
 ---
 

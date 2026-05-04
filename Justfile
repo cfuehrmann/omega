@@ -129,6 +129,16 @@ web-leptos-build:
     rustup target add wasm32-unknown-unknown
     cd frontends/leptos && trunk build --release
 
+# Run the Leptos crate's wasm-bindgen-test suite (Phase 3.1).
+# Pure Rust + serde tests of `SessionStore::apply` and the typed
+# `WsMessage` parse path. Runs as wasm32 under Node via
+# `wasm-bindgen-test-runner`; both `cargo install` and `rustup target
+# add` calls are idempotent (no-op if already at the right version).
+web-leptos-test:
+    rustup target add wasm32-unknown-unknown
+    cargo install --locked --version =0.2.120 wasm-bindgen-cli
+    cd frontends/leptos && cargo test --target wasm32-unknown-unknown
+
 # Build the production omega-server (Rust) — release binary at rust/target/release/omega-server
 rust-build-server:
     cd rust && cargo build --release -p omega-server
@@ -194,10 +204,11 @@ rust-bindings:
     cargo test -p omega-core     --features ts-bindings -- export_bindings
     cargo test -p omega-store    --features ts-bindings -- export_bindings
 
-# Rust-only quality gate: format check + Clippy + cargo test + bindings drift.
-# Runs via the pre-commit hook when only rust/ files are staged.
+# Rust-only quality gate: format check + Clippy + cargo test + bindings drift
+# + Leptos wasm-bindgen-test suite. Runs via the pre-commit hook when only
+# rust/ files are staged.
 # Run manually: just rust-gate
-rust-gate: web-leptos-build
+rust-gate: web-leptos-build web-leptos-test
     cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
     just rust-bindings
     @echo "=== bindings drift check ==="

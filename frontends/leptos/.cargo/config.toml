@@ -1,0 +1,10 @@
+# `cargo test --target wasm32-unknown-unknown` invokes the wasm-bindgen
+# test runner, which compiles each test crate to wasm and executes it
+# under Node (default — no `wasm_bindgen_test_configure!(run_in_browser)`).
+#
+# The runner binary ships in the `wasm-bindgen-cli` crate and **must
+# match the `wasm-bindgen` library version exactly** (=0.2.120 here).
+# `just web-leptos-test` runs an idempotent `cargo install` to ensure
+# the right version is on PATH before invoking `cargo test`.
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"

@@ -14,6 +14,8 @@ frontends/leptos/target/
 # cargo-mutants output
 rust/mutants.out/
 rust/mutants.out.old/
+frontends/leptos/mutants.out/
+frontends/leptos/mutants.out.old/
 
 # output
 out

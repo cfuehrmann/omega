@@ -1,15 +1,19 @@
 /**
- * Phase 3.0 — Leptos smoke test.
+ * Phase 3.1 — Leptos smoke test.
  *
  * Visits `/leptos/`, waits for the wasm bundle to load, the WebSocket
  * to open, and the first frame the server emits (`ready`) to be
- * rendered as an `<li>` inside `[data-testid="leptos-frames"]`.
+ * deserialised through `WsMessage` and applied to the reactive
+ * `SessionStore`. The pretty-printed JSON snapshot under
+ * `[data-testid="leptos-debug-store"]` then contains
+ * `"connected": true`.
  *
  * This locks in the wiring across the full stack:
- *   - omega-server's second `ServeDir` mount (`/leptos/`)
+ *   - omega-server's `/leptos/` `ServeDir` mount
  *   - trunk's `public_url = "/leptos/"` asset paths
  *   - the wasm bundle's `WebSocket::new("ws://…/ws")` connect
- *   - the frame-type dispatch path inside `App`
+ *   - typed `WsMessage` deserialisation in `protocol.rs`
+ *   - `SessionStore::apply` reducing each frame in `store.rs`
  *
  * The fixture binary used here is `mock-omega-server` (port 3003),
  * built by `just rust-build-mock-server`. It serves the Leptos bundle
@@ -21,15 +25,16 @@
 
 import { test, expect } from "@playwright/test";
 
-test("leptos: /leptos/ loads, WS connects, ready frame renders", async ({ page }) => {
+test("leptos: /leptos/ loads, WS connects, ready frame updates the store", async ({ page }) => {
   await page.goto("/leptos/");
 
-  // The list starts empty; once the WS opens and the server emits its
-  // initial `ready` frame, an <li>ready</li> appears.
-  const frames = page.getByTestId("leptos-frames");
-  await expect(frames.locator("li", { hasText: /^ready$/ })).toBeVisible({ timeout: 5000 });
-  // Sanity: the running counter increments in step with the list.
-  await expect(page.getByTestId("leptos-status")).toHaveText(/frames seen: [1-9]/);
+  // The store starts disconnected; once the WS opens and the server
+  // emits `ready`, `SessionStore::apply(WsMessage::Ready)` flips
+  // `connected` to true and the JSON dump reflects it.
+  const storeDump = page.getByTestId("leptos-debug-store");
+  await expect(storeDump).toContainText('"connected": true', { timeout: 5000 });
+  // `transportErrors` must remain empty — there's no malformed-frame path.
+  await expect(storeDump).toContainText('"transportErrors": []');
 });
 
 test("leptos: bare /leptos redirects to /leptos/", async ({ request }) => {
