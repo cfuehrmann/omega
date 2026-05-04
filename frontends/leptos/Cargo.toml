@@ -30,6 +30,16 @@ web-sys                  = { version = "=0.3.97", features = [
     "BinaryType",
     "Document",
     "HtmlInputElement",
+    # Phase 3.3 — feed scroll seam: NodeRef<html::Div> resolves to
+    # `HtmlDivElement`; auto-scroll uses `Element::scroll_into_view`
+    # and `Element::{scrollTop, clientHeight, scrollHeight}`.
+    # `Element` and `HtmlElement` would already be pulled by
+    # `HtmlInputElement` transitively; listing them explicitly makes
+    # the dependency intent obvious for the next reader.
+    "Element",
+    "HtmlElement",
+    "HtmlDivElement",
+    "HtmlTextAreaElement",
 ] }
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }

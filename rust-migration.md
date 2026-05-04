@@ -26,6 +26,7 @@
 | 3.0 — Leptos scaffold | ✅ Done | `frontends/leptos/` crate; `/leptos/` mount on `omega-server`; smoke spec green |
 | 3.1 — Protocol + reactive store | ✅ Done | Typed `WsMessage` parsing; `SessionStore` reducer; `/leptos/` debug dump |
 | 3.2 — Leptos session picker | ✅ Done | `SessionListStore` + picker UI; `/leptos/` lists/creates/renames/deletes; debug dump moved to collapsible panel |
+| 3.3 — Leptos conversation feed | ✅ Done | `event_view.rs` pure projection; `feed.rs` component; `/leptos/` renders every `OmegaEvent` variant + live streaming text + auto-scroll seam |
 | 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.1 done; 3.2–3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -825,8 +826,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | 3.0 | ✅ Done | `frontends/leptos/` crate scaffold; `/leptos/` mount on `omega-server`; hello-world page that renders `Ready` from a real `/ws` connection |
 | 3.1 | ✅ Done | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
 | 3.2 | ✅ Done | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
-| 3.3 | ⬜ Next | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
-| 3.4 | ⬜ | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
+| 3.3 | ✅ Done | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
+| 3.4 | ⬜ Next | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
 | 3.5 | ⬜ | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
 | 3.6 | ⬜ | Visual parity pass; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
 | 3.7 | ⬜ | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
@@ -1252,68 +1253,282 @@ not the HTTP client choice.
   this session" flow). 3.5 lands `ClientFrame::ResumeSession` from the
   picker as part of the resume-session UX.
 
-### Phase 3.3 — conversation feed (next)
+### Phase 3.3 — done (concise record)
 
-**Goal.** Render the conversation as the primary visible surface,
-replacing the JSON debug dump as the focal point of the page. Every
-`OmegaEvent` variant gets a typed view; streaming `text` / `thinking`
-signals append into the active assistant block in real time.
+**Scope.** Conversation feed becomes the primary visible surface at
+`/leptos/`, sitting between the 3.2 picker and the (new) collapsed
+debug panel. Every `OmegaEvent` variant gets a typed view; streaming
+`text` / `thinking` signals append into a live overlay; auto-scroll
+follows new content unless the user has scrolled up.
+
+**Decision — event-router shape (pure projection function).**
+`kind_for(&OmegaEvent) -> EventKind` in `event_view.rs` projects each
+variant to one of six visual families: `User`, `Assistant`, `ToolCall`,
+`ToolResult`, `Status`, `Error`. The `<EventBlock/>` component still
+does the big match for typed field access (each variant carries its
+own field shape — unavoidable), but the *family-class decision* lives
+in the pure helper. Mutation-tested. Same role `is_active` /
+`apply_renamed` played in 3.2. One-component-per-family was rejected
+for adding wrappers without behavioural gain; in-component-match-only
+was rejected because each arm is glued to JSX with no testable seam.
+A `ToolResult` event with `is_error: true` resolves to `Error`, not
+`ToolResult` — the visual family follows the outcome.
+
+**Decision — streaming-text rendering (direct append).**
+`SessionStore::streaming_text` (an `RwSignal<String>`) is appended to
+per `Text` frame by the existing reducer (`store.rs::apply` calls
+`update(|s| s.push_str(...))`). The `StreamingTail` component is a
+`<Show>` over `streaming_text.with(String::is_empty)` containing a
+`<pre>{move || streaming_text.get()}</pre>`. Per-keystroke reactivity
+— leptos's strength — matches SolidJS's direct-append pattern. No
+rAF buffer; verified with `SCRIPTS.longStream()` (8 chunks × 100 ms)
+in the new Playwright spec, which observes the overlay growing live
+and collapsing into the persisted `llm_response` block on `turn_end`.
+If 3.6's markdown rendering makes per-frame work expensive, *that's*
+the point at which a buffer earns its keep.
+
+**Decision — auto-scroll seam (pure predicate + JS-interop edge).**
+`should_autoscroll(scroll_top, client_height, scroll_height,
+threshold) -> bool` in `event_view.rs` is the testable carve-out
+(threshold = 40 px). The reactive `Effect` subscribes to
+`events.with(Vec::len)`, `streaming_text.with(String::len)`, and
+`streaming_thinking.with(String::len)`, then calls
+`sentinel_ref.scroll_into_view()` iff the lockout signal is open. An
+`on:scroll` handler reads `scrollTop` / `clientHeight` / `scrollHeight`
+from a `NodeRef<html::Section>` and feeds the pure predicate to update
+the gate. The DOM-reading half is a JS-interop edge — same
+mutation-gap pattern as 3.1's `ws.rs::WsClient::send` and 3.2's
+`picker.rs` event handlers.
+
+**Decision — tool_result truncation (match SolidJS at 3000 chars +
+inline expand).** SolidJS's `truncate(s, maxChars=3000)` (App.tsx:305)
+is what the inline preview actually renders today; the 100 KB modal
+path is a 3.5 concern. `truncate_for_preview(s, max_chars) ->
+Option<String>` returns `Some(<truncated_with_marker>)` only when the
+input exceeds `max_chars`, so callers tell truncated from full output
+at the type level. Per-row expansion is held in a `RwSignal<bool>`
+inside `<ToolResultBlock/>`; the toggle button only mounts when the
+truncate returned `Some`. Mutation-tested. The marker line `\n…
+[{total} chars total — showing first {max_chars}]` mirrors the
+SolidJS UI byte-for-byte so visual parity holds across the 3.0–3.6
+co-existence window. Diverging to 10 KB was rejected — the SolidJS
+UI doesn't actually do that.
+
+**Decision — markdown / KaTeX / Mermaid (deferred to 3.6).** Locked
+in. 3.3 emits raw text in `<pre class="block-body">` for every
+rendering case. Zero new deps.
+
+**No server-side changes.** Confirmed by grep that all 22
+`OmegaEvent` variants are typed in `frontends/leptos/src/protocol.rs`
+at 3.1; the new `event_type_tag` helper in `event_view.rs` enumerates
+all 22 explicitly so a future `omega-protocol` addition either
+compiles into a real `data-event-type` or breaks the wasm build.
+
+**One concession to test coverage — `<StubComposer/>` (3.3-temp).**
+3.3 needs to drive a multi-tool turn but the Leptos UI has no
+composer until 3.4. A 30-line `<StubComposer/>` (`<textarea>` + send
+button calling `WsClient::send(ClientFrame::UserMessage)`) lives in
+`feed.rs`, marked with `data-testid="leptos-stub-composer-*"` so
+3.4's replacement can grep-and-delete it. Alternatives rejected: a
+JS-side raw `WebSocket` would conflict with the page's WS
+(single-active-WS server) and is racy; exposing the `WsClient`
+handle on `window` is uglier than the stub.
+
+**New files:**
+- `frontends/leptos/src/event_view.rs` (~430 lines) — `EventKind`
+  enum + 6-way `kind_for` projection covering all 22 `OmegaEvent`
+  variants; `css_class_for`, `kind_tag`, `event_type_tag` (one stable
+  attribute string per variant for Playwright); `should_autoscroll`
+  pure predicate; `truncate_for_preview` pure helper. 43 wasm tests.
+- `frontends/leptos/src/feed.rs` (~520 lines) — `<ConversationFeed/>`
+  with the auto-scroll Effect, `<EventBlock/>` with the per-variant
+  body match, `<ToolResultBlock/>` with show-more state,
+  `<StreamingTail/>` for live append, `<StubComposer/>` (3.3-temp).
+- `e2e/leptos-conversation-feed.spec.ts` — 4 specs: multi-tool turn
+  asserts every visible event family renders with both
+  `data-event-kind` and `data-event-type`; long-stream verifies the
+  streaming overlay appears live and collapses into `llm_response`;
+  long `read_file` exercises the truncation toggle; `httpError(400)`
+  surfaces the Error family.
+
+**Modified files:**
+- `frontends/leptos/src/main.rs` — mounts `<ConversationFeed/>` and
+  `<StubComposer/>` between the picker and the (now-collapsed) debug
+  panel. Heading bumped to "Phase 3.3".
+- `frontends/leptos/Cargo.toml` — added `Element`, `HtmlElement`,
+  `HtmlDivElement`, `HtmlTextAreaElement` to the `web-sys` features
+  list (transitively pulled by `HtmlInputElement` already; explicit
+  for next-reader clarity). **Zero new external deps.**
+- `playwright.config.ts` — wired the new spec into the real-server
+  project's `testMatch` and the chromium project's `testIgnore`.
+
+**Tests — wasm-bindgen-test (`just web-leptos-test`):** 116 passing
+(73 from 3.2 + 43 new in `event_view.rs`):
+- 23 tests on `kind_for` — one per `OmegaEvent` variant + the
+  `ToolResult` is_error split. Each catches the deletion mutation of
+  the variant's match arm.
+- 2 tests on `css_class_for` — per-kind values + pairwise uniqueness
+  (catches "every arm returns the same string" mutations).
+- 2 tests on `kind_tag` — same pattern.
+- 1 test on `event_type_tag` — cross-checks against the serde
+  discriminator strings; future field-name drift breaks the test
+  rather than silently breaking Playwright selectors.
+- 8 tests on `should_autoscroll` — boundary cases, exact-equality,
+  one-pixel-past-threshold, threshold-lifts-borderline, and
+  contribution tests for each summed operand. Catches every
+  comparison-operator mutation cargo-mutants emits.
+- 7 tests on `truncate_for_preview` — below/equal/above limit,
+  exact prefix preservation, marker content, multibyte safety,
+  zero-max edge case.
+
+**Tests — Playwright (real-server project, port 3003):** 4 new specs
+in `e2e/leptos-conversation-feed.spec.ts`:
+1. **Multi-tool turn** — drives `SCRIPTS.multiTool()` (3 tool turns +
+   final text). Asserts: 1 `user_message` block with `data-event-kind
+   ="user"`; 3 `tool_call` blocks with the right tool name + JSON
+   input rendered; 3 `tool_result` blocks with `data-event-kind
+   ="tool_result"`; final `llm_response` containing "done multi";
+   every block has both `data-event-kind` and `data-event-type`
+   attributes set; at least one `kind="status"` block exists.
+2. **Streaming overlay** — drives `SCRIPTS.longStream()` (8 chunks ×
+   100 ms). Asserts the overlay (`leptos-streaming-text`) becomes
+   visible mid-turn and contains the streamed text; clears on
+   `turn_end`; final `llm_response` carries the full text "done stream".
+3. **Tool-result truncation** — drives `read_file rust-migration.md`
+   (≈ 50 KB after the read_file MAX_BYTES cap). Asserts the rendered
+   body contains the truncation marker, total visible text length is
+   bounded under 3500, the `show more` button reveals strictly more
+   content, and toggling back hides it again.
+4. **Error family** — drives `httpError(400)`. Asserts at least one
+   block with `data-event-kind="error"` becomes visible; the block's
+   `data-event-type` is one of `llm_error` / `turn_interrupted`.
+
+**Mutation testing** (`cargo mutants -- --target
+wasm32-unknown-unknown`, run from `frontends/leptos/`):
+- `event_view.rs` (new pure-logic file): 18 mutants — 17 caught,
+  1 unviable, **0 missed**. Acceptance criterion met.
+- `feed.rs` (new component): 5 mutants — 4 missed, 1 unviable. All
+  4 misses are JS-interop edges: the `if !auto_scroll.get_untracked()`
+  guard inside the `scrollIntoView` Effect, the `auto_scroll != next`
+  check inside `on_scroll`, and `textarea_value`'s `dyn_into` glue.
+  Documented as gaps, same pattern as 3.1's `ws.rs` (20 missed) and
+  3.2's `picker.rs` (9 missed) / `http.rs` (3 missed) — catching
+  these requires a headless-browser harness with real DOM events.
+  Functionally covered by the Playwright specs.
+
+**Bundle-size impact.** 461,758 B (3.2) → 531,821 B (3.3),
++70,063 B (+15 %). Decomposition: the `<For>` keyed-list machinery
+now has a real consumer (events) and the per-variant `view!` arms in
+`render_event_body` expand into 22 distinct `IntoView` types that
+`into_any()` boxes. No new external crates. With markdown
+(comrak/pulldown-cmark) + KaTeX + Mermaid all aimed at 3.6, the
+remaining bundle budget before the 1 MB target is comfortable.
+
+**`just rust-gate`** ✅ (incl. 116 wasm-bindgen tests, all unit
+suites, ts-rs bindings drift). **`just test-browser`** ✅ 127/127
+(122 from 3.2 + 4 new feed specs + 1 picker re-tally).
+
+**Carry-forward into 3.4:**
+- `<StubComposer/>` is 3.3-temp and must be deleted by 3.4. Search
+  for `data-testid="leptos-stub-composer"` to find its three sites
+  (component, e2e helper, send-button). 3.4's real composer adds:
+  pause / continue / abort buttons (need `ClientFrame::Pause`,
+  `Continue`, `Abort` — all already typed in `protocol.rs`); model
+  and effort switchers (`SetModel`, `SetEffort`); file-completion
+  autocomplete via `GET /api/files?prefix=...` (the `http.rs` HTTP
+  layer needs a second `get_files` function alongside
+  `get_sessions`).
+- The conversation feed has no "jump to bottom" button when the user
+  scrolls up. SolidJS shows an inline `↓` button bottom-right; 3.6
+  parity pass.
+- `<EventBlock/>` clones each `OmegaEvent` once per render of the
+  enclosing `<For>`. For long conversations this is O(n) per turn.
+  Acceptable today; revisit in 3.6 if perf tooling shows it bites.
+  An `Arc<OmegaEvent>` indirection in `SessionStore::events` would
+  be the obvious fix — SessionStore stays untouched here per task
+  spec.
+- The 3000-char preview cap is hard-coded in `feed.rs`; 3.6 may want
+  it user-configurable. No protocol/server change needed.
+- `event_type_tag` enumerates all 22 OmegaEvent variants explicitly.
+  When omega-protocol adds variant #23, the wasm build breaks (no
+  default arm), forcing a rendered-tag decision rather than silently
+  rendering nothing. Intentional.
+
+### Phase 3.4 — composer (next)
+
+**Goal.** Replace the 3.3 `<StubComposer/>` with a parity composer
+that owns user-message send, in-flight pause/continue/abort, model +
+effort switchers, and file-completion autocomplete — every
+operator-side surface the SolidJS UI has today.
 
 **Server-side surface (already in place — do NOT change):**
-- All 22 `OmegaEvent` variants are typed in
-  `frontends/leptos/src/protocol.rs`.
-- `SessionStore::events` accumulates persistent events;
-  `SessionStore::streaming_text` / `streaming_thinking` accumulate
-  the live in-flight signal text.
-- `SessionStore` already drives turn-state transitions and clears
-  the streaming accumulators on `TurnEnd` / `TurnInterrupted` /
-  `LlmResponse`.
+- `ClientFrame::UserMessage`, `Pause`, `Continue { content }`,
+  `Abort`, `SetModel { model }`, `SetEffort { effort }` are all
+  typed in `frontends/leptos/src/protocol.rs` at 3.1.
+- `GET /api/files?prefix=...` is implemented in
+  `omega-server::router::list_files_for_completion` (Phase 1e.4) with
+  the directory-first-then-alphabetical sort and a 50-completion
+  cap; tested at the Rust level. Wire shape:
+  `[{"path":"src/","isDir":true}, ...]`.
+- `OmegaEvent::ModelChanged` / `EffortChanged` / `PauseRequested` /
+  `TurnPaused` / `TurnContinued` / `TurnInterrupted` already drive
+  `SessionStore::turn_state`; the composer reads turn_state to
+  enable/disable buttons.
 
 **Deliverables:**
 
-1. **`feed.rs`** — `ConversationFeed` component reading
-   `SessionStore::events` and rendering one block per event. A pure
-   helper module (`event_view.rs` or similar) projects each
-   `OmegaEvent` variant to a typed view fragment — mutation-tested
-   pure logic for the routing decisions.
-2. **Streaming overlay** — the *last* assistant block in the feed
-   appends `streaming_text` / `streaming_thinking` live. Cleared on
-   `LlmResponse` (which finalises the streamed content into a real
-   `LlmResponse` event).
-3. **Auto-scroll seam** — a `<div>` at the feed's tail with
-   `scrollIntoView()` driven by an `Effect` on
-   `events.with(Vec::len)`. Disable when the user scrolls up
-   (compare `scrollTop + clientHeight` against `scrollHeight`).
-4. **Visual minimum** — distinct CSS classes per event family
-   (`user-message`, `assistant-message`, `tool-call`, `tool-result`,
-   `system-message` for retries/errors). Polish is 3.6.
+1. **`composer.rs`** — `<Composer/>` component reading `turn_state`
+   from context, rendering: a textarea (multi-line, autosizing); a
+   primary action button that flips between `Send` (turn_state=idle),
+   `Pause` (turn_state=running), `Abort` (turn_state=pause_requested),
+   `Continue` (turn_state=paused); a model picker dropdown; an
+   effort picker dropdown.
+2. **`http.rs`** — add `get_files(prefix: &str) -> Result<Vec<FileCompletion>, String>`
+   alongside the existing `get_sessions`. Same `gloo-net` glue.
+3. **`completion.rs`** — pure file-completion state machine: given a
+   composer's text + caret position, derive the completion query;
+   given completions + selection index, derive the inserted text on
+   accept. Mutation-tested.
+4. Delete `<StubComposer/>` (and its three call sites) once the real
+   composer's e2e spec covers the `user_message` send path.
 
-**Out of scope:** composer (3.4), context modal (3.5), syntax
-highlighting, markdown rendering nuance (3.6). 3.3 renders raw text
-inside `<pre>` for code-like content; 3.6 brings markdown + KaTeX +
-Mermaid parity.
+**Out of scope:** context-modal / resume-session UX (3.5), markdown
+/ KaTeX / Mermaid rendering (3.6), visual-parity polish (3.6),
+chromiumoxide cutover (Phase 4).
 
 **Acceptance:**
-- `localhost:3000/leptos/` shows a working conversation feed:
-  user messages, assistant messages, tool-call/result blocks, error
-  blocks. Streaming text appears live.
-- A new Playwright spec (`e2e/leptos-conversation-feed.spec.ts`)
-  drives `mock-omega-server` through a multi-tool turn and asserts
-  every event variant renders.
+- `localhost:3000/leptos/` lets the operator type a message, send
+  it, pause / continue / abort an in-flight turn, switch model and
+  effort, and accept file-completion suggestions.
+- A new Playwright spec
+  (`e2e/leptos-composer.spec.ts`) drives every flow against
+  `mock-omega-server`. Existing leptos specs still pass.
 - `cargo mutants -- --target wasm32-unknown-unknown` on every new
-  pure-logic file: **0 missed**. JS/DOM-interop edges acknowledged
-  as gaps, same pattern as 3.1's `ws.rs` and 3.2's `picker.rs` /
-  `http.rs`.
+  pure-logic file: **0 missed**. JS-interop edges (textarea events,
+  dropdown reactivity, completion popup positioning) acknowledged as
+  gaps, same pattern as 3.1–3.3.
 - `just rust-gate` ✅ · `just test-browser` ✅.
 
-**Open questions to resolve in 3.3:**
-- Streaming-text rendering: append directly into the DOM (one signal
-  read per frame) or buffer and flush? Leptos's per-keystroke
-  reactivity should handle direct append; verify on a long stream.
-- `tool_result` payloads can be 100 KB+; truncate in-place or render
-  in a collapsible? SolidJS UI truncates with a "show more" affordance.
-- Auto-scroll vs user scroll — SolidJS uses a sentinel; mirror that.
-- Markdown: defer to 3.6 (it's a 60 KB+ dep). 3.3 renders plain text.
+**Open questions to resolve in 3.4:**
+- Composer keyboard handling: `Enter` to send vs.
+  `Cmd/Ctrl-Enter` to send. SolidJS uses `Enter` (Shift-Enter for
+  newline). Mirror or diverge?
+- File-completion popup placement: floating below the caret
+  (SolidJS) or fixed at the bottom of the composer? The former is a
+  bigger DOM dance; the latter is simpler but less SolidJS-parity.
+- Pause/continue interjection text: SolidJS lets the user type a
+  mid-turn message in the composer, and the `Continue` button sends
+  it as `ClientFrame::Continue { content }`. Confirm the wire shape
+  matches; consider whether an explicit "pause-and-add-context" UI
+  state is worth modelling.
+- Model + effort dropdowns: hard-code the four supported
+  (sonnet-4-6, opus-4-6, opus-4-7) + four effort levels (low,
+  medium, high, max) on the client, or fetch a discovery endpoint
+  from the server? SolidJS hard-codes; we likely should too —
+  changes there are rare and require a UI bump anyway.
+- File-completion bundle cost: `gloo-net` is already paid for from
+  3.2. Sorted-with-grouping logic should land in a pure helper for
+  mutation testing. No new crate expected.
 
 ---
 

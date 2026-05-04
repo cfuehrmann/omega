@@ -44,6 +44,7 @@ export default defineConfig({
         "**/web-ui-rename-session.spec.ts",
         "**/leptos-smoke.spec.ts",
         "**/leptos-session-picker.spec.ts",
+        "**/leptos-conversation-feed.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -62,6 +63,7 @@ export default defineConfig({
         "**/web-ui-rename-session.spec.ts",
         "**/leptos-smoke.spec.ts",
         "**/leptos-session-picker.spec.ts",
+        "**/leptos-conversation-feed.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

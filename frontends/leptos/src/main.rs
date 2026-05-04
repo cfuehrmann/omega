@@ -1,17 +1,21 @@
-//! Phase 3.2 — Leptos session picker.
+//! Phase 3.3 — Leptos conversation feed.
 //!
 //! Architecture:
 //! ```text
 //!   App
-//!    \u251c\u2500\u2500 provide_context::<SessionStore>      (conversation-level state)
-//!    \u251c\u2500\u2500 provide_context::<SessionListStore>  (picker-level state)
-//!    \u251c\u2500\u2500 provide_context::<WsClient>          (write-path handle)
-//!    \u251c\u2500\u2500 Effect: WsClient::new(url, conv, list).connect()
-//!    \u251c\u2500\u2500 SessionPicker                        (primary surface)
-//!    \u2514\u2500\u2500 <details data-testid="leptos-debug-panel">
-//!         \u2514\u2500\u2500 DebugView                       (3.1 JSON dump, collapsed by default)
+//!    ├── provide_context::<SessionStore>      (conversation state)
+//!    ├── provide_context::<SessionListStore>  (picker state)
+//!    ├── provide_context::<WsClient>          (write-path handle)
+//!    ├── Effect: WsClient::new(url, conv, list).connect()
+//!    ├── SessionPicker     (3.2 — sibling of the feed)
+//!    ├── ConversationFeed  (3.3 — primary surface)
+//!    ├── StubComposer      (3.3 — temp; 3.4 replaces with real composer)
+//!    └── <details data-testid="leptos-debug-panel">
+//!         └── DebugView    (3.1 JSON dump, collapsed by default)
 //! ```
 
+mod event_view;
+mod feed;
 mod http;
 mod picker;
 mod protocol;
@@ -21,6 +25,7 @@ mod ws;
 
 use leptos::prelude::*;
 
+use crate::feed::{ConversationFeed, StubComposer};
 use crate::picker::SessionPicker;
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
@@ -39,7 +44,8 @@ fn App() -> impl IntoView {
     provide_context(list_store);
 
     // Construct the WsClient once and provide it via context so the
-    // picker (and 3.3+ composers) can call `WsClient::send`.
+    // picker, the feed (3.3), and 3.4+ composers can call
+    // `WsClient::send`.
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
             leptos::logging::error!("ws url derivation failed: {err:?}");
@@ -56,8 +62,10 @@ fn App() -> impl IntoView {
 
     view! {
         <main>
-            <h1>"Omega (Leptos) — Phase 3.2"</h1>
+            <h1>"Omega (Leptos) — Phase 3.3"</h1>
             <SessionPicker />
+            <ConversationFeed />
+            <StubComposer />
             <details data-testid="leptos-debug-panel">
                 <summary>"debug: store snapshot"</summary>
                 <DebugView />
@@ -72,7 +80,7 @@ fn DebugView() -> impl IntoView {
 
     // Recompute on every relevant signal change. We touch each field
     // here so leptos's reactive graph subscribes us to all of them in
-    // one shot \u2014 ergonomically equivalent to a `Memo` over `snapshot()`,
+    // one shot — ergonomically equivalent to a `Memo` over `snapshot()`,
     // and the cost of one extra `to_string_pretty` per frame is fine
     // for a debug view.
     let json = move || {
