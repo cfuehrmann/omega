@@ -22,8 +22,8 @@
 | **BUG-B** — system prompt missing LLM Provider section | ✅ Done | Add `platform.claude.com/llms.txt` guidance to `system_prompt.rs` |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
-| 2d — `session_renamed` envelope | ⬜ Next | Fix: rename UI shows the saved name |
-| 3 — Leptos UI rewrite | ⬜ After 2d | SolidJS → Leptos; TS deleted |
+| 2d — `session_renamed` envelope | ✅ Done | Server emits `session_renamed` after rename; rename UI updates without reload |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (decomposed 3.0–3.N) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -613,7 +613,7 @@ TS web client still served by the Rust binary; all new features in Rust.
 | 2a | ✅ Done | Wire `model`/`effort` from `reset` + `POST /api/sessions` through `AgentConfig`; emit `session_info` WS message |
 | 2b | ✅ Done | Align URL paths (`/api/*` vs `/`) or update web-client fetch calls; switch replay to `history` frame |
 | 2c | ✅ Done | Cut over: Playwright + Justfile use `omega-server`; `src/cli.ts` + `src/web/server.ts` deleted |
-| 2d | ⬜ Next | Broadcast `session_renamed` envelope from `handle_rename_session` so the rename UI updates |
+| 2d | ✅ Done | Broadcast `session_renamed` envelope from `handle_rename_session` so the rename UI updates |
 
 ### Phase 2a + 2b — done (concise record)
 
@@ -736,51 +736,30 @@ web / session helpers.
 the deleted `src/cli.ts`. Should be retargeted at `rust/target/release/omega`
 (the omega-cli binary). Bench is not on the test path.
 
-### Phase 2d — `session_renamed` envelope on rename (next)
+### Phase 2d — done (concise record)
 
-**Bug.** Renaming a session in the UI accepts the input and saves on disk,
-but the name field empties out again afterwards. Reproduces against the
-Rust backend; the user reports the same UX existed against the deleted TS
-server too — long-standing, surfaced by the cut-over.
+**Scope (option c — server-side only, Playwright spec skipped).** The
+Leptos client (Phase 3) will inherit a correct protocol from day one;
+writing a Playwright spec for code about to be deleted was rejected as
+throwaway coverage.
 
-**Diagnosis.** `handle_rename_session` (`rust/crates/omega-server/src/router.rs`)
-updates `session.jsonc` on disk and refreshes `ActiveSession::info_cache`,
-but sends *nothing* on the WebSocket. The SolidJS client expects a
-`{type: "session_renamed", sessionDir, name}` envelope — already declared
-in `src/web/protocol.ts:128`, handled in `src/web/client/state.ts:829`
-(updates `sessionName` if the dir matches) and `src/web/client/App.tsx:265`
-(updates the picker's renamed-sessions map). Without that frame the
-client's `sessionName` keeps its previous value (typically `""` for a
-fresh session).
+**Implementation:** `WsMessage::SessionRenamed { session_dir, name }`
+added to `omega-server/src/ws_message.rs` (lives in the server crate, not
+`omega-protocol` — server-only wire shape, same as `SessionDeleted`). Wire
+projection: `{"type":"session_renamed","sessionDir":...,"name":...}`.
+`handle_rename_session` in `router.rs` now sends the envelope on `tx`
+after the disk write + `info_cache` refresh, using the client-supplied
+`session_dir` (basename) so the SolidJS client's
+`state.sessionDir.endsWith("/" + event.sessionDir)` match works for both
+active and inactive targets.
 
-The Rust `WsMessage` enum has *no* `SessionRenamed` variant — grep returns
-zero matches across `rust/crates/`. The existing test
-`rename_session_updates_metadata_for_active_session`
-(`rust/crates/omega-server/tests/ws.rs:754`) enshrines the bug with a
-comment reading *"No frame is emitted on success"* — it asserts only the
-on-disk metadata.
+**Tests in `tests/ws.rs`:** `rename_session_updates_metadata_for_active_session`
+asserts both the on-disk metadata and the broadcast envelope
+(`type/sessionDir/name`). A second test covers renaming a non-active
+session from the picker. Three serialisation unit tests in
+`ws_message.rs` lock down the JSON shape and round-trip.
 
-**Fix (server-side only):**
-
-1. Add `SessionRenamed { session_dir: String, name: String }` to
-   `WsMessage` in `omega-protocol/src/ws_message.rs` (mirror the existing
-   `SessionDeleted` variant: same `ts-rs` derives, same `#[serde(rename_all
-   = "camelCase")]` so the wire field is `sessionDir`).
-2. In `handle_rename_session`, after the disk write + cache refresh, send
-   `WsMessage::SessionRenamed { session_dir: <basename of paths.dir>, name }`
-   on `tx`. Use the *relative* dir name to match the client's matching logic
-   (`state.sessionDir.endsWith("/" + event.sessionDir)`).
-3. Update the existing test to assert the new envelope is received in
-   addition to the on-disk write — drop the misleading comment.
-4. Add a Playwright spec (e.g. `e2e/web-ui-rename-session.spec.ts`) that
-   drives the rename UI end-to-end and asserts the displayed name persists
-   after save. This is the real-world failure mode and it's not currently
-   covered — hence the bug surviving Phase 2c's gate.
-
-No client changes needed (the handler already exists). No protocol
-renegotiation — client and server protocol files have been out of sync
-since before the cut-over. Estimated diff: ~30 LOC across
-`ws_message.rs`, `router.rs`, the unit test, plus the new Playwright spec.
+**Bar:** `cargo test -p omega-server` 59+15+14+16 ✅.
 
 ### Running the UI in real life
 
@@ -799,10 +778,96 @@ production LLM, real cost. Sessions persist to `.omega/sessions/` by default.
 
 ---
 
-## Phase 3 — Leptos UI rewrite ⬜ Future
+## Phase 3 — Leptos UI rewrite 🟡 In progress
 
-`omega-web` crate. Port `src/web/client/` component by component. Imports types from
-`omega-protocol` directly. Once complete: delete `src/`, `ts-rs` derives, `node_modules`.
+`omega-web` crate. Ports `src/web/client/` component by component. Imports types
+from `omega-protocol` directly (no more ts-rs `.d.ts` round-trip). Once complete:
+delete `src/`, the ts-rs derives, and `node_modules`.
+
+### Co-existence strategy — "don't brick Omega before cutover"
+
+The SolidJS UI stays the production frontend until Leptos reaches parity.
+Both bundles ship in the same Rust binary; the URL decides which one runs.
+
+```
+localhost:3000/         → SolidJS (existing, unchanged)
+localhost:3000/leptos/  → Leptos  (new, opt-in)
+        │
+        └── both connect to the same /ws and /api/* on omega-server
+```
+
+Cutover at the end of Phase 3 is a one-line change: swap which bundle the
+`/` static-route fallback serves. Rollback is the inverse one-liner.
+
+### Decomposition
+
+| Sub-phase | Status | Deliverable |
+|---|---|---|
+| 3.0 | ⬜ Next | `omega-web` crate scaffold; `/leptos/` mount on `omega-server`; hello-world page that renders `Ready` from a real `/ws` connection |
+| 3.1 | ⬜ | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
+| 3.2 | ⬜ | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
+| 3.3 | ⬜ | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
+| 3.4 | ⬜ | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
+| 3.5 | ⬜ | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
+| 3.6 | ⬜ | Visual parity pass; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
+| 3.7 | ⬜ | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
+
+### Phase 3.0 — scaffold without bricking (next)
+
+**Goal.** Establish the Rust→wasm→browser toolchain end-to-end and prove
+the `/ws` protocol round-trips through `omega-protocol` types — with zero
+risk to the SolidJS UI.
+
+**Deliverables:**
+
+1. **New crate `rust/crates/omega-web/`** — Leptos CSR (client-side
+   rendering; SSR deferred — `omega-server` is single-process and the
+   wins from SSR don't outweigh the build complexity at this stage).
+   `trunk` build, `wasm-bindgen`, workspace deps on `omega-protocol`
+   (events) and `serde_json` (frame parsing). `Cargo.toml`,
+   `index.html`, `src/main.rs`.
+2. **Hello-world page.** Connects to `/ws`, deserialises incoming
+   frames as `serde_json::Value` first, dispatches on `type`, renders a
+   running list of frame types. `Ready`, `SessionInfo`, `History` are
+   all that arrive on a fresh connect — that's enough to prove the
+   pipe works. No styling, no forms, no parity.
+3. **`omega-server` route mount.** Extend `build_router` so a second
+   `tower_http::ServeDir` mounts the Leptos `dist/` under `/leptos/`.
+   The existing root `ServeDir` fallback is **untouched** — the SolidJS
+   bundle continues to serve `/` exactly as today. WS and `/api/*`
+   routes are shared by both clients.
+4. **`Justfile` recipe `web-leptos-build`.** Runs
+   `trunk build --release --dist rust/crates/omega-web/dist`. Made a
+   dependency of `rust-build-server` so the binary always ships both
+   bundles. New gate step: `just web-leptos-build` runs in the
+   pre-commit gate to catch wasm compilation breaks.
+5. **One Playwright smoke spec** under `e2e/leptos-smoke.spec.ts`
+   (against the existing `mock-omega-server`): visits `/leptos/`,
+   waits for the `ready` text to appear in the DOM. Locks in the
+   wiring; deleted in 3.7 along with the rest of Playwright.
+
+**Out of scope for 3.0:** any feature parity, any styling, any
+component decomposition, SSR, hydration, route-based navigation,
+state management beyond a single `RwSignal<Vec<String>>` of frame
+types seen.
+
+**Acceptance:**
+- `localhost:3000/`        → SolidJS unchanged (manual smoke).
+- `localhost:3000/leptos/` → wasm loads, WS connects, `ready` appears.
+- `just rust-gate` ✅ (including new wasm build step).
+- `just test-browser` ✅ (109 existing + 1 new Leptos smoke).
+
+**Workspace additions (tentative):**
+```toml
+leptos       = { version = "0.7", features = ["csr"] }
+web-sys      = { version = "0.3", features = ["WebSocket", "MessageEvent"] }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+```
+Versions to be pinned during 3.0 implementation against current
+Leptos releases.
+
+**Carry-forward into 3.1:** TBD — recorded after 3.0 lands.
 
 ---
 
