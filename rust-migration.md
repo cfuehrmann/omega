@@ -1060,6 +1060,88 @@ clean on the leptos crate.
   `wasm_bindgen_test_configure!(run_in_browser)` and add chromedriver to
   the gate.
 
+### Phase 3.2 — session picker (next)
+
+**Goal.** First user-facing feature surface in the Leptos UI: a session
+picker that lists, creates, renames, and deletes sessions. Replaces the
+3.1 debug-only JSON dump with a real (if minimal) interactive view, and
+activates the WS write path (`WsClient::send(&ClientFrame)`) for the
+first time.
+
+**Server-side surface (already in place — do NOT change):**
+- `GET /api/sessions` → `Vec<{ dir, metadata }>` newest-first.
+- `POST /api/sessions { model?, effort? }` → `{ dir }`. Creates a new
+  session and installs it as the active session.
+- `ClientFrame::Reset { model?, effort? }` → server creates a fresh
+  session over the existing WS, emits `session_info` → `history` →
+  `reset_done`. Use this when the picker is *changing* sessions on the
+  same socket.
+- `ClientFrame::ResumeSession { session_dir }` → server spawns a new
+  session seeded with the chosen one's resumption summary.
+- `ClientFrame::RenameSession { session_dir, name }` → server writes
+  metadata + broadcasts `WsMessage::SessionRenamed`.
+- `ClientFrame::DeleteSession { session_dir }` → server deletes on disk
+  + broadcasts `WsMessage::SessionDeleted`.
+
+All five `ClientFrame` variants are already typed in
+`frontends/leptos/src/protocol.rs`; all three relevant `WsMessage`
+shapes (`SessionInfo`, `SessionRenamed`, `SessionDeleted`) already
+deserialise correctly and flow through `SessionStore::apply`.
+
+**Deliverables:**
+
+1. **`SessionListStore`** — separate from `SessionStore` (different
+   lifecycle: list lives across resets; conversation state resets per
+   session). Holds `RwSignal<Vec<SessionMetadata>>` plus a `loading` /
+   `last_error` pair. Refresh on mount and on every `SessionRenamed` /
+   `SessionDeleted` / `reset_done` frame.
+2. **HTTP fetch helper** for `GET /api/sessions`. Recommend `gloo-net`
+   (small, leptos-friendly, already a transitive dep via leptos's
+   `server_fn`) over hand-rolled `web_sys::Request`. Verify it doesn't
+   inflate the bundle materially; if it does, fall back to `web_sys`.
+3. **`SessionPicker` component** — minimal HTML, no styling beyond what
+   the SolidJS picker has today. Reads `SessionListStore`; highlights
+   the active session by matching against
+   `SessionStore::session_info.dir`; "new session" button posts to
+   `/api/sessions` (or sends `ClientFrame::Reset`); rename via inline
+   `<input>`; delete with a confirm.
+4. **Wire `WsClient::send`** for the three write-path frames. The 3.1
+   `WsClient::send` returns `Result<(), JsValue>`; surface failures into
+   `SessionListStore::last_error` so the picker can render them.
+5. **Mount under `/leptos/`** as a sidebar next to the existing debug
+   dump (don't remove the dump — it stays useful through 3.6 as a smoke
+   surface). The dump moves into a collapsible panel.
+
+**Out of scope:** styling polish (3.6), conversation feed (3.3),
+composer (3.4), context inspector (3.5), resume-session UI flow (3.5
+— the WS frame already exists, but the picker only needs new/rename/
+delete). Do NOT touch `src/web/` or `omega-server`.
+
+**Acceptance:**
+- `localhost:3000/leptos/` shows a working picker: list, create,
+  rename, delete; active session is visually distinct.
+- A new Playwright spec (`e2e/leptos-session-picker.spec.ts`) covers
+  the four CRUD operations against `mock-omega-server`. Existing
+  smoke specs still pass.
+- `cargo mutants -- --target wasm32-unknown-unknown` on every new
+  pure-logic file (likely `sessions.rs` with the list reducer):
+  **0 missed**. JS-interop edges (the new fetch helper) acknowledged
+  as gaps, same pattern as `ws.rs`.
+- `just rust-gate` ✅ · `just test-browser` ✅.
+
+**Open questions to resolve in 3.2:**
+- Reset-vs-POST decision: should "new session" use `POST /api/sessions`
+  (HTTP) or `ClientFrame::Reset` (WS)? Both work; pick one and document
+  why. The TS UI uses POST for new-from-picker and Reset for in-session
+  reset; mirror that pattern unless you have a reason to diverge.
+- Optimistic update vs server-confirmed: should rename/delete update
+  the local list immediately or wait for the server's broadcast? The
+  server's `SessionRenamed`/`SessionDeleted` frames are already
+  reliable; recommend server-confirmed for honest types, but call out
+  the lag.
+- `gloo-net` vs `web_sys::Request` — verify bundle delta before
+  committing.
+
 ---
 
 ## Phase 4 — `chromiumoxide` + LLM oracle ⬜ Future
