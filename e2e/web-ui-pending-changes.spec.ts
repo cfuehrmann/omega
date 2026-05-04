@@ -71,6 +71,36 @@ test("no pending-changes modal when working tree is clean", async ({ page, serve
 });
 
 // ---------------------------------------------------------------------------
+// Regression test: modal appears even when init events are present on disk
+//
+// On a real production server, Agent::init() always writes `server_started`
+// and `session_started` into events.jsonl before any user work begins.  These
+// are replayed to the browser on first connect, so `state.events.length` is 2
+// (not 0) when the modal condition is evaluated — causing it to be suppressed.
+// The test-server fixture doesn't write those init events, which is why the
+// other tests pass even with the broken gate.
+// ---------------------------------------------------------------------------
+
+test("pending-changes modal appears when only init events are on disk (production regression)", async ({ page, server }) => {
+  await server.setPendingChanges(true);
+
+  // Pre-write the two init events that the real agent writes on every fresh
+  // session.  `loadFixture` writes raw JSONL directly to events.jsonl so they
+  // are replayed via the history frame on first WebSocket connect — exactly
+  // what a production server does.
+  await server.loadFixture([
+    JSON.stringify({ type: "server_started", time: new Date().toISOString() }),
+    JSON.stringify({ type: "session_started", time: new Date().toISOString(), path: "/fake", model: "claude-sonnet-4-6", effort: "medium", omegaCommit: "abc1234" }),
+  ]);
+
+  await page.goto("/");
+  await page.locator(CONNECTED_SELECTOR).waitFor({ timeout: 5000 });
+
+  // The modal MUST appear: the session has no agent work, only init bookkeeping.
+  await expect(page.getByTestId("pending-changes-modal")).toBeVisible({ timeout: 5000 });
+});
+
+// ---------------------------------------------------------------------------
 // Regression test: no false-positive modal when the session already has history
 //
 // If hasPendingChanges is true but the session already has events (i.e. the

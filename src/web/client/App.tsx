@@ -493,7 +493,7 @@ function TokenLegend() {
  */
 function PendingChangesModal() {
   return (
-    <Show when={state.hasPendingChanges && !state.pendingChangesAcknowledged && state.events.length === 0}>
+    <Show when={state.hasPendingChanges && !state.pendingChangesAcknowledged && !state.events.some(e => e.type !== "server_started" && e.type !== "session_started")}>
       <div class="modal-backdrop" data-testid="pending-changes-backdrop">
         <div class="modal pending-changes-modal" data-testid="pending-changes-modal">
           <div class="modal-header">
