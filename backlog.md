@@ -6,19 +6,8 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ## P0 — Top priority
 
-### TEST-ARCH — Test architecture & web-surface honesty
-
-**[backlog/test-architecture.md](backlog/test-architecture.md)**
-
-Umbrella plan for bringing every test surface in Omega onto a single, honest
-pattern: test through the outermost user-visible surface of each binary; fake
-only the LLM (Anthropic-shaped HTTP at `ANTHROPIC_BASE_URL`); let coverage of
-orchestration modules flow down from the e2e tier; keep dedicated unit tests
-only for leaf utilities (SSE parser, per-tool I/O). Six steps; TEST-ARCH-1
-(CLI e2e), TEST-ARCH-2 (server WS-protocol tests), TEST-ARCH-3 (retire
-`omega-mock-server`'s `MockProvider`), and TEST-ARCH-4 (retire `omega-agent`
-MockProvider suite) are done. TEST-ARCH-5 and TEST-ARCH-6 are gated on the
-Leptos rewrite.
+*(empty — TEST-ARCH-1 … 4 done; remaining test-architecture work is gated
+on the Leptos rewrite and tracked under P3.)*
 
 ---
 
@@ -40,6 +29,20 @@ coverage. Fix: emit `llm_error` before `agent_error` on exhaustion.
 ---
 
 ## P3 — Low priority / deferred
+
+### TEST-ARCH-5 / TEST-ARCH-6 — Leptos HTML snapshots + drive `omega-server` to zero-missed
+
+**[backlog/test-architecture.md](backlog/test-architecture.md)**
+
+The two remaining steps of the test-architecture plan. Both gated on the
+Leptos rewrite landing (Phase 3 of `rust-migration.md`):
+
+- **TEST-ARCH-5** — add `leptos::ssr::render_to_string` + `insta`
+  HTML-snapshot tests per component, expected to replace ~80% of the
+  current Playwright surface area.
+- **TEST-ARCH-6** — with the bulk of UI coverage moved into fast Rust
+  tests, drive `cargo mutants -p omega-server` to the same zero-missed
+  bar already met by `omega-cli`, `omega-tools`, and `omega-agent`.
 
 ### Advisor tool — blocked on `clear_tool_uses` compatibility
 

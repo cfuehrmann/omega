@@ -1,38 +1,44 @@
 # TEST-ARCH — Test architecture & web-surface honesty
 
 **Owner:** open
-**Status:** 🔴 Top priority
-**Pre-Leptos work; some sub-items deferred until after Phase 3.**
+**Status:** 🟢 Pre-Leptos work complete (TEST-ARCH-1 … 4); TEST-ARCH-5
+and TEST-ARCH-6 are gated on the Leptos rewrite (Phase 3 of
+`rust-migration.md`).
 
-This is the umbrella plan for bringing every test surface in Omega onto a
-single, honest pattern: **test through the outermost user-visible surface of
-each binary; fake only what we can't run for real (Anthropic); let coverage of
+Umbrella plan for bringing every test surface in Omega onto a single,
+honest pattern: **test through the outermost user-visible surface of each
+binary; fake only what we can't run for real (Anthropic); let coverage of
 internal modules flow down from the e2e tier**.
 
-The current state has three different patterns covering three slices of the
-codebase, an unjustified asymmetry between CLI and server, and a known
-mutation-coverage gap on `omega-cli`. This document defines the target and the
-ordered steps to get there.
+When this document was written, the repo had three different patterns
+covering three slices of the codebase, an unjustified asymmetry between
+CLI and server, and a known mutation-coverage gap on `omega-cli`.
+TEST-ARCH-1 through TEST-ARCH-4 closed all of that; the target architecture
+below is the current state of the repo. The two remaining steps both
+require the Leptos UI rewrite to land first.
 
 ---
 
-## Why now (and why not later)
+## Why this happened pre-Leptos (and what's deferred)
 
 The TS web client is frozen pending the Leptos rewrite (Phase 3 of
-`rust-migration.md`). Before Leptos lands we want:
+`rust-migration.md`). Before Leptos landed we wanted three things in place,
+all now done:
 
-1. The CLI test pattern established and validated. The CLI surface won't
-   change with Leptos, so any tests written now survive the rewrite.
-2. A server-side Rust-level WS-protocol test layer in place, so post-Leptos
-   we already have a fast non-browser path for `omega-server`.
-3. The `omega-mock-server` ↔ `wiremock-style HTTP fake` decision made and
-   migrated, so post-Leptos we don't carry two LLM-fake patterns forward.
+1. The CLI test pattern established and validated (TEST-ARCH-1). The CLI
+   surface won't change with Leptos, so any tests written now survive the
+   rewrite.
+2. A server-side Rust-level WS-protocol test layer (TEST-ARCH-2), so
+   post-Leptos we already have a fast non-browser path for `omega-server`.
+3. The `omega-mock-server` ↔ axum-fake decision made and migrated
+   (TEST-ARCH-3 + TEST-ARCH-4), so post-Leptos we don't carry parallel
+   LLM-fake patterns forward.
 
-What we explicitly *don't* do before Leptos: invest in tightening Playwright
+What we explicitly *didn't* do before Leptos: invest in tightening Playwright
 mutation coverage of `omega-server`. The current TS web UI is going away;
 mutation-tightening assertions in tests that disappear is wasted effort. After
 Leptos, the bulk of `omega-server` mutation kill rate will come from cheap
-Rust HTML-snapshot tests, and the work is justified.
+Rust HTML-snapshot tests — that's TEST-ARCH-5 and TEST-ARCH-6.
 
 ---
 
@@ -300,9 +306,9 @@ zero-missed bar as `omega-tools` and (per TEST-ARCH-1) `omega-cli`.
 
 ## Cross-references
 
-- `rust-migration.md` — BUG-C is the same work as TEST-ARCH-1; the Phase-3
+- `rust-migration.md` — BUG-C was the same work as TEST-ARCH-1; the Phase-3
   Leptos rewrite gates TEST-ARCH-5 and TEST-ARCH-6.
-- `rust/PHASE-1d.0-NOTES.md` — Phase 1d.0a's MockProvider tests are the
-  suite slated for retirement in TEST-ARCH-4.
+- `rust/PHASE-1d.0-NOTES.md` — Phase 1d.0a's MockProvider tests were the
+  suite retired in TEST-ARCH-4.
 - `nutriterm/tests/cli.rs`, `nutriterm/tests/common.rs` — reference pattern
   for TEST-ARCH-1's `assert_cmd` + `insta` + path-normalisation shape.
