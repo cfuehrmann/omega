@@ -807,7 +807,13 @@ async fn handle_abort(state: &AppState) -> Result<(), String> {
 }
 
 /// Drop any existing session, build a fresh one, install `tx` into its
-/// slot, and emit `SessionInfo → History([]) → ResetDone → Ready`.
+/// slot, and emit `SessionInfo → ResetDone → History → Ready`.
+///
+/// Wire order matters: `ResetDone` must arrive **before** `History` so the
+/// client clears stale state first and then loads the fresh init events.  The
+/// previous order (`History → ResetDone`) caused `reset_done` to wipe the
+/// `server_started` / `session_started` events delivered by `history`,
+/// making them invisible until the next browser refresh.
 async fn handle_reset(
     state: &AppState,
     tx: &UnboundedSender<WsMessage>,
@@ -825,10 +831,24 @@ async fn handle_reset(
 
     let (mut session, _dir_name) = create_active_session(state, model, effort).await?;
     session.ws_tx = Some(tx.clone());
+
+    // Capture what we need before installing the session into the slot so we
+    // can build the session_info frame without re-locking active_session.
+    let info_cache_arc = Arc::clone(&session.info_cache);
+    let turn_state_arc = Arc::clone(&session.turn_state);
+    let events_file = session.paths.events_file.clone();
+
     *state.active_session.lock().await = Some(session);
 
-    send_session_info_and_history(state, tx).await;
+    // 1. session_info — client learns the new session identity.
+    let session_info = build_session_info(&info_cache_arc, &turn_state_arc).await;
+    let _ = tx.send(session_info);
+    // 2. reset_done — client clears stale events / metrics.
     let _ = tx.send(WsMessage::ResetDone);
+    // 3. history — client loads the fresh init events (server_started + session_started).
+    let events = read_history_events(&events_file).await;
+    let _ = tx.send(WsMessage::History { events, streaming: false });
+    // 4. ready — client is ready to interact.
     let _ = tx.send(WsMessage::Ready);
     Ok(())
 }

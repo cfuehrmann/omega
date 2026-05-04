@@ -44,6 +44,7 @@ test("rust-serialised session_started validates against TS schema", () => {
     model: "claude-sonnet-4-6",
     effort: "medium",
     systemPrompt: "You are Omega.",
+    omegaCommit: "abc1234",
   });
 
   const event = parseEvent(json);

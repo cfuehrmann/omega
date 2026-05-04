@@ -699,6 +699,65 @@ async fn replay_with_empty_events_file_yields_only_ready() {
 // 10. Reconnect after reset with no turns replays init events, then Ready.
 // ---------------------------------------------------------------------------
 
+/// Regression guard for the `reset_done`-before-`history` ordering fix.
+/// The `reset` response must arrive in the order:
+///   `session_info → reset_done → history → ready`
+/// and `history.events` must contain the init pair
+/// `[server_started, session_started]`.
+///
+/// Previously `reset_done` came *after* `history`, which caused the client
+/// to clear the events it had just loaded — making `server_started` and
+/// `session_started` invisible until the next browser refresh.
+#[tokio::test]
+async fn reset_frame_order_and_init_events_in_history() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    let state = make_test_state(Arc::clone(&provider), tmp.path().join("sessions"));
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready"); // pre-session ready
+
+    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    let frames = recv_until_type(&mut ws, "ready").await;
+
+    let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
+    assert_eq!(
+        types,
+        vec!["session_info", "reset_done", "history", "ready"],
+        "reset frame order must be session_info → reset_done → history → ready; got {types:?}",
+    );
+
+    let history = frames
+        .iter()
+        .find(|v| v["type"] == "history")
+        .expect("history frame present");
+    let event_types: Vec<&str> = history["events"]
+        .as_array()
+        .expect("history.events is an array")
+        .iter()
+        .filter_map(|v| v["type"].as_str())
+        .collect();
+    assert_eq!(
+        event_types,
+        vec!["server_started", "session_started"],
+        "history.events must be [server_started, session_started]; got {event_types:?}",
+    );
+
+    // Also verify session_started carries the omegaCommit field.
+    let ss = history["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["type"] == "session_started")
+        .expect("session_started in history");
+    assert!(
+        ss["omegaCommit"].is_string(),
+        "session_started.omegaCommit must be a string; got {:?}",
+        ss["omegaCommit"]
+    );
+}
+
 #[tokio::test]
 async fn reconnect_after_reset_replays_init_events_then_ready() {
     let tmp = TempDir::new().unwrap();

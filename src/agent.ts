@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { execFileSync } from "child_process";
 import { config, maxOutputTokensForModel, COMPACTION_INSTRUCTIONS } from "./config.js";
 import { toolDefinitions, executeTool, type ToolResult } from "./tools.js";
 import { readEnvPositiveInt, readEnvOptionalPositiveInt } from "./env.js";
@@ -20,6 +21,31 @@ import {
 import type { CreateMessageStream } from "./create-message-stream.js";
 
 // --- Types ---
+
+// ---------------------------------------------------------------------------
+// Omega git commit — resolved once at first use
+// ---------------------------------------------------------------------------
+
+let _omegaCommit: string | undefined;
+
+/**
+ * Returns the short git commit hash of the Omega source tree by running
+ * `git rev-parse --short HEAD` in the directory that contains this module.
+ * Falls back to `"unknown"` if git is unavailable or the call fails.
+ */
+function resolveOmegaCommit(): string {
+  if (_omegaCommit !== undefined) return _omegaCommit;
+  try {
+    _omegaCommit = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: import.meta.dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    _omegaCommit = "unknown";
+  }
+  return _omegaCommit;
+}
 
 export type { OmegaEvent, StreamSignal } from "./events.js";
 export type { CreateMessageStream } from "./create-message-stream.js";
@@ -689,6 +715,7 @@ export class Agent {
         model: this.activeModel,
         effort: this.activeEffort,
         systemPrompt: this.buildSystemPrompt(),
+        omegaCommit: resolveOmegaCommit(),
       });
     }
   }

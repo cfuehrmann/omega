@@ -61,6 +61,7 @@ fn all_22_events() -> Vec<OmegaEvent> {
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
             system_prompt: "You are Omega, a coding agent.".into(),
+            omega_commit: "abc1234".into(),
         }),
         // 2. ServerStarted
         OmegaEvent::ServerStarted(ServerStartedEvent { time: T.into() }),

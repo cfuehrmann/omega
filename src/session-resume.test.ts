@@ -133,7 +133,7 @@ describe("extractResumptionBasis — empty session", () => {
   it("returns empty-session message when events have no turns", () => {
     const events: OmegaEvent[] = [
       { type: "server_started", time: "2025-01-01T00:00:00.000Z" as any },
-      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", path: "", model: "m", effort: "medium", systemPrompt: "s" },
+      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", path: "", model: "m", effort: "medium", systemPrompt: "s", omegaCommit: "unknown" },
     ];
     expect(extractResumptionBasis(events)).toBe(
       "(empty session — no turns recorded)",
@@ -382,7 +382,7 @@ describe("extractResumptionBasis — dropped events", () => {
   it("does not include server_started, session_started, llm_call, turn_end, llm_retry", () => {
     const events: OmegaEvent[] = [
       { type: "server_started", time: "2025-01-01T00:00:00.000Z" as any },
-      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", path: "", model: "m", effort: "medium", systemPrompt: "s" },
+      { type: "session_started", time: "2025-01-01T00:00:00.000Z" as any, sessionId: "x", path: "", model: "m", effort: "medium", systemPrompt: "s", omegaCommit: "unknown" },
       userMsg("hello"),
       { type: "llm_call", time: "2025-01-01T00:00:01.000Z" as any, url: "u", model: "m", contextHashes: [], cacheBreakpointIndex: null, requestBytes: 100 },
       { type: "llm_retry", time: "2025-01-01T00:00:01.000Z" as any, attempt: 1, waitMs: 1000, error: "rate limit" },
@@ -411,7 +411,7 @@ describe("extractLastModelAndEffort", () => {
 
   it("returns undefined for both when no model_changed or effort_changed events exist", () => {
     const events: OmegaEvent[] = [
-      { ...base, type: "session_started", sessionId: "x", path: "", model: "claude-sonnet-4-6", effort: "medium", systemPrompt: "" },
+      { ...base, type: "session_started", sessionId: "x", path: "", model: "claude-sonnet-4-6", effort: "medium", systemPrompt: "", omegaCommit: "unknown" },
       { ...base, type: "user_message", content: "hello" },
     ];
     expect(extractLastModelAndEffort(events)).toEqual({ model: undefined, effort: undefined });

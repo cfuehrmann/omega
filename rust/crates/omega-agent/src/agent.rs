@@ -207,6 +207,7 @@ impl Agent {
             model: self.active_model.clone(),
             effort: self.active_effort.clone(),
             system_prompt,
+            omega_commit: crate::OMEGA_GIT_COMMIT.to_owned(),
         });
         self.event_store.append(&session_started).await?;
         Ok(())

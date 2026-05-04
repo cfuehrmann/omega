@@ -26,3 +26,7 @@ pub use session_resume::{
 pub use system_prompt::{
     build_system_prompt, read_system_prompt_append, system_prompt_append_path,
 };
+
+/// Short git commit hash of the Omega binary, captured at compile time.
+/// Falls back to `"unknown"` when git was unavailable at build time.
+pub const OMEGA_GIT_COMMIT: &str = env!("OMEGA_GIT_COMMIT");

@@ -112,6 +112,12 @@ pub struct LlmResponseUsage {
 // Per-variant event structs
 // ---------------------------------------------------------------------------
 
+/// Fallback for the `omega_commit` serde default: sessions written before
+/// this field was added deserialise with `"unknown"` instead of being dropped.
+fn default_omega_commit() -> String {
+    "unknown".to_owned()
+}
+
 /// The session started (first event in every session).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +132,12 @@ pub struct SessionStartedEvent {
     pub effort: String,
     /// The full system prompt text at session start.
     pub system_prompt: String,
+    /// Short git commit hash of the Omega source at the time the binary was built.
+    /// `"unknown"` when git was unavailable at build time.
+    /// Defaulted on deserialise so that events written before this field was
+    /// added still parse successfully (backward compat).
+    #[serde(default = "default_omega_commit")]
+    pub omega_commit: String,
 }
 
 /// The server process started.
@@ -477,6 +489,7 @@ mod tests {
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
             system_prompt: "You are Omega.".into(),
+            omega_commit: "abc1234".into(),
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "session_started");
@@ -678,7 +691,7 @@ mod tests {
     #[test]
     fn deserialize_ts_session_started() {
         // Typical line from events.jsonl written by the TS agent
-        let line = r#"{"type":"session_started","time":"2024-01-15T12:00:00.000Z","sessionId":"abc","path":".omega/sessions/abc","model":"claude-sonnet-4-6","effort":"medium","systemPrompt":"You are Omega."}"#;
+        let line = r#"{"type":"session_started","time":"2024-01-15T12:00:00.000Z","sessionId":"abc","path":".omega/sessions/abc","model":"claude-sonnet-4-6","effort":"medium","systemPrompt":"You are Omega.","omegaCommit":"abc1234"}"#;
         let ev: OmegaEvent = serde_json::from_str(line).unwrap();
         match ev {
             OmegaEvent::SessionStarted(s) => {

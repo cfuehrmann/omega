@@ -776,7 +776,7 @@ export function dispatch(event: ServerMessage): void {
     case "session_started": {
       setState(produce(s => { s.events.push(event); }));
       setState("liveModel", event.model);
-      if ((event as any).effort) setState("liveEffort", (event as any).effort);
+      setState("liveEffort", event.effort);
       break;
     }
 

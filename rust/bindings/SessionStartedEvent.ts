@@ -11,4 +11,9 @@ path: string, model: string, effort: string,
 /**
  * The full system prompt text at session start.
  */
-systemPrompt: string, };
+systemPrompt: string, 
+/**
+ * Short git commit hash of the Omega source at the time the binary was built.
+ * `"unknown"` when git was unavailable at build time.
+ */
+omegaCommit: string, };

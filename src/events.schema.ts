@@ -50,6 +50,7 @@ const SessionStartSchema = z.object({
   /** Default "medium" for backward compat — old logs lack this field. */
   effort: z.string().default("medium"),
   systemPrompt: z.string(),
+  omegaCommit: z.string().default("unknown"),
 });
 
 const ServerStartedSchema = z.object({

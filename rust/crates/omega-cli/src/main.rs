@@ -160,6 +160,7 @@ async fn run(
         model: model.clone(),
         effort: effort.clone(),
         system_prompt,
+        omega_commit: omega_agent::OMEGA_GIT_COMMIT.to_owned(),
     });
     if let Err(e) = event_store.append(&session_started).await {
         eprintln!("omega: failed to write session_started: {e}");
