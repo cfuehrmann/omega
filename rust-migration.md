@@ -23,7 +23,8 @@
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
 | 2d — `session_renamed` envelope | ✅ Done | Server emits `session_renamed` after rename; rename UI updates without reload |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (decomposed 3.0–3.N) |
+| 3.0 — Leptos scaffold | ✅ Done | `frontends/leptos/` crate; `/leptos/` mount on `omega-server`; smoke spec green |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0 done; 3.1–3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -42,19 +43,28 @@
 
 ```
 dev/
-├── rust/                       ← Cargo workspace (all new Rust code)
+├── rust/                       ← Cargo workspace (backend; native targets)
 │   ├── Cargo.toml
 │   └── crates/
-│       ├── omega-protocol/     ✅ done
+│       ├── omega-protocol/     ✅ done  (shared types — also consumed by frontends/leptos/)
 │       ├── omega-core/         ✅ done
 │       ├── omega-store/        ✅ done
 │       ├── omega-tools/        ✅ done
 │       ├── omega-agent/        ✅ done
-│       └── omega-cli/          ✅ done
-├── src/                        ← TypeScript (frozen; no new features)
+│       ├── omega-cli/          ✅ done
+│       ├── omega-server/       ✅ done  (HTTP + WS; serves both bundles)
+│       └── omega-mock-server/  ✅ done  (Playwright fixture binary)
+├── frontends/                  ← alternative web frontends (Phase 3.0+)
+│   └── leptos/                 🟡 in progress  (standalone wasm32 Cargo workspace)
+├── src/                        ← TypeScript SolidJS frontend (frozen; deleted at 3.7)
+├── e2e/                        ← Playwright (retires in Phase 4)
 ├── Justfile
 └── package.json
 ```
+
+**Two-bundle co-existence (3.0–3.6):** `omega-server` mounts both frontends.
+`/` → SolidJS (`src/web/public/`); `/leptos/` → Leptos (`frontends/leptos/dist/`).
+`/ws`, `/api/*`, `/health` are shared. Cutover at 3.7 swaps the fallback `ServeDir`.
 
 ---
 
@@ -780,9 +790,16 @@ production LLM, real cost. Sessions persist to `.omega/sessions/` by default.
 
 ## Phase 3 — Leptos UI rewrite 🟡 In progress
 
-`omega-web` crate. Ports `src/web/client/` component by component. Imports types
+**Crate `omega-web`** at `frontends/leptos/` (standalone Cargo workspace,
+wasm32-only). Ports `src/web/client/` component by component. Imports types
 from `omega-protocol` directly (no more ts-rs `.d.ts` round-trip). Once complete:
 delete `src/`, the ts-rs derives, and `node_modules`.
+
+The directory sits under `frontends/` rather than inside `rust/crates/` to
+model "alternative frontends" as siblings: today there's one wasm frontend;
+tomorrow there could be others. The backend crates are exclusively under
+`rust/crates/`. Type sharing flows through a `path = "../../rust/crates/omega-protocol"`
+dep — the only thing the wasm and native sides have in common.
 
 ### Co-existence strategy — "don't brick Omega before cutover"
 
@@ -790,8 +807,8 @@ The SolidJS UI stays the production frontend until Leptos reaches parity.
 Both bundles ship in the same Rust binary; the URL decides which one runs.
 
 ```
-localhost:3000/         → SolidJS (existing, unchanged)
-localhost:3000/leptos/  → Leptos  (new, opt-in)
+localhost:3000/         → SolidJS (src/web/public/, Vite-built)
+localhost:3000/leptos/  → Leptos  (frontends/leptos/dist/, trunk-built)
         │
         └── both connect to the same /ws and /api/* on omega-server
 ```
@@ -803,8 +820,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 
 | Sub-phase | Status | Deliverable |
 |---|---|---|
-| 3.0 | ⬜ Next | `omega-web` crate scaffold; `/leptos/` mount on `omega-server`; hello-world page that renders `Ready` from a real `/ws` connection |
-| 3.1 | ⬜ | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
+| 3.0 | ✅ Done | `frontends/leptos/` crate scaffold; `/leptos/` mount on `omega-server`; hello-world page that renders `Ready` from a real `/ws` connection |
+| 3.1 | ⬜ Next | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
 | 3.2 | ⬜ | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
 | 3.3 | ⬜ | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
 | 3.4 | ⬜ | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
@@ -812,62 +829,153 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | 3.6 | ⬜ | Visual parity pass; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
 | 3.7 | ⬜ | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
 
-### Phase 3.0 — scaffold without bricking (next)
+### Phase 3.0 — done (concise record)
 
-**Goal.** Establish the Rust→wasm→browser toolchain end-to-end and prove
-the `/ws` protocol round-trips through `omega-protocol` types — with zero
+**Scope:** establish the Rust→wasm→browser toolchain end-to-end with zero
 risk to the SolidJS UI.
+
+**New crate `frontends/leptos/`** (`omega-web`). Standalone Cargo workspace
+(empty `[workspace]` table) so `cargo test --workspace` from `rust/` doesn't
+try to build wasm-only deps for the host target. Path-deps to
+`../../rust/crates/omega-protocol` preserve type sharing across the workspace
+boundary.
+
+**Pinned versions** (verified to match leptos 0.8.19's transitive resolution
+so no duplicate-version builds):
+```toml
+leptos                   = { version = "=0.8.19", features = ["csr"] }
+wasm-bindgen             = "=0.2.120"
+web-sys                  = { version = "=0.3.97", features = [
+    "WebSocket", "MessageEvent", "Window", "Location",
+    "BinaryType", "Document",
+] }
+console_error_panic_hook = "=0.1.7"
+```
+Toolchain: `trunk 0.21.1`, `wasm32-unknown-unknown` rustup target.
+
+**Hello-world page** (`src/main.rs`, ~80 LOC): `console_error_panic_hook` for
+browser-visible panics; `mount_to_body(App)`; an `App` component holding a
+single `RwSignal<Vec<String>>`; an `Effect` that opens a `web_sys::WebSocket`
+to `format!("{proto}://{host}/ws")` derived from `window.location`; an
+`onmessage` closure that parses each frame as `serde_json::Value`, reads
+`value["type"]`, pushes it into the signal; a `<ul>` view rendering one `<li>`
+per frame. The closure is `forget()`-leaked since the page is throwaway.
+
+**Trunk config:** `public_url = "/leptos/"` so generated `<script>` and
+`<link>` URLs anchor under the mount point.
+
+**`omega-server` additive route mount:**
+- `AppState` gained a `leptos_dir: PathBuf` field defaulted to
+  `frontends/leptos/dist`. Existing `AppState::new(provider, sessions_root,
+  public_dir)` signature kept unchanged — a builder method
+  `.with_leptos_dir(dir)` overrides the default. Result: zero churn at the
+  18 existing test call sites.
+- `build_router` adds two routes *before* the fallback `ServeDir`:
+  `.route("/leptos", get(…Redirect::permanent("/leptos/")))` — 308, modern
+  method-preserving — and `.nest_service("/leptos/", ServeDir::new(…))`.
+  The original fallback `ServeDir` for `/` is untouched.
+- New CLI flag `--leptos-dir <PATH>` on both `omega-server` and
+  `mock-omega-server`. Default value is `frontends/leptos/dist`; if the
+  directory doesn't exist at runtime the route 404s (non-fatal).
+
+**Justfile.** New recipe `web-leptos-build`: idempotent `rustup target add
+wasm32-unknown-unknown` then `cd frontends/leptos && trunk build --release`.
+Wired as a recipe-level dep of `server`, `test-browser*`, and `rust-gate`
+so both bundles always ship together. **Divergence from plan text:** placed
+as a sibling dep, not folded into `rust-build-server` itself — the latter
+stays a pure `cargo build -p omega-server`. The "binary always ships both
+bundles" goal is preserved at the recipe-graph level.
+
+**Tests:**
+- `omega-server/tests/http.rs` — 4 new integration tests:
+  `/leptos/index.html` returns 200 from `leptos_dir`; `/leptos/` (trailing
+  slash) serves `index.html` via `ServeDir`'s directory-index behaviour;
+  bare `/leptos` returns `308` with `location: /leptos/`; the leptos route
+  wins over a decoy `public/leptos/index.html` in the fallback `ServeDir`.
+- `e2e/leptos-smoke.spec.ts` — 2 specs against `mock-omega-server`
+  (real-server project, port 3003): one waits for `<li>ready</li>` inside
+  `[data-testid="leptos-frames"]` and asserts the running counter
+  increments; one verifies the bare-prefix 308 + Location header.
+
+**Bar:** `just rust-gate` ✅ (incl. `web-leptos-build`) · `just test-browser`
+118/118 (109 existing chromium + 7 real-server + 2 new Leptos smoke) ·
+manual `curl` confirms `/`, `/leptos/`, `/leptos`, `/api/sessions`, `/health`
+all behave as specified.
+
+**Drive-by:** committed a regenerated `rust/bindings/SessionStartedEvent.ts`
+that had drifted from a doc-comment-only change in commit `72a14ee`. Pure
+doc-string update in a generated file; required to make the bindings-drift
+guard in `rust-gate` exit clean.
+
+**Carry-forward into 3.1:**
+- The 3.0 page parses frames as `serde_json::Value`. 3.1 replaces this with
+  full `WsMessage` deserialisation through `omega-protocol`, which means
+  the wire shape on the server side needs review: `WsMessage::Item`
+  currently uses untagged `AgentItem` serialisation. Decide whether
+  `omega-protocol` should expose `WsMessage` directly (currently lives in
+  `omega-server` only — server-only types like `SessionDeleted` /
+  `SessionRenamed` argue against the move) or whether the Leptos client
+  defines a parallel client-side `WsMessage` enum that re-uses
+  `omega-protocol::OmegaEvent` for the inner payloads.
+- The closure-leak in `open_ws` is fine for 3.0 but should become a proper
+  `StoredValue<Closure>` once the page has a real lifecycle.
+- `WebSocket::send` (write path) is unimplemented; 3.2 needs it.
+- `frontends/leptos/Cargo.lock` is committed (matches `rust/Cargo.lock`
+  policy for binaries). Compile time on a cold cache is ~40s; subsequent
+  builds are sub-second incremental.
+
+### Phase 3.1 — protocol + WS client (next)
+
+**Goal.** Replace the `serde_json::Value` frame parser with strongly-typed
+`WsMessage` deserialisation, and stand up a single reactive store that all
+future components subscribe to. No visible UI beyond a debug dump.
 
 **Deliverables:**
 
-1. **New crate `rust/crates/omega-web/`** — Leptos CSR (client-side
-   rendering; SSR deferred — `omega-server` is single-process and the
-   wins from SSR don't outweigh the build complexity at this stage).
-   `trunk` build, `wasm-bindgen`, workspace deps on `omega-protocol`
-   (events) and `serde_json` (frame parsing). `Cargo.toml`,
-   `index.html`, `src/main.rs`.
-2. **Hello-world page.** Connects to `/ws`, deserialises incoming
-   frames as `serde_json::Value` first, dispatches on `type`, renders a
-   running list of frame types. `Ready`, `SessionInfo`, `History` are
-   all that arrive on a fresh connect — that's enough to prove the
-   pipe works. No styling, no forms, no parity.
-3. **`omega-server` route mount.** Extend `build_router` so a second
-   `tower_http::ServeDir` mounts the Leptos `dist/` under `/leptos/`.
-   The existing root `ServeDir` fallback is **untouched** — the SolidJS
-   bundle continues to serve `/` exactly as today. WS and `/api/*`
-   routes are shared by both clients.
-4. **`Justfile` recipe `web-leptos-build`.** Runs
-   `trunk build --release --dist rust/crates/omega-web/dist`. Made a
-   dependency of `rust-build-server` so the binary always ships both
-   bundles. New gate step: `just web-leptos-build` runs in the
-   pre-commit gate to catch wasm compilation breaks.
-5. **One Playwright smoke spec** under `e2e/leptos-smoke.spec.ts`
-   (against the existing `mock-omega-server`): visits `/leptos/`,
-   waits for the `ready` text to appear in the DOM. Locks in the
-   wiring; deleted in 3.7 along with the rest of Playwright.
+1. **Client-side `WsMessage` enum.** Either re-export from `omega-protocol`
+   (preferred if the server-only variants can be split out) or define in
+   `frontends/leptos/src/protocol.rs` as a parallel enum re-using
+   `omega_protocol::OmegaEvent` for `Item` payloads. Decide during
+   implementation; record the choice.
+2. **`WsClient` struct** wrapping `web_sys::WebSocket` with:
+   - typed `send(&ClientFrame)` (mirror of the server's `ClientFrame`
+     enum — same split-or-share decision as `WsMessage`).
+   - `on_message` callback yielding `Result<WsMessage, serde_json::Error>`.
+   - reconnection on close (with backoff).
+   - StoredValue-managed `Closure` lifetimes (no `forget`).
+3. **`SessionStore`** — a single struct of `RwSignal`s mirroring the
+   TS `state` shape: `connected: bool`, `session_info: Option<SessionInfo>`,
+   `events: Vec<OmegaEvent>`, `turn_state: TurnState`, `streaming: bool`,
+   plus the `text`/`thinking` accumulators. Reducer-style `apply(WsMessage)`
+   updates the relevant signals. Lives in `provide_context` so descendants
+   can `use_context::<SessionStore>()`.
+4. **Debug view** at `/leptos/` showing JSON-pretty-printed values of every
+   field in the store. Locks the deserialise path under a smoke spec
+   without committing to component shapes. Existing 3.0 hello-world
+   becomes a footnote, deleted at 3.2.
+5. **Snapshot test** of `SessionStore::apply` against a fixture
+   `events.jsonl` so the reducer is unit-testable without a browser.
+   This is the seed for TEST-ARCH-5 (insta-driven Leptos component tests
+   that lands properly in 3.6).
 
-**Out of scope for 3.0:** any feature parity, any styling, any
-component decomposition, SSR, hydration, route-based navigation,
-state management beyond a single `RwSignal<Vec<String>>` of frame
-types seen.
+**Out of scope:** any session-picker UI, any send buttons, any styling.
 
 **Acceptance:**
-- `localhost:3000/`        → SolidJS unchanged (manual smoke).
-- `localhost:3000/leptos/` → wasm loads, WS connects, `ready` appears.
-- `just rust-gate` ✅ (including new wasm build step).
-- `just test-browser` ✅ (109 existing + 1 new Leptos smoke).
+- `localhost:3000/leptos/` shows a JSON dump of the store, updated live
+  as WS frames arrive.
+- `cargo test -p omega-web --target wasm32-unknown-unknown` (via
+  `wasm-bindgen-test`) covers `SessionStore::apply` and the
+  `WsMessage` deserialise path. Add `wasm-bindgen-test` to the gate.
+- Existing 3.0 smoke spec still green (will be retargeted at the new
+  testid in the same commit).
 
-**Workspace additions (tentative):**
-```toml
-leptos       = { version = "0.7", features = ["csr"] }
-web-sys      = { version = "0.3", features = ["WebSocket", "MessageEvent"] }
-wasm-bindgen = "0.2"
-console_error_panic_hook = "0.1"
-```
-Versions to be pinned during 3.0 implementation against current
-Leptos releases.
-
-**Carry-forward into 3.1:** TBD — recorded after 3.0 lands.
+**Open questions to resolve in 3.1:**
+- Server-only `WsMessage` variants (`SessionDeleted`, `SessionRenamed`,
+  `ResetDone`) — lift into `omega-protocol` or define a superset on the
+  client?
+- `wasm-bindgen-test` test runner setup for the gate — needs `wasm-pack`
+  or `cargo test --target wasm32-unknown-unknown` with a headless browser.
+  Pick the lighter integration.
 
 ---
 

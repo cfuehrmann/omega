@@ -268,6 +268,126 @@ async fn servedir_returns_404_for_missing_file() {
 }
 
 // ---------------------------------------------------------------------------
+// `/leptos/` second ServeDir mount (Phase 3.0)
+// ---------------------------------------------------------------------------
+
+/// `GET /leptos/index.html` returns the Leptos bundle's index, served from
+/// the configured `leptos_dir` and not from the SolidJS `public_dir`.
+#[tokio::test]
+async fn leptos_servedir_serves_index_html() {
+    let tmp = TempDir::new().expect("tempdir");
+    let leptos_dir = tmp.path().join("leptos-dist");
+    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
+    std::fs::write(leptos_dir.join("index.html"), "<html>leptos</html>")
+        .expect("write leptos index.html");
+
+    // Distinct public_dir to prove the Leptos bundle isn't accidentally
+    // served by the fallback `ServeDir`.
+    let public_dir = tmp.path().join("public");
+    std::fs::create_dir_all(&public_dir).expect("mkdir public");
+    std::fs::write(public_dir.join("index.html"), "<html>solidjs</html>")
+        .expect("write solid index.html");
+
+    let state =
+        make_test_state(tmp.path().join("sessions"), public_dir).with_leptos_dir(leptos_dir);
+    let addr = spawn_server(state).await;
+
+    let resp = http_client()
+        .get(format!("http://{addr}/leptos/index.html"))
+        .send()
+        .await
+        .expect("GET /leptos/index.html");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.expect("body");
+    assert_eq!(body, "<html>leptos</html>");
+}
+
+/// `GET /leptos/` (trailing slash) serves the bundle's `index.html` via
+/// `ServeDir`'s directory-index behaviour. The Leptos client is expected
+/// to be reachable at the bare prefix.
+#[tokio::test]
+async fn leptos_servedir_serves_index_at_trailing_slash() {
+    let tmp = TempDir::new().expect("tempdir");
+    let leptos_dir = tmp.path().join("leptos-dist");
+    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
+    std::fs::write(leptos_dir.join("index.html"), "<html>leptos-root</html>")
+        .expect("write leptos index.html");
+
+    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
+        .with_leptos_dir(leptos_dir);
+    let addr = spawn_server(state).await;
+
+    let resp = http_client()
+        .get(format!("http://{addr}/leptos/"))
+        .send()
+        .await
+        .expect("GET /leptos/");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.expect("body");
+    assert_eq!(body, "<html>leptos-root</html>");
+}
+
+/// `GET /leptos` (no trailing slash) is 308-redirected to `/leptos/`.
+/// reqwest's default redirect policy follows it, so we disable
+/// redirects here to observe the wire-level response.
+#[tokio::test]
+async fn leptos_bare_prefix_redirects_to_trailing_slash() {
+    let tmp = TempDir::new().expect("tempdir");
+    let leptos_dir = tmp.path().join("leptos-dist");
+    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
+    std::fs::write(leptos_dir.join("index.html"), "<html>leptos</html>")
+        .expect("write leptos index.html");
+
+    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
+        .with_leptos_dir(leptos_dir);
+    let addr = spawn_server(state).await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("reqwest client");
+    let resp = client
+        .get(format!("http://{addr}/leptos"))
+        .send()
+        .await
+        .expect("GET /leptos");
+    assert_eq!(resp.status().as_u16(), 308);
+    assert_eq!(
+        resp.headers().get("location").and_then(|v| v.to_str().ok()),
+        Some("/leptos/"),
+    );
+}
+
+/// The fallback `ServeDir` mounted at `/` must NOT shadow the `/leptos/`
+/// route. With a file named `leptos` in `public_dir`, requests to
+/// `/leptos/index.html` still hit the Leptos `ServeDir`.
+#[tokio::test]
+async fn leptos_route_wins_over_fallback_servedir() {
+    let tmp = TempDir::new().expect("tempdir");
+    let leptos_dir = tmp.path().join("leptos-dist");
+    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
+    std::fs::write(leptos_dir.join("index.html"), "FROM-LEPTOS").expect("write leptos index");
+
+    let public_dir = tmp.path().join("public");
+    std::fs::create_dir_all(public_dir.join("leptos")).expect("mkdir public/leptos");
+    std::fs::write(public_dir.join("leptos/index.html"), "FROM-FALLBACK")
+        .expect("write fallback decoy");
+
+    let state =
+        make_test_state(tmp.path().join("sessions"), public_dir).with_leptos_dir(leptos_dir);
+    let addr = spawn_server(state).await;
+
+    let resp = http_client()
+        .get(format!("http://{addr}/leptos/index.html"))
+        .send()
+        .await
+        .expect("GET /leptos/index.html");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body = resp.text().await.expect("body");
+    assert_eq!(body, "FROM-LEPTOS");
+}
+
+// ---------------------------------------------------------------------------
 // CLI parsing (preserved from 1e.0, extended with omega_store assertion)
 // ---------------------------------------------------------------------------
 

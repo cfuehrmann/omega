@@ -23,6 +23,12 @@ pub const DEFAULT_SESSIONS_ROOT: &str = omega_store::SESSIONS_ROOT;
 /// Matches the directory `vite build` writes to (`src/web/public/`).
 pub const DEFAULT_PUBLIC_DIR: &str = "src/web/public/";
 
+/// Default Leptos `dist/` directory, relative to the process cwd.
+/// Populated by `just web-leptos-build` (Phase 3.0). Mounted by
+/// [`crate::build_router`] under `/leptos/`. If the directory does not
+/// exist at runtime the route simply 404s — non-fatal.
+pub const DEFAULT_LEPTOS_DIR: &str = "frontends/leptos/dist";
+
 /// Parsed `omega-server` command-line arguments.
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -41,4 +47,10 @@ pub struct Args {
     /// Directory containing the built static web client bundle.
     #[arg(long, default_value = DEFAULT_PUBLIC_DIR)]
     pub public_dir: PathBuf,
+
+    /// Directory containing the built Leptos client bundle (Phase 3.0).
+    /// Mounted under `/leptos/`; the existing `--public-dir` continues
+    /// to serve `/`.
+    #[arg(long, default_value = DEFAULT_LEPTOS_DIR)]
+    pub leptos_dir: PathBuf,
 }

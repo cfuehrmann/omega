@@ -15,5 +15,7 @@ systemPrompt: string,
 /**
  * Short git commit hash of the Omega source at the time the binary was built.
  * `"unknown"` when git was unavailable at build time.
+ * Defaulted on deserialise so that events written before this field was
+ * added still parse successfully (backward compat).
  */
 omegaCommit: string, };

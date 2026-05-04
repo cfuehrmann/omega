@@ -45,17 +45,17 @@ test-core-watch:
     bun test --watch
 
 # Run browser (Playwright) tests — builds frontend + Rust binaries first
-test-browser: web-build rust-build-mock-server
+test-browser: web-build web-leptos-build rust-build-mock-server
     npx playwright test
 
 # Run browser tests with headed browser (useful for debugging)
-test-browser-debug: web-build rust-build-mock-server
+test-browser-debug: web-build web-leptos-build rust-build-mock-server
     npx playwright test --headed
 
 # Run browser tests, saving full verbose output to a timestamped log file.
 # Use this when debugging failures: the log path is printed, then inspect
 # with read_file / grep_files. Never re-run just to see more output.
-test-browser-log: web-build rust-build-mock-server
+test-browser-log: web-build web-leptos-build rust-build-mock-server
     #!/usr/bin/env bash
     LOG="test-output/playwright-$(date +%Y%m%d-%H%M%S).log"
     mkdir -p test-output
@@ -121,6 +121,14 @@ gate:
 web-build:
     cd src/web && npx vite build
 
+# Build the Leptos frontend (trunk → frontends/leptos/dist/).
+# Phase 3.0 ships this bundle alongside the SolidJS one; omega-server
+# mounts it under /leptos/. The rustup target add is idempotent and
+# only downloads on first run.
+web-leptos-build:
+    rustup target add wasm32-unknown-unknown
+    cd frontends/leptos && trunk build --release
+
 # Build the production omega-server (Rust) — release binary at rust/target/release/omega-server
 rust-build-server:
     cd rust && cargo build --release -p omega-server
@@ -132,7 +140,7 @@ rust-build-mock-server:
 
 # Start the web server (serves built client + WebSocket on :3000).
 # Pass any omega-server CLI args, e.g. just server --port 3001
-server *args: rust-build-server
+server *args: rust-build-server web-leptos-build
     rust/target/release/omega-server {{args}}
 
 # Start Vite dev server for web client (:5173, proxies WS to :3000)
@@ -189,7 +197,7 @@ rust-bindings:
 # Rust-only quality gate: format check + Clippy + cargo test + bindings drift.
 # Runs via the pre-commit hook when only rust/ files are staged.
 # Run manually: just rust-gate
-rust-gate:
+rust-gate: web-leptos-build
     cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
     just rust-bindings
     @echo "=== bindings drift check ==="

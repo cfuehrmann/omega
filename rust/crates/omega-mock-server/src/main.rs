@@ -49,6 +49,10 @@ struct Args {
     /// Static asset directory served by the fallback `ServeDir` handler.
     #[arg(long, default_value = "src/web/public")]
     public_dir: PathBuf,
+
+    /// Leptos `dist/` directory served under `/leptos/` (Phase 3.0).
+    #[arg(long, default_value = "frontends/leptos/dist")]
+    leptos_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -78,7 +82,8 @@ async fn main() -> std::io::Result<()> {
     );
 
     let provider = Arc::new(AnthropicProvider::new("sk-mock-test").with_base_url(fake_url));
-    let state = omega_server::AppState::new(provider, args.sessions_root, args.public_dir);
+    let state = omega_server::AppState::new(provider, args.sessions_root, args.public_dir)
+        .with_leptos_dir(args.leptos_dir);
 
     let fake_app = fake_router(script.clone(), Some(history.clone()));
     let ctrl_app = control::router(history, script);

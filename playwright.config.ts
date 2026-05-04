@@ -42,6 +42,7 @@ export default defineConfig({
         "**/real-server-replay.spec.ts",
         "**/pause-resume-interject.spec.ts",
         "**/web-ui-rename-session.spec.ts",
+        "**/leptos-smoke.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -58,6 +59,7 @@ export default defineConfig({
         "**/real-server-replay.spec.ts",
         "**/pause-resume-interject.spec.ts",
         "**/web-ui-rename-session.spec.ts",
+        "**/leptos-smoke.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -80,7 +82,7 @@ export default defineConfig({
     },
     {
       command:
-        "OMEGA_ALLOW_DIRTY=1 rust/target/release/mock-omega-server --port 3003 --ctrl-port 3004 --public-dir src/web/public --sessions-root .omega/test-sessions",
+        "OMEGA_ALLOW_DIRTY=1 rust/target/release/mock-omega-server --port 3003 --ctrl-port 3004 --public-dir src/web/public --sessions-root .omega/test-sessions --leptos-dir frontends/leptos/dist",
       port: 3003,
       reuseExistingServer: false,
       timeout: 15000,

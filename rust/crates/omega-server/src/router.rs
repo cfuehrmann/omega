@@ -27,7 +27,7 @@ use axum::{
         ws::{Message, WebSocket},
     },
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
 };
 use futures::{SinkExt, StreamExt};
@@ -73,14 +73,26 @@ pub fn should_replay(event_type: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Build the top-level [`Router`] using `state` for all stateful handlers.
+///
+/// Phase 3.0 mounts a second `ServeDir` under `/leptos/` so the Leptos
+/// bundle (built by `just web-leptos-build` into
+/// [`crate::cli::DEFAULT_LEPTOS_DIR`]) co-exists with the `SolidJS`
+/// fallback `ServeDir` at `/`. A bare `/leptos` (no trailing slash) is
+/// 308-redirected to `/leptos/` (modern method-preserving permanent
+/// redirect, as emitted by [`axum::response::Redirect::permanent`]) so
+/// curl/browsers behave naturally; the nested `ServeDir` requires the
+/// trailing slash to find `index.html`.
 pub fn build_router(state: AppState) -> Router {
     let public_dir = state.public_dir.clone();
+    let leptos_dir = state.leptos_dir.clone();
     Router::new()
         .route("/health", get(health))
         .route("/api/sessions", get(get_sessions).post(post_session))
         .route("/ws", get(ws_handler))
         .route("/api/context", get(get_context))
         .route("/api/files", get(get_files))
+        .route("/leptos", get(|| async { Redirect::permanent("/leptos/") }))
+        .nest_service("/leptos/", ServeDir::new(leptos_dir))
         .fallback_service(ServeDir::new(public_dir))
         .with_state(state)
 }
@@ -847,7 +859,10 @@ async fn handle_reset(
     let _ = tx.send(WsMessage::ResetDone);
     // 3. history — client loads the fresh init events (server_started + session_started).
     let events = read_history_events(&events_file).await;
-    let _ = tx.send(WsMessage::History { events, streaming: false });
+    let _ = tx.send(WsMessage::History {
+        events,
+        streaming: false,
+    });
     // 4. ready — client is ready to interact.
     let _ = tx.send(WsMessage::Ready);
     Ok(())

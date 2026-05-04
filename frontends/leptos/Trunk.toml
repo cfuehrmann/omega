@@ -1,0 +1,9 @@
+# Trunk config — invoked by `just web-leptos-build`.
+#
+# `public_url = "/leptos/"` makes generated asset URLs (the wasm-bindgen
+# JS shim and the .wasm file) resolve correctly when the bundle is
+# mounted under `/leptos/` by `omega-server`'s router.
+
+[build]
+public_url = "/leptos/"
+dist       = "dist"

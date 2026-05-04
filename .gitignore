@@ -4,6 +4,13 @@ node_modules
 # Rust build artifacts
 rust/target/
 
+# Leptos frontend build artifacts (Phase 3.0+)
+# `frontends/leptos/` is a standalone Cargo workspace; trunk writes its
+# bundle to dist/, cargo writes intermediate output to target/.
+# Cargo.lock IS committed (matches rust/Cargo.lock policy for binaries).
+frontends/leptos/dist/
+frontends/leptos/target/
+
 # cargo-mutants output
 rust/mutants.out/
 rust/mutants.out.old/
