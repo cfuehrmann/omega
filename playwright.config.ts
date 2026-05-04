@@ -43,6 +43,7 @@ export default defineConfig({
         "**/pause-resume-interject.spec.ts",
         "**/web-ui-rename-session.spec.ts",
         "**/leptos-smoke.spec.ts",
+        "**/leptos-session-picker.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -60,6 +61,7 @@ export default defineConfig({
         "**/pause-resume-interject.spec.ts",
         "**/web-ui-rename-session.spec.ts",
         "**/leptos-smoke.spec.ts",
+        "**/leptos-session-picker.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

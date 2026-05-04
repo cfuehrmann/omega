@@ -23,6 +23,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{CloseEvent, MessageEvent, WebSocket, js_sys};
 
 use crate::protocol::{ClientFrame, WsMessage};
+use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
 
 const BACKOFF_BASE_MS: u32 = 500;
@@ -35,6 +36,7 @@ const BACKOFF_CAP_MS: u32 = 30_000;
 struct WsState {
     url: String,
     store: SessionStore,
+    list_store: SessionListStore,
     /// Currently-active socket (may be in any readyState).
     socket: Option<WebSocket>,
     /// Closures we hold across the JS↔Rust boundary for the current
@@ -81,13 +83,19 @@ pub struct WsClient {
 }
 
 impl WsClient {
-    /// Build a [`WsClient`] for the given `/ws` URL writing into
-    /// `store`. Does **not** open the socket — call [`Self::connect`].
+    /// Build a [`WsClient`] for the given `/ws` URL writing into the
+    /// two reactive stores.  Does **not** open the socket — call
+    /// [`Self::connect`].
+    ///
+    /// `store` reduces all conversation/session frames; `list_store`
+    /// reduces the picker-relevant `SessionRenamed` / `SessionDeleted`
+    /// envelopes (Phase 3.2). Both are passed as `Copy` signal-handles.
     #[must_use]
-    pub fn new(url: String, store: SessionStore) -> Self {
+    pub fn new(url: String, store: SessionStore, list_store: SessionListStore) -> Self {
         let state = WsState {
             url,
             store,
+            list_store,
             socket: None,
             closures: ClosureBag::default(),
             attempt: 0,
@@ -137,7 +145,12 @@ impl WsClient {
                     return;
                 };
                 match serde_json::from_str::<WsMessage>(&text) {
-                    Ok(msg) => client.state.with_value(|s| s.store.apply(msg)),
+                    Ok(msg) => client.state.with_value(|s| {
+                        // Picker store sees envelope events first (immutable
+                        // borrow); then conversation store consumes the frame.
+                        s.list_store.apply(&msg);
+                        s.store.apply(msg);
+                    }),
                     Err(e) => {
                         leptos::logging::warn!("ws frame parse error: {e}; raw={text}");
                     }
@@ -184,10 +197,8 @@ impl WsClient {
     /// the socket is missing or in a non-open state — callers should
     /// queue + retry or drop, depending on context.
     ///
-    /// Phase 3.1 has no callers; 3.2 wires up the composer. The send
-    /// path is included now so the type-discipline lands in lockstep
-    /// with the read path.
-    #[allow(dead_code)]
+    /// Phase 3.2 wires this up from the session picker (new / rename /
+    /// delete frames).
     pub fn send(self, frame: &ClientFrame) -> Result<(), JsValue> {
         let payload = serde_json::to_string(frame)
             .map_err(|e| JsValue::from_str(&format!("client frame serialise: {e}")))?;

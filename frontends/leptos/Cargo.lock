@@ -1024,11 +1024,13 @@ name = "omega-web"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "gloo-net",
  "leptos",
  "omega-protocol",
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
 ]

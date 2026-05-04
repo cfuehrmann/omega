@@ -25,6 +25,7 @@
 | 2d — `session_renamed` envelope | ✅ Done | Server emits `session_renamed` after rename; rename UI updates without reload |
 | 3.0 — Leptos scaffold | ✅ Done | `frontends/leptos/` crate; `/leptos/` mount on `omega-server`; smoke spec green |
 | 3.1 — Protocol + reactive store | ✅ Done | Typed `WsMessage` parsing; `SessionStore` reducer; `/leptos/` debug dump |
+| 3.2 — Leptos session picker | ✅ Done | `SessionListStore` + picker UI; `/leptos/` lists/creates/renames/deletes; debug dump moved to collapsible panel |
 | 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.1 done; 3.2–3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -823,8 +824,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 |---|---|---|
 | 3.0 | ✅ Done | `frontends/leptos/` crate scaffold; `/leptos/` mount on `omega-server`; hello-world page that renders `Ready` from a real `/ws` connection |
 | 3.1 | ✅ Done | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
-| 3.2 | ⬜ Next | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
-| 3.3 | ⬜ | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
+| 3.2 | ✅ Done | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
+| 3.3 | ⬜ Next | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
 | 3.4 | ⬜ | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
 | 3.5 | ⬜ | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
 | 3.6 | ⬜ | Visual parity pass; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
@@ -1060,87 +1061,259 @@ clean on the leptos crate.
   `wasm_bindgen_test_configure!(run_in_browser)` and add chromedriver to
   the gate.
 
-### Phase 3.2 — session picker (next)
+### Phase 3.2 — done (concise record)
 
-**Goal.** First user-facing feature surface in the Leptos UI: a session
-picker that lists, creates, renames, and deletes sessions. Replaces the
-3.1 debug-only JSON dump with a real (if minimal) interactive view, and
-activates the WS write path (`WsClient::send(&ClientFrame)`) for the
-first time.
+**Scope:** First user-facing feature surface in the Leptos UI. The 3.1
+debug-only JSON dump moves into a `<details>` panel; the primary surface
+is a working session picker that lists, creates, renames, and deletes
+sessions. The WS write path (`WsClient::send`) gains its first three
+callers (`Reset`, `RenameSession`, `DeleteSession`).
+
+**Decision — Reset-vs-POST for "new session" (diverge from TS UI).**
+The SolidJS picker uses `POST /api/sessions` for new-from-picker. The
+Leptos picker uses `ClientFrame::Reset { None, None }` over WS instead.
+Reason: Reset keeps the open socket attached to the new session
+immediately and emits a clean `session_info → history → reset_done`
+triple that flows through the existing `SessionStore` reducer. POST
+creates the session but doesn't notify the open WS, leaving the client
+stale until reconnect. The picker has no model/effort UI yet (3.4
+territory), so `Reset { None, None }` is exactly equivalent to a default
+POST body — less plumbing, fewer race windows. One reactive trigger
+(`Effect` watching `session_info.dir`) covers the whole flow: initial
+fetch on mount, refetch when Reset replaces the active session.
+
+**Decision — separate `SessionListStore` (not folded into `SessionStore`).**
+Different lifecycles: the conversation store resets on every
+`ResetDone`; the picker list survives across resets and is only mutated
+by `SessionRenamed` / `SessionDeleted` envelopes. Folding would force
+either reducer to ignore most of its own input. Per task spec,
+`SessionStore` stays unchanged — the new store lives in
+`frontends/leptos/src/sessions.rs`.
+
+**Decision — `gloo-net` 0.6.0 over hand-rolled `web_sys::Request`.**
+Measured the bundle delta with three controlled `trunk build --release`
+runs:
+
+| Variant | wasm size | delta vs stub |
+|---|---|---|
+| 3.1 baseline | 355,136 B | — |
+| 3.2 stub (no HTTP) | 444,818 B | 0 |
+| 3.2 + `web_sys::Request` | 457,108 B | +12.3 KB |
+| 3.2 + `gloo-net` | 461,758 B | +16.9 KB |
+
+gloo-net costs ~4.5 KB more than the hand-rolled `web_sys::Request`
+alternative — ~1 % of the bundle. Not material; gloo-net wins on
+ergonomics (`Request::get(...).send().await?.json().await?` vs ~25 lines
+of `RequestInit` / `JsFuture` / `dyn_into` / promise-await ceremony).
+Version-pinned to `=0.6.0` to match the existing transitive resolution
+through `leptos`'s `server_fn` (no duplicate-version build).
+
+**Decision — server-confirmed updates (not optimistic).** Rename and
+delete wait for the server's `SessionRenamed` / `SessionDeleted`
+broadcasts before mutating the local list. Localhost round-trip is
+single-digit milliseconds — below human-noticeable. Honest types: the
+UI shows what the server confirms, no rollback path needed. Documented
+gap: on a slow link the rename/delete will appear delayed; acceptable
+for 3.2 scope. The `SessionListStore::apply` reducer is the only place
+the local list mutates in response to writes.
+
+**No server-side changes required.** Every `ClientFrame` variant 3.2
+needs (`Reset`, `RenameSession`, `DeleteSession`) and every `WsMessage`
+the picker reads (`SessionInfo`, `SessionRenamed`, `SessionDeleted`,
+`ResetDone`) was already typed in `frontends/leptos/src/protocol.rs` at
+3.1. Confirmed by grep before writing any code.
+
+**New files:**
+- `frontends/leptos/src/sessions.rs` (~420 lines) — `SessionListStore`
+  + pure reducers `apply_renamed`, `apply_deleted`, `is_active`. Wire
+  shape `SessionListItem` mirrors `omega-server::router::SessionListItem`.
+- `frontends/leptos/src/http.rs` (~50 lines) — `gloo-net` wrapper for
+  `GET /api/sessions`. Single function `get_sessions() -> Result<Vec<...>, String>`.
+- `frontends/leptos/src/picker.rs` (~290 lines) — `SessionPicker`
+  component + `SessionRow` child. Inline rename, confirm-on-delete,
+  active-row marker driven by a `Memo` over
+  `conversation_store.session_info.dir`. Per-row `dir` stored in a
+  `StoredValue<String, LocalStorage>` so all event-handler closures
+  capture only `Copy` values (no `.clone()` ceremony inside `<Show>` /
+  `<For>`).
+- `e2e/leptos-session-picker.spec.ts` (4 specs) — create / rename /
+  delete / multi-session active-distinction. Uses
+  `data-active="true"|"false"` and `data-session-dir="<dir>"`
+  attributes as stable selectors so the spec is hermetic against
+  pre-existing `.omega/test-sessions/` state.
+
+**Modified files:**
+- `frontends/leptos/Cargo.toml` — added `gloo-net = "=0.6.0"`
+  (`default-features = false`, `["http", "json"]`),
+  `wasm-bindgen-futures = "=0.4.70"`, and `"HtmlInputElement"` to the
+  `web-sys` features list.
+- `frontends/leptos/src/main.rs` — swapped `DebugView` as the primary
+  surface for `<SessionPicker />` + `<details data-testid="leptos-debug-panel">{ DebugView }</details>`.
+  Constructs the `WsClient` once at the App root and `provide_context`s
+  it alongside both stores.
+- `frontends/leptos/src/ws.rs` — `WsClient::new` signature gained a
+  third arg `list_store: SessionListStore`; `on_message` now dispatches
+  each parsed `WsMessage` to the picker store *before* the conversation
+  store (`list_store.apply(&msg); store.apply(msg);`). `WsClient::send`
+  loses its `#[allow(dead_code)]`.
+- `playwright.config.ts` — `leptos-session-picker.spec.ts` added to
+  the real-server project's `testMatch` list (and to chromium's
+  `testIgnore`).
+
+**Tests — wasm-bindgen-test (`just web-leptos-test`):** 73 passing
+(3.1 had 47; 26 new in `sessions.rs`). New coverage:
+- 4 pure-reducer tests on `apply_renamed` (match, overwrite, no-match
+  returns false, first-match-only on duplicate dirs).
+- 3 pure-reducer tests on `apply_deleted` (match, no-match returns
+  false, removes-every-match on duplicate dirs).
+- 3 pure-helper tests on `is_active` (match / no-match / current=None).
+- 4 reactive `SessionListStore::apply` tests — each match arm
+  (`SessionRenamed`, `SessionDeleted`, catch-all no-op covering `Ready`
+  / `ResetDone` / `Text`).
+- 4 setter tests (`set_sessions` clears prior error;
+  `set_error` clears loading; `begin_loading` toggles + clears prior
+  error; full begin/finish lifecycle).
+- 1 wire-shape test confirming `SessionListItem` round-trips the
+  server's `GET /api/sessions` JSON output.
+- 7 fetch-generation tests covering the
+  `finish_loading_if_current` / `fail_loading_if_current` /
+  `bump_generation` race-fix machinery (see "Test-side flake" below).
+
+**Test-side flake — caught and fixed in the same commit.** Initial spec
+used `[data-active="true"]` to read the just-created session's dir
+immediately after clicking `+ new session`. The `data-active` attribute
+briefly points at the *previous* active row between the click and the
+server's `session_info(new)` arrival, so the spec sometimes deleted /
+renamed the wrong row and the assertion failed (~30 % flake rate on a
+clean run). Fixed by reading `session_info.dir` from the debug-snapshot
+JSON (ground truth) and waiting for that dir to appear in the list
+before proceeding. **Defensive production fix landed alongside it:**
+`SessionListStore` gained a `fetch_generation` counter (bumped by every
+list mutation) and `finish_loading_if_current` / `fail_loading_if_current`
+wrappers that drop stale fetch results when a `SessionRenamed` /
+`SessionDeleted` broadcast lands while a `GET /api/sessions` is in flight.
+The race is real (a stale fetch *could* clobber a server-confirmed
+mutation), it just wasn't what was making the spec flake.
+
+**Tests — Playwright (real-server project, port 3003):** 4 new specs
+(`e2e/leptos-session-picker.spec.ts`):
+1. Create — click `+ new session`, assert list count grows and exactly
+   one row is `data-active="true"`.
+2. Rename — inline rename submits, label updates after `session_renamed`.
+3. Delete — `window.confirm` auto-accepted, row vanishes after
+   `session_deleted`.
+4. Multi-session active distinction — two consecutive `+ new session`
+   clicks, exactly one active row, the previous session is `data-active="false"`.
+
+**Mutation testing** (`cargo mutants -- --target wasm32-unknown-unknown`,
+run from `frontends/leptos/`):
+- `sessions.rs` (new pure-logic file): 24 mutants — 24 caught,
+  **0 missed**. Acceptance criterion met.
+- `http.rs` (new JS-interop edge): 3 mutants — 3 missed. All in the
+  network-fetch surface (`get_sessions` body). Same documented gap as
+  `ws.rs` from 3.1; the network/DOM mutants require a headless browser
+  harness to catch.
+- `picker.rs` (new component): 9 mutants — 9 missed. All in component
+  glue (`Effect` closure, event handlers, `event_target_value` DOM
+  helper). Covered functionally by the Playwright spec, not by
+  wasm-bindgen-test. Documented as a gap.
+
+**Bundle-size impact.** 355,136 B (3.1) → 461,758 B (3.2),
++106,622 B (+30 %). Decomposition (controlled measurements):
+- +89 KB — picker UI + async runtime (`wasm-bindgen-futures`,
+  `For`/`Show` machinery, `spawn_local`).
+- +17 KB — `gloo-net` HTTP client. (web_sys alternative would have
+  saved ~4.5 KB; rejected as immaterial.)
+The bulk of the growth is the async runtime + reactive components,
+not the HTTP client choice.
+
+**`just rust-gate`** ✅ (incl. `web-leptos-build` 461 KB wasm and
+`web-leptos-test` 65/65). **`just test-browser`** ✅ 122/122 (118 from
+3.1 + 4 new picker specs).
+
+**Carry-forward into 3.3:**
+- `SessionListStore::sessions` is unbounded; with thousands of sessions
+  the picker would render slowly. Virtualisation deferred to 3.6 polish.
+- The picker has no search/filter input; the SolidJS picker has one and
+  3.6 should bring parity.
+- Picker `Effect`s use `Effect::new` with a return-prev-value pattern
+  rather than `Effect::watch`; works but verbose. Revisit if 3.3+
+  patterns warrant a helper.
+- The bundle is now 461 KB (115 KB gzipped). 3.3's conversation feed
+  will add markdown rendering + likely syntax highlighting; budget for
+  another ~150 KB. Consider `wasm-opt -Oz` and a `code-splitting` story
+  before 3.7 cutover if the total approaches 1 MB.
+- `event_target_value` is hand-rolled; leptos 0.8 ships
+  `leptos::ev::event_target_value` — swap when 3.3 needs more form
+  inputs.
+- The rename input has no Enter-to-submit / Esc-to-cancel keyboard
+  handling. Same parity gap as the search-filter; 3.6.
+- Picker doesn't emit a frame on session-row click yet (no "resume
+  this session" flow). 3.5 lands `ClientFrame::ResumeSession` from the
+  picker as part of the resume-session UX.
+
+### Phase 3.3 — conversation feed (next)
+
+**Goal.** Render the conversation as the primary visible surface,
+replacing the JSON debug dump as the focal point of the page. Every
+`OmegaEvent` variant gets a typed view; streaming `text` / `thinking`
+signals append into the active assistant block in real time.
 
 **Server-side surface (already in place — do NOT change):**
-- `GET /api/sessions` → `Vec<{ dir, metadata }>` newest-first.
-- `POST /api/sessions { model?, effort? }` → `{ dir }`. Creates a new
-  session and installs it as the active session.
-- `ClientFrame::Reset { model?, effort? }` → server creates a fresh
-  session over the existing WS, emits `session_info` → `history` →
-  `reset_done`. Use this when the picker is *changing* sessions on the
-  same socket.
-- `ClientFrame::ResumeSession { session_dir }` → server spawns a new
-  session seeded with the chosen one's resumption summary.
-- `ClientFrame::RenameSession { session_dir, name }` → server writes
-  metadata + broadcasts `WsMessage::SessionRenamed`.
-- `ClientFrame::DeleteSession { session_dir }` → server deletes on disk
-  + broadcasts `WsMessage::SessionDeleted`.
-
-All five `ClientFrame` variants are already typed in
-`frontends/leptos/src/protocol.rs`; all three relevant `WsMessage`
-shapes (`SessionInfo`, `SessionRenamed`, `SessionDeleted`) already
-deserialise correctly and flow through `SessionStore::apply`.
+- All 22 `OmegaEvent` variants are typed in
+  `frontends/leptos/src/protocol.rs`.
+- `SessionStore::events` accumulates persistent events;
+  `SessionStore::streaming_text` / `streaming_thinking` accumulate
+  the live in-flight signal text.
+- `SessionStore` already drives turn-state transitions and clears
+  the streaming accumulators on `TurnEnd` / `TurnInterrupted` /
+  `LlmResponse`.
 
 **Deliverables:**
 
-1. **`SessionListStore`** — separate from `SessionStore` (different
-   lifecycle: list lives across resets; conversation state resets per
-   session). Holds `RwSignal<Vec<SessionMetadata>>` plus a `loading` /
-   `last_error` pair. Refresh on mount and on every `SessionRenamed` /
-   `SessionDeleted` / `reset_done` frame.
-2. **HTTP fetch helper** for `GET /api/sessions`. Recommend `gloo-net`
-   (small, leptos-friendly, already a transitive dep via leptos's
-   `server_fn`) over hand-rolled `web_sys::Request`. Verify it doesn't
-   inflate the bundle materially; if it does, fall back to `web_sys`.
-3. **`SessionPicker` component** — minimal HTML, no styling beyond what
-   the SolidJS picker has today. Reads `SessionListStore`; highlights
-   the active session by matching against
-   `SessionStore::session_info.dir`; "new session" button posts to
-   `/api/sessions` (or sends `ClientFrame::Reset`); rename via inline
-   `<input>`; delete with a confirm.
-4. **Wire `WsClient::send`** for the three write-path frames. The 3.1
-   `WsClient::send` returns `Result<(), JsValue>`; surface failures into
-   `SessionListStore::last_error` so the picker can render them.
-5. **Mount under `/leptos/`** as a sidebar next to the existing debug
-   dump (don't remove the dump — it stays useful through 3.6 as a smoke
-   surface). The dump moves into a collapsible panel.
+1. **`feed.rs`** — `ConversationFeed` component reading
+   `SessionStore::events` and rendering one block per event. A pure
+   helper module (`event_view.rs` or similar) projects each
+   `OmegaEvent` variant to a typed view fragment — mutation-tested
+   pure logic for the routing decisions.
+2. **Streaming overlay** — the *last* assistant block in the feed
+   appends `streaming_text` / `streaming_thinking` live. Cleared on
+   `LlmResponse` (which finalises the streamed content into a real
+   `LlmResponse` event).
+3. **Auto-scroll seam** — a `<div>` at the feed's tail with
+   `scrollIntoView()` driven by an `Effect` on
+   `events.with(Vec::len)`. Disable when the user scrolls up
+   (compare `scrollTop + clientHeight` against `scrollHeight`).
+4. **Visual minimum** — distinct CSS classes per event family
+   (`user-message`, `assistant-message`, `tool-call`, `tool-result`,
+   `system-message` for retries/errors). Polish is 3.6.
 
-**Out of scope:** styling polish (3.6), conversation feed (3.3),
-composer (3.4), context inspector (3.5), resume-session UI flow (3.5
-— the WS frame already exists, but the picker only needs new/rename/
-delete). Do NOT touch `src/web/` or `omega-server`.
+**Out of scope:** composer (3.4), context modal (3.5), syntax
+highlighting, markdown rendering nuance (3.6). 3.3 renders raw text
+inside `<pre>` for code-like content; 3.6 brings markdown + KaTeX +
+Mermaid parity.
 
 **Acceptance:**
-- `localhost:3000/leptos/` shows a working picker: list, create,
-  rename, delete; active session is visually distinct.
-- A new Playwright spec (`e2e/leptos-session-picker.spec.ts`) covers
-  the four CRUD operations against `mock-omega-server`. Existing
-  smoke specs still pass.
+- `localhost:3000/leptos/` shows a working conversation feed:
+  user messages, assistant messages, tool-call/result blocks, error
+  blocks. Streaming text appears live.
+- A new Playwright spec (`e2e/leptos-conversation-feed.spec.ts`)
+  drives `mock-omega-server` through a multi-tool turn and asserts
+  every event variant renders.
 - `cargo mutants -- --target wasm32-unknown-unknown` on every new
-  pure-logic file (likely `sessions.rs` with the list reducer):
-  **0 missed**. JS-interop edges (the new fetch helper) acknowledged
-  as gaps, same pattern as `ws.rs`.
+  pure-logic file: **0 missed**. JS/DOM-interop edges acknowledged
+  as gaps, same pattern as 3.1's `ws.rs` and 3.2's `picker.rs` /
+  `http.rs`.
 - `just rust-gate` ✅ · `just test-browser` ✅.
 
-**Open questions to resolve in 3.2:**
-- Reset-vs-POST decision: should "new session" use `POST /api/sessions`
-  (HTTP) or `ClientFrame::Reset` (WS)? Both work; pick one and document
-  why. The TS UI uses POST for new-from-picker and Reset for in-session
-  reset; mirror that pattern unless you have a reason to diverge.
-- Optimistic update vs server-confirmed: should rename/delete update
-  the local list immediately or wait for the server's broadcast? The
-  server's `SessionRenamed`/`SessionDeleted` frames are already
-  reliable; recommend server-confirmed for honest types, but call out
-  the lag.
-- `gloo-net` vs `web_sys::Request` — verify bundle delta before
-  committing.
+**Open questions to resolve in 3.3:**
+- Streaming-text rendering: append directly into the DOM (one signal
+  read per frame) or buffer and flush? Leptos's per-keystroke
+  reactivity should handle direct append; verify on a long stream.
+- `tool_result` payloads can be 100 KB+; truncate in-place or render
+  in a collapsible? SolidJS UI truncates with a "show more" affordance.
+- Auto-scroll vs user scroll — SolidJS uses a sentinel; mirror that.
+- Markdown: defer to 3.6 (it's a 60 KB+ dep). 3.3 renders plain text.
 
 ---
 

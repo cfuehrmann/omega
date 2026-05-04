@@ -1,24 +1,28 @@
-//! Phase 3.1 — Leptos WS client + reactive store + debug dump view.
+//! Phase 3.2 — Leptos session picker.
 //!
 //! Architecture:
 //! ```text
 //!   App
-//!    ├── provide_context::<SessionStore>           ← descendants subscribe
-//!    ├── Effect: WsClient::new(url, store).connect()
-//!    └── DebugView                                  ← serialises store snapshot to JSON
+//!    \u251c\u2500\u2500 provide_context::<SessionStore>      (conversation-level state)
+//!    \u251c\u2500\u2500 provide_context::<SessionListStore>  (picker-level state)
+//!    \u251c\u2500\u2500 provide_context::<WsClient>          (write-path handle)
+//!    \u251c\u2500\u2500 Effect: WsClient::new(url, conv, list).connect()
+//!    \u251c\u2500\u2500 SessionPicker                        (primary surface)
+//!    \u2514\u2500\u2500 <details data-testid="leptos-debug-panel">
+//!         \u2514\u2500\u2500 DebugView                       (3.1 JSON dump, collapsed by default)
 //! ```
-//!
-//! No styling, no controls, no parity with the SolidJS UI.  The only
-//! visible artefact is `[data-testid="leptos-debug-store"]` containing
-//! a pretty-printed JSON dump of `SessionStore::snapshot()`, updated
-//! reactively as WS frames arrive.
 
+mod http;
+mod picker;
 mod protocol;
+mod sessions;
 mod store;
 mod ws;
 
 use leptos::prelude::*;
 
+use crate::picker::SessionPicker;
+use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
 use crate::ws::{WsClient, ws_url_from_window};
 
@@ -29,32 +33,35 @@ fn main() {
 
 #[component]
 fn App() -> impl IntoView {
-    // Single source of truth for the page; provided so any descendant
-    // (3.2+) can `use_context::<SessionStore>()`.
     let store = SessionStore::new();
+    let list_store = SessionListStore::new();
     provide_context(store);
+    provide_context(list_store);
 
-    // Open the WebSocket once on mount. `Effect::new` runs after the
-    // first render in CSR; the Effect closure runs once because we
-    // never read a tracked signal inside it.
-    Effect::new(move |_| match ws_url_from_window() {
-        Ok(url) => WsClient::new(url, store).connect(),
-        Err(err) => leptos::logging::error!("ws url derivation failed: {err:?}"),
+    // Construct the WsClient once and provide it via context so the
+    // picker (and 3.3+ composers) can call `WsClient::send`.
+    let ws = WsClient::new(
+        ws_url_from_window().unwrap_or_else(|err| {
+            leptos::logging::error!("ws url derivation failed: {err:?}");
+            String::new()
+        }),
+        store,
+        list_store,
+    );
+    provide_context(ws);
+
+    Effect::new(move |_| {
+        ws.connect();
     });
 
     view! {
         <main>
-            <h1>"Omega (Leptos) — Phase 3.1 debug view"</h1>
-            <p>
-                "This page renders a live JSON snapshot of "
-                <code>"SessionStore"</code>
-                " — every typed "
-                <code>"WsMessage"</code>
-                " variant the server emits is applied through the "
-                <code>"apply"</code>
-                " reducer.  No controls; this is the protocol smoke surface."
-            </p>
-            <DebugView />
+            <h1>"Omega (Leptos) — Phase 3.2"</h1>
+            <SessionPicker />
+            <details data-testid="leptos-debug-panel">
+                <summary>"debug: store snapshot"</summary>
+                <DebugView />
+            </details>
         </main>
     }
 }
@@ -65,11 +72,10 @@ fn DebugView() -> impl IntoView {
 
     // Recompute on every relevant signal change. We touch each field
     // here so leptos's reactive graph subscribes us to all of them in
-    // one shot — ergonomically equivalent to a `Memo` over `snapshot()`,
+    // one shot \u2014 ergonomically equivalent to a `Memo` over `snapshot()`,
     // and the cost of one extra `to_string_pretty` per frame is fine
     // for a debug view.
     let json = move || {
-        // `track` each field so we re-render on any change.
         store.connected.track();
         store.session_info.track();
         store.turn_state.track();
@@ -85,13 +91,13 @@ fn DebugView() -> impl IntoView {
 
     view! {
         <section>
-            <h2>
+            <h3>
                 "store snapshot ("
                 <span data-testid="leptos-debug-event-count">
                     {move || store.events.with(Vec::len)}
                 </span>
                 " event(s) seen)"
-            </h2>
+            </h3>
             <pre data-testid="leptos-debug-store">{json}</pre>
         </section>
     }
