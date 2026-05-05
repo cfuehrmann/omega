@@ -399,25 +399,21 @@ pub fn ContextModal() -> impl IntoView {
             when=move || state.0.with(Option::is_some)
             fallback=|| ().into_any()
         >
+            // Phase 3.8: inline `style=` attributes were stripped
+            // from this component so `frontends/leptos/style.css`
+            // can fully own the modal's geometry + Mocha palette.
+            // The previous inline styles hard-coded `background:#fff;
+            // color:#000;` which is incompatible with the dark theme.
             <div
                 class="leptos-context-modal-backdrop"
                 data-testid="leptos-context-modal-backdrop"
-                style="position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.5); \
-                       display:flex; align-items:flex-start; justify-content:center; \
-                       padding:2rem; overflow:auto;"
             >
                 <div
                     class="leptos-context-modal"
                     data-testid="leptos-context-modal"
-                    style="background:#fff; color:#000; max-width:64rem; width:100%; \
-                           max-height:calc(100vh - 4rem); overflow:auto; \
-                           padding:1rem; border-radius:0.5rem; \
-                           box-shadow:0 0.5rem 2rem rgba(0,0,0,0.4);"
                 >
                     <header
                         class="leptos-context-modal-header"
-                        style="display:flex; justify-content:space-between; align-items:center; \
-                               margin-bottom:0.75rem;"
                     >
                         <span class="leptos-context-modal-title">
                             "context records"
@@ -471,7 +467,6 @@ pub fn ContextModal() -> impl IntoView {
                     <ul
                         class="leptos-context-modal-records"
                         data-testid="leptos-context-modal-records"
-                        style="list-style:none; padding:0; margin:0;"
                     >
                         <For
                             each=move || {
@@ -492,7 +487,6 @@ pub fn ContextModal() -> impl IntoView {
                                         )
                                         data-testid="leptos-context-modal-record"
                                         data-role=rec.role.clone()
-                                        style="border-top:1px solid #ddd; padding:0.5rem 0;"
                                     >
                                         <span
                                             class="leptos-context-modal-record-role"
@@ -509,7 +503,6 @@ pub fn ContextModal() -> impl IntoView {
                                         >
                                             <span
                                                 class="leptos-context-modal-record-time"
-                                                style="margin-left:0.5rem; color:#666;"
                                             >
                                                 {rec.time.clone().unwrap_or_default()}
                                             </span>
@@ -517,8 +510,6 @@ pub fn ContextModal() -> impl IntoView {
                                         <pre
                                             class="leptos-context-modal-record-body"
                                             data-testid="leptos-context-modal-record-body"
-                                            style="white-space:pre-wrap; \
-                                                   margin:0.25rem 0 0 0;"
                                         >
                                             {render_content(&rec.content)}
                                         </pre>

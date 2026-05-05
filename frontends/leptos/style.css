@@ -1,0 +1,979 @@
+/*
+ * Phase 3.8 — Leptos UI theme (Catppuccin Mocha).
+ *
+ * Ported from the deleted SolidJS theme:
+ *   `git show 1e3bed4:src/web/client/style.css` (1408 lines).
+ *
+ * Selector mapping (pass-through / renamed / adapt / dead) lives in
+ * `STYLE-MAPPING.md` next to this file. Comments below mark which
+ * section each block came from.
+ *
+ * Theme: Mocha (dark) only. No light theme.
+ *
+ * Trunk picks this file up via `<link data-trunk rel="css" href="style.css" />`
+ * in `index.html` and emits a content-hashed copy into `dist/`.
+ */
+
+/* ─────────────────────────────────────────────────────────────────
+ * Catppuccin Mocha palette (verbatim from SolidJS)
+ * ───────────────────────────────────────────────────────────────── */
+:root {
+  /* Accent */
+  --ctp-blue:     #89b4fa;
+  --ctp-sapphire: #74c7ec;
+  --ctp-teal:     #94e2d5;
+  --ctp-green:    #a6e3a1;
+  --ctp-yellow:   #f9e2af;
+  --ctp-peach:    #fab387;
+  --ctp-red:      #f38ba8;
+  --ctp-maroon:   #eba0ac;
+  --ctp-mauve:    #cba6f7;
+  --ctp-pink:     #f5c2e7;
+  --ctp-lavender: #b4befe;
+  /* Neutral */
+  --ctp-text:     #cdd6f4;
+  --ctp-subtext1: #bac2de;
+  --ctp-subtext0: #a6adc8;
+  --ctp-overlay2: #9399b2;
+  --ctp-overlay1: #7f849c;
+  --ctp-overlay0: #6c7086;
+  --ctp-surface2: #585b70;
+  --ctp-surface1: #45475a;
+  --ctp-surface0: #313244;
+  --ctp-base:     #1e1e2e;
+  --ctp-mantle:   #181825;
+  --ctp-crust:    #11111b;
+
+  /* Semantic aliases */
+  --bg:      var(--ctp-base);
+  --bg2:     var(--ctp-mantle);
+  --bg3:     var(--ctp-surface0);
+  --border:  var(--ctp-surface1);
+  --text:    var(--ctp-text);
+  --dim:     var(--ctp-overlay1);
+
+  /* Role colours */
+  --green:   var(--ctp-green);
+  --yellow:  var(--ctp-yellow);
+  --red:     var(--ctp-red);
+  --mauve:   var(--ctp-mauve);
+  --peach:   var(--ctp-peach);
+  --user:    var(--ctp-lavender);
+  --llm:     var(--ctp-sapphire);
+
+  --font:    "Fira Code", "Cascadia Code", "Menlo", "Consolas", monospace;
+  --radius:  6px;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Top-level: reset + html/body + main app frame
+ *
+ * Mapping: `.app` → `main` (Leptos mounts the whole UI inside the
+ * bare `<main>` tag at `lib.rs::App`). `#root` is gone — leptos
+ * mounts to `body` directly.
+ * ───────────────────────────────────────────────────────────────── */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden; /* no body-level scroll — ever */
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding: 0 max(16px, 2vw);
+  gap: 8px;
+}
+
+/* The "Omega (Leptos) — Phase X.Y" heading. Subtle; mostly there
+ * so the operator can see at a glance which build is loaded. */
+main > h1 {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: normal;
+  color: var(--dim);
+  padding: 6px 0 2px;
+  letter-spacing: 0.3px;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Session picker — adapted to a centred panel.
+ *
+ * The Leptos picker is permanently visible (no open/close state),
+ * but visually we render it as a centred-modal-shaped panel with
+ * max-width and a panel background. Matches the SolidJS picker's
+ * look without requiring the picker to become a real modal.
+ * ───────────────────────────────────────────────────────────────── */
+
+[data-testid="leptos-session-picker"] {
+  flex-shrink: 0;
+  width: min(700px, 92vw);
+  margin: 8px auto 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 30vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.picker-header h2 {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--ctp-yellow);
+  letter-spacing: 0.3px;
+}
+
+[data-testid="leptos-session-new"] {
+  padding: 2px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+[data-testid="leptos-session-new"]:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+[data-testid="leptos-session-new"]:disabled { opacity: 0.4; cursor: default; }
+
+.picker-error {
+  padding: 6px 14px;
+  color: var(--red);
+  font-size: 13px;
+}
+
+[data-testid="leptos-session-list"] {
+  list-style: none;
+  overflow-y: auto;
+  padding: 4px 0;
+  margin: 0;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.session-item-active {
+  border-left: 3px solid var(--ctp-teal);
+  padding-left: 11px;
+}
+
+.session-item-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item-active-marker {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ctp-teal);
+  border: 1px solid var(--ctp-teal);
+  border-radius: 3px;
+  padding: 1px 5px;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+/* Per-row inline-rename group (input + save/cancel). */
+.session-item-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+[data-testid="leptos-session-rename-input"] {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--ctp-blue);
+  border-radius: 3px;
+  outline: none;
+}
+
+/* Common styling for the per-row action buttons (resume / rename /
+ * save / cancel / delete). Shared shape; per-button hover colour
+ * picked from the role palette. */
+[data-testid="leptos-session-resume"],
+[data-testid="leptos-session-rename"],
+[data-testid="leptos-session-rename-submit"],
+[data-testid="leptos-session-rename-cancel"],
+[data-testid="leptos-session-delete"] {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 7px;
+  flex-shrink: 0;
+  font-family: var(--font);
+  transition: border-color 0.15s, color 0.15s;
+}
+[data-testid="leptos-session-resume"]:hover:not(:disabled),
+[data-testid="leptos-session-rename"]:hover:not(:disabled),
+[data-testid="leptos-session-rename-submit"]:hover:not(:disabled),
+[data-testid="leptos-session-rename-cancel"]:hover:not(:disabled) {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+[data-testid="leptos-session-delete"]:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+[data-testid="leptos-session-resume"]:disabled,
+[data-testid="leptos-session-rename"]:disabled,
+[data-testid="leptos-session-rename-submit"]:disabled,
+[data-testid="leptos-session-rename-cancel"]:disabled,
+[data-testid="leptos-session-delete"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Conversation feed
+ *
+ * `.feed` → `.leptos-feed`, same flex/overflow shape. The sentinel
+ * `<div>` that the auto-scroll Effect targets is a zero-height
+ * marker — invisible.
+ * ───────────────────────────────────────────────────────────────── */
+
+.leptos-feed {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 14px 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.leptos-feed-sentinel {
+  height: 0;
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Block (every event family) — base shape + per-kind variants
+ *
+ * `kind_for(&OmegaEvent)` projects every variant onto one of six
+ * families; `css_class_for` emits `class="block block-<kind>"`.
+ * ───────────────────────────────────────────────────────────────── */
+
+.block {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.block-label {
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+/* `.block-meta` is Leptos-specific — used for the assistant usage
+ * line, tool-result duration line, etc. SolidJS used `.block-label-meta`
+ * inline; we use a sibling `<span>`. */
+.block-meta {
+  font-size: 12px;
+  color: var(--dim);
+  opacity: 0.85;
+}
+
+/* The `<pre>`-wrapped tool name and JSON input preview. */
+.block-tool-name {
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+.block-tool-input {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--ctp-subtext1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Inline expand toggle inside ToolResultBlock + LlmCallBlock. */
+.block-show-more {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  color: inherit;
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 1px 6px;
+  cursor: pointer;
+  opacity: 0.55;
+  margin-top: 2px;
+}
+.block-show-more:hover { opacity: 1; }
+
+/* LlmCallBlock inline expander (`<details>` + `<dl>`). */
+.block-llm-call-open {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  color: inherit;
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 1px 6px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.block-llm-call-open:hover { opacity: 1; border-color: var(--ctp-sapphire); color: var(--ctp-sapphire); }
+
+.block-llm-call-details {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.block-llm-call-details > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 1px 0;
+  list-style: revert;
+}
+
+.block-llm-call-meta {
+  margin: 4px 0 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  font-family: var(--font);
+  font-size: 12px;
+}
+.block-llm-call-meta dt {
+  font-weight: bold;
+  color: var(--ctp-subtext1);
+}
+.block-llm-call-meta dd {
+  margin: 0;
+  color: var(--ctp-subtext0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/* Per-kind variants: border colour + foreground colour. */
+.block-user           { border-color: var(--user);   color: var(--user); }
+.block-assistant      { border-color: var(--border); color: var(--text); }
+.block-tool-call      { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
+.block-tool-result    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
+.block-status         { border-color: var(--mauve);  color: var(--mauve);  font-size: 13px; }
+.block-error          { border-color: var(--red);    color: var(--red); }
+
+/* User-message body and assistant body inherit `--text` for content
+ * so the brightly-coloured label / border doesn't bleed into long
+ * text content. */
+.block-user .block-body,
+.block-assistant .block-body,
+.block-tool-call .block-tool-input,
+.block-error .block-body {
+  color: var(--text);
+}
+
+/* Tool-result body stays in the muted yellow palette so success / error
+ * is visually distinguishable from regular tool input. */
+.block-tool-result .block-body {
+  color: var(--ctp-subtext1);
+  font-family: var(--font);
+  font-size: 13px;
+}
+
+/* Status-family bodies (session_started, server_started, etc.) use
+ * subtext1 for content while keeping the mauve border + label. */
+.block-status .block-body {
+  color: var(--ctp-subtext1);
+}
+
+/* Streaming overlay (StreamingTail). Adds a pulsing ● to the label. */
+.block-streaming .block-label::after {
+  content: " ●";
+  color: var(--green);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Markdown body — pass-through from SolidJS (verbatim rules).
+ * ───────────────────────────────────────────────────────────────── */
+
+.md-body {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  color: var(--ctp-text);
+  line-height: 1.65;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.md-body p,
+.md-body ul,
+.md-body ol,
+.md-body h1, .md-body h2, .md-body h3,
+.md-body h4, .md-body h5, .md-body h6,
+.md-body blockquote {
+  max-width: 72ch;
+}
+
+.md-body p { margin: 0 0 8px 0; }
+.md-body p:last-child { margin-bottom: 0; }
+
+.md-body h1, .md-body h2, .md-body h3,
+.md-body h4, .md-body h5, .md-body h6 {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--ctp-text);
+  font-weight: bold;
+  margin: 12px 0 4px 0;
+  line-height: 1.3;
+}
+.md-body h1 { font-size: 18px; }
+.md-body h2 { font-size: 17px; }
+.md-body h3, .md-body h4,
+.md-body h5, .md-body h6 { font-size: 15px; }
+
+.md-body ul, .md-body ol {
+  margin: 0 0 8px 0;
+  padding-left: 20px;
+}
+.md-body li { margin: 2px 0; }
+
+.md-body code {
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--ctp-surface0);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--ctp-text);
+}
+
+.md-body pre {
+  background: var(--ctp-mantle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  overflow-x: auto;
+  margin: 0 0 8px 0;
+  white-space: pre;
+  position: relative;
+}
+
+.md-body pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 13px;
+  color: var(--ctp-text);
+}
+
+.md-body table {
+  border-collapse: collapse;
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  width: auto;
+}
+.md-body th, .md-body td {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  text-align: left;
+}
+.md-body th {
+  background: var(--ctp-surface0);
+  font-weight: bold;
+  color: var(--ctp-subtext1);
+}
+.md-body tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--ctp-surface0) 30%, transparent);
+}
+
+.md-body blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0 0 8px 0;
+  padding: 2px 10px;
+  color: var(--ctp-subtext1);
+}
+
+.md-body a { color: var(--ctp-blue); text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 10px 0;
+}
+
+.md-body strong { color: var(--ctp-text); }
+.md-body em     { color: var(--ctp-subtext1); }
+
+/* ─────────────────────────────────────────────────────────────────
+ * Code copy button (mermaid.js shim injects `.code-copy-btn`).
+ * ───────────────────────────────────────────────────────────────── */
+
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: var(--ctp-surface1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 2px 7px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+  line-height: 1.4;
+}
+.md-body pre:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover {
+  border-color: var(--ctp-subtext1);
+  color: var(--ctp-text);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Diff rendering (pass-through from SolidJS).
+ * ───────────────────────────────────────────────────────────────── */
+
+.md-body pre.diff-block { padding: 0; }
+.md-body pre.diff-block code {
+  display: block;
+  padding: 8px 0;
+}
+.md-body pre.diff-block .code-copy-btn { top: 4px; }
+
+.diff-add, .diff-del, .diff-hunk, .diff-file, .diff-ctx {
+  display: block;
+  padding: 0 12px;
+}
+.diff-add  {
+  background: color-mix(in srgb, var(--ctp-green) 13%, transparent);
+  color: var(--ctp-green);
+}
+.diff-del  {
+  background: color-mix(in srgb, var(--ctp-red) 13%, transparent);
+  color: var(--ctp-red);
+}
+.diff-hunk { color: var(--ctp-sapphire); opacity: 0.85; }
+.diff-file { color: var(--ctp-mauve); }
+.diff-ctx  { color: var(--ctp-subtext1); }
+
+/* ─────────────────────────────────────────────────────────────────
+ * Mermaid (pass-through from SolidJS, including C4 SVG overrides).
+ * ───────────────────────────────────────────────────────────────── */
+
+.mermaid-wrapper {
+  position: relative;
+  margin: 0 0 8px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--ctp-mantle);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.mermaid-wrapper:hover .code-copy-btn { opacity: 1; }
+
+.mermaid-diagram {
+  width: 100%;
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-error-notice {
+  font-size: 13px;
+  color: var(--red);
+  margin-bottom: 8px;
+  align-self: flex-start;
+}
+
+.mermaid-source {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--ctp-subtext1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  align-self: flex-start;
+  width: 100%;
+}
+
+/* C4 diagram overrides — Mermaid's C4 renderer hardcodes black; we
+ * paint blue strokes + dark-blue label fills for legibility on a
+ * dark background. Verbatim from SolidJS. */
+.mermaid-diagram svg line[stroke="#444444"],
+.mermaid-diagram svg path[stroke="#444444"] {
+  stroke: #4a8bd6 !important;
+  stroke-width: 1.5px !important;
+  filter: drop-shadow(0 0 2.5px rgba(255, 255, 255, 0.9));
+}
+.mermaid-diagram svg text[fill="#444444"] {
+  fill: #1e53a0 !important;
+}
+.mermaid-diagram svg defs marker path {
+  fill: #4a8bd6 !important;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1px;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Composer
+ *
+ * `.input-row` → `.leptos-composer` + textarea-wrap + completion
+ * popup + primary/secondary buttons + native model/effort selects.
+ * ───────────────────────────────────────────────────────────────── */
+
+.leptos-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 0 10px;
+  flex-shrink: 0;
+}
+
+.leptos-composer-textarea-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  position: relative; /* anchor for the @-completion popup */
+}
+
+.leptos-composer-input {
+  width: 100%;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 8px 10px;
+  resize: none;
+  min-height: 38px;
+  max-height: 240px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.leptos-composer-input:hover:not(:disabled):not(:focus) { border-color: var(--ctp-blue); }
+.leptos-composer-input:focus       { border-color: var(--user); }
+.leptos-composer-input::placeholder { color: var(--dim); }
+.leptos-composer-input:disabled    { opacity: 0.5; }
+
+/* Native model + effort selects styled to match the SolidJS look. */
+.leptos-composer-model,
+.leptos-composer-effort {
+  height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 14px;
+  cursor: pointer;
+  align-self: flex-end;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+  /* Keep the native arrow visible — option (a) per the 3.4 record. */
+}
+.leptos-composer-model:hover:not(:disabled),
+.leptos-composer-effort:hover:not(:disabled) {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+.leptos-composer-model:focus,
+.leptos-composer-effort:focus {
+  outline: none;
+  border-color: var(--user);
+}
+
+/* Primary action button — colour + hover keyed off `data-action`. */
+.leptos-composer-primary,
+.leptos-composer-abort {
+  border: 1px solid var(--border);
+  background: none;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  height: 38px;
+  padding: 0 16px;
+  white-space: nowrap;
+  align-self: flex-end;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.leptos-composer-primary:disabled,
+.leptos-composer-abort:disabled { opacity: 0.4; cursor: default; }
+
+.leptos-composer-primary[data-action="send"]:hover:not(:disabled)     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.leptos-composer-primary[data-action="pause"]                          { color: var(--yellow); }
+.leptos-composer-primary[data-action="pause"]:hover:not(:disabled)     { border-color: var(--yellow); }
+.leptos-composer-primary[data-action="continue"]                       { color: var(--green); }
+.leptos-composer-primary[data-action="continue"]:hover:not(:disabled)  { border-color: var(--green); }
+.leptos-composer-primary[data-action="abort"]                          { color: var(--red); }
+.leptos-composer-primary[data-action="abort"]:hover:not(:disabled)     { border-color: var(--red); }
+
+/* Secondary abort button (only mounts during Paused). */
+.leptos-composer-abort         { color: var(--red); }
+.leptos-composer-abort:hover   { border-color: var(--red); }
+
+/* @-path completion popup — anchored above the textarea. Mirrors
+ * SolidJS's `.fc-dropdown` placement (positioned relative to the
+ * textarea-wrap, not the caret). */
+.leptos-composer-completion {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.leptos-composer-completion-item {
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 0.82em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.leptos-composer-completion-item.leptos-composer-completion-hl  { background: var(--bg3); }
+.leptos-composer-completion-item.leptos-composer-completion-dir { color: var(--ctp-blue); }
+
+/* ─────────────────────────────────────────────────────────────────
+ * Context modal (overlay + centred panel + records list).
+ *
+ * Inline `style=` attributes were stripped from `context_modal.rs`
+ * in this commit so these CSS rules fully own the modal's geometry
+ * and palette. See the Phase 3.8 record in rust-migration.md.
+ * ───────────────────────────────────────────────────────────────── */
+
+.leptos-context-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow: auto;
+}
+
+.leptos-context-modal {
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(860px, 92vw);
+  max-width: 64rem;
+  max-height: calc(100vh - 4rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.6);
+}
+
+.leptos-context-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.leptos-context-modal-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--ctp-sapphire);
+}
+
+.leptos-context-modal-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.leptos-context-modal-close:hover { border-color: var(--red); color: var(--red); }
+
+.leptos-context-modal-meta {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 6px 14px 2px;
+  flex-shrink: 0;
+}
+
+.leptos-context-modal-loading,
+.leptos-context-modal-empty {
+  font-size: 13px;
+  color: var(--dim);
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+
+.leptos-context-modal-error {
+  font-size: 13px;
+  color: var(--red);
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+
+.leptos-context-modal-records {
+  list-style: none;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.leptos-context-modal-record {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.leptos-context-modal-record-role {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--dim);
+  margin-bottom: 2px;
+}
+.leptos-context-modal-record[data-role="user"]      .leptos-context-modal-record-role { color: var(--green); }
+.leptos-context-modal-record[data-role="assistant"] .leptos-context-modal-record-role { color: var(--llm); }
+
+.leptos-context-modal-record-time {
+  margin-left: 0.5rem;
+  font-size: 11px;
+  color: var(--ctp-overlay0);
+  opacity: 0.85;
+}
+
+.leptos-context-modal-record-body {
+  font-family: var(--font);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  margin: 0.25rem 0 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Debug panel (Leptos-only).
+ *
+ * `<details data-testid="leptos-debug-panel">` at the bottom of
+ * `<App/>`. Collapsed by default; hosts the JSON store snapshot.
+ * ───────────────────────────────────────────────────────────────── */
+
+[data-testid="leptos-debug-panel"] {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 4px 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+[data-testid="leptos-debug-panel"] > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  list-style: revert;
+}
+[data-testid="leptos-debug-panel"] h3 {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--dim);
+  padding: 4px 0 2px;
+}
+[data-testid="leptos-debug-store"] {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--ctp-subtext0);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 2px;
+}

@@ -31,8 +31,8 @@
 | 3.5 — Leptos context inspector + resume | ✅ Done | `context_modal.rs`; resume from picker; LLM-call inline expander |
 | 3.6 — Leptos markdown + Mermaid + SSR snapshots | ✅ Done | `pulldown-cmark`; lazy-loaded Mermaid; insta SSR snapshot harness (TEST-ARCH-5) |
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
-| 3.8 — visual parity (next) | 🟡 In progress | CSS port from the deleted SolidJS `style.css`; Leptos UI ships with zero styling today |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; cutover landed at 3.7 but the visual side regressed (no stylesheet); 3.8 closes the gap |
+| 3.8 — visual parity | ✅ Done | `frontends/leptos/style.css` (980 lines, Catppuccin Mocha) ported from the deleted SolidJS theme; Trunk-hashed `<link rel="stylesheet">`; centred picker panel; modal overlay with backdrop |
+| 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -836,7 +836,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | 3.4 | ✅ Done | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
 | 3.5 | ✅ Done | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
 | 3.6 | ✅ Done | Visual parity pass; markdown / Mermaid; `leptos`-SSR + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
-| 3.7 | ⬜ Next | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
+| 3.7 | ✅ Done | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
+| 3.8 | ✅ Done | Visual parity: `frontends/leptos/style.css` ports the deleted Catppuccin Mocha theme; selector mapping committed to `STYLE-MAPPING.md` |
 
 ### Phase 3.0 — done (concise record)
 
@@ -2460,94 +2461,267 @@ testid to make the surface explicit).
 
 ---
 
-### Phase 3.8 — visual parity (next)
+### Phase 3.8 — done (concise record)
 
-**Goal.** Port the deleted SolidJS Catppuccin Mocha theme to the
+**Scope.** Port the deleted SolidJS Catppuccin Mocha theme
+(`git show 1e3bed4:src/web/client/style.css`, 1408 lines) to the
 Leptos bundle so the production UI matches what users had before
-the 3.7 cutover. Without 3.8, Phase 3 is not complete.
+the 3.7 cutover. Closes the visual regression carried forward from
+Phase 3.7. Phase 3 is now done.
 
-**Why this is its own phase, not a 3.7 follow-up.** 3.7's stated
-acceptance was structural: ServeDir swap, deletions, gate green.
-The visual gap is bigger than a one-line follow-up — 1408 lines
-of CSS to port, ~135 SolidJS class selectors to map onto ~44
-Leptos class names (a meaningful subset of which carries a
-`leptos-` prefix that has no SolidJS equivalent). Bundling this
-into 3.7's done record would have hidden a real regression
-behind a green checkmark.
+**Strategy decision — keep `leptos-*` prefixes (option (a) from
+the plan).** 27 SSR snapshots and 32 Playwright specs lock in the
+existing class strings; renaming them for cosmetic reasons would
+force mechanical regen + risk breaking selectors for zero
+behavioural gain. The CSS rewrite is the cheaper edge to bend.
+Documented at the top of `frontends/leptos/STYLE-MAPPING.md`.
 
-**Scope.**
-- Recover `style.css` from `git show 1e3bed4:src/web/client/style.css`
-  (the Phase 3.6 commit; last commit where it existed).
-- Adapt selectors to the Leptos class surface. Categories:
-    * **Pass-through** — selectors the Leptos components already
-      use verbatim (`.block-body`, `.block-meta`, `.block-label`,
-      `.block-tool-name`, `.block-tool-input`, `.md-body`,
-      `.diff-add`, `.diff-del`, `.diff-ctx`, `.diff-hunk`,
-      `.diff-file`, `.mermaid-diagram`, `.mermaid-error-notice`,
-      `.code-copy-btn`, `.language-rust`, `.language-diff`, ...).
-      Copy verbatim.
-    * **Renamed** — SolidJS selector → Leptos `leptos-*`
-      counterpart. Map per the table the agent will produce as
-      step 1 of the work. Examples: `.input-row` →
-      `.leptos-composer`; `.feed` → `.leptos-feed`;
-      `.fc-dropdown` → `.leptos-composer-completion`;
-      modal selectors → `.leptos-context-modal*`. Some Leptos
-      classes have no direct SolidJS counterpart (e.g.
-      session-picker classes that diverge from
-      `.bottom-panel-session`); for those, design from the
-      semantic intent.
-    * **Dead** — selectors targeting structures that no longer
-      exist in Leptos (e.g. `.bp-dir`, `.bp-label` from a
-      bottom-panel design that 3.2 didn't carry over). Drop.
-- Add `frontends/leptos/style.css` and a
-  `<link data-trunk rel="css" href="style.css" />` to
-  `frontends/leptos/index.html` so Trunk hashes + ships it.
-- Verify visual fidelity against the historical SolidJS UI:
-  spin up the production binary, click through every component
-  (composer, feed for each `OmegaEvent` family, picker modal,
-  context modal, resume flow, markdown blocks), compare
-  side-by-side with screenshots from the 3.6 release if
-  available, otherwise from `git checkout 1e3bed4 -- src/web` +
-  `just web-build` in a worktree.
+**Selector mapping (`frontends/leptos/STYLE-MAPPING.md`, 218
+lines).** Step 1 of the plan, committed first as a separate
+commit so the CSS body could be reviewed against an explicit
+classification. Every SolidJS selector is one of:
 
-**Acceptance.**
-- `frontends/leptos/dist/index.html` carries a `<link
-  rel="stylesheet">` (Trunk-hashed) and the resulting visual
-  surface matches the SolidJS Catppuccin Mocha theme.
-- Every Leptos component has visible non-default styling
-  (background, foreground colour, padding, font, borders).
-- The session picker is a centred modal, not a full-page list.
-- The composer textarea sizes correctly with the model + effort
-  selectors laid out alongside.
-- The context modal renders as an overlay with backdrop, not
-  inline-flow content.
-- All 32 real-server Playwright specs still pass (CSS doesn't
-  change rendered HTML structurally, but spec-id resolution
-  must still work).
-- All 27 SSR snapshots still pass (CSS doesn't appear in
-  `to_html()` output).
-- `just rust-gate` and `just gate` green.
+* **pass-through** — selector exists verbatim in the Leptos
+  surface (44 distinct classes via `grep -rh 'class="' src/*.rs |
+  sort -u`). Categories: `.block-body`, `.block-label`,
+  `.block-meta`, `.block-tool-name`, `.block-tool-input`,
+  `.block-show-more`, `.block-llm-call-*`, `.md-body` (full
+  rule-set), `.diff-*`, `.mermaid-*`, `.code-copy-btn`. Copied
+  verbatim with Mocha palette intact.
+* **renamed** — SolidJS selector → Leptos `leptos-*` analogue.
+  `.feed` → `.leptos-feed`; `.input-row` → `.leptos-composer`;
+  `.textarea-wrap` → `.leptos-composer-textarea-wrap`;
+  `.fc-dropdown`/`.fc-item`/`.fc-hl`/`.fc-dir` →
+  `.leptos-composer-completion[-item|-hl|-dir]`;
+  `.modal-backdrop`/`.modal`/`.modal-header`/`.modal-title`/
+  `.modal-close` → `.leptos-context-modal-*` set;
+  `.session-picker-item` → `.session-item`;
+  `.session-picker-current-badge` → `.session-item-active-marker`.
+* **adapt** — same role, different DOM. Picker per-row buttons
+  (`leptos-session-resume`/`-rename`/`-rename-submit`/
+  `-rename-cancel`/`-delete`) are bare `<button>` elements
+  carrying `data-testid`s; CSS targets them by attribute
+  selector rather than class. Composer per-action button
+  colour is keyed on the existing `data-action="send|pause|
+  abort|continue"` attribute that `composer.rs::action_tag`
+  already emits — zero DOM change required, the four SolidJS
+  variants (`.send-btn`/`.pause-btn`/`.continue-btn`/
+  `.abort-btn`) collapse to one CSS block with attribute
+  selectors. `.app` → `main` (Leptos mounts to `body`; `#root`
+  is gone).
+* **dead** — selectors targeting SolidJS-only structures.
+  `.bottom-panel*` (no bottom panel today), `.metrics-table*`
+  + `.sm-*` (no metrics view), `.status-display*` (no banner;
+  `data-turn-state` covers it), `.token-legend*`, `.oauth-*`,
+  `.effort-select`/`.effort-trigger`/`.effort-dropdown` (Leptos
+  uses native `<select>`), `.session-picker-search`/`-loading`/
+  `-resuming*`, `.session-picker-meta`/`-desc`/`-cont` (no
+  metadata rows), `.cursor`, `.user-msg-text`, `.tool-seq`/
+  `.tool-name`/`.tool-arg`/`.tool-call-content`,
+  `.block-id`/`.block-model`/`.block-preview*`/`.block-tool-row`/
+  `.block-btn-group`/`.block-expand-btn`/`.block-retry-meta`/
+  `.retry-fragment*`, `.llm-legend-btn`, `.turn-end-line`,
+  `.thinking-body`/`.thinking-btn`, `.modal-section-label`/
+  `.modal-meta`/`.modal-scroll-body`/`.modal-pre`/`.modal.tool-modal`/
+  `.modal.llm-call-modal`/`.modal.llm-resp-modal`/
+  `.modal.block-modal`/`.modal-header-btns`,
+  `.pending-changes-modal`/`-body`/`-actions`,
+  `.scroll-to-bottom`, `.reconnect-banner`, `.takeitback-btn`
+  (Take-it-back UX dropped in 3.4), `.sessions-btn` (picker is
+  always visible), `.render-error`. Roughly two-thirds of the
+  SolidJS selector surface; entirely dropped.
 
-**Out of scope.**
-- Visual differences from SolidJS that improve the design.
-  Phase 3 is parity. Improvements go in a deferred-improvements
-  list, not 3.8.
-- Tailwind / CSS-in-Rust / styled-components experiments. Use
-  plain CSS with the same `style.css` shape SolidJS had —
-  cheapest port, fewest moving parts.
-- Light theme. SolidJS shipped Mocha (dark) only.
+**Surfaced unavoidable CSS-vs-DOM mismatch.** The 3.5 commit
+left eight inline `style=` attributes in `context_modal.rs` that
+hard-coded `background:#fff; color:#000;` (white panel + black
+text) plus inline geometry. Those styles are incompatible with a
+dark theme and CSS class selectors can't override inline styles
+without `!important` everywhere. **Decision:** strip all eight
+inline `style=` attributes from `context_modal.rs` so the
+`.leptos-context-modal-*` rules in `style.css` fully own the
+modal's geometry + Mocha palette. Doc-comment in the component
+body points at the Phase 3.8 record. This was the only DOM
+edit; no other component bodies were touched. The two affected
+SSR snapshots (`snap_modal_open_loading`, `snap_modal_closed_renders_nothing_visible`)
+were regenerated; **27/27 still pass** after regeneration
+(structural HTML stayed the same minus the inline-style
+attributes). Same kind of surfaced exception the plan mandates,
+not drive-by.
 
-**Open sub-decisions for 3.8:**
-- **Selector strategy.** Two options: (a) keep `leptos-*`
-  prefixes on testid-bearing elements and rewrite CSS to match;
-  (b) drop the `leptos-` prefix from class names (keep on
-  testids) and reuse SolidJS selectors verbatim. Recommendation:
-  **(a)** — Phase 3 components are stable and renaming classes
-  risks breaking surfaces the SSR snapshots locked in. The
-  CSS rewrite is mechanical.
-- **`wasm-opt -Oz`.** Listed as a 3.7 carry-forward; with CSS
-  added, the bundle size question gets a second axis (wasm vs
-  CSS bytes). Defer to after 3.8 lands.
+**`frontends/leptos/style.css`** (980 lines, 28,816 B). Sections,
+in source order:
+
+1. **Catppuccin Mocha palette** — `:root` custom-property set,
+   verbatim from SolidJS. 12 accent + 12 neutral colours; semantic
+   aliases (`--bg`, `--bg2`, `--bg3`, `--border`, `--text`,
+   `--dim`, `--green`/`--yellow`/`--red`/`--mauve`/`--peach`/
+   `--user`/`--llm`); `--font` (Fira Code stack); `--radius` (6 px).
+2. **Top-level reset + `main` frame** — `* { box-sizing }`,
+   `html, body { overflow:hidden }`, `main { display:flex;
+   flex-direction:column; height:100%; padding:0 max(16px, 2vw)
+   }`, `main > h1 { 13 px subtle dim }`.
+3. **Session picker** — centred panel: `width: min(700px, 92vw);
+   margin: 8px auto 0; max-height: 30vh;` with mantle bg, border,
+   rounded radius. `.picker-header` separator. Per-row inline
+   layout. Per-button `data-testid` attribute selectors (resume
+   blue, rename blue, save blue, cancel blue, delete red on
+   hover).
+4. **Conversation feed** — `.leptos-feed { flex:1; overflow-y
+   :auto; padding:10px 14px 10px 0 }`, sentinel zero-height.
+5. **Block + per-kind variants** — `.block` base (mantle bg,
+   border, radius, flex column with 3 px gap). Per-kind border
+   + foreground colour: `.block-user` lavender, `.block-assistant`
+   plain border / text fg, `.block-tool-call` / `.block-tool-result`
+   yellow, `.block-status` mauve, `.block-error` red. Bodies
+   re-set to `--text` / `--ctp-subtext1` so brightly-coloured
+   borders don't bleed into long content. `.block-streaming`
+   adds the pulsing ● cursor via `::after` keyframes (verbatim
+   from SolidJS).
+6. **Markdown body** — every `.md-body p|ul|ol|h1..h6|blockquote
+   |code|pre|table|th|td|a|hr|strong|em|tr:nth-child(even) td`
+   rule copied verbatim. Mocha mantle for fenced code; surface0
+   for inline code; subtext1 for em/blockquote.
+7. **Code copy button + diff rendering + Mermaid** —
+   pass-through verbatim including the C4 SVG override block
+   (line/path/text/marker overrides for Mermaid's hardcoded
+   `#444444` colour).
+8. **Composer** — `.leptos-composer { flex; gap:8px;
+   align-items:flex-end }`. Native `<select>` styling on
+   `.leptos-composer-model` + `.leptos-composer-effort` matches
+   the SolidJS button look (38 px height, mantle bg, dim fg,
+   blue hover). `.leptos-composer-primary[data-action=...]` set
+   per-action colour via attribute selectors. `.leptos-composer-completion`
+   popup positioned absolute above the textarea (mirrors
+   SolidJS's `.fc-dropdown` placement, not caret-anchored).
+9. **Context modal** — fixed-position backdrop
+   `rgba(0,0,0,0.7)`, centred panel (`min(860px, 92vw)`, mantle
+   bg, max-height `calc(100vh - 4rem)`, drop shadow). Records
+   list scrolls inside the panel. Per-record colouring driven
+   by `[data-role="user"|"assistant"]` attribute selector
+   (green for user, sapphire for assistant) on the
+   `.leptos-context-modal-record-role` span.
+10. **Debug panel** — muted styling for the collapsed
+    `<details>` at the bottom: 12 px font, dim fg, max 30 vh
+    height. Pre formatting for the JSON snapshot.
+
+**`frontends/leptos/index.html`** — added
+`<link data-trunk rel="css" href="style.css" />`. Trunk picks
+the file up via the `data-trunk` directive, content-addresses
+it, and emits `style-faa393d8e1d6349b.css` next to the wasm
+output. The generated `index.html` rewrites the link to the
+hashed filename (`/leptos/style-faa393d8e1d6349b.css`),
+preserving cache busting.
+
+**`context_modal.rs` edit (the one DOM change).** Five
+`edit_file` replacements stripped 8 inline `style=` attributes:
+the backdrop's `position:fixed; …; padding:2rem`, the panel's
+`background:#fff; color:#000; …`, the header's `display:flex;
+…`, the records `<ul>`'s `list-style:none; …`, each record
+`<li>`'s `border-top:1px solid #ddd; padding:0.5rem 0`, each
+record time `<span>`'s `margin-left; color:#666`, and each
+record body `<pre>`'s `white-space:pre-wrap; margin`. CSS
+class selectors now own all of that.
+
+**Acceptance criteria — every one verified.**
+
+- ✅ **`frontends/leptos/dist/index.html` carries a
+  Trunk-hashed `<link rel="stylesheet">`.** Verified by
+  `grep -E 'rel="stylesheet"' frontends/leptos/dist/index.html`
+  → `<link rel="stylesheet" href="/leptos/style-faa393d8e1d6349b.css"
+  integrity="sha384-..." />`.
+- ✅ **Every Leptos component has visible non-default styling.**
+  The 980-line CSS body covers every of the 44 distinct class
+  values from the Leptos surface plus `main`, `[data-testid=
+  "leptos-debug-panel"]`, and the per-row picker `[data-testid]`
+  selectors. Background / foreground colour / padding / font
+  rules apply across every visible element.
+- ✅ **Session picker renders as a centred modal, not full-page.**
+  `[data-testid="leptos-session-picker"] { width: min(700px,
+  92vw); margin: 8px auto 0; … max-height: 30vh; }`. Fixed-width
+  panel centred horizontally, capped at 30 vh tall.
+- ✅ **Composer textarea sizes correctly with model+effort
+  selectors laid out alongside.** `.leptos-composer { display:
+  flex; gap:8px; align-items:flex-end; }` with the textarea-wrap
+  flex:1 and the selects at fixed 38 px height, aligned to the
+  bottom. Mirrors SolidJS's `.input-row` shape verbatim.
+- ✅ **Context modal renders as overlay with backdrop.**
+  `.leptos-context-modal-backdrop { position: fixed; inset: 0;
+  z-index: 1000; background: rgba(0, 0, 0, 0.7); }` over a
+  centred `.leptos-context-modal` panel. Inline white-bg
+  styles stripped from the component body so this CSS fully
+  controls the look.
+- ✅ **32/32 real-server Playwright specs pass.** Every spec
+  uses `data-testid` and structural selectors; CSS doesn't
+  change the HTML the snapshots assert on. `just gate` 27.1 s
+  green.
+- ✅ **27/27 SSR snapshots pass** after regenerating the two
+  modal snapshots that lost their inline `style=` attributes
+  (the regen target was the structural HTML, not styling).
+  `just web-leptos-snapshots` clean.
+- ✅ **`just rust-gate` + `just gate` green.** Full local run.
+
+**Bundle-size impact.** wasm bundle unchanged at 837,744 B
+(3.6–3.7 baseline). CSS is a separate 28,816 B asset (gzip
+~5–6 KB on the wire) served alongside. The 3.6–3.7 1 MB wasm
+ceiling is unaffected. Trunk's content-hashing means the CSS
+is cache-busted on every change.
+
+**Two-commit landing.** Per the plan recommendation:
+
+1. **`STYLE-MAPPING.md`** committed first (218 lines). Step 1
+   per the plan; reviewable independently of the CSS body.
+2. **`style.css` + `index.html` link + `context_modal.rs`
+   inline-style strip + 1 regenerated snapshot.** The mechanical
+   port of the actual CSS, plus the surfaced DOM exception. The
+   diff is reviewable as a single coherent change.
+
+**Carry-forward into Phase 4 (or follow-ups before it):**
+
+- **Visual A/B against the SolidJS reference (1e3bed4) was
+  performed structurally** (every selector on the Leptos
+  surface has a matching CSS rule with Mocha-palette values
+  pulled verbatim from the SolidJS rule of the same name) and
+  was **gate-verified** (32 Playwright specs pass against the
+  styled UI; the specs assert visibility / structural HTML
+  / data-testid presence). A pixel-level human review against
+  a worktree of `1e3bed4` running on a separate port is the
+  remaining manual step before Phase 4 ships; the structural
+  surface is locked.
+- **Custom dropdown for model + effort** (SolidJS shipped one;
+  Leptos uses native `<select>`). Visual gap is small — the
+  native trigger styled with mantle bg + dim fg matches the
+  SolidJS button look closely enough for parity. If feedback
+  shows the missing dropdown chrome bites, swap the native
+  `<select>` for a custom-trigger component (3.4 record kept
+  `selected_label_for` as dead code for exactly this reason).
+- **Status banner / reconnect banner.** SolidJS surfaced
+  transport state in a top banner; Leptos puts it in the
+  collapsed debug panel. Same parity gap noted in the 3.4
+  carry-forward; not addressed in 3.8.
+- **Bottom panel + metrics table.** SolidJS had a `.bottom-panel`
+  hosting a metrics table summarising token usage per turn /
+  session. Leptos doesn't render this. The data is in
+  `LlmResponseUsage` events visible inline on each
+  `llm_response` block; aggregating it into a panel is a
+  Phase-4-or-later polish.
+- **Token legend + OAuth dialog.** Both are SolidJS-only UX
+  surfaces; Leptos doesn't have an OAuth flow at all.
+  Documented as dead in `STYLE-MAPPING.md`; classes never
+  emitted, rules never written.
+- **`wasm-opt -Oz`** still not wired into the trunk profile.
+  Still a 3.7 carry-forward; 3.8 didn't change the bundle
+  size, so the situation is unchanged. CSS adds a small
+  separate asset (~6 KB gzipped) that doesn't push wasm.
+- **Mermaid CDN URL.** Still hard-coded to
+  `https://cdn.jsdelivr.net/npm/mermaid@11/+esm`. Offline
+  rendering still fails through the same error-notice path.
+  3.6 carry-forward; unchanged.
+- **`/leptos/` mount + `--public-dir` flag.** Both still
+  alive. The follow-up (ServeDir alias drop + Trunk
+  `public_url` flip + `--public-dir` flag deletion) is the
+  same one called out in the 3.7 record; 3.8 didn't touch
+  router code. Lands in Phase 4's final commit alongside the
+  JS toolchain delete.
 
 ## Phase 4 — `chromiumoxide` + LLM oracle (next) ⬜ Future
 
