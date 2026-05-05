@@ -68,9 +68,11 @@ use crate::ws::WsClient;
 /// panel) and `Composer` (renders the "Sessions" open button) can read
 /// and write the same signal without prop-drilling.
 ///
-/// Default is `true` — picker open on first mount so existing specs
-/// (which navigate straight to `/leptos/` without clicking "Sessions"
-/// first) continue to pass.
+/// Default is `false` — picker closed on first mount (Phase 3.10
+/// TODO-F). The `App` opens the picker via an `Effect` once the WS
+/// connection lands **and** there is no active session yet (typical
+/// fresh-server case). Browser refresh of an active session lands
+/// directly in the conversation feed.
 ///
 /// Wrapped in a newtype so `provide_context` / `use_context` find a
 /// unique type — leptos's context lookup is type-keyed.
@@ -78,11 +80,11 @@ use crate::ws::WsClient;
 pub struct PickerOpen(pub RwSignal<bool>);
 
 impl PickerOpen {
-    /// Construct fresh state (picker visible). Must run inside a leptos
+    /// Construct fresh state (picker hidden). Must run inside a leptos
     /// reactive `Owner` scope.
     #[must_use]
     pub fn new() -> Self {
-        Self(RwSignal::new(true))
+        Self(RwSignal::new(false))
     }
 
     /// Open the picker.

@@ -58,6 +58,11 @@ async function activeDir(page: Page): Promise<string | null> {
 
 /** Click `+ new session` and wait for a new active session_info.dir. */
 async function newSession(page: Page, prev: string | null): Promise<string> {
+  // Phase 3.10 TODO-F: picker default is closed. Open it first if
+  // it's not already open.
+  if ((await page.getByTestId("leptos-session-picker").count()) === 0) {
+    await page.getByTestId("leptos-composer-sessions").click();
+  }
   await page.getByTestId("leptos-session-new").click();
   let next: string | null = null;
   await expect.poll(async () => {

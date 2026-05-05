@@ -52,6 +52,7 @@ use crate::composer::Composer;
 use crate::context_modal::{ContextModal, ContextModalState};
 use crate::feed::ConversationFeed;
 use crate::picker::{PickerOpen, SessionPicker};
+use crate::protocol::TurnState;
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
 use crate::ws::{WsClient, ws_url_from_window};
@@ -87,6 +88,28 @@ pub fn App() -> impl IntoView {
 
     Effect::new(move |_| {
         ws.connect();
+    });
+
+    // Phase 3.10 TODO-E-1: auto-close the picker as soon as a turn
+    // starts (or is requested to pause). Otherwise the modal overlay
+    // (z-index 900) hides the composer's `Continue` button while the
+    // turn is paused — the operator gets stuck. The picker only
+    // re-opens via the `Sessions` button, never during a live turn.
+    Effect::new(move |_| {
+        if store.turn_state.get() != TurnState::Idle {
+            picker_open.close();
+        }
+    });
+
+    // Phase 3.10 TODO-F: open the picker on a *fresh* server
+    // connection (connected + no active session). Browser refresh
+    // with an active session lands directly in the conversation
+    // feed; only the first-time / post-server-restart case opens
+    // the picker automatically.
+    Effect::new(move |_| {
+        if store.connected.get() && store.session_info.with(Option::is_none) {
+            picker_open.open();
+        }
     });
 
     view! {

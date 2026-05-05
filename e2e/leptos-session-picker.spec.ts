@@ -42,15 +42,31 @@
 
 import { test, expect, type Page } from "@playwright/test";
 
-/** Wait for the WS to connect and the picker UI to mount. */
+/**
+ * Wait for the WS to connect, then ensure the picker panel is open.
+ *
+ * Phase 3.10 TODO-F flipped `PickerOpen`'s default to `false` so a
+ * browser refresh of an active session lands directly in the
+ * conversation feed. The picker auto-opens only when `connected &&
+ * session_info.is_none()` (genuinely fresh server). Most tests run
+ * against `mock-omega-server` which has an active session at first
+ * connect, so the picker stays closed and the spec must open it
+ * explicitly. `gotoPicker` does that for any spec that needs to
+ * interact with picker rows immediately.
+ */
 async function gotoPicker(page: Page) {
   await page.goto("/leptos/");
   // Wait for the WS to connect: `data-connected` on <main> flips to
   // "true" once `SessionStore::apply(WsMessage::Ready)` fires.
-  // The debug panel is cfg(debug_assertions)-only (Phase 3.9 TODO-4);
-  // we use the stable DOM attribute instead.
   await expect(page.locator('main[data-connected="true"]'))
     .toBeAttached({ timeout: 5000 });
+  // Open the picker if it's not already open (TODO-F may have
+  // auto-opened it on a fresh server with no active session).
+  const picker = page.getByTestId("leptos-session-picker");
+  if ((await picker.count()) === 0) {
+    await page.getByTestId("leptos-composer-sessions").click();
+  }
+  await expect(picker).toBeVisible({ timeout: 2000 });
 }
 
 /**
@@ -73,8 +89,15 @@ async function readActiveDir(page: Page): Promise<string | null> {
  * picker, so the picker row for the new session is not visible after
  * this call. Open the picker again (via `leptos-composer-sessions`)
  * before asserting on picker rows.
+ *
+ * NOTE (Phase 3.10 TODO-F): picker default is closed; this helper
+ * opens it first if necessary so it can also be used post-`gotoPicker`
+ * after a chain of operations that closed it.
  */
 async function newSession(page: Page, prev: string | null): Promise<string> {
+  if ((await page.getByTestId("leptos-session-picker").count()) === 0) {
+    await page.getByTestId("leptos-composer-sessions").click();
+  }
   await page.getByTestId("leptos-session-new").click();
   // Wait for data-active-session-dir to change to a new value.
   let next: string | null = null;
@@ -212,10 +235,10 @@ test("leptos-picker: only one row is marked active and matches session_info.dir"
 // Phase 3.9 — open/close cycle (TODO-1)
 // ---------------------------------------------------------------------------
 
-test("leptos-picker: picker starts open; \u2715 close button dismisses it; Sessions button re-opens", async ({ page }) => {
+test("leptos-picker: \u2715 close button dismisses the picker; Sessions button re-opens", async ({ page }) => {
   await gotoPicker(page);
 
-  // Picker is open by default (picker_open defaults to true).
+  // gotoPicker guarantees the picker is open.
   await expect(page.getByTestId("leptos-session-picker")).toBeVisible();
 
   // ✕ close button dismisses the picker.

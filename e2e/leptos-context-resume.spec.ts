@@ -72,6 +72,10 @@ async function readActiveDir(page: Page): Promise<string | null> {
  * `leptos-composer-sessions` before accessing picker rows again.
  */
 async function newSession(page: Page, prev: string | null): Promise<string> {
+  // Phase 3.10 TODO-F: ensure the picker is open before clicking + new.
+  if ((await page.getByTestId("leptos-session-picker").count()) === 0) {
+    await page.getByTestId("leptos-composer-sessions").click();
+  }
   await page.getByTestId("leptos-session-new").click();
   let next: string | null = null;
   await expect.poll(async () => {
