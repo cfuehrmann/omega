@@ -32,7 +32,8 @@
 | 3.6 — Leptos markdown + Mermaid + SSR snapshots | ✅ Done | `pulldown-cmark`; lazy-loaded Mermaid; insta SSR snapshot harness (TEST-ARCH-5) |
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
 | 3.8 — visual parity | ✅ Done | `frontends/leptos/style.css` (980 lines, Catppuccin Mocha) ported from the deleted SolidJS theme; Trunk-hashed `<link rel="stylesheet">`; centred picker panel; modal overlay with backdrop |
-| 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase |
+| 3.9 — visual / UX follow-ups | 🟡 To do | Post-3.8 UAT findings: picker open/close + Sessions button; auto-close on Reset/Resume; per-event-type colour drift restoration; drop debug panel from production builds |
+| 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -2722,6 +2723,266 @@ is cache-busted on every change.
   same one called out in the 3.7 record; 3.8 didn't touch
   router code. Lands in Phase 4's final commit alongside the
   JS toolchain delete.
+
+---
+
+## Phase 3.9 — visual / UX follow-ups (post-3.8 UAT) 🟡 To do
+
+Operator UAT after the 3.8 commit landed found four real issues
+the gate didn't catch. None block Phase 4; all are pure-CSS or
+tiny-DOM polish on top of the parity baseline.
+
+### TODO-1: Session picker has no close button and never closes
+
+**Observed:** the Leptos picker is a permanently-visible centred
+panel above the feed. The SolidJS picker was a modal opened from
+a "Sessions" button in the input row, with a `✕ close` button
+in the modal header.
+
+**Why this is a regression:** the 3.8 CSS gave the picker a
+*centred-panel* look but kept it permanently mounted (3.2's
+decision). The visual cue (centred panel = modal) implies it
+should close, but there's no close affordance. Two halves of a
+proper modal port — the styling, the open/close state — only the
+first landed.
+
+**Fix sketch (CSS + small DOM change):**
+
+1. Add a `picker_open: RwSignal<bool>` to `picker.rs` (default
+   `true` so existing specs that don't click "open picker"
+   first continue to pass; first-mount UX is unchanged).
+2. Render a backdrop overlay (`position:fixed; inset:0; bg
+   rgba(0,0,0,0.7); z-index:900`) that wraps the picker panel
+   when `picker_open.get()`.
+3. Add a `✕ close` button in `.picker-header` (paired with the
+   existing `+ new session` button) that sets `picker_open.set(false)`.
+4. Add a "Sessions" button to the composer (`<Composer/>`'s
+   leading slot) that sets `picker_open.set(true)`. Mirrors the
+   SolidJS `.sessions-btn` placement.
+5. Esc-key dismissal via a `keydown` listener on the backdrop.
+6. Click-outside-backdrop dismissal (the same backdrop click
+   handler).
+
+**Acceptance:**
+- Picker panel renders inside a fixed-position dark overlay.
+- `✕ close` button in the header dismisses it.
+- A new "Sessions" button in the composer opens it.
+- Esc-key + click-on-backdrop both dismiss.
+- All 32 Playwright specs still pass (the picker is open by
+  default, so existing flow is unchanged).
+- Add 1–2 new specs covering the open/close cycle.
+
+**Out of scope:** re-styling the picker panel itself. 3.8 already
+shipped the centred-panel look; this is the open/close half.
+
+---
+
+### TODO-2: New-session click leaves the picker mounted
+
+**Observed:** clicking `+ new session` creates a new session and
+activates it, but the picker stays open. The composer textarea is
+usable while the picker is still on screen, which feels jarring.
+In the SolidJS UI, creating a new session auto-closed the picker.
+
+**Fix:** in `picker.rs::on_new_click`, after
+`ws.send(&ClientFrame::Reset { ... })` succeeds, set
+`picker_open.set(false)`. Same for `on_resume` (resuming
+implicitly creates a new session). Rename + delete leave the
+picker open (the user is mid-task on the list). One
+`set(false)` per Reset / Resume click.
+
+**Acceptance:**
+- Clicking `+ new session` closes the picker.
+- Clicking `[resume]` on an inactive row closes the picker.
+- Clicking `[rename]` / `[delete]` does NOT close the picker.
+- One new Playwright spec asserting the picker auto-closes after
+  Reset.
+
+**Depends on:** TODO-1 (the `picker_open` signal must exist).
+
+---
+
+### TODO-3: Per-event-type colours regressed against SolidJS
+
+**Observed:** several event families render in the wrong colour.
+The 3.3 `kind_for` projection collapses 22 `OmegaEvent` variants
+into 6 visual families (User/Assistant/ToolCall/ToolResult/
+Status/Error). 3.8's CSS painted variants by family, but SolidJS
+distinguished more types using compound selectors like
+`.block.api-call` / `.block.thinking` / `.block.retry`.
+
+**Concrete drift table** (→ the CSS rule needed):
+
+| OmegaEvent | SolidJS palette | 3.8 (now) | Fix — add CSS rule |
+|---|---|---|---|
+| `LlmCall` | `--llm` (sapphire `#74c7ec`) | `--mauve` (Status) | `.block[data-event-type="llm_call"] { border-color: var(--llm); color: var(--llm); }` |
+| `LlmResponse` | `--llm` (sapphire) | `--text` plain (Assistant) | `.block[data-event-type="llm_response"] { border-color: var(--llm); color: var(--llm); } .block[data-event-type="llm_response"] .block-body, .md-body { color: var(--text); }` |
+| `LlmRetry` | `--peach` (`#fab387`) | `--mauve` (Status) | `.block[data-event-type="llm_retry"] { border-color: var(--peach); color: var(--peach); }` |
+| `TurnEnd` | `--border` + `--dim` (footer) | `--mauve` (Status) | `.block[data-event-type="turn_end"] { border-color: var(--border); color: var(--dim); }` |
+| `PauseRequested` / `TurnPaused` / `TurnContinued` | `--ctp-teal` (`#94e2d5`) | `--mauve` (Status) | `.block[data-event-type="pause_requested"], .block[data-event-type="turn_paused"], .block[data-event-type="turn_continued"] { border-color: var(--ctp-teal); color: var(--ctp-teal); }` |
+| `SessionStarted` / `ServerStarted` / `ServerStopped` / `Compacted` / `ResumingSession` / `SessionResumed` | `--ctp-overlay2` border + `--ctp-subtext0` fg (info) | `--mauve` (Status) | `.block[data-event-type="session_started"], …[data-event-type="server_started"], …[data-event-type="server_stopped"], …[data-event-type="compacted"], …[data-event-type="resuming_session"], …[data-event-type="session_resumed"] { border-color: var(--ctp-overlay2); color: var(--ctp-subtext0); }` |
+| `ModelChanged` / `EffortChanged` | (inherited `block.status` mauve) | mauve — OK | no fix needed |
+| streaming-thinking overlay | `--ctp-teal` | `--mauve` (Status) | `[data-testid="leptos-streaming-thinking"].block-status { border-color: var(--ctp-teal); color: var(--ctp-teal); }` |
+
+**Note:** attribute selectors `[data-event-type="..."]` have
+lower specificity than the existing `.block-status` /
+`.block-assistant` family rules. Add the new rules **after** the
+family-block rules in `style.css` so source order wins (cascade
+order — same trick `.diff-block` uses today). Alternative:
+`.block.block-status[data-event-type="llm_retry"]` (one extra
+class selector) bumps specificity unambiguously. Either works­;
+pick whichever reads cleaner per rule.
+
+**Acceptance:**
+- Each row in the table above renders in the correct palette
+  when verified visually against `git worktree add /tmp/omega-3.6
+  1e3bed4 && cd /tmp/omega-3.6 && just web-build && just server
+  --port 3001`.
+- All 27 SSR snapshots still pass (CSS changes don't touch HTML).
+- All 32 Playwright specs still pass (no class additions to the
+  HTML; selectors unchanged).
+- 1 new Playwright spec asserting `.block[data-event-type=
+  "llm_call"]` has `border-color` resolving to the sapphire
+  variable — cheapest possible regression catch.
+
+**Update `STYLE-MAPPING.md`:** flip the affected SolidJS rows
+from "renamed → `.block-status`" to "adapt →
+`.block[data-event-type=…]`" with a note pointing at the
+Phase 3.9 fix.
+
+---
+
+### TODO-4: Debug `<details data-testid="leptos-debug-panel">` leaks into production UI
+
+**Observed:** at the bottom of the page, beneath the composer,
+there's an expandable "debug: store snapshot" `<details>` block.
+This was 3.1 scaffolding for the WS-protocol smoke surface;
+3.2–3.7 left it visible because there was no production‑vs‑dev
+split. After 3.7's cutover to `/`, this panel ships to every
+user.
+
+**Fix — two options:**
+
+**Option A (recommended): cfg-gate to debug builds.** Wrap the
+`<details>` mount in `lib.rs` with `#[cfg(debug_assertions)]`
+so `trunk build --release` (which Phase 3.0 wired into every
+gate-level recipe) drops it entirely:
+
+```rust
+#[cfg(debug_assertions)]
+{
+    view! {
+        <details data-testid="leptos-debug-panel">
+            <summary>"debug: store snapshot"</summary>
+            <DebugView />
+        </details>
+    }.into_any()
+}
+#[cfg(not(debug_assertions))]
+{ ().into_any() }
+```
+
+**Option B: query-string toggle.** Read `window.location.search`
+on mount, show the panel iff `?debug=1`. More flexible (lets
+operators flip it on in prod for debugging) but requires URL
+rewriting. Defer unless the option-A drop turns out to bite
+production debugging.
+
+**Spec impact:** `e2e/leptos-session-picker.spec.ts:62`,
+`leptos-context-resume.spec.ts`, and one or two others use the
+`leptos-debug-store` testid as a ground-truth read for
+`session_info.dir` (debug-snapshot is the canonical source vs.
+the racy `data-active` attribute). With option A, those specs
+start failing because `trunk build --release` drops the panel.
+
+**Resolution:** the Playwright project has `webServer.command =
+… mock-omega-server…`; the build that ships its bundle is the
+*release* trunk build (per `web-leptos-build` recipe). The
+specs' debug-panel reads must therefore go away. Two paths:
+
+- **A1.** Replace debug-snapshot reads with a stable
+  per‑component testid that exposes just the active dir (e.g.
+  `[data-testid="leptos-active-session-dir"]` on the active row).
+  Cleaner; one new tiny element per spec consumer.
+- **A2.** Add a `--features dev-panel` flag to the Leptos crate
+  and have `web-leptos-build` (which the test recipe consumes)
+  pass `--features dev-panel`, while `just server` (production)
+  doesn't. Two builds, two sets of bytes, one extra knob.
+
+**Recommendation:** A1. The debug panel was 3.1 scaffolding;
+specs leaning on it for ground-truth was a shortcut, not an
+architectural choice. Replacing with a tiny purposeful testid
+is cleaner than splitting the build matrix.
+
+**Acceptance:**
+- Production build (`trunk build --release`) does not contain
+  the `leptos-debug-panel` element in `dist/index.html` after
+  hydration.
+- All 32 Playwright specs pass against the rebuilt bundle.
+- Visit production binary at `:3000`; no debug panel visible.
+
+---
+
+### Suggested session / model / effort / prompt for Phase 3.9
+
+**Session:** `phase-3-9-visual-followups`
+
+**Model:** `claude-sonnet-4-6`. All four TODOs are mechanical
+CSS / DOM tweaks with clear acceptance criteria; Sonnet 4.6
+handles this well at lower cost than Opus. No deep architectural
+decisions — the open/close picker pattern is standard, the
+colour drift fix is a CSS-rule-per-row table, the debug-panel
+gating is a one-line cfg flip plus testid migration.
+
+**Effort:** `medium`. The work spans 4 small deliverables across
+CSS + a couple of small Rust edits + Playwright spec updates,
+but none of them require sustained reasoning over a large code
+surface. `low` would risk under-thinking the spec migration in
+TODO-4-A1; `high`/`max` is overkill for the breadth.
+
+**Prompt** (paste into a fresh session):
+
+> Implement Phase 3.9 of the Leptos migration as decomposed in
+> rust-migration.md. Read the §"Phase 3.9 — visual / UX follow-ups
+> (post-3.8 UAT)" section in full, plus the §"Phase 3.8 — done
+> (concise record)" above it for context.
+>
+> Four TODOs, each with its own acceptance block in the plan:
+>
+> - TODO-1: session picker open/close (modal overlay + Sessions
+>   button on the composer + Esc + click-outside).
+> - TODO-2: auto-close picker on Reset / Resume.
+> - TODO-3: per-event-type colour drift (CSS-only; the table in
+>   the plan lists every rule to add).
+> - TODO-4: drop the debug panel from production builds + migrate
+>   the 2–3 specs that read from it.
+>
+> Land as four small commits or one cohesive commit — your call,
+> but keep the diff reviewable. After each TODO: `just rust-gate`
+> + `just gate` must stay green; new Playwright specs are welcome
+> for the open/close + auto-close cycles. After TODO-3, re-update
+> `frontends/leptos/STYLE-MAPPING.md` to flip the affected rows
+> from "renamed → .block-status" to "adapt → [data-event-type]".
+>
+> Don't touch:
+> - the WS protocol or any server-side Rust crate
+> - the omega-server router (the /leptos/ alias retire is still
+>   slated for the Phase-4 final commit, not 3.9)
+> - bench/ — still out of scope
+>
+> When done, update rust-migration.md with a "Phase 3.9 — done
+> (concise record)" following the 3.0–3.8 pattern. Mark Phase
+> 3.9 ✅ in the status tables.
+
+**Why this scaffolding belongs in the plan:** Phase 3 was sealed
+`✅ Done` after 3.8's gate-green commit. UAT findings a tier
+below gate are a normal post-merge polish queue — documenting
+them here keeps the rust-migration.md plan as the single source
+of truth for what's left to do, instead of forking into a
+separate issue tracker. Phase 4 (chromiumoxide cutover) can
+start in parallel; 3.9 has no dependency on it.
+
+---
 
 ## Phase 4 — `chromiumoxide` + LLM oracle (next) ⬜ Future
 
