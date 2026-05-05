@@ -231,16 +231,25 @@ async fn get_api_context_returns_records_in_request_order() {
 }
 
 // ---------------------------------------------------------------------------
-// Static file serving (preserved from 1e.0)
+// Static file serving (Phase 3.7 — fallback now serves the Leptos bundle)
 // ---------------------------------------------------------------------------
+//
+// `make_test_state` defaults `leptos_dir` to the production constant
+// (`frontends/leptos/dist`); tests that exercise the fallback `ServeDir`
+// override it via `with_leptos_dir(...)` so reads resolve to the
+// test-scoped tempdir.
 
 #[tokio::test]
-async fn servedir_serves_files_from_public_dir() {
+async fn servedir_serves_files_from_fallback_dir() {
     let tmp = TempDir::new().expect("tempdir");
     let file_path = tmp.path().join("hello.txt");
     std::fs::write(&file_path, "omega-rocks").expect("write tempfile");
 
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
+    // Phase 3.7: the fallback `ServeDir` reads from `leptos_dir`, not
+    // `public_dir`. `public_dir` is retained on `AppState` for
+    // backward compatibility but no longer routed.
+    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
+        .with_leptos_dir(tmp.path().to_path_buf());
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -256,7 +265,8 @@ async fn servedir_serves_files_from_public_dir() {
 #[tokio::test]
 async fn servedir_returns_404_for_missing_file() {
     let tmp = TempDir::new().expect("tempdir");
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
+    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
+        .with_leptos_dir(tmp.path().to_path_buf());
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -272,7 +282,11 @@ async fn servedir_returns_404_for_missing_file() {
 // ---------------------------------------------------------------------------
 
 /// `GET /leptos/index.html` returns the Leptos bundle's index, served from
-/// the configured `leptos_dir` and not from the SolidJS `public_dir`.
+/// the configured `leptos_dir`.
+///
+/// Phase 3.7: with the fallback `ServeDir` also serving `leptos_dir`, the
+/// nested `/leptos/` mount is now an alias for `/`. This test pins the
+/// alias path to confirm the mount is still active.
 #[tokio::test]
 async fn leptos_servedir_serves_index_html() {
     let tmp = TempDir::new().expect("tempdir");
@@ -281,12 +295,8 @@ async fn leptos_servedir_serves_index_html() {
     std::fs::write(leptos_dir.join("index.html"), "<html>leptos</html>")
         .expect("write leptos index.html");
 
-    // Distinct public_dir to prove the Leptos bundle isn't accidentally
-    // served by the fallback `ServeDir`.
     let public_dir = tmp.path().join("public");
     std::fs::create_dir_all(&public_dir).expect("mkdir public");
-    std::fs::write(public_dir.join("index.html"), "<html>solidjs</html>")
-        .expect("write solid index.html");
 
     let state =
         make_test_state(tmp.path().join("sessions"), public_dir).with_leptos_dir(leptos_dir);
@@ -359,22 +369,22 @@ async fn leptos_bare_prefix_redirects_to_trailing_slash() {
 }
 
 /// The fallback `ServeDir` mounted at `/` must NOT shadow the `/leptos/`
-/// route. With a file named `leptos` in `public_dir`, requests to
-/// `/leptos/index.html` still hit the Leptos `ServeDir`.
+/// route. Phase 3.7: both routes now serve the same `leptos_dir`, so we
+/// drop a decoy file at `leptos_dir/leptos/index.html` (which only the
+/// fallback could match — the nested `ServeDir` strips the `/leptos/`
+/// prefix before resolving) and verify `/leptos/index.html` returns the
+/// nested mount's `leptos_dir/index.html` content instead.
 #[tokio::test]
 async fn leptos_route_wins_over_fallback_servedir() {
     let tmp = TempDir::new().expect("tempdir");
     let leptos_dir = tmp.path().join("leptos-dist");
-    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
+    std::fs::create_dir_all(leptos_dir.join("leptos")).expect("mkdir leptos-dist/leptos");
     std::fs::write(leptos_dir.join("index.html"), "FROM-LEPTOS").expect("write leptos index");
-
-    let public_dir = tmp.path().join("public");
-    std::fs::create_dir_all(public_dir.join("leptos")).expect("mkdir public/leptos");
-    std::fs::write(public_dir.join("leptos/index.html"), "FROM-FALLBACK")
+    std::fs::write(leptos_dir.join("leptos/index.html"), "FROM-FALLBACK")
         .expect("write fallback decoy");
 
-    let state =
-        make_test_state(tmp.path().join("sessions"), public_dir).with_leptos_dir(leptos_dir);
+    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
+        .with_leptos_dir(leptos_dir);
     let addr = spawn_server(state).await;
 
     let resp = http_client()

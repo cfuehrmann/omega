@@ -39,9 +39,6 @@ export default defineConfig({
     {
       name: "chromium",
       testIgnore: [
-        "**/real-server-replay.spec.ts",
-        "**/pause-resume-interject.spec.ts",
-        "**/web-ui-rename-session.spec.ts",
         "**/leptos-smoke.spec.ts",
         "**/leptos-session-picker.spec.ts",
         "**/leptos-conversation-feed.spec.ts",
@@ -57,13 +54,17 @@ export default defineConfig({
 
     // -----------------------------------------------------------------------
     // Project 2: real-server (real Agent + mock CreateMessageStream)
+    //
+    // Phase 3.7 cutover: omega-server's `/` fallback now serves the Leptos
+    // bundle, so the surviving SolidJS-targeted real-server specs
+    // (`pause-resume-interject`, `real-server-replay`, `web-ui-rename-session`)
+    // were retired in this commit. Their coverage — reconnect, replay,
+    // pause-during-stream — ports to Phase 4 (chromiumoxide + LLM oracle)
+    // where it will be re-implemented against the Leptos UI.
     // -----------------------------------------------------------------------
     {
       name: "real-server",
       testMatch: [
-        "**/real-server-replay.spec.ts",
-        "**/pause-resume-interject.spec.ts",
-        "**/web-ui-rename-session.spec.ts",
         "**/leptos-smoke.spec.ts",
         "**/leptos-session-picker.spec.ts",
         "**/leptos-conversation-feed.spec.ts",
