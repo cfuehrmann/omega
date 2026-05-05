@@ -44,3 +44,32 @@ pub async fn get_sessions() -> Result<Vec<SessionListItem>, String> {
         .await
         .map_err(|e| format!("GET /api/sessions: decode failed: {e}"))
 }
+
+/// `GET /api/files?prefix=...` → `Vec<String>`.
+///
+/// Each returned entry is a path completion ready to be pasted after
+/// the `@` in the composer (directories include their trailing `/`,
+/// subdir prefixes preserve the leading path component). The server
+/// caps the response at `MAX_FILE_COMPLETIONS = 50`.
+///
+/// # Errors
+///
+/// Returns `Err(message)` for any network-level failure. Same
+/// JS-interop carve-out as [`get_sessions`].
+pub async fn get_files(prefix: &str) -> Result<Vec<String>, String> {
+    // Build the URL via `Request::get` with a query parameter so
+    // we get URL-encoding for free (e.g. spaces, `&`).
+    let resp = Request::get("/api/files")
+        .query([("prefix", prefix)])
+        .send()
+        .await
+        .map_err(|e| format!("GET /api/files failed: {e}"))?;
+
+    if !resp.ok() {
+        return Err(format!("GET /api/files: HTTP {}", resp.status()));
+    }
+
+    resp.json::<Vec<String>>()
+        .await
+        .map_err(|e| format!("GET /api/files: decode failed: {e}"))
+}

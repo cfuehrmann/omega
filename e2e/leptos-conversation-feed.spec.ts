@@ -29,9 +29,9 @@
  * script step — terminal LLM error — which surfaces as
  * `data-event-type="llm_error"` with `data-event-kind="error"`.
  *
- * All four specs use the **stub composer** (`leptos-stub-composer-*`)
- * to send `user_message` frames over the WS — the proper composer
- * lands in 3.4 and supersedes that surface.
+ * All four specs use the production composer (`leptos-composer-*`)
+ * — which replaced the 3.3 stub composer in 3.4 — to send
+ * `user_message` frames over the WS.
  *
  * Lifespan: deleted in Phase 3.7 alongside the rest of Playwright when
  * chromiumoxide takes over.
@@ -52,14 +52,14 @@ async function gotoFeed(page: Page) {
 }
 
 /**
- * Send a user message via the temporary stub composer. The proper
- * composer (3.4) replaces this affordance; specs targeting that
- * version should switch to its testids.
+ * Send a user message via the production composer (Phase 3.4).
+ * Types into the textarea then presses Enter — mirrors the SolidJS
+ * UI's keyboard semantics.
  */
-async function sendStubMessage(page: Page, content: string) {
-  const input = page.getByTestId("leptos-stub-composer-input");
+async function sendComposerMessage(page: Page, content: string) {
+  const input = page.getByTestId("leptos-composer-input");
   await input.fill(content);
-  await page.getByTestId("leptos-stub-composer-send").click();
+  await input.press("Enter");
 }
 
 /** Read the conversation store's session_info.dir from the debug snapshot. */
@@ -96,7 +96,7 @@ test("leptos-feed: multi-tool turn renders every visible event family", async ({
   const startDir = await readActiveDir(page);
   await newSession(page, startDir);
 
-  await sendStubMessage(page, "go multi tool");
+  await sendComposerMessage(page, "go multi tool");
 
   // The multi-tool script ends with a plain text turn after three
   // tool_call/tool_result pairs — `turn_end` is the synchronization
@@ -167,7 +167,7 @@ test("leptos-feed: streaming text overlay appears live and resolves into llm_res
   const startDir = await readActiveDir(page);
   await newSession(page, startDir);
 
-  await sendStubMessage(page, "go long stream");
+  await sendComposerMessage(page, "go long stream");
 
   // While the SSE stream is still emitting chunks, the overlay must
   // be visible and grow. The longStream script is 8 chunks × 100 ms
@@ -215,7 +215,7 @@ test("leptos-feed: long tool_result truncates inline with a working show-more to
   const startDir = await readActiveDir(page);
   await newSession(page, startDir);
 
-  await sendStubMessage(page, "trigger long read");
+  await sendComposerMessage(page, "trigger long read");
 
   const feed = page.getByTestId("leptos-feed");
   await expect(
@@ -270,7 +270,7 @@ test("leptos-feed: terminal llm_error renders in the error family", async ({ pag
   const startDir = await readActiveDir(page);
   await newSession(page, startDir);
 
-  await sendStubMessage(page, "trigger 400");
+  await sendComposerMessage(page, "trigger 400");
 
   const feed = page.getByTestId("leptos-feed");
   // The agent will emit a `turn_interrupted` (kind=error) when the

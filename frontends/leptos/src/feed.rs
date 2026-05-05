@@ -37,15 +37,12 @@ use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
 use omega_protocol::OmegaEvent;
-use wasm_bindgen::JsCast;
 
 use crate::event_view::{
     EventKind, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
     truncate_for_preview,
 };
-use crate::protocol::ClientFrame;
 use crate::store::SessionStore;
-use crate::ws::WsClient;
 
 /// Match the SolidJS UI's inline preview cap. Larger payloads remain
 /// reachable through the "show more" toggle (3.3) and, eventually,
@@ -435,74 +432,4 @@ fn StreamingTail() -> impl IntoView {
             </div>
         </Show>
     }
-}
-
-// ---------------------------------------------------------------------------
-// Stub composer (3.3-temp; superseded by 3.4's real composer)
-// ---------------------------------------------------------------------------
-
-/// Minimal user-message send affordance. The real composer (with
-/// pause/continue/abort, model+effort switchers, file completion)
-/// lands in 3.4. This 5-line stub exists solely so the 3.3 Playwright
-/// spec can drive multi-tool turns over the WS — the feed has nothing
-/// else to look at without something to send.
-///
-/// Marked clearly with `data-testid="leptos-stub-composer"` so 3.4's
-/// replacement can grep-and-delete the surface in one motion.
-#[component]
-pub fn StubComposer() -> impl IntoView {
-    let ws = use_context::<WsClient>().expect("WsClient must be provided");
-    let textarea_ref = NodeRef::<html::Textarea>::new();
-    let draft = RwSignal::new(String::new());
-
-    let on_send = move |_| {
-        let content = draft.get();
-        if content.trim().is_empty() {
-            return;
-        }
-        let frame = ClientFrame::UserMessage { content };
-        if let Err(err) = ws.send(&frame) {
-            leptos::logging::warn!("stub-composer send failed: {err:?}");
-            return;
-        }
-        draft.set(String::new());
-        if let Some(el) = textarea_ref.get() {
-            // Clear the visible textarea too. The signal-driven
-            // prop:value below will reset on next render, but that's
-            // an extra tick; setting directly avoids a stale-value
-            // flicker.
-            el.unchecked_ref::<web_sys::HtmlTextAreaElement>()
-                .set_value("");
-        }
-    };
-
-    view! {
-        <section
-            class="leptos-stub-composer"
-            data-testid="leptos-stub-composer"
-        >
-            <textarea
-                data-testid="leptos-stub-composer-input"
-                node_ref=textarea_ref
-                prop:value=move || draft.get()
-                on:input=move |evt| draft.set(textarea_value(&evt))
-            />
-            <button
-                data-testid="leptos-stub-composer-send"
-                on:click=on_send
-            >
-                "send"
-            </button>
-        </section>
-    }
-}
-
-/// Read the value out of a textarea event target. Same pattern as
-/// `picker.rs::event_target_value` — duplicated here because that
-/// helper targets `HtmlInputElement` and 3.2 forbids touching `picker.rs`.
-fn textarea_value(evt: &ev::Event) -> String {
-    evt.target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
-        .map(|el| el.value())
-        .unwrap_or_default()
 }

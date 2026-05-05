@@ -192,8 +192,12 @@ impl SessionStore {
 // ---------------------------------------------------------------------------
 
 /// Apply transitions that *event* tags drive: turn-state machine and
-/// streaming-accumulator resets. Mirrors `next_turn_state_for` in the
-/// Rust server. `events.push(ev)` itself is the caller's job.
+/// streaming-accumulator resets, plus session-info mirror updates for
+/// `model_changed` / `effort_changed` (the server emits the event but
+/// does **not** re-broadcast a fresh `SessionInfo` envelope, so the
+/// client must mirror the change locally to keep `session_info.model`
+/// and `session_info.effort` honest). Mirrors `next_turn_state_for`
+/// in the Rust server. `events.push(ev)` itself is the caller's job.
 fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
     match ev {
         OmegaEvent::UserMessage(_) => {
@@ -217,6 +221,30 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming_text.set(String::new());
             store.streaming_thinking.set(String::new());
         }
+        // Mirror server-side model/effort changes into the cached
+        // `session_info` so reactive consumers (the composer, the
+        // debug view) see the latest value without a fresh
+        // `session_info` broadcast. The server's set_model handler
+        // refreshes its `info_cache` for *future* broadcasts but does
+        // not actively re-emit one; this rule is what keeps the
+        // client's projection of session_info accurate. (The 8e2106b
+        // SolidJS bug had the same root shape — the UI read from a
+        // stale source after model_changed; we read from session_info
+        // and update session_info here.)
+        OmegaEvent::ModelChanged(e) => {
+            store.session_info.update(|si| {
+                if let Some(info) = si.as_mut() {
+                    info.model.clone_from(&e.model);
+                }
+            });
+        }
+        OmegaEvent::EffortChanged(e) => {
+            store.session_info.update(|si| {
+                if let Some(info) = si.as_mut() {
+                    info.effort.clone_from(&e.effort);
+                }
+            });
+        }
         _ => {}
     }
 }
@@ -231,9 +259,9 @@ mod tests {
 
     use super::*;
     use omega_protocol::events::{
-        AgentErrorEvent, LlmResponseEvent, LlmResponseUsage, PauseRequestedEvent,
-        TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent,
-        UserMessageEvent,
+        AgentErrorEvent, EffortChangedEvent, LlmResponseEvent, LlmResponseUsage,
+        ModelChangedEvent, PauseRequestedEvent, TurnContinuedEvent, TurnEndEvent,
+        TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
     use leptos::reactive::owner::Owner;
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -519,6 +547,82 @@ mod tests {
             let snap = s.snapshot();
             assert!(snap.streaming_text.is_empty());
             assert!(snap.streaming_thinking.is_empty());
+        });
+    }
+
+    // ---- model_changed / effort_changed mirror to session_info -----------
+
+    #[wasm_bindgen_test]
+    fn model_changed_event_updates_cached_session_info_model() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(session_info(TurnState::Idle));
+            assert_eq!(s.snapshot().session_info.unwrap().model, "m");
+            s.apply(WsMessage::ModelChanged(ModelChangedEvent {
+                time: "t".into(),
+                model: "claude-opus-4-7".into(),
+            }));
+            assert_eq!(
+                s.snapshot().session_info.unwrap().model,
+                "claude-opus-4-7"
+            );
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn effort_changed_event_updates_cached_session_info_effort() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(session_info(TurnState::Idle));
+            assert_eq!(s.snapshot().session_info.unwrap().effort, "e");
+            s.apply(WsMessage::EffortChanged(EffortChangedEvent {
+                time: "t".into(),
+                effort: "high".into(),
+            }));
+            assert_eq!(s.snapshot().session_info.unwrap().effort, "high");
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn model_changed_with_no_session_info_is_a_noop() {
+        // Defensive: if session_info hasn't been received yet, the
+        // mirror update is a no-op rather than synthesising a partial
+        // payload. Catches a mutation that constructs a fresh
+        // SessionInfoPayload with default fields.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(WsMessage::ModelChanged(ModelChangedEvent {
+                time: "t".into(),
+                model: "claude-opus-4-7".into(),
+            }));
+            assert!(s.snapshot().session_info.is_none());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn effort_changed_with_no_session_info_is_a_noop() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(WsMessage::EffortChanged(EffortChangedEvent {
+                time: "t".into(),
+                effort: "high".into(),
+            }));
+            assert!(s.snapshot().session_info.is_none());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn model_changed_appends_event_to_log() {
+        // The model-changed event still ends up in the events log
+        // — the mirror is a side effect, not a replacement.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(session_info(TurnState::Idle));
+            s.apply(WsMessage::ModelChanged(ModelChangedEvent {
+                time: "t".into(),
+                model: "claude-opus-4-7".into(),
+            }));
+            assert_eq!(s.snapshot().events.len(), 1);
         });
     }
 

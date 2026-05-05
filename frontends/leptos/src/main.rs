@@ -1,4 +1,4 @@
-//! Phase 3.3 — Leptos conversation feed.
+//! Phase 3.4 — Leptos composer.
 //!
 //! Architecture:
 //! ```text
@@ -9,11 +9,13 @@
 //!    ├── Effect: WsClient::new(url, conv, list).connect()
 //!    ├── SessionPicker     (3.2 — sibling of the feed)
 //!    ├── ConversationFeed  (3.3 — primary surface)
-//!    ├── StubComposer      (3.3 — temp; 3.4 replaces with real composer)
+//!    ├── Composer          (3.4 — replaces 3.3 StubComposer)
 //!    └── <details data-testid="leptos-debug-panel">
 //!         └── DebugView    (3.1 JSON dump, collapsed by default)
 //! ```
 
+mod composer;
+mod completion;
 mod event_view;
 mod feed;
 mod http;
@@ -25,7 +27,8 @@ mod ws;
 
 use leptos::prelude::*;
 
-use crate::feed::{ConversationFeed, StubComposer};
+use crate::composer::Composer;
+use crate::feed::ConversationFeed;
 use crate::picker::SessionPicker;
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
@@ -44,8 +47,7 @@ fn App() -> impl IntoView {
     provide_context(list_store);
 
     // Construct the WsClient once and provide it via context so the
-    // picker, the feed (3.3), and 3.4+ composers can call
-    // `WsClient::send`.
+    // picker, the feed, and the composer can call `WsClient::send`.
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
             leptos::logging::error!("ws url derivation failed: {err:?}");
@@ -62,10 +64,10 @@ fn App() -> impl IntoView {
 
     view! {
         <main>
-            <h1>"Omega (Leptos) — Phase 3.3"</h1>
+            <h1>"Omega (Leptos) — Phase 3.4"</h1>
             <SessionPicker />
             <ConversationFeed />
-            <StubComposer />
+            <Composer />
             <details data-testid="leptos-debug-panel">
                 <summary>"debug: store snapshot"</summary>
                 <DebugView />

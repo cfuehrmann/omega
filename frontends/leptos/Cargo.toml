@@ -40,6 +40,11 @@ web-sys                  = { version = "=0.3.97", features = [
     "HtmlElement",
     "HtmlDivElement",
     "HtmlTextAreaElement",
+    # Phase 3.4 — composer model + effort dropdowns are native
+    # `<select>` elements; `KeyboardEvent` is read in the textarea's
+    # `on:keydown` handler for Enter/Tab/Arrow navigation.
+    "HtmlSelectElement",
+    "KeyboardEvent",
 ] }
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }

@@ -27,7 +27,8 @@
 | 3.1 — Protocol + reactive store | ✅ Done | Typed `WsMessage` parsing; `SessionStore` reducer; `/leptos/` debug dump |
 | 3.2 — Leptos session picker | ✅ Done | `SessionListStore` + picker UI; `/leptos/` lists/creates/renames/deletes; debug dump moved to collapsible panel |
 | 3.3 — Leptos conversation feed | ✅ Done | `event_view.rs` pure projection; `feed.rs` component; `/leptos/` renders every `OmegaEvent` variant + live streaming text + auto-scroll seam |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.1 done; 3.2–3.7 ahead) |
+| 3.4 — Leptos composer | ✅ Done | `composer.rs` + `completion.rs`; primary action button (Send/Pause/Abort/Continue) + secondary Abort; model + effort `<select>` dropdowns; `@`-path file completion via `/api/files`; 3.3 `<StubComposer/>` retired |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.4 done; 3.5–3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -827,8 +828,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | 3.1 | ✅ Done | Protocol types + WS client: deserialise every `WsMessage` variant via `omega-protocol`; central reactive store for session state |
 | 3.2 | ✅ Done | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
 | 3.3 | ✅ Done | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
-| 3.4 | ⬜ Next | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
-| 3.5 | ⬜ | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
+| 3.4 | ✅ Done | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
+| 3.5 | ⬜ Next | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
 | 3.6 | ⬜ | Visual parity pass; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
 | 3.7 | ⬜ | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
 
@@ -1454,81 +1455,312 @@ suites, ts-rs bindings drift). **`just test-browser`** ✅ 127/127
   default arm), forcing a rendered-tag decision rather than silently
   rendering nothing. Intentional.
 
-### Phase 3.4 — composer (next)
+### Phase 3.4 — done (concise record)
 
-**Goal.** Replace the 3.3 `<StubComposer/>` with a parity composer
+**Scope.** The 3.3 `<StubComposer/>` is replaced by a parity composer
 that owns user-message send, in-flight pause/continue/abort, model +
-effort switchers, and file-completion autocomplete — every
-operator-side surface the SolidJS UI has today.
+effort switchers, and `@`-path file-completion autocomplete — every
+operator-side surface the SolidJS UI has today. The composer is now
+the only user-message-send surface at `/leptos/`.
+
+**Decision — composer state-machine shape (pure projection).** Same
+pattern as 3.3's `kind_for` / 3.2's `is_active`:
+[`composer_action(turn_state) -> ComposerAction`] in `composer.rs` is
+the only place the four-state mapping lives. `ComposerAction` is
+`{ Send, Pause, Abort, Continue }`; `Idle→Send`, `Running→Pause`,
+`PauseRequested→Abort` (escalation while server hasn't paused yet),
+`Paused→Continue`. A secondary `Abort` button renders alongside the
+primary one only in `Paused`, so the operator can always escalate
+when the agent has stopped. Inline-match-in-component was rejected
+for the same reason 3.3's family decision was carved out: the
+projection is mutation-testable; the in-component match isn't.
+
+**Decision — continue-with-interjection (mirror SolidJS).** The
+textarea is editable in every turn state. Pressing Continue from
+`Paused` reads the current draft and sends
+`ClientFrame::Continue { content: Some(draft) }` if non-empty, else
+`Continue { content: None }`. The wire shape supports both verbatim;
+parity value is high (operators rely on mid-turn course corrections).
+The SolidJS "preCommitted / Take it back" UX is dropped — one less
+`RwSignal`, one less race window, and the operator can still reach
+the same outcome by pausing then continuing.
+
+**Decision — file-completion popup placement (fixed in textarea
+wrap; no caret-rect math).** The popup is rendered inside
+`.leptos-composer-textarea-wrap` above the textarea. Confirmed by
+grep that the SolidJS UI does the same (`fc-dropdown` is positioned
+absolutely inside `.textarea-wrap`, **not** anchored to the caret) —
+so this is "mirror SolidJS" rather than "diverge for simplicity".
+Pure query-derivation + selection logic landed in `completion.rs`;
+DOM anchoring is plain CSS.
+
+**Decision — keyboard handling (mirror SolidJS).** Enter (no Shift)
+fires the primary action, OR accepts the highlighted completion
+when the popup is open. Shift+Enter inserts a newline. Tab /
+Shift-Tab navigate the popup; ArrowDown / ArrowUp do the same.
+Escape closes the popup. Tab does *not* accept (SolidJS uses Tab
+for navigation, Enter for accept — confirmed by reading
+`src/web/client/App.tsx:1970-1985`). Esc-to-pause / Esc-to-abort
+gestures are deferred to 3.6 polish; visible primary buttons cover
+every state.
+
+**Decision — model + effort dropdowns (hard-coded; native
+`<select>`).** Three models (`claude-sonnet-4-6`, `claude-opus-4-6`,
+`claude-opus-4-7`) and four effort levels (`low`, `medium`, `high`,
+`max`) baked into `composer.rs`. SolidJS hard-codes too; changes are
+rare and require a UI bump anyway. `cap_effort_for_model` (Phase
+1d.1a per BUG-A) lives server-side at `omega-agent/src/config.rs`
+and handles downcasting (e.g. `max` on Sonnet → `high`), so no
+client-side gating is needed. `xhigh` is intentionally omitted from
+the Leptos UI per task spec; the SolidJS bundle still offers it.
+Using native `<select>` (with `prop:value` for the active option)
+rather than custom button/dropdown is a deliberate simplification:
+zero JS-interop on click-outside / focus management, browser-native
+a11y, and one fewer `RwSignal` per dropdown. Trade-off accepted for
+3.4; 3.6 visual-parity pass may revisit.
+
+**Server-side surface needed: none.** Confirmed by grep that every
+`ClientFrame` variant 3.4 needed (`UserMessage`, `Pause`,
+`Continue { content }`, `Abort`, `SetModel`, `SetEffort`) was
+already typed in `frontends/leptos/src/protocol.rs` at 3.1.
+`/api/files` returns `Vec<String>` directly (server's wire shape —
+not `[{path, isDir}]` as the planning stub claimed); we consume it
+verbatim. `/api/files` and `/api/sessions` are the only HTTP
+routes the leptos client touches today.
+
+**Deferred bug fix landed: `model_changed` / `effort_changed` events
+update cached `session_info`.** The server's `set_model` /
+`set_effort` handlers emit a `model_changed` / `effort_changed`
+*event* on `tx` but do **not** re-broadcast a fresh `SessionInfo`
+envelope (they only refresh `info_cache` for *future* SessionInfo
+broadcasts, e.g. on reconnect). Without a client-side mirror rule,
+`session_info.model` / `session_info.effort` would stay stale
+until the next reconnect, and the composer's dropdown would
+display the old value. Two new arms in
+`apply_event_side_effects` (`store.rs`) update
+`session_info.{model,effort}` in place when the corresponding event
+lands. This is exactly the same shape as the 8e2106b SolidJS bug —
+the UI must derive `activeModel` from the live wire-event stream,
+not from a stale checkpoint. Five new wasm-bindgen tests lock down
+the rule (mirror, defensive no-op when `session_info` not yet
+seen, event still appended to the log).
+
+**No new external crate dependencies.** `gloo-net 0.6.0` (already
+pulled in 3.2 for `/api/sessions`) gained a second consumer in
+`http.rs::get_files`. Two new `web-sys` features (`HtmlSelectElement`,
+`KeyboardEvent`) toggled on — zero bundle delta from the features
+themselves (already pulled transitively).
+
+**New files:**
+- `frontends/leptos/src/completion.rs` (~430 lines) — pure
+  `@`-path helpers: `at_token_at_cursor`, `accept_completion`
+  (returns `(new_text, new_cursor, drill_in)`), `next_highlight`
+  (wrap-around with `-1 = none`), `selected_item`. 41 wasm tests.
+- `frontends/leptos/src/composer.rs` (~770 lines) —
+  `<Composer/>` + `<ModelSelect/>`, `<EffortSelect/>`,
+  `<FileCompletionDropdown/>` sub-components; pure helpers
+  `composer_action`, `action_label`, `action_tag`,
+  `show_secondary_abort`, `selected_label_for`, `turn_state_tag`
+  + hard-coded `MODELS` / `EFFORTS` constants. 18 wasm tests on
+  the pure surface.
+- `e2e/leptos-composer.spec.ts` — 8 specs covering every flow:
+  send happy-path, pause-during-tool, continue with interjection,
+  abort, switch-model-mid-idle (regression for 8e2106b),
+  switch-effort, file-completion accept, and a negative
+  assertion that the 3.3 stub composer is gone.
+
+**Modified files:**
+- `frontends/leptos/src/store.rs` — two new arms in
+  `apply_event_side_effects` for `ModelChanged` / `EffortChanged`
+  + 5 new wasm-bindgen tests; store shape unchanged (constraint
+  from task spec).
+- `frontends/leptos/src/feed.rs` — `<StubComposer/>` deleted
+  along with its private `textarea_value` helper and the unused
+  `wasm_bindgen::JsCast` / `crate::protocol::ClientFrame` /
+  `crate::ws::WsClient` imports.
+- `frontends/leptos/src/main.rs` — `mod composer;` +
+  `mod completion;`; `<Composer/>` mounts in place of the stub;
+  heading bumped to "Phase 3.4".
+- `frontends/leptos/src/http.rs` — `get_files(prefix) ->
+  Result<Vec<String>, String>` added alongside `get_sessions`,
+  same `gloo-net` glue, same JS-interop carve-out.
+- `frontends/leptos/Cargo.toml` — `HtmlSelectElement` and
+  `KeyboardEvent` added to the `web-sys` features list (rationale
+  in the inline comment).
+- `playwright.config.ts` — `leptos-composer.spec.ts` wired into
+  the real-server `testMatch` and the chromium `testIgnore`.
+- `e2e/leptos-conversation-feed.spec.ts` — `sendStubMessage` →
+  `sendComposerMessage` (uses `leptos-composer-input` + Enter);
+  doc-comment updated.
+
+**Tests — wasm-bindgen-test (`just web-leptos-test`):** 170 passing
+(116 from 3.3 + 54 new):
+- 41 in `completion.rs`: 11 on `at_token_at_cursor` (boundary
+  semantics, multi-byte safety, multi-`@` priority); 7 on
+  `accept_completion`; 11 on `next_highlight` (zero-len, cold
+  start, wrap-around, `direction == 1` defends against `>=`
+  equivalent mutation — see refactor below); 4 on `selected_item`.
+- 13 new in `composer.rs`: 4 on `composer_action`, 2 on
+  `action_label` (per-action + pairwise unique), 2 on
+  `action_tag`, 1 on `show_secondary_abort`, 4 on
+  `selected_label_for`, 2 on `turn_state_tag`, 2 on hard-coded
+  `MODELS` / `EFFORTS` content.
+- 5 new in `store.rs`: model_changed mirror, effort_changed
+  mirror, defensive no-ops when session_info absent, event still
+  appended to log.
+
+**Tests — Playwright (real-server project, port 3003):** 8 new
+specs in `e2e/leptos-composer.spec.ts`. Total real-server
+leptos coverage now 18 specs (smoke: 2 · picker: 4 · feed: 4 ·
+composer: 8). Total browser-test count: **135 / 135**
+(127 from 3.3 + 8 new composer).
+
+**Mutation testing** (`cargo mutants -- --target
+wasm32-unknown-unknown`, run from `frontends/leptos/`):
+- `completion.rs` (new pure-logic file): 43 mutants — 41 caught,
+  2 unviable, **0 missed**. Initial run had 2 missed (`>` → `>=`
+  on `direction > 0` where `direction` is `±1` from `signum()`
+  after the `delta == 0` early-return — genuinely equivalent
+  mutations on the reachable subset). Refactored to
+  `delta.signum() == 1` so the boundary becomes meaningful;
+  `==` mutates to `!=` which is caught by the up/down tests.
+- `composer.rs`: 34 mutants — 11 caught (every pure helper),
+  1 unviable, **22 missed**. **Every** miss is inside the
+  `Composer` component body — keyboard event handlers (Enter,
+  Tab, Arrow, Escape branches at lines 391–422), fetch-seq
+  staleness checks (lines 228–237), and `RwSignal::new(-1)`
+  highlight initialiser (lines 192, 217, 233). Same JS-interop
+  carve-out documented for 3.1's `ws.rs` (20 missed), 3.2's
+  `picker.rs` (9 missed), 3.3's `feed.rs` (4 missed). All
+  functionally covered by the 8 Playwright specs.
+
+**Bundle-size impact.** 531,821 B (3.3) → 585,496 B (3.4),
++53,675 B (+10 %). Decomposition: ~+15 KB for the composer
+component surface and async fetch-seq machinery; ~+15 KB for the
+two `<select>` dropdown components; ~+20 KB for the file-completion
+popup + keyboard handler. **Zero new external crates.** Total
+bundle 144 KB gzipped — well within budget. Phase 3.6 markdown
+rendering still has 350+ KB headroom before the 1 MB target.
+
+**`just rust-gate`** ✅ (incl. 170 wasm-bindgen tests, all unit
+suites, ts-rs bindings drift). **`just test-browser`** ✅ 135/135
+(127 from 3.3 + 8 new composer specs).
+
+**Carry-forward into 3.5:**
+- `selected_label_for` is currently dead code (the native
+  `<select>` displays the active option's label automatically).
+  Kept and mutation-tested for 3.6 polish if a custom-trigger
+  dropdown lands. Marked `#[allow(dead_code)]` with a doc
+  pointer.
+- The composer doesn't surface `transport_errors` from the
+  store yet — connection-level errors only show up in the debug
+  panel. 3.6 polish should add a status banner.
+- `<select>` doesn't render the SolidJS "trigger button"
+  visual style. Acceptable for 3.4 functional parity; visual
+  parity lands in 3.6.
+- `composer_action` collapses `PauseRequested` and `Paused` into
+  separate primary actions (`Abort` vs `Continue`); SolidJS has
+  a `preCommitted` mid-state with a "Take it back" affordance.
+  Documented divergence; revisit only if operator feedback
+  shows the missing UX is felt.
+- `KeyboardEvent` on the textarea handles Enter/Tab/Arrow/Esc;
+  Esc-to-pause and Esc-to-abort gestures are deferred to 3.6.
+- `data-completion=item.clone()` in the popup row sets a
+  `data-` attribute on each completion item — useful for
+  Playwright but not yet tested as a stable selector beyond the
+  one e2e usage. Cement in 3.6 if specs grow.
+- The textarea has no autosize — the SolidJS UI uses
+  `scrollHeight`-based sizing. Visual parity gap, 3.6.
+
+### Phase 3.5 — context inspector + resume (next)
+
+**Goal.** Two adjacent surfaces the SolidJS UI exposes that the
+Leptos UI doesn't yet: a per-LLM-call **context inspector** modal
+(opened from an `llm_call` block, fetches `/api/context?hashes=...`,
+renders the matched ContextRecord entries) and the
+**resume-session** flow from picker rows (sends
+`ClientFrame::ResumeSession`, the existing
+`OmegaEvent::ResumingSession` / `SessionResumed` events drive the
+feed UX). Plus an inline **LLM-call detail expander** so the
+operator can see the request body / metrics / context-hash list
+without the modal.
 
 **Server-side surface (already in place — do NOT change):**
-- `ClientFrame::UserMessage`, `Pause`, `Continue { content }`,
-  `Abort`, `SetModel { model }`, `SetEffort { effort }` are all
-  typed in `frontends/leptos/src/protocol.rs` at 3.1.
-- `GET /api/files?prefix=...` is implemented in
-  `omega-server::router::list_files_for_completion` (Phase 1e.4) with
-  the directory-first-then-alphabetical sort and a 50-completion
-  cap; tested at the Rust level. Wire shape:
-  `[{"path":"src/","isDir":true}, ...]`.
-- `OmegaEvent::ModelChanged` / `EffortChanged` / `PauseRequested` /
-  `TurnPaused` / `TurnContinued` / `TurnInterrupted` already drive
-  `SessionStore::turn_state`; the composer reads turn_state to
-  enable/disable buttons.
+- `ClientFrame::ResumeSession { session_dir }` is already typed
+  in `frontends/leptos/src/protocol.rs`; server-side handler
+  exists in `omega-server/src/router.rs::handle_resume_session`.
+- `GET /api/context?hashes=h1,h2` is implemented at
+  `omega-server/src/router.rs::get_context` (Phase 1e.4) with
+  request-order preservation and miss-drop semantics.
+- `OmegaEvent::ResumingSession` and `OmegaEvent::SessionResumed`
+  already drive the feed's status family (3.3 `kind_for`).
 
 **Deliverables:**
 
-1. **`composer.rs`** — `<Composer/>` component reading `turn_state`
-   from context, rendering: a textarea (multi-line, autosizing); a
-   primary action button that flips between `Send` (turn_state=idle),
-   `Pause` (turn_state=running), `Abort` (turn_state=pause_requested),
-   `Continue` (turn_state=paused); a model picker dropdown; an
-   effort picker dropdown.
-2. **`http.rs`** — add `get_files(prefix: &str) -> Result<Vec<FileCompletion>, String>`
-   alongside the existing `get_sessions`. Same `gloo-net` glue.
-3. **`completion.rs`** — pure file-completion state machine: given a
-   composer's text + caret position, derive the completion query;
-   given completions + selection index, derive the inserted text on
-   accept. Mutation-tested.
-4. Delete `<StubComposer/>` (and its three call sites) once the real
-   composer's e2e spec covers the `user_message` send path.
+1. **`http.rs::get_context(hashes: &[ContextHash])`** alongside
+   `get_sessions` / `get_files`. Same `gloo-net` glue. The
+   `ContextHash` type is already exported from `omega-store`
+   via the protocol crate's `events.rs`.
+2. **`context_modal.rs`** — `<ContextModal/>` overlay opened by
+   clicking an `llm_call` block. Reads `event.context_hashes`,
+   fetches the records, renders each as `{role, content}`. Pure
+   helper: a hash-list → query-string projection (mutation-tested).
+3. **`llm_call.rs`** (new) or extension of `feed.rs`'s
+   `<EventBlock/>` for `OmegaEvent::LlmCall`: per-call detail
+   expander showing `request_summary`, `cache_breakpoint_index`,
+   `context_hashes`, `request_bytes`. The summary already lands
+   in the feed today; the expander reveals the full struct.
+4. **Resume-session row click handler** in `picker.rs` — a
+   second button on each row ("resume") sends
+   `ClientFrame::ResumeSession { session_dir }`. The active feed
+   updates via the existing `session_info → history →
+   session_resumed` sequence.
 
-**Out of scope:** context-modal / resume-session UX (3.5), markdown
-/ KaTeX / Mermaid rendering (3.6), visual-parity polish (3.6),
-chromiumoxide cutover (Phase 4).
+**Out of scope:** markdown / KaTeX / Mermaid rendering (3.6),
+visual-parity polish (3.6), chromiumoxide cutover (Phase 4).
 
 **Acceptance:**
-- `localhost:3000/leptos/` lets the operator type a message, send
-  it, pause / continue / abort an in-flight turn, switch model and
-  effort, and accept file-completion suggestions.
+- `localhost:3000/leptos/` lets the operator click an
+  `llm_call` block to open a context modal showing the
+  fetched ContextRecord entries; click a picker row's resume
+  button to drive a full resumption flow; click an
+  `llm_call` block's expander to inline the call details.
 - A new Playwright spec
-  (`e2e/leptos-composer.spec.ts`) drives every flow against
-  `mock-omega-server`. Existing leptos specs still pass.
-- `cargo mutants -- --target wasm32-unknown-unknown` on every new
-  pure-logic file: **0 missed**. JS-interop edges (textarea events,
-  dropdown reactivity, completion popup positioning) acknowledged as
-  gaps, same pattern as 3.1–3.3.
+  (`e2e/leptos-context-resume.spec.ts`) drives all three flows
+  against `mock-omega-server`. Existing leptos specs still pass.
+- `cargo mutants -- --target wasm32-unknown-unknown` on every
+  new pure-logic file: **0 missed**. JS-interop edges
+  (modal open/close focus management, click-outside dismissal)
+  acknowledged as gaps.
 - `just rust-gate` ✅ · `just test-browser` ✅.
 
-**Open questions to resolve in 3.4:**
-- Composer keyboard handling: `Enter` to send vs.
-  `Cmd/Ctrl-Enter` to send. SolidJS uses `Enter` (Shift-Enter for
-  newline). Mirror or diverge?
-- File-completion popup placement: floating below the caret
-  (SolidJS) or fixed at the bottom of the composer? The former is a
-  bigger DOM dance; the latter is simpler but less SolidJS-parity.
-- Pause/continue interjection text: SolidJS lets the user type a
-  mid-turn message in the composer, and the `Continue` button sends
-  it as `ClientFrame::Continue { content }`. Confirm the wire shape
-  matches; consider whether an explicit "pause-and-add-context" UI
-  state is worth modelling.
-- Model + effort dropdowns: hard-code the four supported
-  (sonnet-4-6, opus-4-6, opus-4-7) + four effort levels (low,
-  medium, high, max) on the client, or fetch a discovery endpoint
-  from the server? SolidJS hard-codes; we likely should too —
-  changes there are rare and require a UI bump anyway.
-- File-completion bundle cost: `gloo-net` is already paid for from
-  3.2. Sorted-with-grouping logic should land in a pure helper for
-  mutation testing. No new crate expected.
+**Open questions to resolve in 3.5:**
+- Modal vs inline expander: should the LLM-call detail be a
+  modal (SolidJS — takes over the screen, easier to read)
+  or an inline `<details>` (simpler, no JS-interop for
+  click-outside)? The two are not mutually exclusive: 3.5
+  could land both if the cost is contained.
+- Resume button placement: per-row in the picker (SolidJS
+  pattern, requires a second button column) vs a
+  context-menu / right-click affordance (cleaner UI but
+  requires JS-interop for native context menus). Mirror
+  SolidJS unless there's a strong UX-parity reason not to.
+- `ContextHash` newtype vs string in the wire-shape `hashes`
+  query param: confirm by grep that `omega-store` exports
+  `ContextHash` as a `String` newtype (not a struct), so the
+  query-string projection is just `hashes.join(",")`.
+- Modal positioning + scroll lock: full-viewport overlay
+  vs anchored-to-block popover. SolidJS uses full-viewport;
+  3.5 should mirror.
+- LLM-call expander needs `LlmCallEvent.request_summary`
+  rendered in a wrapped `<pre>`; the field can be very long
+  (kilobytes). Reuse `truncate_for_preview` from
+  `event_view.rs` with a per-block show-more toggle, same
+  pattern as 3.3's `<ToolResultBlock/>`.
+- File-completion popup (3.4) currently anchors inside
+  `.leptos-composer-textarea-wrap`. If 3.5's modals introduce
+  a stacking context that conflicts, revisit z-index after
+  visual review.
 
 ---
 

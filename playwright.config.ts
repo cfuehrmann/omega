@@ -45,6 +45,7 @@ export default defineConfig({
         "**/leptos-smoke.spec.ts",
         "**/leptos-session-picker.spec.ts",
         "**/leptos-conversation-feed.spec.ts",
+        "**/leptos-composer.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -64,6 +65,7 @@ export default defineConfig({
         "**/leptos-smoke.spec.ts",
         "**/leptos-session-picker.spec.ts",
         "**/leptos-conversation-feed.spec.ts",
+        "**/leptos-composer.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
