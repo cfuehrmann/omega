@@ -20,6 +20,8 @@
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
 | **BUG-A** — adaptive thinking + effort | ✅ Done | Wire `thinking: adaptive` + `output_config.effort` into every Anthropic call |
 | **BUG-B** — system prompt missing LLM Provider section | ✅ Done | Add `platform.claude.com/llms.txt` guidance to `system_prompt.rs` |
+| **BUG-C** — prompt-cache markers missing in Anthropic request | 🔴 **Top priority** | Apply `cache_control: {type: ephemeral}` on system / last tool / last message; surface `cache_read` / `cache_write` in UI usage line |
+| **BUG-D** — tool-call/tool-result clearing not implemented | 🔴 Top priority | TS agent pruned old tool I/O at compaction thresholds; Rust agent docstring says deferred. Audit + implement (or confirm in place) right after BUG-C |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
 | 2d — `session_renamed` envelope | ✅ Done | Server emits `session_renamed` after rename; rename UI updates without reload |
@@ -33,7 +35,7 @@
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
 | 3.8 — visual parity | ✅ Done | `frontends/leptos/style.css` (980 lines, Catppuccin Mocha) ported from the deleted SolidJS theme; Trunk-hashed `<link rel="stylesheet">`; centred picker panel; modal overlay with backdrop |
 | 3.9 — visual / UX follow-ups | ✅ Done | Picker open/close modal + Sessions button; auto-close on Reset/Resume; per-event-type colour drift (`llm_call` sapphire, `llm_retry` peach, `turn_end` muted, pause teal, info overlay2, thinking teal); debug panel `cfg(debug_assertions)`-gated; specs migrated from debug-store to `data-connected` / `data-active-session-dir` DOM attrs; 5 new Playwright specs; 37/37 green |
-| 3.10 — UX fidelity pass | 🟡 To do | Post-3.9 UAT: PRECHECK prompt-caching cost; picker-hides-Continue critical bug; picker open-on-refresh; close-button normalisation; `llm_response` modals (thinking, context, payload, usage); `llm_call` button rename + payload modal; `tool_call`/`tool_result` modal affordances; status chip (Ready/Streaming/Paused/Offline); `show usage`; `take it back` (optional) |
+| 3.10 — UX fidelity pass | 🟡 In progress (TODO-E-1 + TODO-F done) | Picker auto-closes on turn start (composer's Continue button no longer hidden); picker default flipped to closed (refresh lands in conversation feed). PRECHECK uncovered BUG-C — see top of doc; remaining UX TODOs (G/A/B/C/D, optional E-2/E-3) parked behind BUG-C + BUG-D |
 | 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -3090,7 +3092,205 @@ start in parallel; 3.9 has no dependency on it.
 
 ---
 
-## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 To do
+## Next-session priority queue (post-Phase 3.10 partial)
+
+This is the single ordered worklist for the next operator session.
+The Phase 3.10 PRECHECK uncovered a server-side prompt-cache
+regression that dwarfs every UX item below in cost terms; it lands
+first. A second server-side audit (tool-call/tool-result clearing)
+rides on top because both fixes touch the same `omega-core` /
+`omega-agent` request-shaping code paths and share a verification
+surface. Only after both server-side items land do the Phase 3.10
+UX TODOs resume.
+
+**Ordered:**
+
+1. **BUG-C — prompt-cache markers missing** — server-side, top priority.
+2. **BUG-D — tool-call/tool-result clearing audit** — server-side, top priority. Verify in same session as BUG-C since both touch context-window economics.
+3. **Phase 3.10 remaining UX TODOs** — client-side, resume after BUG-C / BUG-D land. Order: G → A → B → C → D, optional E-2 / E-3.
+
+Details for each item below.
+
+---
+
+### BUG-C — Prompt-cache markers missing in Anthropic request 🔴 Top priority
+
+**Observed (Phase 3.10 PRECHECK).** Anthropic API costs spiked
+after the SolidJS → Leptos cutover. Root cause is *not* in the
+Leptos client — it's that `omega-core::anthropic.rs::build_request_body`
+emits **zero** `cache_control: {"type": "ephemeral"}` markers.
+
+**Reference (TS agent at `8ae104f^:src/agent.ts`).** The
+pre-cutover TS agent applied **three** explicit cache breakpoints
+per request, which Anthropic uses to anchor a 5-minute prefix cache:
+
+1. **System prompt.** The `system` field was an array of two text
+   blocks: a billing-header block (no `cache_control`) followed by
+   the actual system-prompt block carrying
+   `cache_control: { type: "ephemeral" }`.
+2. **Tools.** The last entry in the `tools` array carried
+   `cache_control: { type: "ephemeral" }`, anchoring tool definitions
+   into the cache prefix.
+3. **Last message.** `addCacheControlToLastMessage` annotated the
+   last block of the last message in the conversation history with
+   `cache_control: { type: "ephemeral" }`. Critical for Opus, which
+   requires ≥4096 prefix tokens before the cache activates.
+
+**Current state (Rust port).**
+
+- `system: Option<&str>` — a single plain string, no per-block
+  `cache_control` capability.
+- `tools: &[ToolDefinition]` — the type has no `cache_control` field.
+- `messages: &[Message]` — messages forwarded verbatim;
+  `ContentBlock` has no `cache_control` field.
+- `LlmCallEvent.cache_breakpoint_index` is recorded server-side
+  (in `omega-agent/src/agent.rs` around line 554) and surfaced in
+  the UI's `llm_call` block, **but it never reaches the wire
+  format**. It is observability metadata only.
+- Result: Anthropic re-bills the full input prefix on every turn.
+  `LlmResponseUsage.cache_read_input_tokens` will be ~0 across
+  multi-turn sessions on the Rust port.
+
+**Fix — four files (server-side):**
+
+*`omega-core/src/anthropic.rs`:*
+- Replace `system: Option<&'a str>` in `AnthropicRequestBody` with a
+  typed `Option<Vec<SystemBlock>>` carrying `text` + an optional
+  `cache_control: Option<CacheControl>` field.
+- Add `cache_control: Option<CacheControl>` to the serialised
+  `ToolDefinition` shape (or a parallel `CachedToolDefinition` if
+  the `omega-core` `ToolDefinition` type is shared with non-Anthropic
+  providers).
+- Add `cache_control: Option<CacheControl>` to `ContentBlock`'s
+  serialised shape (likewise).
+- Define `enum CacheControl { Ephemeral }` serialising to
+  `{ "type": "ephemeral" }`.
+- In `build_request_body`: stamp `Ephemeral` on the system block, on
+  the last `ToolDefinition`, and on the last `ContentBlock` of the
+  last message before serialising.
+- Update `anthropic__request_body_kitchen_sink` snapshot.
+
+*`omega-core/src/types.rs`:*
+- Add the `cache_control: Option<CacheControl>` field to
+  `ContentBlock` and `ToolDefinition` if the marker lives on shared
+  types (preferred over a parallel "cached" type — the field is
+  honest and `None` on non-Anthropic codepaths).
+
+*`omega-agent/src/agent.rs`:*
+- The breakpoint stamping itself is *Anthropic-specific*; it should
+  live in `anthropic.rs::build_request_body`, not the agent. The
+  agent's only change is to remove the now-redundant
+  `cache_breakpoint_index` calculation (or keep it for `LlmCallEvent`
+  observability — ideally derive it from the same logic so the UI
+  number matches the wire format).
+
+*`omega-protocol/src/events.rs`:*
+- No protocol change. `LlmCallEvent.cache_breakpoint_index` continues
+  to surface the index for UI observability.
+
+**Tests:**
+- Unit test in `anthropic.rs` asserting the request body's serialised
+  JSON contains exactly three `cache_control` markers in the right
+  positions (system / last tool / last message-last-block).
+- Integration test under `omega-agent/tests/` running a fake
+  Anthropic provider that asserts on the parsed request body shape.
+- Snapshot regenerate on `request_body_kitchen_sink`.
+
+**Acceptance:**
+- After fix, a multi-turn session with `mock-omega-server` shows
+  `cache_read_input_tokens > 0` from the second `LlmResponse`
+  onward (mock can replay an Anthropic response that exercises the
+  `cache_read_input_tokens` field).
+- Manual smoke test against the real Anthropic API: send three
+  identical-prefix turns; observe `cache_read_input_tokens` >>
+  `input_tokens` from turn 2 onward.
+
+**Out of scope:** the UI changes in Phase 3.10 TODO-A-5 (cache_read /
+cache_write in the usage line). Those still land later as a
+production-side cost detector — they read the same `LlmResponseUsage`
+fields that already exist and are populated correctly even when
+caching is off (zero values).
+
+---
+
+### BUG-D — Tool-call / tool-result clearing not implemented 🔴 Top priority
+
+**Observed.** `omega-agent/src/agent.rs:18-21` documents that
+`omega-agent::Agent::sendMessage` mirrors the TS agent **minus**
+features including "context compaction, tool-result clearing,
+model-context-window recovery". The Rust agent therefore never
+prunes old tool input/output blocks from the context, even when the
+context window approaches its budget. The TS agent had explicit
+logic to clear stale `tool_use` / `tool_result` block payloads
+(replacing them with elided summaries) at compaction thresholds,
+keeping the next-turn input-token count from growing without bound.
+
+**Why this matters now.** It compounds BUG-C: even after prompt
+caching is restored, an unbounded tool-result history pushes the
+cached prefix past the model's context window faster than
+necessary, and grows the *uncached suffix* on every turn. The two
+fixes share an audit surface — verify both in the same session.
+
+**What to verify (audit before fixing):**
+
+1. Search `omega-agent` and `omega-core` for any pruning or
+   compaction logic on tool blocks. The relevant TS reference is
+   `src/agent.ts` (deleted at Phase 3.7; recover from
+   `git show 8ae104f^:src/agent.ts | grep -n 'cleared_tool_uses\|compact\|prune'`).
+2. Cross-reference `OmegaEvent::Compacted` and the
+   `cleared_tool_uses` / `cleared_input_tokens` fields on
+   `LlmResponseEvent` — are they being populated server-side, or
+   always `None` on the Rust port?
+3. Run a long mock-omega-server session that fires ≥ 20 tool calls;
+   observe whether `LlmCallEvent.request_bytes` grows monotonically
+   (no clearing) or plateaus / drops (clearing kicks in).
+
+**Fix sketch (after audit confirms gap):** port the TS
+clearing logic into `omega-agent/src/agent.rs`'s context-builder
+path, populating `LlmResponseEvent.cleared_tool_uses` /
+`cleared_input_tokens` on the turn that fires a clear. Tests:
+integration test that runs a 30-turn fake-tool sequence and asserts
+`request_bytes` plateaus.
+
+**Acceptance:** `request_bytes` on `LlmCallEvent` does not grow
+linearly with tool-call count; clearing events surface in the UI
+feed and the metrics carry non-`None` `cleared_*` fields.
+
+---
+
+### Phase 3.10 — remaining UX TODOs (G / A / B / C / D, optional E-2 / E-3)
+
+These are unchanged from the original Phase 3.10 plan below; they
+resume after BUG-C and BUG-D land. The two TODOs that already
+landed — **TODO-E-1** (picker auto-close on turn start) and
+**TODO-F** (picker default closed; auto-open on connect-with-no-session)
+— are recorded in the partial-done block at the end of the Phase 3.10
+section.
+
+**Recommended order (unchanged):**
+
+1. TODO-G — close-button label normalisation (1-line; do while
+   touching modal code for TODO-A).
+2. TODO-A — `llm_response` improvements. Build `TextModal` here;
+   reuse in B/C. Includes the `cache_read` / `cache_write` usage-line
+   addition, which is now a *production cost detector* given
+   BUG-C will be fixed.
+3. TODO-B — `llm_call` button rename + payload modal.
+4. TODO-C — `tool_call` / `tool_result` modal affordances + label
+   cleanup.
+5. TODO-D — status chip (additive; low breakage risk).
+6. TODO-E-2 / E-3 — `show usage` + `take it back` (optional).
+
+Don't touch (still in force):
+
+- WS protocol or server-side Rust crates (BUG-C / BUG-D belong to the
+  *previous* session; Phase 3.10 resume is client-only).
+- `bench/`.
+- The `/leptos/` router alias — retired in Phase 4's final commit.
+
+---
+
+## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 In progress (E-1 + F done; rest parked behind BUG-C / BUG-D)
 
 Operator UAT after Phase 3.9 found a significant cluster of
 missing/regressed features. All are UX / presentation issues on the
@@ -3384,6 +3584,82 @@ button is `close`. Inconsistent.
 ```
 If screen-reader accessibility is a concern, add `aria-label="close"`
 to both buttons and leave the visible glyph as `✕`.
+
+---
+
+### Phase 3.10 — partial-done record (E-1 + F)
+
+**Scope.** Two of the eight planned TODOs landed in this session;
+the remaining six are parked behind BUG-C (prompt-cache markers) and
+BUG-D (tool-call/tool-result clearing audit) per operator direction
+— a broken-cache cost regression dwarfs every UX item below.
+
+**PRECHECK finding (driver of the parking decision).** Confirmed
+prompt caching is broken on the Rust port: `omega-core::anthropic.rs::build_request_body`
+emits zero `cache_control` markers. The TS agent at `8ae104f^:src/agent.ts`
+applied three (system block, last tool, last message-last-block).
+`LlmCallEvent.cache_breakpoint_index` is recorded server-side for
+observability only; it never reaches the wire format. Anthropic
+re-bills the full input prefix every turn. Filed as BUG-C above
+(top of doc). Operator constraint for this session prohibited
+server-side changes — BUG-C lands in the next session, before
+resuming UX work.
+
+**TODO-E-1 — picker auto-close on turn start (critical).**
+Added an `Effect` in `App` that closes the picker whenever
+`store.turn_state.get() != TurnState::Idle`. The 3.9 modal overlay
+(`z-index: 900`) was masking the composer's `Continue` button while
+a turn was paused — operators were stuck. The picker now only
+re-opens via the explicit `Sessions` button, never during a live
+turn.
+
+**TODO-F — picker closed on refresh.**
+Flipped `PickerOpen::new()`'s default from `true` to `false`. Added
+a second `Effect` in `App` that opens the picker only when
+`(connected && session_info.is_none())` — a genuinely fresh server
+connection with no session to land in. Browser refresh of an active
+session now lands directly in the conversation feed.
+
+**Spec migration (knock-on).** All five `e2e/leptos-*.spec.ts` files
+had their `newSession` helper updated to ensure the picker is open
+before clicking `+ new session`:
+
+```ts
+if ((await page.getByTestId("leptos-session-picker").count()) === 0) {
+  await page.getByTestId("leptos-composer-sessions").click();
+}
+await page.getByTestId("leptos-session-new").click();
+```
+
+`gotoPicker` (in `leptos-session-picker.spec.ts`) now opens the
+picker explicitly after the WS-connected wait. The original
+"picker starts open" test was rewritten as "✕ close button dismisses
+the picker" — the precondition is that `gotoPicker` already opened
+it.
+
+**Out-of-scope decisions in this session.**
+
+- TODO-G (close-button normalisation), TODO-A (`llm_response`
+  modals), TODO-B (`llm_call` button + payload modal), TODO-C
+  (`tool_call` / `tool_result` modals), TODO-D (status chip),
+  TODO-E-2 (`show usage`), TODO-E-3 (`take it back`) — not started.
+  Park behind BUG-C / BUG-D; resume in the session after.
+- Server-side fix for BUG-C — explicitly excluded by operator ("don't
+  touch server-side Rust crates"). The plan-internal PRECHECK
+  directive said "fix before UX items"; the operator constraint
+  superseded. BUG-C is now top of the next session's queue.
+
+**Acceptance criteria — verified for the partial.**
+
+- ✅ Picker auto-closes when turn starts (composer Continue button
+  visible during `pause_requested` / `paused`).
+- ✅ Picker default is closed; refresh on an active session lands
+  in the feed.
+- ✅ Picker auto-opens on a fresh server connection with no session.
+- ✅ 27/27 SSR snapshots pass (no scaffolding change — snapshots
+  render `<Composer />` only, picker default flip is invisible).
+- ✅ 37/37 Playwright specs pass.
+- ✅ `just rust-gate` + `just gate` green.
 
 ---
 
