@@ -1,4 +1,4 @@
-//! Phase 3.4 — Leptos composer.
+//! Phase 3.5 — Leptos context inspector + resume.
 //!
 //! Architecture:
 //! ```text
@@ -6,16 +6,19 @@
 //!    ├── provide_context::<SessionStore>      (conversation state)
 //!    ├── provide_context::<SessionListStore>  (picker state)
 //!    ├── provide_context::<WsClient>          (write-path handle)
+//!    ├── provide_context::<ContextModalState> (3.5 modal open/close)
 //!    ├── Effect: WsClient::new(url, conv, list).connect()
-//!    ├── SessionPicker     (3.2 — sibling of the feed)
-//!    ├── ConversationFeed  (3.3 — primary surface)
-//!    ├── Composer          (3.4 — replaces 3.3 StubComposer)
+//!    ├── SessionPicker     (3.2 + 3.5 resume button per row)
+//!    ├── ConversationFeed  (3.3 + 3.5 LlmCallBlock with modal trigger)
+//!    ├── Composer          (3.4)
+//!    ├── ContextModal      (3.5 — full-viewport overlay; renders only when open)
 //!    └── <details data-testid="leptos-debug-panel">
 //!         └── DebugView    (3.1 JSON dump, collapsed by default)
 //! ```
 
 mod composer;
 mod completion;
+mod context_modal;
 mod event_view;
 mod feed;
 mod http;
@@ -28,6 +31,7 @@ mod ws;
 use leptos::prelude::*;
 
 use crate::composer::Composer;
+use crate::context_modal::{ContextModal, ContextModalState};
 use crate::feed::ConversationFeed;
 use crate::picker::SessionPicker;
 use crate::sessions::SessionListStore;
@@ -43,8 +47,10 @@ fn main() {
 fn App() -> impl IntoView {
     let store = SessionStore::new();
     let list_store = SessionListStore::new();
+    let modal_state = ContextModalState::new();
     provide_context(store);
     provide_context(list_store);
+    provide_context(modal_state);
 
     // Construct the WsClient once and provide it via context so the
     // picker, the feed, and the composer can call `WsClient::send`.
@@ -64,10 +70,11 @@ fn App() -> impl IntoView {
 
     view! {
         <main>
-            <h1>"Omega (Leptos) — Phase 3.4"</h1>
+            <h1>"Omega (Leptos) — Phase 3.5"</h1>
             <SessionPicker />
             <ConversationFeed />
             <Composer />
+            <ContextModal />
             <details data-testid="leptos-debug-panel">
                 <summary>"debug: store snapshot"</summary>
                 <DebugView />

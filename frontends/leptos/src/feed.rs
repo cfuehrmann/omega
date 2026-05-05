@@ -38,6 +38,7 @@ use leptos::html;
 use leptos::prelude::*;
 use omega_protocol::OmegaEvent;
 
+use crate::context_modal::ContextModalState;
 use crate::event_view::{
     EventKind, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
     truncate_for_preview,
@@ -218,19 +219,7 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
             .into_any()
         }
 
-        OmegaEvent::LlmCall(e) => {
-            let line = format!(
-                "{} · {} ctx record(s) · {} bytes",
-                e.model,
-                e.context_hashes.len(),
-                e.request_bytes,
-            );
-            view! {
-                <span class="block-label">"llm_call"</span>
-                <span class="block-body">{line}</span>
-            }
-            .into_any()
-        }
+        OmegaEvent::LlmCall(e) => view! { <LlmCallBlock event=e /> }.into_any(),
 
         OmegaEvent::LlmError(e) => {
             let status = e
@@ -347,6 +336,115 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
 // ---------------------------------------------------------------------------
 // Tool-result block (per-row show-more toggle)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// LLM-call block (modal trigger + inline expander) — Phase 3.5
+// ---------------------------------------------------------------------------
+
+/// One `llm_call` row, with two affordances:
+///
+/// 1. A primary button that opens the [`crate::context_modal`]
+///    overlay for the call's `context_hashes`.
+/// 2. An inline `<details>` expander revealing the full event
+///    metadata: `request_summary` (pretty-printed JSON, may be
+///    long), `cache_breakpoint_index`, the full `context_hashes`
+///    list, and `request_bytes`.
+///
+/// Per-row state (the `<details>` open/closed flag) is owned by
+/// the browser via the native `<details>` element — leptos doesn't
+/// need to track it. Same architectural pattern as 3.3's
+/// `<ToolResultBlock/>`: per-row reactive state, no `SessionStore`
+/// involvement.
+#[component]
+fn LlmCallBlock(event: omega_protocol::events::LlmCallEvent) -> impl IntoView {
+    let modal = use_context::<ContextModalState>()
+        .expect("ContextModalState must be provided");
+
+    // Top-line summary mirrors the 3.3 layout (model · hashes ·
+    // bytes) so visual parity holds across the inline-expander
+    // addition.
+    let summary_line = format!(
+        "{} · {} ctx record(s) · {} bytes",
+        event.model,
+        event.context_hashes.len(),
+        event.request_bytes,
+    );
+
+    // Pretty-print request_summary lazily on render. The field is
+    // `Option<Value>`; absent renders as a stable placeholder.
+    let request_summary_str = event.request_summary.as_ref().map_or_else(
+        || "(request summary not available)".to_owned(),
+        |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "(unrenderable)".to_owned()),
+    );
+    let truncated = truncate_for_preview(&request_summary_str, TOOL_RESULT_PREVIEW_MAX_CHARS);
+    let was_truncated = truncated.is_some();
+    let summary_preview = truncated.unwrap_or_else(|| request_summary_str.clone());
+    let summary_full = request_summary_str;
+    let expanded_summary = RwSignal::new(false);
+
+    let cache_bp = event
+        .cache_breakpoint_index
+        .map_or_else(|| "none".to_owned(), |i| i.to_string());
+    let hashes_line = event.context_hashes.join(", ");
+    let hashes_count = event.context_hashes.len();
+    let request_bytes = event.request_bytes;
+
+    // The button click captures the event so the modal has the
+    // hashes available. Clone once into the closure so repeated
+    // clicks reopen the modal.
+    let event_for_modal = event;
+    let on_open_modal = move |_| {
+        modal.open(event_for_modal.clone());
+    };
+
+    view! {
+        <span class="block-label">"llm_call"</span>
+        <span class="block-body" data-testid="leptos-llm-call-summary">{summary_line}</span>
+        <button
+            class="block-llm-call-open"
+            data-testid="leptos-llm-call-open-modal"
+            on:click=on_open_modal
+        >
+            "context records…"
+        </button>
+        <details
+            class="block-llm-call-details"
+            data-testid="leptos-llm-call-details"
+        >
+            <summary>"details"</summary>
+            <dl class="block-llm-call-meta">
+                <dt>"cache_breakpoint_index"</dt>
+                <dd data-testid="leptos-llm-call-cache-bp">{cache_bp}</dd>
+                <dt>"request_bytes"</dt>
+                <dd data-testid="leptos-llm-call-request-bytes">{request_bytes.to_string()}</dd>
+                <dt>{format!("context_hashes ({hashes_count})")}</dt>
+                <dd data-testid="leptos-llm-call-hashes">{hashes_line}</dd>
+                <dt>"request_summary"</dt>
+                <dd>
+                    <pre
+                        class="block-body"
+                        data-testid="leptos-llm-call-request-summary"
+                    >
+                        {move || if expanded_summary.get() {
+                            summary_full.clone()
+                        } else {
+                            summary_preview.clone()
+                        }}
+                    </pre>
+                    <Show when=move || was_truncated fallback=|| ().into_any()>
+                        <button
+                            class="block-show-more"
+                            data-testid="leptos-llm-call-summary-toggle"
+                            on:click=move |_| expanded_summary.update(|v| *v = !*v)
+                        >
+                            {move || if expanded_summary.get() { "show less" } else { "show more" }}
+                        </button>
+                    </Show>
+                </dd>
+            </dl>
+        </details>
+    }
+}
 
 /// One tool_result row, with its own `expanded` signal so the
 /// "show more" toggle is per-row state. The truncation decision is

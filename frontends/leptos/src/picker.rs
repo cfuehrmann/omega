@@ -25,6 +25,12 @@
 //! - **Delete** → `ClientFrame::DeleteSession { dir }` after a
 //!   `window.confirm()` prompt. Server broadcasts `session_deleted`;
 //!   reducer removes the entry.
+//! - **Resume** → `ClientFrame::ResumeSession { dir }` (Phase 3.5).
+//!   Server emits `session_info → history → resuming_session →
+//!   session_resumed → ready` for the new session derived from the
+//!   target's last-message basis. Hits the `Reset`-style path on
+//!   the server: the active session is replaced by a fresh one
+//!   seeded with a resumption summary.
 
 use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
@@ -186,6 +192,20 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         }
     };
 
+    // Resume from this row — Phase 3.5. Sends
+    // `ClientFrame::ResumeSession`; the server replaces the active
+    // session with a fresh one seeded from this dir's last
+    // assistant message + extracted basis. The conversation feed
+    // (3.3) renders the resulting `resuming_session` /
+    // `session_resumed` events through the status family.
+    let on_resume = move |_| {
+        let dir = dir_sv.get_value();
+        let frame = ClientFrame::ResumeSession { session_dir: dir };
+        if let Err(err) = ws.send(&frame) {
+            list.set_error(format!("send ResumeSession: {err:?}"));
+        }
+    };
+
     let active = Memo::new(move |_| {
         let dir = dir_sv.get_value();
         active_dir.with(|d| {
@@ -247,6 +267,12 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
                         " (active)"
                     </span>
                 </Show>
+                <button
+                    data-testid="leptos-session-resume"
+                    on:click=on_resume
+                >
+                    "resume"
+                </button>
                 <button
                     data-testid="leptos-session-rename"
                     on:click=begin_rename

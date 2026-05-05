@@ -28,7 +28,7 @@
 | 3.2 — Leptos session picker | ✅ Done | `SessionListStore` + picker UI; `/leptos/` lists/creates/renames/deletes; debug dump moved to collapsible panel |
 | 3.3 — Leptos conversation feed | ✅ Done | `event_view.rs` pure projection; `feed.rs` component; `/leptos/` renders every `OmegaEvent` variant + live streaming text + auto-scroll seam |
 | 3.4 — Leptos composer | ✅ Done | `composer.rs` + `completion.rs`; primary action button (Send/Pause/Abort/Continue) + secondary Abort; model + effort `<select>` dropdowns; `@`-path file completion via `/api/files`; 3.3 `<StubComposer/>` retired |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.4 done; 3.5–3.7 ahead) |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.5 done; 3.6–3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -829,8 +829,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | 3.2 | ✅ Done | Session picker (list, create, rename, delete) — first feature surface with full read+write WS traffic |
 | 3.3 | ✅ Done | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
 | 3.4 | ✅ Done | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
-| 3.5 | ⬜ Next | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
-| 3.6 | ⬜ | Visual parity pass; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
+| 3.5 | ✅ Done | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
+| 3.6 | ⬜ Next | Visual parity pass; markdown / KaTeX / Mermaid; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
 | 3.7 | ⬜ | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
 
 ### Phase 3.0 — done (concise record)
@@ -1672,95 +1672,322 @@ suites, ts-rs bindings drift). **`just test-browser`** ✅ 135/135
 - The textarea has no autosize — the SolidJS UI uses
   `scrollHeight`-based sizing. Visual parity gap, 3.6.
 
-### Phase 3.5 — context inspector + resume (next)
+### Phase 3.5 — done (concise record)
 
-**Goal.** Two adjacent surfaces the SolidJS UI exposes that the
-Leptos UI doesn't yet: a per-LLM-call **context inspector** modal
-(opened from an `llm_call` block, fetches `/api/context?hashes=...`,
-renders the matched ContextRecord entries) and the
-**resume-session** flow from picker rows (sends
-`ClientFrame::ResumeSession`, the existing
+**Scope.** Two adjacent operator surfaces the SolidJS UI exposes
+that the Leptos UI didn't yet: a per-`llm_call` **context
+inspector** modal (opened from the feed, fetches
+`/api/context?hashes=…`, renders the matched ContextRecord
+entries) and the **resume-session** flow from picker rows (sends
+`ClientFrame::ResumeSession`; the existing
 `OmegaEvent::ResumingSession` / `SessionResumed` events drive the
 feed UX). Plus an inline **LLM-call detail expander** so the
-operator can see the request body / metrics / context-hash list
-without the modal.
+operator can see `request_summary` / `cache_breakpoint_index` /
+`context_hashes` / `request_bytes` without the modal.
 
-**Server-side surface (already in place — do NOT change):**
-- `ClientFrame::ResumeSession { session_dir }` is already typed
-  in `frontends/leptos/src/protocol.rs`; server-side handler
-  exists in `omega-server/src/router.rs::handle_resume_session`.
-- `GET /api/context?hashes=h1,h2` is implemented at
-  `omega-server/src/router.rs::get_context` (Phase 1e.4) with
+**Decision — modal AND inline expander (per-concern split).**
+Follows the SolidJS UI's two-modal-kinds pattern. The modal is
+for async-fetched ContextRecords (need real screen real-estate
+for multiple long records). The inline `<details>` is for the
+zero-cost-to-open metadata view (browser-native, no JS-interop
+for click-outside, no z-index battles). The two are not mutually
+exclusive — they expose different views of the same `LlmCallEvent`.
+
+**Decision — resume button placement (per-row in the picker).**
+Mirrors SolidJS. `picker.rs::SessionRow` already had a
+`[rename] [delete]` button column; 3.5 adds `[resume]` between
+the label and rename. Right-click context menus rejected as
+JS-interop-heavy with poor discoverability; keyboard shortcuts
+deferred to 3.6.
+
+**Decision — ContextHash query-string projection (`hashes.join(",")`).**
+Confirmed by grep that `omega-protocol::ContextHash` is
+`pub type ContextHash = String;` (a type alias — the newtype
+`pub struct ContextHash(String)` lives in `omega-store`, which
+the wasm crate cannot depend on for tokio reasons). So
+`LlmCallEvent.context_hashes` is `Vec<String>` on the client side
+and the projection is just `join(",")`. `gloo-net::Request::query`
+URL-encodes the comma-joined value automatically. The pure helper
+`build_hashes_param` lives in `context_modal.rs` (sole consumer);
+`http.rs` stays a thin glue layer matching 3.2/3.4 precedent.
+
+**Decision — modal positioning (full-viewport `position: fixed`
+overlay).** Mirrors SolidJS. Backdrop styled inline via `style=`
+attribute (the Leptos crate has no CSS file yet); z-index 1000
+stacks unambiguously above the 3.4 file-completion popup which
+is `position: absolute` *inside* `.leptos-composer-textarea-wrap`.
+No z-index conflict.
+
+**Decision — inline-expander state (per-row `RwSignal<bool>`).**
+Mirrors 3.3's `<ToolResultBlock/>`. The `request_summary`
+show-more toggle uses an explicit `RwSignal`; the four-field
+`<details>` itself uses the browser-native `open` attribute
+(no leptos state — the DOM owns it). Centralising into
+`SessionStore` was rejected: forces the conversation reducer to
+know about UI-only concerns and wouldn't reset cleanly on
+session switch.
+
+**Decision — `ContextRecord` parallel wire shape.** The Leptos
+crate cannot pull in `omega-store` (tokio + chrono + file I/O—
+not wasm-friendly). `context_modal.rs` defines a parallel
+`ContextRecord` struct with `content: serde_json::Value`. The
+render helpers ([`render_content`], [`render_block`]) project
+the JSON to a display string — same dispatch as SolidJS's
+`renderContent` (`src/web/client/App.tsx:418`). Pure +
+mutation-tested.
+
+**No server-side changes.** Confirmed by grep before writing
+code:
+- `ClientFrame::ResumeSession { session_dir }` — typed in
+  `frontends/leptos/src/protocol.rs` since 3.1.
+- `GET /api/context?hashes=h1,h2` — implemented in
+  `omega-server/src/router.rs::get_context` since Phase 1e.4 with
   request-order preservation and miss-drop semantics.
 - `OmegaEvent::ResumingSession` and `OmegaEvent::SessionResumed`
-  already drive the feed's status family (3.3 `kind_for`).
+  — already exposed via WS and rendered by 3.3's status family.
 
-**Deliverables:**
+**No new external crates.** `gloo-net 0.6.0` (already pulled in
+3.2 for `/api/sessions`) gained a third consumer in
+`http.rs::get_context`. Zero `web-sys` features added.
 
-1. **`http.rs::get_context(hashes: &[ContextHash])`** alongside
-   `get_sessions` / `get_files`. Same `gloo-net` glue. The
-   `ContextHash` type is already exported from `omega-store`
-   via the protocol crate's `events.rs`.
-2. **`context_modal.rs`** — `<ContextModal/>` overlay opened by
-   clicking an `llm_call` block. Reads `event.context_hashes`,
-   fetches the records, renders each as `{role, content}`. Pure
-   helper: a hash-list → query-string projection (mutation-tested).
-3. **`llm_call.rs`** (new) or extension of `feed.rs`'s
-   `<EventBlock/>` for `OmegaEvent::LlmCall`: per-call detail
-   expander showing `request_summary`, `cache_breakpoint_index`,
-   `context_hashes`, `request_bytes`. The summary already lands
-   in the feed today; the expander reveals the full struct.
-4. **Resume-session row click handler** in `picker.rs` — a
-   second button on each row ("resume") sends
-   `ClientFrame::ResumeSession { session_dir }`. The active feed
-   updates via the existing `session_info → history →
-   session_resumed` sequence.
+**New files:**
+- `frontends/leptos/src/context_modal.rs` (~770 lines) —
+  `ContextRecord` wire shape; pure helpers `build_hashes_param`,
+  `render_content`, `render_block`, `role_label`;
+  `ContextModalState` (open/close API for context provision);
+  private `ContextFetchState` (mutation-tested begin/finish/fail
+  pattern carried from 3.2's `SessionListStore`); `<ContextModal/>`
+  full-viewport overlay component. 35 wasm-bindgen tests.
+- `e2e/leptos-context-resume.spec.ts` — 3 specs: modal open +
+  fetch + close, inline expander toggle, resume from picker
+  drives `resuming_session` + `session_resumed` (uses
+  `SCRIPTS.resumeBasis()`).
 
-**Out of scope:** markdown / KaTeX / Mermaid rendering (3.6),
-visual-parity polish (3.6), chromiumoxide cutover (Phase 4).
+**Modified files:**
+- `frontends/leptos/src/feed.rs` — the `OmegaEvent::LlmCall` arm
+  in `render_event_body` now delegates to a new component
+  `<LlmCallBlock/>` that owns the modal-trigger button + the
+  inline `<details>` expander with all four required fields
+  (`cache_breakpoint_index`, `request_bytes`, `context_hashes`,
+  `request_summary` with `truncate_for_preview` show-more).
+- `frontends/leptos/src/picker.rs` — added `[resume]` button per
+  row (between label and rename) sending
+  `ClientFrame::ResumeSession`; doc comment updated.
+- `frontends/leptos/src/http.rs` — added
+  `get_context(hashes: &[String]) -> Result<Vec<ContextRecord>, String>`
+  alongside `get_sessions` / `get_files`. Same `gloo-net` glue,
+  same JS-interop carve-out. Empty-input short-circuits to
+  `Ok(vec![])` without firing a fetch.
+- `frontends/leptos/src/main.rs` — `mod context_modal;`,
+  `provide_context::<ContextModalState>` at the App root,
+  `<ContextModal/>` mounts as a sibling of `<Composer/>` so the
+  fixed overlay layers above every page surface. Heading bumped
+  to "Phase 3.5".
+- `playwright.config.ts` — `leptos-context-resume.spec.ts` wired
+  into the real-server `testMatch` and the chromium `testIgnore`.
+
+**Tests — wasm-bindgen-test (`just web-leptos-test`):** 205
+passing (170 from 3.4 + 35 new in `context_modal.rs`):
+- 5 on `build_hashes_param` (basic join, empty input, single
+  element no-separator, comma-not-other-separator pin against
+  `&` / `;` / space mutations, order preservation).
+- 9 on `render_block` (per-tag dispatch: text / tool_use /
+  tool_result string content / tool_result array content /
+  thinking / unknown fallback / non-object fallback / missing
+  field / missing tool_use name).
+- 4 on `render_content` (string passthrough, array joins with
+  `\n`, empty-array boundary, non-string-non-array fallback).
+- 2 on `role_label` (known roles pass through, unknown roles
+  pass through verbatim).
+- 2 on `ContextRecord` round-trip (with optional time, without
+  optional time).
+- 4 on `ContextModalState` (starts closed, open sets event,
+  close clears event, open overwrites previous).
+- 9 on `ContextFetchState` (starts idle, begin bumps seq + sets
+  loading, begin clears prior records + error,
+  finish_if_current applies on match, finish_if_current drops
+  stale result, fail_if_current applies on match,
+  fail_if_current drops stale error, reset clears records +
+  loading + error, reset does NOT rewind fetch_seq — boundary
+  defending against pre-reset tokens passing on post-reset open).
+
+**Tests — Playwright (real-server project, port 3003):** 3 new
+specs in `e2e/leptos-context-resume.spec.ts`:
+1. **Modal open → fetch → close.** Drives a single tool turn,
+   clicks the first `llm_call`'s "context records…" button,
+   asserts the modal becomes visible, the loading spinner
+   clears, at least one ContextRecord row renders with a
+   `data-role` and a body, the meta line includes `\d+
+   hash(es) · \d+ bytes`, and the close button dismisses (the
+   `<Show>` wrapper makes the entire backdrop disappear).
+2. **Inline expander reveals all four fields.** Drives a `ping`
+   text turn (single `llm_call` with minimal context), opens
+   the native `<details>`, asserts presence + non-emptiness of
+   `cache-bp`, `request-bytes` (parses to a positive int),
+   `hashes` (12-char hex pattern), and `request-summary`
+   (either `{`-prefixed JSON or the placeholder); toggling
+   closes the expander.
+3. **Resume from picker drives the resumption flow.** Uses
+   `SCRIPTS.resumeBasis()` to feed the mock LLM a tool turn +
+   a final text + a synthetic resumption summary. Creates a
+   source session, runs one turn (so it has assistant history
+   for basis extraction), clicks the source row's `[resume]`
+   button. Asserts: active dir changes to a new dir;
+   `resuming_session` block renders referencing the source
+   dir; `session_resumed` block renders containing
+   "Resumed session summary".
+
+Total browser-test count: **138 / 138** (135 from 3.4 + 3 new
+context-resume).
+
+**Mutation testing** (`cargo mutants -- --target
+wasm32-unknown-unknown`, run from `frontends/leptos/`):
+- `context_modal.rs` (new pure-logic file): 23 mutants — 23
+  caught, **0 missed**. Acceptance criterion met. Initial run
+  had 1 missed (`!=` → `==` on the `fetch_seq != token`
+  stale-fetch check inside the spawn_local closure of
+  `<ContextModal/>`); refactored the four signals into a
+  private `ContextFetchState` struct with `begin` /
+  `finish_if_current` / `fail_if_current` methods (carrying
+  the 3.2 `SessionListStore` pattern), then the `!=` check
+  became directly unit-testable. Same carve-out approach
+  applied to the same kind of in-component reactive
+  comparison.
+- `feed.rs` (LlmCallBlock added): the new component is JS-
+  interop glue, same gap pattern as 3.3's other components.
+  Functionally covered by the Playwright spec. Pure helpers
+  (`truncate_for_preview` re-used) already mutation-tested in
+  3.3.
+- `picker.rs` / `http.rs` / `main.rs`: same JS-interop carve-
+  outs documented in 3.2 / 3.4. New surface is event-handler
+  glue + fetch-call wrapper; functionally Playwright-covered.
+
+**Bundle-size impact.** 585,496 B (3.4) → 650,565 B (3.5),
++65,069 B (+11 %). Decomposition: ~+25 KB for the
+`<ContextModal/>` component surface (For/Show machinery + view
+expansions + style attributes); ~+15 KB for the
+`<LlmCallBlock/>` inline expander (`<details>`/`<dl>` view tree
++ per-row reactive bindings); ~+15 KB for the
+`serde_json::Value` traversal helpers (`to_string_pretty` and
+friends used in `render_block`); ~+10 KB for the new fetch +
+state machinery. **Zero new external crates.** Total bundle
+159 KB gzipped. Phase 3.6 markdown rendering still has ~398 KB
+headroom before the 1 MB target.
+
+**`just rust-gate`** ✅ (incl. 205 wasm-bindgen tests, all unit
+suites, ts-rs bindings drift). **`just test-browser`** ✅
+138/138 (135 from 3.4 + 3 new context-resume specs).
+
+**Carry-forward into 3.6:**
+- Modal click-outside-backdrop dismissal **not implemented**;
+  Esc-key dismissal **not implemented**; focus trap inside
+  modal **not implemented**. All same JS-interop pattern as
+  3.1–3.4. The visible close button is the only dismissal
+  vector today. 3.6 polish.
+- Modal styling is inline `style=` attributes — the Leptos
+  crate still has no CSS file. 3.6 visual-parity pass should
+  externalise to a CSS file (or adopt `tailwindcss`) and make
+  the modal match the SolidJS UI's visual language. The inline
+  styling is functional and structurally sound; a deliberate
+  visual choice.
+- `<details>` is browser-native; the `open` attribute is
+  controlled by the user agent. If 3.6 wants reactive open/
+  close (e.g. "open all llm_call blocks" toggle) the state
+  becomes leptos-managed; today the simpler approach holds.
+- The `request_summary` show-more cap is the same
+  `TOOL_RESULT_PREVIEW_MAX_CHARS = 3000` constant carried
+  forward from 3.3. If 3.6 makes it user-configurable, expose
+  via a single signal at App scope.
+- `ContextRecord.content` is held as `serde_json::Value`
+  rather than a typed `ContentBlock` enum. If a future omega-
+  protocol change touches `ContentBlock`, the wire-shape
+  parser silently keeps working (no ts-rs-style drift guard).
+  Documented divergence; wire-shape stability matters more
+  than typed access at the rendering site.
+- The picker's `[resume]` button has no confirmation prompt.
+  `[delete]` does (`window.confirm`); `[resume]` is
+  non-destructive (creates a new session pointing at the old
+  one) but a careless click discards the operator's currently
+  active session. If feedback shows this is felt, add a
+  prompt; today the choice is to mirror SolidJS where resume
+  is also a single-click action.
+
+### Phase 3.6 — visual parity + markdown / KaTeX / Mermaid (next)
+
+**Goal.** Bring the Leptos UI to visual parity with the SolidJS
+bundle: assistant text rendered as markdown (with code blocks,
+lists, tables, links); inline math via KaTeX; flowchart/sequence
+diagrams via Mermaid. Plus a snapshot-test harness that locks
+component rendering down via `insta` so future refactors are
+automatically regression-tested.
+
+**Out of scope:** the 3.7 cutover (route `/` to Leptos; delete
+`src/`, ts-rs, `node_modules`).
 
 **Acceptance:**
-- `localhost:3000/leptos/` lets the operator click an
-  `llm_call` block to open a context modal showing the
-  fetched ContextRecord entries; click a picker row's resume
-  button to drive a full resumption flow; click an
-  `llm_call` block's expander to inline the call details.
-- A new Playwright spec
-  (`e2e/leptos-context-resume.spec.ts`) drives all three flows
-  against `mock-omega-server`. Existing leptos specs still pass.
-- `cargo mutants -- --target wasm32-unknown-unknown` on every
-  new pure-logic file: **0 missed**. JS-interop edges
-  (modal open/close focus management, click-outside dismissal)
-  acknowledged as gaps.
-- `just rust-gate` ✅ · `just test-browser` ✅.
+- The Leptos feed renders the same markdown/KaTeX/Mermaid
+  affordances the SolidJS UI does today, against the same
+  Playwright fixtures (`web-ui-mermaid.spec.ts` and friends
+  ported / reused).
+- A new snapshot-test harness using `leptos::ssr::render_to_string`
+  + `insta` covers every component at the variant level (per-
+  `OmegaEvent` family for the feed; per-`TurnState` for the
+  composer; per-modal-state for the context inspector).
+  TEST-ARCH-5 lands here.
+- Visual review against the SolidJS UI shows no regressions on
+  the canonical fixtures.
+- `just rust-gate` ✅ · `just test-browser` ✅ · bundle
+  remains under 1 MB (have ~398 KB headroom; markdown +
+  KaTeX + Mermaid combined budget targeted at ≤ 150 KB).
 
-**Open questions to resolve in 3.5:**
-- Modal vs inline expander: should the LLM-call detail be a
-  modal (SolidJS — takes over the screen, easier to read)
-  or an inline `<details>` (simpler, no JS-interop for
-  click-outside)? The two are not mutually exclusive: 3.5
-  could land both if the cost is contained.
-- Resume button placement: per-row in the picker (SolidJS
-  pattern, requires a second button column) vs a
-  context-menu / right-click affordance (cleaner UI but
-  requires JS-interop for native context menus). Mirror
-  SolidJS unless there's a strong UX-parity reason not to.
-- `ContextHash` newtype vs string in the wire-shape `hashes`
-  query param: confirm by grep that `omega-store` exports
-  `ContextHash` as a `String` newtype (not a struct), so the
-  query-string projection is just `hashes.join(",")`.
-- Modal positioning + scroll lock: full-viewport overlay
-  vs anchored-to-block popover. SolidJS uses full-viewport;
-  3.5 should mirror.
-- LLM-call expander needs `LlmCallEvent.request_summary`
-  rendered in a wrapped `<pre>`; the field can be very long
-  (kilobytes). Reuse `truncate_for_preview` from
-  `event_view.rs` with a per-block show-more toggle, same
-  pattern as 3.3's `<ToolResultBlock/>`.
-- File-completion popup (3.4) currently anchors inside
-  `.leptos-composer-textarea-wrap`. If 3.5's modals introduce
-  a stacking context that conflicts, revisit z-index after
-  visual review.
+**Open questions to resolve in 3.6:**
+- **Markdown crate — `pulldown-cmark` 0.13 vs `comrak` 0.42?**
+  `pulldown-cmark` is event-streaming, smaller (~80 KB), GFM
+  via feature flag, no inherent HTML escaping; `comrak` is a
+  full CommonMark + GFM parser, larger (~140 KB), also produces
+  HTML strings, supports more extensions out of the box. The
+  bundle-budget winner is `pulldown-cmark`; the ergonomics
+  winner is `comrak`. Decide by measuring bundle delta against
+  three representative fixtures (assistant turn with code block,
+  assistant turn with list, assistant turn with table) and
+  picking whichever fits the budget at parity output.
+- **KaTeX bundling strategy — JS via `<script>` injection vs
+  Rust port?** A Rust port (`pulldown-latex`, `mathyank`) would
+  keep everything in-bundle; the JS approach (CDN-loaded
+  `katex.js` + its CSS) is the SolidJS UI's current path.
+  Bundle-wise the Rust port is cheaper *if* it covers the
+  same notation surface; the JS path is zero bundle delta but
+  introduces a network dep we've been zealous about avoiding.
+  Decide by enumerating the math notation we actually emit
+  (the resumption summary doesn't use math; assistant
+  responses occasionally use `$x^2$`-style inline) and picking
+  the smallest tool that covers the actual surface.
+- **Mermaid rendering — `<script>` injection vs Rust port?**
+  No Rust Mermaid port exists today (the official Mermaid is
+  a TypeScript library). `<script>` injection of Mermaid + its
+  ~600 KB JS bundle would balloon the page weight even though
+  it doesn't touch our wasm. Lazy-load on first Mermaid block
+  detected? Inline-render server-side and ship SVG? Decide
+  based on how often Mermaid appears in agent output (rare —
+  mostly architecture diagrams in summary turns).
+- **`insta` snapshot harness — how to render?** Leptos 0.8 ships
+  `leptos::ssr::render_to_string` for SSR; the wasm-bindgen-
+  test runner is wasm32-only and `ssr` is a separate feature
+  flag that builds for the host target. Either: (a) split
+  pure-projection tests (host) from component-render tests
+  (host with `ssr` feature) from interactive tests (wasm32),
+  with the fragmentation forcing a clear test-tier hierarchy;
+  or (b) render-to-string from inside a wasm32 test by
+  feeding fixtures through a non-mounted `view!` and stringifying
+  the result. (a) is more idiomatic; (b) keeps a single test
+  binary. Decide based on which Cargo workspace dance is less
+  painful.
+- **Bundle budget tracking.** ~398 KB headroom before 1 MB.
+  Markdown crate at ≤ 140 KB + KaTeX (Rust port estimate at
+  ~50 KB if we go that way) + Mermaid (likely JS/CDN, zero
+  bundle delta but page-weight cost). Total Rust-side budget:
+  ≤ 250 KB; comfortable. The visible inflection point is
+  whether Mermaid stays out-of-bundle.
 
 ---
 

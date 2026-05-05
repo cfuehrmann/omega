@@ -21,6 +21,7 @@
 
 use gloo_net::http::Request;
 
+use crate::context_modal::{ContextRecord, build_hashes_param};
 use crate::sessions::SessionListItem;
 
 /// `GET /api/sessions` → `Vec<SessionListItem>`.
@@ -72,4 +73,39 @@ pub async fn get_files(prefix: &str) -> Result<Vec<String>, String> {
     resp.json::<Vec<String>>()
         .await
         .map_err(|e| format!("GET /api/files: decode failed: {e}"))
+}
+
+/// `GET /api/context?hashes=h1,h2` → `Vec<ContextRecord>`.
+///
+/// Hashes are joined with `,` (see [`build_hashes_param`] — the
+/// pure mutation-tested helper). The server preserves request
+/// order and silently drops misses (Phase 1e.4 contract).
+///
+/// Empty input short-circuits to `Ok(vec![])` without firing a
+/// fetch — matches the server's behaviour and saves a network
+/// round-trip when the modal opens for an `llm_call` with no
+/// context (e.g. the very first turn after `reset`).
+///
+/// # Errors
+///
+/// Returns `Err(message)` for any network-level failure. Same
+/// JS-interop carve-out as [`get_sessions`] / [`get_files`].
+pub async fn get_context(hashes: &[String]) -> Result<Vec<ContextRecord>, String> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let joined = build_hashes_param(hashes);
+    let resp = Request::get("/api/context")
+        .query([("hashes", joined.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("GET /api/context failed: {e}"))?;
+
+    if !resp.ok() {
+        return Err(format!("GET /api/context: HTTP {}", resp.status()));
+    }
+
+    resp.json::<Vec<ContextRecord>>()
+        .await
+        .map_err(|e| format!("GET /api/context: decode failed: {e}"))
 }
