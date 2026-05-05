@@ -6,15 +6,9 @@ edition.workspace = true
 [lints]
 workspace = true
 
-[features]
-# Enables ts-rs TypeScript binding generation.  Not included in release builds.
-ts-bindings = ["dep:ts-rs"]
-
 [dependencies]
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Optional: enabled only when the `ts-bindings` feature is active.
-ts-rs      = { version = "12", optional = true, features = ["serde-compat"] }
 
 [dev-dependencies]
 insta      = { version = "1", features = ["json", "redactions"] }

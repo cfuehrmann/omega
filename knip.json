@@ -1,18 +1,19 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "entry": [
-    "src/events.ts",
-    "src/web/client/vite-env.d.ts",
-    "src/web/client/main.tsx",
-    "src/**/*.test.ts",
-    "src/system-prompt/index.ts",
-    "src/system-prompt/core.ts",
-    "src/system-prompt/append.ts",
-    "src/system-prompt/identity.ts",
-    "e2e/**/*.spec.ts",
-    "e2e/fixtures/test-server.ts"
+    "e2e/**/*.spec.ts"
   ],
-  "project": ["src/**/*.{ts,tsx}", "e2e/**/*.ts"],
-  "ignore": ["src/web/vite.config.ts"],
-  "ignoreDependencies": ["vite-plugin-solid", "@typescript/native-preview"]
+  "project": ["e2e/**/*.ts"],
+  "ignore": [],
+  "ignoreDependencies": [
+    "@anthropic-ai/sdk",
+    "@typescript/native-preview",
+    "marked",
+    "mermaid",
+    "solid-js",
+    "vite",
+    "vite-plugin-solid",
+    "zod"
+  ],
+  "ignoreExportsUsedInFile": true
 }

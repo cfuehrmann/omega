@@ -29,8 +29,6 @@ use crate::{ContextHash, ISOTimestamp};
 /// `ServerStoppedEvent.outcome` discriminator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum ServerStopOutcome {
     Clean,
     Error,
@@ -39,8 +37,6 @@ pub enum ServerStopOutcome {
 /// `TurnInterruptedEvent.reason` discriminator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum InterruptReason {
     Aborted,
     Error,
@@ -49,8 +45,6 @@ pub enum InterruptReason {
 /// `TurnContinuedEvent.mode` discriminator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum ContinueMode {
     Manual,
     Auto,
@@ -58,8 +52,6 @@ pub enum ContinueMode {
 
 /// `LlmRetryEvent.reason` discriminator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum LlmRetryReason {
     /// The provider sent a `retry-after` response header.
     #[serde(rename = "retry-after")]
@@ -73,38 +65,29 @@ pub enum LlmRetryReason {
 /// Per-turn aggregate token and cache metrics.  Used by [`TurnEndEvent`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TurnMetrics {
     pub input_tokens: i64,
     pub output_tokens: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub cache_creation_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub cache_read_tokens: Option<i64>,
 }
 
 /// Token usage from an LLM response envelope.  Field names intentionally
 /// kept in `snake_case` to match the Anthropic API's wire format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct LlmResponseUsage {
     pub input_tokens: i64,
     pub output_tokens: i64,
     /// Tokens written to the prompt cache this call (billed at 1.25× base).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub cache_creation_input_tokens: Option<i64>,
     /// Tokens served from the prompt cache this call (billed at 0.1× base).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub cache_read_input_tokens: Option<i64>,
     /// Service tier used; absent or `"standard"` is the baseline.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub service_tier: Option<String>,
 }
 
@@ -121,8 +104,6 @@ fn default_omega_commit() -> String {
 /// The session started (first event in every session).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct SessionStartedEvent {
     pub time: ISOTimestamp,
     pub session_id: String,
@@ -142,28 +123,21 @@ pub struct SessionStartedEvent {
 
 /// The server process started.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ServerStartedEvent {
     pub time: ISOTimestamp,
 }
 
 /// The server process stopped cleanly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ServerStoppedEvent {
     pub time: ISOTimestamp,
     pub outcome: ServerStopOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub reason: Option<String>,
 }
 
 /// A user message submitted to the agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct UserMessageEvent {
     pub time: ISOTimestamp,
     pub content: String,
@@ -172,8 +146,6 @@ pub struct UserMessageEvent {
 /// An outgoing API call to an LLM.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct LlmCallEvent {
     pub time: ISOTimestamp,
     pub url: String,
@@ -186,55 +158,43 @@ pub struct LlmCallEvent {
     /// Serialized byte size of the full request payload.
     pub request_bytes: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(type = "unknown", optional))]
     pub request_summary: Option<Value>,
 }
 
 /// An LLM response received by the agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct LlmResponseEvent {
     pub time: ISOTimestamp,
     pub stop_reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub cleared_tool_uses: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub cleared_input_tokens: Option<i64>,
     pub usage: LlmResponseUsage,
     /// FK into `context.jsonl` for the assistant record written for this response.
     pub context_hash: ContextHash,
     /// Full assembled assistant text, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub text: Option<String>,
     /// Full assembled thinking content, if any (multiple blocks concatenated).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub thinking: Option<String>,
     /// ISO timestamp of the first streaming text delta.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub streaming_start: Option<ISOTimestamp>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(type = "unknown", optional))]
     pub response_summary: Option<Value>,
 }
 
 /// A tool invocation by the agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ToolCallEvent {
     pub time: ISOTimestamp,
     pub id: String,
     pub name: String,
     /// Tool input parameters (arbitrary JSON from the LLM).
-    #[cfg_attr(feature = "ts-bindings", ts(type = "unknown"))]
     pub input: Value,
     /// Hash of the assistant context.jsonl record containing this `tool_use` block.
     pub context_hash: ContextHash,
@@ -243,8 +203,6 @@ pub struct ToolCallEvent {
 /// The result of a tool invocation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ToolResultEvent {
     pub time: ISOTimestamp,
     pub id: String,
@@ -257,8 +215,6 @@ pub struct ToolResultEvent {
 
 /// End of a user turn — aggregate metrics.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TurnEndEvent {
     pub time: ISOTimestamp,
     pub metrics: TurnMetrics,
@@ -267,21 +223,16 @@ pub struct TurnEndEvent {
 /// A non-retryable LLM provider call error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct LlmErrorEvent {
     pub time: ISOTimestamp,
     pub url: String,
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub http_status: Option<u16>,
 }
 
 /// A generic agent-level error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct AgentErrorEvent {
     pub time: ISOTimestamp,
     pub error: String,
@@ -289,66 +240,50 @@ pub struct AgentErrorEvent {
 
 /// The user interrupted an in-flight turn, or the turn ended due to an error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TurnInterruptedEvent {
     pub time: ISOTimestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub reason: Option<InterruptReason>,
 }
 
 /// Server-side compaction fired during this turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct CompactedEvent {
     pub time: ISOTimestamp,
     /// Full usage object from the API response (structure varies; kept verbatim).
-    #[cfg_attr(feature = "ts-bindings", ts(type = "unknown"))]
     pub usage: Value,
 }
 
 /// LLM provider call retried after a transient error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct LlmRetryEvent {
     pub time: ISOTimestamp,
     /// Retry attempt number, 1-based.
     pub attempt: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub http_status: Option<u16>,
     /// Milliseconds to wait before the next attempt.
     pub wait_ms: i64,
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub retry_at: Option<ISOTimestamp>,
     /// Full structured error body from the provider, kept verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(type = "unknown", optional))]
     pub error_body: Option<Value>,
     /// Partial thinking content accumulated before the error.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub thinking_fragment: Option<String>,
     /// Partial text content accumulated before the error.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub text_fragment: Option<String>,
     /// Why the retry fired.  Absent for ordinary policy-driven retries.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub reason: Option<LlmRetryReason>,
 }
 
 /// The operator switched the active model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ModelChangedEvent {
     pub time: ISOTimestamp,
     pub model: String,
@@ -356,8 +291,6 @@ pub struct ModelChangedEvent {
 
 /// The operator changed the thinking effort level.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct EffortChangedEvent {
     pub time: ISOTimestamp,
     pub effort: String,
@@ -365,26 +298,20 @@ pub struct EffortChangedEvent {
 
 /// A transport-layer error emitted by the web server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TransportErrorEvent {
     pub time: ISOTimestamp,
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub context: Option<String>,
 }
 
 /// Session resumption has started — basis extracted, LLM call about to fire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ResumingSessionEvent {
     pub time: ISOTimestamp,
     pub resumed_from: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub name: Option<String>,
     pub basis: String,
 }
@@ -392,8 +319,6 @@ pub struct ResumingSessionEvent {
 /// The session was seeded with a summary of a previous session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct SessionResumedEvent {
     pub time: ISOTimestamp,
     pub resumed_from: String,
@@ -402,24 +327,18 @@ pub struct SessionResumedEvent {
 
 /// The user has requested a pause.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct PauseRequestedEvent {
     pub time: ISOTimestamp,
 }
 
 /// The agent has reached a clean seam and the turn is now paused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TurnPausedEvent {
     pub time: ISOTimestamp,
 }
 
 /// The paused turn is resuming.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TurnContinuedEvent {
     pub time: ISOTimestamp,
     pub mode: ContinueMode,
@@ -438,8 +357,6 @@ pub struct TurnContinuedEvent {
 /// (e.g. `"session_started"`, `"tool_call"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum OmegaEvent {
     SessionStarted(SessionStartedEvent),
     ServerStarted(ServerStartedEvent),

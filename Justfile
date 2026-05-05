@@ -1,110 +1,33 @@
 # Omega — common workflows
 # Run `just --list` to see all recipes.
 #
-# Two-terminal dev workflow:
-#   Terminal 1:  just server   — Bun backend on :3000 (agent + WebSocket)
-#   Terminal 2:  just client   — Vite hot-reload on :5173 (proxies WS → :3000)
-#   Browser:     http://localhost:5173   (dev)  or  http://localhost:3000  (prod)
+# After Phase 3.7 there is one production frontend (Leptos, wasm32 via Trunk)
+# and one Rust backend (omega-server). The TS toolchain (bun, vite, knip,
+# tsconfigs, package.json, node_modules) is retained only to run the
+# surviving Playwright suite; it carries no application code. It exits
+# alongside Playwright in Phase 4 (chromiumoxide + LLM oracle).
 #
-# Production (no hot-reload):
-#   just web-build && just server
+# Production:
+#   just server         — starts omega-server on :3000 (Leptos at /)
 
-# Run all tests in parallel: web-build first, then test-core and test-browser concurrently.
-# Outputs are captured and printed sequentially (core first, then browser) for readability.
-# set -e is intentionally absent: exit codes are captured explicitly so the cat calls
-# always run and gate-latest.log always contains the full test output on failure.
-test:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    cd src/web && npx vite build || exit $?
-    cd ../..
-    (cd rust && cargo build --release -p omega-mock-server) || exit $?
-    CORE_OUT=$(mktemp); BROWSER_OUT=$(mktemp)
-    bun test >"$CORE_OUT" 2>&1 & CORE_PID=$!
-    npx playwright test >"$BROWSER_OUT" 2>&1 && BROWSER_EXIT=0 || BROWSER_EXIT=$?
-    wait $CORE_PID && CORE_EXIT=0 || CORE_EXIT=$?
-    echo "=== bun test ==="
-    cat "$CORE_OUT"
-    echo "=== playwright ==="
-    cat "$BROWSER_OUT"
-    rm -f "$CORE_OUT" "$BROWSER_OUT"
-    exit $(( CORE_EXIT || BROWSER_EXIT ))
+# -----------------------------------------------------------------------
+# Top-level test pipeline
+# -----------------------------------------------------------------------
 
-# Run bun tests (fast, no build needed)
-test-core:
-    bun test
-
-# Run bun tests, stopping on first failure — fast feedback during iteration
-# Prefer this (or a targeted single-file run: bun test src/foo.test.ts) over
-# the full suite while working on a specific area.
-test-fast:
-    bun test --bail
-
-# Run bun tests in watch mode
-test-core-watch:
-    bun test --watch
-
-# Run browser (Playwright) tests — builds frontend + Rust binaries first
-test-browser: web-build web-leptos-build rust-build-mock-server
-    npx playwright test
-
-# Run browser tests with headed browser (useful for debugging)
-test-browser-debug: web-build web-leptos-build rust-build-mock-server
-    npx playwright test --headed
-
-# Run browser tests, saving full verbose output to a timestamped log file.
-# Use this when debugging failures: the log path is printed, then inspect
-# with read_file / grep_files. Never re-run just to see more output.
-test-browser-log: web-build web-leptos-build rust-build-mock-server
-    #!/usr/bin/env bash
-    LOG="test-output/playwright-$(date +%Y%m%d-%H%M%S).log"
-    mkdir -p test-output
-    npx playwright test --reporter=list > "$LOG" 2>&1; EC=$?
-    echo "Log saved: $LOG"
-    exit $EC
-
-# Run targeted Playwright tests without rebuilding the web client.
-# Use when the build is already current (e.g. you ran just web-build recently).
-# Accepts any Playwright CLI arguments: file paths, --grep patterns, etc.
-# Examples:
-#   just e2e e2e/web-ui-mermaid.spec.ts
-#   just e2e --grep "reconnect"
-e2e *args:
-    npx playwright test {{args}}
-
-# Type-check all TypeScript (three passes in parallel: backend/tests, web client, e2e).
-typecheck:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    OUT1=$(mktemp); OUT2=$(mktemp); OUT3=$(mktemp)
-    bunx tsgo --noEmit >"$OUT1" 2>&1 & PID1=$!
-    bunx tsgo -p src/web/client/tsconfig.json --noEmit >"$OUT2" 2>&1 & PID2=$!
-    bunx tsgo -p e2e/tsconfig.json --noEmit >"$OUT3" 2>&1 & PID3=$!
-    EC=0
-    wait $PID1 || { cat "$OUT1"; EC=1; }
-    wait $PID2 || { cat "$OUT2"; EC=1; }
-    wait $PID3 || { cat "$OUT3"; EC=1; }
-    rm -f "$OUT1" "$OUT2" "$OUT3"
-    exit $EC
-
-# Full quality gate: typecheck + full test suite + knip. Run before every commit.
+# Full quality gate: rust-gate + Playwright. Run before every commit.
 # All output is tee'd to test-output/gate-latest.log (overwritten each run).
 # On failure, read that file for the complete trace — no need to re-run.
-# Works identically whether called directly or via the git pre-commit hook.
 gate:
     #!/usr/bin/env bash
     set -eo pipefail
     mkdir -p test-output
     LOG="test-output/gate-latest.log"
-    # Snapshot production session count before tests run
     BEFORE=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
     {
-        echo "=== typecheck ==="
-        just typecheck
-        echo "=== test ==="
-        just test
-        echo "=== knip ==="
-        bunx knip
+        echo "=== rust-gate ==="
+        just rust-gate
+        echo "=== test-browser ==="
+        just test-browser
         echo "=== session-pollution check ==="
         AFTER=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
         if [ "$AFTER" -gt "$BEFORE" ]; then
@@ -117,25 +40,54 @@ gate:
         echo "=== done ==="
     } 2>&1 | tee "$LOG"
 
-# Build the web client (Vite → src/web/public/)
-web-build:
-    cd src/web && npx vite build
+# Type-check what TypeScript still ships: only the e2e Playwright specs.
+# (Phase 3.7 deleted `src/`, so the root + src/web/client tsconfigs are
+# gone.)
+typecheck:
+    bunx tsgo -p e2e/tsconfig.json --noEmit
+
+# Run browser (Playwright) tests — builds the Leptos bundle + the mock
+# omega-server fixture binary first.
+test-browser: web-leptos-build rust-build-mock-server
+    npx playwright test
+
+# Run browser tests with headed browser (useful for debugging).
+test-browser-debug: web-leptos-build rust-build-mock-server
+    npx playwright test --headed
+
+# Run browser tests, saving full verbose output to a timestamped log file.
+# Use this when debugging failures: the log path is printed, then inspect
+# with read_file / grep_files. Never re-run just to see more output.
+test-browser-log: web-leptos-build rust-build-mock-server
+    #!/usr/bin/env bash
+    LOG="test-output/playwright-$(date +%Y%m%d-%H%M%S).log"
+    mkdir -p test-output
+    npx playwright test --reporter=list > "$LOG" 2>&1; EC=$?
+    echo "Log saved: $LOG"
+    exit $EC
+
+# Run targeted Playwright tests without rebuilding the Leptos bundle.
+# Use when the build is already current.
+# Examples:
+#   just e2e e2e/leptos-markdown.spec.ts
+#   just e2e --grep "reconnect"
+e2e *args:
+    npx playwright test {{args}}
+
+# -----------------------------------------------------------------------
+# Leptos frontend
+# -----------------------------------------------------------------------
 
 # Build the Leptos frontend (trunk → frontends/leptos/dist/).
-# Phase 3.0 ships this bundle alongside the SolidJS one; omega-server
-# mounts it under /leptos/. The rustup target add is idempotent and
-# only downloads on first run.
+# Phase 3.7 made this the canonical production bundle: omega-server
+# now serves it from `/`. The `/leptos/` mount is retained for one
+# release as an alias and will be removed in a follow-up PR.
 web-leptos-build:
     rustup target add wasm32-unknown-unknown
     cd frontends/leptos && trunk build --release
 
-# Run the Leptos crate's wasm-bindgen-test suite (Phase 3.1).
-# Pure Rust + serde tests of `SessionStore::apply` and the typed
-# `WsMessage` parse path. Runs as wasm32 under Node via
-# `wasm-bindgen-test-runner`; both `cargo install` and `rustup target
-# add` calls are idempotent (no-op if already at the right version).
-#
-# Phase 3.6: `--lib` is required because the crate is now lib + bin.
+# Run the Leptos crate's wasm-bindgen-test suite.
+# `--lib` is required because the crate is lib + bin (Phase 3.6 split).
 # The host-target snapshot harness lives at `tests/snapshots.rs` and
 # is gated by `#[cfg(feature = "ssr")]` so it skips here.
 web-leptos-test:
@@ -143,15 +95,19 @@ web-leptos-test:
     cargo install --locked --version =0.2.120 wasm-bindgen-cli
     cd frontends/leptos && cargo test --lib --target wasm32-unknown-unknown
 
-# Phase 3.6 — host-target snapshot harness (TEST-ARCH-5). Renders
-# every component at the variant level via leptos's host SSR
-# codepath and snapshots the HTML with insta. The `ssr` feature is
-# mutually exclusive with `csr`; the bin keeps `csr` (default) and
-# only the snapshot run flips features.
+# Host-target snapshot harness (TEST-ARCH-5). Renders every component
+# at the variant level via leptos's host SSR codepath and snapshots
+# the HTML with insta. The `ssr` feature is mutually exclusive with
+# `csr`; the bin keeps `csr` (default) and only the snapshot run flips
+# features.
 web-leptos-snapshots:
     cd frontends/leptos && cargo test --test snapshots --no-default-features --features ssr
 
-# Build the production omega-server (Rust) — release binary at rust/target/release/omega-server
+# -----------------------------------------------------------------------
+# Rust binaries
+# -----------------------------------------------------------------------
+
+# Build the production omega-server (release) — rust/target/release/omega-server
 rust-build-server:
     cd rust && cargo build --release -p omega-server
 
@@ -160,20 +116,29 @@ rust-build-server:
 rust-build-mock-server:
     cd rust && cargo build --release -p omega-mock-server
 
-# Start the web server (serves built client + WebSocket on :3000).
+# Start the web server (serves the Leptos bundle + WebSocket on :3000).
 # Pass any omega-server CLI args, e.g. just server --port 3001
 server *args: rust-build-server web-leptos-build
     rust/target/release/omega-server {{args}}
 
-# Start Vite dev server for web client (:5173, proxies WS to :3000)
-# Run `just server` in another terminal first.
-client:
-    cd src/web && npx vite
-
-# Show what's listening on :3000 and :5173
+# Show what's listening on :3000.
 ports:
-    @echo "=== :3000 (Bun server) ===" && lsof -iTCP:3000 -sTCP:LISTEN -P -n 2>/dev/null || echo "  nothing"
-    @echo "=== :5173 (Vite client) ===" && lsof -iTCP:5173 -sTCP:LISTEN -P -n 2>/dev/null || echo "  nothing"
+    @echo "=== :3000 (omega-server) ===" && lsof -iTCP:3000 -sTCP:LISTEN -P -n 2>/dev/null || echo "  nothing"
+
+# -----------------------------------------------------------------------
+# Rust quality gate
+# -----------------------------------------------------------------------
+
+# Rust-only gate: format check + Clippy + cargo test + cargo machete
+# + Leptos wasm-bindgen-test suite + Leptos snapshot suite. Runs via
+# the pre-commit hook when only rust/ files are staged.
+# Run manually: just rust-gate
+rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
+    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
+
+# -----------------------------------------------------------------------
+# Repo housekeeping
+# -----------------------------------------------------------------------
 
 # Push current branch to origin
 push:
@@ -181,9 +146,6 @@ push:
 
 # Tag the current commit with the version declared in omega_agent.py and push
 # both the tag and the current branch to origin.
-# Usage: just release
-# The tag name is read automatically from OMEGA_VERSION in omega_agent.py so
-# it is always in sync with what the benchmark containers will clone.
 release:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -200,31 +162,6 @@ release:
     git tag "$VERSION"
     git push origin "$VERSION"
     echo "✅  Released $VERSION"
-
-# Generate TypeScript bindings from Rust types via ts-rs.
-# Exports all types annotated with #[ts(export)] to rust/bindings/.
-# Re-run whenever Rust types change; then commit the updated .ts files.
-rust-bindings:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    EXPORT_DIR="$(pwd)/rust/bindings"
-    mkdir -p "$EXPORT_DIR"
-    export TS_RS_EXPORT_DIR="$EXPORT_DIR"
-    export TS_RS_LARGE_INT="number"
-    cd rust
-    cargo test -p omega-protocol --features ts-bindings -- export_bindings
-    cargo test -p omega-core     --features ts-bindings -- export_bindings
-    cargo test -p omega-store    --features ts-bindings -- export_bindings
-
-# Rust-only quality gate: format check + Clippy + cargo test + bindings drift
-# + Leptos wasm-bindgen-test suite + Leptos snapshot suite (Phase 3.6).
-# Runs via the pre-commit hook when only rust/ files are staged.
-# Run manually: just rust-gate
-rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
-    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
-    just rust-bindings
-    @echo "=== bindings drift check ==="
-    git diff --exit-code rust/bindings/ || (echo "\n❌  rust/bindings/ is out of date — run \`just rust-bindings\` and commit."; exit 1)
 
 # Install git hooks (pre-commit test gate)
 install-hooks:

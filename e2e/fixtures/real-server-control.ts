@@ -7,7 +7,10 @@
  *
  *   • `POST /control/script`      — replace the queue of mock responses.
  *   • `POST /control/reset-calls` — clear captured-call history.
- *   • `GET  /control/llm-calls`   — return captured-call history.
+ *
+ * (`GET /control/llm-calls` is exposed by the binary and used by the
+ * Phase-4 chromiumoxide port, but no surviving Playwright spec needs
+ * it post-3.7.)
  *
  * Each `POST /v1/messages` from the production AnthropicProvider pops
  * one entry from the script queue and replies with an Anthropic-shaped
@@ -31,12 +34,6 @@ type Step =
     }
   | { kind: "httpError"; status: number; body: string };
 
-interface ProjectedCall {
-  systemKind: "task" | "resumption";
-  at: number;
-  messages: Array<{ role: string; content: string }>;
-}
-
 /**
  * Replace the mock response queue with `steps`. Returns once the server
  * has applied the change. Throws on non-2xx.
@@ -55,12 +52,6 @@ export async function loadScript(steps: Step[]): Promise<void> {
 /** Clear the captured-call history. */
 export async function resetCalls(): Promise<void> {
   await fetch(`${CONTROL_URL}/control/reset-calls`, { method: "POST" });
-}
-
-/** Snapshot the captured-call history. */
-export async function getCalls(): Promise<ProjectedCall[]> {
-  const res = await fetch(`${CONTROL_URL}/control/llm-calls`);
-  return (await res.json()) as ProjectedCall[];
 }
 
 // ---------------------------------------------------------------------------

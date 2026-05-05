@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 /// A raw streaming fragment from the LLM.  Never persisted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum StreamSignal {
     /// A text token fragment.
     Text { text: String },

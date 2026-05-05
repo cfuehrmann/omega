@@ -3,10 +3,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "web:build": "cd src/web && npx vite build",
-    "web:dev": "cd src/web && npx vite",
-    "check": "bun test && bunx knip"
+    "test:browser": "npx playwright test"
   },
+  "_comment": "Phase 3.7: package.json + node_modules + bunfig + vite + knip + tsconfigs are intentionally retained for the surviving Playwright suite. They exit alongside Playwright in Phase 4 (chromiumoxide + LLM oracle). The unused devDependencies (vite/solid-js/etc.) are kept inert here so a single Phase-4 commit can yank them in lockstep with the Playwright deletion.",
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/bun": "^1.3.12",

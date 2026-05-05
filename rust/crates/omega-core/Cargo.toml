@@ -6,11 +6,6 @@ edition.workspace = true
 [lints]
 workspace = true
 
-[features]
-# Enables ts-rs bindings; also activates omega-protocol/ts-bindings so
-# ContentBlock's Value fields can reference protocol types if needed.
-ts-bindings = ["dep:ts-rs", "omega-protocol/ts-bindings"]
-
 [dependencies]
 omega-protocol     = { path = "../omega-protocol" }
 serde              = { version = "1", features = ["derive"] }
@@ -24,7 +19,6 @@ thiserror          = "2"
 chrono             = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 rand               = "0.9"
 mutants            = "0.0.3"
-ts-rs              = { version = "12", optional = true, features = ["serde-compat"] }
 
 [dev-dependencies]
 insta    = { version = "1", features = ["json", "redactions"] }

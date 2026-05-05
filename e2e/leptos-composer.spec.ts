@@ -22,7 +22,7 @@
  *    reload.
  * 6. Switch effort — from Idle, change effort from medium to high;
  *    assert session_info.effort updates.
- * 7. File-completion accept — type `@src/web/c`, wait for the popup,
+ * 7. File-completion accept — type `@rust/c`, wait for the popup,
  *    arrow-down to highlight a candidate, press Enter; assert the
  *    textarea now contains the completed path.
  *
@@ -321,8 +321,10 @@ test("leptos-composer: @-prefix opens the completion popup; Enter accepts the hi
   const input = page.getByTestId("leptos-composer-input");
   // Type `@` then a path prefix that should match at least one entry
   // under the test cwd. The mock-omega-server runs with cwd = repo
-  // root, so `src/` is a known directory.
-  await input.fill("@src/");
+  // root, so `rust/` is a known directory (Phase 3.7: replaced the
+  // earlier `src/` reference — `src/` was deleted alongside the
+  // SolidJS frontend).
+  await input.fill("@rust/");
 
   // Popup must appear and contain at least one item.
   const popup = page.getByTestId("leptos-composer-completion");

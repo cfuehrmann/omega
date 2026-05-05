@@ -28,7 +28,10 @@
 | 3.2 — Leptos session picker | ✅ Done | `SessionListStore` + picker UI; `/leptos/` lists/creates/renames/deletes; debug dump moved to collapsible panel |
 | 3.3 — Leptos conversation feed | ✅ Done | `event_view.rs` pure projection; `feed.rs` component; `/leptos/` renders every `OmegaEvent` variant + live streaming text + auto-scroll seam |
 | 3.4 — Leptos composer | ✅ Done | `composer.rs` + `completion.rs`; primary action button (Send/Pause/Abort/Continue) + secondary Abort; model + effort `<select>` dropdowns; `@`-path file completion via `/api/files`; 3.3 `<StubComposer/>` retired |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.6 done; 3.7 ahead) |
+| 3.5 — Leptos context inspector + resume | ✅ Done | `context_modal.rs`; resume from picker; LLM-call inline expander |
+| 3.6 — Leptos markdown + Mermaid + SSR snapshots | ✅ Done | `pulldown-cmark`; lazy-loaded Mermaid; insta SSR snapshot harness (TEST-ARCH-5) |
+| 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
+| 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos; TS frontend + TS agent + ts-rs bridge deleted (3.0–3.7) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -56,19 +59,20 @@ dev/
 │       ├── omega-tools/        ✅ done
 │       ├── omega-agent/        ✅ done
 │       ├── omega-cli/          ✅ done
-│       ├── omega-server/       ✅ done  (HTTP + WS; serves both bundles)
-│       └── omega-mock-server/  ✅ done  (Playwright fixture binary)
-├── frontends/                  ← alternative web frontends (Phase 3.0+)
-│   └── leptos/                 🟡 in progress  (standalone wasm32 Cargo workspace)
-├── src/                        ← TypeScript SolidJS frontend (frozen; deleted at 3.7)
-├── e2e/                        ← Playwright (retires in Phase 4)
+│       ├── omega-server/       ✅ done  (HTTP + WS; serves the Leptos bundle)
+│       └── omega-mock-server/  ✅ done  (Playwright fixture binary; retires in Phase 4)
+├── frontends/                  ← Web frontends
+│   └── leptos/                 ✅ done  (production frontend, wasm32 Cargo workspace)
+├── e2e/                        ← Playwright real-server suite (retires in Phase 4)
 ├── Justfile
-└── package.json
+└── package.json                ← inert; carries Playwright + a few SolidJS-era deps
+                                  retained for Phase 4 deletion in lockstep
 ```
 
-**Two-bundle co-existence (3.0–3.6):** `omega-server` mounts both frontends.
-`/` → SolidJS (`src/web/public/`); `/leptos/` → Leptos (`frontends/leptos/dist/`).
-`/ws`, `/api/*`, `/health` are shared. Cutover at 3.7 swaps the fallback `ServeDir`.
+**Frontend serving (post-3.7):** `omega-server` serves the Leptos
+bundle at both `/` (fallback `ServeDir`) and `/leptos/` (kept as a
+one-release alias; deletion + the `Trunk.toml` `public_url` flip
+land in a follow-up). `/ws`, `/api/*`, `/health` are unchanged.
 
 ---
 
@@ -792,7 +796,7 @@ production LLM, real cost. Sessions persist to `.omega/sessions/` by default.
 
 ---
 
-## Phase 3 — Leptos UI rewrite 🟡 In progress
+## Phase 3 — Leptos UI rewrite ✅ Done
 
 **Crate `omega-web`** at `frontends/leptos/` (standalone Cargo workspace,
 wasm32-only). Ports `src/web/client/` component by component. Imports types
@@ -2213,125 +2217,367 @@ markdown specs).
   (or new sub-recipes get added), the `--lib` flag is the easy
   miss.
 
-### Phase 3.7 — cutover (next)
+### Phase 3.7 — done (concise record)
 
-**Goal.** Switch the production frontend from SolidJS to Leptos and
-delete the SolidJS bundle + its build chain. Ends Phase 3 and
-opens the runway to Phase 4 (chromiumoxide + LLM oracle).
+**Scope.** Two-commit cutover ending Phase 3:
 
-**Out of scope.** Phase 4 work — chromiumoxide test runtime,
-LLM-as-oracle for snapshot review, deletion of `package.json` /
-`node_modules` / Playwright config (those leave with the e2e
-rewrite, not with the SolidJS bundle).
+1. **Commit 1 — ServeDir swap.** `omega_server::build_router` now
+   serves the Leptos bundle from the fallback `ServeDir` at `/`.
+   The nested `ServeDir` at `/leptos/` is **kept as an alias for
+   one release** per the carry-forward; both routes serve identical
+   bytes from `frontends/leptos/dist`. Trunk's `public_url`
+   stays at `/leptos/` so the bundle's hashed asset URLs continue
+   to embed the prefix — those resolve through the kept alias
+   whether the entry HTML was loaded via `/` or `/leptos/`.
+   Rollback path remained a single `git revert`.
 
-**Acceptance.**
-- `omega-server` serves the Leptos bundle from `/`. The SolidJS
-  bundle is gone from the binary's static-route fallback.
-- `src/web/`, `src/cli.ts`-adjacent dead exports, and the ts-rs
-  derive features in `omega-protocol` / `omega-core` /
-  `omega-store` are deleted. `rust/bindings/` is deleted.
-- `package.json`, `bun.lock`, `node_modules/`, `.bunfig.toml`,
-  `vite.config.ts`, `knip.json`, `tsconfig*.json` (root + e2e +
-  src/web/client) are deleted.
-- The Playwright specs whose surface is fully covered by Leptos
-  snapshot tests retire here (typically `web-ui-4.spec.ts`,
-  `web-ui-mermaid.spec.ts`, the assistant-text fixtures from
-  `web-ui.spec.ts`, `web-ui-context-modal.spec.ts`,
-  `web-ui-rename-session.spec.ts`); the rest port to Phase 4's
-  chromiumoxide harness.
-- `Justfile`: every recipe that referenced `src/web/`,
-  `vite build`, `npx playwright`, `bun test`, `knip`, or
-  `bunx tsgo` is either deleted, retargeted at the Leptos
-  bundle, or marked Phase-4-pending.
-- `just rust-gate` ✅ · the new `just gate` (or whatever the
-  recipe is renamed to) replaces the old `just gate` end-to-end.
-- Bundle remains under 1 MB. `wasm-opt -Oz` may land here as
-  trunk-build polish.
+2. **Commit 2 — deletion pass.** SolidJS bundle, TS agent + bridge,
+   ts-rs derives, `rust/bindings/`, chromium Playwright project,
+   and all Justfile recipes that referenced them landed in one
+   atomic commit alongside the `Cargo.lock` churn from the ts-rs
+   drop.
 
-**Open questions to resolve in 3.7:**
-- **One-line `ServeDir` swap.** Today `omega_server::build_router`
-  has a fallback `ServeDir::new(public_dir)` rooted at
-  `src/web/public/`, plus a nested `ServeDir` at `/leptos/` for
-  `frontends/leptos/dist/`. The cutover swaps the fallback
-  target. Decide whether to keep the `/leptos/` mount as a
-  permanent alias (zero-cost; useful for reproducing 3.6
-  bug reports) or delete it on the same commit. Recommendation:
-  keep `/leptos/` for one release, then delete in a follow-up.
-- **`src/` deletion ordering.** Three options: (a) delete
-  `src/web/server.ts`-adjacent dead test files first, then
-  `src/web/client/` (the SolidJS UI), then top-level `src/*.ts`
-  (TS agent code, already mostly gone); (b) one big atomic
-  commit; (c) delete by directory in CI-passing increments.
-  Prefer (c): each delete commit must keep `just rust-gate`
-  green and the relevant subset of browser tests. The TS
-  agent code (`src/agent.ts` etc.) was already retired in 2c
-  per the migration record — verify by grep before assuming
-  it's deletable.
-- **`ts-rs` derive removal.** Each crate that has a
-  `ts-bindings` feature (`omega-protocol`, `omega-core`,
-  `omega-store`) loses it. `rust/bindings/` directory + the
-  `just rust-bindings` recipe + the bindings-drift guard in
-  `just rust-gate` all retire. **Watch out for**
-  `rust/.cargo/config.toml`: the `TS_RS_LARGE_INT` and
-  `TS_RS_EXPORT_DIR` env vars set there should be deleted in
-  the same commit so `cargo` doesn't read stale config.
-- **`package.json` + `node_modules` removal.** Deferred to
-  Phase 4 (chromiumoxide) per the long-standing plan, **not**
-  3.7. 3.7 keeps `package.json` for the surviving Playwright
-  specs that haven't yet ported. Delete in 4 once chromiumoxide
-  is the only browser-test runner.
-- **Which SolidJS Playwright specs retire vs port.** Rough cut:
-  retire (covered by Leptos snapshot tests at TEST-ARCH-5):
-  `web-ui-4.spec.ts` (markdown / diff / copy button — covered
-  by `leptos-markdown.spec.ts` + insta), `web-ui-mermaid.spec.ts`
-  (covered by `leptos-markdown.spec.ts`),
-  `web-ui-context-modal.spec.ts` (covered by
-  `leptos-context-resume.spec.ts` + insta),
-  `web-ui-rename-session.spec.ts` (covered by
-  `leptos-session-picker.spec.ts`),
-  `web-ui-file-completion.spec.ts` (covered by
-  `leptos-composer.spec.ts`). Port to Phase 4 (need real
-  browser): `web-ui.spec.ts` (full UI smoke + reconnect),
-  `web-ui-2.spec.ts`, `web-ui-3.spec.ts`,
-  `web-ui-pending-changes.spec.ts`, `recorded-session.spec.ts`,
-  `persistence.spec.ts`, `pause-ui.spec.ts`,
-  `pause-resume-interject.spec.ts`, `session-picker.spec.ts`,
-  `session-continuity.spec.ts`, `real-server-replay.spec.ts`.
-  Verify the mapping by running each retiring spec against
-  `/leptos/` and confirming the Leptos coverage is at parity
-  before deleting.
-- **`Cargo.lock` + bindings drift across the delete.** The
-  `ts-bindings` feature of `omega-protocol` / `omega-core` /
-  `omega-store` pulls `ts-rs` and a small transitive set
-  (`syn-derive`, `quote-use`, etc.). Once removed, those drop
-  from `Cargo.lock` — expect a noticeable lockfile churn on
-  the same commit. `rust/bindings/` deletion produces the
-  drift signal at gate time even if the lockfile is right;
-  verify the bindings-drift guard is removed in the same
-  commit as the directory.
-- **`Justfile` recipes referencing deleted paths.**
-  `web-build` (Vite), `client` (Vite dev server),
-  `test-core`, `test-fast`, `test-core-watch`, `typecheck`,
-  `gate`, `rust-bindings`, the `e2e` pass-through. Decide
-  per recipe: delete (`web-build`, `rust-bindings`),
-  retarget (`gate` → `rust-gate` + a slimmer browser-test
-  pass), or move to Phase 4 (`test-browser*` if Playwright
-  stays for a release).
-- **Rollback plan.** The cutover is a single-commit `ServeDir`
-  swap. Rollback is the inverse one-liner. If 3.7 lands a
-  big delete pass *plus* the swap in one commit, the
-  rollback story gets harder. Suggested order:
-  (1) commit only the `/` → Leptos `ServeDir` swap; verify
-  in production for one release. (2) delete the SolidJS
-  bundle + ts-rs + Justfile recipes in a follow-up.
-  Two-commit cutover keeps the rollback small.
+**Decision — TS agent code retired in this phase, not earlier.**
+The carry-forward expected `src/agent.ts` to already be gone per
+the 2c migration record, but a grep showed otherwise: 1874 lines
+of TS agent code (`src/agent.ts`) plus 14 bun unit tests survived
+2c retirement because the deletion bar was scoped to the CLI and
+web server. Those tests transitively imported from
+`rust/bindings/` via `src/events.ts`, so deleting `rust/bindings/`
+required retiring the TS agent code too. Decided explicitly (not
+drive-by) and documented here — the TS agent has not been on the
+production code path since 2c, and its bun unit tests duplicate
+coverage already in `rust/crates/omega-agent/`.
+
+**Decision — chromium Playwright project retired wholesale.** The
+chromium project (port 3001) ran the SolidJS-targeted specs against
+`e2e/fixtures/test-server.ts` (a Bun mock backend). Once the SolidJS
+bundle is gone, those specs target nothing. Their Leptos-snapshot-
+covered subset (5 specs from the carry-forward list) retires here;
+the rest (8 specs covering reconnect / replay / pause-during-stream
+/ real-server side effects) port their **coverage intent** to
+Phase 4 (chromiumoxide + LLM oracle) where the spec files will be
+rewritten from scratch against the Leptos test-id surface. The
+current SolidJS-targeted spec files were deleted in commit 2.
+
+**Decision — `/leptos/` alias kept for one release.** Trunk's
+`public_url` flip to `/` is deferred to a follow-up PR alongside the
+`/leptos/` mount removal so bookmarks and bug-report URLs from
+3.0–3.6 continue to resolve. Cost: one `nest_service` line and the
+bare-`/leptos` 308 redirect. The follow-up is the cheapest possible
+delete — three lines in `router.rs`, one config flip in
+`Trunk.toml`, three Rust integration tests, two Playwright smoke
+asserts.
+
+**Files deleted (commit 2):**
+
+- **SolidJS frontend bundle.** `src/web/client/` (SolidJS source),
+  `src/web/public/` (Vite output, ~140 hashed asset files),
+  `src/web/vite.config.ts`.
+- **TS web protocol + helpers.** `src/web/protocol.ts`,
+  `src/web/server-helpers.ts`, `src/web/file-completion.test.ts`,
+  `src/web/session-resilience.test.ts`.
+- **TS agent + bridge + system prompt.** Every `src/*.ts` and
+  `src/system-prompt/*.ts`: `agent.ts` + 9 `agent-*.test.ts`,
+  `events.ts`, `events.schema.ts`, `event-store.ts(+.test)`,
+  `session-resume.ts(+.test)`, `session-dir.ts(+.test)`,
+  `context-store.ts(+.schema/.test)`, `context-hash.ts(+.test)`,
+  `tools.ts(+.test/.schema)`, `planning-files.test.ts`,
+  `compacted.test.ts`, `prompt-caching.test.ts`,
+  `rust-bindings-roundtrip.test.ts`, `test-utils.ts(+.test)`,
+  `test-guard.ts(+.test)`, `test-setup.ts`, `iso-timestamp.ts`,
+  `config.ts`, `env.ts`, `self.ts(+.test)`,
+  `create-message-stream.ts`, `system-prompt/index.ts`,
+  `system-prompt/core.ts`, `system-prompt/append.ts`,
+  `system-prompt/identity.ts`,
+  `system-prompt/system-prompt-append.test.ts`,
+  `system-prompt/system-prompt.test.ts`. The `src/` directory is
+  empty after this and the parent dir was removed.
+- **ts-rs bridge + derives.** `rust/bindings/` (35 `.ts` files,
+  389 lines). `[features] ts-bindings = ...` blocks and the
+  `ts-rs` optional dependency removed from
+  `rust/crates/omega-protocol/Cargo.toml`,
+  `rust/crates/omega-core/Cargo.toml`,
+  `rust/crates/omega-store/Cargo.toml`. Every
+  `#[cfg_attr(feature = "ts-bindings", …)]` annotation removed
+  from the six `.rs` files that carried them (`session_dir.rs`,
+  `context_hash.rs`, `context_store.rs`, `types.rs`, `events.rs`,
+  `stream_signal.rs`).
+- **Cargo config.** `rust/.cargo/config.toml`'s `[env]` block
+  (`TS_RS_EXPORT_DIR`, `TS_RS_LARGE_INT`) gone in the same
+  commit as the feature flags.
+- **Cargo.lock churn.** `ts-rs 12.0.1` plus its small transitive
+  set drop from `rust/Cargo.lock`.
+- **Justfile recipes.** `web-build`, `client`, `rust-bindings`
+  deleted. `gate` retargeted at `rust-gate + test-browser`
+  (the old gate ran `bun test` + `npx vite build` + the bindings
+  drift guard — none of those exist now). `typecheck` collapsed
+  to a single `tsgo -p e2e/tsconfig.json --noEmit` pass.
+  `test-browser*` recipes drop their `web-build` dependency.
+  `server` drops `web-build`. `rust-gate` drops the
+  `just rust-bindings` step and the `git diff --exit-code
+  rust/bindings/` drift assertion (both targets are gone).
+- **Chromium Playwright project + fixture.** `e2e/fixtures/test-server.ts`
+  (Bun mock backend), `e2e/fixtures/index.ts` (chromium-only test
+  fixture provider), `e2e/fixtures/recorded-session.jsonl`,
+  and the 13 chromium-only spec files: `web-ui.spec.ts`,
+  `web-ui-2.spec.ts`, `web-ui-3.spec.ts`, `web-ui-4.spec.ts`,
+  `web-ui-context-modal.spec.ts`, `web-ui-file-completion.spec.ts`,
+  `web-ui-mermaid.spec.ts`, `web-ui-pending-changes.spec.ts`,
+  `pause-ui.spec.ts`, `persistence.spec.ts`,
+  `recorded-session.spec.ts`, `session-continuity.spec.ts`,
+  `session-picker.spec.ts`. Plus the three real-server specs
+  retired in commit 1: `web-ui-rename-session.spec.ts`,
+  `pause-resume-interject.spec.ts`, `real-server-replay.spec.ts`.
+- **`getCalls` helper** in `e2e/fixtures/real-server-control.ts`
+  (only consumer was the deleted Phase-4-bound real-server spec
+  set; the helper will be re-added in Phase 4 against a
+  chromiumoxide harness if needed).
+
+**Files kept (deferred to Phase 4):**
+
+- `package.json`, `bun.lock`, `node_modules/`, `bunfig.toml`,
+  `tsconfig.json`, `e2e/tsconfig.json`, `knip.json`,
+  `knip.config.ts`, `playwright.config.ts`. The
+  user-facing `package.json` retains the SolidJS-era inert deps
+  (`vite`, `solid-js`, `vite-plugin-solid`, `marked`, `mermaid`,
+  `zod`, `@anthropic-ai/sdk`) so a single Phase-4 commit can
+  yank them in lockstep with the Playwright deletion. `knip.json`
+  ignores those unused deps explicitly.
+- `bench/` is out of scope (the 2c follow-up retargeting
+  `bench/omega_agent.py` at `rust/target/release/omega` is still
+  open).
+
+**Spec-by-spec retire-vs-port classification:**
+
+*Retired in 3.7 (Leptos snapshot coverage at TEST-ARCH-5
+supersedes them):*
+
+| Retired spec | Replaced by |
+|---|---|
+| `web-ui-4.spec.ts` (markdown / diff / copy button) | `leptos-markdown.spec.ts` (11 specs) + insta `snap_eb_llm_response_*` fixtures |
+| `web-ui-mermaid.spec.ts` (mermaid lazy render + error path) | `leptos-markdown.spec.ts:175-209` + insta `snap_eb_llm_response_mermaid` |
+| `web-ui-context-modal.spec.ts` (modal open / close / fetch) | `leptos-context-resume.spec.ts:89-156` + insta `snap_modal_open_loading`, `snap_modal_closed_renders_nothing_visible` |
+| `web-ui-rename-session.spec.ts` (rename roundtrip) | `leptos-session-picker.spec.ts:124` |
+| `web-ui-file-completion.spec.ts` (`@`-path popup) | `leptos-composer.spec.ts:315` |
+
+*Phase-4 ports (need browser-side invariants the SSR snapshot
+harness can't reach):*
+
+| Spec | What ports to chromiumoxide |
+|---|---|
+| `web-ui.spec.ts` | Full UI smoke + reconnect-after-drop replay |
+| `web-ui-2.spec.ts` | Streaming-text reflow + scroll-anchor invariants |
+| `web-ui-3.spec.ts` | Tool-result expand / collapse interaction |
+| `web-ui-pending-changes.spec.ts` | Pending-changes modal lifecycle |
+| `recorded-session.spec.ts` | Replay of a recorded `events.jsonl` end-to-end |
+| `persistence.spec.ts` | Disk↔UI consistency after reload |
+| `pause-ui.spec.ts` | Pause-during-stream UI affordances |
+| `pause-resume-interject.spec.ts` | Pause + reload + interject + continue (the 8-scenario suite) |
+| `session-picker.spec.ts` | Picker keyboard nav + delete confirmation |
+| `session-continuity.spec.ts` | Resume→switch→resume continuity |
+| `real-server-replay.spec.ts` | Production-server-binary regression coverage |
+
+Verification of the retire list was structural: each retired spec's
+assertions map 1:1 onto either a Leptos Playwright spec (port 3003)
+or an SSR snapshot fixture in `frontends/leptos/tests/snapshots/`.
+For specs that exercise data-testids that differ between SolidJS
+and Leptos surfaces (e.g. `leptos-context-modal-*` vs the SolidJS
+equivalents), the assertion semantics map; the literal selectors
+are different by design (Leptos uses a `leptos-` prefix on every
+testid to make the surface explicit).
+
+**Verification:**
+
+- `cargo test -p omega-server --test http` — 19/19 ✅ after the
+  swap (commit 1).
+- `just rust-gate` — ✅ after the deletion pass (commit 2):
+  `cargo fmt --check`, `cargo clippy -- -D warnings`,
+  `cargo test --workspace` (all 22 test-result lines pass),
+  `cargo machete` (no unused deps), 275 wasm-bindgen-tests, 27
+  SSR snapshots.
+- `just gate` — ✅ after the deletion pass: rust-gate +
+  Playwright real-server (32/32 ✅) + session-pollution check.
+- Manual:
+    * `curl /` returns the Leptos `index.html` (✅).
+    * `curl /leptos/` returns the same bytes (✅ alias).
+    * `curl -I /leptos` → 308 → `/leptos/` (✅ redirect).
+    * `curl /api/sessions`, `curl /health` unchanged (✅).
+
+**Carry-forward into Phase 4:**
+
+- The `/leptos/` mount + the `308 /leptos → /leptos/` redirect
+  are still in `router.rs`. Delete in a follow-up alongside
+  `Trunk.toml`'s `public_url = "/leptos/"` → `"/"` flip. The
+  follow-up touches three Rust integration tests
+  (`leptos_servedir_serves_index_html`,
+  `leptos_servedir_serves_index_at_trailing_slash`,
+  `leptos_bare_prefix_redirects_to_trailing_slash`), the
+  `leptos-smoke.spec.ts` spec asserting `/leptos` redirects, and
+  `cli.rs::DEFAULT_LEPTOS_DIR` (which becomes the only
+  `--public-dir`-shaped flag).
+- `--public-dir` is still a parsed CLI flag on `omega-server`
+  and `mock-omega-server`, but the value is no longer read by
+  the router. Either rename it to `--solidjs-dir` (signalling
+  vestigiality) or just delete the flag in the same follow-up
+  that drops `/leptos/`. Recommendation: delete.
+- The package.json inert-deps list was kept verbatim per the
+  user instruction; Phase 4 yanks them with the Playwright
+  deletion. The list (for reference): `vite`, `solid-js`,
+  `vite-plugin-solid`, `marked`, `mermaid`, `zod`,
+  `@anthropic-ai/sdk`.
+- The 11 Phase-4-bound specs above are the surface that needs
+  re-implementing. Their old SolidJS-targeted source is
+  recoverable via `git show <commit-2>~:e2e/<spec>` — useful
+  for cross-checking what each spec was actually asserting.
+- `wasm-opt -Oz` was not added in 3.7. The 3.6 carry-forward
+  noted it would shave ≈33 KB off the markdown bundle overage;
+  still optional, still untouched. Phase 4 polish item.
+- Mermaid still loads from
+  `https://cdn.jsdelivr.net/npm/mermaid@11/+esm`. Offline
+  operation impossible; matches the SolidJS behaviour pre-cutover.
+  Phase 4 may re-evaluate (vendor via Trunk `copy-file`).
 
 ---
 
-## Phase 4 — `chromiumoxide` + LLM oracle ⬜ Future
+## Phase 4 — `chromiumoxide` + LLM oracle (next) ⬜ Future
 
-Replace Playwright with `chromiumoxide`. LLM-as-oracle for snapshot review.
-Delete `package.json`, `node_modules`, Playwright config.
+**Goal.** Retire Playwright. Replace it with a pure-Rust browser-test
+harness driven by [`chromiumoxide`](https://crates.io/crates/chromiumoxide)
+(or [`fantoccini`](https://crates.io/crates/fantoccini), see below)
+plus an LLM-as-oracle pass for snapshot review. Delete the JS
+toolchain wholesale (`package.json`, `bun.lock`, `node_modules/`,
+`bunfig.toml`, `tsconfig.json`, `e2e/tsconfig.json`, `knip.json`,
+`knip.config.ts`, `playwright.config.ts`, `e2e/`).
+
+**Open question — chromiumoxide vs fantoccini.**
+Both target Chrome. The choice is a tradeoff:
+
+| Axis | `chromiumoxide` | `fantoccini` |
+|---|---|---|
+| Protocol | DevTools (CDP, direct WS) | WebDriver (HTTP shim, requires `chromedriver`) |
+| Async runtime | `tokio` native | `tokio` native |
+| Process model | Spawns `chrome --headless` directly | Requires running `chromedriver` separately |
+| API surface | Closer to Puppeteer / Playwright — fine-grained DOM events, network interception, coverage | Higher-level WebDriver abstraction — simpler, less powerful |
+| Maintainership | Active; weekly commits | Active but smaller maintainer pool |
+| Selenium / W3C compliance | Not WebDriver-compliant | W3C WebDriver-compliant |
+
+Recommendation: start with **chromiumoxide**. Reasons:
+
+1. The Phase-4-bound spec set leans on browser-side invariants
+   (reconnect, replay, pause-during-stream) where CDP's
+   network-interception + lifecycle events make the assertions
+   cleaner than WebDriver's polling model.
+2. No external `chromedriver` process simplifies the test harness
+   — `mock-omega-server` + `omega-test-fixtures` already manage
+   one binary subprocess; adding a second doubles the lifecycle
+   complexity.
+3. The `e2e/leptos-*.spec.ts` Playwright surface uses
+   `getByTestId` semantics that map naturally to CDP
+   `Runtime.evaluate("document.querySelector(...)")`; the
+   per-spec port is mechanical.
+4. If a chromiumoxide constraint surfaces (the typical one is
+   that headless Chrome on macOS occasionally drops CDP
+   connections), fantoccini is a drop-in replacement at the
+   harness layer — the spec bodies don't change.
+
+The alternative — driving `wasm-bindgen-test` against a real
+browser via `wasm-pack test --chrome` — was rejected during
+Phase 3.6: that runner doesn't exercise the production binary's
+router / WS / persistence code paths, only the wasm bundle's pure
+logic. The Phase-4 surface needs end-to-end coverage.
+
+**LLM-as-oracle prompt design.** The 27 SSR snapshots from 3.6
+lock the static HTML structurally; visual review against the
+SolidJS reference happened manually during the port. The LLM
+oracle replaces the manual pass on every snapshot run:
+
+- **Input.** Two screenshots (or two rendered HTML strings) plus
+  the snapshot fixture name.
+- **Prompt skeleton.** *"You are reviewing a UI parity snapshot.
+  The reference (left) was the SolidJS implementation;
+  the candidate (right) is the Leptos port. The candidate is
+  expected to be visually equivalent modulo the differences
+  enumerated in `frontends/leptos/PARITY-DIFFS.md` (TBC).
+  Identify any unexpected divergence and classify it as
+  (a) cosmetic / acceptable, (b) bug in the candidate, or
+  (c) bug in the reference."*
+- **Output.** JSON with `verdict` (`pass` | `bug-candidate` |
+  `bug-reference`) + `summary` + `evidence`.
+- **Calling code.** A Rust harness that posts the two artefacts
+  to the same provider abstraction `omega-core` already uses
+  (`AnthropicProvider`). Failures bubble up as `cargo test`
+  failures with the LLM's verdict + evidence inlined into the
+  failure message.
+- **Cost guardrails.** The oracle runs only when the snapshot
+  bytes change — i.e. on first failure of the structural
+  `insta` check, not on every run. A daily / weekly drift run
+  re-evaluates accepted-divergence baselines.
+
+Open sub-decisions for Phase 4:
+
+- Multi-modal vs HTML-only oracle. Multi-modal (`vision`) catches
+  layout drift; HTML-only is faster and cheaper. Likely both
+  with HTML-only as the per-failure default and `vision` as the
+  weekly drift run.
+- Where the reference screenshots live. Options: vendored under
+  `frontends/leptos/tests/snapshots/reference/`, or generated
+  on-demand from a frozen SolidJS commit checked out into a
+  worktree at oracle time. Vendoring is simpler and works
+  offline; the worktree path stays honest about drift.
+- Whether the Phase-3.7 retired SolidJS specs ever get
+  resurrected against the Leptos UI before Playwright exits.
+  Recommendation: **no.** Their retire decisions are sound
+  (Leptos snapshot tests cover the same surface). Resurrecting
+  them would add browser-test minutes for zero new coverage.
+  The Phase-4-bound 11 specs are the surface that needs
+  re-implementing, period.
+
+**Spec-by-spec port plan.** Each Phase-4-bound spec gets a
+`tests/e2e_<name>.rs` integration test in a new `omega-e2e`
+crate (or under `omega-test-fixtures`, TBD), driven by
+chromiumoxide against the existing `mock-omega-server`. The
+port order should follow risk:
+
+1. `web-ui.spec.ts` first — it's the smoke test; it's the
+   fastest to find harness-level issues.
+2. `pause-resume-interject.spec.ts` second — it's the most
+   complex; finding chromiumoxide friction here informs the
+   rest of the port.
+3. The remaining 9 in any order; they're mechanically similar.
+
+Each port commit deletes nothing JS-side. The wholesale JS
+toolchain deletion lands as the **last** Phase-4 commit, after
+all 11 ports are green:
+
+- Delete `package.json`, `bun.lock`, `node_modules/`,
+  `bunfig.toml`, `tsconfig.json`, `e2e/tsconfig.json`,
+  `knip.json`, `knip.config.ts`, `playwright.config.ts`,
+  `e2e/` entirely.
+- Delete the inert SolidJS-era deps from `package.json`'s
+  carry-forward list (vite, solid-js, vite-plugin-solid,
+  marked, mermaid, zod, @anthropic-ai/sdk).
+- Delete the `/leptos/` mount alias from `omega-server::router`
+  and flip `frontends/leptos/Trunk.toml`'s `public_url` to `/`
+  (this is the deferred 3.7 follow-up; landing it as part of
+  Phase 4's final commit means it doesn't need its own PR).
+- Delete the now-unused `--public-dir` flag from
+  `omega-server` and `mock-omega-server`.
+
+**Acceptance criteria** (sketch — will firm up before kickoff):
+
+- `just gate` runs `rust-gate` + the new chromiumoxide e2e
+  harness; no `npx` / `bun` / `bunx` calls anywhere.
+- All 11 Phase-4-bound specs from the 3.7 carry-forward have
+  Rust equivalents that exercise the same browser-side
+  invariants.
+- Total e2e wall-clock time ≤ the Playwright suite's wall-clock
+  baseline at 3.7 (24 s / 32 specs); chromiumoxide should be
+  faster per-spec because it skips the `chromedriver` round-trip.
+- LLM oracle wired in; `frontends/leptos/PARITY-DIFFS.md`
+  documents the accepted-divergence baseline.
+- `package.json` etc. gone; `node_modules/` gone; repo no
+  longer carries a JS toolchain.
 
 ---
 

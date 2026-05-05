@@ -30,7 +30,11 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  // Exclude directories that have their own tsconfig with different settings
-  // (e.g. src/web/client needs DOM lib; e2e needs DOM for page.evaluate callbacks).
-  "exclude": ["src/web/client", "e2e"]
+  // Phase 3.7: `src/` was retired alongside the SolidJS frontend.
+  // The only TypeScript that survives is `e2e/` (Playwright specs),
+  // which has its own tsconfig with `lib: ["ESNext", "DOM"]`. This
+  // root tsconfig is no longer the entry point for any typecheck —
+  // see `e2e/tsconfig.json`. It stays alongside `package.json`
+  // until Phase 4 retires the JS toolchain wholesale.
+  "exclude": ["e2e", "node_modules"]
 }

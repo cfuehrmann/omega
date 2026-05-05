@@ -133,21 +133,16 @@ pub async fn make_session_dir(root: &Path) -> Result<SessionPaths> {
 /// Programmatic writes use plain JSON (a valid subset of JSONC).
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct SessionMetadata {
     /// Short human-readable label.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub name: Option<String>,
     /// Free-text description.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub description: Option<String>,
     /// Relative folder name of the session this one resumes.
     /// `continuationOf` is accepted as a legacy alias.
     #[serde(alias = "continuationOf", skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts-bindings", ts(optional))]
     pub resumed_from: Option<String>,
 }
 

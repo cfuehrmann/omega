@@ -1,12 +1,9 @@
-# Configuration for the omega-protocol workspace.
+# Workspace-wide cargo configuration.
 #
-# TS_RS_EXPORT_DIR: all ts-rs #[ts(export)] types write to rust/bindings/.
-#   relative = true  →  path resolved relative to this file's directory
-#   "../bindings"    →  rust/.cargo/../bindings  =  rust/bindings/
-#
-# TS_RS_LARGE_INT: map i64/u64/i128/u128 to TypeScript `number` (not bigint).
-#   All token counts, byte counts, and millisecond durations in omega-protocol
-#   are well within Number.MAX_SAFE_INTEGER; the TS client treats them as number.
+# Phase 3.7 (deletion pass) removed the `TS_RS_EXPORT_DIR` and
+# `TS_RS_LARGE_INT` env vars: ts-rs is gone, the `rust/bindings/`
+# directory is gone, and the TS bridge has retired with the
+# SolidJS frontend. See `rust-migration.md` §"Phase 3.7 — done".
 
 [build]
 # Promote all rustc-native warnings to errors so that `cargo build` fails on
@@ -14,7 +11,3 @@
 # (clippy::all, clippy::pedantic, etc.) are still only evaluated when
 # `cargo clippy` is invoked; -D warnings here covers the rustc-native subset.
 rustflags = ["-D", "warnings"]
-
-[env]
-TS_RS_EXPORT_DIR = { value = "../bindings", relative = true }
-TS_RS_LARGE_INT  = "number"
