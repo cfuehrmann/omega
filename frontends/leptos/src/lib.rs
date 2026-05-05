@@ -1,9 +1,4 @@
-//! Phase 3.9 — Leptos UI library crate (picker open/close + debug-panel gate).
-//!
-//! Splitting the previous `[[bin]]`-only crate into a lib + bin lets
-//! host-target snapshot tests pull in the components without
-//! depending on the binary entrypoint. The bin (`main.rs`) is now a
-//! 5-line shim around [`run`].
+//! Phase 3.10 — Leptos UI library crate.
 //!
 //! ## Architecture
 //!
@@ -13,12 +8,14 @@
 //!    ├── provide_context::<SessionListStore>  (picker state)
 //!    ├── provide_context::<WsClient>          (write-path handle)
 //!    ├── provide_context::<ContextModalState> (modal open/close)
+//!    ├── provide_context::<TextModalState>    (generic text overlay — 3.10)
 //!    ├── provide_context::<PickerOpen>        (picker open/close — 3.9)
 //!    ├── Effect: WsClient::new(url, conv, list).connect()
 //!    ├── SessionPicker     (3.2 + 3.5 resume button per row + 3.9 modal)
 //!    ├── ConversationFeed  (3.3 + 3.5 LlmCallBlock + 3.6 MarkdownBody)
 //!    ├── Composer          (3.4 + 3.9 Sessions button)
 //!    ├── ContextModal      (3.5 — full-viewport overlay)
+//!    ├── TextModal         (3.10 — generic text overlay)
 //!    └── [cfg(debug_assertions)] <details data-testid="leptos-debug-panel">
 //!         └── DebugView    (3.1 JSON dump — dropped from release builds 3.9)
 //! ```
@@ -44,6 +41,7 @@ pub mod picker;
 pub mod protocol;
 pub mod sessions;
 pub mod store;
+pub mod text_modal;
 pub mod ws;
 
 use leptos::prelude::*;
@@ -55,6 +53,7 @@ use crate::picker::{PickerOpen, SessionPicker};
 use crate::protocol::TurnState;
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
+use crate::text_modal::{TextModal, TextModalState};
 use crate::ws::{WsClient, ws_url_from_window};
 
 /// Mount the [`App`] component into the document body. Called from
@@ -70,10 +69,12 @@ pub fn App() -> impl IntoView {
     let store = SessionStore::new();
     let list_store = SessionListStore::new();
     let modal_state = ContextModalState::new();
+    let text_modal_state = TextModalState::new();
     let picker_open = PickerOpen::new();
     provide_context(store);
     provide_context(list_store);
     provide_context(modal_state);
+    provide_context(text_modal_state);
     provide_context(picker_open);
 
     let ws = WsClient::new(
@@ -130,6 +131,7 @@ pub fn App() -> impl IntoView {
             <ConversationFeed />
             <Composer />
             <ContextModal />
+            <TextModal />
             // Debug panel — compiled only in debug builds (cargo test,
             // `trunk serve` dev mode). `trunk build --release` strips
             // this block entirely so it never ships to production users.

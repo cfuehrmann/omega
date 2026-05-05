@@ -38,6 +38,7 @@ use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
 use omega_web::picker::PickerOpen;
 use omega_web::protocol::{SessionInfoPayload, TurnState};
+use omega_web::text_modal::TextModalState;
 
 // ---------------------------------------------------------------------------
 // Scrubbing
@@ -216,6 +217,8 @@ fn snap_event_user_message() {
 fn snap_event_assistant_plain_text() {
     let html = render(|| {
         let ev = ev_assistant("plain assistant text");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -225,6 +228,8 @@ fn snap_event_assistant_plain_text() {
 fn snap_event_assistant_markdown_code_block() {
     let html = render(|| {
         let ev = ev_assistant("Here is code:\n\n```rust\nlet x = 1;\n```\n");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -234,6 +239,8 @@ fn snap_event_assistant_markdown_code_block() {
 fn snap_event_assistant_markdown_list() {
     let html = render(|| {
         let ev = ev_assistant("Steps:\n\n- first\n- second\n- third\n");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -243,6 +250,8 @@ fn snap_event_assistant_markdown_list() {
 fn snap_event_assistant_markdown_table() {
     let html = render(|| {
         let ev = ev_assistant("| a | b |\n|---|---|\n| 1 | 2 |\n");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -252,6 +261,8 @@ fn snap_event_assistant_markdown_table() {
 fn snap_event_assistant_mermaid() {
     let html = render(|| {
         let ev = ev_assistant("```mermaid\ngraph LR\n  A --> B\n```\n");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -261,6 +272,8 @@ fn snap_event_assistant_mermaid() {
 fn snap_event_assistant_diff() {
     let html = render(|| {
         let ev = ev_assistant("```diff\n+ added\n- removed\n```\n");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -270,6 +283,8 @@ fn snap_event_assistant_diff() {
 fn snap_event_assistant_html_is_escaped() {
     let html = render(|| {
         let ev = ev_assistant("hello <script>alert(1)</script>");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     assert!(
@@ -338,6 +353,7 @@ fn snap_event_llm_call() {
     let html = render(|| {
         let ev = ev_llm_call();
         provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);

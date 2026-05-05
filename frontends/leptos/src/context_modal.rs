@@ -244,6 +244,21 @@ impl ContextModalState {
         self.0.set(Some(event));
     }
 
+    /// Open the modal for a single context hash (e.g. from an
+    /// `llm_response` `[context]` button).  `request_bytes` is set to
+    /// zero so the meta line omits the byte count.
+    pub fn open_hash(self, hash: String) {
+        self.0.set(Some(LlmCallEvent {
+            time: String::new().into(),
+            url: String::new(),
+            model: String::new(),
+            context_hashes: vec![hash],
+            cache_breakpoint_index: None,
+            request_bytes: 0,
+            request_summary: None,
+        }));
+    }
+
     /// Close the modal.
     pub fn close(self) {
         self.0.set(None);
@@ -423,7 +438,7 @@ pub fn ContextModal() -> impl IntoView {
                             data-testid="leptos-context-modal-close"
                             on:click=on_close
                         >
-                            "✕ close"
+                            "✕"
                         </button>
                     </header>
                     <div
@@ -433,11 +448,12 @@ pub fn ContextModal() -> impl IntoView {
                         {move || {
                             state.0.with(|opt| {
                                 opt.as_ref().map_or_else(String::new, |event| {
-                                    format!(
-                                        "{} hash(es) · {} bytes",
-                                        event.context_hashes.len(),
-                                        event.request_bytes,
-                                    )
+                                    let n = event.context_hashes.len();
+                                    if event.request_bytes > 0 {
+                                        format!("{n} hash(es) · {} bytes", event.request_bytes)
+                                    } else {
+                                        format!("{n} hash(es)")
+                                    }
                                 })
                             })
                         }}

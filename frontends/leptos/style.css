@@ -1100,3 +1100,142 @@ main > h1 {
   word-break: break-word;
   margin-top: 2px;
 }
+
+/* ==========================================================================
+ * Phase 3.10 TODO-A/B/C/D — label-row, text modal, status chip
+ * ========================================================================== */
+
+/* ── Label row (llm_response, llm_call, tool_call, tool_result) ──────────── */
+.block-label-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  /* Keep left-margin consistent with plain .block-label rows. */
+  margin-bottom: 2px;
+}
+
+/* Muted stop-reason appended inside the block-label span. */
+.block-stop-reason {
+  font-size: 11px;
+  font-weight: normal;
+  font-family: var(--font);
+  letter-spacing: 0;
+  opacity: 0.65;
+}
+
+/* Small pill buttons in the label row: [context], [payload], [thinking]. */
+.block-label-row-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.1s, border-color 0.1s, color 0.1s;
+}
+.block-label-row-btn:hover {
+  opacity: 1;
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+
+/* Tool id superscript (last 4 chars of tool_call id, TODO-C). */
+.block-tool-id {
+  font-size: 10px;
+  font-weight: normal;
+  vertical-align: super;
+  opacity: 0.6;
+  font-family: var(--font);
+}
+
+/* ── Generic text modal (TextModal component) ─────────────────────────────── */
+.leptos-text-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow: auto;
+}
+
+.leptos-text-modal {
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(860px, 92vw);
+  max-width: 64rem;
+  max-height: calc(100vh - 4rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.6);
+}
+
+.leptos-text-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.leptos-text-modal-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--ctp-sapphire);
+}
+
+.leptos-text-modal-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.leptos-text-modal-close:hover { border-color: var(--red); color: var(--red); }
+
+.leptos-text-modal-body {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--font);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+/* ── Status chip (fixed bottom-right, TODO-D) ─────────────────────────────── */
+.status-chip {
+  position: fixed;
+  bottom: 1rem;
+  right: 1.5rem;
+  z-index: 800;
+  font-size: 12px;
+  font-family: var(--font);
+  font-weight: bold;
+  padding: 3px 10px;
+  border-radius: 10px;
+  border: 1px solid currentColor;
+  user-select: none;
+  pointer-events: none;
+}
+.status-chip[data-status="ready"]     { color: var(--ctp-teal); }
+.status-chip[data-status="streaming"] { color: var(--llm); animation: pulse 1s infinite; }
+.status-chip[data-status="paused"]    { color: var(--ctp-yellow); }
+.status-chip[data-status="offline"]   { color: var(--red); }

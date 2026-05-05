@@ -47,6 +47,7 @@ use crate::event_view::{
 };
 use crate::markdown;
 use crate::store::SessionStore;
+use crate::text_modal::TextModalState;
 
 // ---------------------------------------------------------------------------
 // Mermaid + copy-button JS interop (Phase 3.6)
@@ -222,26 +223,7 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
         }
         .into_any(),
 
-        OmegaEvent::LlmResponse(e) => {
-            let text = e.text.unwrap_or_default();
-            let usage_line = format!(
-                "in: {}  out: {}  ({})",
-                e.usage.input_tokens, e.usage.output_tokens, e.stop_reason,
-            );
-            // The outer `<div data-testid="leptos-assistant-text">`
-            // wraps the MarkdownBody so existing Playwright specs
-            // that locate "the rendered assistant text" by testid
-            // still work after Phase 3.6 swapped the inner `<pre>`
-            // for the markdown surface.
-            view! {
-                <span class="block-label">"assistant"</span>
-                <div data-testid="leptos-assistant-text">
-                    <MarkdownBody text=text />
-                </div>
-                <span class="block-meta" data-testid="leptos-assistant-usage">{usage_line}</span>
-            }
-            .into_any()
-        }
+        OmegaEvent::LlmResponse(e) => view! { <LlmResponseBlock event=e /> }.into_any(),
 
         OmegaEvent::ToolCall(e) => {
             let arg_preview = serde_json::to_string(&e.input).unwrap_or_else(|_| "{}".into());
@@ -379,6 +361,97 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
             <span class="block-body">{format!("mode: {:?}", e.mode)}</span>
         }
         .into_any(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LLM-response block (Phase 3.10 TODO-A)
+// ---------------------------------------------------------------------------
+
+/// One `llm_response` row with four affordances:
+///
+/// 1. Stop reason inline in the label (`assistant  (end_turn)`).
+/// 2. `[context]` button — opens the context modal for the response's
+///    `context_hash`.
+/// 3. `[payload]` button — opens the text modal with the full event JSON.
+/// 4. `[thinking]` button — visible only when `thinking` is non-empty;
+///    opens the text modal with the thinking text.
+///
+/// Usage line shows all four token buckets including the cache breakdown
+/// required by TODO-A-5 (BUG-C regression detector).
+#[component]
+fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl IntoView {
+    let context_modal =
+        use_context::<ContextModalState>().expect("ContextModalState must be provided");
+    let text_modal =
+        use_context::<TextModalState>().expect("TextModalState must be provided");
+
+    // Extract all fields before any moves into closures.
+    let stop_reason = event.stop_reason.clone();
+    let context_hash = event.context_hash.clone();
+
+    let thinking_text = event.thinking.clone().unwrap_or_default();
+    let has_thinking = !thinking_text.is_empty();
+
+    let cache_read = event.usage.cache_read_input_tokens.unwrap_or(0);
+    let cache_write = event.usage.cache_creation_input_tokens.unwrap_or(0);
+    let usage_line = format!(
+        "in: {}  out: {}  cache_read: {}  cache_write: {}  ({})",
+        event.usage.input_tokens,
+        event.usage.output_tokens,
+        cache_read,
+        cache_write,
+        event.stop_reason,
+    );
+
+    // Serialise *before* the text move so the whole event is captured.
+    let event_json = serde_json::to_string_pretty(&event)
+        .unwrap_or_else(|_| "{}".to_owned());
+
+    // The outer `<div data-testid="leptos-assistant-text">` wraps
+    // MarkdownBody so existing Playwright selectors still work after
+    // Phase 3.6 swapped the inner `<pre>` for the markdown surface.
+    let text = event.text.unwrap_or_default();
+
+    view! {
+        <div class="block-label-row">
+            <span class="block-label">
+                "assistant"
+                <span class="block-stop-reason">
+                    {format!("  ({stop_reason})")}
+                </span>
+            </span>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-llm-response-context"
+                on:click=move |_| context_modal.open_hash(context_hash.clone())
+            >
+                "[context]"
+            </button>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-llm-response-payload"
+                on:click=move |_| text_modal.open("llm_response payload", event_json.clone())
+            >
+                "[payload]"
+            </button>
+            <Show when=move || has_thinking fallback=|| ().into_any()>
+                <button
+                    class="block-label-row-btn"
+                    data-testid="leptos-llm-response-thinking"
+                    on:click={
+                        let t = thinking_text.clone();
+                        move |_| text_modal.open("thinking", t.clone())
+                    }
+                >
+                    "[thinking]"
+                </button>
+            </Show>
+        </div>
+        <div data-testid="leptos-assistant-text">
+            <MarkdownBody text=text />
+        </div>
+        <span class="block-meta" data-testid="leptos-assistant-usage">{usage_line}</span>
     }
 }
 
