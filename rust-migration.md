@@ -35,7 +35,7 @@
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
 | 3.8 — visual parity | ✅ Done | `frontends/leptos/style.css` (980 lines, Catppuccin Mocha) ported from the deleted SolidJS theme; Trunk-hashed `<link rel="stylesheet">`; centred picker panel; modal overlay with backdrop |
 | 3.9 — visual / UX follow-ups | ✅ Done | Picker open/close modal + Sessions button; auto-close on Reset/Resume; per-event-type colour drift (`llm_call` sapphire, `llm_retry` peach, `turn_end` muted, pause teal, info overlay2, thinking teal); debug panel `cfg(debug_assertions)`-gated; specs migrated from debug-store to `data-connected` / `data-active-session-dir` DOM attrs; 5 new Playwright specs; 37/37 green |
-| 3.10 — UX fidelity pass | 🟡 In progress (TODO-E-1 + TODO-F done) | Picker auto-closes on turn start (composer's Continue button no longer hidden); picker default flipped to closed (refresh lands in conversation feed). PRECHECK uncovered BUG-C — see top of doc; remaining UX TODOs (G/A/B/C/D, optional E-2/E-3) parked behind BUG-C + BUG-D |
+| 3.10 — UX fidelity pass | 🟡 In progress (E-1+F+G+A done; B/C/D remaining) | TODO-G+A done (commit `0cd5d7a`): close-button `✕`, `llm_response` stop-reason inline, thinking/context/payload buttons, `cache_read`/`cache_write` usage line, shared `TextModal`. TODO-B/C/D remain. |
 | 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -3337,146 +3337,50 @@ feed and the metrics carry non-`None` `cleared_*` fields.
 
 ---
 
-### Phase 3.10 — remaining UX TODOs (G / A / B / C / D, optional E-2 / E-3)
+### Phase 3.10 — remaining UX TODOs (B / C / D, optional E-2 / E-3)
 
-These are unchanged from the original Phase 3.10 plan below; they
-resume after BUG-C and BUG-D land. The two TODOs that already
-landed — **TODO-E-1** (picker auto-close on turn start) and
-**TODO-F** (picker default closed; auto-open on connect-with-no-session)
-— are recorded in the partial-done block at the end of the Phase 3.10
-section.
+**Done (commit `0cd5d7a`):** TODO-G (close-button `✕`) and TODO-A
+(`llm_response` stop-reason inline, thinking/context/payload buttons,
+`cache_read`/`cache_write` usage line, shared `TextModal` component).
 
-**Recommended order (unchanged):**
+**Remaining order:**
 
-1. TODO-G — close-button label normalisation (1-line; do while
-   touching modal code for TODO-A).
-2. TODO-A — `llm_response` improvements. Build `TextModal` here;
-   reuse in B/C. Includes the `cache_read` / `cache_write` usage-line
-   addition, which is now a *production cost detector* given
-   BUG-C will be fixed.
-3. TODO-B — `llm_call` button rename + payload modal.
-4. TODO-C — `tool_call` / `tool_result` modal affordances + label
-   cleanup.
-5. TODO-D — status chip (additive; low breakage risk).
-6. TODO-E-2 / E-3 — `show usage` + `take it back` (optional).
+1. TODO-B — `llm_call` button rename + payload modal.
+2. TODO-C — `tool_call` / `tool_result` modal affordances + label cleanup.
+3. TODO-D — status chip (additive; low breakage risk).
+4. TODO-E-2 / E-3 — `show usage` + `take it back` (optional).
 
 Don't touch (still in force):
 
-- WS protocol or server-side Rust crates (BUG-C / BUG-D belong to the
-  *previous* session; Phase 3.10 resume is client-only).
+- WS protocol or server-side Rust crates.
 - `bench/`.
 - The `/leptos/` router alias — retired in Phase 4's final commit.
 
 ---
 
-## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 In progress (E-1 + F done; rest parked behind BUG-C / BUG-D)
+## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 In progress (E-1+F+G+A done; B/C/D remaining)
 
-**BUG-C + BUG-D resolved; resuming UX TODOs G/A/B/C/D in the next
-session.** The prompt-cache markers are now emitted on every Anthropic
-request (BUG-C), and `context_management` with `clear_tool_uses_20250919`
-is now sent on every agent turn (BUG-D). TODO-A-5’s `cache_read` /
-`cache_write` usage line then doubles as a production cost detector for
-any future cache regression.
-
-Operator UAT after Phase 3.9 found a significant cluster of
-missing/regressed features. All are UX / presentation issues on the
-Leptos surface; none require WS-protocol or server-side changes.
+**BUG-C + BUG-D resolved; G + A done; B/C/D in progress.**
+Prompt-cache markers are emitted on every Anthropic request (BUG-C).
+TODO-A-5’s `cache_read` / `cache_write` usage line is live as a
+production cost detector. Remaining TODOs (B/C/D) are pure client-side
+Leptos; none require WS-protocol or server-side changes.
 
 ---
 
-### PRECHECK — Prompt-caching regression
-
-**Concern (investigate before starting any other 3.10 work).**
-The operator has noticed unexpectedly high API costs since the
-cutover to Leptos. The primary suspect is that the `context_hash`
-chain is broken or the cache-breakpoint index is never being set,
-causing the LLM provider to re-process the full context on every
-turn instead of reusing the cached prefix.
-
-**What to verify:**
-
-1. **`LlmCallEvent.cache_breakpoint_index` is non-null on turns after
-   the first.** Open the Leptos UI, run two or three turns in the
-   same session. Look at the `llm_call` blocks in the feed — the
-   expanded `<details>` shows `cache_breakpoint_index`. If it reads
-   `none` on every call, caching is broken server-side.
-
-2. **`LlmResponseEvent.usage.cache_read_input_tokens` is non-zero
-   after the first turn.** The `usage_line` below each `llm_response`
-   block currently shows only `in: N  out: M  (stop_reason)`. Add
-   `cache_read: R  cache_write: W` to the usage line (TODO-A-5 below)
-   so every response visibly shows the Anthropic billing breakdown.
-   If `cache_read_input_tokens` stays zero across a multi-turn
-   conversation, caching is not working.
-
-3. **Cross-reference `TurnEnd.metrics.cache_read_tokens`.** The
-   `turn_end` block shows aggregate metrics; same check.
-
-4. **Compare token counts with the SolidJS baseline** (`git worktree
-   add /tmp/omega-ref 1e3bed4`). Run identical prompts on both;
-   if the Leptos session's `input_tokens` is systematically higher
-   than the SolidJS session's `cache_read_input_tokens` + small
-   delta, the breakpoint logic is regressed.
-
-**Most likely root causes if caching is broken:**
-
-- `omega-store` / `omega-agent`'s `cache_breakpoint_index` logic
-  depends on the session's persisted context chain being intact.
-  If the Leptos cutover accidentally changed the session-dir layout
-  or the event-log format, the breakpoint resolver might fall back
-  to `None`. Check `omega-agent` crate for the function that
-  computes `cache_breakpoint_index` — run its unit tests.
-- The `context_hash` fed back in `LlmCallEvent.context_hashes`
-  must match what the context-load path expects. Verify that the
-  hashes visible in the Leptos `llm_call` block match those in the
-  Anthropic API request's `cache_control` header positions.
-
-**This check is a gate: if caching is confirmed broken, fix it
-before the UX items below. A broken-cache regression is a
-production cost issue, not a cosmetic one.**
+> **PRECHECK — Resolved.** BUG-C confirmed and fixed in a prior
+> session; `cache_read` / `cache_write` are non-zero in the live feed
+> (TODO-A-5 surfaces them on every `llm_response` block).
 
 ---
 
-### TODO-A: `llm_response` — stop reason, thinking button, context + payload modals, usage breakdown
-
-**Observed:** `llm_response` blocks show a generic `assistant` label
-and a usage line. Missing:
-
-1. **Stop reason inline.** The label line should read
-   `assistant  (end_turn)` — stop reason in muted text immediately
-   to the right of the label, same line. SolidJS surfaced this
-   inside the block header.
-
-2. **Thinking button.** When `LlmResponseEvent.thinking` is non-empty,
-   a `[thinking]` button should appear that opens a modal showing the
-   full streamed thinking text. The `streaming_thinking` buffer
-   accumulates during the turn; on `LlmResponse`, the settled
-   `thinking` field holds the final value. A centred modal reusing the
-   `TextModal` pattern (see TODO-B-2) is fine. Button only appears when
-   `thinking.is_some() && !thinking.as_deref().unwrap_or("").is_empty()`.
-
-3. **`context` button.** Every `llm_response` has a `context_hash`
-   field. A `[context]` button should open the context modal for that
-   hash. SolidJS called this button `messages`; `context` is
-   consistent with the `llm_call` button. The `ContextModalState` in
-   3.5 is keyed on `LlmCallEvent`; generalise or add a second signal
-   that accepts a single hash string (the response context_hash).
-
-4. **`payload` button.** A `[payload]` button opens a modal showing the
-   full `LlmResponseEvent` as pretty-printed JSON (all fields). Reuse
-   `TextModal`.
-
-5. **Usage line: cache breakdown.** Extend the usage `block-meta` line:
-   `in: N  out: M  cache_read: R  cache_write: W  (stop_reason)`.
-   The fields `cache_read_input_tokens` and
-   `cache_creation_input_tokens` are already in `LlmResponseUsage`
-   (both `Option<u64>`); render `0` when `None`. This is the
-   cheapest possible caching-regression detector.
-
-**Button layout (same line as label, separated from the body):**
-```
-assistant  (end_turn)    [context]  [payload]  [thinking]
-```
+> **TODO-A — Done (commit `0cd5d7a`).** Stop-reason muted inline;
+> `[context]`, `[payload]`, `[thinking]` buttons on label row; usage
+> line extended with `cache_read`/`cache_write`; `TextModal` +
+> `TextModalState` in `text_modal.rs`; `ContextModalState::open_hash()`
+> for single-hash opens. **Note:** `llm_response` events have always
+> been rendered (labelled "assistant") — TODO-A fixed label detail
+> only, not a missing event type.
 
 ---
 
@@ -3659,37 +3563,15 @@ already exists from Phase 3.9; update `gotoPicker` to call it.
 
 ---
 
-### TODO-G: Close-button label normalisation
-
-**Observed:** picker close button is `✕`; context-modal close
-button is `close`. Inconsistent.
-
-**Fix:** use `✕` everywhere. Change `context_modal.rs`:
-```rust
-"close" → "✕"
-```
-If screen-reader accessibility is a concern, add `aria-label="close"`
-to both buttons and leave the visible glyph as `✕`.
+> **TODO-G — Done (commit `0cd5d7a`).** Context-modal close button
+> changed from `"✕ close"` to `"✕"`; `aria-label="close"` added.
+> Consistent with picker close button.
 
 ---
 
-### Phase 3.10 — partial-done record (E-1 + F)
+### Phase 3.10 — partial-done record (E-1 + F + G + A)
 
-**Scope.** Two of the eight planned TODOs landed in this session;
-the remaining six are parked behind BUG-C (prompt-cache markers) and
-BUG-D (tool-call/tool-result clearing audit) per operator direction
-— a broken-cache cost regression dwarfs every UX item below.
-
-**PRECHECK finding (driver of the parking decision).** Confirmed
-prompt caching is broken on the Rust port: `omega-core::anthropic.rs::build_request_body`
-emits zero `cache_control` markers. The TS agent at `8ae104f^:src/agent.ts`
-applied three (system block, last tool, last message-last-block).
-`LlmCallEvent.cache_breakpoint_index` is recorded server-side for
-observability only; it never reaches the wire format. Anthropic
-re-bills the full input prefix every turn. Filed as BUG-C above
-(top of doc). Operator constraint for this session prohibited
-server-side changes — BUG-C lands in the next session, before
-resuming UX work.
+**Scope.** Four of the eight planned TODOs are done.
 
 **TODO-E-1 — picker auto-close on turn start (critical).**
 Added an `Effect` in `App` that closes the picker whenever
@@ -3723,19 +3605,22 @@ picker explicitly after the WS-connected wait. The original
 the picker" — the precondition is that `gotoPicker` already opened
 it.
 
-**Out-of-scope decisions in this session.**
+**TODO-G — done (commit `0cd5d7a`).**
+Changed context-modal close button from `"✕ close"` to `"✕"`;
+`aria-label="close"` added. Consistent with picker close button.
 
-- TODO-G (close-button normalisation), TODO-A (`llm_response`
-  modals), TODO-B (`llm_call` button + payload modal), TODO-C
-  (`tool_call` / `tool_result` modals), TODO-D (status chip),
-  TODO-E-2 (`show usage`), TODO-E-3 (`take it back`) — not started.
-  Park behind BUG-C / BUG-D; resume in the session after.
-- Server-side fix for BUG-C — explicitly excluded by operator ("don't
-  touch server-side Rust crates"). The plan-internal PRECHECK
-  directive said "fix before UX items"; the operator constraint
-  superseded. BUG-C is now top of the next session's queue.
+**TODO-A — done (commit `0cd5d7a`).**
+Stop-reason muted inline on label row; `[context]`, `[payload]`,
+`[thinking]` buttons; usage line extended with
+`cache_read: R  cache_write: W`; `TextModal` + `TextModalState` built
+in `text_modal.rs`; `ContextModalState::open_hash()` added.
+**Note:** `llm_response` events have always been rendered (labelled
+"assistant"). A prior session note incorrectly suggested they were
+absent; TODO-A fixed label/button detail only, not a missing event type.
 
-**Acceptance criteria — verified for the partial.**
+**Remaining:** TODO-B, C, D, optional E-2/E-3.
+
+**Acceptance criteria — verified for E-1 + F.**
 
 - ✅ Picker auto-closes when turn starts (composer Continue button
   visible during `pause_requested` / `paused`).
@@ -3747,67 +3632,64 @@ it.
 - ✅ 37/37 Playwright specs pass.
 - ✅ `just rust-gate` + `just gate` green.
 
+**Acceptance criteria — verified for G + A (commit `0cd5d7a`).**
+
+- ✅ Context-modal close button shows `✕` (not `close`).
+- ✅ `llm_response` block: stop-reason inline, `[context]`/`[payload]`/
+  `[thinking]` buttons, `cache_read`/`cache_write` in usage line.
+- ✅ `TextModal` + `TextModalState` wired in `lib.rs`.
+- ✅ `ContextModalState::open_hash()` opens modal for a single hash.
+- ✅ 27/27 SSR snapshots updated + passing.
+- ✅ 37/37 Playwright specs pass.
+- ✅ `just rust-gate` + `just gate` green.
+
 ---
 
-### Suggested session / model / effort / prompt for Phase 3.10
+### Suggested next session — Phase 3.10 remainder (TODO-B / C / D)
 
-**Session:** `phase-3-10-ux-fidelity`
+**Model:** `claude-sonnet-4-6`. The remaining TODOs are well-scoped
+incremental changes to `feed.rs`: replace a `<details>` block with
+a modal (B), swap show-more toggles for modals and clean up labels
+(C), add a fixed status chip (D). `TextModal` is already built;
+reuse is mechanical. Sonnet is sufficient — switch to Opus only if
+cross-TODO coherence becomes an issue.
 
-**Model:** `claude-opus-4-7`. This phase requires sustained
-reasoning over a moderate-to-large code surface (`feed.rs` is
-800+ lines; the modal pattern touches `context_modal.rs` +
-`lib.rs` + CSS). Several TODOs interact (the generic `TextModal`
-suggested in TODO-A/B/C, the picker-default change in TODO-F that
-breaks existing specs, the critical pausing fix in TODO-E-1).
-Sonnet handles any single TODO in isolation; Opus is warranted for
-the cross-TODO coherence and the open-ended PRECHECK.
+**Effort:** medium. Pure client-side Leptos. The main coordination
+point is Playwright spec updates when `<details>` (TODO-B) and
+show-more (TODO-C) are removed — update specs in the same commit as
+the code change so gates stay green throughout.
 
-**Effort:** `high`. The PRECHECK is diagnostic work with unclear
-outcome. TODO-E-1 (Continue hidden by picker) is a critical
-regression needing careful `Effect` design to avoid reactivity
-loops. TODO-A through TODO-C each require new modal infrastructure.
-This is 6–8 hours of careful work.
-
-**Recommended order within the session:**
-1. **PRECHECK** — verify caching. If broken, fix + gate before
-   continuing.
-2. **TODO-E-1** — picker auto-close on turn start (critical; tiny
-   change, high operator impact).
-3. **TODO-F** — picker-closed-on-refresh + update `gotoPicker` in
-   specs.
-4. **TODO-G** — close button normalisation (1-line; do while touching
-   modal code for TODO-A).
-5. **TODO-A** — `llm_response` improvements. Build `TextModal` here;
-   reuse in B/C.
-6. **TODO-B** — `llm_call` button rename + payload modal.
-7. **TODO-C** — `tool_call` / `tool_result` modal affordances + label
-   cleanup.
-8. **TODO-D** — status chip (additive; low breakage risk).
-9. **TODO-E-2/3** — `show usage` + `take it back` (optional).
+**Order:** B → C → D. After each: `just rust-gate` green. After all
+three: `just gate` green.
 
 **Prompt:**
 
-> Implement Phase 3.10 of the Leptos migration as decomposed in
-> rust-migration.md §"Phase 3.10 — UX fidelity pass". Read the
-> §"Phase 3.9 — done" record above it for context on what changed
-> in 3.9.
+> Implement Phase 3.10 UX TODOs B, C, D in that order, per the
+> detail blocks in rust-migration.md. Read the full TODO-B through
+> TODO-D blocks before writing any code.
 >
-> Start with PRECHECK (prompt-caching regression check) before any
-> UI work — report the finding before proceeding.
+> After each TODO: `just rust-gate` must be green before moving on.
+> After all three: `just gate` must be green (update any Playwright
+> specs whose assertions break due to `<details>`→modal and
+> show-more→modal migrations in B and C).
 >
-> Then work through TODO-E-1 (picker auto-close on turn start,
-> critical bug), TODO-F (picker closed on refresh), TODO-G (close
-> button normalisation), TODO-A (llm_response modals + thinking
-> button + usage line), TODO-B (llm_call button / payload modal),
-> TODO-C (tool_call / tool_result modals), TODO-D (status chip), in
-> that order. TODO-E-2 and TODO-E-3 are optional if time allows.
+> Constraints: Leptos client only (`frontends/leptos/`). No
+> server-side changes, no WS protocol changes, no `bench/`, no
+> `/leptos/` router alias.
 >
-> Don't touch: WS protocol or server-side Rust crates; bench/;
-> the /leptos/ router alias.
+> `TextModal` (`text_modal.rs`) is already built from TODO-A —
+> reuse it for all payload/details modals in B and C. Do not rebuild
+> it.
 >
-> After each TODO: `just rust-gate` + `just gate` must stay green.
-> When done, add a "Phase 3.10 — done (concise record)" to
-> rust-migration.md and mark Phase 3.10 ✅ in the status tables.
+> When done, record each TODO as done in the Phase 3.10 section of
+> rust-migration.md and mark Phase 3.10 ✅ in the status tables if
+> all TODOs are complete. Then note Phase 4 (chromiumoxide + LLM
+> oracle) as the next session's work.
+
+**Follow-up — Phase 4:** the next major session after Phase 3.10
+completes is **Phase 4 — `chromiumoxide` + LLM oracle**: retire
+Playwright, replace with a pure-Rust browser harness, delete the JS
+toolchain. See the Phase 4 section below for architecture notes.
 
 ---
 
