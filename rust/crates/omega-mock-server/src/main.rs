@@ -81,7 +81,14 @@ async fn main() -> std::io::Result<()> {
         "mock-omega-server: main on {main_addr}, control on {ctrl_addr}, fake LLM on {fake_url}"
     );
 
-    let provider = Arc::new(AnthropicProvider::new("sk-mock-test").with_base_url(fake_url));
+    let provider = Arc::new(
+        AnthropicProvider::new("sk-mock-test")
+            .with_base_url(fake_url)
+            // Mirror the production betas so the fake exercises the full
+            // request path including context_management (BUG-D).
+            .with_beta("compact-2026-01-12")
+            .with_beta("context-management-2025-06-27"),
+    );
     let state = omega_server::AppState::new(provider, args.sessions_root, args.public_dir)
         .with_leptos_dir(args.leptos_dir);
 

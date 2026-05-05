@@ -267,8 +267,12 @@ async fn handle_messages(State(state): State<FakeState>, body: axum::body::Bytes
 
 #[derive(Deserialize)]
 struct AnthropicRequest {
+    /// `system` is now an array of blocks (`[{type, text, cache_control?}]`)
+    /// since BUG-C stamped cache markers on the system prompt.  Accept
+    /// `Value` so we tolerate both the old plain-string shape (legacy tests)
+    /// and the new array shape without deserialisation failures.
     #[serde(default)]
-    system: Option<String>,
+    system: Option<Value>,
     #[serde(default)]
     messages: Vec<RawMessage>,
 }
@@ -280,8 +284,25 @@ struct RawMessage {
 }
 
 fn project_call(req: &AnthropicRequest) -> CapturedCall {
-    let system_kind = if req
-        .system
+    // Extract the first text-block content from the system field.
+    // Handles both:
+    //   - old shape: system = "plain string"
+    //   - new shape: system = [{type:"text",text:"billing_header"},{type:"text",text:"actual_prompt",...}]
+    // For the resumption-detection heuristic we want the actual prompt text
+    // (last text block), not the billing header (first block).
+    let system_text: Option<String> = match &req.system {
+        None => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Array(blocks)) => {
+            // Last text block carries the real system prompt.
+            blocks
+                .iter()
+                .rev()
+                .find_map(|b| b.get("text").and_then(Value::as_str).map(str::to_owned))
+        }
+        Some(other) => other.as_str().map(str::to_owned),
+    };
+    let system_kind = if system_text
         .as_deref()
         .is_some_and(|s| s.starts_with("Summarise the coding session"))
     {

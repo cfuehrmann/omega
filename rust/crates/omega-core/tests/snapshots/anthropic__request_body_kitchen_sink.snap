@@ -111,6 +111,9 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
       {
         "content": [
           {
+            "cache_control": {
+              "type": "ephemeral"
+            },
             "content": "4",
             "tool_use_id": "[id_1]",
             "type": "tool_result"
@@ -121,7 +124,19 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
     ],
     "model": "claude-opus-4-6",
     "stream": true,
-    "system": "You are a helpful assistant.",
+    "system": [
+      {
+        "text": "x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;",
+        "type": "text"
+      },
+      {
+        "cache_control": {
+          "type": "ephemeral"
+        },
+        "text": "You are a helpful assistant.",
+        "type": "text"
+      }
+    ],
     "temperature": 0.5,
     "tools": [
       {
@@ -144,6 +159,9 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
         "name": "calculator"
       },
       {
+        "cache_control": {
+          "type": "ephemeral"
+        },
         "description": "Reads a file from disk.",
         "input_schema": {
           "properties": {

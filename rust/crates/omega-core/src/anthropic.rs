@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::provider::{AgentItemStream, Provider};
-use crate::types::{AgentItem, LlmError, LlmRequest, Message, ToolDefinition};
+use crate::types::{AgentItem, ContentBlock, LlmError, LlmRequest, Message, Role, ToolDefinition};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -401,18 +401,216 @@ impl BlockAccum {
 // Wire-format DTOs (private)
 // ---------------------------------------------------------------------------
 
+// --- Prompt-cache marker (BUG-C) ---
+
+/// Serialises to `{"type":"ephemeral"}` — the Anthropic prompt-cache
+/// breakpoint marker.  Placing this on the last system block, the last tool
+/// definition, and the last block of the last message instructs Anthropic to
+/// anchor a 5-minute prefix cache at those positions.
+#[derive(Serialize, Clone, Copy)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum CacheControl {
+    Ephemeral,
+}
+
 // --- Request body ---
+
+/// A single system-prompt block in the `system` array.
+/// The first block is an uncached billing-attribution header (no
+/// `cache_control`); the second is the full system prompt with
+/// `cache_control: ephemeral` so it is cached after the first call.
+#[derive(Serialize)]
+struct SystemBlock<'a> {
+    #[serde(rename = "type")]
+    ty: &'static str, // always "text"
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+/// Anthropic wire-format for a single content block.  Mirrors
+/// [`ContentBlock`] but adds an optional `cache_control` field so we can
+/// stamp the last block of the last message without touching the shared type.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WireBlock<'a> {
+    Text {
+        text: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    Thinking {
+        thinking: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    ToolUse {
+        id: &'a str,
+        name: &'a str,
+        input: &'a Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    ToolResult {
+        tool_use_id: &'a str,
+        content: &'a str,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+}
+
+fn to_wire_block(block: &ContentBlock, cache_control: Option<CacheControl>) -> WireBlock<'_> {
+    match block {
+        ContentBlock::Text { text } => WireBlock::Text {
+            text,
+            cache_control,
+        },
+        ContentBlock::Thinking {
+            thinking,
+            signature,
+        } => WireBlock::Thinking {
+            thinking,
+            signature: signature.as_deref(),
+            cache_control,
+        },
+        ContentBlock::ToolUse { id, name, input } => WireBlock::ToolUse {
+            id,
+            name,
+            input,
+            cache_control,
+        },
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => WireBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error: *is_error,
+            cache_control,
+        },
+    }
+}
+
+/// Anthropic wire message with `cache_control` stamped on the last block
+/// of the last message in the conversation.
+#[derive(Serialize)]
+struct WireMessage<'a> {
+    role: Role,
+    content: Vec<WireBlock<'a>>,
+}
+
+/// Anthropic wire tool definition with `cache_control` on the last entry.
+#[derive(Serialize)]
+struct WireTool<'a> {
+    name: &'a str,
+    description: &'a str,
+    input_schema: &'a Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+/// Build the `system` array: billing header (uncached) + system prompt (cached).
+///
+/// The billing-attribution header mirrors the `billingHeaderText` block the
+/// TypeScript agent sends (`src/agent.ts` before the 3.7 deletion).  Anthropic's
+/// infrastructure uses it for client identification; it must not carry
+/// `cache_control` (it is intentionally excluded from the cache prefix).
+const BILLING_HEADER: &str =
+    "x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;";
+
+fn build_system_blocks(system: &str) -> Vec<SystemBlock<'_>> {
+    vec![
+        SystemBlock {
+            ty: "text",
+            text: BILLING_HEADER,
+            cache_control: None, // intentionally uncached
+        },
+        SystemBlock {
+            ty: "text",
+            text: system,
+            cache_control: Some(CacheControl::Ephemeral),
+        },
+    ]
+}
+
+/// Build the wire-format messages with `cache_control: ephemeral` stamped on
+/// the last block of the last message.  All other blocks have no marker.
+///
+/// Mirrors `addCacheControlToLastMessage` in the deleted
+/// `src/agent.ts::Agent.sendMessage`.
+fn build_wire_messages(messages: &[Message]) -> Vec<WireMessage<'_>> {
+    let last_msg_idx = messages.len().saturating_sub(1);
+    messages
+        .iter()
+        .enumerate()
+        .map(|(mi, msg)| {
+            let is_last_msg = mi == last_msg_idx && !messages.is_empty();
+            let last_block_idx = msg.content.len().saturating_sub(1);
+            let content = msg
+                .content
+                .iter()
+                .enumerate()
+                .map(|(bi, block)| {
+                    let cache = if is_last_msg && bi == last_block_idx && !msg.content.is_empty() {
+                        Some(CacheControl::Ephemeral)
+                    } else {
+                        None
+                    };
+                    to_wire_block(block, cache)
+                })
+                .collect();
+            WireMessage {
+                role: msg.role,
+                content,
+            }
+        })
+        .collect()
+}
+
+/// Build the wire-format tools with `cache_control: ephemeral` on the last
+/// entry.  All other tools have no marker.
+///
+/// Mirrors the `cachedTools` construction in the deleted
+/// `src/agent.ts::Agent.sendMessage`.
+fn build_wire_tools(tools: &[ToolDefinition]) -> Vec<WireTool<'_>> {
+    let last_idx = tools.len().saturating_sub(1);
+    tools
+        .iter()
+        .enumerate()
+        .map(|(i, tool)| WireTool {
+            name: &tool.name,
+            description: &tool.description,
+            input_schema: &tool.input_schema,
+            cache_control: if !tools.is_empty() && i == last_idx {
+                Some(CacheControl::Ephemeral)
+            } else {
+                None
+            },
+        })
+        .collect()
+}
 
 #[derive(Serialize)]
 struct AnthropicRequestBody<'a> {
     model: &'a str,
     max_tokens: u32,
     stream: bool,
+    /// System-prompt blocks.  `None` when the request has no system prompt.
+    /// When present: `[billing_header (uncached), system_prompt (cached)]`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
-    messages: &'a [Message],
-    #[serde(skip_serializing_if = "<[ToolDefinition]>::is_empty")]
-    tools: &'a [ToolDefinition],
+    system: Option<Vec<SystemBlock<'a>>>,
+    /// Conversation history with `cache_control` on the last block of the
+    /// last message — anchors the prefix cache at the current context tail.
+    messages: Vec<WireMessage<'a>>,
+    /// Tool definitions with `cache_control` on the last entry — anchors all
+    /// tool schemas into the prefix cache.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<WireTool<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -460,9 +658,9 @@ fn build_request_body(req: &LlmRequest) -> AnthropicRequestBody<'_> {
         model: &req.model,
         max_tokens: req.config.max_tokens,
         stream: true,
-        system: req.system.as_deref(),
-        messages: &req.messages,
-        tools: &req.tools,
+        system: req.system.as_deref().map(build_system_blocks),
+        messages: build_wire_messages(&req.messages),
+        tools: build_wire_tools(&req.tools),
         temperature: req.config.temperature,
         thinking,
         output_config,

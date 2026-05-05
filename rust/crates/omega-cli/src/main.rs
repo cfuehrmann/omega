@@ -175,7 +175,11 @@ async fn run(
         AnthropicProvider::new(api_key).with_base_url(u)
     } else {
         AnthropicProvider::new(api_key)
-    };
+    }
+    // BUG-D: context-management betas required for `clear_tool_uses_20250919`,
+    // `clear_thinking_20251015`, and `compact_20260112` edit types.
+    .with_beta("compact-2026-01-12")
+    .with_beta("context-management-2025-06-27");
     // OMEGA_RETRY_INITIAL_MS: test-only knob for the initial retry
     // backoff. Production uses the default (500 ms) — keeping retry
     // tests bounded to single-digit milliseconds.

@@ -20,8 +20,8 @@
 | 1e — `omega-server` (WebSocket) | ✅ Done | tokio/axum server, session mgmt, WS streaming, HTTP static serving |
 | **BUG-A** — adaptive thinking + effort | ✅ Done | Wire `thinking: adaptive` + `output_config.effort` into every Anthropic call |
 | **BUG-B** — system prompt missing LLM Provider section | ✅ Done | Add `platform.claude.com/llms.txt` guidance to `system_prompt.rs` |
-| **BUG-C** — prompt-cache markers missing in Anthropic request | 🔴 **Top priority** | Apply `cache_control: {type: ephemeral}` on system / last tool / last message; surface `cache_read` / `cache_write` in UI usage line |
-| **BUG-D** — tool-call/tool-result clearing not implemented | 🔴 Top priority | TS agent pruned old tool I/O at compaction thresholds; Rust agent docstring says deferred. Audit + implement (or confirm in place) right after BUG-C |
+| **BUG-C** — prompt-cache markers missing in Anthropic request | ✅ Done | Apply `cache_control: {type: ephemeral}` on system / last tool / last message; surface `cache_read` / `cache_write` in UI usage line |
+| **BUG-D** — tool-call/tool-result clearing not implemented | ✅ Done | TS agent pruned old tool I/O at compaction thresholds; Rust agent docstring says deferred. Audit + implement (or confirm in place) right after BUG-C |
 | 1f — Bridge (`ts-rs`) | ✅ Done | 35 `.d.ts` files generated from Rust types; TS web client type-checked against them |
 | 2 — Rust as primary driver | ✅ Done | TS UI talks to Rust backend; TS CLI retired |
 | 2d — `session_renamed` envelope | ✅ Done | Server emits `session_renamed` after rename; rename UI updates without reload |
@@ -3211,6 +3211,42 @@ production-side cost detector — they read the same `LlmResponseUsage`
 fields that already exist and are populated correctly even when
 caching is off (zero values).
 
+### BUG-C — done ✅
+
+**Shipped.** `omega-core/src/anthropic.rs` — `build_request_body` now
+emits three `cache_control: {"type":"ephemeral"}` markers on every
+AnthropicRequest:
+
+1. **System** — `system` field changed from `Option<&str>` to
+   `Option<Vec<SystemBlock>>`: a billing-attribution header block
+   (no cache_control, matches TS `billingHeaderText`) plus the
+   actual system prompt block (with `cache_control: Ephemeral`).
+2. **Last tool** — `tools` field becomes `Vec<WireTool>` via
+   `build_wire_tools`; the last entry carries `cache_control:
+   Ephemeral`.
+3. **Last message last block** — `messages` field becomes
+   `Vec<WireMessage>` via `build_wire_messages`; the last block of
+   the last message carries `cache_control: Ephemeral`.
+
+All Anthropic-specific wire types (`CacheControl`, `SystemBlock`,
+`WireBlock`, `WireMessage`, `WireTool`) are private to `anthropic.rs`.
+Shared types (`ContentBlock`, `ToolDefinition` in `types.rs`) are
+unchanged — zero construction-site churn.
+
+`omega-test-fixtures/src/lib.rs`: `AnthropicRequest.system` widened
+from `Option<String>` to `Option<Value>` so the mock SSE fake parses
+the new array-form system field without returning `400`. `project_call`
+uses the last `text` block in the array as the resumption heuristic.
+
+**Tests added:**
+- `omega-core/tests/anthropic.rs::request_body_has_three_cache_control_markers`
+  — RED before fix, GREEN after; asserts all three positions.
+- `omega-core/tests/snapshots/anthropic__request_body_kitchen_sink.snap`
+  updated: `system` is now an array, `read_file` tool has
+  `cache_control`, last message block has `cache_control`.
+
+**Bar:** `just rust-gate` ✅, `just gate` 37/37 ✅.
+
 ---
 
 ### BUG-D — Tool-call / tool-result clearing not implemented 🔴 Top priority
@@ -3256,6 +3292,49 @@ integration test that runs a 30-turn fake-tool sequence and asserts
 linearly with tool-call count; clearing events surface in the UI
 feed and the metrics carry non-`None` `cleared_*` fields.
 
+### BUG-D — done ✅
+
+**Audit result.** The gap is confirmed:
+- `omega-agent/src/agent.rs`: `context_management: None` on every
+  `LlmRequest` — server-side clearing was never enabled.
+- Per the deleted `src/agent.ts` at `8ae104f^`: clearing is **server-side
+  only** (Anthropic docs state the client keeps its full history; the
+  API edits its server-side prompt). Client-side history pruning is
+  explicitly NOT needed.
+- The `LlmResponseEvent.cleared_tool_uses` / `cleared_input_tokens`
+  fields were already captured (the `applied_edits` parser in
+  `anthropic.rs` was correct) but Anthropic never fired the edits
+  because `context_management` was absent from the request.
+
+**Fix shipped in two layers:**
+
+1. `omega-agent/src/agent.rs` — `build_context_management()` added;
+   wired as `context_management: Some(build_context_management())` in
+   the main agentic loop. Three edit types (matching TS defaults):
+   - `clear_thinking_20251015 keep=all` (preserves cache prefix)
+   - `clear_tool_uses_20250919` (trigger=100K tokens, keep=10 tool_uses,
+     clear_at_least=15K tokens, clear_tool_inputs=true)
+   - `compact_20260112` (trigger=750K tokens, with COMPACTION_INSTRUCTIONS)
+
+2. `omega-server/src/main.rs`, `omega-cli/src/main.rs`,
+   `omega-mock-server/src/main.rs` — `AnthropicProvider` construction
+   extended with `.with_beta("compact-2026-01-12")` +
+   `.with_beta("context-management-2025-06-27")`. Required for the
+   `compact_20260112`, `clear_tool_uses_20250919`, and
+   `clear_thinking_20251015` edit types to be accepted by the API.
+
+**Tests added:**
+- `omega-agent/tests/internal.rs::context_management_present_in_every_llm_request`
+  — RED before fix (asserts `context_management.is_some()` fails);
+  GREEN after (8 tool-turn session, every captured request has the
+  `clear_tool_uses_20250919` edit).
+- `omega-agent/tests/internal.rs::audit_request_bytes_grow_without_context_management`
+  — always GREEN (documents monotonic `request_bytes` growth with
+  MockProvider — MockProvider doesn’t fire server-side clearing;
+  production plateau effect requires real token counts > threshold).
+
+**Bar:** `just rust-gate` ✅, `just gate` 37/37 ✅.
+
 ---
 
 ### Phase 3.10 — remaining UX TODOs (G / A / B / C / D, optional E-2 / E-3)
@@ -3291,6 +3370,13 @@ Don't touch (still in force):
 ---
 
 ## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 In progress (E-1 + F done; rest parked behind BUG-C / BUG-D)
+
+**BUG-C + BUG-D resolved; resuming UX TODOs G/A/B/C/D in the next
+session.** The prompt-cache markers are now emitted on every Anthropic
+request (BUG-C), and `context_management` with `clear_tool_uses_20250919`
+is now sent on every agent turn (BUG-D). TODO-A-5’s `cache_read` /
+`cache_write` usage line then doubles as a production cost detector for
+any future cache regression.
 
 Operator UAT after Phase 3.9 found a significant cluster of
 missing/regressed features. All are UX / presentation issues on the

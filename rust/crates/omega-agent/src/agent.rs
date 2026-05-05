@@ -56,6 +56,91 @@ use crate::system_prompt::build_system_prompt;
 
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
+// ---------------------------------------------------------------------------
+// Context-management configuration (BUG-D fix)
+//
+// Mirrors `config.ts:toolResultClear*` + `autoCompactThreshold` from the
+// deleted TypeScript agent (src/agent.ts, pre-3.7 at 8ae104f^).
+// ---------------------------------------------------------------------------
+
+/// Input-token threshold that triggers the `clear_tool_uses_20250919` edit.
+/// Matches `toolResultClearTrigger = 100_000` in the TS config.
+const TOOL_RESULT_CLEAR_TRIGGER: u64 = 100_000;
+
+/// Number of most-recent tool-use rounds to keep after clearing.
+/// Matches `toolResultClearKeep = 10` in the TS config.
+const TOOL_RESULT_CLEAR_KEEP: u64 = 10;
+
+/// Minimum token savings required before a clearing fires.
+/// Matches `toolResultClearAtLeast = 15_000` in the TS config.
+const TOOL_RESULT_CLEAR_AT_LEAST: u64 = 15_000;
+
+/// Input-token threshold that triggers full context compaction.
+/// Matches `autoCompactThreshold = 750_000` in the TS config.
+const AUTO_COMPACT_THRESHOLD: u64 = 750_000;
+
+/// Compaction summary instructions forwarded verbatim to the model.
+/// Mirrors `COMPACTION_INSTRUCTIONS` in the deleted `src/config.ts`.
+const COMPACTION_INSTRUCTIONS: &str = "You have written a partial transcript for \
+the initial task above. Please write a summary of the transcript. The purpose of \
+this summary is to provide continuity so you can continue to make progress towards \
+solving the task in a future context, where the raw history above may not be \
+accessible and will be replaced with this summary.\n\nFor a coding session, focus \
+especially on what a developer would need to continue the work:\n\n\
+1. **Current state** (snapshot, not narrative): what is true *right now* — \
+which files were changed and how they currently stand, what \
+constants/config values are currently set to, which plan items are done \
+vs. pending.\n\n\
+2. **Next step**: the single most important thing to do next, as specifically \
+as possible (e.g. exact file, function, test name).\n\n\
+3. **Key decisions**: conclusions that should not be re-litigated — design \
+choices made, approaches confirmed or rejected, and *why*.\n\n\
+4. **Learnings / what not to do**: anything tried that failed and why, so the \
+same dead ends are not re-explored.\n\n\
+5. **Technical anchors**: specific file paths, function/type/constant names, \
+commit hashes, and test names relevant to continuing the work. Prefer \
+current values over historical change narratives.\n\n\
+You must wrap your summary in a <summary></summary> block.";
+
+/// Build the `context_management` payload sent on every agent turn.
+///
+/// Three edits in priority order (Anthropic requires this exact ordering
+/// when `clear_thinking_20251015` is present):
+///
+/// 1. `clear_thinking_20251015 keep=all` — keep all thinking blocks to
+///    preserve the prompt-cache prefix.  Clearing them (the API default)
+///    busts the cache at each clearing point, causing expensive rewrites.
+/// 2. `clear_tool_uses_20250919` — when input tokens exceed
+///    `TOOL_RESULT_CLEAR_TRIGGER`, discard all but the last
+///    `TOOL_RESULT_CLEAR_KEEP` tool-use rounds (server-side only — the
+///    local history is unaffected per Anthropic's API docs).
+/// 3. `compact_20260112` — full context compaction at
+///    `AUTO_COMPACT_THRESHOLD` tokens.
+///
+/// Mirrors `context_management` in `src/agent.ts:1288–1316` (pre-3.7).
+fn build_context_management() -> serde_json::Value {
+    serde_json::json!({
+        "edits": [
+            {
+                "type": "clear_thinking_20251015",
+                "keep": "all"
+            },
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": { "type": "input_tokens", "value": TOOL_RESULT_CLEAR_TRIGGER },
+                "keep": { "type": "tool_uses", "value": TOOL_RESULT_CLEAR_KEEP },
+                "clear_at_least": { "type": "input_tokens", "value": TOOL_RESULT_CLEAR_AT_LEAST },
+                "clear_tool_inputs": true
+            },
+            {
+                "type": "compact_20260112",
+                "trigger": { "type": "input_tokens", "value": AUTO_COMPACT_THRESHOLD },
+                "instructions": COMPACTION_INSTRUCTIONS
+            }
+        ]
+    })
+}
+
 /// Maximum invalid-tool-JSON nudges per `send_message` call before we
 /// give up and end the turn.  Mirrors the TS agent's
 /// `feedbackOnExhaustion` cap.
@@ -545,7 +630,7 @@ impl Agent {
                             .to_owned(),
                         ),
                     },
-                    context_management: None,
+                    context_management: Some(build_context_management()),
                 };
 
                 // --- Emit LlmCall ------------------------------------------

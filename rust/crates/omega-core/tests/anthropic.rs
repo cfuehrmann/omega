@@ -1204,6 +1204,122 @@ async fn applied_edits_other_type_leaves_cleared_fields_none() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// BUG-C: prompt-cache markers (RED test — proves zero markers in current code)
+// ---------------------------------------------------------------------------
+
+/// Assert that the Anthropic wire body carries exactly three
+/// `cache_control: {"type":"ephemeral"}` markers:
+///
+/// 1. The **last system block** — anchors the full system prompt into cache.
+/// 2. The **last tool definition** — anchors all tool schemas into cache.
+/// 3. The **last block of the last message** — anchors the full conversation
+///    prefix so Anthropic can reuse the cached input prefix on subsequent turns.
+///
+/// This test was written RED (failing) before the BUG-C fix and is kept as
+/// a regression guard.  It proves that all three markers survive the round-trip
+/// through `build_request_body` → `reqwest` → `wiremock`.
+#[tokio::test]
+async fn request_body_has_three_cache_control_markers() {
+    let server = MockServer::start().await;
+    mount_happy(&server).await;
+
+    let req = LlmRequest {
+        model: "claude-opus-4-6".to_owned(),
+        system: Some("You are helpful.".to_owned()),
+        messages: vec![
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: "What is 2+2?".to_owned(),
+                }],
+            },
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: "tu_01".to_owned(),
+                    name: "calculator".to_owned(),
+                    input: json!({"a": 2, "b": 2}),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "tu_01".to_owned(),
+                    content: "4".to_owned(),
+                    is_error: false,
+                }],
+            },
+        ],
+        tools: vec![
+            ToolDefinition {
+                name: "calculator".to_owned(),
+                description: "Basic arithmetic.".to_owned(),
+                input_schema: json!({"type":"object","properties":{}}),
+            },
+            ToolDefinition {
+                name: "read_file".to_owned(),
+                description: "Read a file.".to_owned(),
+                input_schema: json!({"type":"object","properties":{}}),
+            },
+        ],
+        config: ModelConfig::default(),
+        context_management: None,
+    };
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    collect_ok(&provider, req).await;
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("wiremock recorded requests");
+    let wire: Value = serde_json::from_slice(&received[0].body).expect("wire body JSON");
+
+    let ephemeral = json!({"type": "ephemeral"});
+
+    // 1. System — last block must have cache_control.
+    let system = wire["system"]
+        .as_array()
+        .expect("system must be an array (not a bare string)");
+    assert!(!system.is_empty(), "system array must not be empty");
+    assert_eq!(
+        system.last().unwrap()["cache_control"],
+        ephemeral,
+        "last system block missing cache_control: {wire}"
+    );
+
+    // 2. Tools — last tool must have cache_control.
+    let tools = wire["tools"].as_array().expect("tools array");
+    assert!(!tools.is_empty(), "tools array must not be empty");
+    assert_eq!(
+        tools.last().unwrap()["cache_control"],
+        ephemeral,
+        "last tool definition missing cache_control: {wire}"
+    );
+
+    // 3. Messages — last block of last message must have cache_control.
+    let messages = wire["messages"].as_array().expect("messages array");
+    assert!(!messages.is_empty(), "messages array must not be empty");
+    let last_msg = messages.last().unwrap();
+    let last_content = last_msg["content"].as_array().expect("content array");
+    assert!(
+        !last_content.is_empty(),
+        "last message content must not be empty"
+    );
+    assert_eq!(
+        last_content.last().unwrap()["cache_control"],
+        ephemeral,
+        "last message block missing cache_control: {wire}"
+    );
+
+    // Non-last tools and non-last message blocks must NOT have cache_control.
+    assert!(
+        tools[0].get("cache_control").is_none(),
+        "non-last tool must not have cache_control"
+    );
+}
+
 /// Plain text-only response must NOT emit a `Compacted` event.
 /// Counter-test for `compaction_block_yields_compacted_then_llm_response` —
 /// catches a mutant that hard-codes `compaction_seen = true`.

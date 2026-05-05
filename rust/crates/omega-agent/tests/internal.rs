@@ -354,3 +354,146 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
         "nudge user message must appear in the re-sent request"
     );
 }
+
+// ---------------------------------------------------------------------------
+// BUG-D: tool-call / tool-result clearing audit + fix guard
+// ---------------------------------------------------------------------------
+
+/// Helper: build a single tool-use transcript that uses `run_command` with
+/// `echo` so the tool round-trip completes quickly in tests.
+fn echo_tool_response(id: &str, turn_num: usize) -> Vec<Result<AgentItem, LlmError>> {
+    use omega_protocol::events::ToolCallEvent;
+    vec![
+        Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
+            time: "2024-01-01T00:00:00.000Z".to_owned(),
+            id: id.to_owned(),
+            name: "run_command".to_owned(),
+            input: serde_json::json!({ "command": format!("echo turn{turn_num}") }),
+            context_hash: String::new(),
+        }))),
+        Ok(make_llm_response(
+            "tool_use",
+            None,
+            (turn_num * 100) as i64,
+            5,
+        )),
+    ]
+}
+
+/// **BUG-D audit (RED → GREEN).**
+///
+/// Before the fix, `context_management` is `None` in every `LlmRequest`,
+/// so Anthropic's server-side tool-result clearing never fires.  This test
+/// asserts that `context_management` IS present in every captured request,
+/// which fails before the fix and passes after.
+///
+/// The companion audit below documents the monotonic growth of
+/// `request_bytes` that results from never clearing tool history.
+#[tokio::test]
+async fn context_management_present_in_every_llm_request() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // 8 turns: each turn fires one tool call (run_command echo),
+    // then the model emits end_turn.
+    for i in 1..=8_usize {
+        let tool_id = format!("tu_{i:02}");
+        // Tool-use turn.
+        provider.push_response(echo_tool_response(&tool_id, i));
+        // Post-tool final turn.
+        provider.push_response(vec![Ok(make_llm_response(
+            "end_turn",
+            Some(&format!("ok{i}")),
+            (i * 100) as i64,
+            3,
+        ))]);
+    }
+
+    for i in 1..=8_usize {
+        let stream = agent.send_message(format!("turn {i}"), CancellationToken::new());
+        let _ = collect_stream(stream).await;
+    }
+
+    let reqs = provider.take_requests();
+    assert!(!reqs.is_empty(), "expected captured requests");
+
+    // Every request must carry context_management (BUG-D fix).
+    for (i, req) in reqs.iter().enumerate() {
+        assert!(
+            req.context_management.is_some(),
+            "request {i} missing context_management — BUG-D not fixed"
+        );
+    }
+
+    // The context_management must contain the clear_tool_uses_20250919 edit.
+    let cm = reqs[0].context_management.as_ref().unwrap();
+    let edits = cm["edits"].as_array().expect("edits array");
+    let has_clear_tool_uses = edits
+        .iter()
+        .any(|e| e["type"] == "clear_tool_uses_20250919");
+    assert!(
+        has_clear_tool_uses,
+        "context_management.edits must include clear_tool_uses_20250919"
+    );
+}
+
+/// **BUG-D audit (read-only — always GREEN).**
+///
+/// Documents that `request_bytes` on `LlmCallEvent` grows monotonically as
+/// tool call/result pairs accumulate.  This is the expected behaviour before
+/// and after the BUG-D fix because `MockProvider` never actually fires
+/// Anthropic’s server-side clearing (which requires real input-token counts
+/// exceeding the configured threshold).
+///
+/// The real-world plateau effect is observable via `LlmCallEvent.requestBytes`
+/// in production sessions once BUG-C (prompt caching) and BUG-D
+/// (context_management) are both fixed.
+#[tokio::test]
+async fn audit_request_bytes_grow_without_context_management() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // 6 tool-use turns: accumulate tool I/O in history.
+    for i in 1..=6_usize {
+        let tool_id = format!("tu_{i:02}");
+        provider.push_response(echo_tool_response(&tool_id, i));
+        provider.push_response(vec![Ok(make_llm_response(
+            "end_turn",
+            Some(&format!("ok{i}")),
+            (i * 50) as i64,
+            2,
+        ))]);
+    }
+
+    let mut request_bytes_seq: Vec<i64> = Vec::new();
+    for i in 1..=6_usize {
+        let stream = agent.send_message(format!("turn {i}"), CancellationToken::new());
+        let items = collect_stream(stream).await;
+        // Extract LlmCall events from this turn and record request_bytes.
+        for item in &items {
+            if let AgentItem::Event(boxed) = item {
+                if let OmegaEvent::LlmCall(ev) = boxed.as_ref() {
+                    request_bytes_seq.push(ev.request_bytes);
+                }
+            }
+        }
+    }
+
+    // Verify we captured bytes for every turn-call pair.
+    assert_eq!(
+        request_bytes_seq.len(),
+        12,
+        "expected 2 LlmCall events per turn (tool + final) x 6 turns"
+    );
+
+    // The bytes grow: earlier calls have smaller histories than later ones.
+    // This is the monotonic-growth that context_management is meant to bound.
+    assert!(
+        request_bytes_seq.windows(2).all(|w| w[0] <= w[1]),
+        "request_bytes must grow (or stay equal) turn over turn: {request_bytes_seq:?}"
+    );
+
+    // Confirm the last call's request is larger than the first.
+    assert!(
+        request_bytes_seq.last().unwrap() > request_bytes_seq.first().unwrap(),
+        "request_bytes must increase over 6 tool turns: {request_bytes_seq:?}"
+    );
+}
