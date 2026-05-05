@@ -30,15 +30,13 @@ import { loadScript, resetCalls } from "./fixtures/real-server-control";
 
 async function gotoFeed(page: Page) {
   await page.goto("/leptos/");
-  await page.getByTestId("leptos-debug-panel").locator("summary").click();
-  await expect(page.getByTestId("leptos-debug-store"))
-    .toContainText('"connected": true', { timeout: 5000 });
+  await expect(page.locator('main[data-connected="true"]'))
+    .toBeAttached({ timeout: 5000 });
 }
 
 async function readActiveDir(page: Page): Promise<string | null> {
-  const text = await page.getByTestId("leptos-debug-store").innerText();
-  const json = JSON.parse(text) as { sessionInfo: { dir: string } | null };
-  return json.sessionInfo?.dir ?? null;
+  const val = await page.locator("main").getAttribute("data-active-session-dir");
+  return val || null;
 }
 
 async function newSession(page: Page, prev: string | null): Promise<string> {

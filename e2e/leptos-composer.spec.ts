@@ -43,22 +43,17 @@ import { SCRIPTS, loadScript, resetCalls } from "./fixtures/real-server-control"
 // specs share idioms.
 // ---------------------------------------------------------------------------
 
-/** Wait for WS to connect; expand debug panel for store-snapshot reads. */
+/** Wait for WS to connect. Uses `data-connected` on <main> (Phase 3.9 TODO-4). */
 async function gotoComposer(page: Page) {
   await page.goto("/leptos/");
-  await page.getByTestId("leptos-debug-panel").locator("summary").click();
-  await expect(page.getByTestId("leptos-debug-store"))
-    .toContainText('"connected": true', { timeout: 5000 });
+  await expect(page.locator('main[data-connected="true"]'))
+    .toBeAttached({ timeout: 5000 });
 }
 
-/** Read a typed snapshot of the conversation store. */
-async function readStore(page: Page): Promise<{
-  turnState: string;
-  sessionInfo: { dir: string; model: string; effort: string } | null;
-  events: Array<{ type: string }>;
-}> {
-  const text = await page.getByTestId("leptos-debug-store").innerText();
-  return JSON.parse(text);
+/** Read the active session dir from `data-active-session-dir` on <main>. */
+async function activeDir(page: Page): Promise<string | null> {
+  const val = await page.locator("main").getAttribute("data-active-session-dir");
+  return val || null;
 }
 
 /** Click `+ new session` and wait for a new active session_info.dir. */
@@ -66,14 +61,22 @@ async function newSession(page: Page, prev: string | null): Promise<string> {
   await page.getByTestId("leptos-session-new").click();
   let next: string | null = null;
   await expect.poll(async () => {
-    next = (await readStore(page)).sessionInfo?.dir ?? null;
+    next = await activeDir(page);
     return next !== null && next !== prev;
   }, { timeout: 5000 }).toBeTruthy();
   return next as unknown as string;
 }
 
-async function activeDir(page: Page): Promise<string | null> {
-  return (await readStore(page)).sessionInfo?.dir ?? null;
+/** Wait for the composer's `data-turn-state` attribute to reach `expected`. */
+async function waitForTurnState(
+  page: Page,
+  expected: "idle" | "running" | "pause_requested" | "paused",
+  timeout = 10000,
+) {
+  await expect.poll(
+    async () => page.locator('[data-testid="leptos-composer"]').getAttribute("data-turn-state"),
+    { timeout },
+  ).toBe(expected);
 }
 
 /** Type into the composer textarea (replaces any existing content). */
@@ -84,16 +87,6 @@ async function fillComposer(page: Page, content: string) {
 /** Press the primary action button (whatever it currently is). */
 async function clickPrimary(page: Page) {
   await page.getByTestId("leptos-composer-primary").click();
-}
-
-/** Wait for the store's turn_state to reach the given value. */
-async function waitForTurnState(
-  page: Page,
-  expected: "idle" | "running" | "pause_requested" | "paused",
-  timeout = 10000,
-) {
-  await expect.poll(async () => (await readStore(page)).turnState, { timeout })
-    .toBe(expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -267,22 +260,21 @@ test("leptos-composer: switch model while idle updates session_info immediately 
   await page.getByTestId("leptos-composer-input").press("Enter");
   await waitForTurnState(page, "idle", 10000);
 
-  // Sanity: starts on Sonnet.
-  expect((await readStore(page)).sessionInfo?.model).toBe("claude-sonnet-4-6");
+  // Sanity: the model select starts on Sonnet (the server default).
+  // We read from the native <select> value, not the debug store.
+  const modelSelect = page.getByTestId("leptos-composer-model");
+  await expect(modelSelect).toHaveValue("claude-sonnet-4-6");
 
   // Switch via the native <select>.
-  const modelSelect = page.getByTestId("leptos-composer-model");
   await modelSelect.selectOption("claude-opus-4-7");
 
   // session_info.model must update on the server's next session_info
-  // broadcast — no page reload required.
+  // broadcast — the select's `prop:value` binding is reactive, so the
+  // select reflects the server-confirmed value once it arrives.
   await expect.poll(
-    async () => (await readStore(page)).sessionInfo?.model,
+    async () => modelSelect.inputValue(),
     { timeout: 5000 },
   ).toBe("claude-opus-4-7");
-
-  // Composer dropdown also reflects the new model.
-  await expect(modelSelect).toHaveValue("claude-opus-4-7");
 });
 
 // ---------------------------------------------------------------------------
@@ -296,16 +288,16 @@ test("leptos-composer: switch effort while idle updates session_info", async ({ 
   await newSession(page, await activeDir(page));
 
   // Default effort is medium (omega-agent DEFAULT_EFFORT).
-  expect((await readStore(page)).sessionInfo?.effort).toBe("medium");
-
+  // Read from the native <select> value (reactive, server-confirmed).
   const effortSelect = page.getByTestId("leptos-composer-effort");
+  await expect(effortSelect).toHaveValue("medium");
+
   await effortSelect.selectOption("high");
 
   await expect.poll(
-    async () => (await readStore(page)).sessionInfo?.effort,
+    async () => effortSelect.inputValue(),
     { timeout: 5000 },
   ).toBe("high");
-  await expect(effortSelect).toHaveValue("high");
 });
 
 // ---------------------------------------------------------------------------

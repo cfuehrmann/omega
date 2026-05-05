@@ -32,7 +32,8 @@
 | 3.6 — Leptos markdown + Mermaid + SSR snapshots | ✅ Done | `pulldown-cmark`; lazy-loaded Mermaid; insta SSR snapshot harness (TEST-ARCH-5) |
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
 | 3.8 — visual parity | ✅ Done | `frontends/leptos/style.css` (980 lines, Catppuccin Mocha) ported from the deleted SolidJS theme; Trunk-hashed `<link rel="stylesheet">`; centred picker panel; modal overlay with backdrop |
-| 3.9 — visual / UX follow-ups | 🟡 To do | Post-3.8 UAT findings: picker open/close + Sessions button; auto-close on Reset/Resume; per-event-type colour drift restoration; drop debug panel from production builds |
+| 3.9 — visual / UX follow-ups | ✅ Done | Picker open/close modal + Sessions button; auto-close on Reset/Resume; per-event-type colour drift (`llm_call` sapphire, `llm_retry` peach, `turn_end` muted, pause teal, info overlay2, thinking teal); debug panel `cfg(debug_assertions)`-gated; specs migrated from debug-store to `data-connected` / `data-active-session-dir` DOM attrs; 5 new Playwright specs; 37/37 green |
+| 3.10 — UX fidelity pass | 🟡 To do | Post-3.9 UAT: PRECHECK prompt-caching cost; picker-hides-Continue critical bug; picker open-on-refresh; close-button normalisation; `llm_response` modals (thinking, context, payload, usage); `llm_call` button rename + payload modal; `tool_call`/`tool_result` modal affordances; status chip (Ready/Streaming/Paused/Offline); `show usage`; `take it back` (optional) |
 | 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -2726,7 +2727,7 @@ is cache-busted on every change.
 
 ---
 
-## Phase 3.9 — visual / UX follow-ups (post-3.8 UAT) 🟡 To do
+## Phase 3.9 — visual / UX follow-ups (post-3.8 UAT) ✅ Done
 
 Operator UAT after the 3.8 commit landed found four real issues
 the gate didn't catch. None block Phase 4; all are pure-CSS or
@@ -2923,6 +2924,111 @@ is cleaner than splitting the build matrix.
 
 ---
 
+### Phase 3.9 — done (concise record)
+
+**Scope.** Four UAT findings from Phase 3.8 operator review,
+all pure CSS / tiny DOM polish on top of the 3.8 visual-parity
+baseline.
+
+**TODO-1 — Picker open/close modal.**
+`PickerOpen(RwSignal<bool>)` newtype added to `picker.rs` and
+provided at the `App` root (default `true` — picker open on
+first mount so existing specs pass without clicking "open" first).
+`SessionPicker` wraps the panel in a `<Show>` driven by this
+signal; the outer `<div class="picker-backdrop" data-testid="leptos-picker-backdrop">` is
+a `position:fixed; inset:0` dark overlay. Dismissal vectors: `✕`
+button in `.picker-header-btns`, backdrop click (click on the
+div stops propagation at the panel so only backdrop-direct clicks
+clear the signal), and `keydown Escape` on the backdrop div
+(made focusable via `tabindex="-1"`). `Composer` reads
+`PickerOpen` from context and renders a `.leptos-composer-sessions`
+button (leftmost slot, before the model/effort selects) that calls
+`picker_open.open()`. CSS: `.picker-backdrop` (fixed, 60% black),
+`.picker-close` (dim, red-on-hover), `.picker-header-btns`
+(flex row for `+ new session` + `✕`), `.leptos-composer-sessions`
+(yellow-hover, 38 px aligned with other controls).
+
+**TODO-2 — Auto-close on Reset / Resume.**
+`on_new_click` in `SessionPicker` calls `picker_open.close()`
+after the WS send succeeds. `on_resume` in `SessionRow` does the
+same. Rename and delete leave the picker open (operator is mid-task
+on the list). One-line change in each handler.
+
+**TODO-3 — Per-event-type colour drift.**
+Seven compound selectors added to `style.css` after the
+family-block rules (same cascade-order trick as `.diff-*`):
+
+| Rule | Palette |
+|---|---|
+| `.block.block-status[data-event-type="llm_call"]` | `--llm` sapphire |
+| `.block.block-assistant[data-event-type="llm_response"]` + body | `--llm` border/label; `--text` body |
+| `.block.block-status[data-event-type="llm_retry"]` | `--peach` |
+| `.block.block-status[data-event-type="turn_end"]` | `--border` / `--dim` (muted footer) |
+| `.block.block-status[data-event-type="pause_requested"]` / `turn_paused` / `turn_continued` | `--ctp-teal` |
+| `.block.block-status[data-event-type="session_started"]` / `server_started` / `server_stopped` / `compacted` / `resuming_session` / `session_resumed` | `--ctp-overlay2` / `--ctp-subtext0` |
+| `[data-testid="leptos-streaming-thinking"].block-status` | `--ctp-teal` |
+
+`STYLE-MAPPING.md` updated: affected rows flipped from
+"renamed → `.block-status`" to "adapt → `.block[data-event-type=…]`"
+with Phase 3.9 notes.
+
+**TODO-4 — Debug panel `cfg`-gated + spec migration (A1).**
+The `<details data-testid="leptos-debug-panel">` block in
+`lib.rs::App` is wrapped in `#[cfg(debug_assertions)] { … }
+#[cfg(not(debug_assertions))] { ().into_any() }`. `trunk build
+--release` (the production build used by both `just gate` and
+`just rust-gate`) drops it entirely. Two new DOM attributes on
+`<main>` replace the debug-store as the spec ground-truth surface:
+- `data-connected` — reactive boolean string; replaces `"connected": true` reads.
+- `data-active-session-dir` — reactive `session_info.dir` string; replaces
+  the `sessionInfo.dir` JSON parse in `readActiveDir`.
+
+All five spec files updated: `leptos-smoke`, `leptos-session-picker`,
+`leptos-conversation-feed`, `leptos-context-resume`, `leptos-composer`.
+Composer specs 5 + 6 (model / effort) replaced `readStore().sessionInfo?.model/effort`
+with `expect(select).toHaveValue(…)` / `select.inputValue()` reads on the
+native `<select>` element (which is already reactively bound to `session_info`).
+Composer spec `waitForTurnState` replaced `readStore().turnState` with
+`data-turn-state` on `[data-testid="leptos-composer"]` (already emitted by
+`composer.rs::turn_state_tag`).
+
+Snapshot impact: the four `composer_states` snapshots gained a
+`<button class="leptos-composer-sessions">Sessions</button>` prefix element.
+Regenerated with `INSTA_UPDATE=always`; 27/27 still pass.
+
+`install_app_context` in `snapshots.rs` updated to provide
+`PickerOpen::new()` (required by `<Composer/>` context lookup).
+
+**Five new Playwright specs** (all in `leptos-session-picker.spec.ts`):
+- `picker starts open; ✕ close button dismisses it; Sessions button re-opens`
+- `clicking outside the panel (backdrop) closes the picker`
+- `+ new session auto-closes the picker`
+- `resume auto-closes the picker`
+- `rename does NOT close the picker`
+
+**`newSession` / `openPicker` helpers** updated across all affected specs:
+`newSession` no longer checks picker-row visibility (picker is auto-closed
+by the time the server ack arrives); `openPicker(page)` is a new helper
+that clicks `leptos-composer-sessions` and waits for the picker to appear.
+
+**Acceptance criteria — all verified.**
+
+- ✅ Picker panel renders inside a fixed-position dark overlay with a `✕` close button.
+- ✅ `✕` button, backdrop click, and Esc all dismiss the picker.
+- ✅ `+ new session` auto-closes the picker on send.
+- ✅ `[resume]` auto-closes the picker on send.
+- ✅ `[rename]` / `[delete]` leave the picker open.
+- ✅ "Sessions" button in the composer opens the picker.
+- ✅ Event-type colour rules override family-block palette for the 7 drifted
+  types; verified structurally against selector coverage.
+- ✅ Production build (`trunk build --release`) does not include
+  `leptos-debug-panel` in the WASM bundle.
+- ✅ 27/27 SSR snapshots pass (4 composer snapshots regenerated).
+- ✅ 37/37 Playwright specs pass (32 original + 5 new open/close specs).
+- ✅ `just rust-gate` + `just gate` green.
+
+---
+
 ### Suggested session / model / effort / prompt for Phase 3.9
 
 **Session:** `phase-3-9-visual-followups`
@@ -2981,6 +3087,365 @@ them here keeps the rust-migration.md plan as the single source
 of truth for what's left to do, instead of forking into a
 separate issue tracker. Phase 4 (chromiumoxide cutover) can
 start in parallel; 3.9 has no dependency on it.
+
+---
+
+## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 To do
+
+Operator UAT after Phase 3.9 found a significant cluster of
+missing/regressed features. All are UX / presentation issues on the
+Leptos surface; none require WS-protocol or server-side changes.
+
+---
+
+### PRECHECK — Prompt-caching regression
+
+**Concern (investigate before starting any other 3.10 work).**
+The operator has noticed unexpectedly high API costs since the
+cutover to Leptos. The primary suspect is that the `context_hash`
+chain is broken or the cache-breakpoint index is never being set,
+causing the LLM provider to re-process the full context on every
+turn instead of reusing the cached prefix.
+
+**What to verify:**
+
+1. **`LlmCallEvent.cache_breakpoint_index` is non-null on turns after
+   the first.** Open the Leptos UI, run two or three turns in the
+   same session. Look at the `llm_call` blocks in the feed — the
+   expanded `<details>` shows `cache_breakpoint_index`. If it reads
+   `none` on every call, caching is broken server-side.
+
+2. **`LlmResponseEvent.usage.cache_read_input_tokens` is non-zero
+   after the first turn.** The `usage_line` below each `llm_response`
+   block currently shows only `in: N  out: M  (stop_reason)`. Add
+   `cache_read: R  cache_write: W` to the usage line (TODO-A-5 below)
+   so every response visibly shows the Anthropic billing breakdown.
+   If `cache_read_input_tokens` stays zero across a multi-turn
+   conversation, caching is not working.
+
+3. **Cross-reference `TurnEnd.metrics.cache_read_tokens`.** The
+   `turn_end` block shows aggregate metrics; same check.
+
+4. **Compare token counts with the SolidJS baseline** (`git worktree
+   add /tmp/omega-ref 1e3bed4`). Run identical prompts on both;
+   if the Leptos session's `input_tokens` is systematically higher
+   than the SolidJS session's `cache_read_input_tokens` + small
+   delta, the breakpoint logic is regressed.
+
+**Most likely root causes if caching is broken:**
+
+- `omega-store` / `omega-agent`'s `cache_breakpoint_index` logic
+  depends on the session's persisted context chain being intact.
+  If the Leptos cutover accidentally changed the session-dir layout
+  or the event-log format, the breakpoint resolver might fall back
+  to `None`. Check `omega-agent` crate for the function that
+  computes `cache_breakpoint_index` — run its unit tests.
+- The `context_hash` fed back in `LlmCallEvent.context_hashes`
+  must match what the context-load path expects. Verify that the
+  hashes visible in the Leptos `llm_call` block match those in the
+  Anthropic API request's `cache_control` header positions.
+
+**This check is a gate: if caching is confirmed broken, fix it
+before the UX items below. A broken-cache regression is a
+production cost issue, not a cosmetic one.**
+
+---
+
+### TODO-A: `llm_response` — stop reason, thinking button, context + payload modals, usage breakdown
+
+**Observed:** `llm_response` blocks show a generic `assistant` label
+and a usage line. Missing:
+
+1. **Stop reason inline.** The label line should read
+   `assistant  (end_turn)` — stop reason in muted text immediately
+   to the right of the label, same line. SolidJS surfaced this
+   inside the block header.
+
+2. **Thinking button.** When `LlmResponseEvent.thinking` is non-empty,
+   a `[thinking]` button should appear that opens a modal showing the
+   full streamed thinking text. The `streaming_thinking` buffer
+   accumulates during the turn; on `LlmResponse`, the settled
+   `thinking` field holds the final value. A centred modal reusing the
+   `TextModal` pattern (see TODO-B-2) is fine. Button only appears when
+   `thinking.is_some() && !thinking.as_deref().unwrap_or("").is_empty()`.
+
+3. **`context` button.** Every `llm_response` has a `context_hash`
+   field. A `[context]` button should open the context modal for that
+   hash. SolidJS called this button `messages`; `context` is
+   consistent with the `llm_call` button. The `ContextModalState` in
+   3.5 is keyed on `LlmCallEvent`; generalise or add a second signal
+   that accepts a single hash string (the response context_hash).
+
+4. **`payload` button.** A `[payload]` button opens a modal showing the
+   full `LlmResponseEvent` as pretty-printed JSON (all fields). Reuse
+   `TextModal`.
+
+5. **Usage line: cache breakdown.** Extend the usage `block-meta` line:
+   `in: N  out: M  cache_read: R  cache_write: W  (stop_reason)`.
+   The fields `cache_read_input_tokens` and
+   `cache_creation_input_tokens` are already in `LlmResponseUsage`
+   (both `Option<u64>`); render `0` when `None`. This is the
+   cheapest possible caching-regression detector.
+
+**Button layout (same line as label, separated from the body):**
+```
+assistant  (end_turn)    [context]  [payload]  [thinking]
+```
+
+---
+
+### TODO-B: `llm_call` — rename buttons, move details to modal, label-row layout
+
+**Observed:** the `llm_call` block has a `context records…` button
+and a `<details>` expander for the request payload. Three regressions:
+
+1. **Button label.** `context records…` → `context`. Shorter, matches
+   the `llm_response` button and the original SolidJS UI.
+
+2. **Payload as modal, not `<details>`.** The request payload
+   (`request_summary`, `cache_breakpoint_index`, `context_hashes`,
+   `request_bytes`) should open in a centred overlay modal via a
+   `[payload]` button, not inline in an expandable `<details>`.
+   **`TextModal` component:** add a generic `TextModal` component
+   (or a `PayloadModalState<String>` signal) that accepts a title +
+   `String` body and renders the same backdrop / centred-panel /
+   `✕` close button shape as `ContextModal`. Both `llm_call` and
+   `llm_response` (TODO-A-4) reuse it.
+
+3. **Button placement.** Both buttons appear on the **same line as
+   the label** `llm_call`. Wrap label + buttons in a flex
+   `.block-label-row`:
+   ```
+   llm_call    [context]  [payload]
+   claude-sonnet-4-6 · 3 ctx · 12345 bytes
+   ```
+
+---
+
+### TODO-C: `tool_call` + `tool_result` — modal affordances, label cleanup, correlation numbers
+
+**Observed:** `tool_call` shows `tool_call` text as label (should be
+elided in favour of just the tool name). `tool_result` shows only a
+truncated output with no tool name, no affordance to see the full
+output in a modal, and no time-stamp.
+
+**Fixes:**
+
+1. **`tool_call` label.** Replace the `tool_call` text label with
+   just the tool name at the same visual weight, optionally with a
+   small muted call-number derived from the tool `id` field suffix
+   (SolidJS showed a per-`llm_call` relative index; the `id` suffix
+   is an adequate proxy). CSS: treat the tool name as the block label
+   colour.
+
+2. **`tool_call` payload modal.** Add a `[payload]` button opening a
+   `TextModal` with the full `input` JSON. The existing inline
+   `block-tool-input` `<pre>` can stay as a 2-line preview; clicking
+   `[payload]` shows the full JSON without a show-more toggle.
+
+3. **`tool_result` label.** Show the tool name (`ToolResultEvent.name`)
+   instead of `tool_result`. The `is_error` flag drives the CSS family
+   class (already does `block-error` for errored results); no change
+   needed there.
+
+4. **`tool_result` 2-line preview.** Truncate the inline preview to
+   the first 2 lines of output (not the 3000-char cap). Add a
+   `[payload]` button that opens a `TextModal` with the full output.
+   Remove the existing `[show more]` toggle — the modal replaces it.
+
+5. **No time inline.** Remove the `duration_ms` meta line from inline
+   renders; surface it only inside the `TextModal` (e.g. as a subtitle
+   row: `completed in Nms`).
+
+6. **Parallel tool-call correlation.** When multiple `tool_call`
+   events share a `llm_call`, show a small 1-based index (e.g.
+   `run_command ¹`). Derivable by scanning the feed for the preceding
+   `llm_call` and counting `tool_call` events with matching tool-use
+   `id` prefix or by sequential scan. Simplest acceptable proxy:
+   display the last 4 chars of `id` in superscript muted text.
+
+---
+
+### TODO-D: Status chip — Ready / Streaming / Paused / Offline in bottom-right
+
+**Observed:** the SolidJS UI had a persistent bottom-right status
+chip showing the current turn state + connection state at a glance.
+Absent from Leptos.
+
+**Fix:** add a `<div class="status-chip" data-testid="leptos-status-chip">`
+absolutely positioned (`position: fixed; bottom: 1rem; right: 1.5rem;
+z-index: 800`) with four states driven reactively by `store.connected`
+and `store.turn_state`:
+
+| State | condition | colour | text |
+|---|---|---|---|
+| Ready | connected + Idle | `--ctp-teal` | `Ready` |
+| Streaming | connected + Running | `--llm` + pulse animation | `Streaming…` |
+| Paused | connected + Paused / PauseRequested | `--yellow` | `Paused` |
+| Offline | not connected | `--red` | `Offline` |
+
+The pulse animation can reuse the existing `@keyframes pulse` from
+the streaming cursor. No new signals; just a reactive `<div>` reading
+from `store.connected` and `store.turn_state`.
+
+---
+
+### TODO-E: Pausing UX — picker auto-close on turn start, Continue button, Show usage, Take it back
+
+#### E-1 (critical): Picker hides the Continue button
+
+**Observed:** the picker defaults to open (Phase 3.9 TODO-1
+default). When a turn is paused, the composer's primary button
+becomes `Continue` — but the picker panel overlays the entire
+viewport at `z-index: 900` so the operator cannot see or reach
+the composer. **The operator is stuck.**
+
+**Fix:** add an `Effect` in `lib.rs` or `picker.rs` that
+automatically closes the picker whenever the turn is not idle:
+
+```rust
+Effect::new(move |_| {
+    if store.turn_state.get() != TurnState::Idle {
+        picker_open.close();
+    }
+});
+```
+
+This is the simplest correct fix. The picker then re-opens only
+explicitly (via the `Sessions` button), never during a live turn.
+Spec `gotoPicker` should remain unaffected (it navigates before any
+turn starts, so `turn_state` is `Idle`).
+
+#### E-2: `Show usage` button
+
+**Observed:** missing. The SolidJS UI had `[show usage]` on
+`llm_response` and `turn_end` blocks showing a token-usage table
+(input / output / cache tokens / service tier).
+
+**Fix:** add a `[show usage]` button on the `LlmResponse` block
+(distinct from the `payload` modal from TODO-A-4) that opens a
+small modal rendering the `LlmResponseUsage` struct as a
+two-column table. On `TurnEnd`, show `TurnMetrics` similarly.
+Reuse `TextModal` or add a `UsageModal` variant.
+
+#### E-3: `Take it back` (optional)
+
+**Observed:** missing. SolidJS had a `take it back` button after
+each user message that allowed cancelling the turn and removing
+the message from context.
+
+**Fix:** Phase 3.4 recorded this as an intentional drop (no
+`RwSignal` for the pre-committed state). Revisit: a simpler UX
+that sends `Abort` when the turn is `Running` + removes the last
+`user_message` event from `store.events` locally (no server
+roundtrip needed for the local removal) would cover the use-case.
+This is **optional** for 3.10 — implement only if time allows after
+the critical fixes above.
+
+---
+
+### TODO-F: Picker open-on-refresh regression
+
+**Observed:** a browser refresh opens the session picker. The
+operator expects to land directly in the active conversation;
+the picker should start **closed** on refresh.
+
+**Fix:** change `PickerOpen`'s default from `true` to `false`.
+Add an `Effect` in `lib.rs` that opens the picker when `connected`
+becomes `true` **and** `session_info` is still `None` (no active
+session to resume):
+
+```rust
+Effect::new(move |_| {
+    if store.connected.get() && store.session_info.get().is_none() {
+        picker_open.open();
+    }
+});
+```
+
+This opens the picker only on a genuinely fresh server connection
+with no session state, not on every page load.
+
+**Spec impact:** `gotoPicker` (and any spec that accesses picker
+rows without explicitly opening the picker first) must call
+`openPicker(page)` after `gotoLeptos`. The `openPicker` helper
+already exists from Phase 3.9; update `gotoPicker` to call it.
+
+---
+
+### TODO-G: Close-button label normalisation
+
+**Observed:** picker close button is `✕`; context-modal close
+button is `close`. Inconsistent.
+
+**Fix:** use `✕` everywhere. Change `context_modal.rs`:
+```rust
+"close" → "✕"
+```
+If screen-reader accessibility is a concern, add `aria-label="close"`
+to both buttons and leave the visible glyph as `✕`.
+
+---
+
+### Suggested session / model / effort / prompt for Phase 3.10
+
+**Session:** `phase-3-10-ux-fidelity`
+
+**Model:** `claude-opus-4-7`. This phase requires sustained
+reasoning over a moderate-to-large code surface (`feed.rs` is
+800+ lines; the modal pattern touches `context_modal.rs` +
+`lib.rs` + CSS). Several TODOs interact (the generic `TextModal`
+suggested in TODO-A/B/C, the picker-default change in TODO-F that
+breaks existing specs, the critical pausing fix in TODO-E-1).
+Sonnet handles any single TODO in isolation; Opus is warranted for
+the cross-TODO coherence and the open-ended PRECHECK.
+
+**Effort:** `high`. The PRECHECK is diagnostic work with unclear
+outcome. TODO-E-1 (Continue hidden by picker) is a critical
+regression needing careful `Effect` design to avoid reactivity
+loops. TODO-A through TODO-C each require new modal infrastructure.
+This is 6–8 hours of careful work.
+
+**Recommended order within the session:**
+1. **PRECHECK** — verify caching. If broken, fix + gate before
+   continuing.
+2. **TODO-E-1** — picker auto-close on turn start (critical; tiny
+   change, high operator impact).
+3. **TODO-F** — picker-closed-on-refresh + update `gotoPicker` in
+   specs.
+4. **TODO-G** — close button normalisation (1-line; do while touching
+   modal code for TODO-A).
+5. **TODO-A** — `llm_response` improvements. Build `TextModal` here;
+   reuse in B/C.
+6. **TODO-B** — `llm_call` button rename + payload modal.
+7. **TODO-C** — `tool_call` / `tool_result` modal affordances + label
+   cleanup.
+8. **TODO-D** — status chip (additive; low breakage risk).
+9. **TODO-E-2/3** — `show usage` + `take it back` (optional).
+
+**Prompt:**
+
+> Implement Phase 3.10 of the Leptos migration as decomposed in
+> rust-migration.md §"Phase 3.10 — UX fidelity pass". Read the
+> §"Phase 3.9 — done" record above it for context on what changed
+> in 3.9.
+>
+> Start with PRECHECK (prompt-caching regression check) before any
+> UI work — report the finding before proceeding.
+>
+> Then work through TODO-E-1 (picker auto-close on turn start,
+> critical bug), TODO-F (picker closed on refresh), TODO-G (close
+> button normalisation), TODO-A (llm_response modals + thinking
+> button + usage line), TODO-B (llm_call button / payload modal),
+> TODO-C (tool_call / tool_result modals), TODO-D (status chip), in
+> that order. TODO-E-2 and TODO-E-3 are optional if time allows.
+>
+> Don't touch: WS protocol or server-side Rust crates; bench/;
+> the /leptos/ router alias.
+>
+> After each TODO: `just rust-gate` + `just gate` must stay green.
+> When done, add a "Phase 3.10 — done (concise record)" to
+> rust-migration.md and mark Phase 3.10 ✅ in the status tables.
 
 ---
 

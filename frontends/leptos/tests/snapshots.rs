@@ -36,6 +36,7 @@ use omega_protocol::events::{
 };
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
+use omega_web::picker::PickerOpen;
 use omega_web::protocol::{SessionInfoPayload, TurnState};
 
 // ---------------------------------------------------------------------------
@@ -454,6 +455,8 @@ mod composer_states {
         provide_context(list_store);
         let ws = WsClient::new(String::new(), store, list_store);
         provide_context(ws);
+        // Phase 3.9: PickerOpen is required by <Composer /> (Sessions button).
+        provide_context(PickerOpen::new());
     }
 
     #[test]

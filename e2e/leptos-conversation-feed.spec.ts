@@ -41,14 +41,14 @@ import { test, expect, type Page } from "@playwright/test";
 import { SCRIPTS, loadScript, resetCalls } from "./fixtures/real-server-control";
 
 /**
- * Wait for the WS to connect, then expand the debug panel so we can
- * read the store snapshot for ground-truth queries.
+ * Wait for the WS to connect, then navigate to the Leptos UI.
  */
 async function gotoFeed(page: Page) {
   await page.goto("/leptos/");
-  await page.getByTestId("leptos-debug-panel").locator("summary").click();
-  await expect(page.getByTestId("leptos-debug-store"))
-    .toContainText('"connected": true', { timeout: 5000 });
+  // Wait for WS connection via `data-connected` on <main>.
+  // The debug panel is cfg(debug_assertions)-only (Phase 3.9 TODO-4).
+  await expect(page.locator('main[data-connected="true"]'))
+    .toBeAttached({ timeout: 5000 });
 }
 
 /**
@@ -62,17 +62,16 @@ async function sendComposerMessage(page: Page, content: string) {
   await input.press("Enter");
 }
 
-/** Read the conversation store's session_info.dir from the debug snapshot. */
+/** Read the active session dir from `data-active-session-dir` on <main>. */
 async function readActiveDir(page: Page): Promise<string | null> {
-  const text = await page.getByTestId("leptos-debug-store").innerText();
-  const json = JSON.parse(text) as { sessionInfo: { dir: string } | null };
-  return json.sessionInfo?.dir ?? null;
+  const val = await page.locator("main").getAttribute("data-active-session-dir");
+  return val || null;
 }
 
 /**
  * Click `+ new session` and wait for the new session_info.dir to land.
- * Mirrors the helper in `leptos-session-picker.spec.ts` so the two
- * specs use the same race-tolerant primitive.
+ * NOTE: auto-closes the picker (Phase 3.9 TODO-2); open it again
+ * before accessing picker rows.
  */
 async function newSession(page: Page, prev: string | null): Promise<string> {
   await page.getByTestId("leptos-session-new").click();

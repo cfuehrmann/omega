@@ -45,49 +45,50 @@ import { test, expect, type Page } from "@playwright/test";
 /** Wait for the WS to connect and the picker UI to mount. */
 async function gotoPicker(page: Page) {
   await page.goto("/leptos/");
-  // Picker section is present in the initial DOM, but the WS-driven
-  // store starts disconnected; wait for the debug snapshot to flip
-  // `connected: true` so subsequent sends actually traverse the wire.
-  // The debug panel is collapsed by default — open it just for the wait.
-  await page.getByTestId("leptos-debug-panel").locator("summary").click();
-  await expect(page.getByTestId("leptos-debug-store"))
-    .toContainText('"connected": true', { timeout: 5000 });
+  // Wait for the WS to connect: `data-connected` on <main> flips to
+  // "true" once `SessionStore::apply(WsMessage::Ready)` fires.
+  // The debug panel is cfg(debug_assertions)-only (Phase 3.9 TODO-4);
+  // we use the stable DOM attribute instead.
+  await expect(page.locator('main[data-connected="true"]'))
+    .toBeAttached({ timeout: 5000 });
 }
 
 /**
- * Read the conversation store's session_info.dir from the debug
- * snapshot JSON. Ground-truth equivalent of "which session is active".
- * Returns null if the store has no active session.
+ * Read the active session dir from `data-active-session-dir` on <main>.
+ * This attribute is always in the DOM (not inside the picker panel)
+ * so it works whether the picker is open or closed. Updated reactively
+ * from `SessionStore.session_info.dir` (Phase 3.9 TODO-4).
  */
 async function readActiveDir(page: Page): Promise<string | null> {
-  const text = await page.getByTestId("leptos-debug-store").innerText();
-  const json = JSON.parse(text) as {
-    sessionInfo: { dir: string } | null;
-  };
-  return json.sessionInfo?.dir ?? null;
+  const val = await page.locator("main").getAttribute("data-active-session-dir");
+  return val || null;
 }
 
 /**
  * Click `+ new session` and wait for the *new* session's dir to land
- * in the conversation store (different from `prev`). Returns the new
- * dir. This is the deterministic "create a session" primitive — no
- * racing on `data-active`.
+ * in `data-active-session-dir` on <main> (different from `prev`).
+ * Returns the new dir.
+ *
+ * NOTE (Phase 3.9 TODO-2): clicking `+ new session` auto-closes the
+ * picker, so the picker row for the new session is not visible after
+ * this call. Open the picker again (via `leptos-composer-sessions`)
+ * before asserting on picker rows.
  */
 async function newSession(page: Page, prev: string | null): Promise<string> {
   await page.getByTestId("leptos-session-new").click();
-  // Wait for session_info.dir to change to a new value. expect.poll
-  // re-reads the debug snapshot until it stabilises on the new dir.
+  // Wait for data-active-session-dir to change to a new value.
   let next: string | null = null;
   await expect.poll(async () => {
     next = await readActiveDir(page);
     return next !== null && next !== prev;
   }, { timeout: 5000 }).toBeTruthy();
-  // And wait for the picker list to render that dir as a row — this
-  // is the user-visible end of the create flow.
-  await expect(
-    page.locator(`[data-testid="leptos-session-item"][data-session-dir="${next}"]`),
-  ).toBeVisible({ timeout: 3000 });
   return next as unknown as string;
+}
+
+/** Open the session picker via the composer "Sessions" button. */
+async function openPicker(page: Page) {
+  await page.getByTestId("leptos-composer-sessions").click();
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible({ timeout: 2000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -97,24 +98,25 @@ async function newSession(page: Page, prev: string | null): Promise<string> {
 test("leptos-picker: clicking + new session creates and activates a row", async ({ page }) => {
   await gotoPicker(page);
 
-  const list = page.getByTestId("leptos-session-list");
-  const before = await list.getByTestId("leptos-session-item").count();
-
   const startDir = await readActiveDir(page);
   const dir = await newSession(page, startDir);
 
-  // List grew, and the new dir is the active row (matches session_info.dir).
-  await expect.poll(
-    async () => list.getByTestId("leptos-session-item").count(),
-    { timeout: 5000 },
-  ).toBeGreaterThan(before);
+  // `+ new session` auto-closes the picker (Phase 3.9 TODO-2).
+  await expect(page.getByTestId("leptos-session-picker"))
+    .toHaveCount(0);
 
-  // Exactly one active row, and it's the dir we just created.
-  await expect(page.locator('[data-testid="leptos-session-item"][data-active="true"]'))
-    .toHaveCount(1);
+  // Re-open picker to inspect the list.
+  await openPicker(page);
+  const list = page.getByTestId("leptos-session-list");
+
+  // The new dir is the active row (matches session_info.dir).
   await expect(
     page.locator(`[data-testid="leptos-session-item"][data-session-dir="${dir}"]`),
   ).toHaveAttribute("data-active", "true");
+
+  // Exactly one active row.
+  await expect(page.locator('[data-testid="leptos-session-item"][data-active="true"]'))
+    .toHaveCount(1);
 });
 
 // ---------------------------------------------------------------------------
@@ -126,6 +128,9 @@ test("leptos-picker: rename updates the row label after server confirms", async 
 
   const startDir = await readActiveDir(page);
   const dir = await newSession(page, startDir);
+
+  // Re-open the picker (auto-closed by + new session).
+  await openPicker(page);
 
   // Locate the row by its data-session-dir attribute (stable identity,
   // unlike `data-active` which can race).
@@ -154,6 +159,9 @@ test("leptos-picker: delete removes the row after server confirms", async ({ pag
   const startDir = await readActiveDir(page);
   const dir = await newSession(page, startDir);
 
+  // Re-open the picker (auto-closed by + new session).
+  await openPicker(page);
+
   const row = page.locator(
     `[data-testid="leptos-session-item"][data-session-dir="${dir}"]`,
   );
@@ -179,7 +187,13 @@ test("leptos-picker: only one row is marked active and matches session_info.dir"
 
   const start = await readActiveDir(page);
   const a = await newSession(page, start);
+
+  // Re-open picker to create second session.
+  await openPicker(page);
   const b = await newSession(page, a);
+
+  // Re-open picker to inspect rows.
+  await openPicker(page);
 
   // Exactly one active row, and it's `b` (the most recent).
   await expect(page.locator('[data-testid="leptos-session-item"][data-active="true"]'))
@@ -192,4 +206,99 @@ test("leptos-picker: only one row is marked active and matches session_info.dir"
   await expect(
     page.locator(`[data-testid="leptos-session-item"][data-session-dir="${a}"]`),
   ).toHaveAttribute("data-active", "false");
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3.9 — open/close cycle (TODO-1)
+// ---------------------------------------------------------------------------
+
+test("leptos-picker: picker starts open; \u2715 close button dismisses it; Sessions button re-opens", async ({ page }) => {
+  await gotoPicker(page);
+
+  // Picker is open by default (picker_open defaults to true).
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible();
+
+  // ✕ close button dismisses the picker.
+  await page.getByTestId("leptos-picker-close").click();
+  await expect(page.getByTestId("leptos-session-picker")).toHaveCount(0);
+
+  // Backdrop is also gone.
+  await expect(page.getByTestId("leptos-picker-backdrop")).toHaveCount(0);
+
+  // Sessions button in the composer re-opens it.
+  await page.getByTestId("leptos-composer-sessions").click();
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible({ timeout: 2000 });
+});
+
+test("leptos-picker: clicking outside the panel (backdrop) closes the picker", async ({ page }) => {
+  await gotoPicker(page);
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible();
+
+  // Click the backdrop div itself (not the panel). Use the backdrop
+  // testid and click at its top-left corner to land outside the panel.
+  const backdrop = page.getByTestId("leptos-picker-backdrop");
+  await backdrop.click({ position: { x: 5, y: 5 } });
+  await expect(page.getByTestId("leptos-session-picker")).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3.9 — auto-close on Reset / Resume (TODO-2)
+// ---------------------------------------------------------------------------
+
+test("leptos-picker: + new session auto-closes the picker", async ({ page }) => {
+  await gotoPicker(page);
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible();
+
+  const prev = await readActiveDir(page);
+  // Click + new session while picker is open.
+  await page.getByTestId("leptos-session-new").click();
+
+  // Picker must close immediately (before the server ack arrives).
+  await expect(page.getByTestId("leptos-session-picker")).toHaveCount(0);
+
+  // The session store eventually reflects the new dir.
+  await expect.poll(async () => {
+    const d = await readActiveDir(page);
+    return d !== null && d !== prev;
+  }, { timeout: 5000 }).toBeTruthy();
+});
+
+test("leptos-picker: resume auto-closes the picker", async ({ page }) => {
+  await gotoPicker(page);
+
+  // Create two sessions so we have a non-active row to resume.
+  const start = await readActiveDir(page);
+  const a = await newSession(page, start);
+
+  // Re-open picker (closed by newSession) and create a second one
+  // so `a` is no longer active.
+  await openPicker(page);
+  await newSession(page, a);
+
+  // Re-open picker and click Resume on row `a` (now inactive).
+  await openPicker(page);
+  const rowA = page.locator(
+    `[data-testid="leptos-session-item"][data-session-dir="${a}"]`,
+  );
+  await expect(rowA).toBeVisible();
+  await rowA.getByTestId("leptos-session-resume").click();
+
+  // Picker must close on resume.
+  await expect(page.getByTestId("leptos-session-picker")).toHaveCount(0, { timeout: 3000 });
+});
+
+test("leptos-picker: rename does NOT close the picker", async ({ page }) => {
+  await gotoPicker(page);
+
+  const prev = await readActiveDir(page);
+  const dir = await newSession(page, prev);
+  await openPicker(page);
+
+  const row = page.locator(
+    `[data-testid="leptos-session-item"][data-session-dir="${dir}"]`,
+  );
+  await row.getByTestId("leptos-session-rename").click();
+
+  // Picker must still be open during rename.
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible();
 });

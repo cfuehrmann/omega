@@ -43,15 +43,14 @@ import { test, expect, type Page } from "@playwright/test";
 import { SCRIPTS, loadScript, resetCalls } from "./fixtures/real-server-control";
 
 /**
- * Wait for the WS to connect, then expand the debug panel so we can
- * read the store snapshot for ground-truth queries. Mirrors the
- * helper in `leptos-conversation-feed.spec.ts`.
+ * Wait for the WS to connect, then navigate to the Leptos UI.
+ * Uses `data-connected` on <main> instead of the debug-panel snapshot
+ * (debug panel is cfg(debug_assertions)-only — Phase 3.9 TODO-4).
  */
 async function gotoLeptos(page: Page) {
   await page.goto("/leptos/");
-  await page.getByTestId("leptos-debug-panel").locator("summary").click();
-  await expect(page.getByTestId("leptos-debug-store"))
-    .toContainText('"connected": true', { timeout: 5000 });
+  await expect(page.locator('main[data-connected="true"]'))
+    .toBeAttached({ timeout: 5000 });
 }
 
 /** Send a user message via the production composer (Phase 3.4). */
@@ -61,14 +60,17 @@ async function sendComposerMessage(page: Page, content: string) {
   await input.press("Enter");
 }
 
-/** Read the conversation store's session_info.dir from the debug snapshot. */
+/** Read the active session dir from `data-active-session-dir` on <main>. */
 async function readActiveDir(page: Page): Promise<string | null> {
-  const text = await page.getByTestId("leptos-debug-store").innerText();
-  const json = JSON.parse(text) as { sessionInfo: { dir: string } | null };
-  return json.sessionInfo?.dir ?? null;
+  const val = await page.locator("main").getAttribute("data-active-session-dir");
+  return val || null;
 }
 
-/** Click `+ new session` and wait for the new dir to land in the store. */
+/**
+ * Click `+ new session` and wait for the new dir to land.
+ * NOTE: auto-closes the picker (Phase 3.9 TODO-2); open via
+ * `leptos-composer-sessions` before accessing picker rows again.
+ */
 async function newSession(page: Page, prev: string | null): Promise<string> {
   await page.getByTestId("leptos-session-new").click();
   let next: string | null = null;
@@ -76,9 +78,6 @@ async function newSession(page: Page, prev: string | null): Promise<string> {
     next = await readActiveDir(page);
     return next !== null && next !== prev;
   }, { timeout: 5000 }).toBeTruthy();
-  await expect(
-    page.locator(`[data-testid="leptos-session-item"][data-session-dir="${next}"]`),
-  ).toBeVisible({ timeout: 3000 });
   return next as unknown as string;
 }
 
@@ -242,8 +241,11 @@ test("leptos-context: resume button from picker drives full resumption flow", as
     feed.locator('[data-event-type="turn_end"]')
   ).toHaveCount(1, { timeout: 15000 });
 
-  // The picker now has a row for sourceDir; locate the resume
-  // button on that specific row.
+  // The picker now has a row for sourceDir; open the picker and
+  // locate the resume button on that specific row.
+  // (picker was auto-closed by newSession — Phase 3.9 TODO-2)
+  await page.getByTestId("leptos-composer-sessions").click();
+  await expect(page.getByTestId("leptos-session-picker")).toBeVisible({ timeout: 2000 });
   const sourceRow = page.locator(
     `[data-testid="leptos-session-item"][data-session-dir="${sourceDir}"]`
   );

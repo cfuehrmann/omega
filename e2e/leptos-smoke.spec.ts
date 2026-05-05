@@ -28,13 +28,11 @@ import { test, expect } from "@playwright/test";
 test("leptos: /leptos/ loads, WS connects, ready frame updates the store", async ({ page }) => {
   await page.goto("/leptos/");
 
-  // The store starts disconnected; once the WS opens and the server
-  // emits `ready`, `SessionStore::apply(WsMessage::Ready)` flips
-  // `connected` to true and the JSON dump reflects it.
-  const storeDump = page.getByTestId("leptos-debug-store");
-  await expect(storeDump).toContainText('"connected": true', { timeout: 5000 });
-  // `transportErrors` must remain empty — there's no malformed-frame path.
-  await expect(storeDump).toContainText('"transportErrors": []');
+  // `data-connected` on <main> flips to "true" once the WS opens and
+  // the server emits `ready`. Replaces the removed debug-panel read
+  // (Phase 3.9 TODO-4: debug panel is cfg(debug_assertions)-only).
+  await expect(page.locator('main[data-connected="true"]'))
+    .toBeAttached({ timeout: 5000 });
 });
 
 test("leptos: bare /leptos redirects to /leptos/", async ({ request }) => {

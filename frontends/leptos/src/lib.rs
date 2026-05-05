@@ -1,4 +1,4 @@
-//! Phase 3.6 \u2014 Leptos UI library crate.
+//! Phase 3.9 — Leptos UI library crate (picker open/close + debug-panel gate).
 //!
 //! Splitting the previous `[[bin]]`-only crate into a lib + bin lets
 //! host-target snapshot tests pull in the components without
@@ -9,17 +9,18 @@
 //!
 //! ```text
 //!   App
-//!    \u251c\u2500\u2500 provide_context::<SessionStore>      (conversation state)
-//!    \u251c\u2500\u2500 provide_context::<SessionListStore>  (picker state)
-//!    \u251c\u2500\u2500 provide_context::<WsClient>          (write-path handle)
-//!    \u251c\u2500\u2500 provide_context::<ContextModalState> (modal open/close)
-//!    \u251c\u2500\u2500 Effect: WsClient::new(url, conv, list).connect()
-//!    \u251c\u2500\u2500 SessionPicker     (3.2 + 3.5 resume button per row)
-//!    \u251c\u2500\u2500 ConversationFeed  (3.3 + 3.5 LlmCallBlock + 3.6 MarkdownBody)
-//!    \u251c\u2500\u2500 Composer          (3.4)
-//!    \u251c\u2500\u2500 ContextModal      (3.5 \u2014 full-viewport overlay)
-//!    \u2514\u2500\u2500 <details data-testid=\"leptos-debug-panel\">
-//!         \u2514\u2500\u2500 DebugView    (3.1 JSON dump)
+//!    ├── provide_context::<SessionStore>      (conversation state)
+//!    ├── provide_context::<SessionListStore>  (picker state)
+//!    ├── provide_context::<WsClient>          (write-path handle)
+//!    ├── provide_context::<ContextModalState> (modal open/close)
+//!    ├── provide_context::<PickerOpen>        (picker open/close — 3.9)
+//!    ├── Effect: WsClient::new(url, conv, list).connect()
+//!    ├── SessionPicker     (3.2 + 3.5 resume button per row + 3.9 modal)
+//!    ├── ConversationFeed  (3.3 + 3.5 LlmCallBlock + 3.6 MarkdownBody)
+//!    ├── Composer          (3.4 + 3.9 Sessions button)
+//!    ├── ContextModal      (3.5 — full-viewport overlay)
+//!    └── [cfg(debug_assertions)] <details data-testid="leptos-debug-panel">
+//!         └── DebugView    (3.1 JSON dump — dropped from release builds 3.9)
 //! ```
 //!
 //! ## Module lifetimes
@@ -50,7 +51,7 @@ use leptos::prelude::*;
 use crate::composer::Composer;
 use crate::context_modal::{ContextModal, ContextModalState};
 use crate::feed::ConversationFeed;
-use crate::picker::SessionPicker;
+use crate::picker::{PickerOpen, SessionPicker};
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
 use crate::ws::{WsClient, ws_url_from_window};
@@ -68,9 +69,11 @@ pub fn App() -> impl IntoView {
     let store = SessionStore::new();
     let list_store = SessionListStore::new();
     let modal_state = ContextModalState::new();
+    let picker_open = PickerOpen::new();
     provide_context(store);
     provide_context(list_store);
     provide_context(modal_state);
+    provide_context(picker_open);
 
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
@@ -87,16 +90,41 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <main>
-            <h1>"Omega (Leptos) — Phase 3.6"</h1>
+        // `data-connected` — WS connected flag (Playwright: wait for WS ready).
+        // `data-active-session-dir` — current session dir (Playwright: ground-truth
+        //   active-dir read, replaces debug-store JSON parse). Both attributes
+        // are always in the DOM; updated reactively from `SessionStore`.
+        // Phase 3.9 TODO-4: debug panel cfg-gated; these attributes are the
+        // replacement ground-truth surface for specs.
+        <main
+            data-connected=move || store.connected.get().to_string()
+            data-active-session-dir=move || store.session_info.with(
+                |si| si.as_ref().map(|s| s.dir.clone()).unwrap_or_default()
+            )
+        >
+            <h1>"Omega (Leptos)"</h1>
             <SessionPicker />
             <ConversationFeed />
             <Composer />
             <ContextModal />
-            <details data-testid="leptos-debug-panel">
-                <summary>"debug: store snapshot"</summary>
-                <DebugView />
-            </details>
+            // Debug panel — compiled only in debug builds (cargo test,
+            // `trunk serve` dev mode). `trunk build --release` strips
+            // this block entirely so it never ships to production users.
+            // Phase 3.9 TODO-4: specs migrated from debug-store reads to
+            // `data-connected` + `data-session-dir` DOM attributes.
+            {
+                #[cfg(debug_assertions)]
+                {
+                    view! {
+                        <details data-testid="leptos-debug-panel">
+                            <summary>"debug: store snapshot"</summary>
+                            <DebugView />
+                        </details>
+                    }.into_any()
+                }
+                #[cfg(not(debug_assertions))]
+                { ().into_any() }
+            }
         </main>
     }
 }

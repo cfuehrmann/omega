@@ -54,6 +54,7 @@ use web_sys::HtmlTextAreaElement;
 
 use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
 use crate::http::get_files;
+use crate::picker::PickerOpen;
 use crate::protocol::{ClientFrame, TurnState};
 use crate::store::SessionStore;
 use crate::ws::WsClient;
@@ -431,12 +432,23 @@ pub fn Composer() -> impl IntoView {
 
     // ---- view --------------------------------------------------------------
 
+    // "Sessions" button opens the picker (Phase 3.9 TODO-1).
+    let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
+    let on_sessions_click = move |_| picker_open.open();
+
     view! {
         <section
             class="leptos-composer"
             data-testid="leptos-composer"
             data-turn-state=move || turn_state_tag(store.turn_state.get())
         >
+            <button
+                class="leptos-composer-sessions"
+                data-testid="leptos-composer-sessions"
+                on:click=on_sessions_click
+            >
+                "Sessions"
+            </button>
             <ModelSelect active=active_model on_change=on_model_change />
             <EffortSelect active=active_effort on_change=on_effort_change />
             <div class="leptos-composer-textarea-wrap">

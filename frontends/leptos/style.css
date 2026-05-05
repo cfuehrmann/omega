@@ -106,25 +106,36 @@ main > h1 {
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * Session picker — adapted to a centred panel.
+ * Session picker — modal overlay with open/close state (Phase 3.9).
  *
- * The Leptos picker is permanently visible (no open/close state),
- * but visually we render it as a centred-modal-shaped panel with
- * max-width and a panel background. Matches the SolidJS picker's
- * look without requiring the picker to become a real modal.
+ * The picker is now a true modal: a fixed-position dark backdrop with
+ * the panel centred inside. Opened by the "Sessions" button in the
+ * composer; closed by the `✕` button, backdrop click, Esc key,
+ * `+ new session`, or `[resume]`.
  * ───────────────────────────────────────────────────────────────── */
 
+/* Fixed-position backdrop — stacks over the feed + composer. */
+.picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+}
+
 [data-testid="leptos-session-picker"] {
-  flex-shrink: 0;
   width: min(700px, 92vw);
-  margin: 8px auto 0;
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  max-height: 30vh;
+  max-height: 70vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.5);
 }
 
 .picker-header {
@@ -143,6 +154,13 @@ main > h1 {
   letter-spacing: 0.3px;
 }
 
+/* Right-side header button group: + new session + ✕ close. */
+.picker-header-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 [data-testid="leptos-session-new"] {
   padding: 2px 10px;
   border-radius: var(--radius);
@@ -156,6 +174,21 @@ main > h1 {
 }
 [data-testid="leptos-session-new"]:hover    { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 [data-testid="leptos-session-new"]:disabled { opacity: 0.4; cursor: default; }
+
+/* ✕ close button in the picker header. */
+.picker-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 2px 7px;
+  cursor: pointer;
+  line-height: 1;
+  transition: border-color 0.15s, color 0.15s;
+}
+.picker-close:hover { border-color: var(--red); color: var(--red); }
 
 .picker-error {
   padding: 6px 14px;
@@ -782,6 +815,26 @@ main > h1 {
 .leptos-composer-abort         { color: var(--red); }
 .leptos-composer-abort:hover   { border-color: var(--red); }
 
+/* "Sessions" button — opens the picker modal (Phase 3.9 TODO-1). */
+.leptos-composer-sessions {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 14px;
+  height: 38px;
+  padding: 0 12px;
+  cursor: pointer;
+  align-self: flex-end;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.leptos-composer-sessions:hover:not(:disabled) {
+  border-color: var(--ctp-yellow);
+  color: var(--ctp-yellow);
+}
+
 /* @-path completion popup — anchored above the textarea. Mirrors
  * SolidJS's `.fc-dropdown` placement (positioned relative to the
  * textarea-wrap, not the caret). */
@@ -935,6 +988,76 @@ main > h1 {
   word-break: break-word;
   color: var(--text);
   margin: 0.25rem 0 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ * Per-event-type colour overrides (Phase 3.9 TODO-3).
+ *
+ * The family-block rules above paint six visual families (User /
+ * Assistant / ToolCall / ToolResult / Status / Error). Several event
+ * types within the Status family map more precisely to distinct
+ * SolidJS palette entries. These rules follow the family-block rules
+ * in source order so cascade order wins (same specificity trick
+ * `.diff-*` uses). Each rule uses `.block.block-<family>` to ensure
+ * unambiguous precedence over the plain `.block-status` rule above.
+ *
+ * See the drift table in rust-migration.md §"Phase 3.9 — TODO-3".
+ * ───────────────────────────────────────────────────────────────── */
+
+/* llm_call — sapphire (SolidJS: `.block.api-call`). */
+.block.block-status[data-event-type="llm_call"] {
+  border-color: var(--llm);
+  color: var(--llm);
+}
+
+/* llm_response — sapphire border/label; text body stays --text.
+ * (SolidJS: `.block.api-response`) */
+.block.block-assistant[data-event-type="llm_response"] {
+  border-color: var(--llm);
+  color: var(--llm);
+}
+.block.block-assistant[data-event-type="llm_response"] .block-body,
+.block.block-assistant[data-event-type="llm_response"] .md-body {
+  color: var(--text);
+}
+
+/* llm_retry — peach (SolidJS: `.block.retry`). */
+.block.block-status[data-event-type="llm_retry"] {
+  border-color: var(--peach);
+  color: var(--peach);
+}
+
+/* turn_end — muted border/dim fg (SolidJS: `.block.footer`). */
+.block.block-status[data-event-type="turn_end"] {
+  border-color: var(--border);
+  color: var(--dim);
+}
+
+/* Pause lifecycle events — teal (SolidJS: `.block.pause-event`). */
+.block.block-status[data-event-type="pause_requested"],
+.block.block-status[data-event-type="turn_paused"],
+.block.block-status[data-event-type="turn_continued"] {
+  border-color: var(--ctp-teal);
+  color: var(--ctp-teal);
+}
+
+/* Info lifecycle events — overlay2 border + subtext0 fg
+ * (SolidJS: `.block.info`). */
+.block.block-status[data-event-type="session_started"],
+.block.block-status[data-event-type="server_started"],
+.block.block-status[data-event-type="server_stopped"],
+.block.block-status[data-event-type="compacted"],
+.block.block-status[data-event-type="resuming_session"],
+.block.block-status[data-event-type="session_resumed"] {
+  border-color: var(--ctp-overlay2);
+  color: var(--ctp-subtext0);
+}
+
+/* Streaming-thinking overlay — teal to distinguish thinking from
+ * generic status mauve (SolidJS: `.block.thinking`). */
+[data-testid="leptos-streaming-thinking"].block-status {
+  border-color: var(--ctp-teal);
+  color: var(--ctp-teal);
 }
 
 /* ─────────────────────────────────────────────────────────────────

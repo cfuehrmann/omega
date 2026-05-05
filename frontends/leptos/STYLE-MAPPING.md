@@ -59,14 +59,14 @@ grep -rh 'class="' frontends/leptos/src/*.rs \
 | `.block.tool` | renamed | `.block-tool-call` | |
 | `.block.result` | renamed | `.block-tool-result` | The OK case (errored tool results land in `.block-error`). |
 | `.block.result-error` | renamed | `.block-error` | `kind_for` collapses errored tool_result + AgentError + LlmError + TransportError + TurnInterrupted into the single `Error` family. |
-| `.block.api-call`, `.block.api-response` | renamed | `.block-status` (llm_call), `.block-assistant` (llm_response) | The Leptos UI uses the existing visual families; llm_call is `Status`, llm_response is `Assistant`. We don't need a dedicated api-call colour. |
-| `.block.thinking` | renamed | `.block-status` (StreamingTail thinking overlay) | The streaming thinking overlay reuses the `Status` family; matches the SolidJS visual category. |
+| `.block.api-call`, `.block.api-response` | adapt | `.block.block-status[data-event-type="llm_call"]`, `.block.block-assistant[data-event-type="llm_response"]` | Phase 3.9 TODO-3: per-event-type rules override the family-block colour. `llm_call` → sapphire (`--llm`); `llm_response` → sapphire border/label with `--text` body. Rules added after the family-block rules so source order wins. |
+| `.block.thinking` | adapt | `[data-testid="leptos-streaming-thinking"].block-status` | Phase 3.9 TODO-3: streaming-thinking overlay gets teal (`--ctp-teal`) via attribute+class compound rule, overriding the generic `.block-status` mauve. |
 | `.block.status` | renamed | `.block-status` | Direct map. |
-| `.block.footer` | renamed | `.block-status` (turn_end) | Per `kind_for`, `TurnEnd` is `Status`. SolidJS used `.footer` for the muted look; we accept the slightly more saturated `Status` palette. |
-| `.block.pause-event` | renamed | `.block-status` (PauseRequested / TurnPaused / TurnContinued) | All three pause events fall into `Status`. |
+| `.block.footer` | adapt | `.block.block-status[data-event-type="turn_end"]` | Phase 3.9 TODO-3: `turn_end` gets the muted `--border`/`--dim` palette from the `--footer` look via data-event-type rule, rather than the generic `.block-status` mauve. |
+| `.block.pause-event` | adapt | `.block.block-status[data-event-type="pause_requested"]`, `…[data-event-type="turn_paused"]`, `…[data-event-type="turn_continued"]` | Phase 3.9 TODO-3: all three pause events get teal (`--ctp-teal`) via per-event-type rules. |
 | `.block.error-b`, `.block.interrupt` | renamed | `.block-error` | |
-| `.block.info` | renamed | `.block-status` (session_started, server_started, server_stopped, resuming_session, session_resumed, compacted) | |
-| `.block.retry` | renamed | `.block-status` (llm_retry) | SolidJS painted retry `--peach`. We use the Status mauve to keep the palette tight; the inline `attempt N · wait Nms · …` text is enough disambiguation. |
+| `.block.info` | adapt | `.block.block-status[data-event-type="session_started"]`, `…[data-event-type="server_started"]`, `…[data-event-type="server_stopped"]`, `…[data-event-type="compacted"]`, `…[data-event-type="resuming_session"]`, `…[data-event-type="session_resumed"]` | Phase 3.9 TODO-3: info lifecycle events get `--ctp-overlay2` border + `--ctp-subtext0` fg via per-event-type rules. |
+| `.block.retry` | adapt | `.block.block-status[data-event-type="llm_retry"]` | Phase 3.9 TODO-3: llm_retry restored to `--peach` (matching SolidJS) via per-event-type rule overriding the `.block-status` mauve. |
 | `.block.streaming` (streaming label cursor) | adapt | `.block-streaming` | Leptos's `StreamingTail` adds a `block-streaming` class. The `.block-label::after` blinking ● keeps Mocha's pulse keyframes. |
 | `.block-label` | pass-through | `.block-label` | Verbatim. |
 | `.block-label-meta` | dead | — | Not emitted; meta lives in `.block-meta`. |
@@ -113,19 +113,19 @@ grep -rh 'class="' frontends/leptos/src/*.rs \
 | `.continue-btn` | adapt | `.leptos-composer-primary[data-action="continue"]` | |
 | `.takeitback-btn` | dead | — | The "Take it back" affordance was dropped in 3.4 (recorded decision). |
 | `.abort-btn` | adapt | `.leptos-composer-primary[data-action="abort"]`, `.leptos-composer-abort` | Both the primary (during PauseRequested) and the secondary (during Paused) get the red colour. |
-| `.sessions-btn` | dead | — | Leptos has no separate "open sessions modal" button; the picker is always visible (mounted as a centred panel by 3.8 CSS). |
+| `.sessions-btn` | adapt | `.leptos-composer-sessions` | Phase 3.9 TODO-1: a "Sessions" button was added to `<Composer/>` at position 0 (before model/effort selects). Opens the picker modal via `PickerOpen.open()`. Styled with yellow hover to match SolidJS's sessions-btn palette. |
 | `.effort-select`, `.effort-trigger`, `.effort-dropdown`, `.effort-option`, `.effort-option-selected` | dead | — | Leptos uses native `<select>` elements (`.leptos-composer-effort` / `.leptos-composer-model`); the SolidJS custom dropdown machinery has no analogue. We style the native `<select>` with `.leptos-composer-effort` / `.leptos-composer-model` rules. |
 
 ## Session picker
 
-The Leptos picker is a permanently-visible panel. The 3.8 CSS makes it look
-like a centred modal (max-width, centred, panel background) without requiring
-open/close state — visual parity with the SolidJS picker modal.
+The Leptos picker is now a true modal overlay (Phase 3.9 TODO-1). The 3.8 CSS gave it
+the visual shape of a centred panel; 3.9 adds a fixed-position backdrop, a `✕` close
+button in the header, and a `PickerOpen` signal wired to the composer's "Sessions" button.
 
 | SolidJS selector | Status | Leptos counterpart | Notes |
-|---|---|---|---|
+|---|---|---|——|
 | `.session-picker-modal` (max-width:700px) | adapt | `[data-testid="leptos-session-picker"]` | Use the testid as the stable selector — `picker.rs` doesn't emit a `.leptos-session-picker` class today. |
-| `.modal-backdrop` (when picker is open) | dead | — | No backdrop; the picker is inline in the page layout. |
+| `.modal-backdrop` (when picker is open) | adapt | `.picker-backdrop` | Phase 3.9 TODO-1: fixed-position dark overlay added. `PickerOpen(false)` removes it from the DOM entirely via `<Show>`. |
 | `.session-picker-list` | adapt | `[data-testid="leptos-session-list"]` | The `<ul>` is testid-bearing only; targeted by attribute selector. |
 | `.session-picker-search` | dead | — | No search input in 3.2; deferred to 3.6/4 polish. |
 | `.session-picker-new` | adapt | `[data-testid="leptos-session-new"]` | "+ new session" button. |

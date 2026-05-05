@@ -1,15 +1,16 @@
-//! Session-picker component (Phase 3.2).
+//! Session-picker component (Phase 3.2 + Phase 3.9).
 //!
-//! Renders the picker UI:
+//! Renders the picker UI as a modal overlay (Phase 3.9 open/close):
 //!
 //! ```text
-//! +------------------------------------------------+
-//! | [ + new session ]                              |
-//! |------------------------------------------------|
-//! | * 2026-05-04T18-37-19-…  active  [rename] [del]|
-//! |   2026-05-04T18-32-12-…  beta    [rename] [del]|
-//! |   2026-05-04T18-29-04-…  alpha   [rename] [del]|
-//! +------------------------------------------------+
+//! +-- backdrop (fixed, click-outside closes) ----+
+//! | +-- picker panel (.leptos-session-picker) --+|
+//! | | [ Sessions ]               [ + new ] [✕] ||
+//! | |-------------------------------------------||
+//! | | * 2026-05-04T18-37-19-…  (active) [↩] [✎]||
+//! | |   2026-05-04T18-32-12-…          [↩] [✎] ||
+//! | +-------------------------------------------+|
+//! +-----------------------------------------------+
 //! ```
 //!
 //! "Active" is `SessionListItem.dir == SessionStore::session_info.dir`.
@@ -19,7 +20,7 @@
 //!   for the Reset-vs-POST decision). Server emits
 //!   `session_info → history → reset_done`; an `Effect` watching
 //!   `session_info.dir` triggers a refetch so the new dir appears in
-//!   the list.
+//!   the list. Picker auto-closes on success (Phase 3.9 TODO-2).
 //! - **Rename** → `ClientFrame::RenameSession { dir, name }`. Server
 //!   broadcasts `session_renamed`; reducer updates the local list.
 //! - **Delete** → `ClientFrame::DeleteSession { dir }` after a
@@ -28,9 +29,23 @@
 //! - **Resume** → `ClientFrame::ResumeSession { dir }` (Phase 3.5).
 //!   Server emits `session_info → history → resuming_session →
 //!   session_resumed → ready` for the new session derived from the
-//!   target's last-message basis. Hits the `Reset`-style path on
-//!   the server: the active session is replaced by a fresh one
-//!   seeded with a resumption summary.
+//!   target's last-message basis. Picker auto-closes on success
+//!   (Phase 3.9 TODO-2).
+//!
+//! ## Open/close state (Phase 3.9 TODO-1)
+//!
+//! [`PickerOpen`] is provided at the App root and consumed by both
+//! `SessionPicker` (to render/hide the backdrop + panel) and
+//! `Composer` (to add the "Sessions" open button). Default is `true`
+//! so every existing spec that doesn't click "open" first continues
+//! to pass; the picker is open on first mount.
+//!
+//! Dismissal vectors:
+//! - `✕` button in picker header
+//! - Click on the dark backdrop outside the panel
+//! - Esc key while the backdrop is focused / active
+//! - Creating a new session (Reset) — auto-closes on send
+//! - Resuming a session — auto-closes on send
 
 use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
@@ -43,13 +58,67 @@ use crate::sessions::{SessionListItem, SessionListStore, is_active};
 use crate::store::SessionStore;
 use crate::ws::WsClient;
 
+// ---------------------------------------------------------------------------
+// PickerOpen context handle (Phase 3.9 TODO-1)
+// ---------------------------------------------------------------------------
+
+/// Wraps the picker's open/close `RwSignal<bool>`.
+///
+/// Provided at the `App` root so both `SessionPicker` (renders the
+/// panel) and `Composer` (renders the "Sessions" open button) can read
+/// and write the same signal without prop-drilling.
+///
+/// Default is `true` — picker open on first mount so existing specs
+/// (which navigate straight to `/leptos/` without clicking "Sessions"
+/// first) continue to pass.
+///
+/// Wrapped in a newtype so `provide_context` / `use_context` find a
+/// unique type — leptos's context lookup is type-keyed.
+#[derive(Debug, Clone, Copy)]
+pub struct PickerOpen(pub RwSignal<bool>);
+
+impl PickerOpen {
+    /// Construct fresh state (picker visible). Must run inside a leptos
+    /// reactive `Owner` scope.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(RwSignal::new(true))
+    }
+
+    /// Open the picker.
+    pub fn open(self) {
+        self.0.set(true);
+    }
+
+    /// Close the picker.
+    pub fn close(self) {
+        self.0.set(false);
+    }
+}
+
+impl Default for PickerOpen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SessionPicker component
+// ---------------------------------------------------------------------------
+
 /// Top-level picker view. Looks up `SessionStore`, `SessionListStore`,
-/// and `WsClient` from context (provided at the `App` root).
+/// `WsClient`, and `PickerOpen` from context (provided at the `App` root).
+///
+/// Renders as a fixed-position dark backdrop with the picker panel
+/// centred inside. Backdrop click + Esc key + `✕` button all dismiss
+/// the picker. `+ new session` and `[resume]` buttons auto-close the
+/// picker after the send succeeds (Phase 3.9 TODO-2).
 #[component]
 pub fn SessionPicker() -> impl IntoView {
     let conv = use_context::<SessionStore>().expect("SessionStore must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
+    let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
 
     // Initial fetch on mount.
     Effect::new(move |_| {
@@ -80,61 +149,112 @@ pub fn SessionPicker() -> impl IntoView {
             .with(|si| si.as_ref().map(|s| s.dir.clone()))
     });
 
+    // TODO-2: Reset auto-closes the picker.
     let on_new_click = move |_| {
         if let Err(err) = ws.send(&ClientFrame::Reset {
             model: None,
             effort: None,
         }) {
             list.set_error(format!("send Reset: {err:?}"));
+            return;
+        }
+        picker_open.close();
+    };
+
+    // TODO-1: close handler shared by `✕` button, backdrop click, Esc.
+    let on_close = move |_: leptos::ev::MouseEvent| picker_open.close();
+
+    // Esc-key dismissal on the backdrop div.
+    let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
+        if evt.key() == "Escape" {
+            picker_open.close();
         }
     };
 
+    // Stop propagation so clicking inside the panel doesn't bubble
+    // up to the backdrop and close the picker.
+    let stop_propagation =
+        move |evt: leptos::ev::MouseEvent| evt.stop_propagation();
+
     view! {
-        <section data-testid="leptos-session-picker">
-            <header class="picker-header">
-                <h2>"Sessions"</h2>
-                <button
-                    data-testid="leptos-session-new"
-                    on:click=on_new_click
-                >
-                    "+ new session"
-                </button>
-            </header>
-            <Show
-                when=move || list.last_error.with(Option::is_some)
-                fallback=|| ().into_any()
+        <Show when=move || picker_open.0.get() fallback=|| ()>
+            <div
+                class="picker-backdrop"
+                data-testid="leptos-picker-backdrop"
+                on:click=on_close
+                on:keydown=on_keydown
+                // tabindex makes the div focusable so keydown fires.
+                tabindex="-1"
             >
-                <p
-                    data-testid="leptos-session-error"
-                    class="picker-error"
+                <section
+                    data-testid="leptos-session-picker"
+                    on:click=stop_propagation
                 >
-                    {move || list.last_error.with(|e| e.clone().unwrap_or_default())}
-                </p>
-            </Show>
-            <ul data-testid="leptos-session-list">
-                <For
-                    each=move || list.sessions.get()
-                    key=|item: &SessionListItem| item.dir.clone()
-                    children=move |item: SessionListItem| {
-                        view! {
-                            <SessionRow item=item active_dir=active_dir />
-                        }
-                    }
-                />
-            </ul>
-        </section>
+                    <header class="picker-header">
+                        <h2>"Sessions"</h2>
+                        <div class="picker-header-btns">
+                            <button
+                                data-testid="leptos-session-new"
+                                on:click=on_new_click
+                            >
+                                "+ new session"
+                            </button>
+                            <button
+                                class="picker-close"
+                                data-testid="leptos-picker-close"
+                                on:click=on_close
+                            >
+                                "✕"
+                            </button>
+                        </div>
+                    </header>
+                    <Show
+                        when=move || list.last_error.with(Option::is_some)
+                        fallback=|| ().into_any()
+                    >
+                        <p
+                            data-testid="leptos-session-error"
+                            class="picker-error"
+                        >
+                            {move || list.last_error.with(|e| e.clone().unwrap_or_default())}
+                        </p>
+                    </Show>
+                    <ul data-testid="leptos-session-list">
+                        <For
+                            each=move || list.sessions.get()
+                            key=|item: &SessionListItem| item.dir.clone()
+                            children=move |item: SessionListItem| {
+                                view! {
+                                    <SessionRow item=item active_dir=active_dir />
+                                }
+                            }
+                        />
+                    </ul>
+                </section>
+            </div>
+        </Show>
     }
 }
+
+// ---------------------------------------------------------------------------
+// SessionRow component
+// ---------------------------------------------------------------------------
 
 /// One row in the picker list. Owns the inline-rename edit state.
 ///
 /// `dir` is stored once in a `StoredValue<String>` so every event
 /// handler closure captures only `Copy` values and the row cleanly
 /// composes inside `<Show>` / `<For>` without `.clone()` ceremony.
+///
+/// TODO-2: `on_resume` sets `PickerOpen` to `false` after the send
+/// succeeds so the picker auto-closes when the operator resumes a
+/// session. Rename and delete do NOT close the picker (the operator
+/// is mid-task on the list).
 #[component]
 fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl IntoView {
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
+    let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
 
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
 
@@ -190,20 +310,25 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         if let Err(err) = ws.send(&frame) {
             list.set_error(format!("send DeleteSession: {err:?}"));
         }
+        // NOTE: delete does NOT close the picker — the operator is
+        // mid-task on the list.
     };
 
-    // Resume from this row — Phase 3.5. Sends
-    // `ClientFrame::ResumeSession`; the server replaces the active
-    // session with a fresh one seeded from this dir's last
+    // Resume from this row — Phase 3.5 + Phase 3.9 TODO-2.
+    // Sends `ClientFrame::ResumeSession`; the server replaces the
+    // active session with a fresh one seeded from this dir's last
     // assistant message + extracted basis. The conversation feed
     // (3.3) renders the resulting `resuming_session` /
     // `session_resumed` events through the status family.
+    // Auto-closes picker on success.
     let on_resume = move |_| {
         let dir = dir_sv.get_value();
         let frame = ClientFrame::ResumeSession { session_dir: dir };
         if let Err(err) = ws.send(&frame) {
             list.set_error(format!("send ResumeSession: {err:?}"));
+            return;
         }
+        picker_open.close();
     };
 
     let active = Memo::new(move |_| {
