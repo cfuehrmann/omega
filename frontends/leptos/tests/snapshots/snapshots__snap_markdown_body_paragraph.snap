@@ -1,0 +1,6 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="md-body" class="block-body md-body"><p>hello</p>
+</div>

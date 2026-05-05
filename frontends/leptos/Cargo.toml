@@ -13,14 +13,32 @@ publish = false
 # by the path-dep on `omega-protocol` below.
 [workspace]
 
+# Phase 3.6: split into a thin lib + bin so host-target snapshot tests
+# (insta, `tests/snapshots.rs`) can pull in the components without
+# building the whole binary path. The bin is a 5-line shim that calls
+# `omega_web::run()`.
+[lib]
+name = "omega_web"
+path = "src/lib.rs"
+
 [[bin]]
 name = "omega-web"
 path = "src/main.rs"
 
+# Phase 3.6 — `csr` and `ssr` are mutually exclusive in leptos's
+# crate-feature design. The default is `csr` (what trunk + the bin use).
+# Snapshot tests flip via
+# `cargo test --no-default-features --features ssr`
+# from the `web-leptos-snapshots` recipe.
+[features]
+default = ["csr"]
+csr = ["leptos/csr"]
+ssr = ["leptos/ssr"]
+
 [dependencies]
 # Versions pinned against transitive resolution of leptos 0.8.19 to avoid
 # duplicate-version builds.
-leptos                   = { version = "=0.8.19", features = ["csr"] }
+leptos                   = { version = "=0.8.19", default-features = false }
 wasm-bindgen             = "=0.2.120"
 web-sys                  = { version = "=0.3.97", features = [
     "WebSocket",
@@ -45,6 +63,12 @@ web-sys                  = { version = "=0.3.97", features = [
     # `on:keydown` handler for Enter/Tab/Arrow navigation.
     "HtmlSelectElement",
     "KeyboardEvent",
+    # Phase 3.6 — markdown post-mount enhancement walks `<pre>`
+    # blocks. `NodeList` is the return type of `Element::query_selector_all`;
+    # `DomTokenList` is the return type of `Element::class_list`.
+    "NodeList",
+    "Node",
+    "DomTokenList",
 ] }
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }
@@ -58,12 +82,29 @@ omega-protocol           = { path = "../../rust/crates/omega-protocol" }
 gloo-net                 = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
 wasm-bindgen-futures     = "=0.4.70"
 
+# Phase 3.6 — markdown rendering.
+#
+# pulldown-cmark chosen over comrak after measuring the wasm bundle
+# delta (see Phase 3.6 done record): pulldown-cmark adds ~64 KB after
+# `wasm-opt -Oz` against an assistant-turn fixture; comrak adds
+# ~140 KB+. The HTML-escape filter for inline `Event::Html` /
+# `Event::InlineHtml` is implemented in `src/markdown.rs` (mirrors
+# SolidJS's `marked.use({ renderer })` HTML-escape override).
+#
+# `default-features = false` strips out the bundled crates set we
+# don't need (`getopts`-style CLI helpers via `simd` etc.). `html`
+# is the renderer; `gen-tests` and friends are intentionally absent.
+pulldown-cmark           = { version = "=0.13.3", default-features = false, features = ["html"] }
+
 # Tests run as wasm32 under `wasm-bindgen-test-runner` (Node backend).
 # The exact-pin matches the `wasm-bindgen 0.2.120` resolution above —
 # wasm-bindgen-test 0.3.70 has `wasm-bindgen = "=0.2.120"` as a hard
 # requirement. Do not change one without changing the other.
 [dev-dependencies]
 wasm-bindgen-test = "=0.3.70"
+# Phase 3.6 — host-target snapshot harness (TEST-ARCH-5). Pinned at
+# the latest 1.x at the time of authoring.
+insta             = { version = "=1.47.2", features = ["yaml"] }
 
 # Smaller wasm bundle for production.
 [profile.release]

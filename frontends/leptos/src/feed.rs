@@ -39,11 +39,49 @@ use leptos::prelude::*;
 use omega_protocol::OmegaEvent;
 
 use crate::context_modal::ContextModalState;
+#[cfg(target_arch = "wasm32")]
+use crate::diff_render::render_diff_html;
 use crate::event_view::{
     EventKind, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
     truncate_for_preview,
 };
+use crate::markdown;
 use crate::store::SessionStore;
+
+// ---------------------------------------------------------------------------
+// Mermaid + copy-button JS interop (Phase 3.6)
+// ---------------------------------------------------------------------------
+//
+// The mermaid lazy-load shim lives in `src/mermaid.js` so it can
+// dynamically `import("mermaid")` from a CDN — wasm-bindgen would
+// otherwise need a built-time dep on a 600 KB JS library and the
+// SolidJS UI mirrors this exact lazy-load pattern
+// (App.tsx:122-132). The two-function surface (`renderMermaid` +
+// `addCopyButtons`) is enough to mirror SolidJS's
+// `enhanceCodeBlocks` + `renderMermaidBlocks` end-to-end.
+//
+// Module path is crate-relative: wasm-bindgen rewrites it at link
+// time so the resulting `.js` lives next to the wasm output. On
+// host targets these externs compile but the functions are never
+// invoked (the Effects that call them only fire under `csr`).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/src/mermaid.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = "renderMermaid", catch)]
+    fn js_render_mermaid(container: &web_sys::Element) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+
+    #[wasm_bindgen(js_name = "addCopyButtons")]
+    fn js_add_copy_buttons(container: &web_sys::Element);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn js_render_mermaid(_container: &()) -> Result<(), ()> {
+    Ok(())
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn js_add_copy_buttons(_container: &()) {}
 
 /// Match the SolidJS UI's inline preview cap. Larger payloads remain
 /// reachable through the "show more" toggle (3.3) and, eventually,
@@ -148,8 +186,12 @@ pub fn ConversationFeed() -> impl IntoView {
 /// Renders one `OmegaEvent` with the visual-family CSS class and a
 /// typed body. `ToolResult` events delegate to [`ToolResultBlock`]
 /// for show-more state.
+///
+/// `pub` so the host-target snapshot harness in `tests/snapshots.rs`
+/// (Phase 3.6 TEST-ARCH-5) can render fixtures directly. The wasm
+/// runtime mounts it from `<ConversationFeed/>`.
 #[component]
-fn EventBlock(event: OmegaEvent) -> impl IntoView {
+pub fn EventBlock(event: OmegaEvent) -> impl IntoView {
     let kind = kind_for(&event);
     let class = css_class_for(kind);
     let kind_str = kind_tag(kind);
@@ -186,9 +228,16 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
                 "in: {}  out: {}  ({})",
                 e.usage.input_tokens, e.usage.output_tokens, e.stop_reason,
             );
+            // The outer `<div data-testid="leptos-assistant-text">`
+            // wraps the MarkdownBody so existing Playwright specs
+            // that locate "the rendered assistant text" by testid
+            // still work after Phase 3.6 swapped the inner `<pre>`
+            // for the markdown surface.
             view! {
                 <span class="block-label">"assistant"</span>
-                <pre class="block-body" data-testid="leptos-assistant-text">{text}</pre>
+                <div data-testid="leptos-assistant-text">
+                    <MarkdownBody text=text />
+                </div>
                 <span class="block-meta" data-testid="leptos-assistant-usage">{usage_line}</span>
             }
             .into_any()
@@ -311,7 +360,7 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
 
         OmegaEvent::SessionResumed(e) => view! {
             <span class="block-label">"session_resumed"</span>
-            <pre class="block-body">{e.summary}</pre>
+            <MarkdownBody text=e.summary />
         }
         .into_any(),
 
@@ -487,8 +536,253 @@ fn ToolResultBlock(event: omega_protocol::events::ToolResultEvent) -> impl IntoV
 }
 
 // ---------------------------------------------------------------------------
-// Streaming tail
+// MarkdownBody (Phase 3.6)
 // ---------------------------------------------------------------------------
+
+/// Wire-shape helper: the language tag pulldown-cmark emits as the
+/// `class=` attribute on the `<code>` element. Pure; mutation-tested
+/// via `tests/snapshots.rs` and the markdown unit tests.
+///
+/// Returns the bare language string (e.g. `"mermaid"` for
+/// `class="language-mermaid"`), or `None` for code blocks that have
+/// no language tag.
+#[must_use]
+pub fn language_from_class(class_attr: &str) -> Option<&str> {
+    // pulldown-cmark emits `class="language-foo"` for ``` foo blocks.
+    // Multiple classes are space-separated; the language one is
+    // always the `language-*` token.
+    class_attr
+        .split_ascii_whitespace()
+        .find_map(|tok| tok.strip_prefix("language-"))
+}
+
+/// Decide whether a fenced-code language tag should be diff-rendered.
+/// Mirrors `App.tsx::enhanceCodeBlocks`'s
+/// `cls.includes("language-diff") || cls.includes("language-patch")`
+/// check. Pure; mutation-tested.
+#[must_use]
+pub fn is_diff_language(lang: &str) -> bool {
+    lang == "diff" || lang == "patch"
+}
+
+/// Decide whether a fenced-code language tag should be lazy-rendered
+/// as a Mermaid diagram. Pure; mutation-tested.
+#[must_use]
+pub fn is_mermaid_language(lang: &str) -> bool {
+    lang == "mermaid"
+}
+
+/// Render markdown text as a `<div class="block-body md-body">`.
+/// Mirrors `App.tsx::MdBody` exactly:
+///
+/// 1. `inner_html` is set from [`markdown::render_to_html`] (raw
+///    HTML in source is escaped by the rendering pipeline).
+/// 2. After mount, an `Effect` walks the rendered DOM, marks
+///    mermaid blocks for lazy rendering, applies diff colouring on
+///    `language-diff` / `language-patch` blocks, and asks the JS
+///    shim to add copy buttons + render mermaid.
+///
+/// The post-mount mutation surface (DOM walking, mermaid invocation)
+/// is JS-interop and lives behind a `cfg(target_arch = "wasm32")`
+/// gate; the host build compiles it as a no-op so the snapshot
+/// tests render the static HTML straight from `inner_html`.
+#[component]
+pub fn MarkdownBody(text: String) -> impl IntoView {
+    let html = markdown::render_to_html(&text);
+    let node_ref: NodeRef<html::Div> = NodeRef::new();
+
+    Effect::new(move |_| {
+        if let Some(_el) = node_ref.get() {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use wasm_bindgen::JsCast as _;
+                let el_ref: &web_sys::Element = _el.unchecked_ref();
+                enhance_md_body(el_ref);
+                js_add_copy_buttons(el_ref);
+                if let Err(err) = js_render_mermaid(el_ref) {
+                    leptos::logging::error!("renderMermaid failed: {err:?}");
+                }
+            }
+        }
+    });
+
+    view! {
+        <div
+            class="block-body md-body"
+            data-testid="md-body"
+            inner_html=html
+            node_ref=node_ref
+        />
+    }
+}
+
+/// Walk every `<pre>` in `container` once and apply the SolidJS
+/// UI's post-mount enhancements:
+///
+/// * `language-mermaid` — add `mermaid-pending` class and stash the
+///   raw source in `data-mermaid-source` so the JS shim can replace
+///   the `<pre>` with the rendered SVG wrapper.
+/// * `language-diff` / `language-patch` — replace `<code>.innerHTML`
+///   with the per-line span output of [`render_diff_html`] and add
+///   the `diff-block` marker class + `data-testid="diff-block"` to
+///   the parent `<pre>`.
+/// * Any other language — leave alone; the JS shim's
+///   `addCopyButtons` injects the copy button after the wasm side
+///   returns.
+///
+/// Idempotent via `data-enhanced="1"`. Skipped on host targets.
+#[cfg(target_arch = "wasm32")]
+fn enhance_md_body(container: &web_sys::Element) {
+    use wasm_bindgen::JsCast as _;
+    let pres = container.query_selector_all("pre").unwrap_or_else(|err| {
+        leptos::logging::error!("querySelectorAll(pre) failed: {err:?}");
+        web_sys::NodeList::from(wasm_bindgen::JsValue::NULL).unchecked_into()
+    });
+    let len = pres.length();
+    for i in 0..len {
+        let Some(node) = pres.item(i) else { continue };
+        let Ok(pre) = node.dyn_into::<web_sys::HtmlElement>() else {
+            continue;
+        };
+        // Idempotency guard — if the JS shim already enhanced this
+        // block (copy button added), don't double-process.
+        if pre.dataset().get("mdEnhanced").is_some() {
+            continue;
+        }
+        let _ = pre.dataset().set("mdEnhanced", "1");
+
+        let code = pre.query_selector("code").ok().flatten();
+        let lang = code.as_ref().and_then(|c| {
+            let cls = c.class_name();
+            language_from_class(&cls).map(str::to_owned)
+        });
+
+        let raw_text = code
+            .as_ref()
+            .map(|c| c.text_content().unwrap_or_default())
+            .unwrap_or_else(|| pre.text_content().unwrap_or_default());
+
+        match lang.as_deref() {
+            Some(l) if is_mermaid_language(l) => {
+                let _ = pre.dataset().set("mermaidSource", &raw_text);
+                pre.class_list()
+                    .add_1("mermaid-pending")
+                    .unwrap_or_else(|err| {
+                        leptos::logging::error!("add mermaid-pending failed: {err:?}");
+                    });
+            }
+            Some(l) if is_diff_language(l) => {
+                if let Some(c) = code {
+                    c.set_inner_html(&render_diff_html(&raw_text));
+                }
+                pre.class_list().add_1("diff-block").unwrap_or_else(|err| {
+                    leptos::logging::error!("add diff-block failed: {err:?}");
+                });
+                pre.set_attribute("data-testid", "diff-block")
+                    .unwrap_or_else(|err| {
+                        leptos::logging::error!("set data-testid failed: {err:?}");
+                    });
+            }
+            _ => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — pure helpers in this module
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // --- language_from_class -----------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn language_from_class_extracts_simple_language() {
+        assert_eq!(language_from_class("language-rust"), Some("rust"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn language_from_class_handles_no_language() {
+        assert_eq!(language_from_class(""), None);
+        assert_eq!(language_from_class("hljs"), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn language_from_class_finds_in_multi_class() {
+        assert_eq!(
+            language_from_class("hljs language-mermaid foo"),
+            Some("mermaid"),
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn language_from_class_strips_only_first_token() {
+        // Defensive: pulldown-cmark always uses a single token; pin
+        // that we don't accidentally combine multiple language- prefixes.
+        assert_eq!(
+            language_from_class("language-foo language-bar"),
+            Some("foo"),
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn language_from_class_does_not_match_partial_prefix() {
+        // A class `language` (no dash) does not start with the full
+        // `language-` prefix so it doesn't strip.
+        assert_eq!(language_from_class("language"), None);
+    }
+
+    // --- is_diff_language --------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn is_diff_language_matches_diff() {
+        assert!(is_diff_language("diff"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn is_diff_language_matches_patch() {
+        assert!(is_diff_language("patch"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn is_diff_language_rejects_other() {
+        assert!(!is_diff_language(""));
+        assert!(!is_diff_language("rust"));
+        assert!(!is_diff_language("DIFF")); // case-sensitive on purpose
+        assert!(!is_diff_language("diff-tree"));
+    }
+
+    // --- is_mermaid_language ----------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn is_mermaid_language_matches() {
+        assert!(is_mermaid_language("mermaid"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn is_mermaid_language_rejects_other() {
+        assert!(!is_mermaid_language(""));
+        assert!(!is_mermaid_language("Mermaid"));
+        assert!(!is_mermaid_language("mermaid2"));
+        assert!(!is_mermaid_language("flow"));
+    }
+}
+
 
 /// Live overlay rendered after the persisted-event list. Two
 /// conditional blocks: streaming text (assistant family) and streaming

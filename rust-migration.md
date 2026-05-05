@@ -28,7 +28,7 @@
 | 3.2 — Leptos session picker | ✅ Done | `SessionListStore` + picker UI; `/leptos/` lists/creates/renames/deletes; debug dump moved to collapsible panel |
 | 3.3 — Leptos conversation feed | ✅ Done | `event_view.rs` pure projection; `feed.rs` component; `/leptos/` renders every `OmegaEvent` variant + live streaming text + auto-scroll seam |
 | 3.4 — Leptos composer | ✅ Done | `composer.rs` + `completion.rs`; primary action button (Send/Pause/Abort/Continue) + secondary Abort; model + effort `<select>` dropdowns; `@`-path file completion via `/api/files`; 3.3 `<StubComposer/>` retired |
-| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.5 done; 3.6–3.7 ahead) |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; TS deleted (3.0–3.6 done; 3.7 ahead) |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -830,8 +830,8 @@ Cutover at the end of Phase 3 is a one-line change: swap which bundle the
 | 3.3 | ✅ Done | Conversation feed: render every `OmegaEvent` variant + streaming `text`/`thinking` signals; auto-scroll seam |
 | 3.4 | ✅ Done | Composer: user-message send, pause / continue / abort, model + effort switchers; file-picker autocomplete via `/api/files` |
 | 3.5 | ✅ Done | Context inspector (`/api/context`); resume-session flow; LLM-call detail expander |
-| 3.6 | ⬜ Next | Visual parity pass; markdown / KaTeX / Mermaid; `leptos::ssr::render_to_string` + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
-| 3.7 | ⬜ | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
+| 3.6 | ✅ Done | Visual parity pass; markdown / Mermaid; `leptos`-SSR + `insta` snapshot tests per component (TEST-ARCH-5 lands here) |
+| 3.7 | ⬜ Next | Cutover: route `/` to Leptos; delete `src/`, ts-rs derives, `package.json`, `node_modules`; retire SolidJS Playwright specs whose surface is covered by snapshot tests |
 
 ### Phase 3.0 — done (concise record)
 
@@ -1912,82 +1912,419 @@ suites, ts-rs bindings drift). **`just test-browser`** ✅
   prompt; today the choice is to mirror SolidJS where resume
   is also a single-click action.
 
-### Phase 3.6 — visual parity + markdown / KaTeX / Mermaid (next)
+### Phase 3.6 — done (concise record)
 
-**Goal.** Bring the Leptos UI to visual parity with the SolidJS
-bundle: assistant text rendered as markdown (with code blocks,
-lists, tables, links); inline math via KaTeX; flowchart/sequence
-diagrams via Mermaid. Plus a snapshot-test harness that locks
-component rendering down via `insta` so future refactors are
-automatically regression-tested.
+**Scope.** Bring the Leptos feed to visual parity with the SolidJS
+bundle: assistant text rendered as markdown (paragraphs, code blocks,
+lists, tables, links, GFM strikethrough, diff/patch colouring);
+Mermaid lazy-loaded on first ```mermaid block detected. Plus a
+host-target SSR snapshot harness using `insta` that locks every
+component at the variant level (TEST-ARCH-5).
 
-**Out of scope:** the 3.7 cutover (route `/` to Leptos; delete
-`src/`, ts-rs, `node_modules`).
+**Decision — markdown crate (`pulldown-cmark = "=0.13.3"`).** Measured
+bundle delta on three representative fixtures (assistant turn with
+code block, list, table) by toggling the dep and rebuilding
+`trunk build --release`:
 
-**Acceptance:**
-- The Leptos feed renders the same markdown/KaTeX/Mermaid
-  affordances the SolidJS UI does today, against the same
-  Playwright fixtures (`web-ui-mermaid.spec.ts` and friends
-  ported / reused).
-- A new snapshot-test harness using `leptos::ssr::render_to_string`
-  + `insta` covers every component at the variant level (per-
-  `OmegaEvent` family for the feed; per-`TurnState` for the
-  composer; per-modal-state for the context inspector).
-  TEST-ARCH-5 lands here.
-- Visual review against the SolidJS UI shows no regressions on
-  the canonical fixtures.
-- `just rust-gate` ✅ · `just test-browser` ✅ · bundle
-  remains under 1 MB (have ~398 KB headroom; markdown +
-  KaTeX + Mermaid combined budget targeted at ≤ 150 KB).
+| Variant | wasm bytes | delta vs 3.5 |
+|---|---|---|
+| 3.5 baseline | 650,565 | — |
+| + `pulldown-cmark` (default features) | ~890 KB | +240 KB |
+| + `pulldown-cmark` (`default-features = false`, `features = ["html"]`) | 837,959 | +183 KB |
+| `comrak` 0.42 (default features) | ~960 KB | +310 KB |
 
-**Open questions to resolve in 3.6:**
-- **Markdown crate — `pulldown-cmark` 0.13 vs `comrak` 0.42?**
-  `pulldown-cmark` is event-streaming, smaller (~80 KB), GFM
-  via feature flag, no inherent HTML escaping; `comrak` is a
-  full CommonMark + GFM parser, larger (~140 KB), also produces
-  HTML strings, supports more extensions out of the box. The
-  bundle-budget winner is `pulldown-cmark`; the ergonomics
-  winner is `comrak`. Decide by measuring bundle delta against
-  three representative fixtures (assistant turn with code block,
-  assistant turn with list, assistant turn with table) and
-  picking whichever fits the budget at parity output.
-- **KaTeX bundling strategy — JS via `<script>` injection vs
-  Rust port?** A Rust port (`pulldown-latex`, `mathyank`) would
-  keep everything in-bundle; the JS approach (CDN-loaded
-  `katex.js` + its CSS) is the SolidJS UI's current path.
-  Bundle-wise the Rust port is cheaper *if* it covers the
-  same notation surface; the JS path is zero bundle delta but
-  introduces a network dep we've been zealous about avoiding.
-  Decide by enumerating the math notation we actually emit
-  (the resumption summary doesn't use math; assistant
-  responses occasionally use `$x^2$`-style inline) and picking
-  the smallest tool that covers the actual surface.
-- **Mermaid rendering — `<script>` injection vs Rust port?**
-  No Rust Mermaid port exists today (the official Mermaid is
-  a TypeScript library). `<script>` injection of Mermaid + its
-  ~600 KB JS bundle would balloon the page weight even though
-  it doesn't touch our wasm. Lazy-load on first Mermaid block
-  detected? Inline-render server-side and ship SVG? Decide
-  based on how often Mermaid appears in agent output (rare —
-  mostly architecture diagrams in summary turns).
-- **`insta` snapshot harness — how to render?** Leptos 0.8 ships
-  `leptos::ssr::render_to_string` for SSR; the wasm-bindgen-
-  test runner is wasm32-only and `ssr` is a separate feature
-  flag that builds for the host target. Either: (a) split
-  pure-projection tests (host) from component-render tests
-  (host with `ssr` feature) from interactive tests (wasm32),
-  with the fragmentation forcing a clear test-tier hierarchy;
-  or (b) render-to-string from inside a wasm32 test by
-  feeding fixtures through a non-mounted `view!` and stringifying
-  the result. (a) is more idiomatic; (b) keeps a single test
-  binary. Decide based on which Cargo workspace dance is less
-  painful.
-- **Bundle budget tracking.** ~398 KB headroom before 1 MB.
-  Markdown crate at ≤ 140 KB + KaTeX (Rust port estimate at
-  ~50 KB if we go that way) + Mermaid (likely JS/CDN, zero
-  bundle delta but page-weight cost). Total Rust-side budget:
-  ≤ 250 KB; comfortable. The visible inflection point is
-  whether Mermaid stays out-of-bundle.
+`pulldown-cmark` with the minimal feature set wins on bundle size
+and on the HTML-escape ergonomics: `Event::Html` /
+`Event::InlineHtml` are trivially intercepted in a `.map(…)` over
+the parser's event stream, mirroring SolidJS's
+`marked.use({ renderer: { html: ... } })` override. Comrak emits
+HTML strings in one shot; intercepting raw HTML requires post-string
+rewriting. Both render at parity output for the three fixtures; the
+bundle gap is decisive.
+
+**Decision — KaTeX dropped (out of scope).** Confirmed by grep:
+the SolidJS `MdBody` does not import KaTeX. The `katex@0.16` entry
+in `bun.lock` is a transitive dep of mermaid, not used by our
+markdown path. The math notation envelope today is **empty**:
+* The resumption summary uses no math.
+* Assistant responses occasionally use `$x^2$`-style inline; the
+  SolidJS UI renders that as raw text (markdown's inline-code rule
+  does not fire on `$…$`).
+* No tool output emits LaTeX.
+
+If math appears in a future PR, add a `feature = "math"` flag
+pulling `pulldown-latex` (~30 KB wasm) and a small renderer; today
+the smallest tool that covers the surface is no tool at all.
+Documented in the Phase 3.7 carry-forward so the boundary is
+explicit.
+
+**Decision — Mermaid via JS shim (`src/mermaid.js`).** Mirrors
+`App.tsx::renderMermaidBlocks` byte-for-byte on `data-testid`
+(`mermaid-wrapper`, `mermaid-diagram`, `mermaid-error-notice`,
+`mermaid-source`, `code-copy-btn`) so the existing
+`e2e/web-ui-mermaid.spec.ts` parity surface ports verbatim.
+Mermaid itself is loaded lazily via
+`import("https://cdn.jsdelivr.net/npm/mermaid@11/+esm")` only when
+a `pre.mermaid-pending` element is detected. **Bundle delta = 0**:
+the 600 KB mermaid library never enters the wasm bundle and only
+incurs page weight when a mermaid block actually appears.
+Frequency check: zero ```mermaid hits in committed
+`.omega/sessions/*/events.jsonl`; lazy-load is the right default.
+
+The shim is loaded by trunk via the wasm-bindgen `module = "..."`
+attribute on the extern block in `feed.rs` — trunk picks it up,
+copies it next to the wasm output, and rewrites the JS bindings
+shim's import. No Trunk asset directives required.
+
+**Decision — snapshot harness via host-target SSR + insta.** The
+original plan suggested `leptos::ssr::render_to_string` from inside
+a wasm32 test. That doesn't work: `csr` and `ssr` are mutually
+exclusive leptos features, and the `ssr` codepath panics on wasm.
+The cleanest split is option (a) from the plan: split lib + bin,
+flip features at `cargo test --features ssr` time. The lib is
+feature-agnostic; only the snapshot run picks a side.
+
+A probe (`cargo run --features ssr` on a stub `<App/>`) confirmed
+that leptos's `tachys::view::RenderHtml::to_html` produces clean
+static HTML when the `ssr` feature is on, and that our
+existing components (which use `NodeRef`, `Effect`, event handlers,
+web-sys types in field types) all compile under `ssr` because the
+reactive-runtime / JS-interop touches happen inside Effect / event
+handler closures that don't run during SSR. Zero `cfg` gating
+required across the existing component bodies — the only host-vs-
+wasm32 split is the new mermaid + copy-button JS-interop seam in
+`feed.rs` (gated `#[cfg(target_arch = "wasm32")]`).
+
+**No server-side changes.** Confirmed by grep:
+`LlmResponseEvent.text` is `Option<String>` carrying raw markdown;
+`SessionResumedEvent.summary` is the resume markdown surface. Both
+were already typed in `omega-protocol` since 1a; both already flow
+through the existing `OmegaEvent` surface. No new
+`OmegaEvent` variants. No new HTTP routes. No new WS frames.
+
+**No new external crate beyond pulldown-cmark + insta (dev-only).**
+Mermaid is JS-side. KaTeX is not used. `gloo-net` count of consumers
+is unchanged.
+
+**New files:**
+- `frontends/leptos/src/lib.rs` (~135 lines) — lib entrypoint;
+  re-exports modules and the `App` component. Replaces the previous
+  bin-only crate config so host-target snapshot tests can pull in
+  components without the bin path.
+- `frontends/leptos/src/markdown.rs` (~399 lines) — pure markdown
+  rendering (`render_to_html`, `escape_html`, `escape_inline_html`,
+  `render_options`). 26 wasm-bindgen-tests + cargo-mutants
+  acceptance run (1 missed mutant; equivalent — see below).
+- `frontends/leptos/src/diff_render.rs` (~326 lines) — pure diff
+  classification + rendering (`DiffLine` enum, `classify_line`,
+  `render_diff_html`). 22 wasm-bindgen-tests + cargo-mutants
+  acceptance run **(0 missed)**.
+- `frontends/leptos/src/mermaid.js` (~164 lines) — the JS shim
+  exposing `renderMermaid` + `addCopyButtons`. Identical visual
+  surface to `App.tsx::renderMermaidBlocks`.
+- `frontends/leptos/tests/snapshots.rs` (~490 lines) — the SSR
+  snapshot harness. **27 insta snapshots** covering: every
+  `OmegaEvent` family (16 EventBlock fixtures incl.
+  markdown-code-block, markdown-list, markdown-table, mermaid,
+  diff, html-escaped, session-resumed-markdown); standalone
+  MarkdownBody fixtures (paragraph, plain code block, inline code,
+  link); ContextModal closed + open-loading; Composer per
+  TurnState (idle / running / pause_requested / paused).
+- `e2e/leptos-markdown.spec.ts` — 11 Playwright specs covering
+  markdown affordances (bold + inline code; lists + headings;
+  GFM table; links; fenced code language class; raw-HTML escape),
+  diff colouring (5 line classes + `pre.diff-block` marker),
+  Mermaid lazy-load (success + invalid-syntax error path),
+  patch language tag, and streaming-overlay-stays-raw.
+- `frontends/leptos/tests/snapshots/*.snap` — 27 committed insta
+  snapshots.
+
+**Modified files:**
+- `frontends/leptos/src/feed.rs` — `<MarkdownBody />` component
+  added; `OmegaEvent::LlmResponse` and `OmegaEvent::SessionResumed`
+  arms in `render_event_body` now route assistant text through
+  it. New pure helpers `language_from_class`, `is_diff_language`,
+  `is_mermaid_language` (all wasm-bindgen-tested). The post-mount
+  enhancer `enhance_md_body` walks `<pre>` blocks, marks mermaid
+  for lazy render, and applies diff colouring; gated
+  `#[cfg(target_arch = "wasm32")]`. Wasm-only `wasm_bindgen` extern
+  block declares `renderMermaid` + `addCopyButtons` against the JS
+  shim. `EventBlock` was made `pub` so the snapshot harness can
+  render it directly. Outer `<div data-testid="leptos-assistant-text">`
+  wraps `<MarkdownBody />` so existing Playwright specs that
+  locate by that testid continue to work.
+- `frontends/leptos/src/main.rs` — reduced to a 5-line shim
+  calling `omega_web::run()`.
+- `frontends/leptos/Cargo.toml` — `[lib]` + `[[bin]]` split;
+  `[features]` block adding `csr` (default) and `ssr` (mutually
+  exclusive); `pulldown-cmark = "=0.13.3"` with
+  `default-features = false, features = ["html"]`; `insta` 1.47.2
+  as dev-dep; three new `web-sys` features (`NodeList`, `Node`,
+  `DomTokenList`). `leptos` switched from `features = ["csr"]` to
+  `default-features = false` so the feature flip works.
+- `Justfile` — `web-leptos-test` now uses `--lib` (lib/bin split
+  needs the explicit kind); new `web-leptos-snapshots` recipe runs
+  the SSR harness; `rust-gate` depends on both.
+- `playwright.config.ts` — `leptos-markdown.spec.ts` wired into
+  the real-server `testMatch` and the chromium `testIgnore`.
+
+**Tests — wasm-bindgen-test (`just web-leptos-test`):** **275
+passing** (205 from 3.5 + 70 new):
+- 26 in `markdown.rs` covering `escape_html` (full attack vector),
+  `render_options` (positive + negative bit pin + exact-bits pin),
+  `escape_inline_html` (block + inline + passthrough +
+  softbreak), `render_to_html` (paragraph, strong, inline code,
+  ordered/unordered list, link, fenced code with/without language,
+  GFM table, strikethrough, escape inline-html block + inline,
+  preserve `&` in text, mermaid/diff/patch language class,
+  empty input, headings, blockquote).
+- 22 in `diff_render.rs`: `classify_line` boundary cases (every
+  variant + `+++`/`---` priority over `+`/`-`, `@` alone is ctx,
+  `@@` is hunk, empty line, single-char +/-);
+  `DiffLine::class()` per-variant + pairwise-unique;
+  `render_diff_html` (simple add, drops trailing empty,
+  preserves intermediate empty, escapes HTML chars, full
+  patch fixture, no separator between spans, empty input,
+  just-newline boundary).
+- 22 new in `feed.rs` for `language_from_class`,
+  `is_diff_language`, `is_mermaid_language` (per-match-arm + each
+  pairwise-disjoint negative).
+
+**Tests — host-target SSR snapshots (`just web-leptos-snapshots`):**
+**27 passing**. Per-`OmegaEvent` family for the feed (16);
+standalone `MarkdownBody` (4); per-modal-state for `ContextModal`
+(2); per-`TurnState` for `Composer` (4). The leptos hydration
+markers (`data-hk="..."` and `<!--hk=...-->`) are scrubbed by a
+UTF-8-correct char-walking helper before the snapshot is taken so
+the fixtures are stable across leptos minor bumps.
+
+**Tests — Playwright (real-server project, port 3003):** 11 new
+specs in `e2e/leptos-markdown.spec.ts`:
+1. assistant text renders inside `[data-testid="md-body"]` (bold +
+   inline code).
+2. paragraph + lists + headings.
+3. GFM table renders.
+4. links keep their `href`.
+5. fenced code keeps `language-rust` class.
+6. raw HTML in source is escaped (no live `<script>` tag).
+7. diff block: 5 line classes + `pre.diff-block` marker.
+8. patch language tag triggers diff colouring.
+9. mermaid block renders an SVG diagram (lazy-loaded).
+10. invalid mermaid surfaces error notice + raw source.
+11. streaming overlay renders raw text, not markdown (markdown
+    rendering applies only to settled `llm_response`, mirroring
+    SolidJS).
+
+Total real-server leptos coverage now 29 specs (smoke 2 · picker
+4 · feed 4 · composer 8 · context-resume 3 · markdown
+11 · + 1 from a re-tally fix). **Total browser-test count:
+149 / 149.**
+
+**Mutation testing** (`cargo mutants -- --target
+wasm32-unknown-unknown`, run from `frontends/leptos/`):
+- `markdown.rs`: 8 mutants — 5 caught, 2 unviable, **1
+  equivalent**. The remaining mutant replaces `|` with `^` in
+  `render_options() -> Options::ENABLE_TABLES |
+  Options::ENABLE_STRIKETHROUGH`. Since the two flags are
+  disjoint bits, `T | S` and `T ^ S` produce **bit-identical**
+  outputs — no test (including an exact `bits()` equality)
+  can distinguish them. Same kind of equivalence as 3.4's
+  `direction == 1 vs >= 1 on signum() input`. Documented;
+  acceptance bar of "0 missed" met modulo the equivalent
+  mutation.
+- `diff_render.rs`: 7 mutants — 6 caught, 1 unviable,
+  **0 missed**. Acceptance criterion met.
+- `feed.rs` new pure helpers (`language_from_class`,
+  `is_diff_language`, `is_mermaid_language`): all caught;
+  per-variant + pairwise-disjoint coverage. The 7 missed
+  mutants in `feed.rs` are all in JS-interop edges
+  (`enhance_md_body` DOM walk, the two existing
+  `ConversationFeed` carve-outs from 3.3); same documented
+  pattern — functionally Playwright-covered.
+
+**Bundle-size impact.** 650,565 B (3.5) → 838,434 B (3.6),
+**+187,869 B (+29 %)**. Decomposition:
+- ~+95 KB — `pulldown-cmark` parser + HTML renderer + their
+  transitive crate code (`pulldown-cmark-escape`).
+- ~+45 KB — `<MarkdownBody />` component + post-mount enhancer
+  + `wasm_bindgen` extern glue for `renderMermaid` /
+  `addCopyButtons`.
+- ~+40 KB — additional `View` codegen from the new
+  `OmegaEvent::LlmResponse` arm wrapping `<MarkdownBody />` and
+  the diff/mermaid post-processing match arms.
+- 0 KB — KaTeX (not used) + Mermaid (JS-side, lazy-loaded from
+  CDN).
+
+The combined budget for markdown + KaTeX + Mermaid was
+targeted at ≤ 150 KB; we landed at ~183 KB — over the soft
+target by ~33 KB but **comfortably under the 1 MB hard
+ceiling** (162 KB headroom remaining). `wasm-opt -Oz` is not
+on this build host; running it (binaryen ships it) typically
+shaves another 15–20 % on top of `lto + opt-level="s"`, which
+would bring us back inside the soft target. Adopting it as
+part of the trunk profile is a 3.7 polish item.
+
+**`just rust-gate`** ✅ (incl. 275 wasm-bindgen tests, 27 SSR
+snapshots, all unit suites, ts-rs bindings drift).
+**`just test-browser`** ✅ **149 / 149** (138 from 3.5 + 11 new
+markdown specs).
+
+**Carry-forward into 3.7:**
+- `wasm-opt -Oz` is not yet wired into the trunk build. Adding
+  `[package.metadata.wasm-opt]` or running `wasm-opt` as a
+  trunk hook would shave the 33 KB markdown overage and give
+  3.7 a tighter cutover footing. Optional; the 1 MB ceiling
+  is intact.
+- The mermaid CDN URL is hard-coded
+  (`https://cdn.jsdelivr.net/npm/mermaid@11/+esm`). Operators
+  on offline networks lose mermaid rendering; the wrapper
+  shows the error-notice + raw source path which matches
+  SolidJS's behaviour when its bundled mermaid fails. If
+  offline operation matters, the Vite-bundled SolidJS path
+  is the reference — a 3.7 follow-up could vendor mermaid
+  via `npm install + trunk copy-file` and serve it locally.
+  Not tracked as a blocker.
+- The math notation envelope is empty today. If a future
+  agent surface emits `$…$` math, add a `feature = "math"`
+  flag in `omega-web` pulling `pulldown-latex` (~30 KB) and
+  wire it into `markdown::render_to_html`. Boundary documented
+  here so future PRs know where the seam is.
+- The streaming-text overlay still renders raw `<pre>`. SolidJS
+  does the same — markdown only mounts after `turn_end`. If
+  3.7 adopts streaming markdown, expect per-frame markdown
+  rendering cost; verify with `SCRIPTS.longStream()` first
+  before committing.
+- Snapshot review at TEST-ARCH-5 is **structural** (insta locks
+  the static HTML); visual review against the SolidJS UI on
+  the canonical fixtures was performed manually during this
+  phase. A future LLM-as-oracle run (Phase 4) supersedes the
+  manual review.
+- The `leptos-assistant-text` testid is now an outer-`<div>`
+  wrapper; the Playwright surface still works but specs that
+  navigate by descendant text (`.locator("...").locator(...)`)
+  may see one more wrapper level than before. Existing specs
+  use `toContainText` so this is invisible to them.
+- Mutation testing bar for `markdown.rs` is met modulo a single
+  equivalent mutation (`|` ↔ `^` on disjoint bitflags). Same
+  kind of equivalence flagged in 3.4. Documented; not a gap.
+- The lib + bin split now means `cargo test` in the leptos crate
+  needs `--lib` for the wasm-bindgen-test runner. The Justfile
+  recipe was updated; if anyone re-derives the recipe by hand
+  (or new sub-recipes get added), the `--lib` flag is the easy
+  miss.
+
+### Phase 3.7 — cutover (next)
+
+**Goal.** Switch the production frontend from SolidJS to Leptos and
+delete the SolidJS bundle + its build chain. Ends Phase 3 and
+opens the runway to Phase 4 (chromiumoxide + LLM oracle).
+
+**Out of scope.** Phase 4 work — chromiumoxide test runtime,
+LLM-as-oracle for snapshot review, deletion of `package.json` /
+`node_modules` / Playwright config (those leave with the e2e
+rewrite, not with the SolidJS bundle).
+
+**Acceptance.**
+- `omega-server` serves the Leptos bundle from `/`. The SolidJS
+  bundle is gone from the binary's static-route fallback.
+- `src/web/`, `src/cli.ts`-adjacent dead exports, and the ts-rs
+  derive features in `omega-protocol` / `omega-core` /
+  `omega-store` are deleted. `rust/bindings/` is deleted.
+- `package.json`, `bun.lock`, `node_modules/`, `.bunfig.toml`,
+  `vite.config.ts`, `knip.json`, `tsconfig*.json` (root + e2e +
+  src/web/client) are deleted.
+- The Playwright specs whose surface is fully covered by Leptos
+  snapshot tests retire here (typically `web-ui-4.spec.ts`,
+  `web-ui-mermaid.spec.ts`, the assistant-text fixtures from
+  `web-ui.spec.ts`, `web-ui-context-modal.spec.ts`,
+  `web-ui-rename-session.spec.ts`); the rest port to Phase 4's
+  chromiumoxide harness.
+- `Justfile`: every recipe that referenced `src/web/`,
+  `vite build`, `npx playwright`, `bun test`, `knip`, or
+  `bunx tsgo` is either deleted, retargeted at the Leptos
+  bundle, or marked Phase-4-pending.
+- `just rust-gate` ✅ · the new `just gate` (or whatever the
+  recipe is renamed to) replaces the old `just gate` end-to-end.
+- Bundle remains under 1 MB. `wasm-opt -Oz` may land here as
+  trunk-build polish.
+
+**Open questions to resolve in 3.7:**
+- **One-line `ServeDir` swap.** Today `omega_server::build_router`
+  has a fallback `ServeDir::new(public_dir)` rooted at
+  `src/web/public/`, plus a nested `ServeDir` at `/leptos/` for
+  `frontends/leptos/dist/`. The cutover swaps the fallback
+  target. Decide whether to keep the `/leptos/` mount as a
+  permanent alias (zero-cost; useful for reproducing 3.6
+  bug reports) or delete it on the same commit. Recommendation:
+  keep `/leptos/` for one release, then delete in a follow-up.
+- **`src/` deletion ordering.** Three options: (a) delete
+  `src/web/server.ts`-adjacent dead test files first, then
+  `src/web/client/` (the SolidJS UI), then top-level `src/*.ts`
+  (TS agent code, already mostly gone); (b) one big atomic
+  commit; (c) delete by directory in CI-passing increments.
+  Prefer (c): each delete commit must keep `just rust-gate`
+  green and the relevant subset of browser tests. The TS
+  agent code (`src/agent.ts` etc.) was already retired in 2c
+  per the migration record — verify by grep before assuming
+  it's deletable.
+- **`ts-rs` derive removal.** Each crate that has a
+  `ts-bindings` feature (`omega-protocol`, `omega-core`,
+  `omega-store`) loses it. `rust/bindings/` directory + the
+  `just rust-bindings` recipe + the bindings-drift guard in
+  `just rust-gate` all retire. **Watch out for**
+  `rust/.cargo/config.toml`: the `TS_RS_LARGE_INT` and
+  `TS_RS_EXPORT_DIR` env vars set there should be deleted in
+  the same commit so `cargo` doesn't read stale config.
+- **`package.json` + `node_modules` removal.** Deferred to
+  Phase 4 (chromiumoxide) per the long-standing plan, **not**
+  3.7. 3.7 keeps `package.json` for the surviving Playwright
+  specs that haven't yet ported. Delete in 4 once chromiumoxide
+  is the only browser-test runner.
+- **Which SolidJS Playwright specs retire vs port.** Rough cut:
+  retire (covered by Leptos snapshot tests at TEST-ARCH-5):
+  `web-ui-4.spec.ts` (markdown / diff / copy button — covered
+  by `leptos-markdown.spec.ts` + insta), `web-ui-mermaid.spec.ts`
+  (covered by `leptos-markdown.spec.ts`),
+  `web-ui-context-modal.spec.ts` (covered by
+  `leptos-context-resume.spec.ts` + insta),
+  `web-ui-rename-session.spec.ts` (covered by
+  `leptos-session-picker.spec.ts`),
+  `web-ui-file-completion.spec.ts` (covered by
+  `leptos-composer.spec.ts`). Port to Phase 4 (need real
+  browser): `web-ui.spec.ts` (full UI smoke + reconnect),
+  `web-ui-2.spec.ts`, `web-ui-3.spec.ts`,
+  `web-ui-pending-changes.spec.ts`, `recorded-session.spec.ts`,
+  `persistence.spec.ts`, `pause-ui.spec.ts`,
+  `pause-resume-interject.spec.ts`, `session-picker.spec.ts`,
+  `session-continuity.spec.ts`, `real-server-replay.spec.ts`.
+  Verify the mapping by running each retiring spec against
+  `/leptos/` and confirming the Leptos coverage is at parity
+  before deleting.
+- **`Cargo.lock` + bindings drift across the delete.** The
+  `ts-bindings` feature of `omega-protocol` / `omega-core` /
+  `omega-store` pulls `ts-rs` and a small transitive set
+  (`syn-derive`, `quote-use`, etc.). Once removed, those drop
+  from `Cargo.lock` — expect a noticeable lockfile churn on
+  the same commit. `rust/bindings/` deletion produces the
+  drift signal at gate time even if the lockfile is right;
+  verify the bindings-drift guard is removed in the same
+  commit as the directory.
+- **`Justfile` recipes referencing deleted paths.**
+  `web-build` (Vite), `client` (Vite dev server),
+  `test-core`, `test-fast`, `test-core-watch`, `typecheck`,
+  `gate`, `rust-bindings`, the `e2e` pass-through. Decide
+  per recipe: delete (`web-build`, `rust-bindings`),
+  retarget (`gate` → `rust-gate` + a slimmer browser-test
+  pass), or move to Phase 4 (`test-browser*` if Playwright
+  stays for a release).
+- **Rollback plan.** The cutover is a single-commit `ServeDir`
+  swap. Rollback is the inverse one-liner. If 3.7 lands a
+  big delete pass *plus* the swap in one commit, the
+  rollback story gets harder. Suggested order:
+  (1) commit only the `/` → Leptos `ServeDir` swap; verify
+  in production for one release. (2) delete the SolidJS
+  bundle + ts-rs + Justfile recipes in a follow-up.
+  Two-commit cutover keeps the rollback small.
 
 ---
 

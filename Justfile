@@ -134,10 +134,22 @@ web-leptos-build:
 # `WsMessage` parse path. Runs as wasm32 under Node via
 # `wasm-bindgen-test-runner`; both `cargo install` and `rustup target
 # add` calls are idempotent (no-op if already at the right version).
+#
+# Phase 3.6: `--lib` is required because the crate is now lib + bin.
+# The host-target snapshot harness lives at `tests/snapshots.rs` and
+# is gated by `#[cfg(feature = "ssr")]` so it skips here.
 web-leptos-test:
     rustup target add wasm32-unknown-unknown
     cargo install --locked --version =0.2.120 wasm-bindgen-cli
-    cd frontends/leptos && cargo test --target wasm32-unknown-unknown
+    cd frontends/leptos && cargo test --lib --target wasm32-unknown-unknown
+
+# Phase 3.6 — host-target snapshot harness (TEST-ARCH-5). Renders
+# every component at the variant level via leptos's host SSR
+# codepath and snapshots the HTML with insta. The `ssr` feature is
+# mutually exclusive with `csr`; the bin keeps `csr` (default) and
+# only the snapshot run flips features.
+web-leptos-snapshots:
+    cd frontends/leptos && cargo test --test snapshots --no-default-features --features ssr
 
 # Build the production omega-server (Rust) — release binary at rust/target/release/omega-server
 rust-build-server:
@@ -205,10 +217,10 @@ rust-bindings:
     cargo test -p omega-store    --features ts-bindings -- export_bindings
 
 # Rust-only quality gate: format check + Clippy + cargo test + bindings drift
-# + Leptos wasm-bindgen-test suite. Runs via the pre-commit hook when only
-# rust/ files are staged.
+# + Leptos wasm-bindgen-test suite + Leptos snapshot suite (Phase 3.6).
+# Runs via the pre-commit hook when only rust/ files are staged.
 # Run manually: just rust-gate
-rust-gate: web-leptos-build web-leptos-test
+rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
     cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
     just rust-bindings
     @echo "=== bindings drift check ==="

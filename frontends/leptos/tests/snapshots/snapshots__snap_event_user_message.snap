@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="user_message" data-event-kind="user" class="block block-user"><span class="block-label">user_message</span><pre data-testid="leptos-user-content" class="block-body">hello world</pre></div>

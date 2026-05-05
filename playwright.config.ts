@@ -47,6 +47,7 @@ export default defineConfig({
         "**/leptos-conversation-feed.spec.ts",
         "**/leptos-composer.spec.ts",
         "**/leptos-context-resume.spec.ts",
+        "**/leptos-markdown.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -68,6 +69,7 @@ export default defineConfig({
         "**/leptos-conversation-feed.spec.ts",
         "**/leptos-composer.spec.ts",
         "**/leptos-context-resume.spec.ts",
+        "**/leptos-markdown.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

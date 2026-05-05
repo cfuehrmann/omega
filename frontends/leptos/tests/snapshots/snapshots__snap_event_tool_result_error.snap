@@ -1,0 +1,6 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="tool_result" data-event-kind="error" class="block block-error"><span class="block-label">tool_result · error</span><span data-testid="leptos-tool-result-meta" class="block-meta">42ms · run_command</span><pre data-testid="leptos-tool-result-body" class="block-body">boom
+</pre><!><!--<() />--></div>

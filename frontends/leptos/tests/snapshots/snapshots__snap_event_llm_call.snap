@@ -1,0 +1,7 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="llm_call" data-event-kind="status" class="block block-status"><span class="block-label">llm_call</span><span data-testid="leptos-llm-call-summary" class="block-body">claude-sonnet-4-6 · 2 ctx record(s) · 1234 bytes</span><button data-testid="leptos-llm-call-open-modal" class="block-llm-call-open">context records…</button><details data-testid="leptos-llm-call-details" class="block-llm-call-details"><summary>details</summary><dl class="block-llm-call-meta"><dt>cache_breakpoint_index</dt><dd data-testid="leptos-llm-call-cache-bp">2</dd><dt>request_bytes</dt><dd data-testid="leptos-llm-call-request-bytes">1234</dd><dt>context_hashes (2)</dt><dd data-testid="leptos-llm-call-hashes">aaaaaaaaaaaa, bbbbbbbbbbbb</dd><dt>request_summary</dt><dd><pre data-testid="leptos-llm-call-request-summary" class="block-body">{
+  "system": "test"
+}</pre><!><!--<() />--></dd></dl></details></div>
