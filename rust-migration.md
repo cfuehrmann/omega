@@ -31,7 +31,8 @@
 | 3.5 — Leptos context inspector + resume | ✅ Done | `context_modal.rs`; resume from picker; LLM-call inline expander |
 | 3.6 — Leptos markdown + Mermaid + SSR snapshots | ✅ Done | `pulldown-cmark`; lazy-loaded Mermaid; insta SSR snapshot harness (TEST-ARCH-5) |
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
-| 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos; TS frontend + TS agent + ts-rs bridge deleted (3.0–3.7) |
+| 3.8 — visual parity (next) | 🟡 In progress | CSS port from the deleted SolidJS `style.css`; Leptos UI ships with zero styling today |
+| 3 — Leptos UI rewrite | 🟡 In progress | SolidJS → Leptos; cutover landed at 3.7 but the visual side regressed (no stylesheet); 3.8 closes the gap |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
@@ -796,7 +797,7 @@ production LLM, real cost. Sessions persist to `.omega/sessions/` by default.
 
 ---
 
-## Phase 3 — Leptos UI rewrite ✅ Done
+## Phase 3 — Leptos UI rewrite 🟡 In progress
 
 **Crate `omega-web`** at `frontends/leptos/` (standalone Cargo workspace,
 wasm32-only). Ports `src/web/client/` component by component. Imports types
@@ -2406,6 +2407,25 @@ testid to make the surface explicit).
 
 **Carry-forward into Phase 4:**
 
+- **🚨 Visual regression — no CSS shipped (deferred to Phase 3.8,
+  not Phase 4).** The Leptos bundle has never had a stylesheet:
+  `frontends/leptos/index.html` carries no `<link rel="stylesheet">`,
+  `frontends/leptos/` has no `style.css`, and Trunk's asset pipeline
+  has nothing CSS-shaped to copy into `dist/`. Phases 3.0–3.6 each
+  added components with class names but never the CSS that styles
+  them. The 3.6 SSR snapshot harness locks **structural** HTML
+  (insta on `to_html()`), not rendered visuals — so the snapshot
+  bar passed even with zero CSS. The 3.6 carry-forward note about
+  "manual visual review against the SolidJS UI" was a fig leaf:
+  the gap was "is there ANY stylesheet at all" and the answer
+  was no, but no one looked. After commit 2 the deleted SolidJS
+  `src/web/client/style.css` (1408 lines, Catppuccin Mocha) is
+  recoverable from `git show 1e3bed4:src/web/client/style.css`;
+  Phase 3.8 ports it to the Leptos class surface. The cutover
+  shipped a black-on-white-text-on-full-page UI with no modals,
+  no panels, no spacing — functionally complete, visually broken.
+  **Phase 3 is not done until 3.8 lands.**
+
 - The `/leptos/` mount + the `308 /leptos → /leptos/` redirect
   are still in `router.rs`. Delete in a follow-up alongside
   `Trunk.toml`'s `public_url = "/leptos/"` → `"/"` flip. The
@@ -2439,6 +2459,95 @@ testid to make the surface explicit).
   Phase 4 may re-evaluate (vendor via Trunk `copy-file`).
 
 ---
+
+### Phase 3.8 — visual parity (next)
+
+**Goal.** Port the deleted SolidJS Catppuccin Mocha theme to the
+Leptos bundle so the production UI matches what users had before
+the 3.7 cutover. Without 3.8, Phase 3 is not complete.
+
+**Why this is its own phase, not a 3.7 follow-up.** 3.7's stated
+acceptance was structural: ServeDir swap, deletions, gate green.
+The visual gap is bigger than a one-line follow-up — 1408 lines
+of CSS to port, ~135 SolidJS class selectors to map onto ~44
+Leptos class names (a meaningful subset of which carries a
+`leptos-` prefix that has no SolidJS equivalent). Bundling this
+into 3.7's done record would have hidden a real regression
+behind a green checkmark.
+
+**Scope.**
+- Recover `style.css` from `git show 1e3bed4:src/web/client/style.css`
+  (the Phase 3.6 commit; last commit where it existed).
+- Adapt selectors to the Leptos class surface. Categories:
+    * **Pass-through** — selectors the Leptos components already
+      use verbatim (`.block-body`, `.block-meta`, `.block-label`,
+      `.block-tool-name`, `.block-tool-input`, `.md-body`,
+      `.diff-add`, `.diff-del`, `.diff-ctx`, `.diff-hunk`,
+      `.diff-file`, `.mermaid-diagram`, `.mermaid-error-notice`,
+      `.code-copy-btn`, `.language-rust`, `.language-diff`, ...).
+      Copy verbatim.
+    * **Renamed** — SolidJS selector → Leptos `leptos-*`
+      counterpart. Map per the table the agent will produce as
+      step 1 of the work. Examples: `.input-row` →
+      `.leptos-composer`; `.feed` → `.leptos-feed`;
+      `.fc-dropdown` → `.leptos-composer-completion`;
+      modal selectors → `.leptos-context-modal*`. Some Leptos
+      classes have no direct SolidJS counterpart (e.g.
+      session-picker classes that diverge from
+      `.bottom-panel-session`); for those, design from the
+      semantic intent.
+    * **Dead** — selectors targeting structures that no longer
+      exist in Leptos (e.g. `.bp-dir`, `.bp-label` from a
+      bottom-panel design that 3.2 didn't carry over). Drop.
+- Add `frontends/leptos/style.css` and a
+  `<link data-trunk rel="css" href="style.css" />` to
+  `frontends/leptos/index.html` so Trunk hashes + ships it.
+- Verify visual fidelity against the historical SolidJS UI:
+  spin up the production binary, click through every component
+  (composer, feed for each `OmegaEvent` family, picker modal,
+  context modal, resume flow, markdown blocks), compare
+  side-by-side with screenshots from the 3.6 release if
+  available, otherwise from `git checkout 1e3bed4 -- src/web` +
+  `just web-build` in a worktree.
+
+**Acceptance.**
+- `frontends/leptos/dist/index.html` carries a `<link
+  rel="stylesheet">` (Trunk-hashed) and the resulting visual
+  surface matches the SolidJS Catppuccin Mocha theme.
+- Every Leptos component has visible non-default styling
+  (background, foreground colour, padding, font, borders).
+- The session picker is a centred modal, not a full-page list.
+- The composer textarea sizes correctly with the model + effort
+  selectors laid out alongside.
+- The context modal renders as an overlay with backdrop, not
+  inline-flow content.
+- All 32 real-server Playwright specs still pass (CSS doesn't
+  change rendered HTML structurally, but spec-id resolution
+  must still work).
+- All 27 SSR snapshots still pass (CSS doesn't appear in
+  `to_html()` output).
+- `just rust-gate` and `just gate` green.
+
+**Out of scope.**
+- Visual differences from SolidJS that improve the design.
+  Phase 3 is parity. Improvements go in a deferred-improvements
+  list, not 3.8.
+- Tailwind / CSS-in-Rust / styled-components experiments. Use
+  plain CSS with the same `style.css` shape SolidJS had —
+  cheapest port, fewest moving parts.
+- Light theme. SolidJS shipped Mocha (dark) only.
+
+**Open sub-decisions for 3.8:**
+- **Selector strategy.** Two options: (a) keep `leptos-*`
+  prefixes on testid-bearing elements and rewrite CSS to match;
+  (b) drop the `leptos-` prefix from class names (keep on
+  testids) and reuse SolidJS selectors verbatim. Recommendation:
+  **(a)** — Phase 3 components are stable and renaming classes
+  risks breaking surfaces the SSR snapshots locked in. The
+  CSS rewrite is mechanical.
+- **`wasm-opt -Oz`.** Listed as a 3.7 carry-forward; with CSS
+  added, the bundle size question gets a second axis (wasm vs
+  CSS bytes). Defer to after 3.8 lands.
 
 ## Phase 4 — `chromiumoxide` + LLM oracle (next) ⬜ Future
 
