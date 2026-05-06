@@ -3111,73 +3111,96 @@ toolchain deletion.
 ### Mutation testing — current state and Phase 4 risk
 
 **Why this matters for Phase 4:** Playwright is currently the only
-safety net for at least one mutation that unit tests miss. Deleting
-Playwright before an equivalent Rust e2e test exists creates a
-permanent escape window for that mutant.
+safety net for a sizeable cluster of mutations that unit tests miss.
+Deleting Playwright before equivalent Rust e2e tests exist creates a
+permanent escape window for those mutants.
 
-#### Rust workspace (`rust/`)
+#### Phase 4 opener re-baseline (Step 2)
 
-Last run: **2026-05-03** (stale — before BUG-C/D fixes on 2026-05-05).
-Scope: `omega-agent` — 132 mutants, **0 missed**, 83 unviable.
-Action: re-run as Phase 4 opener to confirm BUG-C/D code paths covered.
+Fresh sweep on **2026-05-09** (head of Phase 4 work) reveals the
+phase-3 "0 survivors" claim is stale: Phase-3.10 introduced new
+surface (composer, picker, status-chip, modals, http-client, ws
+reconnect) without a follow-up sweep.
+
+| Sweep | Total | Caught | Unviable | **Missed** | Timeout |
+|---|---:|---:|---:|---:|---:|
+| Rust workspace (`rust/`) | 690 | 316 | 346 | **20** | 8 |
+| Leptos (`frontends/leptos/`, wasm32) | 271 | 175 | 10 | **84** | 2 |
+| **Total** | **961** | **491** | **356** | **104** | **10** |
+
+(`cargo-mutants` counts TIMEOUTs as caught; survivors = MISSED only.)
+
+**Sweep recipes** (pinned in the Justfile so future runs don't OOM
+on the tmpfs `/tmp` default):
 
 ```
-cd rust && cargo mutants
+just mutants        # rust workspace, ~3h with -j2
+just web-mutants    # leptos wasm32,  ~1.5h with -j2
 ```
 
-#### Leptos frontend (`frontends/leptos/`)
+Both recipes export `TMPDIR=$HOME/.cache/cargo-mutants-tmp` so the
+per-mutant scratch trees land on real disk.
 
-Last run: **2026-05-05 08:21** — *before* Phase 3.10 (TODO-G/A/B/C/D).
-Scope: **`markdown.rs` only** (8 mutants). Not a full codebase sweep.
+#### Step 2 triage — LIVE / DEAD / EQUIVALENT
 
-Result: 5 caught, **1 missed**, 2 unviable.
+The 14 unit-killable survivors (the only ones whose natural test
+surface is a unit test, not the upcoming chromiumoxide harness) were
+classified under the dead-code lens *("does any production caller
+actually depend on this?")* and either tested or skipped:
 
-**Missed:** `markdown.rs:61:28  render_options  | → ^`
-
-The `render_options` function OR-combines `comrak` extension flags.
-Substituting XOR (`^`) for OR (`|`) produces wrong flags only when
-two non-zero flags are active simultaneously. Existing unit tests
-exercise each extension in isolation, so XOR == OR for every single
-test case — the mutant slips through.
-
-**Current safety net:** `leptos-markdown.spec.ts` renders a document
-with multiple simultaneous extensions (table + strikethrough +
-autolink). Combined XOR of two non-zero bits ≠ OR, so the rendered
-HTML differs and the assertion fails. **Deleting Playwright without
-first fixing this unit-test gap allows the mutant to escape
-permanently.**
-
-**Fix (required before JS toolchain deletion):** add a `#[test]` in
-`markdown.rs` that passes a string containing both a GFM table *and*
-`~~strikethrough~~` and asserts the output HTML contains both a
-`<table>` and a `<del>` element. This forces the multi-flag path and
-kills the survivor.
-
-**Functions never mutation-tested** (added after the last sweep):
-
-| Function | File | Return type | Unit tests |
+| # | Survivor | Verdict | Action |
 |---|---|---|---|
-| `truncate_for_preview` | `event_view.rs` | `Option<String>` | ✅ wasm |
-| `kind_for` | `event_view.rs` | `EventKind` | ✅ wasm |
-| `truncate_to_lines` | `event_view.rs` | `Option<String>` | ✅ wasm (7) |
+| 1 | `markdown.rs:61` `render_options` `\|→^` | EQUIVALENT | `#[mutants::skip]` + GFM table + `~~strike~~` render test |
+| 2 | `agent.rs:348` `active_model` (×2) | LIVE | 2 accessor tests (initial-config + post-`set_model`) |
+| 3 | `agent.rs:354` `active_effort` (×2) | LIVE | 2 accessor tests (initial-config + post-`set_effort`) |
+| 4 | `controls.rs:258` `notify` accessor | LIVE | `notify_returns_same_instance` (pointer-equality) |
+| 5 | `cli/main.rs:105` `delete !` (allow_dirty bang) | LIVE | dirty-tree integration test (real git repo, no `--allow-dirty`) |
+| 6 | `mock-server/control.rs:40` `ready` (×2) | LIVE | mock-server `tower::oneshot` integration test |
+| 7 | `protocol/events.rs:101` `default_omega_commit` (×2) | LIVE | back-compat deserialise test (omits `omegaCommit` field) |
+| 8 | `test-fixtures` `default_input_tokens` (×3) | LIVE | serde-default test on `MockResponse::Text` |
+| 9 | `test-fixtures` `default_output_tokens` (×3) | LIVE | serde-default test on `MockResponse::Text` |
+| 10 | `test-fixtures` `new_script` | EQUIVALENT | `#[mutants::skip]` (`Default::default()` is byte-identical) |
+| 11 | `test-fixtures` `CallHistory::snapshot` | LIVE | mock-server `/control/llm-calls` integration test |
+| 12 | `test-fixtures` `CallHistory::reset` | LIVE | mock-server `/control/reset-calls` integration test |
+| 13 | `test-fixtures` `project_message` `==` | LIVE | text-block vs tool-use single-block unit test |
+| 14 | `leptos/ws.rs:252` `RandomJitter::factor` (×8) | LIVE | wasm range/spread test (asserts `[0.8, 1.2)` and non-constancy) |
 
-Full sweep command (from `frontends/leptos/`):
+**Refactor as part of Step 2:** `omega-mock-server` is now
+`[lib] + [[bin]]`. The lib re-exports `pub mod control` so the new
+integration test can drive the control router directly via
+`tower::ServiceExt::oneshot` without TCP binding (the binary is
+untouched aside from `use omega_mock_server::control;`).
 
-```
-cargo mutants --target wasm32-unknown-unknown
-```
+#### Deferred to Step 5 (post-harness mutation sweep)
 
-Expected: all three fully caught (all have targeted wasm tests). Run
-to confirm — don’t assume.
+The remaining ~80 leptos missed mutants are concentrated in code
+whose natural test surface IS the chromiumoxide harness, not unit
+tests. Killing them now would require ~600 LOC of brittle DOM/event
+stubs that the harness will obsolete a few commits later.
 
-#### Phase 4 mutation risk matrix
+| File | Missed | Nature |
+|---|---:|---|
+| `composer.rs` | 22 | caret arithmetic, slash-menu nav, keystroke handlers |
+| `ws.rs` | ~12 | connection-state guards (jitter math killed in Step 2) |
+| `feed.rs` | 13 | `enhance_md_body` DOM walker, mermaid/diff guard CALL SITES (the classifier fns are caught) |
+| `picker.rs` | 10 | open/close, session-row state, refresh |
+| `http.rs` | 9 | REST GET wrappers (`get_sessions`, `get_files`, `get_context`) |
+| `lib.rs` | 7 | App routing, StatusChip arms |
+| `context_modal.rs` | 1 | open/close |
+| `main.rs` | 1 | entry point |
 
-| Area | Risk | Action |
+Step 5 re-runs both sweeps after the harness lands and applies the
+same LIVE/DEAD lens to whatever remains. Acceptance criterion for
+Phase 4 close: **0 missed in both sweeps**.
+
+#### Phase 4 mutation risk matrix (revised)
+
+| Area | Risk after Step 2 | Action |
 |---|---|---|
-| `markdown.rs` `\|`→`^` survivor | **HIGH** — Playwright is its only net | Fix unit test before deleting Playwright |
-| `event_view.rs` never swept | Medium — well unit-tested | Full sweep at Phase 4 open; fix any survivors |
-| `rust/` workspace stale | Low — was 0 missed | Re-run at Phase 4 open; confirm BUG-C/D covered |
-| `feed.rs`/`lib.rs` UI components | None — `impl IntoView` not mutable | Accept; e2e tests cover behavior |
+| Unit-killable survivors (14 above) | None — closed in Step 2 | — |
+| `markdown.rs` `\|→^` | None — value-equivalent, skipped with comment + render test | — |
+| Leptos UI mutants (~80) | Medium — covered today by Playwright, will be covered by harness | Step 5 sweep after harness lands |
+| `rust/` workspace baseline drift | Low — re-baselined in Step 2 | Re-run on every PR that touches `rust/` |
 
 ---
 

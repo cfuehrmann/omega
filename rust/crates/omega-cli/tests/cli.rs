@@ -355,3 +355,79 @@ async fn happy_path_stderr_snapshot() {
     let stderr = normalize_session_line(&stderr);
     assert_snapshot!("happy_path_stderr", stderr);
 }
+
+// ---------------------------------------------------------------------------
+// 9. Pending-changes gate
+// ---------------------------------------------------------------------------
+
+/// Kills `delete ! in run` at `omega-cli/src/main.rs:105` (the
+/// `!allow_dirty` bang in the pending-changes gate). Without the bang,
+/// the condition becomes `if allow_dirty && pending`, which means the
+/// gate refuses ONLY when `--allow-dirty` was passed — the inverse of
+/// the production rule. With the test below, the unmutated code refuses
+/// (exit 1) and the mutated code would proceed past the gate, then
+/// either succeed (exit 0) or fail somewhere downstream — either way,
+/// not the expected exit-1-with-the-uncommitted-changes message.
+///
+/// The test creates a real git repo with one staged-but-uncommitted
+/// file so `git status --porcelain` actually reports a change. We
+/// deliberately omit `--allow-dirty` so the gate is the only thing
+/// standing between the run and any LLM call (no mock server is set
+/// up, so reaching the LLM would also fail, but with a different
+/// stderr signature).
+#[test]
+fn dirty_tree_without_allow_dirty_exits_with_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cwd = temp.path();
+
+    // Initialise a real git repo so `git status --porcelain` works.
+    // (`omega` shells out to git rather than using libgit2.)
+    let run_git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git invocation");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    run_git(&["init", "--quiet"]);
+    // Need at least one commit so the working-tree-vs-HEAD comparison
+    // is well-defined.
+    std::fs::write(cwd.join("README.md"), "hi\n").expect("write README");
+    run_git(&["add", "README.md"]);
+    run_git(&["commit", "--quiet", "-m", "init"]);
+    // Now make the tree dirty: an unstaged change.
+    std::fs::write(cwd.join("README.md"), "hi\nmore\n").expect("dirty write");
+
+    let session_root = cwd.join("sessions");
+
+    let assert = cargo_bin_cmd!("omega")
+        .env("ANTHROPIC_API_KEY", "sk-test")
+        .current_dir(cwd)
+        .args([
+            "run",
+            "--instruction",
+            "noop",
+            "--session-root",
+            session_root.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .code(1);
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("uncommitted changes in the working tree"),
+        "stderr did not mention pending-changes gate: {stderr}"
+    );
+    assert!(
+        stderr.contains("--allow-dirty"),
+        "stderr did not mention --allow-dirty escape hatch: {stderr}"
+    );
+}

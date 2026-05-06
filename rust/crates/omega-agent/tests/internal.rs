@@ -497,3 +497,55 @@ async fn audit_request_bytes_grow_without_context_management() {
         "request_bytes must increase over 6 tool turns: {request_bytes_seq:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Active model / effort accessors
+// ---------------------------------------------------------------------------
+//
+// `Agent::active_model` and `Agent::active_effort` are read by the
+// router on every status push (`omega-server/src/router.rs:246-251`)
+// to populate the SessionInfoCache that the leptos UI's StatusChip
+// renders. They're also used by the effort-reset gate (lines 630-631).
+// Without these tests, mutating the accessors to return `""` survived
+// the workspace mutation sweep because no test actually observed the
+// value. Each accessor gets two checks: initial-config visibility and
+// post-`set_*` visibility.
+
+/// Kills `replace Agent::active_model -> &str with ""` (and `"xyzzy"`).
+#[tokio::test]
+async fn active_model_reflects_initial_config() {
+    let (agent, _p, _t) = make_test_agent();
+    // make_test_agent constructs with model="claude-sonnet-4-6".
+    assert_eq!(agent.active_model(), "claude-sonnet-4-6");
+}
+
+/// Pinned: a follow-on `set_model` call is observable through the
+/// accessor. Required because the SessionInfoCache snapshot a slash-
+/// command refresh produces would otherwise still show the old model.
+#[tokio::test]
+async fn active_model_reflects_set_model() {
+    let (mut agent, _p, _t) = make_test_agent();
+    let _ = agent.set_model("claude-opus-4-7".to_owned()).await;
+    assert_eq!(agent.active_model(), "claude-opus-4-7");
+}
+
+/// Kills `replace Agent::active_effort -> &str with ""` (and `"xyzzy"`).
+/// `make_test_agent` constructs with `effort = None`; the agent
+/// substitutes `DEFAULT_EFFORT` ("medium") in `Agent::new`, so the
+/// accessor MUST round-trip the resolved string (not be replaced by a
+/// literal `""` or `"xyzzy"` returned regardless of state).
+#[tokio::test]
+async fn active_effort_reflects_initial_config() {
+    let (agent, _p, _t) = make_test_agent();
+    assert_eq!(agent.active_effort(), "medium");
+}
+
+/// Pinned: a follow-on `set_effort` is observable through the accessor.
+/// Without this, a router that broadcasts the effort to the StatusChip
+/// would still show the previous value after `/effort` slash-command.
+#[tokio::test]
+async fn active_effort_reflects_set_effort() {
+    let (mut agent, _p, _t) = make_test_agent();
+    let _ = agent.set_effort("medium".to_owned()).await;
+    assert_eq!(agent.active_effort(), "medium");
+}

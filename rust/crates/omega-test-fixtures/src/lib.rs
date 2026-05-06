@@ -124,6 +124,12 @@ const fn default_output_tokens() -> i64 {
 pub type Script = Arc<Mutex<VecDeque<MockResponse>>>;
 
 #[must_use]
+// `Default::default()` for `Arc<Mutex<VecDeque<MockResponse>>>` produces
+// `Arc::new(Mutex::new(VecDeque::new()))` — byte-identical to the body
+// below. The mutation `replace new_script -> Script with Default::default()`
+// is therefore value-equivalent and impossible to kill via behaviour. Skip
+// it explicitly rather than carry a survivor that no test can ever fail on.
+#[mutants::skip]
 pub fn new_script() -> Script {
     Arc::new(Mutex::new(VecDeque::new()))
 }
@@ -550,4 +556,157 @@ fn format_event(event: &str, data: &Value) -> String {
     let mut s = String::new();
     push_event(&mut s, event, data);
     s
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    /// Kills `replace default_input_tokens -> i64 with 0` and `with 1`.
+    /// This default IS production behaviour: it's the serde default for
+    /// `MockResponse::Text` deserialisation. JS-side test fixtures (and
+    /// any humans hand-writing scripts) rely on `{kind:"text",text:"x"}`
+    /// roundtripping with input_tokens=10 / output_tokens=5 \u2014 the
+    /// CLI's stderr snapshots assert on those exact numbers.
+    #[test]
+    fn mock_response_text_uses_token_defaults_on_deserialize() {
+        let json = serde_json::json!({
+            "kind": "text",
+            "text": "hi",
+            // input_tokens and output_tokens deliberately omitted
+        });
+        let resp: MockResponse = serde_json::from_value(json).unwrap();
+        match resp {
+            MockResponse::Text {
+                text,
+                input_tokens,
+                output_tokens,
+            } => {
+                assert_eq!(text, "hi");
+                assert_eq!(input_tokens, 10, "default_input_tokens");
+                assert_eq!(output_tokens, 5, "default_output_tokens");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    /// Direct unit-level pin in case the const-fn ever stops being used
+    /// by serde (e.g. the field becomes mandatory). Then the test would
+    /// be the only thing keeping the fn from being dead. The constant
+    /// 10 matches `cli.rs` snapshot tests for the happy path.
+    #[test]
+    fn default_input_tokens_is_10() {
+        assert_eq!(default_input_tokens(), 10);
+    }
+
+    /// Ditto for output tokens.
+    #[test]
+    fn default_output_tokens_is_5() {
+        assert_eq!(default_output_tokens(), 5);
+    }
+
+    /// Kills `replace == with != in project_message`. The function decides
+    /// whether a single-block content array gets unwrapped to a plain
+    /// string (when block.type == "text") or JSON-stringified (otherwise).
+    /// Mutating `==` to `!=` flips the rule: text blocks would get
+    /// JSON-stringified, and tool_use blocks would attempt the text-block
+    /// shortcut and fall through to the JSON branch anyway. The
+    /// observable difference is exactly what the test below asserts:
+    /// a tool_use single-block array must JSON-stringify, and a text
+    /// single-block array must unwrap to its raw text.
+    #[test]
+    fn project_message_distinguishes_text_block_from_tool_use_block() {
+        // Text block: must unwrap to raw "hello".
+        let text_msg = RawMessage {
+            role: "user".into(),
+            content: serde_json::json!([{"type": "text", "text": "hello"}]),
+        };
+        let projected = project_message(&text_msg);
+        assert_eq!(projected.role, "user");
+        assert_eq!(
+            projected.content, "hello",
+            "single-block text array must unwrap to its raw string"
+        );
+
+        // Tool-use block: must JSON-stringify the whole array.
+        let tool_msg = RawMessage {
+            role: "assistant".into(),
+            content: serde_json::json!([{
+                "type": "tool_use",
+                "id": "tu_1",
+                "name": "read_file",
+                "input": {"path": "foo.txt"}
+            }]),
+        };
+        let projected = project_message(&tool_msg);
+        assert_eq!(projected.role, "assistant");
+        assert!(
+            projected.content.starts_with('['),
+            "tool_use block must JSON-stringify (got: {})",
+            projected.content
+        );
+        assert!(
+            projected.content.contains("\"tool_use\""),
+            "tool_use block must contain its type marker (got: {})",
+            projected.content
+        );
+        assert!(
+            projected.content.contains("read_file"),
+            "tool_use block must preserve tool name (got: {})",
+            projected.content
+        );
+    }
+
+    /// Kills `replace CallHistory::snapshot -> Vec<CapturedCall> with vec![]`.
+    /// `snapshot()` is the read side of the mock-server `/control/llm-calls`
+    /// route (consumed by the upcoming Phase-4 chromiumoxide harness). The
+    /// mock-server's own integration test exercises this end-to-end, but
+    /// cargo-mutants only runs same-crate tests, so we need a direct test
+    /// here in `omega-test-fixtures` to kill the mutation.
+    #[test]
+    fn call_history_snapshot_returns_recorded_calls() {
+        let history = CallHistory::default();
+        let call = CapturedCall {
+            system_kind: "system",
+            at: 0,
+            messages: vec![CapturedMessage {
+                role: "user".to_owned(),
+                content: "hi".to_owned(),
+            }],
+        };
+        history.push(call);
+        let snap = history.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].system_kind, "system");
+        assert_eq!(snap[0].messages.len(), 1);
+        assert_eq!(snap[0].messages[0].role, "user");
+    }
+
+    /// Kills `replace CallHistory::reset with ()`. Same rationale as the
+    /// snapshot test above: same-crate test required for cargo-mutants.
+    /// `reset()` is consumed by the mock-server `/control/reset-calls`
+    /// route (used by Phase-3 Playwright tests and by the upcoming
+    /// chromiumoxide harness to clear captured calls between scenarios).
+    #[test]
+    fn call_history_reset_clears_recorded_calls() {
+        let history = CallHistory::default();
+        history.push(CapturedCall {
+            system_kind: "system",
+            at: 0,
+            messages: vec![],
+        });
+        assert_eq!(history.snapshot().len(), 1, "sanity: push recorded");
+        history.reset();
+        assert_eq!(
+            history.snapshot().len(),
+            0,
+            "after reset, snapshot must be empty"
+        );
+    }
 }

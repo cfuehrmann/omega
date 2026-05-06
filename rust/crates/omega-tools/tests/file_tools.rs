@@ -754,6 +754,37 @@ async fn grep_files_glob_filter() {
 }
 
 #[tokio::test]
+async fn grep_files_default_is_case_insensitive() {
+    // The `case_sensitive` flag defaults to false, which is implemented as
+    // `RegexBuilder::case_insensitive(!case_sensitive)` — i.e. when the
+    // caller omits the flag we want INSENSITIVE matching. Search a
+    // lowercase pattern against UPPERCASE content: the match only succeeds
+    // under case-insensitive semantics.
+    //
+    // Kills `delete ! in search` (line 93 of grep_files.rs): that mutation
+    // turns the default into case-SENSITIVE matching, which would fail to
+    // find "hello" inside "HELLO".
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "HELLO WORLD\n").unwrap();
+
+    let out = exec(
+        "grep_files",
+        json!({
+            "pattern": "hello",
+            "path": dir.path().to_str().unwrap(),
+            "context_lines": 0
+            // case_sensitive deliberately omitted — must default to false
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("HELLO"),
+        "lowercase pattern must match uppercase content under default case-insensitive search: {out}"
+    );
+}
+
+#[tokio::test]
 async fn grep_files_context_lines_include_surrounding_lines() {
     // With context_lines=2 the output must include lines before and after
     // the match, not just the match itself.

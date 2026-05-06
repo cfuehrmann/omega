@@ -19,14 +19,13 @@
 //! the parser, the network layer, retry behaviour, or the
 //! request/response wire shape are all reachable from Playwright tests.
 
-mod control;
-
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::Parser;
 use omega_core::AnthropicProvider;
+use omega_mock_server::control;
 use omega_test_fixtures::{CallHistory, new_script, router as fake_router};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 
 /// CLI shape mirrors `omega-server`'s, plus `--ctrl-port` for the control API.

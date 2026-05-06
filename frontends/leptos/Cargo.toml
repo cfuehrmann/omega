@@ -96,6 +96,12 @@ wasm-bindgen-futures     = "=0.4.70"
 # is the renderer; `gen-tests` and friends are intentionally absent.
 pulldown-cmark           = { version = "=0.13.3", default-features = false, features = ["html"] }
 
+# `#[mutants::skip]` attribute for equivalent-mutation suppression
+# (e.g. `markdown::render_options` where `T | S == T ^ S` for disjoint
+# bitflag bits, making the `| → ^` mutation value-equivalent and
+# uncatchable by any test).
+mutants                  = "0.0.3"
+
 # Tests run as wasm32 under `wasm-bindgen-test-runner` (Node backend).
 # The exact-pin matches the `wasm-bindgen 0.2.120` resolution above —
 # wasm-bindgen-test 0.3.70 has `wasm-bindgen = "=0.2.120"` as a hard

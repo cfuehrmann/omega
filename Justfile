@@ -137,6 +137,33 @@ rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
     cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
 
 # -----------------------------------------------------------------------
+# Mutation testing
+# -----------------------------------------------------------------------
+#
+# `cargo mutants` defaults to `/tmp` for per-mutant scratch trees. On this
+# host `/tmp` is tmpfs (≈8 GB) which fills before the sweep finishes;
+# redirect to `~/.cache/cargo-mutants-tmp` (real disk). Run sweeps with
+# `-j2` to keep peak disk footprint reasonable.
+
+# Run cargo-mutants on the rust workspace.
+mutants:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    mkdir -p "$HOME/.cache/cargo-mutants-tmp"
+    export TMPDIR="$HOME/.cache/cargo-mutants-tmp"
+    cd rust && cargo mutants -j2
+
+# Run cargo-mutants on the leptos crate (wasm32 target).
+web-mutants:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    mkdir -p "$HOME/.cache/cargo-mutants-tmp"
+    export TMPDIR="$HOME/.cache/cargo-mutants-tmp"
+    rustup target add wasm32-unknown-unknown
+    cargo install --locked --version =0.2.120 wasm-bindgen-cli
+    cd frontends/leptos && cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
+
+# -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------
 

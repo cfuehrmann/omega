@@ -53,7 +53,18 @@ pub fn escape_html(input: &str) -> String {
 
 /// Markdown render options. Public so the snapshot tests can pin the
 /// option set explicitly.
+///
+/// `#[mutants::skip]`: `Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH`
+/// and `Options::ENABLE_TABLES ^ Options::ENABLE_STRIKETHROUGH` produce the
+/// **same numeric value** because the two bitflag bits are disjoint. The
+/// `| → ^` mutation is therefore value-equivalent and uncatchable by any
+/// test that observes only the returned `Options`. The behavioural intent
+/// (both features active in the same render pass) is pinned by
+/// [`tests::render_renders_table_and_strikethrough_together`] below, so a
+/// future flag addition that *would* break the equivalence still trips a
+/// test rather than silently slipping through.
 #[must_use]
+#[mutants::skip]
 pub fn render_options() -> Options {
     // Match the SolidJS UI: GFM (tables + strikethrough), no `breaks`
     // (a single newline does not become `<br/>`), no raw HTML
@@ -339,6 +350,26 @@ mod tests {
     fn render_strikethrough() {
         let out = render_to_html("~~gone~~");
         assert!(out.contains("<del>gone</del>"));
+    }
+
+    /// Both GFM features active in the *same* render pass. Documents
+    /// the operator's Phase-4 acceptance for `render_options`: a single
+    /// document containing a GFM table whose cells include `~~strike~~`
+    /// renders both `<table>` and `<del>` in the same output. Note that
+    /// the corresponding `| → ^` mutation on `render_options` is
+    /// value-equivalent (disjoint bits) and silenced via
+    /// `#[mutants::skip]` on the function itself; this test is the
+    /// behavioural pin that would catch any future regression where
+    /// both features no longer coexist (e.g. someone splitting them
+    /// across two render paths).
+    #[wasm_bindgen_test]
+    #[test]
+    fn render_renders_table_and_strikethrough_together() {
+        let out = render_to_html(
+            "| col |\n|---|\n| ~~gone~~ |\n",
+        );
+        assert!(out.contains("<table>"), "missing <table> in output: {out}");
+        assert!(out.contains("<del>gone</del>"), "missing <del>gone</del> in output: {out}");
     }
 
     #[wasm_bindgen_test]

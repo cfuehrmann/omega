@@ -2,4 +2,14 @@
 # See https://mutants.rs/ for the full schema.
 #
 # Equivalent-mutant suppressions live on the source lines themselves via
-# #[mutants::skip] — nothing to list here.
+# #[mutants::skip] when possible. Statement-level equivalents (where a
+# function-wide skip would lose coverage of legitimate mutants) are
+# excluded here with a regex matching the mutant description.
+
+exclude_re = [
+    # router.rs handle_socket: deleting `Message::Close(_) => break;` makes
+    # Close frames fall through to `_ => continue`, but the next
+    # `reader.next()` returns None (stream end) and the while-let exits
+    # identically. Equivalent mutant, fully documented in-source.
+    "delete match arm Message::Close\\(_\\) in handle_socket",
+]

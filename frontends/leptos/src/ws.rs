@@ -381,4 +381,36 @@ mod tests {
         let _ = backoff_delay_ms(3, &mut j);
         assert_eq!(j.idx.get(), 3);
     }
+
+    /// `RandomJitter` is the production `Jitter` impl that wraps
+    /// `js_sys::Math::random()`. The unit tests above only ever drive
+    /// `backoff_delay_ms` with deterministic stub jitters, so the real
+    /// implementation — `0.8 + Math::random() * 0.4` → `[0.8, 1.2)` —
+    /// was not exercised at all and survived every operator mutation
+    /// (`+ → -`, `* → /`, etc.).
+    ///
+    /// Asserting the documented range over many samples kills those
+    /// mutants: `+ → -` would drift below `0.8`, `* → /` and `+ → +=
+    /// 0.4` (the `0.4` operand mutations) would produce values outside
+    /// `[0.8, 1.2)`. Asserting at least two distinct values rules out
+    /// any mutation that collapses the function to a constant.
+    #[wasm_bindgen_test]
+    fn random_jitter_factor_in_documented_range_and_varies() {
+        let mut j = RandomJitter;
+        let mut samples: Vec<f64> = Vec::with_capacity(200);
+        for _ in 0..200 {
+            let f = j.factor();
+            assert!(
+                (0.8..1.2).contains(&f),
+                "RandomJitter::factor returned {f}; expected [0.8, 1.2)"
+            );
+            samples.push(f);
+        }
+        let first = samples[0];
+        let varies = samples.iter().any(|s| (s - first).abs() > 1e-9);
+        assert!(
+            varies,
+            "RandomJitter::factor returned a constant value across 200 samples"
+        );
+    }
 }

@@ -15,6 +15,10 @@ edition.workspace = true
 name = "mock-omega-server"
 path = "src/main.rs"
 
+[lib]
+name = "omega_mock_server"
+path = "src/lib.rs"
+
 [lints]
 workspace = true
 
@@ -25,3 +29,8 @@ tokio               = { version = "1", features = ["full"] }
 omega-core          = { path = "../omega-core" }
 omega-server        = { path = "../omega-server" }
 omega-test-fixtures = { path = "../omega-test-fixtures" }
+
+[dev-dependencies]
+http-body-util      = "0.1"
+serde_json          = "1"
+tower               = { version = "0.5", features = ["util"] }

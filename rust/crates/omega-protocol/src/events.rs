@@ -414,6 +414,33 @@ mod tests {
         assert_eq!(json["systemPrompt"], "You are Omega.");
     }
 
+    /// Backward-compat: sessions written before the `omegaCommit` field
+    /// existed must still deserialise cleanly. Kills both
+    /// `replace default_omega_commit -> String with String::new()` and
+    /// `... with "xyzzy".into()` — the only production caller of the
+    /// default is the serde deserialiser path triggered when an old
+    /// `events.jsonl` line lacks the field.
+    #[test]
+    fn session_started_uses_default_omega_commit_when_field_missing() {
+        let json = serde_json::json!({
+            "type": "session_started",
+            "time": "2024-01-15T12:00:00.000Z",
+            "sessionId": "abc123",
+            "path": "",
+            "model": "claude-sonnet-4-6",
+            "effort": "medium",
+            "systemPrompt": "You are Omega.",
+            // omegaCommit deliberately omitted
+        });
+        let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
+        match parsed {
+            OmegaEvent::SessionStarted(ev) => {
+                assert_eq!(ev.omega_commit, "unknown");
+            }
+            other => panic!("expected SessionStarted, got {other:?}"),
+        }
+    }
+
     #[test]
     fn user_message_round_trip() {
         let ev = OmegaEvent::UserMessage(UserMessageEvent {

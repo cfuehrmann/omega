@@ -1323,10 +1323,13 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "http-body-util",
  "omega-core",
  "omega-server",
  "omega-test-fixtures",
+ "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -1388,6 +1391,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures",
+ "mutants",
  "serde",
  "serde_json",
  "tokio",

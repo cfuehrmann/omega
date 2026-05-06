@@ -464,4 +464,21 @@ mod tests {
         assert!(g.pending_continue.is_none());
         assert!(!g.suspended);
     }
+
+    /// Kills `replace ControlHandle::notify -> &Notify with
+    /// Box::leak(Box::new(Default::default()))`. The agent loop awaits
+    /// `notify().notified()` while external callers wake the handle
+    /// through the same instance — if `notify()` ever returned a fresh
+    /// `Notify` per call, the wake would land on a `Notify` nobody is
+    /// listening to. Two consecutive calls must be the SAME instance.
+    #[test]
+    fn notify_returns_same_instance() {
+        let (h, _t) = make_handle();
+        let p1: *const tokio::sync::Notify = h.notify();
+        let p2: *const tokio::sync::Notify = h.notify();
+        assert!(
+            std::ptr::eq(p1, p2),
+            "notify() must return a stable reference; got {p1:?} then {p2:?}"
+        );
+    }
 }
