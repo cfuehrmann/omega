@@ -3095,7 +3095,7 @@ start in parallel; 3.9 has no dependency on it.
 ## Next-session priority queue — Phase 4 kickoff
 
 **All migration work through Phase 3.10 is complete** (37/37 Playwright
-specs green, `just gate` ✅). The only open items are:
+specs green, `just gate` ✅). Open items:
 
 | Item | Priority | Notes |
 |---|---|---|
@@ -3103,8 +3103,154 @@ specs green, `just gate` ✅). The only open items are:
 | TODO-E-2 — `[usage]` detail button on `llm_response` | Optional | Additive, low-risk Leptos change |
 | TODO-E-3 — `[take it back]` edit-and-resend | Optional | Medium scope, requires new WS round-trip |
 
-**Recommended:** start Phase 4 directly. TODO-E-2/E-3 can slot in before
-or after the JS toolchain deletion — they don’t depend on each other.
+TODO-E-2/E-3 are independent and can slot in before or after JS
+toolchain deletion.
+
+---
+
+### Mutation testing — current state and Phase 4 risk
+
+**Why this matters for Phase 4:** Playwright is currently the only
+safety net for at least one mutation that unit tests miss. Deleting
+Playwright before an equivalent Rust e2e test exists creates a
+permanent escape window for that mutant.
+
+#### Rust workspace (`rust/`)
+
+Last run: **2026-05-03** (stale — before BUG-C/D fixes on 2026-05-05).
+Scope: `omega-agent` — 132 mutants, **0 missed**, 83 unviable.
+Action: re-run as Phase 4 opener to confirm BUG-C/D code paths covered.
+
+```
+cd rust && cargo mutants
+```
+
+#### Leptos frontend (`frontends/leptos/`)
+
+Last run: **2026-05-05 08:21** — *before* Phase 3.10 (TODO-G/A/B/C/D).
+Scope: **`markdown.rs` only** (8 mutants). Not a full codebase sweep.
+
+Result: 5 caught, **1 missed**, 2 unviable.
+
+**Missed:** `markdown.rs:61:28  render_options  | → ^`
+
+The `render_options` function OR-combines `comrak` extension flags.
+Substituting XOR (`^`) for OR (`|`) produces wrong flags only when
+two non-zero flags are active simultaneously. Existing unit tests
+exercise each extension in isolation, so XOR == OR for every single
+test case — the mutant slips through.
+
+**Current safety net:** `leptos-markdown.spec.ts` renders a document
+with multiple simultaneous extensions (table + strikethrough +
+autolink). Combined XOR of two non-zero bits ≠ OR, so the rendered
+HTML differs and the assertion fails. **Deleting Playwright without
+first fixing this unit-test gap allows the mutant to escape
+permanently.**
+
+**Fix (required before JS toolchain deletion):** add a `#[test]` in
+`markdown.rs` that passes a string containing both a GFM table *and*
+`~~strikethrough~~` and asserts the output HTML contains both a
+`<table>` and a `<del>` element. This forces the multi-flag path and
+kills the survivor.
+
+**Functions never mutation-tested** (added after the last sweep):
+
+| Function | File | Return type | Unit tests |
+|---|---|---|---|
+| `truncate_for_preview` | `event_view.rs` | `Option<String>` | ✅ wasm |
+| `kind_for` | `event_view.rs` | `EventKind` | ✅ wasm |
+| `truncate_to_lines` | `event_view.rs` | `Option<String>` | ✅ wasm (7) |
+
+Full sweep command (from `frontends/leptos/`):
+
+```
+cargo mutants --target wasm32-unknown-unknown
+```
+
+Expected: all three fully caught (all have targeted wasm tests). Run
+to confirm — don’t assume.
+
+#### Phase 4 mutation risk matrix
+
+| Area | Risk | Action |
+|---|---|---|
+| `markdown.rs` `\|`→`^` survivor | **HIGH** — Playwright is its only net | Fix unit test before deleting Playwright |
+| `event_view.rs` never swept | Medium — well unit-tested | Full sweep at Phase 4 open; fix any survivors |
+| `rust/` workspace stale | Low — was 0 missed | Re-run at Phase 4 open; confirm BUG-C/D covered |
+| `feed.rs`/`lib.rs` UI components | None — `impl IntoView` not mutable | Accept; e2e tests cover behavior |
+
+---
+
+### Phase 4 — harness design discussion
+
+The operator needs to understand the harness before it is built. The
+agent must present a **written design memo in the chat** — not in a
+file — covering the questions below, then wait for operator approval
+before writing any implementation code.
+
+**1. Crate layout.** Where does the e2e test code live?
+
+- **Option A** — `rust/crates/omega-e2e`: inside the existing workspace.
+  Shares `omega-protocol` types without path hacks; `cargo test -p
+  omega-e2e` runs it standalone.
+- **Option B** — integration tests inside `omega-mock-server`: avoids a
+  new crate but conflates fixture-server code with test assertions.
+- **Option C** — new top-level Cargo workspace member `omega-e2e/`:
+  cleanest separation; one extra `[workspace.members]` entry.
+
+Pick one and justify it.
+
+**2. Browser driver.** `chromiumoxide` vs `fantoccini`?
+
+- **chromiumoxide**: CDP directly to Chrome. No sidecar binary.
+  Rich async API; Chrome-only.
+- **fantoccini**: WebDriver protocol. Browser-agnostic but requires
+  `chromedriver` or `geckodriver` as a sidecar process.
+
+Both need a Chrome/Chromium binary present. State the choice and why.
+
+**3. Server lifecycle.** How is test isolation achieved?
+
+Each `#[tokio::test]` should have its own `mock-omega-server` instance
+so a crash in one test doesn’t poison others. The design must describe
+the `TestHarness` struct lifecycle: spawn server on a random free port
+→ wait for ready signal → open browser session → run assertions → drop
+everything. Explain how “ready” is detected (stdout probe / TCP connect
+/ HTTP health endpoint).
+
+**4. Threading model.** `cargo test` parallelises within a binary by
+default. If tests bind a fixed port, they race. Explain: random ports,
+a port pool, or `--test-threads=1`? Justify the choice.
+
+**5. LLM oracle gating.** The oracle must not run on every `cargo test`
+invocation. Proposed gate: `OMEGA_E2E_LLM_ORACLE=1` env var; CI omits
+it; operator enables when investigating a snapshot surprise. Confirm
+or propose an alternative.
+
+**6. Spec port order.** Suggested (safest → riskiest):
+1. `leptos-connection` — WS connect only, no feed assertions
+2. `leptos-reconnect` — WS lifecycle
+3. `leptos-composer` — input / submit / clear
+4. **`leptos-markdown`** — port early to fix `render_options` survivor
+5. `leptos-context-resume` — session state
+6. `leptos-conversation-feed` — most complex; highest coverage value
+
+Reordering is allowed with justification.
+
+**7. Deletion checklist.** Files removed in the final commit:
+```
+e2e/                    # Playwright specs + fixtures
+package.json
+bun.lock
+node_modules/
+playwright.config.ts
+bunfig.toml
+knip.config.ts          # if present
+tsconfig*.json          # root + any sub-configs
+```
+Justfile: replace `gate` body to invoke Rust e2e instead of `just
+test-browser`; delete `test-browser`, `test-browser-debug`,
+`test-browser-log`, `e2e`, `typecheck` recipes; update all comments.
 
 ---
 
@@ -3112,45 +3258,50 @@ or after the JS toolchain deletion — they don’t depend on each other.
 
 **Model:** `claude-opus-4-7`
 
-**Effort:** `high` (or `max` if the harness-architecture choices turn
-out to need extended reasoning). The session makes a structural
-architectural decision (harness crate layout, `just gate` integration,
-LLM-oracle API shape) before writing the first line of code — that
-frontloaded design work benefits from the stronger model.
+**Effort:** `high`
 
 **Prompt:**
 
-> Implement Phase 4: retire Playwright and replace it with a pure-Rust
-> browser-test harness.
+> We are starting Phase 4 of the Rust migration: retiring Playwright
+> and replacing it with a pure-Rust browser-test harness.
 >
-> Read the full Phase 4 section in `rust-migration.md` before writing
-> any code. That section contains the architecture decision (chromiumoxide
-> vs fantoccini), the spec-port order, the LLM-oracle design, and the
-> acceptance criteria. Follow it.
+> **Step 1 — orient.** Read `rust-migration.md` thoroughly: the
+> Phase 4 section (mutation state, risk matrix, harness design
+> questions), the Justfile, and every Playwright spec in `e2e/`.
+> Understand what each spec tests before designing the replacement.
 >
-> **Constraints:**
-> - New crate `omega-e2e` (or `omega-test-fixtures` sub-module — decide
->   and justify before coding).
-> - Each ported spec gets a `tests/e2e_<name>.rs` integration test that
->   drives `mock-omega-server` + chromiumoxide. Port one spec at a time;
->   `just rust-gate` must be green after each port.
-> - Do not delete any JS files until every spec has a Rust equivalent
->   and `just gate` is green on the new harness alone.
-> - The final commit deletes `e2e/`, `package.json`, `bun.lock`,
->   `node_modules/`, `playwright.config.ts`, `knip.*`, `tsconfig*`,
->   `bunfig.toml`, and flips the `/leptos/` alias to `/` in
->   `omega-server::router`.
-> - LLM oracle: wire `AnthropicProvider` (already in `omega-core`) to
->   review SSR snapshot diffs. The oracle runs only on structural
->   `insta` failures, not on every run.
+> **Step 2 — mutation baseline.** Run both sweeps:
+> ```
+> cd frontends/leptos && cargo mutants --target wasm32-unknown-unknown
+> cd rust              && cargo mutants
+> ```
+> Fix any survivors. The known one is `markdown.rs:61:28`
+> (`render_options | → ^`): add a `#[test]` that renders a Markdown
+> string containing both a GFM table and `~~strikethrough~~` text and
+> asserts the HTML contains both `<table>` and `<del>`. Commit with
+> `just rust-gate` green before touching any harness code.
 >
-> After the final deletion commit: `just gate` must run with zero
-> `npx`/`bun`/`bunx` calls, all Rust e2e tests green, wall-clock
-> ≤ the Playwright baseline (24 s / 37 specs).
+> **Step 3 — design memo.** Write a memo in the chat (not a file)
+> answering all seven harness design questions from the Phase 4
+> section of `rust-migration.md`: crate layout, browser driver,
+> server lifecycle, threading model, LLM oracle gating, spec port
+> order, and deletion checklist. **Wait for my approval of the memo
+> before writing any implementation code.**
 >
-> Update `rust-migration.md`: mark Phase 4 ✅ in the status table,
-> record the harness-crate decision, and note Phase 5 (if any) or
-> declare the migration complete.
+> **Step 4 — implement** (after memo is approved):
+> - Port one Playwright spec at a time in the agreed order.
+>   `just rust-gate` must stay green after each port.
+> - Do not delete any JS/TS file until every spec has a passing Rust
+>   equivalent and `just gate` is green on the new harness alone.
+> - The final deletion commit removes exactly the files listed in the
+>   agreed checklist and updates the Justfile accordingly.
+> - After deletion: `just gate` must contain zero `npx`/`bun`/`bunx`
+>   calls; all Rust e2e tests green; wall-clock ≤ 24 s.
+> - Re-run both mutation sweeps and confirm 0 survived.
+>
+> **When complete:** mark Phase 4 ✅ in `rust-migration.md` status
+> table; record crate/driver decisions and final mutation scores;
+> declare migration complete or note Phase 5.
 
 ---
 
