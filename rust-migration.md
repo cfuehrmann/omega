@@ -3092,30 +3092,69 @@ start in parallel; 3.9 has no dependency on it.
 
 ---
 
-## Next-session priority queue (Phase 3.10 complete — Phase 4 next)
+## Next-session priority queue — Phase 4 kickoff
 
-This is the single ordered worklist for the next operator session.
-**Phase 3.10 is complete.** BUG-C and BUG-D were resolved in a prior
-session; all Phase 3.10 TODOs (G, A, B, C, D) are done and all 37
-Playwright specs are green.
+**All migration work through Phase 3.10 is complete** (37/37 Playwright
+specs green, `just gate` ✅). The only open items are:
 
-**Next priority: Phase 4 — `chromiumoxide` + LLM oracle** (replace
-Playwright with pure-Rust browser tests driven by `chromiumoxide`, add
-an LLM-based oracle for the test feed assertions).
+| Item | Priority | Notes |
+|---|---|---|
+| Phase 4 — `chromiumoxide` + LLM oracle | **Next** | Retire Playwright + JS toolchain; pure-Rust e2e harness |
+| TODO-E-2 — `[usage]` detail button on `llm_response` | Optional | Additive, low-risk Leptos change |
+| TODO-E-3 — `[take it back]` edit-and-resend | Optional | Medium scope, requires new WS round-trip |
 
-Optional before Phase 4:
-- TODO-E-2 (`show usage` detail button on `llm_response` usage line)
-- TODO-E-3 (`take it back` / edit-and-resend user message)
-
-**Ordered:**
-
-1. **Phase 4 — `chromiumoxide` + LLM oracle** — next session's work.
-2. **TODO-E-2** — optional `[usage]` detail button (additive, low risk).
-3. **TODO-E-3** — optional `[take it back]` edit-and-resend (medium scope).
+**Recommended:** start Phase 4 directly. TODO-E-2/E-3 can slot in before
+or after the JS toolchain deletion — they don’t depend on each other.
 
 ---
 
-### BUG-C — Prompt-cache markers missing in Anthropic request 🔴 Top priority
+### Phase 4 — next-session prompt
+
+**Model:** `claude-opus-4-7`
+
+**Effort:** `high` (or `max` if the harness-architecture choices turn
+out to need extended reasoning). The session makes a structural
+architectural decision (harness crate layout, `just gate` integration,
+LLM-oracle API shape) before writing the first line of code — that
+frontloaded design work benefits from the stronger model.
+
+**Prompt:**
+
+> Implement Phase 4: retire Playwright and replace it with a pure-Rust
+> browser-test harness.
+>
+> Read the full Phase 4 section in `rust-migration.md` before writing
+> any code. That section contains the architecture decision (chromiumoxide
+> vs fantoccini), the spec-port order, the LLM-oracle design, and the
+> acceptance criteria. Follow it.
+>
+> **Constraints:**
+> - New crate `omega-e2e` (or `omega-test-fixtures` sub-module — decide
+>   and justify before coding).
+> - Each ported spec gets a `tests/e2e_<name>.rs` integration test that
+>   drives `mock-omega-server` + chromiumoxide. Port one spec at a time;
+>   `just rust-gate` must be green after each port.
+> - Do not delete any JS files until every spec has a Rust equivalent
+>   and `just gate` is green on the new harness alone.
+> - The final commit deletes `e2e/`, `package.json`, `bun.lock`,
+>   `node_modules/`, `playwright.config.ts`, `knip.*`, `tsconfig*`,
+>   `bunfig.toml`, and flips the `/leptos/` alias to `/` in
+>   `omega-server::router`.
+> - LLM oracle: wire `AnthropicProvider` (already in `omega-core`) to
+>   review SSR snapshot diffs. The oracle runs only on structural
+>   `insta` failures, not on every run.
+>
+> After the final deletion commit: `just gate` must run with zero
+> `npx`/`bun`/`bunx` calls, all Rust e2e tests green, wall-clock
+> ≤ the Playwright baseline (24 s / 37 specs).
+>
+> Update `rust-migration.md`: mark Phase 4 ✅ in the status table,
+> record the harness-crate decision, and note Phase 5 (if any) or
+> declare the migration complete.
+
+---
+
+### BUG-C — Prompt-cache markers missing in Anthropic request ✅ Done
 
 **Observed (Phase 3.10 PRECHECK).** Anthropic API costs spiked
 after the SolidJS → Leptos cutover. Root cause is *not* in the
@@ -3251,7 +3290,7 @@ uses the last `text` block in the array as the resumption heuristic.
 
 ---
 
-### BUG-D — Tool-call / tool-result clearing not implemented 🔴 Top priority
+### BUG-D — Tool-call / tool-result clearing not implemented ✅ Done
 
 **Observed.** `omega-agent/src/agent.rs:18-21` documents that
 `omega-agent::Agent::sendMessage` mirrors the TS agent **minus**
@@ -3840,7 +3879,7 @@ the canonical example — a serde default is untestable by design.
 
 ---
 
-## BUG-A — Adaptive thinking + effort not sent to Anthropic 🔴 Top priority
+## BUG-A — Adaptive thinking + effort not sent to Anthropic ✅ Done
 
 **Observed:** Session `2026-05-02T22-49-42-372-4d68835d` — every `llm_response` has
 `thinking: False`. The agent produced zero thinking blocks across 50+ API calls.
@@ -3886,7 +3925,7 @@ the response side (`LlmResponseEvent`, context storage) is unaffected.
 
 ---
 
-## BUG-B — Rust system prompt missing `## LLM Provider` section 🔴 Top priority
+## BUG-B — Rust system prompt missing `## LLM Provider` section ✅ Done
 
 **Observed:** Session `2026-05-02T22-49-42-372-4d68835d`:
 - `web_search` → `BRAVE_SEARCH_API_KEY is not set` (no Brave key in env).
