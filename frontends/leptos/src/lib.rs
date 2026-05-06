@@ -126,12 +126,12 @@ pub fn App() -> impl IntoView {
                 |si| si.as_ref().map(|s| s.dir.clone()).unwrap_or_default()
             )
         >
-            <h1>"Omega (Leptos)"</h1>
             <SessionPicker />
             <ConversationFeed />
             <Composer />
             <ContextModal />
             <TextModal />
+            <StatusChip />
             // Debug panel — compiled only in debug builds (cargo test,
             // `trunk serve` dev mode). `trunk build --release` strips
             // this block entirely so it never ships to production users.
@@ -151,6 +151,54 @@ pub fn App() -> impl IntoView {
                 { ().into_any() }
             }
         </main>
+    }
+}
+
+/// Phase 3.10 TODO-D — persistent status chip in the bottom-right corner.
+///
+/// Four states driven by `store.connected` and `store.turn_state`:
+///
+/// | `data-status` | colour | text         |
+/// |---------------|--------|--------------|
+/// | `ready`       | teal   | `Ready`      |
+/// | `streaming`   | llm    | `Streaming…` |
+/// | `paused`      | yellow | `Paused`     |
+/// | `offline`     | red    | `Offline`    |
+///
+/// CSS lives in `style.css` (`.status-chip` + `[data-status="*"]` rules
+/// written in Phase 3.10 planning). The chip is `pointer-events: none`
+/// so it never intercepts clicks on the feed or composer beneath it.
+#[component]
+fn StatusChip() -> impl IntoView {
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
+
+    let status = move || {
+        if !store.connected.get() {
+            "offline"
+        } else {
+            match store.turn_state.get() {
+                TurnState::Running => "streaming",
+                TurnState::Paused | TurnState::PauseRequested => "paused",
+                TurnState::Idle => "ready",
+            }
+        }
+    };
+
+    let text = move || match status() {
+        "offline" => "Offline",
+        "streaming" => "Streaming…",
+        "paused" => "Paused",
+        _ => "Ready",
+    };
+
+    view! {
+        <div
+            class="status-chip"
+            data-testid="leptos-status-chip"
+            data-status=status
+        >
+            {text}
+        </div>
     }
 }
 

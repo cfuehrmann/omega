@@ -5,9 +5,9 @@
  * `mock-omega-server` (port 3003, real-server project). Four
  * concerns under test:
  *
- * 1. **Open modal on llm_call** — clicking the "context records…"
- *    button on an `llm_call` block opens the full-viewport modal,
- *    fires `GET /api/context?hashes=…`, and renders one
+ * 1. **Open modal on llm_call** — clicking the `[context]` button on
+ *    an `llm_call` block opens the full-viewport modal, fires
+ *    `GET /api/context?hashes=…`, and renders one
  *    `[data-testid="leptos-context-modal-record"]` per returned
  *    record with its role + body.
  *
@@ -17,13 +17,12 @@
  *    wrapper). Click-outside / Esc dismissal are JS-interop gaps —
  *    not exercised here, mirroring the same pattern as 3.1–3.4.
  *
- * 3. **Inline expander on llm_call** — clicking the native
- *    `<details>` `<summary>` reveals
- *    `[data-testid="leptos-llm-call-cache-bp"]`,
- *    `[data-testid="leptos-llm-call-request-bytes"]`,
- *    `[data-testid="leptos-llm-call-hashes"]`, and
- *    `[data-testid="leptos-llm-call-request-summary"]` — the four
- *    fields the acceptance criterion names.
+ * 3. **Payload modal on llm_call** (TODO-B, Phase 3.10) — clicking
+ *    the `[payload]` button (`leptos-llm-call-payload`) opens the
+ *    `TextModal` overlay. The modal body contains the four
+ *    metadata fields (`cache_breakpoint_index`, `request_bytes`,
+ *    the context hashes list, and `request_summary`). Closing via
+ *    `leptos-text-modal-close` hides the modal.
  *
  * 4. **Resume from picker triggers resumption summary turn** —
  *    drives `SCRIPTS.resumeBasis()` which feeds the mock
@@ -118,7 +117,7 @@ test("leptos-context: clicking llm_call opens modal, fetches records, close dism
   // is not in the DOM at all.
   await expect(page.getByTestId("leptos-context-modal")).toHaveCount(0);
 
-  // Click the first llm_call's "context records…" button.
+  // Click the first llm_call's "[context]" button.
   await llmCalls.first().getByTestId("leptos-llm-call-open-modal").click();
 
   // Modal becomes visible.
@@ -154,10 +153,10 @@ test("leptos-context: clicking llm_call opens modal, fetches records, close dism
 });
 
 // ---------------------------------------------------------------------------
-// 3: Inline expander toggles llm_call details
+// 3: Payload modal reveals llm_call metadata (TODO-B, Phase 3.10)
 // ---------------------------------------------------------------------------
 
-test("leptos-context: llm_call inline expander reveals request_summary, cache_bp, hashes, request_bytes", async ({ page }) => {
+test("leptos-context: llm_call [payload] button opens TextModal with metadata fields", async ({ page }) => {
   await resetCalls();
   await loadScript([
     { kind: "text", text: "ping" },
@@ -167,7 +166,7 @@ test("leptos-context: llm_call inline expander reveals request_summary, cache_bp
   const startDir = await readActiveDir(page);
   await newSession(page, startDir);
 
-  await sendComposerMessage(page, "trigger inline details");
+  await sendComposerMessage(page, "trigger payload modal");
 
   const feed = page.getByTestId("leptos-feed");
   await expect(
@@ -175,51 +174,43 @@ test("leptos-context: llm_call inline expander reveals request_summary, cache_bp
   ).toHaveCount(1, { timeout: 15000 });
 
   const llmCall = feed.locator('[data-event-type="llm_call"]').first();
-  const details = llmCall.getByTestId("leptos-llm-call-details");
-  await expect(details).toBeVisible();
 
-  // Native <details> starts collapsed; the body fields exist in the
-  // DOM but their containing <details> is closed. Clicking the
-  // <summary> opens it. We assert by checking the `open` attribute
-  // toggles on the element.
-  await expect(details).not.toHaveAttribute("open", /.*/);
-  await details.locator("summary").click();
-  await expect(details).toHaveAttribute("open", /^$|true/);
+  // The <details> expander is gone (TODO-B). In its place, a [payload]
+  // button opens the TextModal overlay.
+  await expect(llmCall.getByTestId("leptos-llm-call-details")).toHaveCount(0);
+  await expect(llmCall.getByTestId("leptos-llm-call-payload")).toBeVisible();
 
-  // All four expected fields are present and populated.
-  await expect(llmCall.getByTestId("leptos-llm-call-cache-bp"))
-    .toBeVisible();
-  await expect(llmCall.getByTestId("leptos-llm-call-request-bytes"))
-    .toBeVisible();
-  // request_bytes is a positive integer for a real call.
-  const bytesText = await llmCall.getByTestId("leptos-llm-call-request-bytes")
-    .innerText();
-  expect(parseInt(bytesText, 10)).toBeGreaterThan(0);
+  // Modal is closed initially.
+  await expect(page.getByTestId("leptos-text-modal")).toHaveCount(0);
 
-  // hashes line lists at least one hash (the one this call's
-  // context_hashes contains).
-  await expect(llmCall.getByTestId("leptos-llm-call-hashes"))
-    .toBeVisible();
-  const hashesText = await llmCall.getByTestId("leptos-llm-call-hashes")
-    .innerText();
-  // 12-char lowercase hex; the omega-store ContextHash format. A
-  // bare-empty hashes line would be an empty string here.
-  expect(hashesText.length).toBeGreaterThan(0);
+  // Click [payload].
+  await llmCall.getByTestId("leptos-llm-call-payload").click();
 
-  // request_summary block exists. The mock-omega-server's
-  // AnthropicProvider may or may not populate it depending on the
-  // wire shape it sees; either way the placeholder renders.
-  const summary = llmCall.getByTestId("leptos-llm-call-request-summary");
-  await expect(summary).toBeVisible();
-  const summaryText = await summary.innerText();
-  // Either pretty-printed JSON (contains '{') or the placeholder.
-  expect(
-    summaryText.includes("{") || summaryText.includes("not available"),
-  ).toBe(true);
+  // TextModal appears.
+  const modal = page.getByTestId("leptos-text-modal");
+  await expect(modal).toBeVisible({ timeout: 3000 });
 
-  // Toggle closes the expander again.
-  await details.locator("summary").click();
-  await expect(details).not.toHaveAttribute("open", /.*/);
+  // Title indicates this is an llm_call payload.
+  await expect(page.getByTestId("leptos-text-modal-title"))
+    .toContainText("llm_call payload");
+
+  // Modal body contains all four metadata fields.
+  const body = page.getByTestId("leptos-text-modal-body");
+  await expect(body).toContainText("model:");
+  await expect(body).toContainText("cache_breakpoint_index:");
+  await expect(body).toContainText("request_bytes:");
+  await expect(body).toContainText("context_hashes:");
+  await expect(body).toContainText("request_summary");
+
+  // request_bytes value is a positive integer.
+  const bodyText = await body.innerText();
+  const bytesMatch = bodyText.match(/request_bytes:\s*(\d+)/);
+  expect(bytesMatch).not.toBeNull();
+  expect(parseInt(bytesMatch![1], 10)).toBeGreaterThan(0);
+
+  // Close via ✕ button.
+  await page.getByTestId("leptos-text-modal-close").click();
+  await expect(page.getByTestId("leptos-text-modal")).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------

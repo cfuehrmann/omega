@@ -298,6 +298,7 @@ fn snap_event_assistant_html_is_escaped() {
 fn snap_event_tool_call() {
     let html = render(|| {
         let ev = ev_tool_call();
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -307,6 +308,7 @@ fn snap_event_tool_call() {
 fn snap_event_tool_result_ok() {
     let html = render(|| {
         let ev = ev_tool_result("hi\n", false);
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);
@@ -316,6 +318,7 @@ fn snap_event_tool_result_ok() {
 fn snap_event_tool_result_error() {
     let html = render(|| {
         let ev = ev_tool_result("boom\n", true);
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);

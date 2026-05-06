@@ -201,6 +201,38 @@ pub fn truncate_for_preview(s: &str, max_chars: usize) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Line-count truncation (TODO-C tool previews)
+// ---------------------------------------------------------------------------
+
+/// Truncate `s` to at most `max_lines` newline-delimited lines for
+/// inline preview.
+///
+/// Returns `None` if `s` has `max_lines` or fewer lines (no truncation
+/// needed — the caller can render `s` verbatim). Returns
+/// `Some(first_n_lines)` — without a trailing `\n` — when there is
+/// content beyond line `max_lines`.
+///
+/// Used by `ToolCallBlock` and `ToolResultBlock` (TODO-C) to produce
+/// 2-line inline previews that redirect to a `TextModal` for the full
+/// output.
+#[must_use]
+pub fn truncate_to_lines(s: &str, max_lines: usize) -> Option<String> {
+    if max_lines == 0 {
+        return if s.is_empty() { None } else { Some(String::new()) };
+    }
+    let mut count = 0usize;
+    for (i, c) in s.char_indices() {
+        if c == '\n' {
+            count += 1;
+            if count >= max_lines && i + 1 < s.len() {
+                return Some(s[..i].to_owned());
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -729,5 +761,58 @@ mod tests {
         // separator.
         assert!(r.starts_with("\n\u{2026}"), "starts with marker: {r:?}");
         assert!(r.contains("2 chars total"));
+    }
+
+    // ---- truncate_to_lines ------------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_short_input_returns_none() {
+        assert_eq!(truncate_to_lines("one", 2), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_exactly_max_lines_returns_none() {
+        // "one\ntwo" has exactly 2 lines — no truncation needed.
+        assert_eq!(truncate_to_lines("one\ntwo", 2), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_extra_line_returns_some() {
+        assert_eq!(
+            truncate_to_lines("one\ntwo\nthree", 2),
+            Some("one\ntwo".into()),
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_preserves_prefix_exactly() {
+        // Catches off-by-one on the slice boundary.
+        let result = truncate_to_lines("aaa\nbbb\nccc", 2).unwrap();
+        assert_eq!(result, "aaa\nbbb");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_trailing_newline_at_boundary_is_none() {
+        // "one\ntwo\n" — the third "line" is empty (no real content).
+        // The newline at position 7 is i+1 == s.len() == 8, so the
+        // i+1 < s.len() guard correctly returns None (no truncation).
+        assert_eq!(truncate_to_lines("one\ntwo\n", 2), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_max_zero_empty_returns_none() {
+        assert_eq!(truncate_to_lines("", 0), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_to_lines_max_zero_nonempty_returns_some_empty() {
+        assert_eq!(truncate_to_lines("hello", 0), Some(String::new()));
     }
 }

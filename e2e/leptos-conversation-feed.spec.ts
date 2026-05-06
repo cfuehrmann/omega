@@ -19,11 +19,11 @@
  *    overlay must appear during the turn and the final `llm_response`
  *    must show the assembled text after `turn_end`.
  *
- * 3. Tool-result truncation — drive a `read_file` against the bundled
- *    Leptos-feed CSS file (long enough to exceed the 3000-char preview
- *    cap). Assert the "show more" button appears, that the body text
- *    is bounded under the cap, and that clicking the button reveals
- *    the full content.
+ * 3. Tool-result truncation (TODO-C, Phase 3.10) — drive a `read_file`
+ *    against rust-migration.md (long enough to span many lines) and
+ *    assert the inline preview is bounded to 2 lines, the old
+ *    `[show more]` toggle is gone, and the `[payload]` button opens
+ *    a `TextModal` containing the full content.
  *
  * The fourth test exercises the Error family via a `httpError(400)`
  * script step — terminal LLM error — which surfaces as
@@ -196,14 +196,13 @@ test("leptos-feed: streaming text overlay appears live and resolves into llm_res
 });
 
 // ---------------------------------------------------------------------------
-// 3. Tool-result truncation — show-more toggle reveals the full body
+// 3. Tool-result truncation — [payload] modal reveals full body (TODO-C)
 // ---------------------------------------------------------------------------
 
-test("leptos-feed: long tool_result truncates inline with a working show-more toggle", async ({ page }) => {
+test("leptos-feed: long tool_result shows 2-line preview; [payload] button opens TextModal with full content", async ({ page }) => {
   await resetCalls();
-  // Drive a single read_file tool turn against this very file. The
-  // file is several KB long — well past the 3000-char preview cap —
-  // so the show-more toggle must appear.
+  // Drive a single read_file tool turn against rust-migration.md, which
+  // is several KB long — many lines — so the 2-line preview must truncate.
   await loadScript([
     {
       kind: "toolUse",
@@ -228,31 +227,40 @@ test("leptos-feed: long tool_result truncates inline with a working show-more to
   const result = feed.locator('[data-event-type="tool_result"]');
   await expect(result).toHaveCount(1);
 
-  // Truncation marker is present in the rendered body.
+  // The [show more] toggle is gone (TODO-C). Only the [payload] button exists.
+  await expect(result.getByTestId("leptos-tool-result-expand")).toHaveCount(0);
+  await expect(result.getByTestId("leptos-tool-result-payload")).toBeVisible();
+
+  // The inline preview is bounded to the first 2 lines (no 3000-char
+  // truncation marker any more). The body must NOT contain the old marker.
   const body = result.locator('[data-testid="leptos-tool-result-body"]');
-  await expect(body).toContainText("chars total — showing first 3000");
+  await expect(body).not.toContainText("chars total — showing first");
 
-  // The truncated body length in the DOM is bounded by the cap +
-  // marker length (a small constant). Locking down `truncate_for_preview`
-  // through Playwright in addition to the wasm-bindgen-test boundary
-  // tests catches "constant changed but tests not regenerated" drift.
-  const truncatedText = await body.innerText();
-  expect(truncatedText.length).toBeLessThan(3500);
+  // Inline preview text is short (2 lines means well under 500 chars for
+  // any reasonable file line length).
+  const previewText = await body.innerText();
+  const previewLines = previewText.split("\n").filter((l: string) => l.length > 0);
+  expect(previewLines.length).toBeLessThanOrEqual(2);
 
-  // Show-more reveals the full body. The full body must be
-  // strictly longer than the truncated one, otherwise the rendering
-  // is broken.
-  const expand = result.getByTestId("leptos-tool-result-expand");
-  await expect(expand).toHaveText("show more");
-  await expand.click();
+  // [payload] opens the TextModal with the full file content.
+  await expect(page.getByTestId("leptos-text-modal")).toHaveCount(0);
+  await result.getByTestId("leptos-tool-result-payload").click();
 
-  await expect(expand).toHaveText("show less");
-  const fullText = await body.innerText();
-  expect(fullText.length).toBeGreaterThan(truncatedText.length);
+  const modal = page.getByTestId("leptos-text-modal");
+  await expect(modal).toBeVisible({ timeout: 3000 });
 
-  // Toggle back hides the trailing content again.
-  await expand.click();
-  await expect(expand).toHaveText("show more");
+  // Title contains the tool name and duration.
+  await expect(page.getByTestId("leptos-text-modal-title"))
+    .toContainText("read_file");
+
+  // Full body is substantially longer than the 2-line preview.
+  const modalBody = page.getByTestId("leptos-text-modal-body");
+  const fullText = await modalBody.innerText();
+  expect(fullText.length).toBeGreaterThan(previewText.length + 100);
+
+  // Close the modal.
+  await page.getByTestId("leptos-text-modal-close").click();
+  await expect(page.getByTestId("leptos-text-modal")).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------

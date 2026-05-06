@@ -35,7 +35,7 @@
 | 3.7 — cutover + delete | ✅ Done | `omega-server` serves Leptos at `/`; `src/` + `rust/bindings/` + ts-rs derives + chromium Playwright project all gone |
 | 3.8 — visual parity | ✅ Done | `frontends/leptos/style.css` (980 lines, Catppuccin Mocha) ported from the deleted SolidJS theme; Trunk-hashed `<link rel="stylesheet">`; centred picker panel; modal overlay with backdrop |
 | 3.9 — visual / UX follow-ups | ✅ Done | Picker open/close modal + Sessions button; auto-close on Reset/Resume; per-event-type colour drift (`llm_call` sapphire, `llm_retry` peach, `turn_end` muted, pause teal, info overlay2, thinking teal); debug panel `cfg(debug_assertions)`-gated; specs migrated from debug-store to `data-connected` / `data-active-session-dir` DOM attrs; 5 new Playwright specs; 37/37 green |
-| 3.10 — UX fidelity pass | 🟡 In progress (E-1+F+G+A done; B/C/D remaining) | TODO-G+A done (commit `0cd5d7a`): close-button `✕`, `llm_response` stop-reason inline, thinking/context/payload buttons, `cache_read`/`cache_write` usage line, shared `TextModal`. TODO-B/C/D remain. |
+| 3.10 — UX fidelity pass | ✅ Done | TODO-G+A done (commit `0cd5d7a`): close-button `✕`, `llm_response` stop-reason inline, thinking/context/payload buttons, `cache_read`/`cache_write` usage line, shared `TextModal`. TODO-B done: `llm_call` `[context]`/`[payload]` label-row, `<details>`→modal. TODO-C done: `ToolCallBlock` name label + id superscript + 2-line preview + `[payload]` modal; `ToolResultBlock` name label + 2-line preview + `[payload]` modal, show-more removed, duration in modal title. TODO-D done: `StatusChip` fixed-position chip (Ready/Streaming…/Paused/Offline). `<h1>"Omega (Leptos)"` heading removed. All 37 Playwright specs green. |
 | 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
 | 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
@@ -3092,24 +3092,26 @@ start in parallel; 3.9 has no dependency on it.
 
 ---
 
-## Next-session priority queue (post-Phase 3.10 partial)
+## Next-session priority queue (Phase 3.10 complete — Phase 4 next)
 
 This is the single ordered worklist for the next operator session.
-The Phase 3.10 PRECHECK uncovered a server-side prompt-cache
-regression that dwarfs every UX item below in cost terms; it lands
-first. A second server-side audit (tool-call/tool-result clearing)
-rides on top because both fixes touch the same `omega-core` /
-`omega-agent` request-shaping code paths and share a verification
-surface. Only after both server-side items land do the Phase 3.10
-UX TODOs resume.
+**Phase 3.10 is complete.** BUG-C and BUG-D were resolved in a prior
+session; all Phase 3.10 TODOs (G, A, B, C, D) are done and all 37
+Playwright specs are green.
+
+**Next priority: Phase 4 — `chromiumoxide` + LLM oracle** (replace
+Playwright with pure-Rust browser tests driven by `chromiumoxide`, add
+an LLM-based oracle for the test feed assertions).
+
+Optional before Phase 4:
+- TODO-E-2 (`show usage` detail button on `llm_response` usage line)
+- TODO-E-3 (`take it back` / edit-and-resend user message)
 
 **Ordered:**
 
-1. **BUG-C — prompt-cache markers missing** — server-side, top priority.
-2. **BUG-D — tool-call/tool-result clearing audit** — server-side, top priority. Verify in same session as BUG-C since both touch context-window economics.
-3. **Phase 3.10 remaining UX TODOs** — client-side, resume after BUG-C / BUG-D land. Order: G → A → B → C → D, optional E-2 / E-3.
-
-Details for each item below.
+1. **Phase 4 — `chromiumoxide` + LLM oracle** — next session's work.
+2. **TODO-E-2** — optional `[usage]` detail button (additive, low risk).
+3. **TODO-E-3** — optional `[take it back]` edit-and-resend (medium scope).
 
 ---
 
@@ -3337,18 +3339,20 @@ feed and the metrics carry non-`None` `cleared_*` fields.
 
 ---
 
-### Phase 3.10 — remaining UX TODOs (B / C / D, optional E-2 / E-3)
+### ✅ Phase 3.10 — all UX TODOs complete
 
 **Done (commit `0cd5d7a`):** TODO-G (close-button `✕`) and TODO-A
 (`llm_response` stop-reason inline, thinking/context/payload buttons,
 `cache_read`/`cache_write` usage line, shared `TextModal` component).
 
-**Remaining order:**
+**Done (current session):** TODO-B + TODO-C + TODO-D.
 
-1. TODO-B — `llm_call` button rename + payload modal.
-2. TODO-C — `tool_call` / `tool_result` modal affordances + label cleanup.
-3. TODO-D — status chip (additive; low breakage risk).
-4. TODO-E-2 / E-3 — `show usage` + `take it back` (optional).
+1. ✅ TODO-B — `llm_call` `[context]`/`[payload]` label-row; `<details>`→modal.
+2. ✅ TODO-C — `ToolCallBlock`/`ToolResultBlock` name label, 2-line preview,
+   `[payload]` modal; show-more removed; duration moved to modal title.
+3. ✅ TODO-D — `StatusChip` fixed chip (Ready/Streaming…/Paused/Offline).
+4. ✅ `<h1>"Omega (Leptos)"` page heading removed from `App`.
+5. TODO-E-2 / E-3 — `show usage` + `take it back` (optional, not started).
 
 Don't touch (still in force):
 
@@ -3358,9 +3362,9 @@ Don't touch (still in force):
 
 ---
 
-## Phase 3.10 — UX fidelity pass (post-3.9 UAT) 🟡 In progress (E-1+F+G+A done; B/C/D remaining)
+## Phase 3.10 — UX fidelity pass (post-3.9 UAT) ✅ Done (E-1+F+G+A+B+C+D)
 
-**BUG-C + BUG-D resolved; G + A done; B/C/D in progress.**
+**All core TODOs done.** BUG-C + BUG-D resolved; G + A + B + C + D done.
 Prompt-cache markers are emitted on every Anthropic request (BUG-C).
 TODO-A-5’s `cache_read` / `cache_write` usage line is live as a
 production cost detector. Remaining TODOs (B/C/D) are pure client-side
@@ -3382,9 +3386,35 @@ Leptos; none require WS-protocol or server-side changes.
 > been rendered (labelled "assistant") — TODO-A fixed label detail
 > only, not a missing event type.
 
+> **TODO-B — Done.** `llm_call` `[context]`/`[payload]` label-row layout;
+> `<details>` expander replaced by `TextModal` payload modal containing
+> model, cache_breakpoint_index, request_bytes, context_hashes, and
+> request_summary. Button text `"context records…"` → `"[context]"`.
+> `truncate_for_preview` no longer used by `LlmCallBlock`.
+> Playwright test 3 in `leptos-context-resume.spec.ts` updated to
+> assert the payload modal (not the `<details>` expander).
+
 ---
 
-### TODO-B: `llm_call` — rename buttons, move details to modal, label-row layout
+> **TODO-C — Done.** New `ToolCallBlock` component: tool name as label +
+> last-4-chars of `id` in superscript (`<sup class="block-tool-id">`)
+> for parallel-call correlation; 2-line JSON preview; `[payload]` button
+> opens `TextModal`. `ToolResultBlock` rewritten: tool name as label;
+> 2-line output preview via new `truncate_to_lines(s, 2)`; `[payload]`
+> button opens `TextModal` with full output + duration in title; old
+> `[show more]` toggle removed; `duration_ms` meta line removed from
+> inline view. `truncate_to_lines` added to `event_view.rs` with 7
+> wasm-bindgen tests. Playwright test 3 in
+> `leptos-conversation-feed.spec.ts` updated to assert the payload
+> modal (not the show-more toggle).
+
+---
+
+> **TODO-D — Done.** `StatusChip` component added to `lib.rs` and
+> mounted in `App`. Reads `store.connected` + `store.turn_state`;
+> emits `data-testid="leptos-status-chip"` and `data-status`
+> (`ready` / `streaming` / `paused` / `offline`). CSS already
+> present in `style.css` from Phase 3.10 planning.
 
 **Observed:** the `llm_call` block has a `context records…` button
 and a `<details>` expander for the request payload. Three regressions:
@@ -3618,7 +3648,7 @@ in `text_modal.rs`; `ContextModalState::open_hash()` added.
 "assistant"). A prior session note incorrectly suggested they were
 absent; TODO-A fixed label/button detail only, not a missing event type.
 
-**Remaining:** TODO-B, C, D, optional E-2/E-3.
+**Remaining:** ~~TODO-B, C, D~~ ✅ all done. `<h1>` heading removed. Optional: TODO-E-2/E-3.
 
 **Acceptance criteria — verified for E-1 + F.**
 
@@ -3645,51 +3675,15 @@ absent; TODO-A fixed label/button detail only, not a missing event type.
 
 ---
 
-### Suggested next session — Phase 3.10 remainder (TODO-B / C / D)
+### ✅ Phase 3.10 remainder complete — Next: Phase 4
 
-**Model:** `claude-sonnet-4-6`. The remaining TODOs are well-scoped
-incremental changes to `feed.rs`: replace a `<details>` block with
-a modal (B), swap show-more toggles for modals and clean up labels
-(C), add a fixed status chip (D). `TextModal` is already built;
-reuse is mechanical. Sonnet is sufficient — switch to Opus only if
-cross-TODO coherence becomes an issue.
+**Phase 3.10 is complete.** All TODOs (G, A, B, C, D) are done.
+All 37 Playwright specs green. `just rust-gate` + `just gate` green.
 
-**Effort:** medium. Pure client-side Leptos. The main coordination
-point is Playwright spec updates when `<details>` (TODO-B) and
-show-more (TODO-C) are removed — update specs in the same commit as
-the code change so gates stay green throughout.
-
-**Order:** B → C → D. After each: `just rust-gate` green. After all
-three: `just gate` green.
-
-**Prompt:**
-
-> Implement Phase 3.10 UX TODOs B, C, D in that order, per the
-> detail blocks in rust-migration.md. Read the full TODO-B through
-> TODO-D blocks before writing any code.
->
-> After each TODO: `just rust-gate` must be green before moving on.
-> After all three: `just gate` must be green (update any Playwright
-> specs whose assertions break due to `<details>`→modal and
-> show-more→modal migrations in B and C).
->
-> Constraints: Leptos client only (`frontends/leptos/`). No
-> server-side changes, no WS protocol changes, no `bench/`, no
-> `/leptos/` router alias.
->
-> `TextModal` (`text_modal.rs`) is already built from TODO-A —
-> reuse it for all payload/details modals in B and C. Do not rebuild
-> it.
->
-> When done, record each TODO as done in the Phase 3.10 section of
-> rust-migration.md and mark Phase 3.10 ✅ in the status tables if
-> all TODOs are complete. Then note Phase 4 (chromiumoxide + LLM
-> oracle) as the next session's work.
-
-**Follow-up — Phase 4:** the next major session after Phase 3.10
-completes is **Phase 4 — `chromiumoxide` + LLM oracle**: retire
-Playwright, replace with a pure-Rust browser harness, delete the JS
-toolchain. See the Phase 4 section below for architecture notes.
+**Phase 4 — `chromiumoxide` + LLM oracle** is the next session's
+work: retire Playwright, replace with a pure-Rust browser harness,
+delete the JS toolchain. See the Phase 4 section below for
+architecture notes.
 
 ---
 

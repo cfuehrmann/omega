@@ -10,8 +10,8 @@
 //!    │         ├── pure `kind_for(&event)`   → CSS class + data-event-kind
 //!    │         ├── pure `event_type_tag()`   → data-event-type
 //!    │         └── match → typed body view per OmegaEvent variant
-//!    │              └── ToolResult: <ToolResultBlock> with show-more toggle
-//!    │                   └── pure `truncate_for_preview(s, 3000)`
+//!    │              └── ToolResult: <ToolResultBlock> with payload modal (TODO-C)
+//!    │                   └── pure `truncate_to_lines(s, 2)`
 //!    ├── <StreamingTail>     (live append into the active assistant block)
 //!    └── <div sentinel/>     (Effect-driven scrollIntoView seam)
 //! ```
@@ -43,7 +43,7 @@ use crate::context_modal::ContextModalState;
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
     EventKind, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
-    truncate_for_preview,
+    truncate_to_lines,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -83,11 +83,6 @@ fn js_render_mermaid(_container: &()) -> Result<(), ()> {
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 fn js_add_copy_buttons(_container: &()) {}
-
-/// Match the SolidJS UI's inline preview cap. Larger payloads remain
-/// reachable through the "show more" toggle (3.3) and, eventually,
-/// the modal that 3.5 ports.
-const TOOL_RESULT_PREVIEW_MAX_CHARS: usize = 3000;
 
 /// Pixels of grace at the bottom of the feed before the user is
 /// considered to have scrolled up. Mirrors the SolidJS UI's `8` px
@@ -225,15 +220,7 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
 
         OmegaEvent::LlmResponse(e) => view! { <LlmResponseBlock event=e /> }.into_any(),
 
-        OmegaEvent::ToolCall(e) => {
-            let arg_preview = serde_json::to_string(&e.input).unwrap_or_else(|_| "{}".into());
-            view! {
-                <span class="block-label">"tool_call"</span>
-                <span class="block-tool-name" data-testid="leptos-tool-name">{e.name}</span>
-                <pre class="block-tool-input" data-testid="leptos-tool-input">{arg_preview}</pre>
-            }
-            .into_any()
-        }
+        OmegaEvent::ToolCall(e) => view! { <ToolCallBlock event=e /> }.into_any(),
 
         OmegaEvent::ToolResult(e) => view! { <ToolResultBlock event=e /> }.into_any(),
 
@@ -456,155 +443,175 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
 }
 
 // ---------------------------------------------------------------------------
-// Tool-result block (per-row show-more toggle)
+// Tool-call block (TODO-C)
 // ---------------------------------------------------------------------------
 
+/// One `tool_call` row — Phase 3.10 TODO-C.
+///
+/// Label is the tool name (not the literal string `"tool_call"`).
+/// The last four characters of the tool-use `id` appear in superscript
+/// muted text as a correlation hint when parallel tool calls share an
+/// `llm_call`. A 2-line JSON preview appears inline; a `[payload]`
+/// button opens the full JSON in a [`TextModal`].
+#[component]
+fn ToolCallBlock(event: omega_protocol::events::ToolCallEvent) -> impl IntoView {
+    let text_modal =
+        use_context::<TextModalState>().expect("TextModalState must be provided");
+
+    let name = event.name.clone();
+    // Last 4 chars of the tool-use id as a correlation hint.
+    let id_suffix = {
+        let id = &event.id;
+        let len = id.chars().count();
+        if len > 4 {
+            id.chars().skip(len - 4).collect::<String>()
+        } else {
+            id.clone()
+        }
+    };
+
+    let full_input = serde_json::to_string_pretty(&event.input)
+        .unwrap_or_else(|_| "{}".to_owned());
+    // 2-line preview; full JSON reachable via the payload modal.
+    let preview = truncate_to_lines(&full_input, 2)
+        .unwrap_or_else(|| full_input.clone());
+    let full_for_modal = full_input;
+    let modal_title = format!("tool_call: {name}");
+
+    view! {
+        <div class="block-label-row">
+            <span class="block-label">
+                <span data-testid="leptos-tool-name">{name.clone()}</span>
+                <sup class="block-tool-id">{id_suffix}</sup>
+            </span>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-tool-call-payload"
+                on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
+            >
+                "[payload]"
+            </button>
+        </div>
+        <pre class="block-tool-input" data-testid="leptos-tool-input">{preview}</pre>
+    }
+}
+
 // ---------------------------------------------------------------------------
-// LLM-call block (modal trigger + inline expander) — Phase 3.5
+// LLM-call block (TODO-B: label-row layout, context + payload buttons)
 // ---------------------------------------------------------------------------
 
-/// One `llm_call` row, with two affordances:
+/// One `llm_call` row — Phase 3.10 TODO-B.
 ///
-/// 1. A primary button that opens the [`crate::context_modal`]
-///    overlay for the call's `context_hashes`.
-/// 2. An inline `<details>` expander revealing the full event
-///    metadata: `request_summary` (pretty-printed JSON, may be
-///    long), `cache_breakpoint_index`, the full `context_hashes`
-///    list, and `request_bytes`.
+/// Label row (flex `.block-label-row`) contains:
+///   `llm_call` label · `[context]` button · `[payload]` button
 ///
-/// Per-row state (the `<details>` open/closed flag) is owned by
-/// the browser via the native `<details>` element — leptos doesn't
-/// need to track it. Same architectural pattern as 3.3's
-/// `<ToolResultBlock/>`: per-row reactive state, no `SessionStore`
-/// involvement.
+/// The `[context]` button opens the [`ContextModal`] overlay.
+/// The `[payload]` button opens a [`TextModal`] with the full
+/// event metadata: model, cache_breakpoint_index, request_bytes,
+/// context_hashes, and the request_summary JSON.
+///
+/// The old native `<details>` expander (Phase 3.5) is removed
+/// and replaced by the payload modal so the inline block stays
+/// compact.
 #[component]
 fn LlmCallBlock(event: omega_protocol::events::LlmCallEvent) -> impl IntoView {
-    let modal = use_context::<ContextModalState>()
+    let context_modal = use_context::<ContextModalState>()
         .expect("ContextModalState must be provided");
+    let text_modal =
+        use_context::<TextModalState>().expect("TextModalState must be provided");
 
-    // Top-line summary mirrors the 3.3 layout (model · hashes ·
-    // bytes) so visual parity holds across the inline-expander
-    // addition.
+    // Summary line: model · ctx count · bytes.
     let summary_line = format!(
-        "{} · {} ctx record(s) · {} bytes",
+        "{} · {} ctx · {} bytes",
         event.model,
         event.context_hashes.len(),
         event.request_bytes,
     );
 
-    // Pretty-print request_summary lazily on render. The field is
-    // `Option<Value>`; absent renders as a stable placeholder.
-    let request_summary_str = event.request_summary.as_ref().map_or_else(
-        || "(request summary not available)".to_owned(),
-        |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "(unrenderable)".to_owned()),
-    );
-    let truncated = truncate_for_preview(&request_summary_str, TOOL_RESULT_PREVIEW_MAX_CHARS);
-    let was_truncated = truncated.is_some();
-    let summary_preview = truncated.unwrap_or_else(|| request_summary_str.clone());
-    let summary_full = request_summary_str;
-    let expanded_summary = RwSignal::new(false);
-
+    // Payload text: all four metadata fields joined in a readable block.
     let cache_bp = event
         .cache_breakpoint_index
         .map_or_else(|| "none".to_owned(), |i| i.to_string());
-    let hashes_line = event.context_hashes.join(", ");
-    let hashes_count = event.context_hashes.len();
-    let request_bytes = event.request_bytes;
-
-    // The button click captures the event so the modal has the
-    // hashes available. Clone once into the closure so repeated
-    // clicks reopen the modal.
-    let event_for_modal = event;
-    let on_open_modal = move |_| {
-        modal.open(event_for_modal.clone());
+    let hashes_text = if event.context_hashes.is_empty() {
+        "  (none)".to_owned()
+    } else {
+        event
+            .context_hashes
+            .iter()
+            .map(|h| format!("  {h}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
+    let request_summary_str = event.request_summary.as_ref().map_or_else(
+        || "(not available)".to_owned(),
+        |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "(unrenderable)".to_owned()),
+    );
+    let payload_text = format!(
+        "model: {}\ncache_breakpoint_index: {}\nrequest_bytes: {}\ncontext_hashes:\n{}\n\n--- request_summary ---\n{}",
+        event.model,
+        cache_bp,
+        event.request_bytes,
+        hashes_text,
+        request_summary_str,
+    );
+
+    // Clone the event for the context modal; the payload text is moved.
+    let event_for_ctx = event;
 
     view! {
-        <span class="block-label">"llm_call"</span>
+        <div class="block-label-row">
+            <span class="block-label">"llm_call"</span>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-llm-call-open-modal"
+                on:click=move |_| context_modal.open(event_for_ctx.clone())
+            >
+                "[context]"
+            </button>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-llm-call-payload"
+                on:click=move |_| text_modal.open("llm_call payload", payload_text.clone())
+            >
+                "[payload]"
+            </button>
+        </div>
         <span class="block-body" data-testid="leptos-llm-call-summary">{summary_line}</span>
-        <button
-            class="block-llm-call-open"
-            data-testid="leptos-llm-call-open-modal"
-            on:click=on_open_modal
-        >
-            "context records…"
-        </button>
-        <details
-            class="block-llm-call-details"
-            data-testid="leptos-llm-call-details"
-        >
-            <summary>"details"</summary>
-            <dl class="block-llm-call-meta">
-                <dt>"cache_breakpoint_index"</dt>
-                <dd data-testid="leptos-llm-call-cache-bp">{cache_bp}</dd>
-                <dt>"request_bytes"</dt>
-                <dd data-testid="leptos-llm-call-request-bytes">{request_bytes.to_string()}</dd>
-                <dt>{format!("context_hashes ({hashes_count})")}</dt>
-                <dd data-testid="leptos-llm-call-hashes">{hashes_line}</dd>
-                <dt>"request_summary"</dt>
-                <dd>
-                    <pre
-                        class="block-body"
-                        data-testid="leptos-llm-call-request-summary"
-                    >
-                        {move || if expanded_summary.get() {
-                            summary_full.clone()
-                        } else {
-                            summary_preview.clone()
-                        }}
-                    </pre>
-                    <Show when=move || was_truncated fallback=|| ().into_any()>
-                        <button
-                            class="block-show-more"
-                            data-testid="leptos-llm-call-summary-toggle"
-                            on:click=move |_| expanded_summary.update(|v| *v = !*v)
-                        >
-                            {move || if expanded_summary.get() { "show less" } else { "show more" }}
-                        </button>
-                    </Show>
-                </dd>
-            </dl>
-        </details>
     }
 }
 
-/// One tool_result row, with its own `expanded` signal so the
-/// "show more" toggle is per-row state. The truncation decision is
-/// the pure [`truncate_for_preview`] (mutation-tested); only the
-/// visibility toggle and event handler live here.
+/// One `tool_result` row — Phase 3.10 TODO-C.
+///
+/// * Label is the tool name (not `"tool_result"`).
+/// * Inline preview is truncated to the first 2 lines.
+/// * A `[payload]` button opens a [`TextModal`] with the full output.
+/// * The old `[show more]` toggle and the `duration_ms` meta line are
+///   removed from the inline view; duration appears in the modal title.
 #[component]
 fn ToolResultBlock(event: omega_protocol::events::ToolResultEvent) -> impl IntoView {
-    let expanded = RwSignal::new(false);
-    // Compute the preview lazily so a long output isn't truncated
-    // every render. This is fine to capture by clone — the event is
-    // already owned by the closure.
-    let full = event.output.clone();
-    let truncated = truncate_for_preview(&full, TOOL_RESULT_PREVIEW_MAX_CHARS);
-    let was_truncated = truncated.is_some();
-    let preview = truncated.unwrap_or_else(|| full.clone());
+    let text_modal =
+        use_context::<TextModalState>().expect("TextModalState must be provided");
 
-    let label = if event.is_error {
-        "tool_result · error"
-    } else {
-        "tool_result"
-    };
-    let duration_line = format!("{}ms · {}", event.duration_ms, event.name);
+    let name = event.name.clone();
+    let full = event.output.clone();
+    // 2-line inline preview; full output reachable via the payload modal.
+    let preview = truncate_to_lines(&full, 2)
+        .unwrap_or_else(|| full.clone());
+    let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
+    let full_for_modal = full;
 
     view! {
-        <span class="block-label">{label}</span>
-        <span class="block-meta" data-testid="leptos-tool-result-meta">{duration_line}</span>
-        <pre class="block-body" data-testid="leptos-tool-result-body">
-            {move || if expanded.get() { full.clone() } else { preview.clone() }}
-        </pre>
-        <Show when=move || was_truncated fallback=|| ().into_any()>
+        <div class="block-label-row">
+            <span class="block-label" data-testid="leptos-tool-result-name">{name}</span>
             <button
-                class="block-show-more"
-                data-testid="leptos-tool-result-expand"
-                on:click=move |_| expanded.update(|v| *v = !*v)
+                class="block-label-row-btn"
+                data-testid="leptos-tool-result-payload"
+                on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
             >
-                {move || if expanded.get() { "show less" } else { "show more" }}
+                "[payload]"
             </button>
-        </Show>
+        </div>
+        <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
     }
 }
 
