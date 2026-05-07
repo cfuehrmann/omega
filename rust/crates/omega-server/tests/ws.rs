@@ -995,6 +995,17 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
     send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
+    // Capture which session dirs exist *before* the resume so we can
+    // identify the directory created specifically by resume_session
+    // (the reset above also creates a session, so there are two non-B dirs).
+    let dirs_before_resume: std::collections::HashSet<std::path::PathBuf> =
+        std::fs::read_dir(&sessions_root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+
     // Resume from session B.
     send_json(
         &mut ws,
@@ -1027,11 +1038,13 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
 
     // The newly-created session must record the resume link in its
     // metadata so a subsequent `GET /api/sessions` exposes it.
+    // Find the directory that did NOT exist before the resume_session command
+    // (there are two non-B dirs: the one from reset and the one from resume).
     let new_dir = std::fs::read_dir(&sessions_root)
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .find(|p| p.is_dir() && p.file_name().and_then(|n| n.to_str()) != Some(session_b_name))
+        .find(|p| p.is_dir() && !dirs_before_resume.contains(p))
         .expect("new session dir created on resume");
     let meta = omega_store::read_session_metadata(&new_dir).await;
     assert_eq!(
