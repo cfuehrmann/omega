@@ -4,6 +4,7 @@
 //! host-target snapshot tests (`tests/snapshots.rs`) pull in
 //! components without building the bin path.
 
+#[mutants::skip] // WASM binary entry point; wasm_bindgen_test runner never calls main().
 fn main() {
     omega_web::run();
 }

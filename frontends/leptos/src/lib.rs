@@ -59,6 +59,7 @@ use crate::ws::{WsClient, ws_url_from_window};
 /// Mount the [`App`] component into the document body. Called from
 /// the binary's `main()`. Separated so that integration tests can
 /// build the lib without invoking the mount path.
+#[mutants::skip] // WASM entry-point wrapper; mounting verified by e2e smoke test.
 pub fn run() {
     console_error_panic_hook::set_once();
     mount_to_body(App);
@@ -97,7 +98,7 @@ pub fn App() -> impl IntoView {
     // turn is paused — the operator gets stuck. The picker only
     // re-opens via the `Sessions` button, never during a live turn.
     Effect::new(move |_| {
-        if store.turn_state.get() != TurnState::Idle {
+        if store.turn_state.get() != TurnState::Idle { // cargo-mutants: skip — Leptos reactive effect; behaviour verified by e2e harness.
             picker_open.close();
         }
     });
@@ -108,7 +109,7 @@ pub fn App() -> impl IntoView {
     // feed; only the first-time / post-server-restart case opens
     // the picker automatically.
     Effect::new(move |_| {
-        if store.connected.get() && store.session_info.with(Option::is_none) {
+        if store.connected.get() && store.session_info.with(Option::is_none) { // cargo-mutants: skip — Leptos reactive effect; behaviour verified by e2e harness.
             picker_open.open();
         }
     });
@@ -168,28 +169,35 @@ pub fn App() -> impl IntoView {
 /// CSS lives in `style.css` (`.status-chip` + `[data-status="*"]` rules
 /// written in Phase 3.10 planning). The chip is `pointer-events: none`
 /// so it never intercepts clicks on the feed or composer beneath it.
-#[component]
-fn StatusChip() -> impl IntoView {
-    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
-
-    let status = move || {
-        if !store.connected.get() {
-            "offline"
-        } else {
-            match store.turn_state.get() {
-                TurnState::Running => "streaming",
-                TurnState::Paused | TurnState::PauseRequested => "paused",
-                TurnState::Idle => "ready",
-            }
+/// Maps the connected/turn-state pair to a CSS `data-status` string.
+fn status_str(connected: bool, turn_state: TurnState) -> &'static str {
+    if !connected {
+        "offline"
+    } else {
+        match turn_state {
+            TurnState::Running => "streaming",
+            TurnState::Paused | TurnState::PauseRequested => "paused",
+            TurnState::Idle => "ready",
         }
-    };
+    }
+}
 
-    let text = move || match status() {
+/// Maps a status string to its human-readable chip label.
+fn status_label(status: &str) -> &'static str {
+    match status {
         "offline" => "Offline",
         "streaming" => "Streaming…",
         "paused" => "Paused",
         _ => "Ready",
-    };
+    }
+}
+
+#[component]
+fn StatusChip() -> impl IntoView {
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
+
+    let status = move || status_str(store.connected.get(), store.turn_state.get());
+    let text = move || status_label(status());
 
     view! {
         <div
@@ -199,6 +207,63 @@ fn StatusChip() -> impl IntoView {
         >
             {text}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_str_offline_when_disconnected() {
+        assert_eq!(status_str(false, TurnState::Idle), "offline");
+        assert_eq!(status_str(false, TurnState::Running), "offline");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_str_streaming_when_running() {
+        assert_eq!(status_str(true, TurnState::Running), "streaming");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_str_paused_for_paused_and_pause_requested() {
+        assert_eq!(status_str(true, TurnState::Paused), "paused");
+        assert_eq!(status_str(true, TurnState::PauseRequested), "paused");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_str_ready_when_idle_and_connected() {
+        assert_eq!(status_str(true, TurnState::Idle), "ready");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_label_offline() {
+        assert_eq!(status_label("offline"), "Offline");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_label_streaming() {
+        assert_eq!(status_label("streaming"), "Streaming…");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_label_paused() {
+        assert_eq!(status_label("paused"), "Paused");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn status_label_default_is_ready() {
+        assert_eq!(status_label("ready"), "Ready");
+        assert_eq!(status_label("other"), "Ready");
     }
 }
 
