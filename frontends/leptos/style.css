@@ -225,6 +225,11 @@ main > h1 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.session-item-label:hover {
+  color: var(--ctp-blue);
 }
 
 .session-item-active-marker {
@@ -260,12 +265,10 @@ main > h1 {
   outline: none;
 }
 
-/* Common styling for the per-row action buttons (resume / rename /
- * save / cancel / delete). Shared shape; per-button hover colour
- * picked from the role palette. */
+/* Common styling for the per-row action buttons (resume / cancel /
+ * delete). Shared shape; per-button hover colour picked from the
+ * role palette. */
 [data-testid="leptos-session-resume"],
-[data-testid="leptos-session-rename"],
-[data-testid="leptos-session-rename-submit"],
 [data-testid="leptos-session-rename-cancel"],
 [data-testid="leptos-session-delete"] {
   background: none;
@@ -280,8 +283,6 @@ main > h1 {
   transition: border-color 0.15s, color 0.15s;
 }
 [data-testid="leptos-session-resume"]:hover:not(:disabled),
-[data-testid="leptos-session-rename"]:hover:not(:disabled),
-[data-testid="leptos-session-rename-submit"]:hover:not(:disabled),
 [data-testid="leptos-session-rename-cancel"]:hover:not(:disabled) {
   border-color: var(--ctp-blue);
   color: var(--ctp-blue);
@@ -291,8 +292,6 @@ main > h1 {
   color: var(--red);
 }
 [data-testid="leptos-session-resume"]:disabled,
-[data-testid="leptos-session-rename"]:disabled,
-[data-testid="leptos-session-rename-submit"]:disabled,
 [data-testid="leptos-session-rename-cancel"]:disabled,
 [data-testid="leptos-session-delete"]:disabled {
   opacity: 0.4;
@@ -1255,22 +1254,187 @@ main > h1 {
   line-height: 1.5;
 }
 
-/* ── Status chip (fixed bottom-right, TODO-D) ─────────────────────────────── */
+/* ── Status chip (inline in the composer row) ───────────────────────────────────────────── */
 .status-chip {
-  position: fixed;
-  bottom: 1rem;
-  right: 1.5rem;
-  z-index: 800;
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--font);
   font-weight: bold;
-  padding: 3px 10px;
-  border-radius: 10px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--radius);
   border: 1px solid currentColor;
   user-select: none;
   pointer-events: none;
+  align-self: flex-end;
+  flex-shrink: 0;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
 }
 .status-chip[data-status="ready"]     { color: var(--ctp-teal); }
 .status-chip[data-status="streaming"] { color: var(--llm); animation: pulse 1s infinite; }
 .status-chip[data-status="paused"]    { color: var(--ctp-yellow); }
 .status-chip[data-status="offline"]   { color: var(--red); }
+
+/* ── Usage panel (sticky, above Composer) ───────────────────────────────── */
+
+/* "▼ Usage" / "▲ Usage" toggle button — styled like .leptos-composer-sessions */
+.leptos-composer-usage {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 14px;
+  height: 38px;
+  padding: 0 12px;
+  cursor: pointer;
+  align-self: flex-end;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+  user-select: none;
+}
+.leptos-composer-usage:hover {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+.leptos-composer-usage[data-panel-open="true"] {
+  color: var(--ctp-blue);
+  border-color: var(--ctp-blue);
+}
+
+/* The panel itself — sits between the feed and the composer row */
+.usage-panel {
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  padding: 6px 4px 4px;
+}
+
+/* Metrics table */
+.usage-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--dim);
+  width: auto;
+  padding: 2px 0;
+}
+
+.ut-row-label {
+  font-weight: bold;
+  color: var(--dim);
+  padding: 1px 12px 1px 0;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ut-header {
+  color: var(--dim);
+  opacity: 0.65;
+  font-weight: normal;
+  padding: 2px 0 1px 16px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.ut-gap { padding-left: 32px; }
+
+.ut-val {
+  color: var(--dim);
+  opacity: 0.85;
+  padding: 1px 0 1px 16px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ut-legend-cell {
+  padding-left: 12px;
+  vertical-align: middle;
+}
+
+.ut-legend-btn {
+  cursor: pointer;
+  opacity: 0.55;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  padding: 2px 4px;
+}
+.ut-legend-btn:hover { opacity: 0.9; }
+
+/* ── Token-field legend overlay ─────────────────────────────────────────── */
+
+.token-legend-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 200;
+}
+
+@media (min-width: 600px) {
+  .token-legend-overlay { align-items: center; }
+}
+
+.token-legend {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 16px 20px 20px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+}
+
+@media (min-width: 600px) {
+  .token-legend {
+    border-radius: var(--radius);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    width: auto;
+    min-width: 340px;
+  }
+}
+
+.token-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--ctp-subtext1);
+}
+
+.token-legend-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--dim);
+  font-size: 13px;
+  padding: 2px 7px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.token-legend-close:hover { border-color: var(--red); color: var(--red); }
+
+.token-legend-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+.token-legend-table td {
+  padding: 5px 10px 5px 0;
+  vertical-align: top;
+  color: var(--text);
+}
+
+.token-legend-table td:first-child {
+  white-space: nowrap;
+  color: var(--ctp-subtext1);
+  padding-right: 16px;
+}

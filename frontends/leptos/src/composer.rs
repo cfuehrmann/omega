@@ -57,6 +57,7 @@ use crate::http::get_files;
 use crate::picker::PickerOpen;
 use crate::protocol::{ClientFrame, TurnState};
 use crate::store::SessionStore;
+use crate::usage_panel::UsagePanelOpen;
 use crate::ws::WsClient;
 
 // ---------------------------------------------------------------------------
@@ -68,18 +69,41 @@ use crate::ws::WsClient;
 /// "discovery endpoint" rationale.
 pub const MODELS: &[(&str, &str)] = &[
     ("claude-sonnet-4-6", "Sonnet"),
-    ("claude-opus-4-6", "Opus 4.6"),
     ("claude-opus-4-7", "Opus 4.7"),
 ];
 
-/// Effort levels offered. Server's `cap_effort_for_model` downcasts
-/// `max` on Sonnet to `high`, so no client-side gating is required.
+/// Effort levels for Sonnet 4.6 (and Opus 4.6 if ever re-added).
+/// These models support `low` / `medium` / `high` / `max`.
+/// `xhigh` is not available on Sonnet.
 pub const EFFORTS: &[(&str, &str)] = &[
     ("low", "Low"),
     ("medium", "Medium"),
     ("high", "High"),
     ("max", "Max"),
 ];
+
+/// Effort levels for Claude Opus 4.7, which additionally exposes
+/// `xhigh` — a tier between `high` and `max` recommended as the
+/// starting point for long-horizon coding and agentic tasks.
+pub const EFFORTS_OPUS47: &[(&str, &str)] = &[
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("xhigh", "XHigh"),
+    ("max", "Max"),
+];
+
+/// Return the appropriate effort slice for `model`.
+/// `claude-opus-4-7` gets the extended list (including `xhigh`);
+/// all other models fall back to the standard four-level list.
+#[must_use]
+pub fn efforts_for_model(model: &str) -> &'static [(&'static str, &'static str)] {
+    if model == "claude-opus-4-7" {
+        EFFORTS_OPUS47
+    } else {
+        EFFORTS
+    }
+}
 
 /// Project the (value, label) pairs to the label whose value matches
 /// `current`. Falls back to `current` itself (verbatim) when no value
@@ -440,6 +464,10 @@ pub fn Composer() -> impl IntoView {
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
     let on_sessions_click = move |_| picker_open.open();
 
+    // "Usage" button toggles the usage panel.
+    let usage_panel_open =
+        use_context::<UsagePanelOpen>().expect("UsagePanelOpen must be provided");
+
     view! {
         <section
             class="leptos-composer"
@@ -453,8 +481,16 @@ pub fn Composer() -> impl IntoView {
             >
                 "Sessions"
             </button>
+            <button
+                class="leptos-composer-usage"
+                data-testid="leptos-composer-usage"
+                data-panel-open=move || usage_panel_open.is_open().to_string()
+                on:click=move |_| usage_panel_open.toggle()
+            >
+                {move || if usage_panel_open.is_open() { "▲ Usage" } else { "▼ Usage" }}
+            </button>
             <ModelSelect active=active_model on_change=on_model_change />
-            <EffortSelect active=active_effort on_change=on_effort_change />
+            <EffortSelect active=active_effort active_model=active_model on_change=on_effort_change />
             <div class="leptos-composer-textarea-wrap">
                 <Show
                     when=move || completion_open.get()
@@ -501,6 +537,7 @@ pub fn Composer() -> impl IntoView {
                     "Abort"
                 </button>
             </Show>
+            <StatusChip />
         </section>
     }
 }
@@ -552,7 +589,11 @@ where
 }
 
 #[component]
-fn EffortSelect<F>(active: Memo<String>, on_change: F) -> impl IntoView
+fn EffortSelect<F>(
+    active: Memo<String>,
+    active_model: Memo<String>,
+    on_change: F,
+) -> impl IntoView
 where
     F: Fn(String) + Copy + 'static,
 {
@@ -570,10 +611,72 @@ where
                 }
             }
         >
-            {EFFORTS.iter().map(|(value, label)| view! {
-                <option value=*value>{*label}</option>
-            }).collect_view()}
+            {move || {
+                efforts_for_model(&active_model.get())
+                    .iter()
+                    .map(|(value, label)| view! {
+                        <option value=*value>{*label}</option>
+                    })
+                    .collect_view()
+            }}
         </select>
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Status chip (inline in the composer row)
+// ---------------------------------------------------------------------------
+
+/// Maps the connected/turn-state pair to a CSS `data-status` string.
+pub(crate) fn status_str(connected: bool, turn_state: TurnState) -> &'static str {
+    if !connected {
+        "offline"
+    } else {
+        match turn_state {
+            TurnState::Running => "streaming",
+            TurnState::Paused | TurnState::PauseRequested => "paused",
+            TurnState::Idle => "ready",
+        }
+    }
+}
+
+/// Maps a `data-status` string to its human-readable chip label.
+pub(crate) fn status_label(status: &str) -> &'static str {
+    match status {
+        "offline" => "Offline",
+        "streaming" => "Streaming…",
+        "paused" => "Paused",
+        _ => "Ready",
+    }
+}
+
+/// Inline status badge rendered at the right end of the composer row.
+///
+/// Four states driven by `store.connected` and `store.turn_state`:
+///
+/// | `data-status` | colour | text         |
+/// |---------------|--------|--------------|
+/// | `ready`       | teal   | `Ready`      |
+/// | `streaming`   | llm    | `Streaming…` |
+/// | `paused`      | yellow | `Paused`     |
+/// | `offline`     | red    | `Offline`    |
+///
+/// `pointer-events: none` in CSS — never intercepts clicks on the composer.
+#[component]
+fn StatusChip() -> impl IntoView {
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
+
+    let status = move || status_str(store.connected.get(), store.turn_state.get());
+    let text = move || status_label(status());
+
+    view! {
+        <div
+            class="status-chip"
+            data-testid="leptos-status-chip"
+            data-status=status
+        >
+            {text}
+        </div>
     }
 }
 
@@ -736,8 +839,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn selected_label_falls_back_to_value_when_unknown() {
-        // E.g. server-set effort `xhigh` not in the dropdown.
+        // `xhigh` is not in the Sonnet EFFORTS list — falls back to value.
         assert_eq!(selected_label_for(EFFORTS, "xhigh"), "xhigh");
+        // But `xhigh` IS in the Opus 4.7 list — returns its label.
+        assert_eq!(selected_label_for(EFFORTS_OPUS47, "xhigh"), "XHigh");
         assert_eq!(selected_label_for(MODELS, "unknown-model"), "unknown-model");
     }
 
@@ -781,14 +886,58 @@ mod tests {
         }
     }
 
+    // ---- status_str / status_label ----------------------------------------
+
+    #[wasm_bindgen_test]
+    fn status_str_offline_when_disconnected() {
+        assert_eq!(status_str(false, TurnState::Idle), "offline");
+        assert_eq!(status_str(false, TurnState::Running), "offline");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_str_streaming_when_running() {
+        assert_eq!(status_str(true, TurnState::Running), "streaming");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_str_paused_for_paused_and_pause_requested() {
+        assert_eq!(status_str(true, TurnState::Paused), "paused");
+        assert_eq!(status_str(true, TurnState::PauseRequested), "paused");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_str_ready_when_idle_and_connected() {
+        assert_eq!(status_str(true, TurnState::Idle), "ready");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_label_offline() {
+        assert_eq!(status_label("offline"), "Offline");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_label_streaming() {
+        assert_eq!(status_label("streaming"), "Streaming…");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_label_paused() {
+        assert_eq!(status_label("paused"), "Paused");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_label_default_is_ready() {
+        assert_eq!(status_label("ready"), "Ready");
+        assert_eq!(status_label("other"), "Ready");
+    }
+
     // ---- MODELS / EFFORTS hard-coded contents -----------------------------
 
     #[wasm_bindgen_test]
-    fn models_list_contains_three_supported_models() {
+    fn models_list_contains_two_supported_models() {
         let values: Vec<&str> = MODELS.iter().map(|(v, _)| *v).collect();
-        assert_eq!(values.len(), 3);
+        assert_eq!(values.len(), 2);
         assert!(values.contains(&"claude-sonnet-4-6"));
-        assert!(values.contains(&"claude-opus-4-6"));
         assert!(values.contains(&"claude-opus-4-7"));
     }
 
@@ -797,5 +946,27 @@ mod tests {
         let values: Vec<&str> = EFFORTS.iter().map(|(v, _)| *v).collect();
         assert_eq!(values.len(), 4);
         assert_eq!(values, vec!["low", "medium", "high", "max"]);
+    }
+
+    #[wasm_bindgen_test]
+    fn efforts_opus47_list_contains_five_levels_including_xhigh() {
+        let values: Vec<&str> = EFFORTS_OPUS47.iter().map(|(v, _)| *v).collect();
+        assert_eq!(values.len(), 5);
+        assert_eq!(values, vec!["low", "medium", "high", "xhigh", "max"]);
+    }
+
+    #[wasm_bindgen_test]
+    fn efforts_for_model_returns_opus47_list_for_opus47() {
+        assert_eq!(efforts_for_model("claude-opus-4-7"), EFFORTS_OPUS47);
+    }
+
+    #[wasm_bindgen_test]
+    fn efforts_for_model_returns_standard_list_for_sonnet() {
+        assert_eq!(efforts_for_model("claude-sonnet-4-6"), EFFORTS);
+    }
+
+    #[wasm_bindgen_test]
+    fn efforts_for_model_returns_standard_list_for_unknown_model() {
+        assert_eq!(efforts_for_model("unknown-model"), EFFORTS);
     }
 }

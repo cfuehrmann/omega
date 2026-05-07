@@ -42,6 +42,7 @@ pub mod protocol;
 pub mod sessions;
 pub mod store;
 pub mod text_modal;
+pub mod usage_panel;
 pub mod ws;
 
 use leptos::prelude::*;
@@ -54,6 +55,7 @@ use crate::protocol::TurnState;
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
 use crate::text_modal::{TextModal, TextModalState};
+use crate::usage_panel::{UsagePanel, UsagePanelOpen};
 use crate::ws::{WsClient, ws_url_from_window};
 
 /// Mount the [`App`] component into the document body. Called from
@@ -72,11 +74,13 @@ pub fn App() -> impl IntoView {
     let modal_state = ContextModalState::new();
     let text_modal_state = TextModalState::new();
     let picker_open = PickerOpen::new();
+    let usage_panel_open = UsagePanelOpen::new();
     provide_context(store);
     provide_context(list_store);
     provide_context(modal_state);
     provide_context(text_modal_state);
     provide_context(picker_open);
+    provide_context(usage_panel_open);
 
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
@@ -129,10 +133,10 @@ pub fn App() -> impl IntoView {
         >
             <SessionPicker />
             <ConversationFeed />
+            <UsagePanel />
             <Composer />
             <ContextModal />
             <TextModal />
-            <StatusChip />
             // Debug panel — compiled only in debug builds (cargo test,
             // `trunk serve` dev mode). `trunk build --release` strips
             // this block entirely so it never ships to production users.
@@ -155,18 +159,6 @@ pub fn App() -> impl IntoView {
     }
 }
 
-/// Phase 3.10 TODO-D — persistent status chip in the bottom-right corner.
-///
-/// Four states driven by `store.connected` and `store.turn_state`:
-///
-/// | `data-status` | colour | text         |
-/// |---------------|--------|--------------|
-/// | `ready`       | teal   | `Ready`      |
-/// | `streaming`   | llm    | `Streaming…` |
-/// | `paused`      | yellow | `Paused`     |
-/// | `offline`     | red    | `Offline`    |
-///
-/// CSS lives in `style.css` (`.status-chip` + `[data-status="*"]` rules
 /// Returns true when a turn is in progress (i.e. the session is not idle).
 /// Extracted from the reactive Effect so the `!= Idle` condition is mutation-tested.
 fn turn_is_active(state: TurnState) -> bool {
@@ -177,49 +169,6 @@ fn turn_is_active(state: TurnState) -> bool {
 /// server is connected and no session is active yet.
 fn should_auto_open_picker(connected: bool, has_no_session: bool) -> bool {
     connected && has_no_session
-}
-
-/// written in Phase 3.10 planning). The chip is `pointer-events: none`
-/// so it never intercepts clicks on the feed or composer beneath it.
-/// Maps the connected/turn-state pair to a CSS `data-status` string.
-fn status_str(connected: bool, turn_state: TurnState) -> &'static str {
-    if !connected {
-        "offline"
-    } else {
-        match turn_state {
-            TurnState::Running => "streaming",
-            TurnState::Paused | TurnState::PauseRequested => "paused",
-            TurnState::Idle => "ready",
-        }
-    }
-}
-
-/// Maps a status string to its human-readable chip label.
-fn status_label(status: &str) -> &'static str {
-    match status {
-        "offline" => "Offline",
-        "streaming" => "Streaming…",
-        "paused" => "Paused",
-        _ => "Ready",
-    }
-}
-
-#[component]
-fn StatusChip() -> impl IntoView {
-    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
-
-    let status = move || status_str(store.connected.get(), store.turn_state.get());
-    let text = move || status_label(status());
-
-    view! {
-        <div
-            class="status-chip"
-            data-testid="leptos-status-chip"
-            data-status=status
-        >
-            {text}
-        </div>
-    }
 }
 
 #[cfg(test)]
@@ -250,56 +199,6 @@ mod tests {
         assert!(!should_auto_open_picker(false, false));
     }
 
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_str_offline_when_disconnected() {
-        assert_eq!(status_str(false, TurnState::Idle), "offline");
-        assert_eq!(status_str(false, TurnState::Running), "offline");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_str_streaming_when_running() {
-        assert_eq!(status_str(true, TurnState::Running), "streaming");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_str_paused_for_paused_and_pause_requested() {
-        assert_eq!(status_str(true, TurnState::Paused), "paused");
-        assert_eq!(status_str(true, TurnState::PauseRequested), "paused");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_str_ready_when_idle_and_connected() {
-        assert_eq!(status_str(true, TurnState::Idle), "ready");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_label_offline() {
-        assert_eq!(status_label("offline"), "Offline");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_label_streaming() {
-        assert_eq!(status_label("streaming"), "Streaming…");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_label_paused() {
-        assert_eq!(status_label("paused"), "Paused");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn status_label_default_is_ready() {
-        assert_eq!(status_label("ready"), "Ready");
-        assert_eq!(status_label("other"), "Ready");
-    }
 }
 
 #[component]
