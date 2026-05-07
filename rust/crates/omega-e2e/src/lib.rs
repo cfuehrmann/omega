@@ -647,6 +647,13 @@ async fn launch_browser() -> Result<(Browser, JoinHandle<()>)> {
     Ok((browser, task))
 }
 
+/// Quote a Rust `&str` as a JS-safe string literal. Useful when
+/// embedding selectors into `eval` expressions in tests.
+#[must_use]
+pub fn js_string(s: &str) -> String {
+    json_str(s)
+}
+
 fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
 }
