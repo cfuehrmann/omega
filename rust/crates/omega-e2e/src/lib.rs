@@ -600,6 +600,9 @@ fn spawn_mock_server(main_port: u16, ctrl_port: u16, sessions_root: &Path) -> Re
         .arg(sessions_root)
         .arg("--leptos-dir")
         .arg(&leptos_dir)
+        // Run with cwd = workspace root so agent file-completion
+        // sees real subdirectories (e.g. `rust/`, `frontends/`).
+        .current_dir(workspace_root())
         .env("OMEGA_ALLOW_DIRTY", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
