@@ -6,7 +6,7 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ## P0 — Top priority
 
-### WEB-1 — Scroll tailing + jump-to-bottom button
+### WEB-1 — Scroll tailing + jump-to-bottom button ✅ DONE
 
 **Migration defect.** The feed has no visible tailing / non-tailing indicator
 and no way for the user to jump back to the bottom other than manually scrolling.
