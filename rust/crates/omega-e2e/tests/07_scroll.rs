@@ -1,0 +1,251 @@
+// Phase WEB-1 — scroll-tailing + jump-to-bottom button e2e test.
+//
+// State-machine covered:
+//
+//   tailing (established via scroll-to-bottom)
+//     → scroll up  → non-tailing (button appears, new events don't move view)
+//     → click ↓   → tailing (button gone, new events follow sentinel)
+//
+// Observable surface: `data-auto-scroll` on `[data-testid="leptos-feed"]`
+// and `[data-testid="scroll-to-bottom"]`.  No pixel-position assertions.
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::doc_markdown,
+    clippy::too_many_lines
+)]
+
+use std::time::Duration;
+
+use omega_e2e::{MockResponse, TestHarness};
+
+const T: Duration = Duration::from_secs(8);
+const T_TURN: Duration = Duration::from_secs(20);
+
+// ---------------------------------------------------------------------------
+// Script builder — ≥ 10 events with substantial rendered height
+// ---------------------------------------------------------------------------
+
+/// Two tool-call steps (llm_call + tool_call + tool_result each) followed
+/// by a long text reply, plus user_message / session events.
+/// That gives comfortably > 10 persisted event blocks.  The final text is
+/// 20 lines so the rendered height exceeds any reasonable viewport.
+fn tall_script() -> Vec<MockResponse> {
+    vec![
+        MockResponse::ToolUse {
+            id: "toolu_scroll_0".into(),
+            name: "run_command".into(),
+            input: serde_json::json!({ "command": "echo scroll_test_a" }),
+        },
+        MockResponse::ToolUse {
+            id: "toolu_scroll_1".into(),
+            name: "run_command".into(),
+            input: serde_json::json!({ "command": "echo scroll_test_b" }),
+        },
+        MockResponse::Text {
+            text: (0..20)
+                .map(|i| format!("Scroll test line {i}: content to fill the feed panel.\n"))
+                .collect::<String>(),
+            input_tokens: 30,
+            output_tokens: 60,
+        },
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async fn send_message(h: &TestHarness, content: &str) {
+    h.fill("[data-testid=\"leptos-composer-input\"]", content)
+        .await
+        .expect("fill composer");
+    h.press_key("[data-testid=\"leptos-composer-input\"]", "Enter")
+        .await
+        .expect("submit composer");
+}
+
+// ---------------------------------------------------------------------------
+// scroll_tailing — full state-machine
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "browser"]
+async fn scroll_tailing() {
+    let h = TestHarness::launch().await.expect("launch");
+    h.reset_calls().await.expect("reset");
+    h.load_script(tall_script()).await.expect("load script");
+    h.new_session().await.expect("new session");
+
+    // Send the first turn and wait for it to complete.
+    send_message(&h, "go scroll test").await;
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
+        1,
+        T_TURN,
+    )
+    .await
+    .expect("first turn_end never landed");
+
+    // ── Establish tailing mode ────────────────────────────────────────────
+    //
+    // Scroll the feed to the very bottom programmatically.  This exercises
+    // the "scroll back to bottom → tailing restored" path and gives us a
+    // deterministic starting point regardless of any scroll events that may
+    // have fired during the first turn.
+    h.eval::<bool>(
+        "(() => { \
+           const el = document.querySelector('[data-testid=\"leptos-feed\"]'); \
+           if (el) el.scrollTop = el.scrollHeight; \
+           return true; \
+         })()",
+    )
+    .await
+    .expect("scroll feed to bottom");
+
+    h.wait_for_attr(
+        "[data-testid=\"leptos-feed\"]",
+        "data-auto-scroll",
+        "true",
+        T,
+    )
+    .await
+    .expect("data-auto-scroll should be true after scrolling to bottom");
+
+    // ── Phase 1: tailing — button must be absent ──────────────────────────
+    let btn_present: bool = h
+        .eval("!!document.querySelector('[data-testid=\"scroll-to-bottom\"]')")
+        .await
+        .expect("eval btn_present");
+    assert!(
+        !btn_present,
+        "scroll-to-bottom button should be absent while tailing"
+    );
+
+    // ── Phase 2: scroll up → non-tailing ─────────────────────────────────
+    h.eval::<bool>(
+        "(() => { \
+           document.querySelector('[data-testid=\"leptos-feed\"]').scrollTop = 0; \
+           return true; \
+         })()",
+    )
+    .await
+    .expect("scroll feed to top");
+
+    h.wait_for_attr(
+        "[data-testid=\"leptos-feed\"]",
+        "data-auto-scroll",
+        "false",
+        T,
+    )
+    .await
+    .expect("data-auto-scroll should become false after scroll-up");
+
+    // The ↓ button must appear in non-tailing mode.
+    h.wait_for_selector("[data-testid=\"scroll-to-bottom\"]", T)
+        .await
+        .expect("scroll-to-bottom button should appear in non-tailing mode");
+
+    // ── Phase 3: new events arrive while non-tailing ──────────────────────
+    //
+    // Queue a second turn and confirm that completing it does NOT flip
+    // auto_scroll back to true and does NOT cause the button to disappear.
+    // The button being present after new events is the observable proof that
+    // the view did not scroll to the bottom.
+    h.load_script(vec![MockResponse::Text {
+        text: "second turn — should not move view".into(),
+        input_tokens: 5,
+        output_tokens: 5,
+    }])
+    .await
+    .expect("load second script");
+
+    send_message(&h, "go second turn").await;
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
+        2,
+        T_TURN,
+    )
+    .await
+    .expect("second turn_end never landed");
+
+    // Feed must still be in non-tailing mode.
+    let auto_scroll_after: String = h
+        .eval(
+            "document.querySelector('[data-testid=\"leptos-feed\"]')\
+              .getAttribute('data-auto-scroll')",
+        )
+        .await
+        .expect("read data-auto-scroll after second turn");
+    assert_eq!(
+        auto_scroll_after, "false",
+        "data-auto-scroll should stay false while non-tailing after new events"
+    );
+
+    // Button must still be present (the view did not auto-scroll to bottom).
+    h.wait_for_selector("[data-testid=\"scroll-to-bottom\"]", T)
+        .await
+        .expect("scroll-to-bottom button should remain present after non-tailing new events");
+
+    // ── Phase 4: click ↓ → back to tailing ──────────────────────────────
+    h.click("[data-testid=\"scroll-to-bottom\"]")
+        .await
+        .expect("click scroll-to-bottom button");
+
+    h.wait_for_attr(
+        "[data-testid=\"leptos-feed\"]",
+        "data-auto-scroll",
+        "true",
+        T,
+    )
+    .await
+    .expect("data-auto-scroll should return to true after button click");
+
+    h.wait_for_detached("[data-testid=\"scroll-to-bottom\"]", T)
+        .await
+        .expect("scroll-to-bottom button should disappear after returning to tailing");
+
+    // ── Phase 5: new turn while tailing → sentinel followed ──────────────
+    //
+    // A new streamed turn is issued while the feed is in tailing mode.
+    // Tailing must be maintained throughout (data-auto-scroll stays "true"
+    // and the button stays absent).
+    h.load_script(vec![MockResponse::SlowText {
+        text: "third turn streaming to confirm tailing".into(),
+        chunks: 4,
+        delay_ms: 80,
+    }])
+    .await
+    .expect("load third script");
+
+    send_message(&h, "go third turn").await;
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
+        3,
+        T_TURN,
+    )
+    .await
+    .expect("third turn_end never landed");
+
+    // Tailing mode must be maintained throughout the third turn.
+    h.wait_for_attr(
+        "[data-testid=\"leptos-feed\"]",
+        "data-auto-scroll",
+        "true",
+        T,
+    )
+    .await
+    .expect("data-auto-scroll should remain true after tailing through third turn");
+
+    // Button must remain absent while tailing.
+    let btn_final: bool = h
+        .eval("!!document.querySelector('[data-testid=\"scroll-to-bottom\"]')")
+        .await
+        .expect("eval btn_final");
+    assert!(
+        !btn_final,
+        "scroll-to-bottom button should remain absent while tailing"
+    );
+}
