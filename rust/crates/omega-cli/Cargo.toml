@@ -19,6 +19,7 @@ tokio               = { version = "1", features = ["full"] }
 omega-test-fixtures = { path = "../omega-test-fixtures" }
 
 [dependencies]
+dotenvy     = "0.15"
 clap         = { version = "4", features = ["derive"] }
 tokio        = { version = "1", features = ["full"] }
 futures      = "0.3"

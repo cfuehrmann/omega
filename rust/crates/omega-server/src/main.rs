@@ -18,6 +18,11 @@ use omega_server::{AppState, Args, serve};
 #[mutants::skip]
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    // Load `.env` from CWD (and parent dirs) before reading any env vars.
+    // Silently ignored if no `.env` file is present (production / CI inject
+    // secrets via the real environment instead).
+    dotenvy::dotenv().ok();
+
     let args = Args::parse();
     eprintln!(
         "omega-server: starting on 0.0.0.0:{} (sessions_root={}, leptos_dir={})",

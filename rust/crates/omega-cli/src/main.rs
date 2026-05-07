@@ -60,6 +60,10 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    // Load `.env` from CWD (and parent dirs) before reading any env vars.
+    // Silently ignored if no `.env` file is present.
+    dotenvy::dotenv().ok();
+
     let cli = Cli::parse();
     let exit_code = match cli.command {
         Command::Run {
