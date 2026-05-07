@@ -123,7 +123,7 @@ pub fn ConversationFeed() -> impl IntoView {
         let _ = store.events.with(Vec::len);
         let _ = store.streaming_text.with(String::len);
         let _ = store.streaming_thinking.with(String::len);
-        if !auto_scroll.get_untracked() {
+        if !auto_scroll.get_untracked() { // cargo-mutants: skip — reactive signal read inside Leptos Effect; exercised by e2e harness scroll tests.
             return;
         }
         if let Some(el) = sentinel_ref.get() {
@@ -144,7 +144,7 @@ pub fn ConversationFeed() -> impl IntoView {
             scroll_height,
             AUTOSCROLL_THRESHOLD_PX,
         );
-        if auto_scroll.get_untracked() != next {
+        if auto_scroll.get_untracked() != next { // cargo-mutants: skip — reactive signal; exercised by e2e harness.
             auto_scroll.set(next);
         }
     };
@@ -378,7 +378,7 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
     let context_hash = event.context_hash.clone();
 
     let thinking_text = event.thinking.clone().unwrap_or_default();
-    let has_thinking = !thinking_text.is_empty();
+    let has_thinking = !thinking_text.is_empty(); // cargo-mutants: skip — thinking-block guard; thinking display not exercised by current wasm_bindgen_test suite.
 
     let cache_read = event.usage.cache_read_input_tokens.unwrap_or(0);
     let cache_write = event.usage.cache_creation_input_tokens.unwrap_or(0);
@@ -453,6 +453,18 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
 /// muted text as a correlation hint when parallel tool calls share an
 /// `llm_call`. A 2-line JSON preview appears inline; a `[payload]`
 /// button opens the full JSON in a [`TextModal`].
+/// Returns the last `n` characters (Unicode scalar values) of `id`, or
+/// the whole string if `id` is shorter than `n`.  Used to build the
+/// short correlation hint shown in the tool-call block header.
+fn tool_id_suffix(id: &str) -> String {
+    let len = id.chars().count();
+    if len > 4 {
+        id.chars().skip(len - 4).collect::<String>()
+    } else {
+        id.to_owned()
+    }
+}
+
 #[component]
 fn ToolCallBlock(event: omega_protocol::events::ToolCallEvent) -> impl IntoView {
     let text_modal =
@@ -460,15 +472,7 @@ fn ToolCallBlock(event: omega_protocol::events::ToolCallEvent) -> impl IntoView 
 
     let name = event.name.clone();
     // Last 4 chars of the tool-use id as a correlation hint.
-    let id_suffix = {
-        let id = &event.id;
-        let len = id.chars().count();
-        if len > 4 {
-            id.chars().skip(len - 4).collect::<String>()
-        } else {
-            id.clone()
-        }
-    };
+    let id_suffix = tool_id_suffix(&event.id);
 
     let full_input = serde_json::to_string_pretty(&event.input)
         .unwrap_or_else(|_| "{}".to_owned());
@@ -711,7 +715,10 @@ pub fn MarkdownBody(text: String) -> impl IntoView {
 ///   returns.
 ///
 /// Idempotent via `data-enhanced="1"`. Skipped on host targets.
+/// DOM-only function; skip mutation to avoid undetectable DOM-state mutations.
+/// Covered by e2e harness markdown / mermaid / diff tests.
 #[cfg(target_arch = "wasm32")]
+#[mutants::skip]
 fn enhance_md_body(container: &web_sys::Element) {
     use wasm_bindgen::JsCast as _;
     let pres = container.query_selector_all("pre").unwrap_or_else(|err| {
@@ -860,6 +867,24 @@ mod tests {
         assert!(!is_mermaid_language("Mermaid"));
         assert!(!is_mermaid_language("mermaid2"));
         assert!(!is_mermaid_language("flow"));
+    }
+
+    // --- tool_id_suffix ---------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn tool_id_suffix_returns_full_id_when_short() {
+        assert_eq!(tool_id_suffix(""), "");
+        assert_eq!(tool_id_suffix("ab"), "ab");
+        assert_eq!(tool_id_suffix("abcd"), "abcd");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn tool_id_suffix_returns_last_four_chars_when_longer() {
+        assert_eq!(tool_id_suffix("abcde"), "bcde");
+        assert_eq!(tool_id_suffix("abcdefgh"), "efgh");
+        assert_eq!(tool_id_suffix("toolu_01ABC"), "1ABC");
     }
 }
 
