@@ -843,6 +843,16 @@ mod tests {
         });
     }
 
+    #[wasm_bindgen_test]
+    fn modal_state_open_hash_sets_single_hash() {
+        with_owner(|| {
+            let s = ContextModalState::new();
+            s.open_hash("deadbeef1234".into());
+            let ev = s.0.get_untracked().expect("modal should be open after open_hash");
+            assert_eq!(ev.context_hashes, vec!["deadbeef1234".to_string()]);
+        });
+    }
+
     // ---- ContextFetchState (token-comparison stale-fetch fix) -------------
 
     fn rec(hash: &str, role: &str) -> ContextRecord {
