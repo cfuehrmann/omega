@@ -463,12 +463,9 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
 /// the whole string if `id` is shorter than `n`.  Used to build the
 /// short correlation hint shown in the tool-call block header.
 fn tool_id_suffix(id: &str) -> String {
-    let len = id.chars().count();
-    if len > 4 {
-        id.chars().skip(len - 4).collect::<String>()
-    } else {
-        id.to_owned()
-    }
+    // saturating_sub avoids the off-by-one boundary: skip(0) == clone for len==4
+    let offset = id.chars().count().saturating_sub(4);
+    id.chars().skip(offset).collect()
 }
 
 #[component]
