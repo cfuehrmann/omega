@@ -485,33 +485,29 @@ impl TestHarness {
             .ok_or_else(|| anyhow!("data-active-session-dir not set"))
     }
 
-    /// Open the session picker if it isn't already open.
+    /// Open the session picker if it isn't already open. The picker
+    /// is mounted/unmounted, not just hidden — so we test for the
+    /// element's presence in the DOM.
     pub async fn open_picker(&self) -> Result<()> {
-        let already: Option<String> = self
-            .attr("[data-testid='leptos-session-picker']", "data-open")
-            .await?;
-        if already.as_deref() == Some("true") {
+        let exists: bool = self
+            .eval::<bool>("!!document.querySelector('[data-testid=\"leptos-session-picker\"]')")
+            .await
+            .unwrap_or(false);
+        if exists {
             return Ok(());
         }
-        // Toggle button labelled "Sessions".
-        self.click("[data-testid='leptos-session-picker-toggle']")
+        self.click("[data-testid='leptos-composer-sessions']")
             .await?;
-        self.wait_for_attr(
-            "[data-testid='leptos-session-picker']",
-            "data-open",
-            "true",
-            DEFAULT_TIMEOUT,
-        )
-        .await?;
+        self.wait_for_selector("[data-testid='leptos-session-picker']", DEFAULT_TIMEOUT)
+            .await?;
         Ok(())
     }
 
-    /// Click `+ new session`; wait for the active dir to change.
+    /// Click `+ new session` (assumes the picker is open) and wait
+    /// for `<main data-active-session-dir>` to flip to a new value.
     pub async fn new_session(&self) -> Result<String> {
         let before = self.active_dir().await.unwrap_or_default();
-        self.click("[data-testid='leptos-session-picker-new']")
-            .await?;
-        // Active dir flips to the new session.
+        self.click("[data-testid='leptos-session-new']").await?;
         let deadline = Instant::now() + DEFAULT_TIMEOUT;
         loop {
             if let Ok(now) = self.active_dir().await
@@ -525,6 +521,17 @@ impl TestHarness {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+    }
+
+    /// Override `window.confirm` and `window.alert` to always accept,
+    /// so confirm-protected actions (delete row) don't block. The
+    /// override survives until the next page navigation.
+    pub async fn auto_accept_dialogs(&self) -> Result<()> {
+        let _ = self
+            .page
+            .evaluate("window.confirm = () => true; window.alert = () => undefined;")
+            .await?;
+        Ok(())
     }
 }
 

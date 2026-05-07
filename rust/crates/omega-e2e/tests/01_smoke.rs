@@ -1,5 +1,7 @@
 //! Port of `e2e/leptos-smoke.spec.ts` (2 cases).
 
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
 use std::time::Duration;
 
 use omega_e2e::TestHarness;
