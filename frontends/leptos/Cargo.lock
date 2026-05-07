@@ -1095,6 +1095,7 @@ dependencies = [
  "console_error_panic_hook",
  "gloo-net",
  "insta",
+ "js-sys",
  "leptos",
  "mutants",
  "omega-protocol",

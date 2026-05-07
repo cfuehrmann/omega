@@ -37,6 +37,22 @@ use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
 use omega_protocol::OmegaEvent;
+use std::cell::Cell;
+use std::rc::Rc;
+
+/// Returns the current time in milliseconds (epoch on wasm32; always 0 on
+/// host targets where the auto-scroll code never executes).
+#[inline]
+fn now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0.0
+    }
+}
 
 use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
@@ -110,6 +126,19 @@ pub fn ConversationFeed() -> impl IntoView {
     let scroll_ref = NodeRef::<html::Section>::new();
     let sentinel_ref = NodeRef::<html::Div>::new();
     let auto_scroll = RwSignal::new(true);
+    // Chromium 148+ dispatches scroll events as macrotasks, so the
+    // event can fire *after* new content has been appended (growing
+    // scrollHeight), making should_autoscroll() spuriously return false.
+    //
+    // Fix: record (timestamp_ms, scrollHeight) of each programmatic
+    // set_scroll_top.  In on_scroll, if elapsed < grace AND the observed
+    // scrollTop matches the expected clamped value (prog_sh - clientH)
+    // AND scrollHeight has grown since then, it's a deferred echo — ignore
+    // it.  A genuine user scroll-to-top produces a completely different
+    // scrollTop (≈0), so the position check rejects it even within the
+    // grace window.
+    let prog_state: Rc<Cell<(f64, i32)>> = Rc::new(Cell::new((-10_000.0, 0)));
+    const PROG_SCROLL_GRACE_MS: f64 = 150.0;
 
     // Auto-scroll Effect.
     //
@@ -122,6 +151,14 @@ pub fn ConversationFeed() -> impl IntoView {
     // itself: reading it via `get_untracked` keeps the gate-flip out
     // of the effect's dependency set so an `on:scroll`-induced flip
     // doesn't itself trigger a scroll-into-view.
+    //
+    // We use `set_scroll_top(scroll_height)` instead of
+    // `sentinel.scroll_into_view()` to keep the scroll synchronous
+    // (value is clamped by the browser to the legal maximum).
+    // We also stamp `last_prog_scroll_ts` so the on_scroll handler
+    // can suppress the deferred scroll event that Chromium 148+ fires
+    // after new content has already been appended (see comment above).
+    let prog_state_eff = Rc::clone(&prog_state);
     Effect::new(move |_| {
         let _ = store.events.with(Vec::len);
         let _ = store.streaming_text.with(String::len);
@@ -129,11 +166,14 @@ pub fn ConversationFeed() -> impl IntoView {
         if !auto_scroll.get_untracked() {
             return;
         }
-        if let Some(el) = sentinel_ref.get() {
-            el.scroll_into_view();
+        if let Some(section) = scroll_ref.get() {
+            let sh = section.scroll_height();
+            prog_state_eff.set((now_ms(), sh));
+            section.set_scroll_top(sh);
         }
     });
 
+    let prog_state_scroll = Rc::clone(&prog_state);
     let on_scroll = move |_ev: ev::Event| {
         let Some(el) = scroll_ref.get() else {
             return;
@@ -141,6 +181,31 @@ pub fn ConversationFeed() -> impl IntoView {
         let scroll_top = f64::from(el.scroll_top());
         let client_height = f64::from(el.client_height());
         let scroll_height = f64::from(el.scroll_height());
+
+        // Guard against deferred scroll-event echoes from our own
+        // set_scroll_top calls (Chromium 148+ fires scroll events as
+        // macrotasks — new content can arrive between the call and the
+        // event, making should_autoscroll() spuriously return false).
+        //
+        // We only suppress the event when ALL three conditions hold:
+        //   1. It arrived within the grace window after a programmatic scroll.
+        //   2. We're already in tailing mode (auto_scroll = true).
+        //   3. The scroll position matches the expected clamped value (the
+        //      deferred echo of prog_sh − clientH), AND scrollHeight has
+        //      grown since we set it (confirming new content arrived).
+        // A genuine user scroll-to-top yields scroll_top ≈ 0 which never
+        // satisfies condition 3, so it is always processed.
+        let (prog_ts, prog_sh) = prog_state_scroll.get();
+        let elapsed = now_ms() - prog_ts;
+        if elapsed < PROG_SCROLL_GRACE_MS && auto_scroll.get_untracked() {
+            let expected_st = f64::from(prog_sh) - client_height;
+            let is_echo = (scroll_top - expected_st).abs() <= 5.0
+                && scroll_height > f64::from(prog_sh) + 10.0;
+            if is_echo {
+                return;
+            }
+        }
+
         let next = should_autoscroll(
             scroll_top,
             client_height,
@@ -153,28 +218,45 @@ pub fn ConversationFeed() -> impl IntoView {
     };
 
     view! {
-        <section
-            class="leptos-feed"
-            data-testid="leptos-feed"
-            data-auto-scroll=move || if auto_scroll.get() { "true" } else { "false" }
-            node_ref=scroll_ref
-            on:scroll=on_scroll
-        >
-            <For
-                each=move || {
-                    store
-                        .events
-                        .get()
-                        .into_iter()
-                        .enumerate()
-                        .collect::<Vec<(usize, OmegaEvent)>>()
-                }
-                key=|(idx, _): &(usize, OmegaEvent)| *idx
-                children=|(_, event): (usize, OmegaEvent)| view! { <EventBlock event=event /> }
-            />
-            <StreamingTail />
-            <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" node_ref=sentinel_ref />
-        </section>
+        <div class="feed-wrapper">
+            <section
+                class="leptos-feed"
+                data-testid="leptos-feed"
+                data-auto-scroll=move || if auto_scroll.get() { "true" } else { "false" }
+                node_ref=scroll_ref
+                on:scroll=on_scroll
+            >
+                <For
+                    each=move || {
+                        store
+                            .events
+                            .get()
+                            .into_iter()
+                            .enumerate()
+                            .collect::<Vec<(usize, OmegaEvent)>>()
+                    }
+                    key=|(idx, _): &(usize, OmegaEvent)| *idx
+                    children=|(_, event): (usize, OmegaEvent)| view! { <EventBlock event=event /> }
+                />
+                <StreamingTail />
+                <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" node_ref=sentinel_ref />
+            </section>
+            <Show when=move || !auto_scroll.get()>
+                <button
+                    class="scroll-to-bottom-btn"
+                    data-testid="scroll-to-bottom"
+                    aria-label="Scroll to bottom"
+                    on:click=move |_| {
+                        auto_scroll.set(true);
+                        if let Some(el) = sentinel_ref.get_untracked() {
+                            el.scroll_into_view();
+                        }
+                    }
+                >
+                    "↓"
+                </button>
+            </Show>
+        </div>
     }
 }
 
