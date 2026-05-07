@@ -6,6 +6,11 @@
 # function-wide skip would lose coverage of legitimate mutants) are
 # excluded here with a regex matching the mutant description.
 
+# omega-e2e: all tests are #[ignore = "browser"] (require live Chromium).
+# Mutations in the harness helpers are untestable without browser infrastructure.
+# Coverage is provided by the e2e sweeps run separately via `just e2e`.
+exclude = ["crates/omega-e2e/**"]
+
 exclude_re = [
     # router.rs handle_socket: deleting `Message::Close(_) => break;` makes
     # Close frames fall through to `_ => continue`, but the next
