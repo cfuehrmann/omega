@@ -37,7 +37,7 @@
 | 3.9 — visual / UX follow-ups | ✅ Done | Picker open/close modal + Sessions button; auto-close on Reset/Resume; per-event-type colour drift (`llm_call` sapphire, `llm_retry` peach, `turn_end` muted, pause teal, info overlay2, thinking teal); debug panel `cfg(debug_assertions)`-gated; specs migrated from debug-store to `data-connected` / `data-active-session-dir` DOM attrs; 5 new Playwright specs; 37/37 green |
 | 3.10 — UX fidelity pass | ✅ Done | TODO-G+A done (commit `0cd5d7a`): close-button `✕`, `llm_response` stop-reason inline, thinking/context/payload buttons, `cache_read`/`cache_write` usage line, shared `TextModal`. TODO-B done: `llm_call` `[context]`/`[payload]` label-row, `<details>`→modal. TODO-C done: `ToolCallBlock` name label + id superscript + 2-line preview + `[payload]` modal; `ToolResultBlock` name label + 2-line preview + `[payload]` modal, show-more removed, duration in modal title. TODO-D done: `StatusChip` fixed-position chip (Ready/Streaming…/Paused/Offline). `<h1>"Omega (Leptos)"` heading removed. All 37 Playwright specs green. |
 | 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
-| 4 — `chromiumoxide` + LLM oracle | ⬜ Future | Playwright retired; pure-Rust browser tests |
+| 4 — `chromiumoxide` e2e harness | ⬜ Future | Playwright retired; pure-Rust browser tests |
 
 ---
 
@@ -2207,8 +2207,9 @@ markdown specs).
 - Snapshot review at TEST-ARCH-5 is **structural** (insta locks
   the static HTML); visual review against the SolidJS UI on
   the canonical fixtures was performed manually during this
-  phase. A future LLM-as-oracle run (Phase 4) supersedes the
-  manual review.
+  phase. The LLM-as-oracle plan (previously noted here for Phase 4) has
+  been dropped; the `insta` snapshots + chromiumoxide e2e tests provide
+  sufficient ongoing coverage.
 - The `leptos-assistant-text` testid is now an outer-`<div>`
   wrapper; the Playwright surface still works but specs that
   navigate by descendant text (`.locator("...").locator(...)`)
@@ -2262,7 +2263,7 @@ bundle is gone, those specs target nothing. Their Leptos-snapshot-
 covered subset (5 specs from the carry-forward list) retires here;
 the rest (8 specs covering reconnect / replay / pause-during-stream
 / real-server side effects) port their **coverage intent** to
-Phase 4 (chromiumoxide + LLM oracle) where the spec files will be
+Phase 4 (chromiumoxide e2e harness) where the spec files will be
 rewritten from scratch against the Leptos test-id surface. The
 current SolidJS-targeted spec files were deleted in commit 2.
 
@@ -3099,7 +3100,7 @@ specs green, `just gate` ✅). Open items:
 
 | Item | Priority | Notes |
 |---|---|---|
-| Phase 4 — `chromiumoxide` + LLM oracle | **Next** | Retire Playwright + JS toolchain; pure-Rust e2e harness |
+| Phase 4 — `chromiumoxide` e2e harness | **Next** | Retire Playwright + JS toolchain; pure-Rust e2e harness; Step 3 (design memo) approved — ready for Step 4 |
 | TODO-E-2 — `[usage]` detail button on `llm_response` | Optional | Additive, low-risk Leptos change |
 | TODO-E-3 — `[take it back]` edit-and-resend | Optional | Medium scope, requires new WS round-trip |
 
@@ -3204,80 +3205,61 @@ Phase 4 close: **0 missed in both sweeps**.
 
 ---
 
-### Phase 4 — harness design discussion
+### Phase 4 — harness design (settled)
 
-The operator needs to understand the harness before it is built. The
-agent must present a **written design memo in the chat** — not in a
-file — covering the questions below, then wait for operator approval
-before writing any implementation code.
+*Design memo presented in chat and approved. Step 2 committed at `de06dd0`. Step 3 complete. Ready for Step 4 — implementation.*
 
-**1. Crate layout.** Where does the e2e test code live?
+**Q1 — Crate layout: Option A — `rust/crates/omega-e2e`.** Inside the existing workspace; shares `omega-protocol` types without path hacks; `cargo test -p omega-e2e` runs it standalone. Option B conflates fixture-server code with test assertions; Option C adds workspace duplication without benefit.
 
-- **Option A** — `rust/crates/omega-e2e`: inside the existing workspace.
-  Shares `omega-protocol` types without path hacks; `cargo test -p
-  omega-e2e` runs it standalone.
-- **Option B** — integration tests inside `omega-mock-server`: avoids a
-  new crate but conflates fixture-server code with test assertions.
-- **Option C** — new top-level Cargo workspace member `omega-e2e/`:
-  cleanest separation; one extra `[workspace.members]` entry.
+**Q2 — Browser driver: `chromiumoxide`.** CDP directly to Chrome; no `chromedriver` sidecar. An additional advantage: WS frames can be captured and deserialized directly as `omega-protocol` types in test bodies, making pause/abort/resume assertions more precise than DOM polling alone.
 
-Pick one and justify it.
+**Q3 — Server lifecycle.** Each `#[tokio::test]` owns a `TestHarness`:
+1. `TcpListener::bind("127.0.0.1:0")` → capture port → drop listener.
+2. Spawn `mock-omega-server --port <port> --sessions-root <TempDir>` subprocess.
+3. Poll `GET /health` (50 ms retries, 5 s timeout) — tightest ready signal; no stdout parsing.
+4. `Browser::launch` (headless) → `browser.new_page(url)`.
+5. Test body runs; `impl Drop` kills subprocess; `TempDir` auto-cleans.
 
-**2. Browser driver.** `chromiumoxide` vs `fantoccini`?
+**Q4 — Threading model: random ports.** Each harness gets a unique OS-assigned port via `:0`; zero coordination; full `cargo test` parallelism. Identical pattern to every `omega-server` integration test today.
 
-- **chromiumoxide**: CDP directly to Chrome. No sidecar binary.
-  Rich async API; Chrome-only.
-- **fantoccini**: WebDriver protocol. Browser-agnostic but requires
-  `chromedriver` or `geckodriver` as a sidecar process.
+**Q5 — LLM oracle: dropped.** Visual parity was confirmed manually during Phase 3.8/3.9. The SolidJS reference is deleted; comparing against it again would re-confirm already-accepted work. Ongoing regressions are caught by `insta` SSR snapshots (structural) + chromiumoxide e2e tests (behavioural) — deterministic, free, zero API cost.
 
-Both need a Chrome/Chromium binary present. State the choice and why.
+> **Deferred idea (not tied to any phase):** using a vision-capable LLM to detect visual regressions across UI changes — e.g. comparing screenshots before and after a CSS or component refactor — is appealing as a future QA gate. Recorded here so the idea is not lost.
 
-**3. Server lifecycle.** How is test isolation achieved?
+**Q6 — Spec port order.**
 
-Each `#[tokio::test]` should have its own `mock-omega-server` instance
-so a crash in one test doesn’t poison others. The design must describe
-the `TestHarness` struct lifecycle: spawn server on a random free port
-→ wait for ready signal → open browser session → run assertions → drop
-everything. Explain how “ready” is detected (stdout probe / TCP connect
-/ HTTP health endpoint).
+| Step | File | Tests | Rationale |
+|---|---|---|---|
+| 1 | `leptos-smoke.spec.ts` | 2 | Validates harness plumbing; WS connect + redirect; smallest blast radius |
+| 2 | `leptos-session-picker.spec.ts` | 9 | WS CRUD lifecycle (Reset/Rename/Delete); no feed rendering needed |
+| 3 | `leptos-markdown.spec.ts` | 11 | Moved ahead of composer to lock in the `render_options` mutation fix early |
+| 4 | `leptos-composer.spec.ts` | 8 | In-flight pause/abort/continue/model-switch; depends on working feed |
+| 5 | `leptos-context-resume.spec.ts` | 3 | Async context fetch + resume flow |
+| 6 | `leptos-conversation-feed.spec.ts` | 4 | Most complex; highest coverage value; port last |
 
-**4. Threading model.** `cargo test` parallelises within a binary by
-default. If tests bind a fixed port, they race. Explain: random ports,
-a port pool, or `--test-threads=1`? Justify the choice.
+**Q7 — Deletion checklist.** Final commit (after all 6 specs have passing Rust equivalents and `just gate` is green on the Rust harness alone):
 
-**5. LLM oracle gating.** The oracle must not run on every `cargo test`
-invocation. Proposed gate: `OMEGA_E2E_LLM_ORACLE=1` env var; CI omits
-it; operator enables when investigating a snapshot surprise. Confirm
-or propose an alternative.
-
-**6. Spec port order.** Suggested (safest → riskiest):
-1. `leptos-connection` — WS connect only, no feed assertions
-2. `leptos-reconnect` — WS lifecycle
-3. `leptos-composer` — input / submit / clear
-4. **`leptos-markdown`** — port early to fix `render_options` survivor
-5. `leptos-context-resume` — session state
-6. `leptos-conversation-feed` — most complex; highest coverage value
-
-Reordering is allowed with justification.
-
-**7. Deletion checklist.** Files removed in the final commit:
+*Files deleted:*
 ```
-e2e/                    # Playwright specs + fixtures
+e2e/
 package.json
 bun.lock
 node_modules/
 playwright.config.ts
 bunfig.toml
-knip.config.ts          # if present
-tsconfig*.json          # root + any sub-configs
+tsconfig.json
+e2e/tsconfig.json
+knip.json
 ```
-Justfile: replace `gate` body to invoke Rust e2e instead of `just
-test-browser`; delete `test-browser`, `test-browser-debug`,
-`test-browser-log`, `e2e`, `typecheck` recipes; update all comments.
 
+*Justfile:* `gate` body replaces `just test-browser` with `just rust-e2e`; delete recipes `test-browser`, `test-browser-debug`, `test-browser-log`, `e2e`, `typecheck`, `rust-build-mock-server`; update header comment.
+
+*`omega-server` (deferred from Phase 3.7, land in this commit):* delete `/leptos/` mount alias from router; flip `frontends/leptos/Trunk.toml` `public_url` to `/`; delete `--public-dir` flag from `omega-server` and `mock-omega-server`.
 ---
 
 ### Phase 4 — next-session prompt
+
+*Steps 1–3 complete. Start directly at Step 4.*
 
 **Model:** `claude-opus-4-7`
 
@@ -3285,46 +3267,19 @@ test-browser`; delete `test-browser`, `test-browser-debug`,
 
 **Prompt:**
 
-> We are starting Phase 4 of the Rust migration: retiring Playwright
-> and replacing it with a pure-Rust browser-test harness.
+> Steps 1–3 of Phase 4 are complete (mutation baseline committed at `de06dd0`; harness design memo approved). Start at Step 4.
 >
-> **Step 1 — orient.** Read `rust-migration.md` thoroughly: the
-> Phase 4 section (mutation state, risk matrix, harness design
-> questions), the Justfile, and every Playwright spec in `e2e/`.
-> Understand what each spec tests before designing the replacement.
+> **Orient first.** Read `rust-migration.md` Phase 4 section — specifically the settled harness design (Q1–Q7) and the spec port order table — and every Playwright spec in `e2e/`. Understand what each spec tests before writing any Rust.
 >
-> **Step 2 — mutation baseline.** Run both sweeps:
-> ```
-> cd frontends/leptos && cargo mutants --target wasm32-unknown-unknown
-> cd rust              && cargo mutants
-> ```
-> Fix any survivors. The known one is `markdown.rs:61:28`
-> (`render_options | → ^`): add a `#[test]` that renders a Markdown
-> string containing both a GFM table and `~~strikethrough~~` text and
-> asserts the HTML contains both `<table>` and `<del>`. Commit with
-> `just rust-gate` green before touching any harness code.
+> **Step 4 — implement:**
+> - Create `rust/crates/omega-e2e` inside the existing workspace. Add `chromiumoxide` as the browser driver. Build a `TestHarness` struct: spawn `mock-omega-server` on a random OS-assigned port (`:0`), probe `GET /health` until ready, open a headless Chrome page via `chromiumoxide::Browser::launch`.
+> - Port specs one at a time in the agreed order: `leptos-smoke` → `leptos-session-picker` → `leptos-markdown` → `leptos-composer` → `leptos-context-resume` → `leptos-conversation-feed`. `just rust-gate` must stay green after each port.
+> - Do not delete any JS/TS file until every spec has a passing Rust equivalent.
+> - Once all 6 specs are green: apply the deletion checklist (Q7). Delete `e2e/`, `package.json`, `bun.lock`, `node_modules/`, `playwright.config.ts`, `bunfig.toml`, `tsconfig.json`, `e2e/tsconfig.json`, `knip.json`. Update the Justfile (replace `just test-browser` with `just rust-e2e` in `gate`; delete `test-browser`, `test-browser-debug`, `test-browser-log`, `e2e`, `typecheck`, `rust-build-mock-server` recipes). Delete the `/leptos/` mount alias from `omega-server::router`, flip `frontends/leptos/Trunk.toml` `public_url` to `/`, and delete `--public-dir` from `omega-server` and `mock-omega-server`.
+> - After deletion: `just gate` must contain zero `npx`/`bun`/`bunx` calls; all Rust e2e tests green; wall-clock ≤ 24 s.
+> - Re-run both mutation sweeps (`just mutants` + `just web-mutants`) and confirm 0 survived.
 >
-> **Step 3 — design memo.** Write a memo in the chat (not a file)
-> answering all seven harness design questions from the Phase 4
-> section of `rust-migration.md`: crate layout, browser driver,
-> server lifecycle, threading model, LLM oracle gating, spec port
-> order, and deletion checklist. **Wait for my approval of the memo
-> before writing any implementation code.**
->
-> **Step 4 — implement** (after memo is approved):
-> - Port one Playwright spec at a time in the agreed order.
->   `just rust-gate` must stay green after each port.
-> - Do not delete any JS/TS file until every spec has a passing Rust
->   equivalent and `just gate` is green on the new harness alone.
-> - The final deletion commit removes exactly the files listed in the
->   agreed checklist and updates the Justfile accordingly.
-> - After deletion: `just gate` must contain zero `npx`/`bun`/`bunx`
->   calls; all Rust e2e tests green; wall-clock ≤ 24 s.
-> - Re-run both mutation sweeps and confirm 0 survived.
->
-> **When complete:** mark Phase 4 ✅ in `rust-migration.md` status
-> table; record crate/driver decisions and final mutation scores;
-> declare migration complete or note Phase 5.
+> **When complete:** mark Phase 4 ✅ in `rust-migration.md` status table; record crate/driver decisions and final mutation scores; declare migration complete.
 
 ---
 
@@ -3893,153 +3848,54 @@ absent; TODO-A fixed label/button detail only, not a missing event type.
 **Phase 3.10 is complete.** All TODOs (G, A, B, C, D) are done.
 All 37 Playwright specs green. `just rust-gate` + `just gate` green.
 
-**Phase 4 — `chromiumoxide` + LLM oracle** is the next session's
+**Phase 4 — `chromiumoxide` e2e harness** is the next session's
 work: retire Playwright, replace with a pure-Rust browser harness,
 delete the JS toolchain. See the Phase 4 section below for
 architecture notes.
 
 ---
 
-## Phase 4 — `chromiumoxide` + LLM oracle (next) ⬜ Future
+## Phase 4 — `chromiumoxide` e2e harness (next) ⬜ Future
 
 **Goal.** Retire Playwright. Replace it with a pure-Rust browser-test
 harness driven by [`chromiumoxide`](https://crates.io/crates/chromiumoxide)
-(or [`fantoccini`](https://crates.io/crates/fantoccini), see below)
-plus an LLM-as-oracle pass for snapshot review. Delete the JS
-toolchain wholesale (`package.json`, `bun.lock`, `node_modules/`,
-`bunfig.toml`, `tsconfig.json`, `e2e/tsconfig.json`, `knip.json`,
-`knip.config.ts`, `playwright.config.ts`, `e2e/`).
+(CDP directly to Chrome; no sidecar process). Delete the JS toolchain
+wholesale (`package.json`, `bun.lock`, `node_modules/`, `bunfig.toml`,
+`tsconfig.json`, `e2e/tsconfig.json`, `knip.json`, `playwright.config.ts`,
+`e2e/`).
 
-**Open question — chromiumoxide vs fantoccini.**
-Both target Chrome. The choice is a tradeoff:
+**Settled decisions** (memo approved; see harness design section above):
 
-| Axis | `chromiumoxide` | `fantoccini` |
+- **Crate:** `rust/crates/omega-e2e` (Option A — inside existing workspace).
+- **Driver:** `chromiumoxide`. No `chromedriver` sidecar; CDP gives WS
+  frame access so pause/abort/resume tests can assert directly on
+  `omega-protocol` wire types, not just DOM effects.
+- **Isolation:** `TestHarness` per `#[tokio::test]` — random port (`:0`),
+  `mock-omega-server` subprocess, `/health` poll, headless Chrome,
+  `TempDir` sessions root. `impl Drop` cleans up.
+- **LLM oracle:** dropped. Parity was confirmed manually during 3.8/3.9;
+  the SolidJS reference is deleted. `insta` snapshots + chromiumoxide
+  e2e tests provide sufficient ongoing coverage.
+
+**Spec port order** (37 tests across 6 files):
+
+| Step | File | Tests |
 |---|---|---|
-| Protocol | DevTools (CDP, direct WS) | WebDriver (HTTP shim, requires `chromedriver`) |
-| Async runtime | `tokio` native | `tokio` native |
-| Process model | Spawns `chrome --headless` directly | Requires running `chromedriver` separately |
-| API surface | Closer to Puppeteer / Playwright — fine-grained DOM events, network interception, coverage | Higher-level WebDriver abstraction — simpler, less powerful |
-| Maintainership | Active; weekly commits | Active but smaller maintainer pool |
-| Selenium / W3C compliance | Not WebDriver-compliant | W3C WebDriver-compliant |
+| 1 | `leptos-smoke.spec.ts` | 2 |
+| 2 | `leptos-session-picker.spec.ts` | 9 |
+| 3 | `leptos-markdown.spec.ts` | 11 |
+| 4 | `leptos-composer.spec.ts` | 8 |
+| 5 | `leptos-context-resume.spec.ts` | 3 |
+| 6 | `leptos-conversation-feed.spec.ts` | 4 |
 
-Recommendation: start with **chromiumoxide**. Reasons:
+**Acceptance criteria:**
 
-1. The Phase-4-bound spec set leans on browser-side invariants
-   (reconnect, replay, pause-during-stream) where CDP's
-   network-interception + lifecycle events make the assertions
-   cleaner than WebDriver's polling model.
-2. No external `chromedriver` process simplifies the test harness
-   — `mock-omega-server` + `omega-test-fixtures` already manage
-   one binary subprocess; adding a second doubles the lifecycle
-   complexity.
-3. The `e2e/leptos-*.spec.ts` Playwright surface uses
-   `getByTestId` semantics that map naturally to CDP
-   `Runtime.evaluate("document.querySelector(...)")`; the
-   per-spec port is mechanical.
-4. If a chromiumoxide constraint surfaces (the typical one is
-   that headless Chrome on macOS occasionally drops CDP
-   connections), fantoccini is a drop-in replacement at the
-   harness layer — the spec bodies don't change.
-
-The alternative — driving `wasm-bindgen-test` against a real
-browser via `wasm-pack test --chrome` — was rejected during
-Phase 3.6: that runner doesn't exercise the production binary's
-router / WS / persistence code paths, only the wasm bundle's pure
-logic. The Phase-4 surface needs end-to-end coverage.
-
-**LLM-as-oracle prompt design.** The 27 SSR snapshots from 3.6
-lock the static HTML structurally; visual review against the
-SolidJS reference happened manually during the port. The LLM
-oracle replaces the manual pass on every snapshot run:
-
-- **Input.** Two screenshots (or two rendered HTML strings) plus
-  the snapshot fixture name.
-- **Prompt skeleton.** *"You are reviewing a UI parity snapshot.
-  The reference (left) was the SolidJS implementation;
-  the candidate (right) is the Leptos port. The candidate is
-  expected to be visually equivalent modulo the differences
-  enumerated in `frontends/leptos/PARITY-DIFFS.md` (TBC).
-  Identify any unexpected divergence and classify it as
-  (a) cosmetic / acceptable, (b) bug in the candidate, or
-  (c) bug in the reference."*
-- **Output.** JSON with `verdict` (`pass` | `bug-candidate` |
-  `bug-reference`) + `summary` + `evidence`.
-- **Calling code.** A Rust harness that posts the two artefacts
-  to the same provider abstraction `omega-core` already uses
-  (`AnthropicProvider`). Failures bubble up as `cargo test`
-  failures with the LLM's verdict + evidence inlined into the
-  failure message.
-- **Cost guardrails.** The oracle runs only when the snapshot
-  bytes change — i.e. on first failure of the structural
-  `insta` check, not on every run. A daily / weekly drift run
-  re-evaluates accepted-divergence baselines.
-
-Open sub-decisions for Phase 4:
-
-- Multi-modal vs HTML-only oracle. Multi-modal (`vision`) catches
-  layout drift; HTML-only is faster and cheaper. Likely both
-  with HTML-only as the per-failure default and `vision` as the
-  weekly drift run.
-- Where the reference screenshots live. Options: vendored under
-  `frontends/leptos/tests/snapshots/reference/`, or generated
-  on-demand from a frozen SolidJS commit checked out into a
-  worktree at oracle time. Vendoring is simpler and works
-  offline; the worktree path stays honest about drift.
-- Whether the Phase-3.7 retired SolidJS specs ever get
-  resurrected against the Leptos UI before Playwright exits.
-  Recommendation: **no.** Their retire decisions are sound
-  (Leptos snapshot tests cover the same surface). Resurrecting
-  them would add browser-test minutes for zero new coverage.
-  The Phase-4-bound 11 specs are the surface that needs
-  re-implementing, period.
-
-**Spec-by-spec port plan.** Each Phase-4-bound spec gets a
-`tests/e2e_<name>.rs` integration test in a new `omega-e2e`
-crate (or under `omega-test-fixtures`, TBD), driven by
-chromiumoxide against the existing `mock-omega-server`. The
-port order should follow risk:
-
-1. `web-ui.spec.ts` first — it's the smoke test; it's the
-   fastest to find harness-level issues.
-2. `pause-resume-interject.spec.ts` second — it's the most
-   complex; finding chromiumoxide friction here informs the
-   rest of the port.
-3. The remaining 9 in any order; they're mechanically similar.
-
-Each port commit deletes nothing JS-side. The wholesale JS
-toolchain deletion lands as the **last** Phase-4 commit, after
-all 11 ports are green:
-
-- Delete `package.json`, `bun.lock`, `node_modules/`,
-  `bunfig.toml`, `tsconfig.json`, `e2e/tsconfig.json`,
-  `knip.json`, `knip.config.ts`, `playwright.config.ts`,
-  `e2e/` entirely.
-- Delete the inert SolidJS-era deps from `package.json`'s
-  carry-forward list (vite, solid-js, vite-plugin-solid,
-  marked, mermaid, zod, @anthropic-ai/sdk).
-- Delete the `/leptos/` mount alias from `omega-server::router`
-  and flip `frontends/leptos/Trunk.toml`'s `public_url` to `/`
-  (this is the deferred 3.7 follow-up; landing it as part of
-  Phase 4's final commit means it doesn't need its own PR).
-- Delete the now-unused `--public-dir` flag from
-  `omega-server` and `mock-omega-server`.
-
-**Acceptance criteria** (sketch — will firm up before kickoff):
-
-- `just gate` runs `rust-gate` + the new chromiumoxide e2e
-  harness; no `npx` / `bun` / `bunx` calls anywhere.
-- All 11 Phase-4-bound specs from the 3.7 carry-forward have
-  Rust equivalents that exercise the same browser-side
-  invariants.
-- Total e2e wall-clock time ≤ the Playwright suite's wall-clock
-  baseline at 3.7 (24 s / 32 specs); chromiumoxide should be
-  faster per-spec because it skips the `chromedriver` round-trip.
-- LLM oracle wired in; `frontends/leptos/PARITY-DIFFS.md`
-  documents the accepted-divergence baseline.
-- `package.json` etc. gone; `node_modules/` gone; repo no
-  longer carries a JS toolchain.
-
----
+- `just gate` runs `rust-gate` + `rust-e2e`; zero `npx`/`bun`/`bunx` calls.
+- All 6 spec files have passing Rust equivalents covering the same
+  browser-side invariants.
+- Wall-clock ≤ 24 s (Playwright baseline at 3.7).
+- `package.json`, `node_modules/` etc. gone; repo carries no JS toolchain.
+- Both mutation sweeps re-run; **0 missed** in each.
 
 ## Settled decisions — format and compatibility
 
