@@ -98,7 +98,7 @@ pub fn App() -> impl IntoView {
     // turn is paused — the operator gets stuck. The picker only
     // re-opens via the `Sessions` button, never during a live turn.
     Effect::new(move |_| {
-        if store.turn_state.get() != TurnState::Idle { // cargo-mutants: skip — Leptos reactive effect; behaviour verified by e2e harness.
+        if turn_is_active(store.turn_state.get()) {
             picker_open.close();
         }
     });
@@ -109,7 +109,7 @@ pub fn App() -> impl IntoView {
     // feed; only the first-time / post-server-restart case opens
     // the picker automatically.
     Effect::new(move |_| {
-        if store.connected.get() && store.session_info.with(Option::is_none) { // cargo-mutants: skip — Leptos reactive effect; behaviour verified by e2e harness.
+        if should_auto_open_picker(store.connected.get(), store.session_info.with(Option::is_none)) {
             picker_open.open();
         }
     });
@@ -167,6 +167,18 @@ pub fn App() -> impl IntoView {
 /// | `offline`     | red    | `Offline`    |
 ///
 /// CSS lives in `style.css` (`.status-chip` + `[data-status="*"]` rules
+/// Returns true when a turn is in progress (i.e. the session is not idle).
+/// Extracted from the reactive Effect so the `!= Idle` condition is mutation-tested.
+fn turn_is_active(state: TurnState) -> bool {
+    state != TurnState::Idle
+}
+
+/// Returns true when the picker should open automatically:
+/// server is connected and no session is active yet.
+fn should_auto_open_picker(connected: bool, has_no_session: bool) -> bool {
+    connected && has_no_session
+}
+
 /// written in Phase 3.10 planning). The chip is `pointer-events: none`
 /// so it never intercepts clicks on the feed or composer beneath it.
 /// Maps the connected/turn-state pair to a CSS `data-status` string.
@@ -214,6 +226,29 @@ fn StatusChip() -> impl IntoView {
 mod tests {
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn turn_is_active_true_for_running_paused_pause_requested() {
+        assert!(turn_is_active(TurnState::Running));
+        assert!(turn_is_active(TurnState::Paused));
+        assert!(turn_is_active(TurnState::PauseRequested));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn turn_is_active_false_for_idle() {
+        assert!(!turn_is_active(TurnState::Idle));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn should_auto_open_picker_true_only_when_connected_and_no_session() {
+        assert!(should_auto_open_picker(true, true));
+        assert!(!should_auto_open_picker(false, true));
+        assert!(!should_auto_open_picker(true, false));
+        assert!(!should_auto_open_picker(false, false));
+    }
 
     #[wasm_bindgen_test]
     #[test]

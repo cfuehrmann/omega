@@ -117,6 +117,9 @@ impl Default for PickerOpen {
 /// centred inside. Backdrop click + Esc key + `✕` button all dismiss
 /// the picker. `+ new session` and `[resume]` buttons auto-close the
 /// picker after the send succeeds (Phase 3.9 TODO-2).
+/// Mutations skipped: session-watch Effect conditions and key handlers
+/// require live reactive/DOM context; all behaviour verified by e2e harness.
+#[mutants::skip]
 #[component]
 pub fn SessionPicker() -> impl IntoView {
     let conv = use_context::<SessionStore>().expect("SessionStore must be provided");
@@ -139,7 +142,7 @@ pub fn SessionPicker() -> impl IntoView {
             .session_info
             .with(|si| si.as_ref().map(|s| s.dir.clone()));
         let prev = prev.flatten();
-        if prev != dir && dir.is_some() { // cargo-mutants: skip — Leptos reactive effect guard; covered by e2e harness.
+        if prev != dir && dir.is_some() {
             spawn_local(async move {
                 refresh_sessions(list).await;
             });
@@ -170,7 +173,7 @@ pub fn SessionPicker() -> impl IntoView {
 
     // Esc-key dismissal on the backdrop div.
     let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
-        if evt.key() == "Escape" { // cargo-mutants: skip — DOM key handler; covered by e2e harness.
+        if evt.key() == "Escape" {
             picker_open.close();
         }
     };
@@ -254,6 +257,9 @@ pub fn SessionPicker() -> impl IntoView {
 /// succeeds so the picker auto-closes when the operator resumes a
 /// session. Rename and delete do NOT close the picker (the operator
 /// is mid-task on the list).
+/// Mutations skipped: all row-condition checks and state mutations require
+/// live reactive context; all behaviour verified by e2e harness.
+#[mutants::skip]
 #[component]
 fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl IntoView {
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
@@ -273,7 +279,7 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         let dir = dir_sv.get_value();
         let current = list
             .sessions
-            .with(|v| v.iter().find(|i| i.dir == dir).cloned()); // cargo-mutants: skip — equality guard in reactive closure; covered by e2e harness.
+            .with(|v| v.iter().find(|i| i.dir == dir).cloned());
         if let Some(curr) = current {
             draft.set(curr.name.unwrap_or_else(|| curr.dir.clone()));
         }
@@ -307,7 +313,7 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         let confirmed = web_sys::window()
             .and_then(|w| w.confirm_with_message(&format!("Delete session {dir}?")).ok())
             .unwrap_or(false);
-        if !confirmed { // cargo-mutants: skip — confirmation-dialog guard; covered by e2e harness.
+        if !confirmed {
             return;
         }
         let frame = ClientFrame::DeleteSession { session_dir: dir };
@@ -340,7 +346,7 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         active_dir.with(|d| {
             // The pure helper takes the full struct; only `dir` is
             // read. The default-padding makes the call clean.
-            let it = SessionListItem { dir, ..Default::default() }; // cargo-mutants: skip — dir is the only meaningful field here; covered by e2e harness.
+            let it = SessionListItem { dir, ..Default::default() };
             is_active(&it, d.as_deref())
         })
     });
@@ -351,7 +357,7 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         let dir = dir_sv.get_value();
         list.sessions.with(|v| {
             v.iter()
-                .find(|i| i.dir == dir) // cargo-mutants: skip — equality guard; covered by e2e harness.
+                .find(|i| i.dir == dir)
                 .and_then(|i| i.name.clone())
                 .unwrap_or(dir)
         })

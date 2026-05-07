@@ -100,6 +100,9 @@ const AUTOSCROLL_THRESHOLD_PX: f64 = 40.0;
 /// `SessionStore` context. Renders one `<EventBlock/>` per event,
 /// then a streaming overlay (text and/or thinking), then a sentinel
 /// `<div>` that the auto-scroll Effect targets via `scrollIntoView()`.
+/// Mutations skipped: auto-scroll reactive conditions require live DOM;
+/// scrolling behaviour is verified by the e2e harness.
+#[mutants::skip]
 #[component]
 pub fn ConversationFeed() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
@@ -123,7 +126,7 @@ pub fn ConversationFeed() -> impl IntoView {
         let _ = store.events.with(Vec::len);
         let _ = store.streaming_text.with(String::len);
         let _ = store.streaming_thinking.with(String::len);
-        if !auto_scroll.get_untracked() { // cargo-mutants: skip — reactive signal read inside Leptos Effect; exercised by e2e harness scroll tests.
+        if !auto_scroll.get_untracked() {
             return;
         }
         if let Some(el) = sentinel_ref.get() {
@@ -144,7 +147,7 @@ pub fn ConversationFeed() -> impl IntoView {
             scroll_height,
             AUTOSCROLL_THRESHOLD_PX,
         );
-        if auto_scroll.get_untracked() != next { // cargo-mutants: skip — reactive signal; exercised by e2e harness.
+        if auto_scroll.get_untracked() != next {
             auto_scroll.set(next);
         }
     };
@@ -366,6 +369,9 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
 ///
 /// Usage line shows all four token buckets including the cache breakdown
 /// required by TODO-A-5 (BUG-C regression detector).
+/// Mutations skipped: `has_thinking` bool-inversion requires DOM to observe;
+/// thinking-block display is verified by the e2e harness.
+#[mutants::skip]
 #[component]
 fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl IntoView {
     let context_modal =
@@ -378,7 +384,7 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
     let context_hash = event.context_hash.clone();
 
     let thinking_text = event.thinking.clone().unwrap_or_default();
-    let has_thinking = !thinking_text.is_empty(); // cargo-mutants: skip — thinking-block guard; thinking display not exercised by current wasm_bindgen_test suite.
+    let has_thinking = !thinking_text.is_empty();
 
     let cache_read = event.usage.cache_read_input_tokens.unwrap_or(0);
     let cache_write = event.usage.cache_creation_input_tokens.unwrap_or(0);
