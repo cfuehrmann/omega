@@ -47,10 +47,9 @@ pub struct AppState {
     pub active_session: Arc<Mutex<Option<ActiveSession>>>,
     /// Root directory that contains the per-session sub-folders.
     pub sessions_root: PathBuf,
-    /// Directory served as static files by the fallback `ServeDir` handler.
-    pub public_dir: PathBuf,
-    /// Directory served under `/leptos/` by a second `ServeDir` (Phase 3.0).
-    /// Defaults to [`cli::DEFAULT_LEPTOS_DIR`]; override with
+    /// Directory containing the built Leptos client bundle, served as
+    /// the fallback `ServeDir` at `/`. Defaults to
+    /// [`cli::DEFAULT_LEPTOS_DIR`]; override with
     /// [`AppState::with_leptos_dir`].
     pub leptos_dir: PathBuf,
     /// LLM provider.  `Arc<dyn Provider>` lets tests inject a
@@ -63,24 +62,17 @@ impl AppState {
     ///
     /// `leptos_dir` defaults to [`cli::DEFAULT_LEPTOS_DIR`]; override
     /// with [`AppState::with_leptos_dir`] before calling [`serve`] /
-    /// [`build_router`]. The default keeps existing call sites
-    /// (tests, `omega-server` binary) source-compatible across the
-    /// Phase 3.0 introduction of the second `ServeDir`.
-    pub fn new(
-        provider: Arc<dyn omega_core::Provider>,
-        sessions_root: PathBuf,
-        public_dir: PathBuf,
-    ) -> Self {
+    /// [`build_router`].
+    pub fn new(provider: Arc<dyn omega_core::Provider>, sessions_root: PathBuf) -> Self {
         Self {
             active_session: Arc::new(Mutex::new(None)),
             sessions_root,
-            public_dir,
             leptos_dir: PathBuf::from(cli::DEFAULT_LEPTOS_DIR),
             provider,
         }
     }
 
-    /// Override the directory served under `/leptos/`.
+    /// Override the directory containing the built Leptos client bundle.
     /// Returns `self` for builder-style chaining.
     #[must_use]
     pub fn with_leptos_dir(mut self, leptos_dir: PathBuf) -> Self {

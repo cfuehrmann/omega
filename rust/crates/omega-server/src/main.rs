@@ -20,10 +20,9 @@ use omega_server::{AppState, Args, serve};
 async fn main() -> std::io::Result<()> {
     let args = Args::parse();
     eprintln!(
-        "omega-server: starting on 0.0.0.0:{} (sessions_root={}, public_dir={}, leptos_dir={})",
+        "omega-server: starting on 0.0.0.0:{} (sessions_root={}, leptos_dir={})",
         args.port,
         args.sessions_root.display(),
-        args.public_dir.display(),
         args.leptos_dir.display(),
     );
 
@@ -50,8 +49,7 @@ async fn main() -> std::io::Result<()> {
         },
     ));
 
-    let state = AppState::new(provider, args.sessions_root, args.public_dir)
-        .with_leptos_dir(args.leptos_dir);
+    let state = AppState::new(provider, args.sessions_root).with_leptos_dir(args.leptos_dir);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port)).await?;
     serve(listener, state).await
 }

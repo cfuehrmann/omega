@@ -27,7 +27,7 @@ use axum::{
         ws::{Message, WebSocket},
     },
     http::StatusCode,
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use futures::{SinkExt, StreamExt};
@@ -74,21 +74,10 @@ pub fn should_replay(event_type: &str) -> bool {
 
 /// Build the top-level [`Router`] using `state` for all stateful handlers.
 ///
-/// **Phase 3.7 cutover:** the fallback `ServeDir` at `/` now serves the
-/// Leptos bundle (`leptos_dir`). The `SolidJS` bundle is no longer mounted
-/// anywhere; `state.public_dir` is retained on [`AppState`] for backward
-/// compatibility but is no longer read by the router. The nested
-/// `ServeDir` at `/leptos/` is **kept as a permanent alias for one
-/// release** so existing bookmarks and bug-report URLs continue to
-/// resolve; it points at the same directory as the fallback and serves
-/// identical bytes. A bare `/leptos` (no trailing slash) is
-/// 308-redirected to `/leptos/` so curl/browsers behave naturally.
-///
-/// The `/leptos/` mount is scheduled for removal in a follow-up PR
-/// after the cutover bakes in production for one release; deletion
-/// must coincide with switching `frontends/leptos/Trunk.toml` to
-/// `public_url = "/"` so the bundle's hashed asset URLs stop
-/// embedding the `/leptos/` prefix.
+/// The fallback `ServeDir` at `/` serves the Leptos bundle
+/// (`leptos_dir`). The Phase 3.0 `/leptos/` alias mount and its
+/// trailing-slash redirect were removed in Phase 4 alongside the
+/// `Trunk.toml` `public_url` flip to `/`.
 pub fn build_router(state: AppState) -> Router {
     let leptos_dir = state.leptos_dir.clone();
     Router::new()
@@ -97,8 +86,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         .route("/api/context", get(get_context))
         .route("/api/files", get(get_files))
-        .route("/leptos", get(|| async { Redirect::permanent("/leptos/") }))
-        .nest_service("/leptos/", ServeDir::new(leptos_dir.clone()))
         .fallback_service(ServeDir::new(leptos_dir))
         .with_state(state)
 }
@@ -1348,11 +1335,7 @@ mod tests {
     }
 
     fn test_state(tmp: &TempDir) -> AppState {
-        AppState::new(
-            Arc::new(EmptyProvider),
-            tmp.path().join("sessions"),
-            tmp.path().to_path_buf(),
-        )
+        AppState::new(Arc::new(EmptyProvider), tmp.path().join("sessions"))
     }
 
     // -----------------------------------------------------------------

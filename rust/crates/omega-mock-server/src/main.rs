@@ -45,11 +45,7 @@ struct Args {
     #[arg(long, default_value = ".omega/test-sessions")]
     sessions_root: PathBuf,
 
-    /// Static asset directory served by the fallback `ServeDir` handler.
-    #[arg(long, default_value = "src/web/public")]
-    public_dir: PathBuf,
-
-    /// Leptos `dist/` directory served under `/leptos/` (Phase 3.0).
+    /// Leptos `dist/` directory served by the fallback `ServeDir` at `/`.
     #[arg(long, default_value = "frontends/leptos/dist")]
     leptos_dir: PathBuf,
 }
@@ -88,8 +84,8 @@ async fn main() -> std::io::Result<()> {
             .with_beta("compact-2026-01-12")
             .with_beta("context-management-2025-06-27"),
     );
-    let state = omega_server::AppState::new(provider, args.sessions_root, args.public_dir)
-        .with_leptos_dir(args.leptos_dir);
+    let state =
+        omega_server::AppState::new(provider, args.sessions_root).with_leptos_dir(args.leptos_dir);
 
     let fake_app = fake_router(script.clone(), Some(history.clone()));
     let ctrl_app = control::router(history, script);

@@ -1,5 +1,0 @@
-# Phase 3.7: bun no longer runs any tests (the TS agent and its bun
-# unit tests were retired alongside the SolidJS frontend — `src/` is
-# gone). Bun is retained as a generic Node-compat runtime in case the
-# Phase-4 chromiumoxide harness wants it. The original `[test]` block
-# is intentionally absent rather than left pointing at a deleted path.

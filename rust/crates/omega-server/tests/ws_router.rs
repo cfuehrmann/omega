@@ -117,7 +117,7 @@ type WsClient =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 fn make_state(provider: Arc<MockProvider>, sessions_root: PathBuf) -> AppState {
-    AppState::new(provider, sessions_root, PathBuf::from("/dev/null"))
+    AppState::new(provider, sessions_root)
 }
 
 async fn spawn_server(state: AppState) -> SocketAddr {
@@ -1070,8 +1070,6 @@ async fn e2e_full_turn_via_http_fake() {
             &free_port.to_string(),
             "--sessions-root",
             sessions_root.to_str().unwrap(),
-            "--public-dir",
-            "/dev/null",
         ])
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())

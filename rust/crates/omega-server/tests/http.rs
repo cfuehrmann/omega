@@ -41,8 +41,8 @@ impl Provider for MockProvider {
 // ---------------------------------------------------------------------------
 
 /// Build an [`AppState`] backed by a [`MockProvider`] suitable for tests.
-fn make_test_state(sessions_root: PathBuf, public_dir: PathBuf) -> AppState {
-    AppState::new(Arc::new(MockProvider), sessions_root, public_dir)
+fn make_test_state(sessions_root: PathBuf) -> AppState {
+    AppState::new(Arc::new(MockProvider), sessions_root)
 }
 
 /// Spawn `build_router(state)` on a random local port and return its bound
@@ -73,7 +73,7 @@ fn http_client() -> reqwest::Client {
 #[tokio::test]
 async fn health_returns_200_with_json_status_ok() {
     let tmp = TempDir::new().expect("tempdir");
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
+    let state = make_test_state(tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -116,7 +116,7 @@ async fn get_api_files_returns_completions_for_absolute_prefix() {
     std::fs::create_dir(seed.join("helpers")).expect("mkdir helpers");
     std::fs::write(seed.join("world.txt"), "").expect("write world.txt");
 
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
+    let state = make_test_state(tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
 
     let prefix = format!("{}/hel", seed.display());
@@ -155,7 +155,7 @@ async fn get_api_context_returns_records_in_request_order() {
 
     let tmp = TempDir::new().expect("tempdir");
     let sessions_root = tmp.path().join("sessions");
-    let state = make_test_state(sessions_root.clone(), tmp.path().to_path_buf());
+    let state = make_test_state(sessions_root.clone());
     let addr = spawn_server(state).await;
     let client = http_client();
 
@@ -245,11 +245,8 @@ async fn servedir_serves_files_from_fallback_dir() {
     let file_path = tmp.path().join("hello.txt");
     std::fs::write(&file_path, "omega-rocks").expect("write tempfile");
 
-    // Phase 3.7: the fallback `ServeDir` reads from `leptos_dir`, not
-    // `public_dir`. `public_dir` is retained on `AppState` for
-    // backward compatibility but no longer routed.
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
-        .with_leptos_dir(tmp.path().to_path_buf());
+    let state =
+        make_test_state(tmp.path().join("sessions")).with_leptos_dir(tmp.path().to_path_buf());
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -265,8 +262,8 @@ async fn servedir_serves_files_from_fallback_dir() {
 #[tokio::test]
 async fn servedir_returns_404_for_missing_file() {
     let tmp = TempDir::new().expect("tempdir");
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
-        .with_leptos_dir(tmp.path().to_path_buf());
+    let state =
+        make_test_state(tmp.path().join("sessions")).with_leptos_dir(tmp.path().to_path_buf());
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -275,126 +272,6 @@ async fn servedir_returns_404_for_missing_file() {
         .await
         .expect("GET missing");
     assert_eq!(resp.status().as_u16(), 404);
-}
-
-// ---------------------------------------------------------------------------
-// `/leptos/` second ServeDir mount (Phase 3.0)
-// ---------------------------------------------------------------------------
-
-/// `GET /leptos/index.html` returns the Leptos bundle's index, served from
-/// the configured `leptos_dir`.
-///
-/// Phase 3.7: with the fallback `ServeDir` also serving `leptos_dir`, the
-/// nested `/leptos/` mount is now an alias for `/`. This test pins the
-/// alias path to confirm the mount is still active.
-#[tokio::test]
-async fn leptos_servedir_serves_index_html() {
-    let tmp = TempDir::new().expect("tempdir");
-    let leptos_dir = tmp.path().join("leptos-dist");
-    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
-    std::fs::write(leptos_dir.join("index.html"), "<html>leptos</html>")
-        .expect("write leptos index.html");
-
-    let public_dir = tmp.path().join("public");
-    std::fs::create_dir_all(&public_dir).expect("mkdir public");
-
-    let state =
-        make_test_state(tmp.path().join("sessions"), public_dir).with_leptos_dir(leptos_dir);
-    let addr = spawn_server(state).await;
-
-    let resp = http_client()
-        .get(format!("http://{addr}/leptos/index.html"))
-        .send()
-        .await
-        .expect("GET /leptos/index.html");
-    assert_eq!(resp.status().as_u16(), 200);
-    let body = resp.text().await.expect("body");
-    assert_eq!(body, "<html>leptos</html>");
-}
-
-/// `GET /leptos/` (trailing slash) serves the bundle's `index.html` via
-/// `ServeDir`'s directory-index behaviour. The Leptos client is expected
-/// to be reachable at the bare prefix.
-#[tokio::test]
-async fn leptos_servedir_serves_index_at_trailing_slash() {
-    let tmp = TempDir::new().expect("tempdir");
-    let leptos_dir = tmp.path().join("leptos-dist");
-    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
-    std::fs::write(leptos_dir.join("index.html"), "<html>leptos-root</html>")
-        .expect("write leptos index.html");
-
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
-        .with_leptos_dir(leptos_dir);
-    let addr = spawn_server(state).await;
-
-    let resp = http_client()
-        .get(format!("http://{addr}/leptos/"))
-        .send()
-        .await
-        .expect("GET /leptos/");
-    assert_eq!(resp.status().as_u16(), 200);
-    let body = resp.text().await.expect("body");
-    assert_eq!(body, "<html>leptos-root</html>");
-}
-
-/// `GET /leptos` (no trailing slash) is 308-redirected to `/leptos/`.
-/// reqwest's default redirect policy follows it, so we disable
-/// redirects here to observe the wire-level response.
-#[tokio::test]
-async fn leptos_bare_prefix_redirects_to_trailing_slash() {
-    let tmp = TempDir::new().expect("tempdir");
-    let leptos_dir = tmp.path().join("leptos-dist");
-    std::fs::create_dir_all(&leptos_dir).expect("mkdir leptos-dist");
-    std::fs::write(leptos_dir.join("index.html"), "<html>leptos</html>")
-        .expect("write leptos index.html");
-
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
-        .with_leptos_dir(leptos_dir);
-    let addr = spawn_server(state).await;
-
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("reqwest client");
-    let resp = client
-        .get(format!("http://{addr}/leptos"))
-        .send()
-        .await
-        .expect("GET /leptos");
-    assert_eq!(resp.status().as_u16(), 308);
-    assert_eq!(
-        resp.headers().get("location").and_then(|v| v.to_str().ok()),
-        Some("/leptos/"),
-    );
-}
-
-/// The fallback `ServeDir` mounted at `/` must NOT shadow the `/leptos/`
-/// route. Phase 3.7: both routes now serve the same `leptos_dir`, so we
-/// drop a decoy file at `leptos_dir/leptos/index.html` (which only the
-/// fallback could match — the nested `ServeDir` strips the `/leptos/`
-/// prefix before resolving) and verify `/leptos/index.html` returns the
-/// nested mount's `leptos_dir/index.html` content instead.
-#[tokio::test]
-async fn leptos_route_wins_over_fallback_servedir() {
-    let tmp = TempDir::new().expect("tempdir");
-    let leptos_dir = tmp.path().join("leptos-dist");
-    std::fs::create_dir_all(leptos_dir.join("leptos")).expect("mkdir leptos-dist/leptos");
-    std::fs::write(leptos_dir.join("index.html"), "FROM-LEPTOS").expect("write leptos index");
-    std::fs::write(leptos_dir.join("leptos/index.html"), "FROM-FALLBACK")
-        .expect("write fallback decoy");
-
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf())
-        .with_leptos_dir(leptos_dir);
-    let addr = spawn_server(state).await;
-
-    let resp = http_client()
-        .get(format!("http://{addr}/leptos/index.html"))
-        .send()
-        .await
-        .expect("GET /leptos/index.html");
-    assert_eq!(resp.status().as_u16(), 200);
-    let body = resp.text().await.expect("body");
-    assert_eq!(body, "FROM-LEPTOS");
 }
 
 // ---------------------------------------------------------------------------
@@ -419,10 +296,10 @@ fn args_defaults_match_documented_constants() {
         "DEFAULT_SESSIONS_ROOT must not duplicate the omega_store constant"
     );
     assert_eq!(
-        args.public_dir,
-        PathBuf::from(omega_server::cli::DEFAULT_PUBLIC_DIR),
+        args.leptos_dir,
+        PathBuf::from(omega_server::cli::DEFAULT_LEPTOS_DIR),
     );
-    assert_eq!(args.public_dir, PathBuf::from("src/web/public/"));
+    assert_eq!(args.leptos_dir, PathBuf::from("frontends/leptos/dist"));
 }
 
 #[test]
@@ -434,12 +311,12 @@ fn args_accept_all_three_overrides() {
         "4242",
         "--sessions-root",
         "/tmp/custom-sessions",
-        "--public-dir",
-        "/var/www/omega",
+        "--leptos-dir",
+        "/var/www/omega-leptos",
     ]);
     assert_eq!(args.port, 4242);
     assert_eq!(args.sessions_root, PathBuf::from("/tmp/custom-sessions"));
-    assert_eq!(args.public_dir, PathBuf::from("/var/www/omega"));
+    assert_eq!(args.leptos_dir, PathBuf::from("/var/www/omega-leptos"));
 }
 
 #[test]
@@ -459,7 +336,7 @@ fn args_reject_invalid_port() {
 async fn post_session_creates_dir_and_returns_201() {
     let tmp = TempDir::new().expect("tempdir");
     let sessions_root = tmp.path().join("sessions");
-    let state = make_test_state(sessions_root.clone(), tmp.path().to_path_buf());
+    let state = make_test_state(sessions_root.clone());
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -497,7 +374,7 @@ async fn post_session_creates_dir_and_returns_201() {
 async fn get_sessions_returns_empty_array_for_nonexistent_root() {
     let tmp = TempDir::new().expect("tempdir");
     let nonexistent = tmp.path().join("no-such-dir");
-    let state = make_test_state(nonexistent, tmp.path().to_path_buf());
+    let state = make_test_state(nonexistent);
     let addr = spawn_server(state).await;
 
     let resp = http_client()
@@ -516,7 +393,7 @@ async fn get_sessions_returns_empty_array_for_nonexistent_root() {
 async fn get_sessions_returns_two_after_two_posts() {
     let tmp = TempDir::new().expect("tempdir");
     let sessions_root = tmp.path().join("sessions");
-    let state = make_test_state(sessions_root.clone(), tmp.path().to_path_buf());
+    let state = make_test_state(sessions_root.clone());
     let addr = spawn_server(state).await;
     let client = http_client();
 
@@ -557,7 +434,7 @@ async fn get_sessions_returns_two_after_two_posts() {
 async fn get_sessions_newest_first() {
     let tmp = TempDir::new().expect("tempdir");
     let sessions_root = tmp.path().join("sessions");
-    let state = make_test_state(sessions_root.clone(), tmp.path().to_path_buf());
+    let state = make_test_state(sessions_root.clone());
     let addr = spawn_server(state).await;
     let client = http_client();
 
@@ -602,7 +479,7 @@ async fn get_sessions_newest_first() {
 async fn get_sessions_includes_metadata_after_rename() {
     let tmp = TempDir::new().expect("tempdir");
     let sessions_root = tmp.path().join("sessions");
-    let state = make_test_state(sessions_root.clone(), tmp.path().to_path_buf());
+    let state = make_test_state(sessions_root.clone());
     let addr = spawn_server(state).await;
     let client = http_client();
 
@@ -669,15 +546,12 @@ async fn graceful_shutdown_writes_server_stopped_and_exits_clean() {
 
     let tmp = TempDir::new().expect("tempdir");
     let sessions_root = tmp.path().join("sessions");
-    let public_dir = tmp.path().to_path_buf();
 
     let bin = env!("CARGO_BIN_EXE_omega-server");
     let mut child = Command::new(bin)
         .args(["--port", &port.to_string()])
         .arg("--sessions-root")
         .arg(&sessions_root)
-        .arg("--public-dir")
-        .arg(&public_dir)
         .env("ANTHROPIC_API_KEY", "dummy")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -741,7 +615,7 @@ async fn graceful_shutdown_writes_server_stopped_and_exits_clean() {
 #[tokio::test]
 async fn serve_function_starts_real_http_listener() {
     let tmp = TempDir::new().expect("tempdir");
-    let state = make_test_state(tmp.path().join("sessions"), tmp.path().to_path_buf());
+    let state = make_test_state(tmp.path().join("sessions"));
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind 127.0.0.1:0");

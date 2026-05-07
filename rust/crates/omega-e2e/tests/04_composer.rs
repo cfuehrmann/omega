@@ -1,6 +1,6 @@
 //! Port of `e2e/leptos-composer.spec.ts` (8 cases).
 //!
-//! Drives the composer at `/leptos/` against `mock-omega-server`.
+//! Drives the composer at the site root against `mock-omega-server`.
 //! Covers Send / Pause-during-tool / Continue-with-interjection /
 //! Pause-then-Abort / Switch-model-idle / Switch-effort-idle /
 //! @-completion / Stub-composer-removed.

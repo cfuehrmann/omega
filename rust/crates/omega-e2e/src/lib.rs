@@ -6,7 +6,7 @@
 //!   `frontends/leptos/dist` bundle as `--leptos-dir`, and a separate
 //!   random control-API port,
 //! - a headless Chrome instance launched via `chromiumoxide::Browser`,
-//! - a `Page` already at `/leptos/`, the WS connection up
+//! - a `Page` already at `/`, the WS connection up
 //!   (`<main data-connected="true">`),
 //! - a control-API client for scripting the mock LLM and capturing
 //!   `/v1/messages` calls.
@@ -78,7 +78,7 @@ pub struct CapturedMessage {
 ///
 /// Construct with [`TestHarness::launch`]. Drop tears down both.
 pub struct TestHarness {
-    /// Page already at `/leptos/`, WS connected.
+    /// Page already at `/`, WS connected.
     pub page: Page,
     /// `http://127.0.0.1:<main_port>` — the mock-omega-server.
     pub base_url: String,
@@ -100,7 +100,7 @@ pub struct TestHarness {
 
 impl TestHarness {
     /// Spawn the server, wait for `/health`, launch headless Chrome,
-    /// open `/leptos/`, wait for WS connect.
+    /// open `/`, wait for WS connect.
     pub async fn launch() -> Result<Self> {
         let main_port = pick_free_port()?;
         let ctrl_port = pick_free_port()?;
@@ -118,9 +118,9 @@ impl TestHarness {
 
         let (browser, handler_task) = launch_browser().await?;
         let page = browser
-            .new_page(format!("{base_url}/leptos/"))
+            .new_page(format!("{base_url}/"))
             .await
-            .context("open /leptos/")?;
+            .context("open /")?;
         page.wait_for_navigation().await.context("wait for nav")?;
 
         let harness = Self {
