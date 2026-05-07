@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="llm_response" data-event-kind="assistant" class="block block-assistant"><div class="block-label-row"><span class="block-label">assistant<span class="block-stop-reason">  (end_turn)</span></span><button data-testid="leptos-llm-response-context" class="block-label-row-btn">[context]</button><button data-testid="leptos-llm-response-payload" class="block-label-row-btn">[payload]</button><!><!--<() />--></div><div data-testid="leptos-assistant-text"><div data-testid="md-body" class="block-body md-body"><pre><code class="language-mermaid">graph LR
+<div data-testid="leptos-event-block" data-event-type="llm_response" data-event-kind="assistant" class="block block-assistant"><div class="block-label-row"><span class="block-label">assistant<span class="block-stop-reason">  (end_turn)</span></span><!><!--<() />--><button data-testid="leptos-llm-response-context" class="block-label-row-btn">context</button><button data-testid="leptos-llm-response-payload" class="block-label-row-btn">payload</button></div><div data-testid="leptos-assistant-text"><div data-testid="md-body" class="block-body md-body"><pre><code class="language-mermaid">graph LR
   A --&gt; B
 </code></pre>
 </div></div><span data-testid="leptos-assistant-usage" class="block-meta">in: 10  out: 5  cache_read: 0  cache_write: 0  (end_turn)</span></div>

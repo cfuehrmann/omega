@@ -47,6 +47,7 @@
 //! - Creating a new session (Reset) — auto-closes on send
 //! - Resuming a session — auto-closes on send
 
+use leptos::html;
 use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
@@ -150,6 +151,41 @@ pub fn SessionPicker() -> impl IntoView {
         dir
     });
 
+    // Which row is currently being renamed (None = none). Shared across all
+    // rows so at most one can be in edit mode at a time.
+    let editing_dir: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // NodeRef used to focus the backdrop when the picker opens so that
+    // keydown events reach it even before the operator interacts with the
+    // panel. Mirrors the same spawn_local autofocus pattern used by
+    // SessionRow for the rename input.
+    let backdrop_ref = NodeRef::<html::Div>::new();
+    Effect::new(move |_| {
+        if backdrop_ref.get().is_some() {
+            spawn_local(async move {
+                if let Some(el) = backdrop_ref.get_untracked() {
+                    let _ = el.focus();
+                }
+            });
+        }
+    });
+
+    // When a rename finishes (editing_dir transitions Some → None), return
+    // focus to the backdrop so Esc-to-close keeps working. Without this the
+    // focus stays on the now-unmounted <input> and keydown never reaches the
+    // backdrop's on:keydown handler.
+    Effect::new(move |prev_editing: Option<Option<String>>| {
+        let current = editing_dir.get();
+        if matches!(prev_editing, Some(Some(_))) && current.is_none() {
+            spawn_local(async move {
+                if let Some(el) = backdrop_ref.get_untracked() {
+                    let _ = el.focus();
+                }
+            });
+        }
+        current
+    });
+
     // Derived "active dir" reader used by item rows.
     let active_dir = Memo::new(move |_| {
         conv.session_info
@@ -172,8 +208,11 @@ pub fn SessionPicker() -> impl IntoView {
     let on_close = move |_: leptos::ev::MouseEvent| picker_open.close();
 
     // Esc-key dismissal on the backdrop div.
+    // Guard: do not close the picker when a session name is being edited
+    // (the rename input's own keydown already calls stop_propagation, but
+    // this check is a safety-net for any other path that might bubble).
     let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
-        if evt.key() == "Escape" {
+        if evt.key() == "Escape" && editing_dir.with_untracked(Option::is_none) {
             picker_open.close();
         }
     };
@@ -188,9 +227,12 @@ pub fn SessionPicker() -> impl IntoView {
             <div
                 class="picker-backdrop"
                 data-testid="leptos-picker-backdrop"
+                node_ref=backdrop_ref
                 on:click=on_close
                 on:keydown=on_keydown
                 // tabindex makes the div focusable so keydown fires.
+                // Auto-focused on mount (see Effect above) so Esc works
+                // immediately even before the operator clicks inside the panel.
                 tabindex="-1"
             >
                 <section
@@ -232,7 +274,7 @@ pub fn SessionPicker() -> impl IntoView {
                             key=|item: &SessionListItem| item.dir.clone()
                             children=move |item: SessionListItem| {
                                 view! {
-                                    <SessionRow item=item active_dir=active_dir />
+                                    <SessionRow item=item active_dir=active_dir editing_dir=editing_dir />
                                 }
                             }
                         />
@@ -247,11 +289,17 @@ pub fn SessionPicker() -> impl IntoView {
 // SessionRow component
 // ---------------------------------------------------------------------------
 
-/// One row in the picker list. Owns the inline-rename edit state.
+/// One row in the picker list. Participates in shared inline-rename state.
 ///
 /// `dir` is stored once in a `StoredValue<String>` so every event
 /// handler closure captures only `Copy` values and the row cleanly
 /// composes inside `<Show>` / `<For>` without `.clone()` ceremony.
+///
+/// `editing_dir` is the picker-level `RwSignal<Option<String>>` that holds
+/// the `dir` of the row currently being renamed, or `None`. Because it is
+/// shared across all rows only one row can be in edit mode at a time:
+/// clicking a label calls `editing_dir.set(Some(own_dir))`, which
+/// automatically collapses any other row that was open.
 ///
 /// TODO-2: `on_resume` sets `PickerOpen` to `false` after the send
 /// succeeds so the picker auto-closes when the operator resumes a
@@ -261,21 +309,50 @@ pub fn SessionPicker() -> impl IntoView {
 /// live reactive context; all behaviour verified by e2e harness.
 #[mutants::skip]
 #[component]
-fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl IntoView {
+fn SessionRow(
+    item: SessionListItem,
+    active_dir: Memo<Option<String>>,
+    editing_dir: RwSignal<Option<String>>,
+) -> impl IntoView {
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
 
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
 
-    // Inline rename: edit-mode flag + draft text.
-    let editing = RwSignal::new(false);
+    // Draft text for the rename input.
     let draft = RwSignal::new(item.name.clone().unwrap_or_else(|| item.dir.clone()));
 
-    let begin_rename = move |_| {
-        // Re-seed the draft from the latest server-confirmed name in
-        // case the row was renamed by another tab/client since the
-        // last open. Reading from `list.sessions` keeps us truthful.
+    // This row is in edit mode when the shared editing_dir matches our dir.
+    let editing = move || {
+        let dir = dir_sv.get_value();
+        editing_dir.with(|opt| opt.as_deref() == Some(dir.as_str()))
+    };
+
+    // NodeRef for the rename <input>. Used to focus + select-all when edit
+    // mode activates so the user can type straight away.
+    let input_ref = NodeRef::<html::Input>::new();
+
+    // Runs whenever the input element is mounted into the DOM — i.e. the
+    // moment <Show>'s fallback renders it (editing just became true).
+    // spawn_local defers to a microtask so the DOM node is fully live
+    // before focus/select are called.
+    Effect::new(move |_| {
+        if input_ref.get().is_some() {
+            spawn_local(async move {
+                if let Some(el) = input_ref.get_untracked() {
+                    let _ = el.focus();
+                    el.select();
+                }
+            });
+        }
+    });
+
+    // Clicking the session label opens rename mode. Re-seeds the draft
+    // from the latest server-confirmed name so a concurrent rename by
+    // another tab is picked up correctly. Setting editing_dir to our dir
+    // automatically closes any other row that was open.
+    let begin_rename = move |_: leptos::ev::MouseEvent| {
         let dir = dir_sv.get_value();
         let current = list
             .sessions
@@ -283,28 +360,36 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
         if let Some(curr) = current {
             draft.set(curr.name.unwrap_or_else(|| curr.dir.clone()));
         }
-        editing.set(true);
+        editing_dir.set(Some(dir));
     };
 
-    let cancel_rename = move |_| {
-        editing.set(false);
-    };
-
-    let submit_rename = move |_| {
-        let name = draft.get();
-        if name.trim().is_empty() {
-            // Empty would rename-to-empty, which the server accepts —
-            // but unhelpful. Just cancel.
-            editing.set(false);
-            return;
-        }
-        let frame = ClientFrame::RenameSession {
-            session_dir: dir_sv.get_value(),
-            name,
-        };
-        match ws.send(&frame) {
-            Ok(()) => editing.set(false),
-            Err(err) => list.set_error(format!("send RenameSession: {err:?}")),
+    // Enter submits the rename; Escape cancels. No separate save button.
+    let on_rename_keydown = move |evt: leptos::ev::KeyboardEvent| {
+        match evt.key().as_str() {
+            "Enter" => {
+                evt.prevent_default();
+                let name = draft.get();
+                if name.trim().is_empty() {
+                    // Empty name — just cancel, same as before.
+                    editing_dir.set(None);
+                    return;
+                }
+                let frame = ClientFrame::RenameSession {
+                    session_dir: dir_sv.get_value(),
+                    name,
+                };
+                match ws.send(&frame) {
+                    Ok(()) => editing_dir.set(None),
+                    Err(err) => list.set_error(format!("send RenameSession: {err:?}")),
+                }
+            }
+            "Escape" => {
+                // Stop propagation so the Escape doesn't bubble up to
+                // the picker backdrop and close the whole picker.
+                evt.stop_propagation();
+                editing_dir.set(None);
+            }
+            _ => {}
         }
     };
 
@@ -371,30 +456,25 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
             class=move || if active.get() { "session-item session-item-active" } else { "session-item" }
         >
             <Show
-                when=move || !editing.get()
+                when=move || !editing()
                 fallback=move || view! {
                     <span class="session-item-edit">
                         <input
                             data-testid="leptos-session-rename-input"
+                            node_ref=input_ref
                             prop:value=move || draft.get()
                             on:input=move |evt| draft.set(event_target_value(&evt))
+                            on:keydown=on_rename_keydown
                         />
-                        <button
-                            data-testid="leptos-session-rename-submit"
-                            on:click=submit_rename
-                        >
-                            "save"
-                        </button>
-                        <button
-                            data-testid="leptos-session-rename-cancel"
-                            on:click=cancel_rename
-                        >
-                            "cancel"
-                        </button>
                     </span>
                 }
             >
-                <span class="session-item-label" data-testid="leptos-session-label">
+                <span
+                    class="session-item-label"
+                    data-testid="leptos-session-label"
+                    on:click=begin_rename
+                    title="Click to rename"
+                >
                     {label}
                 </span>
                 <Show when=move || active.get() fallback=|| ().into_any()>
@@ -407,12 +487,6 @@ fn SessionRow(item: SessionListItem, active_dir: Memo<Option<String>>) -> impl I
                     on:click=on_resume
                 >
                     "resume"
-                </button>
-                <button
-                    data-testid="leptos-session-rename"
-                    on:click=begin_rename
-                >
-                    "rename"
                 </button>
                 <button
                     data-testid="leptos-session-delete"

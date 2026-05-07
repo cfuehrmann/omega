@@ -1448,40 +1448,63 @@ fn now_iso() -> String {
 /// Mirrors `elideAnthropicRequest` in the TypeScript reference
 /// (`src/agent.ts`, commits 50622a9 / 5f1e40a).
 ///
-/// * `system`  → `"[N block(s), X chars]"`
+/// * `system`  → `"[N block(s), X chars, cache_control: ephemeral]"`
+///   (the last system block always carries the cache marker)
 /// * `tools`   → array of `{name, description: "[N chars]", input_schema:
-///               "[elided]"}`
-/// * `messages` → `"[N message(s), X chars]"`
+///               "[elided]"}` with `cache_control: "ephemeral"` on the last
+///   entry (matches the wire format produced by `build_wire_tools`)
+/// * `messages` → `"[N message(s), X chars, cache_control on msg[N-1]]"`
+///   (the last content block of the last message always carries the marker)
 /// * Top-level scalar fields (`model`, `max_tokens`, `thinking`, …) are
 ///   forwarded verbatim.
 fn elide_request(req: &LlmRequest) -> Value {
     use serde_json::{Map, json};
 
     // ---- system ---------------------------------------------------------
+    // The last system block always receives `cache_control: ephemeral`
+    // (see `build_system_blocks` in omega-core/src/anthropic.rs).
     let system_val = if let Some(sys) = &req.system {
         let blocks = 1usize; // always a single string block in our agent
         let chars = sys.chars().count();
         let label = if blocks == 1 { "block" } else { "blocks" };
-        Value::String(format!("[{blocks} {label}, {chars} chars]"))
+        Value::String(format!(
+            "[{blocks} {label}, {chars} chars, cache_control: ephemeral]"
+        ))
     } else {
         Value::Null
     };
 
     // ---- tools ----------------------------------------------------------
+    // The last tool definition always receives `cache_control: ephemeral`
+    // (see `build_wire_tools` in omega-core/src/anthropic.rs).
+    let last_tool_idx = req.tools.len().saturating_sub(1);
     let tools_val: Vec<Value> = req
         .tools
         .iter()
-        .map(|t| {
+        .enumerate()
+        .map(|(i, t)| {
             let desc_chars = t.description.chars().count();
-            json!({
-                "name": t.name,
-                "description": format!("[{desc_chars} chars]"),
-                "input_schema": "[elided]",
-            })
+            if i == last_tool_idx {
+                json!({
+                    "name": t.name,
+                    "description": format!("[{desc_chars} chars]"),
+                    "input_schema": "[elided]",
+                    "cache_control": "ephemeral",
+                })
+            } else {
+                json!({
+                    "name": t.name,
+                    "description": format!("[{desc_chars} chars]"),
+                    "input_schema": "[elided]",
+                })
+            }
         })
         .collect();
 
     // ---- messages -------------------------------------------------------
+    // The last content block of the last message always receives
+    // `cache_control: ephemeral` (see `build_wire_messages` in
+    // omega-core/src/anthropic.rs).
     let msg_count = req.messages.len();
     let msg_label = if msg_count == 1 {
         "message"
@@ -1489,7 +1512,14 @@ fn elide_request(req: &LlmRequest) -> Value {
         "messages"
     };
     let msg_chars = serde_json::to_string(&req.messages).map_or(0, |s| s.chars().count());
-    let messages_val = Value::String(format!("[{msg_count} {msg_label}, {msg_chars} chars]"));
+    let cache_note = if msg_count > 0 {
+        format!(", cache_control on msg[{}]", msg_count - 1)
+    } else {
+        String::new()
+    };
+    let messages_val = Value::String(format!(
+        "[{msg_count} {msg_label}, {msg_chars} chars{cache_note}]"
+    ));
 
     // ---- top-level scalars ----------------------------------------------
     let mut map = Map::new();
@@ -1583,12 +1613,36 @@ mod elide_request_tests {
     }
 
     #[test]
+    fn messages_label_includes_cache_control_note() {
+        let req = make_request(vec![user_msg("a"), user_msg("b")], vec![]);
+        let v = elide_request(&req);
+        let s = v["messages"].as_str().expect("string");
+        assert!(s.contains("cache_control on msg[1]"), "cache note: {s}");
+    }
+
+    #[test]
+    fn empty_messages_label_has_no_cache_note() {
+        let req = make_request(vec![], vec![]);
+        let v = elide_request(&req);
+        let s = v["messages"].as_str().expect("string");
+        assert!(!s.contains("cache_control"), "unexpected cache note: {s}");
+    }
+
+    #[test]
     fn singular_system_block_label() {
         let req = make_request(vec![user_msg("hi")], vec![]);
         let v = elide_request(&req);
         let s = v["system"].as_str().expect("string");
         assert!(s.starts_with("[1 block,"), "singular: {s}");
         assert!(!s.contains("blocks,"), "plural leaked: {s}");
+    }
+
+    #[test]
+    fn system_label_includes_cache_control() {
+        let req = make_request(vec![user_msg("hi")], vec![]);
+        let v = elide_request(&req);
+        let s = v["system"].as_str().expect("string");
+        assert!(s.contains("cache_control: ephemeral"), "cache missing: {s}");
     }
 
     #[test]
@@ -1614,5 +1668,44 @@ mod elide_request_tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["name"], "read_file");
         assert_eq!(arr[0]["description"], "[12 chars]");
+    }
+
+    #[test]
+    fn last_tool_has_cache_control() {
+        let tool_a = ToolDefinition {
+            name: "tool_a".to_owned(),
+            description: "first".to_owned(),
+            input_schema: serde_json::json!({}),
+        };
+        let tool_b = ToolDefinition {
+            name: "tool_b".to_owned(),
+            description: "second".to_owned(),
+            input_schema: serde_json::json!({}),
+        };
+        let req = make_request(vec![user_msg("hi")], vec![tool_a, tool_b]);
+        let v = elide_request(&req);
+        let arr = v["tools"].as_array().expect("tools array");
+        assert_eq!(arr.len(), 2);
+        assert!(
+            arr[0].get("cache_control").is_none(),
+            "first tool must not have cache_control"
+        );
+        assert_eq!(
+            arr[1]["cache_control"], "ephemeral",
+            "last tool must have cache_control"
+        );
+    }
+
+    #[test]
+    fn single_tool_has_cache_control() {
+        let tool = ToolDefinition {
+            name: "only".to_owned(),
+            description: "sole tool".to_owned(),
+            input_schema: serde_json::json!({}),
+        };
+        let req = make_request(vec![user_msg("hi")], vec![tool]);
+        let v = elide_request(&req);
+        let arr = v["tools"].as_array().expect("tools array");
+        assert_eq!(arr[0]["cache_control"], "ephemeral");
     }
 }

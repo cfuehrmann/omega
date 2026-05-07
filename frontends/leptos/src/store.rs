@@ -48,6 +48,11 @@ pub struct SessionState {
     pub streaming_thinking: String,
     /// Envelope-level transport errors (not persisted as `OmegaEvent`s).
     pub transport_errors: Vec<String>,
+    /// Client-local pre-commit flag for the Continue-during-PauseRequested
+    /// flow. When `true` and `turn_state` transitions to `Paused`, the
+    /// composer auto-fires a `continue` WS message. Cleared on disconnect
+    /// and on `ResetDone`. Never sent to the server — purely a UI promise.
+    pub pre_committed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +72,8 @@ pub struct SessionStore {
     pub streaming_text: RwSignal<String>,
     pub streaming_thinking: RwSignal<String>,
     pub transport_errors: RwSignal<Vec<String>>,
+    /// See [`SessionState::pre_committed`].
+    pub pre_committed: RwSignal<bool>,
 }
 
 impl Default for SessionStore {
@@ -91,6 +98,7 @@ impl SessionStore {
             streaming_text: RwSignal::new(String::new()),
             streaming_thinking: RwSignal::new(String::new()),
             transport_errors: RwSignal::new(Vec::new()),
+            pre_committed: RwSignal::new(false),
         }
     }
 
@@ -135,6 +143,8 @@ impl SessionStore {
                 self.streaming_thinking.set(String::new());
                 self.turn_state.set(TurnState::Idle);
                 self.transport_errors.set(Vec::new());
+                // pre_committed is a client-local promise; reset invalidates it.
+                self.pre_committed.set(false);
             }
 
             WsMessage::AgentError(AgentErrorPayload::Envelope { message }) => {
@@ -183,6 +193,7 @@ impl SessionStore {
             streaming_text: self.streaming_text.get_untracked(),
             streaming_thinking: self.streaming_thinking.get_untracked(),
             transport_errors: self.transport_errors.get_untracked(),
+            pre_committed: self.pre_committed.get_untracked(),
         }
     }
 }
@@ -371,6 +382,18 @@ mod tests {
             assert!(snap.events.is_empty());
             assert!(!snap.streaming);
             assert_eq!(snap.turn_state, TurnState::Idle);
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn reset_done_clears_pre_committed() {
+        // pre_committed is a client-local UI promise; ResetDone must wipe it
+        // so a pre-committed Continue cannot leak into a new session.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.pre_committed.set(true);
+            s.apply(WsMessage::ResetDone);
+            assert!(!s.snapshot().pre_committed);
         });
     }
 

@@ -1,6 +1,6 @@
 //! Pure helpers for the conversation feed (Phase 3.3).
 //!
-//! Three concerns, all pure / DOM-free / mutation-tested:
+//! Four concerns, all pure / DOM-free / mutation-tested:
 //!
 //! 1. [`EventKind`] projection: route an [`OmegaEvent`] variant to one
 //!    of six visual families (user / assistant / tool_call / tool_result
@@ -21,6 +21,13 @@
 //!    Returns `Some(<truncated_with_marker>)` when the input exceeds
 //!    `max_chars`, `None` otherwise. Matches the SolidJS UI's
 //!    `truncate(s, maxChars=3000)` (see `src/web/client/App.tsx:305`).
+//!
+//! 4. [`assign_tool_corr`]: walk an event slice and assign 1-based
+//!    correlation integers to tool-call / tool-result pairs within each
+//!    `LlmCall` group. The integers are shown as superscripts in the
+//!    feed so the user can visually pair calls with their results.
+
+use std::collections::HashMap;
 
 use omega_protocol::OmegaEvent;
 
@@ -230,6 +237,82 @@ pub fn truncate_to_lines(s: &str, max_lines: usize) -> Option<String> {
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Byte + line combined preview (tool call / tool result blocks)
+// ---------------------------------------------------------------------------
+
+/// Truncate `s` to at most `max_lines` newline-delimited lines *and*
+/// at most `max_bytes` UTF-8 bytes for the inline tool preview.
+///
+/// The line limit is applied first; the byte cap is then applied to
+/// whatever that yielded. Returns `None` when neither limit binds
+/// (the caller renders `s` verbatim). Returns `Some(truncated)` when
+/// at least one limit binds.
+///
+/// Byte truncation always cuts at a UTF-8 character boundary so the
+/// output is always valid UTF-8. No trailing ellipsis is appended —
+/// the `[input]` / `[payload]` modal button already signals that more
+/// content exists.
+#[must_use]
+pub fn truncate_preview(s: &str, max_lines: usize, max_bytes: usize) -> Option<String> {
+    let line_cut = truncate_to_lines(s, max_lines);
+    let candidate: &str = line_cut.as_deref().unwrap_or(s);
+    if candidate.len() <= max_bytes {
+        // Byte limit is not binding — return the (possibly None) line result.
+        return line_cut;
+    }
+    // Byte limit is binding. Walk down from max_bytes to find a char boundary.
+    let mut boundary = max_bytes;
+    while boundary > 0 && !candidate.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    Some(candidate[..boundary].to_owned())
+}
+
+// ---------------------------------------------------------------------------
+// Tool-call / tool-result correlation integers
+// ---------------------------------------------------------------------------
+
+/// Assign 1-based correlation integers to tool-call and tool-result events.
+///
+/// Returns a parallel `Vec<Option<usize>>` the same length as `events`:
+///
+/// * `LlmCall` events reset the per-call counter to zero and clear the id
+///   map, so numbering restarts at 1 for each LLM round-trip.
+/// * `ToolCall` events get `Some(n)` where *n* is the 1-based ordinal of
+///   that call within the current `LlmCall` group.
+/// * `ToolResult` events get `Some(n)` matching the `ToolCall` with the
+///   same `id`.
+/// * All other events get `None`.
+///
+/// Designed to be called once per reactive frame in `ConversationFeed`
+/// so that numbers stay consistent across the entire displayed feed.
+#[must_use]
+pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
+    let mut result = vec![None; events.len()];
+    let mut counter = 0usize;
+    let mut id_map: HashMap<String, usize> = HashMap::new();
+
+    for (i, ev) in events.iter().enumerate() {
+        match ev {
+            OmegaEvent::LlmCall(_) => {
+                counter = 0;
+                id_map.clear();
+            }
+            OmegaEvent::ToolCall(e) => {
+                counter += 1;
+                id_map.insert(e.id.clone(), counter);
+                result[i] = Some(counter);
+            }
+            OmegaEvent::ToolResult(e) => {
+                result[i] = id_map.get(&e.id).copied();
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -814,5 +897,196 @@ mod tests {
     #[test]
     fn truncate_to_lines_max_zero_nonempty_returns_some_empty() {
         assert_eq!(truncate_to_lines("hello", 0), Some(String::new()));
+    }
+
+    // ---- truncate_preview -------------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_preview_no_limit_binds_returns_none() {
+        // 2 lines, 10 bytes — well within both limits.
+        assert_eq!(truncate_preview("abc", 2, 200), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_preview_line_limit_binds_byte_does_not() {
+        // 3 lines, each short — line limit fires, byte doesn't.
+        let r = truncate_preview("one\ntwo\nthree", 2, 200);
+        assert_eq!(r, Some("one\ntwo".into()));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_preview_byte_limit_binds_line_does_not() {
+        // 1 long line, no newline — byte limit fires.
+        let s = "x".repeat(300);
+        let r = truncate_preview(&s, 2, 200).expect("must truncate");
+        assert_eq!(r.len(), 200);
+        assert!(r.chars().all(|c| c == 'x'));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_preview_byte_cuts_at_char_boundary_for_multibyte() {
+        // 'α' = 2 bytes. 5 × 'α' = 10 bytes. max_bytes=9 → cuts before the 5th α.
+        let s = "α".repeat(5); // 10 bytes
+        let r = truncate_preview(&s, 10, 9).expect("must truncate");
+        // Must be valid UTF-8 and exactly 4 α chars (8 bytes).
+        assert_eq!(r, "α".repeat(4));
+        assert_eq!(r.len(), 8);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_preview_byte_limit_applied_after_line_limit() {
+        // 3 long lines — line limit fires first (giving "xxx…\nyyy…"),
+        // then byte limit fires on that result.
+        let s = format!("{0}\n{1}\n{2}", "x".repeat(50), "y".repeat(50), "z".repeat(50));
+        // max_lines=2 gives "xxx…\nyyy…" (101 bytes including \n).
+        // max_bytes=20 then cuts that to the first 20 bytes.
+        let r = truncate_preview(&s, 2, 20).expect("must truncate");
+        assert_eq!(r.len(), 20);
+        assert!(r.starts_with(&"x".repeat(20)));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn truncate_preview_exactly_at_byte_limit_returns_none() {
+        // s fits in exactly 10 bytes (10 ASCII chars, 1 line) → None.
+        let s = "x".repeat(10);
+        assert_eq!(truncate_preview(&s, 2, 10), None);
+    }
+
+    // ---- assign_tool_corr ------------------------------------------------
+
+    fn make_llm_call() -> OmegaEvent {
+        OmegaEvent::LlmCall(LlmCallEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            url: "u".into(),
+            model: "m".into(),
+            context_hashes: vec![],
+            cache_breakpoint_index: None,
+            request_bytes: 0,
+            request_summary: None,
+        })
+    }
+
+    fn make_tool_call(id: &str) -> OmegaEvent {
+        OmegaEvent::ToolCall(ToolCallEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            id: id.into(),
+            name: "run_command".into(),
+            input: serde_json::json!({}),
+            context_hash: "deadbeef".into(),
+        })
+    }
+
+    fn make_tool_result(id: &str) -> OmegaEvent {
+        OmegaEvent::ToolResult(ToolResultEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            id: id.into(),
+            name: "run_command".into(),
+            is_error: false,
+            duration_ms: 1,
+            output: "ok".into(),
+        })
+    }
+
+    fn make_user() -> OmegaEvent {
+        OmegaEvent::UserMessage(UserMessageEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            content: "hi".into(),
+        })
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_empty_events_returns_empty() {
+        assert_eq!(assign_tool_corr(&[]), vec![]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_non_tool_events_get_none() {
+        let events = vec![make_user(), make_llm_call()];
+        assert_eq!(assign_tool_corr(&events), vec![None, None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_single_tool_call_gets_one() {
+        let events = vec![make_tool_call("id1")];
+        assert_eq!(assign_tool_corr(&events), vec![Some(1)]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_two_calls_numbered_sequentially() {
+        let events = vec![make_tool_call("id1"), make_tool_call("id2")];
+        assert_eq!(assign_tool_corr(&events), vec![Some(1), Some(2)]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_result_matches_call_by_id() {
+        let events = vec![make_tool_call("id1"), make_tool_result("id1")];
+        assert_eq!(assign_tool_corr(&events), vec![Some(1), Some(1)]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_two_calls_two_results_matched() {
+        let events = vec![
+            make_tool_call("a"),
+            make_tool_call("b"),
+            make_tool_result("b"),
+            make_tool_result("a"),
+        ];
+        assert_eq!(
+            assign_tool_corr(&events),
+            vec![Some(1), Some(2), Some(2), Some(1)],
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_llm_call_resets_counter() {
+        let events = vec![
+            make_tool_call("a"),
+            make_tool_call("b"),
+            make_llm_call(),
+            make_tool_call("c"),
+        ];
+        // After LlmCall, counter restarts at 1.
+        assert_eq!(
+            assign_tool_corr(&events),
+            vec![Some(1), Some(2), None, Some(1)],
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_result_before_matching_call_gets_none() {
+        // ToolResult arrives before the ToolCall with the same id (shouldn't
+        // happen in practice, but must not panic and should return None).
+        let events = vec![make_tool_result("unknown")];
+        assert_eq!(assign_tool_corr(&events), vec![None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_llm_call_clears_id_map() {
+        // After an LlmCall, a ToolResult with an id from the previous group
+        // should NOT match (map was cleared).
+        let events = vec![
+            make_tool_call("id1"),
+            make_llm_call(),
+            make_tool_result("id1"), // id1 was in the previous group
+        ];
+        assert_eq!(
+            assign_tool_corr(&events),
+            vec![Some(1), None, None],
+        );
     }
 }

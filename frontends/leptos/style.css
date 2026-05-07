@@ -165,7 +165,7 @@ main > h1 {
   padding: 2px 10px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--bg3);
+  background: none;
   color: var(--dim);
   font-family: var(--font);
   font-size: 13px;
@@ -217,8 +217,9 @@ main > h1 {
 }
 
 .session-item-label {
+  font-family: var(--font);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text);
   flex: 1;
   min-width: 0;
@@ -475,6 +476,15 @@ main > h1 {
 .block-tool-result    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
 .block-status         { border-color: var(--mauve);  color: var(--mauve);  font-size: 13px; }
 .block-error          { border-color: var(--red);    color: var(--red); }
+
+/* Base body rule: override the browser user-agent `white-space: pre`
+ * that applies directly to `<pre>` elements (which beats the inherited
+ * `pre-wrap` from `.block`). All `.block-body` children — whether `pre`,
+ * `span`, or `div` — therefore wrap correctly within the block's width. */
+.block-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* User-message body and assistant body inherit `--text` for content
  * so the brightly-coloured label / border doesn't bleed into long
@@ -796,7 +806,7 @@ main > h1 {
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg2);
+  background: none;
   color: var(--dim);
   font-family: var(--font);
   font-size: 14px;
@@ -837,13 +847,15 @@ main > h1 {
 .leptos-composer-primary:disabled,
 .leptos-composer-abort:disabled { opacity: 0.4; cursor: default; }
 
-.leptos-composer-primary[data-action="send"]:hover:not(:disabled)     { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.leptos-composer-primary[data-action="pause"]                          { color: var(--yellow); }
-.leptos-composer-primary[data-action="pause"]:hover:not(:disabled)     { border-color: var(--yellow); }
-.leptos-composer-primary[data-action="continue"]                       { color: var(--green); }
-.leptos-composer-primary[data-action="continue"]:hover:not(:disabled)  { border-color: var(--green); }
-.leptos-composer-primary[data-action="abort"]                          { color: var(--red); }
-.leptos-composer-primary[data-action="abort"]:hover:not(:disabled)     { border-color: var(--red); }
+.leptos-composer-primary[data-action="send"]:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.leptos-composer-primary[data-action="pause"]                               { color: var(--yellow); }
+.leptos-composer-primary[data-action="pause"]:hover:not(:disabled)          { border-color: var(--yellow); }
+.leptos-composer-primary[data-action="continue"]                            { color: var(--green); }
+.leptos-composer-primary[data-action="continue"]:hover:not(:disabled)       { border-color: var(--green); }
+.leptos-composer-primary[data-action="takeitback"]                          { color: var(--ctp-peach); }
+.leptos-composer-primary[data-action="takeitback"]:hover:not(:disabled)     { border-color: var(--ctp-peach); }
+.leptos-composer-primary[data-action="abort"]                               { color: var(--red); }
+.leptos-composer-primary[data-action="abort"]:hover:not(:disabled)          { border-color: var(--red); }
 
 /* Secondary abort button (only mounts during Paused). */
 .leptos-composer-abort         { color: var(--red); }
@@ -865,8 +877,13 @@ main > h1 {
   transition: border-color 0.15s, color 0.15s;
 }
 .leptos-composer-sessions:hover:not(:disabled) {
-  border-color: var(--ctp-yellow);
-  color: var(--ctp-yellow);
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+/* Active state (picker open) — same blue as the usage/model/effort buttons. */
+.leptos-composer-sessions[data-panel-open="true"] {
+  color: var(--ctp-blue);
+  border-color: var(--ctp-blue);
 }
 
 /* @-path completion popup — anchored above the textarea. Mirrors
@@ -1158,6 +1175,11 @@ main > h1 {
   opacity: 0.65;
 }
 
+/* Push the button group to the right margin of the label row. */
+.block-label-row > .block-label-row-btn:first-of-type {
+  margin-left: auto;
+}
+
 /* Small pill buttons in the label row: [context], [payload], [thinking]. */
 .block-label-row-btn {
   background: none;
@@ -1177,7 +1199,9 @@ main > h1 {
   color: var(--ctp-blue);
 }
 
-/* Tool id superscript (last 4 chars of tool_call id, TODO-C). */
+/* Correlation-integer superscript on tool_call and tool_result blocks.
+ * Shows the 1-based ordinal assigned by assign_tool_corr() so the user
+ * can visually pair each call with its result. */
 .block-tool-id {
   font-size: 10px;
   font-weight: normal;
@@ -1271,10 +1295,12 @@ main > h1 {
   display: flex;
   align-items: center;
 }
-.status-chip[data-status="ready"]     { color: var(--ctp-teal); }
-.status-chip[data-status="streaming"] { color: var(--llm); animation: pulse 1s infinite; }
-.status-chip[data-status="paused"]    { color: var(--ctp-yellow); }
-.status-chip[data-status="offline"]   { color: var(--red); }
+.status-chip[data-status="ready"]                 { color: var(--ctp-teal); }
+.status-chip[data-status="streaming"]             { color: var(--llm); animation: pulse 1s infinite; }
+.status-chip[data-status="pausing"]               { color: var(--ctp-yellow); animation: pulse 1s infinite; }
+.status-chip[data-status="pausing-will-continue"] { color: var(--ctp-green); animation: pulse 1s infinite; }
+.status-chip[data-status="paused"]                { color: var(--ctp-yellow); }
+.status-chip[data-status="offline"]               { color: var(--red); }
 
 /* ── Usage panel (sticky, above Composer) ───────────────────────────────── */
 

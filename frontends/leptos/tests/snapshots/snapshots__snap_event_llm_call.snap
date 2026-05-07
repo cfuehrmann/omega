@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="llm_call" data-event-kind="status" class="block block-status"><div class="block-label-row"><span class="block-label">llm_call</span><button data-testid="leptos-llm-call-open-modal" class="block-label-row-btn">[context]</button><button data-testid="leptos-llm-call-payload" class="block-label-row-btn">[payload]</button></div><span data-testid="leptos-llm-call-summary" class="block-body">claude-sonnet-4-6 · 2 ctx · 1234 bytes</span></div>
+<div data-testid="leptos-event-block" data-event-type="llm_call" data-event-kind="status" class="block block-status"><div class="block-label-row"><span class="block-label">llm_call</span><span data-testid="leptos-llm-call-summary" class="block-meta">2 ctx · 1234 bytes</span><button data-testid="leptos-llm-call-open-modal" class="block-label-row-btn">context</button><button data-testid="leptos-llm-call-payload" class="block-label-row-btn">payload</button></div></div>

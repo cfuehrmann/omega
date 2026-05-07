@@ -110,7 +110,7 @@ async fn composer_send_pong() {
     let action = h.attr(PRIMARY, "data-action").await.expect("attr");
     assert_eq!(action.as_deref(), Some("send"));
     let label = h.text_content(PRIMARY).await.expect("primary text");
-    assert_eq!(label.trim(), "Send");
+    assert_eq!(label.trim(), "Send ⏎");
 
     h.fill(INPUT, "ping").await.expect("fill");
     h.press_key(INPUT, "Enter").await.expect("submit");
@@ -276,16 +276,20 @@ async fn composer_pause_then_abort() {
     h.click(PRIMARY).await.expect("click send");
     wait_for_turn_state(&h, "running", Duration::from_secs(10)).await;
 
-    // Pause first — abort path requires pause_requested or paused.
+    // Pause first — abort is available as secondary during PauseRequested.
     h.click(PRIMARY).await.expect("click pause");
 
-    // While in pause_requested the primary action is "abort".
-    h.wait_for_attr(PRIMARY, "data-action", "abort", Duration::from_secs(5))
+    // While in pause_requested, primary is "continue" (pre-commit); abort is
+    // the secondary button (Abort ⎋).
+    h.wait_for_attr(PRIMARY, "data-action", "continue", Duration::from_secs(5))
         .await
-        .expect("primary never flipped to abort");
+        .expect("primary never flipped to continue in pause_requested");
+    h.wait_for_selector(ABORT, Duration::from_secs(2))
+        .await
+        .expect("abort secondary button missing during pause_requested");
 
-    // Click Abort.
-    h.click(PRIMARY).await.expect("click abort");
+    // Click the secondary Abort button.
+    h.click(ABORT).await.expect("click abort");
 
     wait_for_turn_state(&h, "idle", Duration::from_secs(15)).await;
 

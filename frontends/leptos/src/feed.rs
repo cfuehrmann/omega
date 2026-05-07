@@ -11,7 +11,7 @@
 //!    │         ├── pure `event_type_tag()`   → data-event-type
 //!    │         └── match → typed body view per OmegaEvent variant
 //!    │              └── ToolResult: <ToolResultBlock> with payload modal (TODO-C)
-//!    │                   └── pure `truncate_to_lines(s, 2)`
+//!    │                   └── pure `truncate_preview(s, 2, 200)`
 //!    ├── <StreamingTail>     (live append into the active assistant block)
 //!    └── <div sentinel/>     (Effect-driven scrollIntoView seam)
 //! ```
@@ -58,8 +58,8 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
-    truncate_to_lines,
+    EventKind, assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag,
+    should_autoscroll, truncate_preview,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -228,15 +228,17 @@ pub fn ConversationFeed() -> impl IntoView {
             >
                 <For
                     each=move || {
-                        store
-                            .events
-                            .get()
+                        let events = store.events.get();
+                        let corrs = assign_tool_corr(&events);
+                        events
                             .into_iter()
                             .enumerate()
-                            .collect::<Vec<(usize, OmegaEvent)>>()
+                            .zip(corrs)
+                            .map(|((idx, ev), corr)| (idx, ev, corr))
+                            .collect::<Vec<(usize, OmegaEvent, Option<usize>)>>()
                     }
-                    key=|(idx, _): &(usize, OmegaEvent)| *idx
-                    children=|(_, event): (usize, OmegaEvent)| view! { <EventBlock event=event /> }
+                    key=|(idx, _, _): &(usize, OmegaEvent, Option<usize>)| *idx
+                    children=|(_, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr /> }
                 />
                 <StreamingTail />
                 <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" node_ref=sentinel_ref />
@@ -271,8 +273,13 @@ pub fn ConversationFeed() -> impl IntoView {
 /// `pub` so the host-target snapshot harness in `tests/snapshots.rs`
 /// (Phase 3.6 TEST-ARCH-5) can render fixtures directly. The wasm
 /// runtime mounts it from `<ConversationFeed/>`.
+///
+/// `corr` is the 1-based correlation integer for tool-call / tool-result
+/// pairs within the same `LlmCall` group (see [`assign_tool_corr`]).
+/// When called from the snapshot harness without a corr argument it
+/// defaults to `None` and no superscript is rendered.
 #[component]
-pub fn EventBlock(event: OmegaEvent) -> impl IntoView {
+pub fn EventBlock(event: OmegaEvent, #[prop(optional_no_strip)] corr: Option<usize>) -> impl IntoView {
     let kind = kind_for(&event);
     let class = css_class_for(kind);
     let kind_str = kind_tag(kind);
@@ -285,7 +292,7 @@ pub fn EventBlock(event: OmegaEvent) -> impl IntoView {
             data-event-type=event_type
             data-event-kind=kind_str
         >
-            {render_event_body(event)}
+            {render_event_body(event, corr)}
         </div>
     }
 }
@@ -295,7 +302,7 @@ pub fn EventBlock(event: OmegaEvent) -> impl IntoView {
 /// site. The big match here is necessary (each arm needs typed field
 /// access); the *family decision* is carved out into the pure
 /// `kind_for` in `event_view.rs`.
-fn render_event_body(event: OmegaEvent) -> AnyView {
+fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
     match event {
         OmegaEvent::UserMessage(e) => view! {
             <span class="block-label">"user_message"</span>
@@ -305,9 +312,9 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
 
         OmegaEvent::LlmResponse(e) => view! { <LlmResponseBlock event=e /> }.into_any(),
 
-        OmegaEvent::ToolCall(e) => view! { <ToolCallBlock event=e /> }.into_any(),
+        OmegaEvent::ToolCall(e) => view! { <ToolCallBlock event=e corr=corr /> }.into_any(),
 
-        OmegaEvent::ToolResult(e) => view! { <ToolResultBlock event=e /> }.into_any(),
+        OmegaEvent::ToolResult(e) => view! { <ToolResultBlock event=e corr=corr /> }.into_any(),
 
         OmegaEvent::TurnEnd(e) => {
             let m = &e.metrics;
@@ -447,7 +454,7 @@ fn render_event_body(event: OmegaEvent) -> AnyView {
 ///    `context_hash`.
 /// 3. `[payload]` button — opens the text modal with the full event JSON.
 /// 4. `[thinking]` button — visible only when `thinking` is non-empty;
-///    opens the text modal with the thinking text.
+///    opens the text modal with the thinking text; always the leftmost button.
 ///
 /// Usage line shows all four token buckets including the cache breakdown
 /// required by TODO-A-5 (BUG-C regression detector).
@@ -496,20 +503,6 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
                     {format!("  ({stop_reason})")}
                 </span>
             </span>
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-llm-response-context"
-                on:click=move |_| context_modal.open_hash(context_hash.clone())
-            >
-                "[context]"
-            </button>
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-llm-response-payload"
-                on:click=move |_| text_modal.open("llm_response payload", event_json.clone())
-            >
-                "[payload]"
-            </button>
             <Show when=move || has_thinking fallback=|| ().into_any()>
                 <button
                     class="block-label-row-btn"
@@ -519,9 +512,23 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
                         move |_| text_modal.open("thinking", t.clone())
                     }
                 >
-                    "[thinking]"
+                    "thinking"
                 </button>
             </Show>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-llm-response-context"
+                on:click=move |_| context_modal.open_hash(context_hash.clone())
+            >
+                "context"
+            </button>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-llm-response-payload"
+                on:click=move |_| text_modal.open("llm_response payload", event_json.clone())
+            >
+                "payload"
+            </button>
         </div>
         <div data-testid="leptos-assistant-text">
             <MarkdownBody text=text />
@@ -537,32 +544,24 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
 /// One `tool_call` row — Phase 3.10 TODO-C.
 ///
 /// Label is the tool name (not the literal string `"tool_call"`).
-/// The last four characters of the tool-use `id` appear in superscript
-/// muted text as a correlation hint when parallel tool calls share an
-/// `llm_call`. A 2-line JSON preview appears inline; a `[payload]`
-/// button opens the full JSON in a [`TextModal`].
-/// Returns the last `n` characters (Unicode scalar values) of `id`, or
-/// the whole string if `id` is shorter than `n`.  Used to build the
-/// short correlation hint shown in the tool-call block header.
-fn tool_id_suffix(id: &str) -> String {
-    // saturating_sub avoids the off-by-one boundary: skip(0) == clone for len==4
-    let offset = id.chars().count().saturating_sub(4);
-    id.chars().skip(offset).collect()
-}
-
+/// When `corr` is `Some(n)`, the 1-based integer *n* appears as a
+/// superscript correlation hint so the user can pair calls with
+/// their results. A 2-line / 200-byte JSON preview appears inline;
+/// an `[input]` button opens the full JSON in a [`TextModal`].
 #[component]
-fn ToolCallBlock(event: omega_protocol::events::ToolCallEvent) -> impl IntoView {
+fn ToolCallBlock(
+    event: omega_protocol::events::ToolCallEvent,
+    #[prop(optional_no_strip)] corr: Option<usize>,
+) -> impl IntoView {
     let text_modal =
         use_context::<TextModalState>().expect("TextModalState must be provided");
 
     let name = event.name.clone();
-    // Last 4 chars of the tool-use id as a correlation hint.
-    let id_suffix = tool_id_suffix(&event.id);
 
     let full_input = serde_json::to_string_pretty(&event.input)
         .unwrap_or_else(|_| "{}".to_owned());
-    // 2-line preview; full JSON reachable via the payload modal.
-    let preview = truncate_to_lines(&full_input, 2)
+    // 2-line / 200-byte preview; full JSON reachable via the input modal.
+    let preview = truncate_preview(&full_input, 2, 200)
         .unwrap_or_else(|| full_input.clone());
     let full_for_modal = full_input;
     let modal_title = format!("tool_call: {name}");
@@ -571,14 +570,14 @@ fn ToolCallBlock(event: omega_protocol::events::ToolCallEvent) -> impl IntoView 
         <div class="block-label-row">
             <span class="block-label">
                 <span data-testid="leptos-tool-name">{name.clone()}</span>
-                <sup class="block-tool-id">{id_suffix}</sup>
+                {corr.map(|n| view! { <sup class="block-tool-id">{n.to_string()}</sup> })}
             </span>
             <button
                 class="block-label-row-btn"
-                data-testid="leptos-tool-call-payload"
+                data-testid="leptos-tool-call-input"
                 on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
             >
-                "[payload]"
+                "input"
             </button>
         </div>
         <pre class="block-tool-input" data-testid="leptos-tool-input">{preview}</pre>
@@ -592,12 +591,11 @@ fn ToolCallBlock(event: omega_protocol::events::ToolCallEvent) -> impl IntoView 
 /// One `llm_call` row — Phase 3.10 TODO-B.
 ///
 /// Label row (flex `.block-label-row`) contains:
-///   `llm_call` label · `[context]` button · `[payload]` button
+///   `llm_call` label · ctx-count + bytes meta · `[context]` button · `[payload]` button
 ///
 /// The `[context]` button opens the [`ContextModal`] overlay.
-/// The `[payload]` button opens a [`TextModal`] with the full
-/// event metadata: model, cache_breakpoint_index, request_bytes,
-/// context_hashes, and the request_summary JSON.
+/// The `[payload]` button opens a [`TextModal`] with
+/// cache_breakpoint_index, request_bytes, and the request_summary JSON.
 ///
 /// The old native `<details>` expander (Phase 3.5) is removed
 /// and replaced by the payload modal so the inline block stays
@@ -609,38 +607,23 @@ fn LlmCallBlock(event: omega_protocol::events::LlmCallEvent) -> impl IntoView {
     let text_modal =
         use_context::<TextModalState>().expect("TextModalState must be provided");
 
-    // Summary line: model · ctx count · bytes.
-    let summary_line = format!(
-        "{} · {} ctx · {} bytes",
-        event.model,
+    // Inline meta: ctx count · bytes (shown on the label row).
+    let inline_meta = format!(
+        "{} ctx · {} bytes",
         event.context_hashes.len(),
         event.request_bytes,
     );
 
-    // Payload text: all four metadata fields joined in a readable block.
-    let cache_bp = event
-        .cache_breakpoint_index
-        .map_or_else(|| "none".to_owned(), |i| i.to_string());
-    let hashes_text = if event.context_hashes.is_empty() {
-        "  (none)".to_owned()
-    } else {
-        event
-            .context_hashes
-            .iter()
-            .map(|h| format!("  {h}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    // Payload text: request_bytes + request_summary JSON.
+    // cache_control placement is visible inside request_summary itself
+    // (system/tools/messages labels each note their ephemeral marker).
     let request_summary_str = event.request_summary.as_ref().map_or_else(
         || "(not available)".to_owned(),
         |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "(unrenderable)".to_owned()),
     );
     let payload_text = format!(
-        "model: {}\ncache_breakpoint_index: {}\nrequest_bytes: {}\ncontext_hashes:\n{}\n\n--- request_summary ---\n{}",
-        event.model,
-        cache_bp,
+        "request_bytes: {}\n\n--- request_summary ---\n{}",
         event.request_bytes,
-        hashes_text,
         request_summary_str,
     );
 
@@ -650,54 +633,62 @@ fn LlmCallBlock(event: omega_protocol::events::LlmCallEvent) -> impl IntoView {
     view! {
         <div class="block-label-row">
             <span class="block-label">"llm_call"</span>
+            <span class="block-meta" data-testid="leptos-llm-call-summary">{inline_meta}</span>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-llm-call-open-modal"
                 on:click=move |_| context_modal.open(event_for_ctx.clone())
             >
-                "[context]"
+                "context"
             </button>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-llm-call-payload"
                 on:click=move |_| text_modal.open("llm_call payload", payload_text.clone())
             >
-                "[payload]"
+                "payload"
             </button>
         </div>
-        <span class="block-body" data-testid="leptos-llm-call-summary">{summary_line}</span>
     }
 }
 
 /// One `tool_result` row — Phase 3.10 TODO-C.
 ///
 /// * Label is the tool name (not `"tool_result"`).
-/// * Inline preview is truncated to the first 2 lines.
+/// * When `corr` is `Some(n)`, the same integer shown on the
+///   matching [`ToolCallBlock`] appears as a superscript.
+/// * Inline preview is truncated to the first 2 lines / 200 bytes.
 /// * A `[payload]` button opens a [`TextModal`] with the full output.
 /// * The old `[show more]` toggle and the `duration_ms` meta line are
 ///   removed from the inline view; duration appears in the modal title.
 #[component]
-fn ToolResultBlock(event: omega_protocol::events::ToolResultEvent) -> impl IntoView {
+fn ToolResultBlock(
+    event: omega_protocol::events::ToolResultEvent,
+    #[prop(optional_no_strip)] corr: Option<usize>,
+) -> impl IntoView {
     let text_modal =
         use_context::<TextModalState>().expect("TextModalState must be provided");
 
     let name = event.name.clone();
     let full = event.output.clone();
-    // 2-line inline preview; full output reachable via the payload modal.
-    let preview = truncate_to_lines(&full, 2)
+    // 2-line / 200-byte inline preview; full output reachable via the payload modal.
+    let preview = truncate_preview(&full, 2, 200)
         .unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
 
     view! {
         <div class="block-label-row">
-            <span class="block-label" data-testid="leptos-tool-result-name">{name}</span>
+            <span class="block-label" data-testid="leptos-tool-result-name">
+                {name}
+                {corr.map(|n| view! { <sup class="block-tool-id">{n.to_string()}</sup> })}
+            </span>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-tool-result-payload"
                 on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
             >
-                "[payload]"
+                "payload"
             </button>
         </div>
         <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
@@ -952,24 +943,6 @@ mod tests {
         assert!(!is_mermaid_language("Mermaid"));
         assert!(!is_mermaid_language("mermaid2"));
         assert!(!is_mermaid_language("flow"));
-    }
-
-    // --- tool_id_suffix ---------------------------------------------
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn tool_id_suffix_returns_full_id_when_short() {
-        assert_eq!(tool_id_suffix(""), "");
-        assert_eq!(tool_id_suffix("ab"), "ab");
-        assert_eq!(tool_id_suffix("abcd"), "abcd");
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn tool_id_suffix_returns_last_four_chars_when_longer() {
-        assert_eq!(tool_id_suffix("abcde"), "bcde");
-        assert_eq!(tool_id_suffix("abcdefgh"), "efgh");
-        assert_eq!(tool_id_suffix("toolu_01ABC"), "1ABC");
     }
 }
 

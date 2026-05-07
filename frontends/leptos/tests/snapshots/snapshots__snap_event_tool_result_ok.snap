@@ -2,5 +2,5 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="tool_result" data-event-kind="tool_result" class="block block-tool-result"><div class="block-label-row"><span data-testid="leptos-tool-result-name" class="block-label">run_command</span><button data-testid="leptos-tool-result-payload" class="block-label-row-btn">[payload]</button></div><pre data-testid="leptos-tool-result-body" class="block-body">hi
+<div data-testid="leptos-event-block" data-event-type="tool_result" data-event-kind="tool_result" class="block block-tool-result"><div class="block-label-row"><span data-testid="leptos-tool-result-name" class="block-label">run_command<!></span><button data-testid="leptos-tool-result-payload" class="block-label-row-btn">payload</button></div><pre data-testid="leptos-tool-result-body" class="block-body">hi
 </pre></div>

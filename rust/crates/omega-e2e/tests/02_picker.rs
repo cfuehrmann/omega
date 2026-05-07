@@ -78,7 +78,8 @@ async fn picker_rename_updates_label() {
     let dir = h.new_session().await.expect("new session");
     h.open_picker().await.expect("re-open picker");
 
-    h.click(&item_action_sel(&dir, "leptos-session-rename"))
+    // Clicking the label opens the inline rename input.
+    h.click(&item_action_sel(&dir, "leptos-session-label"))
         .await
         .expect("click rename");
 
@@ -94,9 +95,10 @@ async fn picker_rename_updates_label() {
         .await
         .expect("fill rename");
 
-    h.click(&item_action_sel(&dir, "leptos-session-rename-submit"))
+    // Enter submits (no submit button — handled by on:keydown).
+    h.press_key(&input_sel, "Enter")
         .await
-        .expect("click submit");
+        .expect("press Enter to submit");
 
     let label_sel = format!("{} [data-testid='leptos-session-label']", item_sel(&dir));
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -289,7 +291,8 @@ async fn picker_rename_does_not_close() {
     let dir = h.new_session().await.expect("new session");
     h.open_picker().await.expect("re-open picker");
 
-    h.click(&item_action_sel(&dir, "leptos-session-rename"))
+    // Clicking the label opens the inline rename input.
+    h.click(&item_action_sel(&dir, "leptos-session-label"))
         .await
         .expect("click rename");
 

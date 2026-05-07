@@ -249,11 +249,10 @@ async fn llm_call_payload_modal_shows_metadata() {
         .await
         .expect("read body");
     for needle in [
-        "model:",
-        "cache_breakpoint_index:",
         "request_bytes:",
-        "context_hashes:",
         "request_summary",
+        "\"model\"", // JSON key present in request_summary block
+        "\"tools\"", // tool list always present in elided request
     ] {
         assert!(
             body.contains(needle),

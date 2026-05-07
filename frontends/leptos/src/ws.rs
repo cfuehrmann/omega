@@ -164,6 +164,10 @@ impl WsClient {
             Closure::<dyn FnMut(CloseEvent)>::new(move |_evt: CloseEvent| {
                 client.state.update_value(|s| {
                     s.store.connected.set(false);
+                    // pre_committed is a client-local UI promise. On disconnect
+                    // we must clear it so a stale pre-commit cannot auto-fire a
+                    // `continue` frame against a fresh reconnected session.
+                    s.store.pre_committed.set(false);
                     s.attempt = s.attempt.saturating_add(1);
                 });
                 client.schedule_reconnect();

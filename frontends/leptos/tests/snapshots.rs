@@ -39,6 +39,7 @@ use omega_web::feed::{EventBlock, MarkdownBody};
 use omega_web::picker::PickerOpen;
 use omega_web::protocol::{SessionInfoPayload, TurnState};
 use omega_web::text_modal::TextModalState;
+use omega_web::usage_panel::UsagePanelOpen;
 
 // ---------------------------------------------------------------------------
 // Scrubbing
@@ -457,7 +458,7 @@ mod composer_states {
     use omega_web::store::SessionStore;
     use omega_web::ws::WsClient;
 
-    fn install_app_context(turn_state: TurnState) {
+    fn install_app_context(turn_state: TurnState, pre_committed: bool) {
         let store = SessionStore::new();
         store.session_info.set(Some(SessionInfoPayload {
             dir: "2025-01-01T00-00-00-000-aaaa".into(),
@@ -469,6 +470,7 @@ mod composer_states {
             name: None,
         }));
         store.turn_state.set(turn_state);
+        store.pre_committed.set(pre_committed);
         provide_context(store);
         let list_store = SessionListStore::new();
         provide_context(list_store);
@@ -476,12 +478,14 @@ mod composer_states {
         provide_context(ws);
         // Phase 3.9: PickerOpen is required by <Composer /> (Sessions button).
         provide_context(PickerOpen::new());
+        // UsagePanelOpen is required by <Composer /> (Usage button).
+        provide_context(UsagePanelOpen::new());
     }
 
     #[test]
     fn snap_composer_idle() {
         let html = render(|| {
-            install_app_context(TurnState::Idle);
+            install_app_context(TurnState::Idle, false);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);
@@ -490,7 +494,7 @@ mod composer_states {
     #[test]
     fn snap_composer_running() {
         let html = render(|| {
-            install_app_context(TurnState::Running);
+            install_app_context(TurnState::Running, false);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);
@@ -499,7 +503,18 @@ mod composer_states {
     #[test]
     fn snap_composer_pause_requested() {
         let html = render(|| {
-            install_app_context(TurnState::PauseRequested);
+            install_app_context(TurnState::PauseRequested, false);
+            view! { <Composer /> }
+        });
+        insta::assert_snapshot!(html);
+    }
+
+    /// PauseRequested + pre_committed=true: primary should be "Take it back"
+    /// with the secondary Abort ⎋ still present.
+    #[test]
+    fn snap_composer_pause_requested_pre_committed() {
+        let html = render(|| {
+            install_app_context(TurnState::PauseRequested, true);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);
@@ -508,7 +523,7 @@ mod composer_states {
     #[test]
     fn snap_composer_paused() {
         let html = render(|| {
-            install_app_context(TurnState::Paused);
+            install_app_context(TurnState::Paused, false);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);

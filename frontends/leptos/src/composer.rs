@@ -8,41 +8,54 @@
 //!   │   ├─ <Show completion_open>
 //!   │   │   └─ <FileCompletionDropdown items=… highlight=… />
 //!   │   └─ <textarea .composer-input on:input on:keydown />
-//!   └─ <button> based on `composer_action(turn_state)`:
-//!        Idle            → "Send"     ⇒ ClientFrame::UserMessage
-//!        Running         → "Pause"    ⇒ ClientFrame::Pause
-//!        PauseRequested  → "Abort"    ⇒ ClientFrame::Abort
-//!        Paused          → "Continue" ⇒ ClientFrame::Continue { content }
-//!      [+ a secondary "Abort" button only in Paused, so the operator
-//!         can always escalate.]
-//! ```
+//!   └─ Button matrix keyed on `turn_state` × `pre_committed`:
+//!
+//!        Idle              → "Send ⏎"        ⇒ ClientFrame::UserMessage
+//!        Running           → "Pause ⎋"       ⇒ ClientFrame::Pause
+//!        PauseRequested    → "Continue ⏎"    ⇒ pre_committed = true
+//!                               +  "Abort ⎋"  ⇒ ClientFrame::Abort
+//!        PauseRequested    → "Take it back"  ⇒ pre_committed = false
+//!        (pre_committed)        + "Abort ⎋"  ⇒ ClientFrame::Abort
+//!        Paused            → "Continue ⏎"    ⇒ ClientFrame::Continue { content }
+//!                               + "Abort ⎋"  ⇒ ClientFrame::Abort
+//!
+//! ## Pre-commit / auto-drain flow
+//!
+//! Clicking "Continue ⏎" during `PauseRequested` does **not** send a WS
+//! frame immediately — the agent is still mid-stream. Instead it sets
+//! `store.pre_committed = true`, switching the status chip to
+//! "Pausing, will continue". An `Effect` watches the
+//! `PauseRequested → Paused` transition: when it fires while
+//! `pre_committed` is set, it auto-fires `ClientFrame::Continue` (with
+//! any interjection typed meanwhile) and clears the flag.
+//!
+//! "Take it back" is available during `PauseRequested` + pre_committed
+//! and reverts the promise: `pre_committed = false`. The pause will
+//! still land, but the UI will not auto-fire a continue.
+//!
+//! ## Keyboard shortcuts
+//!
+//! | Key   | State                          | Action                        |
+//! |-------|--------------------------------|-------------------------------|
+//! | `⎋`   | Running                        | Pause                         |
+//! | `⎋`   | PauseRequested \| Paused       | Abort                         |
+//! | `⏎`   | Idle                           | Send                          |
+//! | `⏎`   | PauseRequested (not committed) | Continue (pre-commit)         |
+//! | `⏎`   | Paused                         | Continue (send WS frame)      |
+//! | `⏎`   | Running \| PauseRequested+pc  | newline (compose interjection) |
 //!
 //! ## Pure projection
 //!
-//! [`composer_action`] is the only place the four-state mapping lives.
-//! It mirrors 3.3's `kind_for` / 3.2's `is_active` pattern: pure,
-//! mutation-tested, no DOM reads. The component wraps it with the
-//! `WsClient::send` calls and signal updates.
-//!
-//! ## Continue with interjection
-//!
-//! Per 3.4 spec: when the action is `Continue` (turn paused), the
-//! textarea draft (if non-empty) is forwarded as
-//! `ClientFrame::Continue { content: Some(draft) }`. Empty drafts
-//! send `Continue { content: None }`. The wire shape supports both
-//! verbatim. The "preCommitted / take it back" SolidJS UX is
-//! intentionally dropped — one less RwSignal, one less race window;
-//! the operator can still reach the same outcome by pausing then
-//! continuing.
+//! [`composer_action`] is the only place the button-matrix mapping lives.
+//! [`status_str`] / [`status_label`] are the only places the status chip
+//! label mapping lives. Both are pure, mutation-tested, no DOM reads.
 //!
 //! ## Mutation-test carve-out
 //!
-//! `composer_action` is the carved-out pure projection.
-//! `selected_label_for` (model + effort short labels) is also pure
-//! and mutation-tested. Component glue (textarea events, dropdown
-//! reactivity, completion popup positioning, focus management,
-//! NodeRef DOM reads) is the JS-interop edge — same gap pattern as
-//! 3.1's `ws.rs` / 3.2's `picker.rs` / 3.3's `feed.rs`.
+//! Component glue (textarea events, dropdown reactivity, completion popup
+//! positioning, focus management, NodeRef DOM reads, reactive Effects) is
+//! the JS-interop edge — same gap pattern as 3.1's `ws.rs` / 3.2's
+//! `picker.rs` / 3.3's `feed.rs`.
 
 use leptos::ev;
 use leptos::html;
@@ -130,44 +143,49 @@ pub fn selected_label_for<'a>(options: &'a [(&'a str, &'a str)], current: &'a st
 // Pure state-machine projection
 // ---------------------------------------------------------------------------
 
-/// Primary action the composer should offer for the given
-/// server-reported turn state.
+/// Primary action the composer should offer for the given server-reported
+/// turn state and client-local `pre_committed` flag.
 ///
-/// - `Idle`           → `Send`
-/// - `Running`        → `Pause`
-/// - `PauseRequested` → `Abort` (escalation while server hasn't
-///   actually paused yet — `Continue` would be ambiguous because the
-///   agent is mid-streaming)
-/// - `Paused`         → `Continue` (with optional interjection content
-///   from the textarea draft)
+/// - `Idle`                              → `Send`
+/// - `Running`                           → `Pause`
+/// - `PauseRequested` (not committed)    → `Continue` (pre-commit: sets flag, no WS)
+/// - `PauseRequested` (committed)        → `TakeItBack` (clears flag)
+/// - `Paused`                            → `Continue` (sends WS `continue` frame)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComposerAction {
     Send,
     Pause,
-    Abort,
     Continue,
+    TakeItBack,
 }
 
-/// Pure projection from server-reported turn state to the primary
-/// composer action. Same pattern as 3.3's `kind_for`.
+/// Pure projection from server turn state + pre_committed flag to the
+/// primary composer action.
 #[must_use]
-pub fn composer_action(turn_state: TurnState) -> ComposerAction {
+pub fn composer_action(turn_state: TurnState, pre_committed: bool) -> ComposerAction {
     match turn_state {
         TurnState::Idle => ComposerAction::Send,
         TurnState::Running => ComposerAction::Pause,
-        TurnState::PauseRequested => ComposerAction::Abort,
+        TurnState::PauseRequested => {
+            if pre_committed {
+                ComposerAction::TakeItBack
+            } else {
+                ComposerAction::Continue
+            }
+        }
         TurnState::Paused => ComposerAction::Continue,
     }
 }
 
-/// Stable visible label for each action.
+/// Stable visible label for each action (key icon shown to the right
+/// of the text so the operator can see which key drives the button).
 #[must_use]
 pub fn action_label(action: ComposerAction) -> &'static str {
     match action {
-        ComposerAction::Send => "Send",
-        ComposerAction::Pause => "Pause",
-        ComposerAction::Abort => "Abort",
-        ComposerAction::Continue => "Continue",
+        ComposerAction::Send => "Send ⏎",
+        ComposerAction::Pause => "Pause ⎋",
+        ComposerAction::Continue => "Continue ⏎",
+        ComposerAction::TakeItBack => "Take it back",
     }
 }
 
@@ -178,20 +196,18 @@ pub fn action_tag(action: ComposerAction) -> &'static str {
     match action {
         ComposerAction::Send => "send",
         ComposerAction::Pause => "pause",
-        ComposerAction::Abort => "abort",
         ComposerAction::Continue => "continue",
+        ComposerAction::TakeItBack => "takeitback",
     }
 }
 
-/// Whether a secondary `Abort` button should render alongside the
-/// primary one. We only show it in `Paused` — when the primary is
-/// `Continue` and the operator might want to escalate. In `Running`
-/// the primary is already `Pause` (Abort requires pausing first); in
-/// `PauseRequested` the primary is already `Abort`; in `Idle` there
-/// is no turn to abort.
+/// Whether a secondary `Abort ⎋` button should render alongside the
+/// primary one. Shown whenever the turn is paused or pause-requested:
+/// both states allow the operator to escalate to an immediate abort.
+/// (`Running` requires pausing first; `Idle` has nothing to abort.)
 #[must_use]
 pub fn show_secondary_abort(turn_state: TurnState) -> bool {
-    matches!(turn_state, TurnState::Paused)
+    matches!(turn_state, TurnState::Paused | TurnState::PauseRequested)
 }
 
 // ---------------------------------------------------------------------------
@@ -235,9 +251,9 @@ pub fn Composer() -> impl IntoView {
             .with(|si| si.as_ref().map_or_else(String::new, |s| s.effort.clone()))
     });
 
-    // Primary action derived from turn state — mutation-testable
-    // projection lives in `composer_action`.
-    let action = Memo::new(move |_| composer_action(store.turn_state.get()));
+    // Primary action derived from turn state + pre_committed — mutation-testable
+    // projections live in `composer_action`.
+    let action = Memo::new(move |_| composer_action(store.turn_state.get(), store.pre_committed.get()));
 
     #[allow(unused_variables)]
     let close_completion = move || {
@@ -350,7 +366,8 @@ pub fn Composer() -> impl IntoView {
         }
     };
 
-    let do_continue = move || {
+    // Continue from Paused: send the WS frame (with optional interjection draft).
+    let do_continue_from_paused = move || {
         let typed = draft.get();
         let content = if typed.trim().is_empty() {
             None
@@ -365,16 +382,74 @@ pub fn Composer() -> impl IntoView {
         if had_content {
             set_textarea_state(String::new(), 0);
         }
+        store.pre_committed.set(false);
+    };
+
+    // Continue from PauseRequested: the pause seam hasn’t landed yet.
+    // Don’t send anything over the wire — just set the pre_committed flag.
+    // When turn_state transitions PauseRequested → Paused, the auto-drain
+    // Effect below will fire `do_continue_from_paused`.
+    let do_continue_from_pause_requested = move || {
+        store.pre_committed.set(true);
+    };
+
+    // Take it back: revert a pre-committed Continue while still in PauseRequested.
+    let do_take_it_back = move || {
+        store.pre_committed.set(false);
     };
 
     let on_primary_click = move |_| match action.get() {
         ComposerAction::Send => do_send(),
         ComposerAction::Pause => do_pause(),
-        ComposerAction::Abort => do_abort(),
-        ComposerAction::Continue => do_continue(),
+        ComposerAction::Continue => {
+            // `Continue` covers two states:
+            //   PauseRequested → pre-commit (no WS yet)
+            //   Paused         → send WS continue frame
+            if store.turn_state.get_untracked() == TurnState::PauseRequested {
+                do_continue_from_pause_requested();
+            } else {
+                do_continue_from_paused();
+            }
+        }
+        ComposerAction::TakeItBack => do_take_it_back(),
     };
 
     let on_secondary_abort = move |_| do_abort();
+
+    // Auto-drain effect: client-only (Effects need a WASM executor; SSR has none).
+    // When turn_state transitions PauseRequested → Paused while pre_committed is
+    // set, auto-fire the continue WS frame.  Belt-and-suspenders: also clears
+    // pre_committed if we leave PauseRequested/Paused without a normal drain
+    // (e.g. disconnect → reconnect into Idle, or server reset).  The disconnect
+    // path is also covered by ws.rs’s on_close handler.
+    #[cfg(not(feature = "ssr"))]
+    {
+        let auto_drain_prev: StoredValue<TurnState, LocalStorage> =
+            StoredValue::new_local(TurnState::Idle);
+        Effect::new(move |_| {
+            let current = store.turn_state.get();
+            let prev = auto_drain_prev.get_value();
+            let pc = store.pre_committed.get_untracked();
+            if prev == TurnState::PauseRequested && current == TurnState::Paused && pc {
+                let typed = draft.get_untracked();
+                let content = if typed.trim().is_empty() { None } else { Some(typed) };
+                let had_content = content.is_some();
+                if ws.send(&ClientFrame::Continue { content }).is_ok() && had_content {
+                    draft.set(String::new());
+                    if let Some(el) = textarea_ref.get_untracked() {
+                        el.set_value("");
+                        let _ = el.set_selection_start(Some(0));
+                        let _ = el.set_selection_end(Some(0));
+                    }
+                }
+                store.pre_committed.set(false);
+            }
+            if !matches!(current, TurnState::PauseRequested | TurnState::Paused) && pc {
+                store.pre_committed.set(false);
+            }
+            auto_drain_prev.set_value(current);
+        });
+    }
 
     // ---- model + effort dropdowns ------------------------------------------
 
@@ -447,22 +522,60 @@ pub fn Composer() -> impl IntoView {
             // the prefix; on_input fires next).
         }
 
-        // Out of popup: Enter (no Shift) fires the primary action.
+        // ⎋: pause from Running; abort from PauseRequested / Paused.
+        // (Popup Escape is already handled above and returns early.)
+        if key == "Escape" {
+            match store.turn_state.get_untracked() {
+                TurnState::Running => {
+                    evt.prevent_default();
+                    do_pause();
+                }
+                TurnState::PauseRequested | TurnState::Paused => {
+                    evt.prevent_default();
+                    do_abort();
+                }
+                TurnState::Idle => {} // browser default
+            }
+            return;
+        }
+
+        // ⏎ (no Shift): fire the primary action for the current state.
+        // In Running, or in PauseRequested with a pre-committed Continue,
+        // there is no Enter action — fall through so the textarea can
+        // receive a newline for composing a multi-line interjection.
         if key == "Enter" && !shift {
-            evt.prevent_default();
-            on_primary_click(ev::MouseEvent::new("click").unwrap_or_else(|_| {
-                // Synthesising a MouseEvent is overkill here; just
-                // dispatch the action directly.
-                ev::MouseEvent::new("click").expect("MouseEvent fallback")
-            }));
+            let ts = store.turn_state.get_untracked();
+            let pc = store.pre_committed.get_untracked();
+            match ts {
+                TurnState::Idle => {
+                    evt.prevent_default();
+                    do_send();
+                }
+                TurnState::PauseRequested if !pc => {
+                    evt.prevent_default();
+                    do_continue_from_pause_requested();
+                }
+                TurnState::Paused => {
+                    evt.prevent_default();
+                    do_continue_from_paused();
+                }
+                // Running or PauseRequested+preCommitted: fall through to newline.
+                _ => {}
+            }
         }
     };
 
     // ---- view --------------------------------------------------------------
 
-    // "Sessions" button opens the picker (Phase 3.9 TODO-1).
+    // "Sessions" button toggles the picker (Phase 3.9 TODO-1).
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
-    let on_sessions_click = move |_| picker_open.open();
+    let on_sessions_click = move |_| {
+        if picker_open.0.get_untracked() {
+            picker_open.close();
+        } else {
+            picker_open.open();
+        }
+    };
 
     // "Usage" button toggles the usage panel.
     let usage_panel_open =
@@ -477,6 +590,7 @@ pub fn Composer() -> impl IntoView {
             <button
                 class="leptos-composer-sessions"
                 data-testid="leptos-composer-sessions"
+                data-panel-open=move || picker_open.0.get().to_string()
                 on:click=on_sessions_click
             >
                 "Sessions"
@@ -534,7 +648,7 @@ pub fn Composer() -> impl IntoView {
                     data-testid="leptos-composer-abort"
                     on:click=on_secondary_abort
                 >
-                    "Abort"
+                    "Abort ⎋"
                 </button>
             </Show>
             <StatusChip />
@@ -627,14 +741,35 @@ where
 // Status chip (inline in the composer row)
 // ---------------------------------------------------------------------------
 
-/// Maps the connected/turn-state pair to a CSS `data-status` string.
-pub(crate) fn status_str(connected: bool, turn_state: TurnState) -> &'static str {
+/// Maps the connected/turn-state/pre_committed triple to a CSS
+/// `data-status` string.
+///
+/// | `data-status`          | when                                   |
+/// |------------------------|----------------------------------------|
+/// | `offline`              | not connected                          |
+/// | `streaming`            | `Running`                              |
+/// | `pausing`              | `PauseRequested`, not pre-committed    |
+/// | `pausing-will-continue`| `PauseRequested`, pre-committed        |
+/// | `paused`               | `Paused`                               |
+/// | `ready`                | `Idle`                                 |
+pub(crate) fn status_str(
+    connected: bool,
+    turn_state: TurnState,
+    pre_committed: bool,
+) -> &'static str {
     if !connected {
         "offline"
     } else {
         match turn_state {
             TurnState::Running => "streaming",
-            TurnState::Paused | TurnState::PauseRequested => "paused",
+            TurnState::PauseRequested => {
+                if pre_committed {
+                    "pausing-will-continue"
+                } else {
+                    "pausing"
+                }
+            }
+            TurnState::Paused => "paused",
             TurnState::Idle => "ready",
         }
     }
@@ -645,6 +780,8 @@ pub(crate) fn status_label(status: &str) -> &'static str {
     match status {
         "offline" => "Offline",
         "streaming" => "Streaming…",
+        "pausing" => "Pausing…",
+        "pausing-will-continue" => "Pausing, will continue",
         "paused" => "Paused",
         _ => "Ready",
     }
@@ -652,21 +789,30 @@ pub(crate) fn status_label(status: &str) -> &'static str {
 
 /// Inline status badge rendered at the right end of the composer row.
 ///
-/// Four states driven by `store.connected` and `store.turn_state`:
+/// Six states driven by `store.connected`, `store.turn_state`, and
+/// `store.pre_committed`:
 ///
-/// | `data-status` | colour | text         |
-/// |---------------|--------|--------------|
-/// | `ready`       | teal   | `Ready`      |
-/// | `streaming`   | llm    | `Streaming…` |
-/// | `paused`      | yellow | `Paused`     |
-/// | `offline`     | red    | `Offline`    |
+/// | `data-status`           | colour | text                    |
+/// |-------------------------|--------|-------------------------|
+/// | `ready`                 | teal   | `Ready`                 |
+/// | `streaming`             | llm    | `Streaming…`            |
+/// | `pausing`               | yellow | `Pausing…`              |
+/// | `pausing-will-continue` | green  | `Pausing, will continue`|
+/// | `paused`                | yellow | `Paused`                |
+/// | `offline`               | red    | `Offline`               |
 ///
 /// `pointer-events: none` in CSS — never intercepts clicks on the composer.
 #[component]
 fn StatusChip() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
 
-    let status = move || status_str(store.connected.get(), store.turn_state.get());
+    let status = move || {
+        status_str(
+            store.connected.get(),
+            store.turn_state.get(),
+            store.pre_committed.get(),
+        )
+    };
     let text = move || status_label(status());
 
     view! {
@@ -747,35 +893,43 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn composer_action_idle_is_send() {
-        assert_eq!(composer_action(TurnState::Idle), ComposerAction::Send);
+        assert_eq!(composer_action(TurnState::Idle, false), ComposerAction::Send);
     }
 
     #[wasm_bindgen_test]
     fn composer_action_running_is_pause() {
-        assert_eq!(composer_action(TurnState::Running), ComposerAction::Pause);
+        assert_eq!(composer_action(TurnState::Running, false), ComposerAction::Pause);
     }
 
     #[wasm_bindgen_test]
-    fn composer_action_pause_requested_is_abort() {
+    fn composer_action_pause_requested_not_precommitted_is_continue() {
         assert_eq!(
-            composer_action(TurnState::PauseRequested),
-            ComposerAction::Abort
+            composer_action(TurnState::PauseRequested, false),
+            ComposerAction::Continue
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn composer_action_pause_requested_precommitted_is_takeitback() {
+        assert_eq!(
+            composer_action(TurnState::PauseRequested, true),
+            ComposerAction::TakeItBack
         );
     }
 
     #[wasm_bindgen_test]
     fn composer_action_paused_is_continue() {
-        assert_eq!(composer_action(TurnState::Paused), ComposerAction::Continue);
+        assert_eq!(composer_action(TurnState::Paused, false), ComposerAction::Continue);
     }
 
     // ---- action_label / action_tag ----------------------------------------
 
     #[wasm_bindgen_test]
     fn action_label_per_action_is_distinct() {
-        assert_eq!(action_label(ComposerAction::Send), "Send");
-        assert_eq!(action_label(ComposerAction::Pause), "Pause");
-        assert_eq!(action_label(ComposerAction::Abort), "Abort");
-        assert_eq!(action_label(ComposerAction::Continue), "Continue");
+        assert_eq!(action_label(ComposerAction::Send), "Send ⏎");
+        assert_eq!(action_label(ComposerAction::Pause), "Pause ⎋");
+        assert_eq!(action_label(ComposerAction::Continue), "Continue ⏎");
+        assert_eq!(action_label(ComposerAction::TakeItBack), "Take it back");
     }
 
     #[wasm_bindgen_test]
@@ -784,8 +938,8 @@ mod tests {
         let all = [
             ComposerAction::Send,
             ComposerAction::Pause,
-            ComposerAction::Abort,
             ComposerAction::Continue,
+            ComposerAction::TakeItBack,
         ];
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {
@@ -798,8 +952,8 @@ mod tests {
     fn action_tag_per_action_is_snake_case_lowercase() {
         assert_eq!(action_tag(ComposerAction::Send), "send");
         assert_eq!(action_tag(ComposerAction::Pause), "pause");
-        assert_eq!(action_tag(ComposerAction::Abort), "abort");
         assert_eq!(action_tag(ComposerAction::Continue), "continue");
+        assert_eq!(action_tag(ComposerAction::TakeItBack), "takeitback");
     }
 
     #[wasm_bindgen_test]
@@ -807,8 +961,8 @@ mod tests {
         let all = [
             ComposerAction::Send,
             ComposerAction::Pause,
-            ComposerAction::Abort,
             ComposerAction::Continue,
+            ComposerAction::TakeItBack,
         ];
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {
@@ -820,10 +974,11 @@ mod tests {
     // ---- show_secondary_abort ----------------------------------------------
 
     #[wasm_bindgen_test]
-    fn secondary_abort_only_visible_when_paused() {
+    fn secondary_abort_visible_when_paused_or_pause_requested() {
+        // Abort is now available whenever the turn is in a pause state.
         assert!(!show_secondary_abort(TurnState::Idle));
         assert!(!show_secondary_abort(TurnState::Running));
-        assert!(!show_secondary_abort(TurnState::PauseRequested));
+        assert!(show_secondary_abort(TurnState::PauseRequested));
         assert!(show_secondary_abort(TurnState::Paused));
     }
 
@@ -890,24 +1045,38 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn status_str_offline_when_disconnected() {
-        assert_eq!(status_str(false, TurnState::Idle), "offline");
-        assert_eq!(status_str(false, TurnState::Running), "offline");
+        assert_eq!(status_str(false, TurnState::Idle, false), "offline");
+        assert_eq!(status_str(false, TurnState::Running, false), "offline");
     }
 
     #[wasm_bindgen_test]
     fn status_str_streaming_when_running() {
-        assert_eq!(status_str(true, TurnState::Running), "streaming");
+        assert_eq!(status_str(true, TurnState::Running, false), "streaming");
     }
 
     #[wasm_bindgen_test]
-    fn status_str_paused_for_paused_and_pause_requested() {
-        assert_eq!(status_str(true, TurnState::Paused), "paused");
-        assert_eq!(status_str(true, TurnState::PauseRequested), "paused");
+    fn status_str_pausing_for_pause_requested_without_precommit() {
+        assert_eq!(status_str(true, TurnState::PauseRequested, false), "pausing");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_str_pausing_will_continue_for_pause_requested_with_precommit() {
+        assert_eq!(
+            status_str(true, TurnState::PauseRequested, true),
+            "pausing-will-continue"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn status_str_paused_when_paused() {
+        assert_eq!(status_str(true, TurnState::Paused, false), "paused");
+        // pre_committed has no effect in Paused (pause already landed).
+        assert_eq!(status_str(true, TurnState::Paused, true), "paused");
     }
 
     #[wasm_bindgen_test]
     fn status_str_ready_when_idle_and_connected() {
-        assert_eq!(status_str(true, TurnState::Idle), "ready");
+        assert_eq!(status_str(true, TurnState::Idle, false), "ready");
     }
 
     #[wasm_bindgen_test]
@@ -918,6 +1087,16 @@ mod tests {
     #[wasm_bindgen_test]
     fn status_label_streaming() {
         assert_eq!(status_label("streaming"), "Streaming…");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_label_pausing() {
+        assert_eq!(status_label("pausing"), "Pausing…");
+    }
+
+    #[wasm_bindgen_test]
+    fn status_label_pausing_will_continue() {
+        assert_eq!(status_label("pausing-will-continue"), "Pausing, will continue");
     }
 
     #[wasm_bindgen_test]
