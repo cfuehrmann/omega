@@ -6,8 +6,7 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ## P0 — Top priority
 
-*(empty — TEST-ARCH-1 … 4 done; remaining test-architecture work is gated
-on the Leptos rewrite and tracked under P3.)*
+*(empty — TEST-ARCH-1 … 6 all done; see [backlog/test-architecture.md](backlog/test-architecture.md).)*
 
 ---
 
@@ -30,19 +29,11 @@ coverage. Fix: emit `llm_error` before `agent_error` on exhaustion.
 
 ## P3 — Low priority / deferred
 
-### TEST-ARCH-5 / TEST-ARCH-6 — Leptos HTML snapshots + drive `omega-server` to zero-missed
+### TEST-ARCH-5 / TEST-ARCH-6 — Done
 
-**[backlog/test-architecture.md](backlog/test-architecture.md)**
-
-The two remaining steps of the test-architecture plan. Both gated on the
-Leptos rewrite landing (Phase 3 of `rust-migration.md`):
-
-- **TEST-ARCH-5** — add `leptos::ssr::render_to_string` + `insta`
-  HTML-snapshot tests per component, expected to replace ~80% of the
-  current Playwright surface area.
-- **TEST-ARCH-6** — with the bulk of UI coverage moved into fast Rust
-  tests, drive `cargo mutants -p omega-server` to the same zero-missed
-  bar already met by `omega-cli`, `omega-tools`, and `omega-agent`.
+Both completed. TEST-ARCH-5 (Leptos SSR snapshots) shipped in Phase 3.6;
+TEST-ARCH-6 (zero-missed workspace sweep) achieved in Phase 4 Step 5.
+See [backlog/test-architecture.md](backlog/test-architecture.md).
 
 ### Advisor tool — blocked on `clear_tool_uses` compatibility
 

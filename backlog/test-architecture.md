@@ -1,9 +1,7 @@
 # TEST-ARCH — Test architecture & web-surface honesty
 
 **Owner:** open
-**Status:** 🟢 Pre-Leptos work complete (TEST-ARCH-1 … 4); TEST-ARCH-5
-and TEST-ARCH-6 are gated on the Leptos rewrite (Phase 3 of
-`rust-migration.md`).
+**Status:** ✅ All steps complete. TEST-ARCH-1 … 6 done.
 
 Umbrella plan for bringing every test surface in Omega onto a single,
 honest pattern: **test through the outermost user-visible surface of each
@@ -275,32 +273,25 @@ redacted in every WS / CLI snapshot).
 
 ---
 
-### TEST-ARCH-5 — Leptos HTML snapshot tests *(post-Phase 3)*
+### TEST-ARCH-5 — Leptos HTML snapshot tests
 
-**Status:** ⬜ blocked on Leptos rewrite landing.
+**Status:** ✅ **Done** (Phase 3.6, commit `cfd8ce9`).
 
-When the Leptos UI ships, add a fast Rust test layer:
-
-- For each component, construct a reactive state via the same event-sequence
-  scripts the WS protocol tests use.
-- Render via `leptos::ssr::render_to_string` (or component-level testing
-  utilities).
-- Snapshot the HTML with `insta`.
-
-This is the cheap bulk of post-Leptos UI testing. Expected to replace ~80% of
-the current Playwright surface area. Keep Playwright for genuinely
-browser-only concerns: keyboard navigation, focus, scroll behaviour,
-reconnection UX, mobile layout, hydration mismatches.
+`leptos::ssr::render_to_string` + `insta` HTML-snapshot harness added in
+`frontends/leptos/tests/snapshots.rs`. 27 snapshot tests cover every
+major component variant. The gate runs them via `cargo test --test
+snapshots --no-default-features --features ssr`.
 
 ---
 
-### TEST-ARCH-6 — Drive `rust-mutants-server` to zero-missed *(post-Phase 3)*
+### TEST-ARCH-6 — Drive full workspace to zero-missed
 
-**Status:** ⬜ blocked on TEST-ARCH-5.
+**Status:** ✅ **Done** (Phase 4 Step 5, commit `25cb34a`).
 
-With the bulk of UI coverage now in fast Rust tests (TEST-ARCH-5), running
-mutation testing on `omega-server` is finally cheap. Drive it to the same
-zero-missed bar as `omega-tools` and (per TEST-ARCH-1) `omega-cli`.
+Post-harness mutation re-baseline with omega-e2e excluded:
+`rust/` workspace 688 mutants, **0 missed**; `frontends/leptos/` 206 mutants,
+**0 missed**. The `omega-server` crate is fully covered within the workspace
+sweep.
 
 ---
 
