@@ -39,9 +39,9 @@ ssr = ["leptos/ssr"]
 # Versions pinned against transitive resolution of leptos 0.8.19 to avoid
 # duplicate-version builds.
 leptos                   = { version = "=0.8.19", default-features = false }
-js-sys                   = "=0.3.97"
-wasm-bindgen             = "=0.2.120"
-web-sys                  = { version = "=0.3.97", features = [
+js-sys                   = "=0.3.98"
+wasm-bindgen             = "=0.2.121"
+web-sys                  = { version = "=0.3.98", features = [
     "WebSocket",
     "MessageEvent",
     "Window",
@@ -81,7 +81,7 @@ omega-protocol           = { path = "../../rust/crates/omega-protocol" }
 # The `json` feature pulls in serde_json (already a direct dep). The `http`
 # feature provides the `Request::get/post` builders.
 gloo-net                 = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
-wasm-bindgen-futures     = "=0.4.70"
+wasm-bindgen-futures     = "=0.4.71"
 
 # Phase 3.6 — markdown rendering.
 #
@@ -101,14 +101,14 @@ pulldown-cmark           = { version = "=0.13.3", default-features = false, feat
 # (e.g. `markdown::render_options` where `T | S == T ^ S` for disjoint
 # bitflag bits, making the `| → ^` mutation value-equivalent and
 # uncatchable by any test).
-mutants                  = "0.0.3"
+mutants                  = "0.0.4"
 
 # Tests run as wasm32 under `wasm-bindgen-test-runner` (Node backend).
-# The exact-pin matches the `wasm-bindgen 0.2.120` resolution above —
-# wasm-bindgen-test 0.3.70 has `wasm-bindgen = "=0.2.120"` as a hard
+# The exact-pin matches the `wasm-bindgen 0.2.121` resolution above —
+# wasm-bindgen-test 0.3.71 has `wasm-bindgen = "=0.2.121"` as a hard
 # requirement. Do not change one without changing the other.
 [dev-dependencies]
-wasm-bindgen-test = "=0.3.70"
+wasm-bindgen-test = "=0.3.71"
 # Phase 3.6 — host-target snapshot harness (TEST-ARCH-5). Pinned at
 # the latest 1.x at the time of authoring.
 insta             = { version = "=1.47.2", features = ["yaml"] }

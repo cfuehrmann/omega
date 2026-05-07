@@ -21,7 +21,7 @@ use futures::StreamExt;
 use futures::stream::{self, Stream};
 use omega_protocol::events::LlmRetryEvent;
 use omega_protocol::{LlmRetryReason, OmegaEvent, StreamSignal};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::provider::{AgentItemStream, Provider};
 use crate::types::{AgentItem, LlmError, LlmRequest};

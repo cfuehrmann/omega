@@ -14,10 +14,11 @@
 //! ## Why `gloo-net`
 //!
 //! `gloo-net` 0.6 is already a transitive dep via `leptos`'s
-//! `server_fn`. Pinning it as a direct dep with the same version costs
-//! ~zero bytes (LTO already linked the relevant code paths). The
-//! ergonomics win is significant — see `ws_url_from_window` for the
-//! `web_sys::Request` alternative we'd otherwise be writing.
+//! `server_fn` (which requires `gloo-net = "0.6"`). Pinning it as a
+//! direct dep with the same version costs ~zero bytes (LTO already
+//! linked the relevant code paths), and prevents a duplicate build of
+//! gloo-net if we were to specify a different version. The `gloo-net`
+//! pin will track `server_fn` until leptos upgrades to 0.7.
 
 use gloo_net::http::Request;
 

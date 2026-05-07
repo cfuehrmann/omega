@@ -66,7 +66,7 @@ web-leptos-build:
 # is gated by `#[cfg(feature = "ssr")]` so it skips here.
 web-leptos-test:
     rustup target add wasm32-unknown-unknown
-    cargo install --locked --version =0.2.120 wasm-bindgen-cli
+    cargo install --locked --version =0.2.121 wasm-bindgen-cli
     cd frontends/leptos && cargo test --lib --target wasm32-unknown-unknown
 
 # Host-target snapshot harness (TEST-ARCH-5). Renders every component
@@ -129,7 +129,7 @@ web-mutants:
     mkdir -p "$HOME/.cache/cargo-mutants-tmp"
     export TMPDIR="$HOME/.cache/cargo-mutants-tmp"
     rustup target add wasm32-unknown-unknown
-    cargo install --locked --version =0.2.120 wasm-bindgen-cli
+    cargo install --locked --version =0.2.121 wasm-bindgen-cli
     cd frontends/leptos && cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
 
 # -----------------------------------------------------------------------

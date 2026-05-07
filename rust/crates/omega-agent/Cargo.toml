@@ -13,7 +13,7 @@ omega-store    = { path = "../omega-store" }
 omega-tools    = { path = "../omega-tools" }
 
 async-stream = "0.3"
-mutants       = "0.0.3" # #[mutants::skip] attribute for equivalent-mutation suppression
+mutants       = "0.0.4" # #[mutants::skip] attribute for equivalent-mutation suppression
 chrono       = { version = "0.4", default-features = false, features = ["clock"] }
 futures      = "0.3"
 serde_json   = "1"
