@@ -77,3 +77,4 @@ bench/jobs/
 # Python bytecode cache
 __pycache__/
 *.pyc
+.phase4-notes.md

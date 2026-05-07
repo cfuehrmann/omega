@@ -9,6 +9,7 @@ members  = [
   "crates/omega-server",
   "crates/omega-mock-server",
   "crates/omega-test-fixtures",
+  "crates/omega-e2e",
 ]
 resolver = "2"
 

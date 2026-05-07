@@ -1,0 +1,31 @@
+[package]
+name    = "omega-e2e"
+version = "0.1.0"
+edition.workspace = true
+
+# Phase 4 chromiumoxide-driven end-to-end harness. Tests live under
+# `tests/`; each test owns a freshly spawned `mock-omega-server` on a
+# random `127.0.0.1:0` port, a TempDir sessions root, and a headless
+# Chrome page driven over CDP. Every test is `#[ignore = "browser"]`
+# so the workspace `cargo test` (run by `just rust-gate`) stays fast
+# and Chrome-free; the explicit `just rust-e2e` recipe runs them.
+#
+# Replaces the Playwright spec suite under `e2e/`. See `rust-migration.md`
+# §"Phase 4 — harness design (settled)".
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow              = "1"
+chromiumoxide       = "0.9"
+futures             = "0.3"
+reqwest             = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json          = "1"
+tempfile            = "3"
+tokio               = { version = "1", features = ["full"] }
+omega-test-fixtures = { path = "../omega-test-fixtures" }

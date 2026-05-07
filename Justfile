@@ -51,6 +51,12 @@ typecheck:
 test-browser: web-leptos-build rust-build-mock-server
     npx playwright test
 
+# Run the chromiumoxide-driven Rust e2e suite (Phase 4 successor to
+# Playwright). Builds the Leptos bundle and the mock fixture binary
+# first, then runs the `--ignored` (browser) tests in `omega-e2e`.
+rust-e2e: web-leptos-build rust-build-mock-server
+    cd rust && cargo test -p omega-e2e --tests -- --ignored --test-threads=1
+
 # Run browser tests with headed browser (useful for debugging).
 test-browser-debug: web-leptos-build rust-build-mock-server
     npx playwright test --headed
