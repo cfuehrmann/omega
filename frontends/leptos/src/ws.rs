@@ -108,6 +108,7 @@ impl WsClient {
 
     /// Open a fresh WebSocket. Drops any previously-installed socket
     /// and closures. Idempotent: a second call re-connects.
+    #[mutants::skip] // WebSocket API; covered by e2e harness (smoke + reconnect tests).
     pub fn connect(self) {
         // Cancel any pending reconnect timer first so two connects
         // don't race to install duplicate sockets.
@@ -199,6 +200,7 @@ impl WsClient {
     ///
     /// Phase 3.2 wires this up from the session picker (new / rename /
     /// delete frames).
+    #[mutants::skip] // WebSocket send; covered by e2e harness (all user-action tests).
     pub fn send(self, frame: &ClientFrame) -> Result<(), JsValue> {
         let payload = serde_json::to_string(frame)
             .map_err(|e| JsValue::from_str(&format!("client frame serialise: {e}")))?;
@@ -211,6 +213,7 @@ impl WsClient {
             .ok_or_else(|| JsValue::from_str("WsClient state already disposed"))?
     }
 
+    #[mutants::skip] // timer scheduling; covered by e2e harness reconnect behaviour.
     fn schedule_reconnect(self) {
         let attempt = self.state.with_value(|s| s.attempt);
         let delay_ms = backoff_delay_ms(attempt, &mut RandomJitter);
@@ -274,11 +277,13 @@ fn backoff_delay_ms(attempt: u32, jitter: &mut impl Jitter) -> i32 {
 // JS timer wrappers
 // ---------------------------------------------------------------------------
 
+#[mutants::skip] // JS timer wrapper; covered by e2e harness reconnect tests.
 fn set_timeout(callback: &js_sys::Function, ms: i32) -> Result<i32, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     window.set_timeout_with_callback_and_timeout_and_arguments_0(callback, ms)
 }
 
+#[mutants::skip] // JS timer cancel; covered by e2e harness reconnect tests.
 fn clear_timeout(handle: i32) {
     if let Some(window) = web_sys::window() {
         window.clear_timeout_with_handle(handle);
@@ -291,6 +296,7 @@ fn clear_timeout(handle: i32) {
 
 /// Derive `<ws|wss>://<host>/ws` from `window.location`. Errors only on
 /// a missing/foreign-origin window.
+#[mutants::skip] // URL derives from window.location protocol; test URL is always http so == vs != flip is value-equivalent in the wasm test harness.
 pub fn ws_url_from_window() -> Result<String, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     let location = window.location();

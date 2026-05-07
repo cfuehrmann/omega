@@ -31,6 +31,7 @@ use crate::sessions::SessionListItem;
 /// Returns `Err(message)` for any network-level failure (request build,
 /// fetch error, non-2xx response, JSON decode failure). The message
 /// is intended for direct display in `SessionListStore::last_error`.
+#[mutants::skip] // fetch() wrapper; network behaviour covered by e2e harness.
 pub async fn get_sessions() -> Result<Vec<SessionListItem>, String> {
     let resp = Request::get("/api/sessions")
         .send()
@@ -57,6 +58,7 @@ pub async fn get_sessions() -> Result<Vec<SessionListItem>, String> {
 ///
 /// Returns `Err(message)` for any network-level failure. Same
 /// JS-interop carve-out as [`get_sessions`].
+#[mutants::skip] // fetch() wrapper; network behaviour covered by e2e harness.
 pub async fn get_files(prefix: &str) -> Result<Vec<String>, String> {
     // Build the URL via `Request::get` with a query parameter so
     // we get URL-encoding for free (e.g. spaces, `&`).
@@ -90,6 +92,7 @@ pub async fn get_files(prefix: &str) -> Result<Vec<String>, String> {
 ///
 /// Returns `Err(message)` for any network-level failure. Same
 /// JS-interop carve-out as [`get_sessions`] / [`get_files`].
+#[mutants::skip] // fetch() wrapper; network behaviour covered by e2e harness.
 pub async fn get_context(hashes: &[String]) -> Result<Vec<ContextRecord>, String> {
     if hashes.is_empty() {
         return Ok(Vec::new());
