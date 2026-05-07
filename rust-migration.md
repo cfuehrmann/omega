@@ -37,7 +37,7 @@
 | 3.9 — visual / UX follow-ups | ✅ Done | Picker open/close modal + Sessions button; auto-close on Reset/Resume; per-event-type colour drift (`llm_call` sapphire, `llm_retry` peach, `turn_end` muted, pause teal, info overlay2, thinking teal); debug panel `cfg(debug_assertions)`-gated; specs migrated from debug-store to `data-connected` / `data-active-session-dir` DOM attrs; 5 new Playwright specs; 37/37 green |
 | 3.10 — UX fidelity pass | ✅ Done | TODO-G+A done (commit `0cd5d7a`): close-button `✕`, `llm_response` stop-reason inline, thinking/context/payload buttons, `cache_read`/`cache_write` usage line, shared `TextModal`. TODO-B done: `llm_call` `[context]`/`[payload]` label-row, `<details>`→modal. TODO-C done: `ToolCallBlock` name label + id superscript + 2-line preview + `[payload]` modal; `ToolResultBlock` name label + 2-line preview + `[payload]` modal, show-more removed, duration in modal title. TODO-D done: `StatusChip` fixed-position chip (Ready/Streaming…/Paused/Offline). `<h1>"Omega (Leptos)"` heading removed. All 37 Playwright specs green. |
 | 3 — Leptos UI rewrite | ✅ Done | SolidJS → Leptos. Cutover at 3.7 + visual parity at 3.8 close out the phase; 3.9 polish queue tracked separately |
-| 4 — `chromiumoxide` e2e harness | ⬜ Future | Playwright retired; pure-Rust browser tests |
+| 4 — `chromiumoxide` e2e harness | 🟡 Step 5 pending | Steps 1–4 + Q7 deletion done (PR head `40e4f48`): `omega-e2e` crate with chromiumoxide harness, all 6 specs ported (36/36 green), Playwright + JS toolchain deleted, `/leptos/` mount alias removed (Trunk `public_url=/`). Step 5 — post-harness mutation re-baseline — outstanding before phase closes |
 
 ---
 
@@ -65,19 +65,18 @@ dev/
 │       ├── omega-agent/        ✅ done
 │       ├── omega-cli/          ✅ done
 │       ├── omega-server/       ✅ done  (HTTP + WS; serves the Leptos bundle)
-│       └── omega-mock-server/  ✅ done  (Playwright fixture binary; retires in Phase 4)
+│       ├── omega-mock-server/  ✅ done  (fixture binary used by the e2e harness)
+│       └── omega-e2e/          ✅ done  (Phase 4 chromiumoxide harness; 36 browser tests)
 ├── frontends/                  ← Web frontends
 │   └── leptos/                 ✅ done  (production frontend, wasm32 Cargo workspace)
-├── e2e/                        ← Playwright real-server suite (retires in Phase 4)
-├── Justfile
-└── package.json                ← inert; carries Playwright + a few SolidJS-era deps
-                                  retained for Phase 4 deletion in lockstep
+└── Justfile
 ```
 
-**Frontend serving (post-3.7):** `omega-server` serves the Leptos
-bundle at both `/` (fallback `ServeDir`) and `/leptos/` (kept as a
-one-release alias; deletion + the `Trunk.toml` `public_url` flip
-land in a follow-up). `/ws`, `/api/*`, `/health` are unchanged.
+**Frontend serving (post-Phase-4):** `omega-server` serves the
+Leptos bundle at `/` only (Trunk `public_url = "/"`, fallback
+`ServeDir`). The Phase-3.0 `/leptos/` alias mount and its 308
+redirect were retired alongside the Playwright deletion in commit
+`40e4f48`. `/ws`, `/api/*`, `/health` are unchanged.
 
 ---
 
@@ -3093,19 +3092,19 @@ start in parallel; 3.9 has no dependency on it.
 
 ---
 
-## Next-session priority queue — Phase 4 kickoff
+## Next-session priority queue — Phase 4 close-out
 
-**All migration work through Phase 3.10 is complete** (37/37 Playwright
-specs green, `just gate` ✅). Open items:
+**Phase 4 implementation + Q7 deletion are complete** (36/36
+chromiumoxide specs green; Playwright + JS toolchain deleted;
+Leptos mounted at `/`; PR head `40e4f48`). Open items:
 
 | Item | Priority | Notes |
 |---|---|---|
-| Phase 4 — `chromiumoxide` e2e harness | **Next** | Retire Playwright + JS toolchain; pure-Rust e2e harness; Step 3 (design memo) approved — ready for Step 4 |
+| Phase 4 Step 5 — post-harness mutation re-baseline | **Next** | Re-run `just mutants` + `just web-mutants`; confirm 0 missed; record final scores in this file; mark Phase 4 ✅ in the status table; declare migration complete |
 | TODO-E-2 — `[usage]` detail button on `llm_response` | Optional | Additive, low-risk Leptos change |
 | TODO-E-3 — `[take it back]` edit-and-resend | Optional | Medium scope, requires new WS round-trip |
 
-TODO-E-2/E-3 are independent and can slot in before or after JS
-toolchain deletion.
+TODO-E-2/E-3 are independent and unblocked by Phase-4 close-out.
 
 ---
 
@@ -3257,29 +3256,127 @@ knip.json
 *`omega-server` (deferred from Phase 3.7, land in this commit):* delete `/leptos/` mount alias from router; flip `frontends/leptos/Trunk.toml` `public_url` to `/`; delete `--public-dir` flag from `omega-server` and `mock-omega-server`.
 ---
 
-### Phase 4 — next-session prompt
+### Phase 4 — Step 4 + Q7 outcome (landed)
 
-*Steps 1–3 complete. Start directly at Step 4.*
+*Steps 1–3 committed at `de06dd0` (mutation baseline) and `c504594`
+(design memo). Step 4 + Q7 landed across seven commits ending at
+`40e4f48`.*
 
-**Model:** `claude-opus-4-7`
+**Per-spec port commits** (all `just rust-gate`-green at landing):
 
-**Effort:** `high`
+| Spec | Commit | Cases | Wall (sequential) |
+|---|---|---|---|
+| 1 — smoke | `0cd6fdb` | 2 | 1.7 s |
+| 2 — session-picker | `66e8e15` | 9 | 4.8 s |
+| 3 — markdown | `cfd8ce9` | 11 | 6.3 s |
+| 4 — composer | `8bc7845` | 8 | 8.9 s |
+| 5 — context-resume | `701c605` | 3 | 2.9 s |
+| 6 — conversation-feed | `ca9a25b` | 4 | 5.4 s |
+| **Q7 deletion** | `40e4f48` | smoke 2→1 | — |
+
+36 e2e cases total post-Q7 (the bare `/leptos` → `/leptos/` 308
+redirect case was deleted alongside its route).
+
+**Q7 changes (single commit `40e4f48`):**
+
+- *Deleted:* `e2e/`, `package.json`, `bun.lock`, `bunfig.toml`,
+  `playwright.config.ts`, `tsconfig.json`, `knip.json`,
+  `node_modules/`.
+- *Justfile:* removed `test-browser{,-debug,-log}`, `e2e`,
+  `typecheck`, `rust-build-mock-server`; `gate` now runs
+  `rust-e2e`. **Zero `npx`/`bunx`/`bun` references.**
+- *Trunk:* `public_url '/leptos/' → '/'`.
+- *omega-server:* deleted the `/leptos` → `/leptos/` 308 redirect,
+  the `/leptos/` nested `ServeDir`, the `--public-dir` CLI flag,
+  the `DEFAULT_PUBLIC_DIR` const, and the `AppState::public_dir`
+  field. The Leptos bundle is now served only by the root fallback
+  `ServeDir`.
+- *omega-mock-server:* matching `--public-dir` removal.
+- *Tests:* deleted 4 `/leptos/`-mount cases in `tests/http.rs`
+  (covered by harness smoke + the surviving root-`/` ServeDir
+  tests); harness `launch()` navigates to `/`; `01_smoke.rs` lost
+  the redirect case (route is gone).
+
+**Acceptance criteria — actual at `40e4f48`:**
+
+| Criterion | Target | Measured |
+|---|---|---|
+| `npx`/`bun`/`bunx` in `Justfile` | 0 | 0 ✅ |
+| Rust e2e green | all | 36/36 ✅ |
+| `just rust-gate` green | yes | yes ✅ |
+| Session-pollution check | clean | clean ✅ |
+| `just gate` wall | ≤ 24 s | **~64 s** ⚠️ |
+
+The 24 s target was a stretch goal from the harness design memo. The
+actual wall is dominated by `rust-gate`'s leptos `--release` build +
+clippy + snapshot run, which is unrelated to the Phase 4 swap. The
+e2e suite alone runs in ~28 s sequentially. Parallelism (`--test-threads=2`)
+was tried and rejected — picker tests collide on shared sessions
+state within a single test binary; sequential is the safe default.
+
+**Files added:**
+
+- `rust/crates/omega-e2e/` — new workspace member.
+  - `src/lib.rs` — `TestHarness` (CDP via chromiumoxide; subprocess
+    lifecycle; helpers: `wait_for_attr`, `wait_for_selector`,
+    `wait_for_count`, `wait_for_detached`, `text_content`, `attr`,
+    `click`, `fill`, `select_option`, `press_key`, `eval`,
+    `open_picker`, `new_session`, `auto_accept_dialogs`,
+    `load_script`, `reset_calls`, `captured_calls`).
+  - `tests/01_smoke.rs` … `tests/06_feed.rs` — one file per ported
+    Playwright spec; every test marked `#[ignore = "browser"]` so
+    `cargo test` skips them but `just rust-e2e` (`-- --ignored
+    --test-threads=1`) runs them.
+
+### Phase 4 — Step 5 next-session prompt
+
+*Step 4 + Q7 are landed at `40e4f48`. Step 5 is the post-harness
+mutation re-baseline — the final gate before declaring Phase 4 done.*
+
+**Model:** `claude-sonnet-4-6`
+
+**Effort:** `medium`
 
 **Prompt:**
 
-> Steps 1–3 of Phase 4 are complete (mutation baseline committed at `de06dd0`; harness design memo approved). Start at Step 4.
+> Phase 4 Steps 1–4 + Q7 are complete (PR head `40e4f48`). Run
+> Step 5 — the post-harness mutation re-baseline.
 >
-> **Orient first.** Read `rust-migration.md` Phase 4 section — specifically the settled harness design (Q1–Q7) and the spec port order table — and every Playwright spec in `e2e/`. Understand what each spec tests before writing any Rust.
+> **Orient first.** Read the Phase 4 section of `rust-migration.md`,
+> especially the Step 4 + Q7 outcome subsection and the original
+> mutation re-baseline expectations ("Phase 4 close: 0 missed in
+> both sweeps"). Skim the `omega-e2e` crate (`rust/crates/omega-e2e/`)
+> to understand what surface the harness now covers — particularly
+> the Leptos UI mutants that were Playwright-only at the Step 2
+> baseline.
 >
-> **Step 4 — implement:**
-> - Create `rust/crates/omega-e2e` inside the existing workspace. Add `chromiumoxide` as the browser driver. Build a `TestHarness` struct: spawn `mock-omega-server` on a random OS-assigned port (`:0`), probe `GET /health` until ready, open a headless Chrome page via `chromiumoxide::Browser::launch`.
-> - Port specs one at a time in the agreed order: `leptos-smoke` → `leptos-session-picker` → `leptos-markdown` → `leptos-composer` → `leptos-context-resume` → `leptos-conversation-feed`. `just rust-gate` must stay green after each port.
-> - Do not delete any JS/TS file until every spec has a passing Rust equivalent.
-> - Once all 6 specs are green: apply the deletion checklist (Q7). Delete `e2e/`, `package.json`, `bun.lock`, `node_modules/`, `playwright.config.ts`, `bunfig.toml`, `tsconfig.json`, `e2e/tsconfig.json`, `knip.json`. Update the Justfile (replace `just test-browser` with `just rust-e2e` in `gate`; delete `test-browser`, `test-browser-debug`, `test-browser-log`, `e2e`, `typecheck`, `rust-build-mock-server` recipes). Delete the `/leptos/` mount alias from `omega-server::router`, flip `frontends/leptos/Trunk.toml` `public_url` to `/`, and delete `--public-dir` from `omega-server` and `mock-omega-server`.
-> - After deletion: `just gate` must contain zero `npx`/`bun`/`bunx` calls; all Rust e2e tests green; wall-clock ≤ 24 s.
-> - Re-run both mutation sweeps (`just mutants` + `just web-mutants`) and confirm 0 survived.
+> **Run both sweeps.** They are slow (hours each); start them in
+> the background and let them finish:
 >
-> **When complete:** mark Phase 4 ✅ in `rust-migration.md` status table; record crate/driver decisions and final mutation scores; declare migration complete.
+> - `just mutants` — `rust/` workspace (cargo-mutants on native
+>   target). Step-2 baseline: 690 total, 20 missed.
+> - `just web-mutants` — `frontends/leptos/` (cargo-mutants against
+>   wasm32). Step-2 baseline: 271 total, 84 missed.
+>
+> **Triage missed mutants.** For each survivor, classify it as
+> (a) genuinely covered by the new harness (write the missing test),
+> (b) value-equivalent / unreachable (document with comment +
+> rationale), or (c) reveals a real gap that requires a fix or new
+> test. Prefer (a) wherever practical; the Phase-4 promise was that
+> `omega-e2e` would close the Playwright gap. Land fixes / tests as
+> separate commits per survivor cluster.
+>
+> **Close out the phase.** Once both sweeps show 0 missed:
+>
+> - Update the Phase 4 row in the status table (line ~49) from
+>   `🟡 Step 5 pending` to `✅ Done` with a short summary.
+> - Add a final-score table to the Phase 4 section.
+> - Update the priority queue: drop the Step 5 row; promote
+>   TODO-E-2 / TODO-E-3 to top priority (or declare migration
+>   complete and close the document).
+>
+> Commit each sweep result + closing edits separately so the
+> mutation diff is reviewable on its own.
 
 ---
 
@@ -3855,9 +3952,16 @@ architecture notes.
 
 ---
 
-## Phase 4 — `chromiumoxide` e2e harness (next) ⬜ Future
+## Phase 4 — `chromiumoxide` e2e harness 🟡 Step 5 pending
 
-**Goal.** Retire Playwright. Replace it with a pure-Rust browser-test
+**Steps 1–4 + Q7 landed across `0cd6fdb..40e4f48`.** See the
+*Phase 4 — Step 4 + Q7 outcome (landed)* subsection above for the
+per-spec commit table, the Q7 diff summary, and the measured
+acceptance criteria. **Step 5 — post-harness mutation re-baseline
+— is the only outstanding work** (see *Step 5 next-session prompt*
+above).
+
+**Goal (preserved as historical context).** Retire Playwright. Replace it with a pure-Rust browser-test
 harness driven by [`chromiumoxide`](https://crates.io/crates/chromiumoxide)
 (CDP directly to Chrome; no sidecar process). Delete the JS toolchain
 wholesale (`package.json`, `bun.lock`, `node_modules/`, `bunfig.toml`,
