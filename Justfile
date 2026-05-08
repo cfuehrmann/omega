@@ -9,15 +9,43 @@
 # rust/crates/omega-e2e.
 #
 # Production:
-#   just server         — starts omega-server on :3000 (Leptos at /)
+#   just server         — builds and starts omega-server on :3000 (Leptos at /)
+
+# Scratch directory for cargo-mutants (keeps per-mutant trees off tmpfs).
+mutants-tmp := env('HOME') + "/.cache/cargo-mutants-tmp"
+
+# -----------------------------------------------------------------------
+# Private helpers
+# -----------------------------------------------------------------------
+
+# Add the wasm32 target and install the matching wasm-bindgen-cli.
+# Version-locked: bump both here and in frontends/leptos/Cargo.toml together.
+[private]
+wasm-setup:
+    rustup target add wasm32-unknown-unknown
+    cargo install --locked --version =0.2.121 wasm-bindgen-cli
+
+# Format check + Clippy + cargo test + machete. Assumes dist/ is already built.
+[private]
+_rust-checks:
+    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+    cargo machete
+
+# Build mock server + run browser tests. Assumes dist/ is already built.
+[private]
+_rust-e2e-run:
+    cd rust && cargo build --release -p omega-mock-server
+    cd rust && cargo test -p omega-e2e --tests -- --ignored --test-threads=1
 
 # -----------------------------------------------------------------------
 # Top-level test pipeline
 # -----------------------------------------------------------------------
 
-# Full quality gate: rust-gate + chromiumoxide e2e. Run before every commit.
+# Full quality gate: Leptos build → test → snapshots → Rust checks → e2e.
 # All output is tee'd to test-output/gate-latest.log (overwritten each run).
 # On failure, read that file for the complete trace — no need to re-run.
+# The Leptos bundle is built exactly once; rust-gate and rust-e2e each
+# rebuild it when called standalone.
 gate:
     #!/usr/bin/env bash
     set -eo pipefail
@@ -25,10 +53,16 @@ gate:
     LOG="test-output/gate-latest.log"
     BEFORE=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
     {
-        echo "=== rust-gate ==="
-        just rust-gate
+        echo "=== web-leptos-build ==="
+        just web-leptos-build
+        echo "=== web-leptos-test ==="
+        just web-leptos-test
+        echo "=== web-leptos-snapshots ==="
+        just web-leptos-snapshots
+        echo "=== rust-checks ==="
+        just _rust-checks
         echo "=== rust-e2e ==="
-        just rust-e2e
+        just _rust-e2e-run
         echo "=== session-pollution check ==="
         AFTER=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
         if [ "$AFTER" -gt "$BEFORE" ]; then
@@ -44,9 +78,7 @@ gate:
 # Run the chromiumoxide-driven Rust e2e suite. Builds the Leptos bundle
 # and the mock-omega-server fixture binary first, then runs the
 # `--ignored` (browser) tests in `omega-e2e`.
-rust-e2e: web-leptos-build
-    cd rust && cargo build --release -p omega-mock-server
-    cd rust && cargo test -p omega-e2e --tests -- --ignored --test-threads=1
+rust-e2e: web-leptos-build _rust-e2e-run
 
 # -----------------------------------------------------------------------
 # Leptos frontend
@@ -56,17 +88,14 @@ rust-e2e: web-leptos-build
 # Phase 3.7 made this the canonical production bundle; Phase 4 Q7
 # flipped Trunk's `public_url` to `/` and omega-server now serves it
 # from `/` (the `/leptos/` alias mount is gone).
-web-leptos-build:
-    rustup target add wasm32-unknown-unknown
+web-leptos-build: wasm-setup
     cd frontends/leptos && trunk build --release
 
 # Run the Leptos crate's wasm-bindgen-test suite.
 # `--lib` is required because the crate is lib + bin (Phase 3.6 split).
 # The host-target snapshot harness lives at `tests/snapshots.rs` and
 # is gated by `#[cfg(feature = "ssr")]` so it skips here.
-web-leptos-test:
-    rustup target add wasm32-unknown-unknown
-    cargo install --locked --version =0.2.121 wasm-bindgen-cli
+web-leptos-test: wasm-setup
     cd frontends/leptos && cargo test --lib --target wasm32-unknown-unknown
 
 # Host-target snapshot harness (TEST-ARCH-5). Renders every component
@@ -85,7 +114,8 @@ web-leptos-snapshots:
 rust-build-server:
     cd rust && cargo build --release -p omega-server
 
-# Start the web server (serves the Leptos bundle + WebSocket on :3000).
+# Build and start the web server (serves the Leptos bundle + WebSocket on :3000).
+# Rebuilds the server binary and the Leptos bundle on every invocation.
 # Pass any omega-server CLI args, e.g. just server --port 3001
 server *args: rust-build-server web-leptos-build
     rust/target/release/omega-server {{args}}
@@ -106,9 +136,7 @@ ports:
 # cargo machete is run from the repo root so it scans *both* the
 # rust/ workspace and frontends/leptos/ in one pass. Running it from
 # inside rust/ would silently skip the leptos workspace.
-rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
-    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test
-    cargo machete
+rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots _rust-checks
 
 # -----------------------------------------------------------------------
 # Mutation testing
@@ -121,29 +149,17 @@ rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
 
 # Run cargo-mutants on the rust workspace.
 mutants:
-    #!/usr/bin/env bash
-    set -eo pipefail
-    mkdir -p "$HOME/.cache/cargo-mutants-tmp"
-    export TMPDIR="$HOME/.cache/cargo-mutants-tmp"
-    cd rust && cargo mutants -j2
+    mkdir -p {{mutants-tmp}}
+    cd rust && TMPDIR={{mutants-tmp}} cargo mutants -j2
 
 # Run cargo-mutants on the leptos crate (wasm32 target).
-web-mutants:
-    #!/usr/bin/env bash
-    set -eo pipefail
-    mkdir -p "$HOME/.cache/cargo-mutants-tmp"
-    export TMPDIR="$HOME/.cache/cargo-mutants-tmp"
-    rustup target add wasm32-unknown-unknown
-    cargo install --locked --version =0.2.121 wasm-bindgen-cli
-    cd frontends/leptos && cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
+web-mutants: wasm-setup
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
 
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------
-
-# Push current branch to origin
-push:
-    git push
 
 # Tag the current commit with the version declared in omega_agent.py and push
 # both the tag and the current branch to origin.
@@ -169,7 +185,3 @@ install-hooks:
     cp scripts/pre-commit .git/hooks/pre-commit
     chmod +x .git/hooks/pre-commit
     @echo "✅  Git hooks installed."
-
-# Run a quick git status
-status:
-    git status --short
