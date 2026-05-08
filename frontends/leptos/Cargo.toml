@@ -81,6 +81,10 @@ omega-protocol           = { path = "../../rust/crates/omega-protocol" }
 # The `json` feature pulls in serde_json (already a direct dep). The `http`
 # feature provides the `Request::get/post` builders.
 gloo-net                 = { version = "=0.6.0", default-features = false, features = ["http", "json"] }
+# Version pin only — not imported directly. wasm-bindgen-futures 0.4.71
+# corresponds to wasm-bindgen 0.2.121; pinning here ensures that gloo-net,
+# leptos, and any_spawner all resolve to the same version and don't pull in
+# a mismatched wasm-bindgen ABI. Do not change independently of wasm-bindgen.
 wasm-bindgen-futures     = "=0.4.71"
 
 # Phase 3.6 — markdown rendering.
@@ -112,6 +116,11 @@ wasm-bindgen-test = "=0.3.71"
 # Phase 3.6 — host-target snapshot harness (TEST-ARCH-5). Pinned at
 # the latest 1.x at the time of authoring.
 insta             = { version = "=1.47.2", features = ["yaml"] }
+
+# cargo-machete: wasm-bindgen-futures is a version pin, not a direct import.
+# See comment next to the dep declaration above.
+[package.metadata.cargo-machete]
+ignored = ["wasm-bindgen-futures"]
 
 # Smaller wasm bundle for production.
 [profile.release]

@@ -102,8 +102,13 @@ ports:
 # + Leptos wasm-bindgen-test suite + Leptos snapshot suite. Runs via
 # the pre-commit hook when only rust/ files are staged.
 # Run manually: just rust-gate
+#
+# cargo machete is run from the repo root so it scans *both* the
+# rust/ workspace and frontends/leptos/ in one pass. Running it from
+# inside rust/ would silently skip the leptos workspace.
 rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots
-    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo machete
+    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+    cargo machete
 
 # -----------------------------------------------------------------------
 # Mutation testing
