@@ -12,7 +12,7 @@ Terminal-Bench 2.0 is a 89-task containerised coding benchmark run via [Harbor](
 
 Omega + Opus 4.7 at 69.7 % matches the official leaderboard's Opus 4.7 Adaptive entry (69.4 %) — same model, different agent harness.
 
-Run `bun bench/scripts/bench-summary.ts` for a live breakdown from `bench/results/results.jsonl`.
+Run `python bench/scripts/bench-summary.py` for a live breakdown from `bench/results/results.jsonl` (regenerate this script in Python if it does not exist yet).
 
 ## Running benchmarks
 
@@ -49,11 +49,17 @@ Results land in `bench/jobs/<job-name>/`. Each trial directory contains
 
 ## Ingest and view results
 
+The ingest and summary scripts are lightweight Python utilities. If they are
+not present in `bench/scripts/`, ask the LLM to write them — the schema below
+and the existing `results.jsonl` are sufficient context.
+
+Expected interface (regenerate to taste):
+
 ```bash
-bun bench/scripts/bench-ingest.ts                           # scan all of bench/jobs/
-bun bench/scripts/bench-ingest.ts bench/jobs/my-run         # specific job
-bun bench/scripts/bench-summary.ts                          # all models
-bun bench/scripts/bench-summary.ts sonnet                   # filter by model substring
+python bench/scripts/bench-ingest.py                      # scan all of bench/jobs/
+python bench/scripts/bench-ingest.py bench/jobs/my-run    # specific job
+python bench/scripts/bench-summary.py                     # all models
+python bench/scripts/bench-summary.py sonnet              # filter by model substring
 ```
 
 Ingestion is idempotent: re-running after the same job adds nothing.
@@ -70,10 +76,9 @@ To permanently exclude a contaminated or infra-failed trial, add its UUID to
 | `bench/results/oracle-tasks.json` | Per-task metadata for all 89 tasks |
 | `bench/results/.skip-trials` | Trial UUIDs permanently excluded from ingest |
 | `bench/jobs/` | Raw Harbor job output — gitignored, local only |
-| `bench/scripts/bench-ingest.ts` | Scan `bench/jobs/` → append new trials to `results.jsonl` |
-| `bench/scripts/bench-summary.ts` | Print results summary table |
-| `bench/scripts/analyze-failures.ts` | Detailed failure-log analysis (TypeScript) |
-| `bench/scripts/analyze-failures2.py` | Alternate failure analysis (Python) |
+| `bench/scripts/bench-ingest.py` | Scan `bench/jobs/` → append new trials to `results.jsonl` (regenerate if absent) |
+| `bench/scripts/bench-summary.py` | Print results summary table (regenerate if absent) |
+| `bench/scripts/analyze-failures2.py` | Failure-log analysis |
 
 ## `results.jsonl` schema
 
