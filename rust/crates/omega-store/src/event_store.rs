@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use omega_protocol::OmegaEvent;
+use omega_types::OmegaEvent;
 
 use crate::{Result, StoreError};
 

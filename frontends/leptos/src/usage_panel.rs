@@ -25,7 +25,7 @@
 
 use leptos::ev;
 use leptos::prelude::*;
-use omega_protocol::OmegaEvent;
+use omega_types::OmegaEvent;
 
 use crate::store::SessionStore;
 
@@ -313,7 +313,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
-    use omega_protocol::events::{
+    use omega_types::events::{
         LlmResponseEvent, LlmResponseUsage, TurnEndEvent, TurnMetrics, UserMessageEvent,
     };
 

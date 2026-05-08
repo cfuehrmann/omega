@@ -36,7 +36,7 @@
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
-use omega_protocol::OmegaEvent;
+use omega_types::OmegaEvent;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -462,7 +462,7 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
 /// thinking-block display is verified by the e2e harness.
 #[mutants::skip]
 #[component]
-fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl IntoView {
+fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoView {
     let context_modal =
         use_context::<ContextModalState>().expect("ContextModalState must be provided");
     let text_modal =
@@ -550,7 +550,7 @@ fn LlmResponseBlock(event: omega_protocol::events::LlmResponseEvent) -> impl Int
 /// an `[input]` button opens the full JSON in a [`TextModal`].
 #[component]
 fn ToolCallBlock(
-    event: omega_protocol::events::ToolCallEvent,
+    event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
     let text_modal =
@@ -601,7 +601,7 @@ fn ToolCallBlock(
 /// and replaced by the payload modal so the inline block stays
 /// compact.
 #[component]
-fn LlmCallBlock(event: omega_protocol::events::LlmCallEvent) -> impl IntoView {
+fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
     let context_modal = use_context::<ContextModalState>()
         .expect("ContextModalState must be provided");
     let text_modal =
@@ -663,7 +663,7 @@ fn LlmCallBlock(event: omega_protocol::events::LlmCallEvent) -> impl IntoView {
 ///   removed from the inline view; duration appears in the modal title.
 #[component]
 fn ToolResultBlock(
-    event: omega_protocol::events::ToolResultEvent,
+    event: omega_types::events::ToolResultEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
     let text_modal =

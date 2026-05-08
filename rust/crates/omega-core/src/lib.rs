@@ -11,7 +11,7 @@
 //!
 //! The contract that crosses crate boundaries is the [`AgentItem`] stream:
 //! a sequence of ephemeral [`StreamSignal`]s (text/thinking fragments) and
-//! persisted [`omega_protocol::OmegaEvent`]s (`LlmResponse`, `ToolCall`,
+//! persisted [`omega_types::OmegaEvent`]s (`LlmResponse`, `ToolCall`,
 //! `LlmRetry`, `LlmError`).
 //!
 //! # `context_hash` is filled by the persistence layer
@@ -23,7 +23,7 @@
 //! conflate streaming and persistence; the boundary kept here matches the
 //! TypeScript implementation.
 //!
-//! [`StreamSignal`]: omega_protocol::StreamSignal
+//! [`StreamSignal`]: omega_types::StreamSignal
 
 pub mod anthropic;
 pub mod ollama;

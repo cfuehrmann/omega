@@ -61,9 +61,9 @@ mod common;
 
 use common::{collect_stream, make_llm_response, make_test_agent, tags};
 use omega_core::{AgentItem, ContentBlock, LlmError, Message, Role};
-use omega_protocol::events::CompactedEvent;
-use omega_protocol::{OmegaEvent, StreamSignal};
 use omega_store::random_hash;
+use omega_types::events::CompactedEvent;
+use omega_types::{OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -362,7 +362,7 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
 /// Helper: build a single tool-use transcript that uses `run_command` with
 /// `echo` so the tool round-trip completes quickly in tests.
 fn echo_tool_response(id: &str, turn_num: usize) -> Vec<Result<AgentItem, LlmError>> {
-    use omega_protocol::events::ToolCallEvent;
+    use omega_types::events::ToolCallEvent;
     vec![
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-01T00:00:00.000Z".to_owned(),

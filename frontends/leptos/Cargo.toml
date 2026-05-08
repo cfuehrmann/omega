@@ -10,7 +10,7 @@ publish = false
 # `wasm32-unknown-unknown`. Detaching keeps the rust-side gate green and
 # lets `trunk build` invoke its own `cargo` against the wasm target without
 # tripping over host-only deps. Type sharing with the backend is preserved
-# by the path-dep on `omega-protocol` below.
+# by the path-dep on `omega-types` below.
 [workspace]
 
 # Phase 3.6: split into a thin lib + bin so host-target snapshot tests
@@ -74,7 +74,7 @@ web-sys                  = { version = "=0.3.98", features = [
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }
 serde_json               = "1"
-omega-protocol           = { path = "../../rust/crates/omega-protocol" }
+omega-types              = { path = "../../rust/crates/omega-types" }
 
 # HTTP client for `GET /api/sessions` (Phase 3.2). Already a transitive dep
 # via leptos's `server_fn`; pinning 0.6.0 keeps the resolution single-version.

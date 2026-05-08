@@ -752,7 +752,7 @@ async fn response_event_time_fields_are_valid_rfc3339() {
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(omega_protocol::OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(omega_types::OmegaEvent::LlmResponse(r)) => Some(r),
             _ => None,
         })
         .expect("expected LlmResponse event");
@@ -961,11 +961,11 @@ async fn compaction_block_yields_compacted_then_llm_response() {
     let items = collect_ok(&provider, simple_request()).await;
 
     // Expect: Text("Hello"), Compacted, LlmResponse — in that order.
-    use omega_protocol::OmegaEvent;
+    use omega_types::OmegaEvent;
     let mut iter = items.iter();
 
     match iter.next().expect("first item") {
-        AgentItem::Signal(omega_protocol::StreamSignal::Text { text }) => {
+        AgentItem::Signal(omega_types::StreamSignal::Text { text }) => {
             assert_eq!(text, "Hello", "text-delta surfaces normally");
         }
         other => panic!("expected text Signal, got {other:?}"),
@@ -1049,7 +1049,7 @@ async fn compaction_usage_carries_iterations_verbatim() {
     let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    use omega_protocol::OmegaEvent;
+    use omega_types::OmegaEvent;
     let compacted = items
         .iter()
         .find_map(|i| match i.as_event() {
@@ -1122,7 +1122,7 @@ async fn applied_edits_populates_cleared_fields() {
     let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    use omega_protocol::OmegaEvent;
+    use omega_types::OmegaEvent;
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
@@ -1185,7 +1185,7 @@ async fn applied_edits_other_type_leaves_cleared_fields_none() {
     let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    use omega_protocol::OmegaEvent;
+    use omega_types::OmegaEvent;
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
@@ -1331,7 +1331,7 @@ async fn non_compacting_response_emits_no_compacted() {
     let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    use omega_protocol::OmegaEvent;
+    use omega_types::OmegaEvent;
     assert!(
         !items
             .iter()
@@ -1393,7 +1393,7 @@ async fn compacted_event_time_is_valid_rfc3339() {
     let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    use omega_protocol::OmegaEvent;
+    use omega_types::OmegaEvent;
     let compacted = items
         .iter()
         .find_map(|i| match i.as_event() {

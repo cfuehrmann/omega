@@ -24,7 +24,7 @@ use futures::StreamExt;
 use omega_core::{
     AgentItem, AnthropicProvider, LlmError, LlmRequest, OllamaProvider, Provider, RetryingProvider,
 };
-use omega_protocol::{LlmRetryReason, OmegaEvent};
+use omega_types::{LlmRetryReason, OmegaEvent};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -111,9 +111,7 @@ async fn collect_all(
 }
 
 /// Filter `LlmRetry` events out of a result vec.
-fn retry_events(
-    items: &[Result<AgentItem, LlmError>],
-) -> Vec<&omega_protocol::events::LlmRetryEvent> {
+fn retry_events(items: &[Result<AgentItem, LlmError>]) -> Vec<&omega_types::events::LlmRetryEvent> {
     items
         .iter()
         .filter_map(|r| r.as_ref().ok())

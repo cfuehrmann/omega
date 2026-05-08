@@ -28,9 +28,9 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
-use omega_protocol::events::{LlmResponseEvent, ToolCallEvent};
-use omega_protocol::{LlmResponseUsage, OmegaEvent};
 use omega_store::{ContextStore, EventStore};
+use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::{LlmResponseUsage, OmegaEvent};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -211,9 +211,9 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
         .iter()
         .map(|it| match it {
             AgentItem::Signal(s) => match s {
-                omega_protocol::StreamSignal::Text { .. } => "Signal:Text",
-                omega_protocol::StreamSignal::Thinking { .. } => "Signal:Thinking",
-                omega_protocol::StreamSignal::ThinkingBlockComplete { .. } => {
+                omega_types::StreamSignal::Text { .. } => "Signal:Text",
+                omega_types::StreamSignal::Thinking { .. } => "Signal:Thinking",
+                omega_types::StreamSignal::ThinkingBlockComplete { .. } => {
                     "Signal:ThinkingBlockComplete"
                 }
             },

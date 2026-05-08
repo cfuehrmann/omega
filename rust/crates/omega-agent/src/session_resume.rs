@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use omega_protocol::{OmegaEvent, events::InterruptReason};
+use omega_types::{OmegaEvent, events::InterruptReason};
 
 // ---------------------------------------------------------------------------
 // Resumption-call configuration (Phase 1d.1c)
@@ -417,7 +417,7 @@ pub fn extract_description_from_response(response_text: &str) -> Option<String> 
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
-    use omega_protocol::{
+    use omega_types::{
         ContinueMode, OmegaEvent,
         events::{
             AgentErrorEvent, CompactedEvent, EffortChangedEvent, InterruptReason, LlmResponseEvent,

@@ -18,7 +18,7 @@
 //! helpers.
 
 use omega_core::AgentItem;
-use omega_protocol::OmegaEvent;
+use omega_types::OmegaEvent;
 
 /// One WebSocket frame the server can emit.
 ///
@@ -164,7 +164,7 @@ mod tests {
 
     use super::WsMessage;
     use omega_core::AgentItem;
-    use omega_protocol::{StreamSignal, events::TurnEndEvent, events::TurnMetrics};
+    use omega_types::{StreamSignal, events::TurnEndEvent, events::TurnMetrics};
 
     #[test]
     fn ready_serialises_to_type_ready_only() {
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn history_serialises_each_event_in_order() {
-        let events = vec![omega_protocol::OmegaEvent::TurnEnd(TurnEndEvent {
+        let events = vec![omega_types::OmegaEvent::TurnEnd(TurnEndEvent {
             time: "2024-01-01T00:00:00.000Z".to_owned(),
             metrics: TurnMetrics {
                 input_tokens: 1,
@@ -357,17 +357,15 @@ mod tests {
 
     #[test]
     fn item_event_turn_end_serialises_with_type_turn_end() {
-        let ev = AgentItem::Event(Box::new(omega_protocol::OmegaEvent::TurnEnd(
-            TurnEndEvent {
-                time: "2024-01-01T00:00:00.000Z".to_owned(),
-                metrics: TurnMetrics {
-                    input_tokens: 1,
-                    output_tokens: 2,
-                    cache_creation_tokens: None,
-                    cache_read_tokens: None,
-                },
+        let ev = AgentItem::Event(Box::new(omega_types::OmegaEvent::TurnEnd(TurnEndEvent {
+            time: "2024-01-01T00:00:00.000Z".to_owned(),
+            metrics: TurnMetrics {
+                input_tokens: 1,
+                output_tokens: 2,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
             },
-        )));
+        })));
         let v = WsMessage::Item(Box::new(ev)).to_json();
         assert_eq!(v["type"], "turn_end");
         assert_eq!(v["time"], "2024-01-01T00:00:00.000Z");

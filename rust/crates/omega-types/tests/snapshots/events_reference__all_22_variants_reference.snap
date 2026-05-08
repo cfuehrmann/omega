@@ -1,5 +1,5 @@
 ---
-source: crates/omega-protocol/tests/events_reference.rs
+source: crates/omega-types/tests/events_reference.rs
 expression: events
 ---
 [

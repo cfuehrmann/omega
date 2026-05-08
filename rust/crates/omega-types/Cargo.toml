@@ -1,5 +1,5 @@
 [package]
-name    = "omega-protocol"
+name    = "omega-types"
 version = "0.1.0"
 edition.workspace = true
 

@@ -29,7 +29,7 @@
 
 use std::collections::HashMap;
 
-use omega_protocol::OmegaEvent;
+use omega_types::OmegaEvent;
 
 // ---------------------------------------------------------------------------
 // Visual-family projection
@@ -323,7 +323,7 @@ pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic, clippy::float_cmp)]
 
-    use omega_protocol::events::{
+    use omega_types::events::{
         AgentErrorEvent, CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
         LlmResponseEvent, LlmResponseUsage, LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
         ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
@@ -331,7 +331,7 @@ mod tests {
         TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
         TurnPausedEvent, UserMessageEvent,
     };
-    use omega_protocol::{ContinueMode, InterruptReason, OmegaEvent};
+    use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
     use serde_json::json;
     use wasm_bindgen_test::wasm_bindgen_test;
 

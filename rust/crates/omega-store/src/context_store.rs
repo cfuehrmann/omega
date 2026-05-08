@@ -2,7 +2,7 @@
 //!
 //! Each session maintains a single `context.jsonl` file.  Every message
 //! pushed to the agent's conversation history is written as a
-//! [`ContextRecord`] — a [`Message`](omega_core::Message) augmented with a
+//! [`ContextRecord`] — a [`Message`](omega_types::conversation) augmented with a
 //! [`ContextHash`] primary key and an ISO 8601 timestamp.
 //!
 //! The hash returned by [`ContextStore::append`] is used as a foreign key in
@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use omega_core::{ContentBlock, Role};
+use omega_types::{ContentBlock, Role};
 use serde::{Deserialize, Serialize};
 
 use crate::{ContextHash, Result, StoreError, random_hash};

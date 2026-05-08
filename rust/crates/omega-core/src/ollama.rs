@@ -8,8 +8,8 @@
 use std::time::Duration;
 
 use async_stream::try_stream;
-use omega_protocol::events::{LlmResponseEvent, ToolCallEvent};
-use omega_protocol::{LlmResponseUsage, OmegaEvent, StreamSignal};
+use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

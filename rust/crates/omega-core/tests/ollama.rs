@@ -292,7 +292,7 @@ async fn synthesises_tool_call_id_when_missing() {
     let tool_call = items
         .iter()
         .find_map(|i| {
-            if let Some(omega_protocol::OmegaEvent::ToolCall(tc)) = i.as_event() {
+            if let Some(omega_types::OmegaEvent::ToolCall(tc)) = i.as_event() {
                 Some(tc)
             } else {
                 None
@@ -589,7 +589,7 @@ async fn response_event_time_is_valid_rfc3339() {
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(omega_protocol::OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(omega_types::OmegaEvent::LlmResponse(r)) => Some(r),
             _ => None,
         })
         .expect("expected LlmResponse event");

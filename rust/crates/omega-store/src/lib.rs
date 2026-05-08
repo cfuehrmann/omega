@@ -7,7 +7,7 @@
 //! - [`event_store`]  — [`EventStore`]: append [`OmegaEvent`]s to `events.jsonl`.
 //! - [`context_store`]— [`ContextStore`]: append context records to `context.jsonl`.
 //!
-//! [`OmegaEvent`]: omega_protocol::OmegaEvent
+//! [`OmegaEvent`]: omega_types::OmegaEvent
 
 pub mod context_hash;
 pub mod context_store;

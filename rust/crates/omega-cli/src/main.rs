@@ -18,8 +18,8 @@ use omega_agent::{
     system_prompt::system_prompt_append_path,
 };
 use omega_core::{AnthropicProvider, RetryConfig, RetryingProvider};
-use omega_protocol::{OmegaEvent, events::SessionStartedEvent};
 use omega_store::{ContextStore, EventStore, SESSIONS_ROOT, make_session_dir};
+use omega_types::{OmegaEvent, events::SessionStartedEvent};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
@@ -230,11 +230,11 @@ async fn run(
     while let Some(item) = stream.next().await {
         match item {
             omega_core::AgentItem::Signal(sig) => match sig {
-                omega_protocol::StreamSignal::Text { text } => {
+                omega_types::StreamSignal::Text { text } => {
                     print!("{text}");
                 }
-                omega_protocol::StreamSignal::Thinking { .. }
-                | omega_protocol::StreamSignal::ThinkingBlockComplete { .. } => {
+                omega_types::StreamSignal::Thinking { .. }
+                | omega_types::StreamSignal::ThinkingBlockComplete { .. } => {
                     // Thinking blocks and their completion signals are not
                     // shown in CLI output.
                 }

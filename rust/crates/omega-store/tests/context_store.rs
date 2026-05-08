@@ -1,8 +1,8 @@
 //! Integration tests for `ContextStore` and `ContextHash` — real file I/O
 //! via temp directories.
 
-use omega_core::{ContentBlock, Role};
 use omega_store::{ContextRecord, ContextStore, hash_from_str};
+use omega_types::{ContentBlock, Role};
 
 // ---------------------------------------------------------------------------
 // Helpers

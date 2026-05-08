@@ -1491,9 +1491,9 @@ dependencies = [
  "futures",
  "mutants",
  "omega-core",
- "omega-protocol",
  "omega-store",
  "omega-tools",
+ "omega-types",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1512,9 +1512,9 @@ dependencies = [
  "insta",
  "omega-agent",
  "omega-core",
- "omega-protocol",
  "omega-store",
  "omega-test-fixtures",
+ "omega-types",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1531,7 +1531,7 @@ dependencies = [
  "futures",
  "insta",
  "mutants",
- "omega-protocol",
+ "omega-types",
  "rand 0.10.1",
  "reqwest",
  "serde",
@@ -1573,15 +1573,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "omega-protocol"
-version = "0.1.0"
-dependencies = [
- "insta",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "omega-server"
 version = "0.1.0"
 dependencies = [
@@ -1596,9 +1587,9 @@ dependencies = [
  "nix",
  "omega-agent",
  "omega-core",
- "omega-protocol",
  "omega-store",
  "omega-test-fixtures",
+ "omega-types",
  "regex",
  "reqwest",
  "serde",
@@ -1615,8 +1606,7 @@ name = "omega-store"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "omega-core",
- "omega-protocol",
+ "omega-types",
  "rand 0.10.1",
  "regex",
  "serde",
@@ -1654,6 +1644,15 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "omega-types"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

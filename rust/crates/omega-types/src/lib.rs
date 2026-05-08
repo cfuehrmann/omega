@@ -1,4 +1,4 @@
-//! omega-protocol — shared type definitions for the Omega agent protocol.
+//! omega-types — shared type definitions for the Omega agent protocol.
 //!
 //! This crate owns the canonical Rust representation of every type that
 //! crosses a persistence or network boundary:
@@ -7,15 +7,19 @@
 //!   `events.jsonl` and streamed over WebSocket.
 //! - [`StreamSignal`] — ephemeral streaming primitives (text/thinking
 //!   token fragments) that are never persisted.
+//! - [`ContentBlock`] / [`Role`] — conversation primitives shared by all
+//!   LLM provider backends and the persistence layer.
 //!
 //! All types implement `serde::Serialize` + `serde::Deserialize`.
 //! The JSON representation is intentionally close to the TypeScript
 //! representation that preceded it; field names are camelCase to match
 //! existing `events.jsonl` files.
 
+pub mod conversation;
 pub mod events;
 pub mod stream_signal;
 
+pub use conversation::{ContentBlock, Role};
 pub use events::{
     ContinueMode, InterruptReason, LlmResponseUsage, LlmRetryReason, OmegaEvent, ServerStopOutcome,
     TurnMetrics,

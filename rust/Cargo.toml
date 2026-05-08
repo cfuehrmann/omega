@@ -1,6 +1,6 @@
 [workspace]
 members  = [
-  "crates/omega-protocol",
+  "crates/omega-types",
   "crates/omega-core",
   "crates/omega-store",
   "crates/omega-tools",

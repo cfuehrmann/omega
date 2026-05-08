@@ -1,10 +1,10 @@
 //! Integration tests for `EventStore` — real file I/O via temp directories.
 
-use omega_protocol::{
+use omega_store::EventStore;
+use omega_types::{
     OmegaEvent,
     events::{TurnEndEvent, TurnMetrics, UserMessageEvent},
 };
-use omega_store::EventStore;
 
 // ---------------------------------------------------------------------------
 // Helpers

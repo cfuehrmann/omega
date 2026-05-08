@@ -25,7 +25,7 @@
 //! the assertions stay independent of leptos's reactive plumbing.
 
 use leptos::prelude::*;
-use omega_protocol::OmegaEvent;
+use omega_types::OmegaEvent;
 use serde::Serialize;
 
 use crate::protocol::{AgentErrorPayload, SessionInfoPayload, TurnState, WsMessage};
@@ -269,7 +269,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
-    use omega_protocol::events::{
+    use omega_types::events::{
         AgentErrorEvent, EffortChangedEvent, LlmResponseEvent, LlmResponseUsage,
         ModelChangedEvent, PauseRequestedEvent, TurnContinuedEvent, TurnEndEvent,
         TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
@@ -495,7 +495,7 @@ mod tests {
             s.apply(user_msg("hi"));
             s.apply(WsMessage::TurnInterrupted(TurnInterruptedEvent {
                 time: "t".into(),
-                reason: Some(omega_protocol::InterruptReason::Aborted),
+                reason: Some(omega_types::InterruptReason::Aborted),
             }));
             let snap = s.snapshot();
             assert_eq!(snap.turn_state, TurnState::Idle);
@@ -534,7 +534,7 @@ mod tests {
             assert_eq!(s.snapshot().turn_state, TurnState::Paused);
             s.apply(WsMessage::TurnContinued(TurnContinuedEvent {
                 time: "t2".into(),
-                mode: omega_protocol::ContinueMode::Manual,
+                mode: omega_types::ContinueMode::Manual,
             }));
             assert_eq!(s.snapshot().turn_state, TurnState::Running);
         });

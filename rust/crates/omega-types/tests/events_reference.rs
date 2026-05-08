@@ -17,8 +17,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use omega_protocol::OmegaEvent;
-use omega_protocol::events::{
+use omega_types::OmegaEvent;
+use omega_types::events::{
     AgentErrorEvent, CompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
     LlmCallEvent, LlmErrorEvent, LlmResponseEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason,
     ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,

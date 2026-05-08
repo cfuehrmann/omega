@@ -61,7 +61,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use omega_protocol::events::LlmCallEvent;
+use omega_types::events::LlmCallEvent;
 use serde::{Deserialize, Serialize};
 
 use crate::http::get_context;

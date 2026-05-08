@@ -1,4 +1,4 @@
-//! Shared helpers for `omega-protocol` integration tests.
+//! Shared helpers for `omega-types` integration tests.
 //!
 //! Each `tests/*.rs` file is a separate test binary; include this module
 //! via `mod common;`.  Unused items are silenced with `#[allow(dead_code)]`.

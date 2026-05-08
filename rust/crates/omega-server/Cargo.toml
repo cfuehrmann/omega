@@ -23,7 +23,7 @@ mutants      = "0.0.4" # #[mutants::skip] attribute for equivalent-mutation supp
 omega-agent    = { path = "../omega-agent" }
 omega-store    = { path = "../omega-store" }
 omega-core     = { path = "../omega-core" }
-omega-protocol = { path = "../omega-protocol" }
+omega-types    = { path = "../omega-types" }
 tokio-util   = "0.7"          # CancellationToken used to cancel a turn
 futures      = "0.3"          # StreamExt for forwarding agent stream to WS
 chrono       = { version = "0.4", default-features = false, features = ["clock"] }  # ISO timestamps for server_stopped
@@ -38,7 +38,7 @@ futures             = "0.3"
 tokio-tungstenite   = "0.29"     # WS test client (matches axum 0.8's tungstenite version)
 omega-core          = { path = "../omega-core" }
 omega-store         = { path = "../omega-store" }
-omega-protocol      = { path = "../omega-protocol" }   # for ws_message unit tests + integration tests
+omega-types         = { path = "../omega-types" }   # for ws_message unit tests + integration tests
 omega-agent         = { path = "../omega-agent" }       # for tool_use test transcripts
 omega-test-fixtures = { path = "../omega-test-fixtures" }
 serde_json          = "1"

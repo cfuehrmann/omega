@@ -50,9 +50,9 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt, stream::BoxStream};
 use insta::assert_snapshot;
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
-use omega_protocol::events::{LlmResponseEvent, ToolCallEvent};
-use omega_protocol::{OmegaEvent, StreamSignal};
 use omega_server::{AppState, build_router};
+use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::{OmegaEvent, StreamSignal};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as TMessage;
@@ -205,7 +205,7 @@ fn llm_response_event(stop_reason: &str, text: Option<&str>) -> AgentItem {
         stop_reason: stop_reason.to_owned(),
         cleared_tool_uses: None,
         cleared_input_tokens: None,
-        usage: omega_protocol::LlmResponseUsage {
+        usage: omega_types::LlmResponseUsage {
             input_tokens: 1,
             output_tokens: 1,
             cache_creation_input_tokens: None,

@@ -7,7 +7,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-omega-protocol = { path = "../omega-protocol" }
+omega-types    = { path = "../omega-types" }
 omega-core     = { path = "../omega-core" }
 omega-store    = { path = "../omega-store" }
 omega-tools    = { path = "../omega-tools" }

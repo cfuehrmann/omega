@@ -28,8 +28,8 @@
 use leptos::prelude::*;
 use leptos::reactive::owner::Owner;
 use leptos::tachys::view::RenderHtml;
-use omega_protocol::OmegaEvent;
-use omega_protocol::events::{
+use omega_types::OmegaEvent;
+use omega_types::events::{
     AgentErrorEvent, LlmCallEvent, LlmResponseEvent, LlmResponseUsage, ResumingSessionEvent,
     SessionResumedEvent, SessionStartedEvent, ToolCallEvent, ToolResultEvent, TurnEndEvent,
     TurnMetrics, UserMessageEvent,

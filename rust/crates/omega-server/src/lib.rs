@@ -26,9 +26,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use omega_protocol::OmegaEvent;
-use omega_protocol::events::{ServerStopOutcome, ServerStoppedEvent};
 use omega_store::EventStore;
+use omega_types::OmegaEvent;
+use omega_types::events::{ServerStopOutcome, ServerStoppedEvent};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 

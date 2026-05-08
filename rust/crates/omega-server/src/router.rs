@@ -40,8 +40,8 @@ use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
 
 use omega_core::AgentItem;
-use omega_protocol::OmegaEvent;
-use omega_protocol::events::PauseRequestedEvent;
+use omega_types::OmegaEvent;
+use omega_types::events::PauseRequestedEvent;
 
 use crate::AppState;
 use crate::session::{ActiveSession, SessionInfoCache};

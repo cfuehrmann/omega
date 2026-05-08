@@ -36,20 +36,20 @@
 //!   `reset_done`, `session_deleted`, `session_renamed`.
 //! - 3 stream-signal tags forwarded inside the server's `Item` variant:
 //!   `text`, `thinking`, `thinking_block_complete`.
-//! - 22 [`omega_protocol::OmegaEvent`] tags forwarded via `Item`. The
+//! - 22 [`omega_types::OmegaEvent`] tags forwarded via `Item`. The
 //!   `agent_error` event tag merges into the envelope variant via the
 //!   payload-disambiguation trick above, so 21 dedicated event variants
 //!   appear here.
 
-use omega_protocol::events::{
+use omega_types::events::{
     CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
     LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent,
     ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
     ToolCallEvent, ToolResultEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
     TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
-use omega_protocol::events::AgentErrorEvent;
-use omega_protocol::OmegaEvent;
+use omega_types::events::AgentErrorEvent;
+use omega_types::OmegaEvent;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

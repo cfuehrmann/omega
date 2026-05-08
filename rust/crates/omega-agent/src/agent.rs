@@ -31,14 +31,14 @@ use futures::stream::{FuturesUnordered, Stream, StreamExt};
 use omega_core::{
     AgentItem, ContentBlock, LlmError, LlmRequest, Message, ModelConfig, Provider, Role,
 };
-use omega_protocol::StreamSignal;
-use omega_protocol::events::{
+use omega_types::StreamSignal;
+use omega_types::events::{
     AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
     ModelChangedEvent, ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent,
     SessionStartedEvent, ToolCallEvent, ToolResultEvent, TurnContinuedEvent, TurnEndEvent,
     TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
-use omega_protocol::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
+use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
 use omega_tools::{execute_tool, tool_definitions};

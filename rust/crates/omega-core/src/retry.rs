@@ -19,8 +19,8 @@ use std::time::Duration;
 use chrono::Utc;
 use futures::StreamExt;
 use futures::stream::{self, Stream};
-use omega_protocol::events::LlmRetryEvent;
-use omega_protocol::{LlmRetryReason, OmegaEvent, StreamSignal};
+use omega_types::events::LlmRetryEvent;
+use omega_types::{LlmRetryReason, OmegaEvent, StreamSignal};
 use rand::RngExt;
 
 use crate::provider::{AgentItemStream, Provider};

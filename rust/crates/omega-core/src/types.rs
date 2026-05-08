@@ -8,55 +8,13 @@
 
 use std::time::Duration;
 
-use omega_protocol::{OmegaEvent, StreamSignal};
+use omega_types::{OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// ---------------------------------------------------------------------------
-// Conversation primitives
-// ---------------------------------------------------------------------------
-
-/// Role of a [`Message`] in the conversation history.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    User,
-    Assistant,
-}
-
-/// A single content block inside a [`Message`].
-///
-/// Mirrors the Anthropic Messages API shape — the union of every block
-/// type the agent sends or receives.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContentBlock {
-    /// A text block.
-    Text { text: String },
-    /// A thinking block (extended reasoning, returned by Anthropic
-    /// when the model has thinking enabled).  The `signature` is the
-    /// opaque token Anthropic requires when echoing the block back in
-    /// a follow-up turn.
-    Thinking {
-        thinking: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        signature: Option<String>,
-    },
-    /// A tool invocation by the assistant.
-    ToolUse {
-        id: String,
-        name: String,
-        /// Arbitrary JSON input parameters supplied by the LLM.
-        input: Value,
-    },
-    /// The result of a tool invocation, sent back as a user message.
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        is_error: bool,
-    },
-}
+// ContentBlock and Role are defined in omega-types; re-exported here
+// so that `omega_core::ContentBlock` and `omega_core::Role` continue to resolve.
+pub use omega_types::{ContentBlock, Role};
 
 /// A single message in the conversation history sent to the provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

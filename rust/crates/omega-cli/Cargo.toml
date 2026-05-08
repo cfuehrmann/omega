@@ -27,5 +27,5 @@ chrono       = { version = "0.4", features = ["clock"] }
 omega-core   = { path = "../omega-core" }
 omega-store  = { path = "../omega-store" }
 omega-agent  = { path = "../omega-agent" }
-omega-protocol = { path = "../omega-protocol" }
+omega-types  = { path = "../omega-types" }
 tokio-util   = { version = "0.7", features = ["rt"] }

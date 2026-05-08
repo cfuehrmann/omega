@@ -49,9 +49,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use omega_protocol::events::PauseRequestedEvent;
-use omega_protocol::{ContinueMode, OmegaEvent};
 use omega_store::EventStore;
+use omega_types::events::PauseRequestedEvent;
+use omega_types::{ContinueMode, OmegaEvent};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;

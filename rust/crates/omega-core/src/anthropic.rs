@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use eventsource_stream::Eventsource;
 use futures::stream::TryStreamExt;
-use omega_protocol::events::{CompactedEvent, LlmResponseEvent, ToolCallEvent};
-use omega_protocol::{LlmResponseUsage, OmegaEvent, StreamSignal};
+use omega_types::events::{CompactedEvent, LlmResponseEvent, ToolCallEvent};
+use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
