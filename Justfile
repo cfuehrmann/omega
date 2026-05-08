@@ -24,6 +24,7 @@ mutants-tmp := env('HOME') + "/.cache/cargo-mutants-tmp"
 wasm-setup:
     rustup target add wasm32-unknown-unknown
     cargo install --locked --version =0.2.121 wasm-bindgen-cli
+    cargo install --locked --version =0.21.1 trunk
 
 # Format check + Clippy + cargo test + machete. Assumes dist/ is already built.
 [private]
