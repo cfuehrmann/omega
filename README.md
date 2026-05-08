@@ -1,6 +1,6 @@
 # Omega — AI Coding Agent
 
-Omega is a general-purpose AI coding agent. It supports multiple LLM backends (Anthropic, Ollama) and is primarily developed and benchmarked against Claude. It orients itself
+Omega is a general-purpose AI coding agent. It supports multiple LLM backends (Anthropic, Ollama) and is primarily developed and benchmarked against Sonnet and Opus. It orients itself
 by reading a project's documentation and files, then acts through a rich tool
 set: reading and writing files, running shell commands, searching the web, and
 more.
