@@ -262,10 +262,12 @@ pub fn Composer() -> impl IntoView {
 
     let textarea_ref = NodeRef::<html::Textarea>::new();
 
-    // Provide the inject-text context so the session picker can
-    // insert `@<session_dir>` into the composer without prop-drilling.
-    let composer_insert = ComposerInsert::new();
-    provide_context(composer_insert);
+    // The inject-text context is now provided by `App` so that
+    // `SessionRow` (rendered inside `SessionPicker`, a sibling of
+    // `Composer`) can always access it — even when `Composer` itself
+    // is not rendered (no active session).
+    let composer_insert = use_context::<ComposerInsert>()
+        .expect("ComposerInsert must be provided by App");
 
     // Draft text. The textarea is the canonical source of truth for
     // visible text via `prop:value`; we mirror it into `draft` for

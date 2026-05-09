@@ -407,6 +407,45 @@ async fn picker_at_path_twice_preserves_both_paths() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Regression: pre-existing sessions shown when picker auto-opens
+// (no active session on start).
+// ---------------------------------------------------------------------------
+
+/// When sessions exist on disk but the server has no active session
+/// (e.g. after a server restart), the picker auto-opens and must list
+/// the pre-existing sessions.
+///
+/// Regression guard: previously `ComposerInsert` was provided by the
+/// `Composer` component, which is hidden when there is no session.
+/// `SessionRow` called `use_context::<ComposerInsert>().expect(...)`,
+/// which panicked, and no rows were ever rendered.
+#[tokio::test]
+#[ignore = "browser"]
+async fn picker_shows_pre_existing_sessions_when_no_active_session() {
+    use tempfile::TempDir;
+
+    // Pre-populate the sessions root with one session directory whose
+    // name matches the server's `session_dir_re` regex.
+    let sessions_dir = TempDir::new().expect("create sessions dir");
+    std::fs::create_dir(sessions_dir.path().join("2025-01-01T00-00-00-000-abcd1234"))
+        .expect("create pre-existing session dir");
+
+    let h = TestHarness::launch_with_dir(sessions_dir)
+        .await
+        .expect("launch");
+
+    // No active session → the picker must auto-open.
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker auto-opens when no active session");
+
+    // The pre-existing session must appear as a row in the list.
+    h.wait_for_count("[data-testid='leptos-session-item']", 1, DEFAULT_TIMEOUT)
+        .await
+        .expect("pre-existing session is listed in the picker");
+}
+
 /// Rename does NOT close the picker.
 #[tokio::test]
 #[ignore = "browser"]

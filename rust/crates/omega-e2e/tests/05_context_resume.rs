@@ -294,7 +294,14 @@ async fn resume_from_picker_runs_full_flow() {
     send_message(&h, "seed the source session").await;
     wait_for_one_turn_end(&h).await;
 
-    // Reopen picker and locate the source row.
+    // Create a second (scratch) session so that source_dir becomes
+    // inactive — the resume button is only shown on inactive rows.
+    h.open_picker()
+        .await
+        .expect("open picker for scratch session");
+    h.new_session().await.expect("create scratch session");
+
+    // Open picker and locate the source row.
     h.open_picker().await.expect("open picker");
     let row_sel =
         format!("[data-testid=\"leptos-session-item\"][data-session-dir=\"{source_dir}\"]");

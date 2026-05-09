@@ -102,9 +102,16 @@ impl TestHarness {
     /// Spawn the server, wait for `/health`, launch headless Chrome,
     /// open `/`, wait for WS connect.
     pub async fn launch() -> Result<Self> {
+        let sessions_dir = TempDir::new().context("create tempdir for sessions")?;
+        Self::launch_with_dir(sessions_dir).await
+    }
+
+    /// Like [`Self::launch`] but uses a caller-supplied `sessions_dir`.
+    /// Allows tests to pre-populate the sessions root before the server
+    /// starts (e.g. to simulate a restart with existing sessions on disk).
+    pub async fn launch_with_dir(sessions_dir: TempDir) -> Result<Self> {
         let main_port = pick_free_port()?;
         let ctrl_port = pick_free_port()?;
-        let sessions_dir = TempDir::new().context("create tempdir for sessions")?;
 
         let server_child = spawn_mock_server(main_port, ctrl_port, sessions_dir.path())?;
         let base_url = format!("http://127.0.0.1:{main_port}");
