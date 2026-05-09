@@ -12,12 +12,12 @@
 //!
 //!        Idle              → "Send ⏎"        ⇒ ClientFrame::UserMessage
 //!        Running           → "Pause ⎋"       ⇒ ClientFrame::Pause
-//!        PauseRequested    → "Continue ⏎"    ⇒ pre_committed = true
-//!                               +  "Abort ⎋"  ⇒ ClientFrame::Abort
-//!        PauseRequested    → "Take it back"  ⇒ pre_committed = false
-//!        (pre_committed)        + "Abort ⎋"  ⇒ ClientFrame::Abort
-//!        Paused            → "Continue ⏎"    ⇒ ClientFrame::Continue { content }
-//!                               + "Abort ⎋"  ⇒ ClientFrame::Abort
+//!        PauseRequested    → "Abort ⎋"  ⇒ ClientFrame::Abort
+//!                               + "Continue ⏎"    ⇒ pre_committed = true
+//!        PauseRequested    → "Abort ⎋"  ⇒ ClientFrame::Abort
+//!        (pre_committed)        + "Take it back"  ⇒ pre_committed = false
+//!        Paused            → "Abort ⎋"  ⇒ ClientFrame::Abort
+//!                               + "Continue ⏎"    ⇒ ClientFrame::Continue { content }
 //!
 //! ## Pre-commit / auto-drain flow
 //!
@@ -634,14 +634,6 @@ pub fn Composer() -> impl IntoView {
                     placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline)"
                 />
             </div>
-            <button
-                class="leptos-composer-primary"
-                data-testid="leptos-composer-primary"
-                data-action=move || action_tag(action.get())
-                on:click=on_primary_click
-            >
-                {move || action_label(action.get())}
-            </button>
             <Show when=move || show_secondary_abort(store.turn_state.get()) fallback=|| ().into_any()>
                 <button
                     class="leptos-composer-abort"
@@ -651,6 +643,14 @@ pub fn Composer() -> impl IntoView {
                     "Abort ⎋"
                 </button>
             </Show>
+            <button
+                class="leptos-composer-primary"
+                data-testid="leptos-composer-primary"
+                data-action=move || action_tag(action.get())
+                on:click=on_primary_click
+            >
+                {move || action_label(action.get())}
+            </button>
             <StatusChip />
         </section>
     }
