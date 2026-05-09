@@ -121,23 +121,33 @@ async fn picker_rename_updates_label() {
 // ---------------------------------------------------------------------------
 
 /// Delete row: confirm dialog accepted → row vanishes.
+///
+/// The delete button is only rendered on **inactive** rows (the
+/// session you're currently on can't be deleted). So we create two
+/// sessions — the second auto-becomes active, leaving the first
+/// inactive and deletable.
 #[tokio::test]
 #[ignore = "browser"]
 async fn picker_delete_removes_row() {
     let h = TestHarness::launch().await.expect("launch");
     h.open_picker().await.expect("open picker");
 
-    let dir = h.new_session().await.expect("new session");
-    h.open_picker().await.expect("re-open picker");
+    // First session — will become inactive once the second is created.
+    let a = h.new_session().await.expect("first new session");
+    h.open_picker().await.expect("re-open picker (1)");
+
+    // Second session — auto-active, so `a` is now inactive.
+    let _b = h.new_session().await.expect("second new session");
+    h.open_picker().await.expect("re-open picker (2)");
 
     h.auto_accept_dialogs()
         .await
         .expect("override window.confirm");
-    h.click(&item_action_sel(&dir, "leptos-session-delete"))
+    h.click(&item_action_sel(&a, "leptos-session-delete"))
         .await
-        .expect("click delete");
+        .expect("click delete on inactive row");
 
-    h.wait_for_detached(&item_sel(&dir), Duration::from_secs(3))
+    h.wait_for_detached(&item_sel(&a), Duration::from_secs(3))
         .await
         .expect("row removed");
 }
