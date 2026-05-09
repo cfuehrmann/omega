@@ -431,7 +431,10 @@ fn SessionRow(
 
     let on_insert_at = move |_| {
         let dir = dir_sv.get_value();
-        composer_insert.insert(dir);
+        // Build the full relative path so the agent can locate the
+        // session on disk: `.omega/sessions/<dir>/`.
+        let path = format!(".omega/sessions/{}/", dir);
+        composer_insert.insert(path);
         picker_open.close();
     };
 

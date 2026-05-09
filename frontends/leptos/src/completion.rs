@@ -124,6 +124,50 @@ pub fn accept_completion(text: &str, cursor: usize, item: &str) -> Option<Accept
 }
 
 // ---------------------------------------------------------------------------
+// Picker-insert projection
+// ---------------------------------------------------------------------------
+
+/// Compute the new textarea state after the session-picker's `@path` button
+/// is clicked with `item` as the path to insert.
+///
+/// The cursor is **always treated as `text.len()`** — the textarea is
+/// typically unfocused when the picker button fires, and browsers may
+/// report a stale or zero `selectionStart`. Treating the insertion point
+/// as the end of the existing text is the only semantically correct choice:
+/// the operator is _appending_ context, not splicing into the middle of a
+/// sentence.
+///
+/// Two cases:
+/// 1. The text already ends with an `@`-token (e.g. the operator typed `@`
+///    and then clicked the picker) → the token is replaced via
+///    [`accept_completion`], exactly as the keyboard-completion dropdown
+///    would do.
+/// 2. No trailing `@`-token → `@item` is appended with a leading space
+///    unless `text` is empty or already ends in whitespace.
+///
+/// Returns `(new_text, new_cursor)`. The cursor lands immediately after
+/// the inserted `@item`.
+#[must_use]
+pub fn insert_item_text(text: &str, item: &str) -> (String, usize) {
+    let cursor = text.len();
+    if let Some(out) = accept_completion(text, cursor, item) {
+        // Text ends with an @-token — splice the chosen path in.
+        (out.new_text, out.new_cursor)
+    } else {
+        // No trailing @-token: append "@item", with a leading space
+        // unless the text is empty or already ends in whitespace.
+        let space = if text.is_empty() || text.ends_with(char::is_whitespace) {
+            ""
+        } else {
+            " "
+        };
+        let insertion = format!("{}@{}", space, item);
+        let new_cursor = cursor + insertion.len();
+        (format!("{}{}", text, insertion), new_cursor)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Highlight-index navigation
 // ---------------------------------------------------------------------------
 
@@ -336,6 +380,74 @@ mod tests {
             accept_completion("first @one second @tw end", 21, "two.txt").expect("accept");
         assert_eq!(out.new_text, "first @one second @two.txt end");
         assert!(!out.drill_in);
+    }
+
+    // ---- insert_item_text -------------------------------------------------
+    //
+    // These tests cover the picker's "@path" button logic. The critical
+    // invariant: existing prompt text is NEVER discarded — the path is
+    // always appended (or replaces a trailing @-token), regardless of the
+    // stale/zero cursor position that browsers report after a textarea
+    // loses focus.
+
+    #[wasm_bindgen_test]
+    fn insert_item_appends_to_non_empty_text_with_space() {
+        let (text, cursor) = insert_item_text("analyze this", "src/");
+        assert_eq!(text, "analyze this @src/");
+        assert_eq!(cursor, text.len());
+    }
+
+    #[wasm_bindgen_test]
+    fn insert_item_into_empty_text_has_no_leading_space() {
+        let (text, cursor) = insert_item_text("", "src/");
+        assert_eq!(text, "@src/");
+        assert_eq!(cursor, text.len());
+    }
+
+    #[wasm_bindgen_test]
+    fn insert_item_after_trailing_whitespace_has_no_extra_space() {
+        let (text, cursor) = insert_item_text("analyze this ", "src/");
+        assert_eq!(text, "analyze this @src/");
+        assert_eq!(cursor, text.len());
+    }
+
+    #[wasm_bindgen_test]
+    fn insert_item_replaces_trailing_at_token() {
+        // Operator typed "@" then opened the picker — the token is
+        // replaced rather than appended, matching keyboard-completion
+        // behavior.
+        let (text, cursor) = insert_item_text("check @", ".omega/sessions/abc123/");
+        assert_eq!(text, "check @.omega/sessions/abc123/");
+        assert_eq!(cursor, text.len());
+    }
+
+    #[wasm_bindgen_test]
+    fn insert_item_replaces_trailing_at_token_with_partial_prefix() {
+        let (text, cursor) = insert_item_text("fix @.omega/sessions/", ".omega/sessions/abc/");
+        assert_eq!(text, "fix @.omega/sessions/abc/");
+        assert_eq!(cursor, text.len());
+    }
+
+    #[wasm_bindgen_test]
+    fn insert_item_preserves_full_prompt_text() {
+        // Regression test for the overwrite bug: clicking the @path button
+        // must NEVER discard the existing prompt. Whatever the operator
+        // typed should still be present verbatim as a prefix of new_text.
+        let prompt = "please fix the login bug in";
+        let (text, _) = insert_item_text(prompt, ".omega/sessions/abc/");
+        assert!(
+            text.starts_with(prompt),
+            "existing prompt was discarded: got {text:?}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn insert_item_cursor_lands_after_inserted_item() {
+        let item = ".omega/sessions/xyz/";
+        let (text, cursor) = insert_item_text("prompt", item);
+        // cursor should point right after "@<item>"
+        assert_eq!(&text[..cursor], &format!("prompt @{}", item));
+        assert_eq!(cursor, text.len());
     }
 
     // ---- next_highlight -----------------------------------------------------

@@ -65,7 +65,7 @@ use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
 
-use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
+use crate::completion::{accept_completion, at_token_at_cursor, insert_item_text, next_highlight, selected_item};
 use crate::http::get_files;
 use crate::picker::PickerOpen;
 use crate::protocol::{ClientFrame, TurnState};
@@ -620,27 +620,14 @@ pub fn Composer() -> impl IntoView {
         // Consume immediately to avoid re-triggering.
         composer_insert.0.set(None);
 
-        let Some((text, cursor)) = read_textarea() else {
+        let Some((text, _)) = read_textarea() else {
             return;
         };
 
-        let (new_text, new_cursor) = if let Some(out) = accept_completion(&text, cursor, &item) {
-            // Cursor is inside an @-token — splice it in.
-            (out.new_text, out.new_cursor)
-        } else {
-            // No @-token: insert "@item" at the cursor, prepending a
-            // space if the preceding char is not whitespace.
-            let before = &text[..cursor];
-            let after = &text[cursor..];
-            let space = if before.is_empty() || before.ends_with(char::is_whitespace) {
-                ""
-            } else {
-                " "
-            };
-            let insertion = format!("{}@{}", space, item);
-            let new_cursor = cursor + insertion.len();
-            (format!("{}{}{}", before, insertion, after), new_cursor)
-        };
+        // `insert_item_text` always appends at the end of the existing
+        // text, avoiding the stale / zero cursor that browsers report
+        // after the textarea loses focus when the picker button is clicked.
+        let (new_text, new_cursor) = insert_item_text(&text, &item);
 
         set_textarea_state(new_text, new_cursor);
 
