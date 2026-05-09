@@ -1305,6 +1305,74 @@ main > h1 {
   line-height: 1.5;
 }
 
+/* ── Dirty-working-tree warning modal ──────────────────────────────────────────────────── */
+.leptos-dirty-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.leptos-dirty-modal {
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--yellow);
+  border-radius: var(--radius);
+  width: min(520px, 90vw);
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.leptos-dirty-modal-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.leptos-dirty-modal-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--yellow);
+}
+
+.leptos-dirty-modal-body {
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.leptos-dirty-modal-body p { margin: 0 0 0.6em 0; }
+.leptos-dirty-modal-body p:last-child { margin-bottom: 0; }
+
+.leptos-dirty-modal-actions {
+  padding: 10px 16px 14px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+}
+
+.leptos-dirty-modal-ok {
+  background: none;
+  border: 1px solid var(--yellow);
+  border-radius: 3px;
+  color: var(--yellow);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 4px 16px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.leptos-dirty-modal-ok:hover {
+  background: var(--yellow);
+  color: var(--base);
+}
+
 /* ── Status chip (inline in the composer row) ───────────────────────────────────────────── */
 .status-chip {
   font-size: 14px;
