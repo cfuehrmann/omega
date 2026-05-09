@@ -1226,7 +1226,11 @@ main > h1 {
   margin-left: auto;
 }
 
-/* Small pill buttons in the label row: [context], [payload], [thinking]. */
+/* Small pill buttons in the label row: [context], [payload], [thinking].
+ * Hidden by default; revealed only while the parent .block is hovered,
+ * mirroring the session-modal .session-item-actions behaviour.
+ * Because the buttons stay in flex flow (not absolutely positioned),
+ * there is no layout shift when they appear or disappear. */
 .block-label-row-btn {
   background: none;
   border: 1px solid var(--border);
@@ -1236,8 +1240,14 @@ main > h1 {
   font-size: 11px;
   padding: 1px 6px;
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, border-color 0.1s, color 0.1s;
+}
+/* Reveal buttons when the mouse is over the containing event block. */
+.block:hover .block-label-row-btn {
   opacity: 0.8;
-  transition: opacity 0.1s, border-color 0.1s, color 0.1s;
+  pointer-events: auto;
 }
 .block-label-row-btn:hover {
   opacity: 1;
