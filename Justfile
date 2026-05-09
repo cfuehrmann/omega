@@ -20,11 +20,22 @@ mutants-tmp := env('HOME') + "/.cache/cargo-mutants-tmp"
 
 # Add the wasm32 target and install the matching wasm-bindgen-cli.
 # Version-locked: bump both here and in frontends/leptos/Cargo.toml together.
+#
+# wasm-bindgen-cli: --locked is intentional — it ensures the installed CLI uses
+# the same wasm-bindgen-shared ABI as our pinned lib.  The future-incompatibility
+# warnings about buf_redux and multipart (pulled in by wasm-bindgen-test-runner
+# via rouille) are a known upstream issue (rustwasm/wasm-bindgen#3356) and do
+# not affect functionality.
+#
+# trunk: --locked is intentionally omitted.  trunk@0.21.14's locked Cargo.lock
+# pins libdeflate-sys@1.23.1, which uses the 'no-evex512' GCC attribute removed
+# in GCC 16.  Omitting --locked lets cargo resolve a newer libdeflate-sys that
+# builds on all supported host toolchains.
 [private]
 wasm-setup:
     rustup target add wasm32-unknown-unknown
     cargo install --locked --version =0.2.121 wasm-bindgen-cli
-    cargo install --locked --version =0.21.1 trunk
+    cargo install         --version =0.21.14 trunk
 
 # Format check + Clippy + cargo test + machete. Assumes dist/ is already built.
 [private]
