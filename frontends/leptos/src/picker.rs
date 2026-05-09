@@ -152,6 +152,10 @@ pub fn SessionPicker() -> impl IntoView {
         dir
     });
 
+    // True when a session is active — used to lock down all close vectors
+    // when no session exists (the operator must pick or create one).
+    let has_session = Memo::new(move |_| conv.session_info.with(Option::is_some));
+
     // Which row is currently being renamed (None = none). Shared across all
     // rows so at most one can be in edit mode at a time.
     let editing_dir: RwSignal<Option<String>> = RwSignal::new(None);
@@ -205,15 +209,26 @@ pub fn SessionPicker() -> impl IntoView {
         picker_open.close();
     };
 
-    // TODO-1: close handler shared by `✕` button, backdrop click, Esc.
-    let on_close = move |_: leptos::ev::MouseEvent| picker_open.close();
+    // TODO-1: close handler shared by `✕` button and backdrop click.
+    // Guard: no-op when there is no active session — the operator must
+    // pick or create one before the picker can be dismissed.
+    let on_close = move |_: leptos::ev::MouseEvent| {
+        if has_session.get_untracked() {
+            picker_open.close();
+        }
+    };
 
     // Esc-key dismissal on the backdrop div.
-    // Guard: do not close the picker when a session name is being edited
-    // (the rename input's own keydown already calls stop_propagation, but
-    // this check is a safety-net for any other path that might bubble).
+    // Guards:
+    //  1. No active session → Esc is ignored (operator must choose a session).
+    //  2. A rename is in progress → Esc is ignored here (the rename input's
+    //     own keydown already handles it and calls stop_propagation, but this
+    //     check is a safety-net for any other path that might bubble).
     let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
-        if evt.key() == "Escape" && editing_dir.with_untracked(Option::is_none) {
+        if evt.key() == "Escape"
+            && has_session.get_untracked()
+            && editing_dir.with_untracked(Option::is_none)
+        {
             picker_open.close();
         }
     };
@@ -249,13 +264,15 @@ pub fn SessionPicker() -> impl IntoView {
                             >
                                 "+ new session"
                             </button>
-                            <button
-                                class="picker-close"
-                                data-testid="leptos-picker-close"
-                                on:click=on_close
-                            >
-                                "✕"
-                            </button>
+                            <Show when=move || has_session.get() fallback=|| ()>
+                                <button
+                                    class="picker-close"
+                                    data-testid="leptos-picker-close"
+                                    on:click=on_close
+                                >
+                                    "✕"
+                                </button>
+                            </Show>
                         </div>
                     </header>
                     <Show
