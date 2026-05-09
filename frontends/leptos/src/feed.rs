@@ -59,7 +59,7 @@ use crate::context_modal::ContextModalState;
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
     EventKind, assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag,
-    should_autoscroll, truncate_preview,
+    should_autoscroll, tool_call_preview, truncate_preview,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -237,7 +237,7 @@ pub fn ConversationFeed() -> impl IntoView {
                             .map(|((idx, ev), corr)| (idx, ev, corr))
                             .collect::<Vec<(usize, OmegaEvent, Option<usize>)>>()
                     }
-                    key=|(idx, _, _): &(usize, OmegaEvent, Option<usize>)| *idx
+                    key=|(idx, _, corr): &(usize, OmegaEvent, Option<usize>)| (*idx, *corr)
                     children=|(_, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr /> }
                 />
                 <StreamingTail />
@@ -544,9 +544,10 @@ fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoVi
 /// One `tool_call` row — Phase 3.10 TODO-C.
 ///
 /// Label is the tool name (not the literal string `"tool_call"`).
-/// When `corr` is `Some(n)`, the 1-based integer *n* appears as a
-/// superscript correlation hint so the user can pair calls with
-/// their results. A 2-line / 200-byte JSON preview appears inline;
+/// When `corr` is `Some(n)`, a yellow `<span class="corr-badge">` with the
+/// 1-based ordinal *n* is rendered at the start of the label row so the
+/// user can pair calls with their results on the same line.
+/// A 2-line / 300-byte preview follows the tool name inline;
 /// an `[input]` button opens the full JSON in a [`TextModal`].
 #[component]
 fn ToolCallBlock(
@@ -560,18 +561,22 @@ fn ToolCallBlock(
 
     let full_input = serde_json::to_string_pretty(&event.input)
         .unwrap_or_else(|_| "{}".to_owned());
-    // 2-line / 200-byte preview; full JSON reachable via the input modal.
-    let preview = truncate_preview(&full_input, 2, 200)
-        .unwrap_or_else(|| full_input.clone());
+    // Human-readable preview: tool-specific field extraction rather than raw
+    // JSON. Full JSON always reachable via the [input] modal button.
+    // Limits: 2 lines / 300 bytes.
+    let raw_preview = tool_call_preview(&name, &event.input);
+    let preview = truncate_preview(&raw_preview, 2, 300)
+        .unwrap_or(raw_preview);
     let full_for_modal = full_input;
     let modal_title = format!("tool_call: {name}");
 
     view! {
         <div class="block-label-row">
+            {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
             <span class="block-label">
                 <span data-testid="leptos-tool-name">{name.clone()}</span>
-                {corr.map(|n| view! { <sup class="block-tool-id">{n.to_string()}</sup> })}
             </span>
+            <span class="block-tool-preview" data-testid="leptos-tool-input">{preview}</span>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-tool-call-input"
@@ -580,7 +585,6 @@ fn ToolCallBlock(
                 "input"
             </button>
         </div>
-        <pre class="block-tool-input" data-testid="leptos-tool-input">{preview}</pre>
     }
 }
 
@@ -654,13 +658,13 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
 
 /// One `tool_result` row — Phase 3.10 TODO-C.
 ///
-/// * Label is the tool name (not `"tool_result"`).
-/// * When `corr` is `Some(n)`, the same integer shown on the
-///   matching [`ToolCallBlock`] appears as a superscript.
-/// * Inline preview is truncated to the first 2 lines / 200 bytes.
-/// * A `[payload]` button opens a [`TextModal`] with the full output.
-/// * The old `[show more]` toggle and the `duration_ms` meta line are
-///   removed from the inline view; duration appears in the modal title.
+/// * Label is the literal text `"result"` (not the tool name) so results
+///   are visually distinct from tool calls at a glance.
+/// * When `corr` is `Some(n)`, a yellow `<span class="corr-badge">` with
+///   the 1-based ordinal is shown at the start of the label row.
+/// * A 2-line / 300-byte output preview is rendered on its own line below
+///   the label row, left-aligned; a `[payload]` button opens a
+///   [`TextModal`] with the full output.
 #[component]
 fn ToolResultBlock(
     event: omega_types::events::ToolResultEvent,
@@ -671,17 +675,17 @@ fn ToolResultBlock(
 
     let name = event.name.clone();
     let full = event.output.clone();
-    // 2-line / 200-byte inline preview; full output reachable via the payload modal.
-    let preview = truncate_preview(&full, 2, 200)
+    // 2-line / 300-byte inline preview; full output reachable via the payload modal.
+    let preview = truncate_preview(&full, 2, 300)
         .unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
 
     view! {
         <div class="block-label-row">
+            {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
             <span class="block-label" data-testid="leptos-tool-result-name">
-                {name}
-                {corr.map(|n| view! { <sup class="block-tool-id">{n.to_string()}</sup> })}
+                "result"
             </span>
             <button
                 class="block-label-row-btn"

@@ -392,6 +392,28 @@ main > h1 {
   opacity: 0.85;
 }
 
+/* Correlation badge: 1-based ordinal for tool-call / tool-result pairs.
+ * Shown in the label row, yellow, same font as .block-label. */
+.corr-badge {
+  color: var(--yellow);
+  font-size: 13px;
+  font-weight: bold;
+  font-family: var(--font);
+  letter-spacing: 0.5px;
+}
+
+/* Inline preview text sitting on the same label row as the tool name. */
+.block-tool-preview {
+  color: var(--ctp-subtext1);
+  font-size: 12px;
+  font-family: var(--font);
+  font-weight: normal;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
 /* The `<pre>`-wrapped tool name and JSON input preview. */
 .block-tool-name {
   font-size: 13px;

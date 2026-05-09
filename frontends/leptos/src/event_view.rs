@@ -281,10 +281,12 @@ pub fn truncate_preview(s: &str, max_lines: usize, max_bytes: usize) -> Option<S
 ///
 /// * `LlmCall` events reset the per-call counter to zero and clear the id
 ///   map, so numbering restarts at 1 for each LLM round-trip.
-/// * `ToolCall` events get `Some(n)` where *n* is the 1-based ordinal of
-///   that call within the current `LlmCall` group.
+/// * `ToolCall` events in a group with **two or more** calls get `Some(n)`
+///   where *n* is the 1-based ordinal within the current `LlmCall` group.
+///   Groups with only a single call get `None` — there is nothing to pair,
+///   so the number would add visual noise without helping the user.
 /// * `ToolResult` events get `Some(n)` matching the `ToolCall` with the
-///   same `id`.
+///   same `id`, subject to the same single-call suppression.
 /// * All other events get `None`.
 ///
 /// Designed to be called once per reactive frame in `ConversationFeed`
@@ -295,6 +297,7 @@ pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
     let mut counter = 0usize;
     let mut id_map: HashMap<String, usize> = HashMap::new();
 
+    // Pass 1 — assign corrs exactly as before.
     for (i, ev) in events.iter().enumerate() {
         match ev {
             OmegaEvent::LlmCall(_) => {
@@ -312,7 +315,200 @@ pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
             _ => {}
         }
     }
+
+    // Pass 2 — suppress corrs in groups that have ≤ 1 tool call.
+    // Groups are delimited by `LlmCall` events; everything before the
+    // first `LlmCall` forms an implicit group.
+    let mut group_start = 0usize;
+    let n = events.len();
+    let mut i = 0usize;
+    while i <= n {
+        let at_boundary = i == n || matches!(events[i], OmegaEvent::LlmCall(_));
+        if at_boundary {
+            let max_in_group = result[group_start..i]
+                .iter()
+                .filter_map(|x| *x)
+                .max()
+                .unwrap_or(0);
+            if max_in_group <= 1 {
+                for slot in &mut result[group_start..i] {
+                    *slot = None;
+                }
+            }
+            // Next group starts after the LlmCall event itself.
+            group_start = i + 1;
+        }
+        i += 1;
+    }
+
     result
+}
+
+// ---------------------------------------------------------------------------
+// Tool-call preview
+// ---------------------------------------------------------------------------
+
+/// Build a human-readable one/two-line summary of a tool invocation.
+///
+/// Instead of showing the raw JSON input object, this function extracts the
+/// most important parameters for each known tool and formats them for quick
+/// scanning. The result is NOT yet truncated — callers should apply
+/// [`truncate_preview`] with `(2, 300)` limits.
+///
+/// For unknown tool names the function falls back to a JSON pretty-print of
+/// the full `input` value so nothing is ever hidden without the modal.
+///
+/// # Parameter conventions
+/// * String fields are extracted as-is; missing optional fields are omitted.
+/// * Timeout / duration values are shown as `timeout=Ns` / `timeout=Nms`.
+/// * File-glob and path-type filters are shown in `[…]` brackets.
+#[must_use]
+pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
+    /// Pull a string field, returning `""` when missing or not a string.
+    fn s<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
+        v.get(key).and_then(|x| x.as_str()).unwrap_or("")
+    }
+    /// Pull an unsigned-integer field.
+    fn u(v: &serde_json::Value, key: &str) -> Option<u64> {
+        v.get(key).and_then(|x| x.as_u64())
+    }
+    /// Pull a boolean field.
+    fn b(v: &serde_json::Value, key: &str) -> bool {
+        v.get(key).and_then(|x| x.as_bool()).unwrap_or(false)
+    }
+
+    match name {
+        // ── shell execution ────────────────────────────────────────────────
+        "run_command" => {
+            let cmd = s(input, "command");
+            let timeout = u(input, "timeout");
+            match timeout {
+                Some(t) => format!("{cmd}  [timeout: {t}s]"),
+                None => cmd.to_owned(),
+            }
+        }
+
+        "run_background" => {
+            let cmd = s(input, "command");
+            let cwd = s(input, "cwd");
+            if cwd.is_empty() {
+                cmd.to_owned()
+            } else {
+                format!("{cmd}  [@ {cwd}]")
+            }
+        }
+
+        // ── background process I/O ─────────────────────────────────────────
+        "wait_for_output" => {
+            let pid = u(input, "pid");
+            let timeout_ms = u(input, "timeoutMs");
+            let pattern = s(input, "pattern");
+            let log_file = s(input, "logFile");
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(p) = pid {
+                parts.push(format!("pid={p}"));
+            }
+            if let Some(t) = timeout_ms {
+                parts.push(format!("timeout={t}ms"));
+            }
+            if !pattern.is_empty() {
+                parts.push(format!("pattern={pattern:?}"));
+            }
+            if !log_file.is_empty() {
+                parts.push(log_file.to_owned());
+            }
+            parts.join("  ")
+        }
+
+        "write_stdin" => {
+            let pid = u(input, "pid");
+            let text = s(input, "text");
+            let end_stdin = b(input, "end_stdin");
+            let prefix = pid.map_or_else(String::new, |p| format!("pid={p}  "));
+            if end_stdin {
+                format!("{prefix}{text}  [EOF]")
+            } else {
+                format!("{prefix}{text}")
+            }
+        }
+
+        // ── file system reads ──────────────────────────────────────────────
+        "read_file" => {
+            let path = s(input, "path");
+            let offset = u(input, "offset");
+            let limit = u(input, "limit");
+            match (offset, limit) {
+                (None, None) => path.to_owned(),
+                (Some(o), Some(l)) => format!("{path}  [offset={o}, limit={l}]"),
+                (Some(o), None) => format!("{path}  [offset={o}]"),
+                (None, Some(l)) => format!("{path}  [limit={l}]"),
+            }
+        }
+
+        "list_files" => {
+            let path = s(input, "path");
+            if b(input, "recursive") {
+                format!("{path}  [recursive]")
+            } else {
+                path.to_owned()
+            }
+        }
+
+        // ── file system writes ─────────────────────────────────────────────
+        "write_file" => {
+            // Content can be huge — only show the destination path.
+            s(input, "path").to_owned()
+        }
+
+        "edit_file" => {
+            let path = s(input, "path");
+            let n = input
+                .get("replacements")
+                .and_then(|v| v.as_array())
+                .map_or(0, |a| a.len());
+            let plural = if n == 1 { "" } else { "s" };
+            format!("{path}  ({n} replacement{plural})")
+        }
+
+        // ── search ─────────────────────────────────────────────────────────
+        "grep_files" => {
+            let pattern = s(input, "pattern");
+            let path = s(input, "path");
+            let file_glob = s(input, "file_glob");
+            if file_glob.is_empty() {
+                format!("{pattern:?}  in {path}")
+            } else {
+                format!("{pattern:?}  in {path}  [{file_glob}]")
+            }
+        }
+
+        "find_files" => {
+            let pattern = s(input, "pattern");
+            let path = s(input, "path");
+            let type_filter = s(input, "type");
+            if type_filter.is_empty() {
+                format!("{pattern}  in {path}")
+            } else {
+                format!("{pattern}  in {path}  [type={type_filter}]")
+            }
+        }
+
+        // ── web / network ──────────────────────────────────────────────────
+        "web_search" => s(input, "query").to_owned(),
+
+        "fetch_url" => {
+            let url = s(input, "url");
+            let postprocess = s(input, "postprocess");
+            if postprocess.is_empty() {
+                url.to_owned()
+            } else {
+                format!("{url}  [{postprocess}]")
+            }
+        }
+
+        // ── fallback: pretty-print full JSON ───────────────────────────────
+        _ => serde_json::to_string_pretty(input).unwrap_or_else(|_| "{}".to_owned()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,23 +1211,41 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn assign_tool_corr_single_tool_call_gets_one() {
+    fn assign_tool_corr_single_tool_call_suppressed() {
+        // A group with exactly one tool call gets None — no pair to highlight.
         let events = vec![make_tool_call("id1")];
-        assert_eq!(assign_tool_corr(&events), vec![Some(1)]);
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn assign_tool_corr_two_calls_numbered_sequentially() {
-        let events = vec![make_tool_call("id1"), make_tool_call("id2")];
-        assert_eq!(assign_tool_corr(&events), vec![Some(1), Some(2)]);
+        assert_eq!(assign_tool_corr(&events), vec![None]);
     }
 
     #[wasm_bindgen_test]
     #[test]
     fn assign_tool_corr_result_matches_call_by_id() {
+        // Two calls in the group — both numbered, results matched by id.
+        let events = vec![
+            make_tool_call("id1"),
+            make_tool_call("id2"),
+            make_tool_result("id1"),
+        ];
+        assert_eq!(
+            assign_tool_corr(&events),
+            vec![Some(1), Some(2), Some(1)],
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_single_call_result_both_suppressed() {
+        // One call + its result: both suppressed (single-call group).
         let events = vec![make_tool_call("id1"), make_tool_result("id1")];
-        assert_eq!(assign_tool_corr(&events), vec![Some(1), Some(1)]);
+        assert_eq!(assign_tool_corr(&events), vec![None, None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_two_calls_numbered_sequentially() {
+        // Two calls in the same group: both numbered.
+        let events = vec![make_tool_call("id1"), make_tool_call("id2")];
+        assert_eq!(assign_tool_corr(&events), vec![Some(1), Some(2)]);
     }
 
     #[wasm_bindgen_test]
@@ -1058,10 +1272,11 @@ mod tests {
             make_llm_call(),
             make_tool_call("c"),
         ];
-        // After LlmCall, counter restarts at 1.
+        // Group 1 (before LlmCall): 2 calls → numbered.
+        // Group 2 (after LlmCall): 1 call → suppressed.
         assert_eq!(
             assign_tool_corr(&events),
-            vec![Some(1), Some(2), None, Some(1)],
+            vec![Some(1), Some(2), None, None],
         );
     }
 
@@ -1078,7 +1293,8 @@ mod tests {
     #[test]
     fn assign_tool_corr_llm_call_clears_id_map() {
         // After an LlmCall, a ToolResult with an id from the previous group
-        // should NOT match (map was cleared).
+        // should NOT match (map was cleared). Also: the single call in group 1
+        // is suppressed, and the orphan result in group 2 is also None.
         let events = vec![
             make_tool_call("id1"),
             make_llm_call(),
@@ -1086,7 +1302,260 @@ mod tests {
         ];
         assert_eq!(
             assign_tool_corr(&events),
-            vec![Some(1), None, None],
+            vec![None, None, None],
         );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_run_command_no_timeout() {
+        let input = serde_json::json!({ "command": "echo hi" });
+        assert_eq!(tool_call_preview("run_command", &input), "echo hi");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_run_command_with_timeout() {
+        let input = serde_json::json!({ "command": "sleep 999", "timeout": 300 });
+        assert_eq!(
+            tool_call_preview("run_command", &input),
+            "sleep 999  [timeout: 300s]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_run_background_no_cwd() {
+        let input = serde_json::json!({ "command": "cargo watch" });
+        assert_eq!(tool_call_preview("run_background", &input), "cargo watch");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_run_background_with_cwd() {
+        let input = serde_json::json!({ "command": "npm start", "cwd": "frontend" });
+        assert_eq!(
+            tool_call_preview("run_background", &input),
+            "npm start  [@ frontend]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_wait_for_output_all_fields() {
+        let input = serde_json::json!({
+            "pid": 42,
+            "logFile": "/tmp/out.log",
+            "timeoutMs": 5000,
+            "pattern": "ready"
+        });
+        assert_eq!(
+            tool_call_preview("wait_for_output", &input),
+            r#"pid=42  timeout=5000ms  pattern="ready"  /tmp/out.log"#,
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_wait_for_output_no_pattern() {
+        let input = serde_json::json!({
+            "pid": 7,
+            "logFile": "/tmp/x.log",
+            "timeoutMs": 2000
+        });
+        assert_eq!(
+            tool_call_preview("wait_for_output", &input),
+            "pid=7  timeout=2000ms  /tmp/x.log",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_write_stdin_basic() {
+        let input = serde_json::json!({ "pid": 12, "text": "yes\n" });
+        assert_eq!(
+            tool_call_preview("write_stdin", &input),
+            "pid=12  yes\n",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_write_stdin_eof() {
+        let input = serde_json::json!({ "pid": 12, "text": "data", "end_stdin": true });
+        assert_eq!(
+            tool_call_preview("write_stdin", &input),
+            "pid=12  data  [EOF]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_read_file_path_only() {
+        let input = serde_json::json!({ "path": "src/main.rs" });
+        assert_eq!(tool_call_preview("read_file", &input), "src/main.rs");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_read_file_with_offset_and_limit() {
+        let input = serde_json::json!({ "path": "a.txt", "offset": 10, "limit": 50 });
+        assert_eq!(
+            tool_call_preview("read_file", &input),
+            "a.txt  [offset=10, limit=50]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_read_file_with_offset_only() {
+        let input = serde_json::json!({ "path": "b.txt", "offset": 5 });
+        assert_eq!(tool_call_preview("read_file", &input), "b.txt  [offset=5]");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_read_file_with_limit_only() {
+        let input = serde_json::json!({ "path": "c.txt", "limit": 30 });
+        assert_eq!(tool_call_preview("read_file", &input), "c.txt  [limit=30]");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_list_files_not_recursive() {
+        let input = serde_json::json!({ "path": "." });
+        assert_eq!(tool_call_preview("list_files", &input), ".");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_list_files_recursive() {
+        let input = serde_json::json!({ "path": "src", "recursive": true });
+        assert_eq!(
+            tool_call_preview("list_files", &input),
+            "src  [recursive]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_write_file_shows_only_path() {
+        // Content field is intentionally suppressed (can be huge).
+        let input = serde_json::json!({ "path": "out.txt", "content": "hello world" });
+        assert_eq!(tool_call_preview("write_file", &input), "out.txt");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_edit_file_one_replacement() {
+        let input = serde_json::json!({
+            "path": "foo.rs",
+            "replacements": [{"old_text": "a", "new_text": "b"}]
+        });
+        assert_eq!(
+            tool_call_preview("edit_file", &input),
+            "foo.rs  (1 replacement)",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_edit_file_many_replacements() {
+        let input = serde_json::json!({
+            "path": "bar.rs",
+            "replacements": [
+                {"old_text": "a", "new_text": "b"},
+                {"old_text": "c", "new_text": "d"}
+            ]
+        });
+        assert_eq!(
+            tool_call_preview("edit_file", &input),
+            "bar.rs  (2 replacements)",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_grep_files_no_glob() {
+        let input = serde_json::json!({ "pattern": "fn main", "path": "src" });
+        // Pattern is quoted (Debug format) to distinguish regex from path.
+        assert_eq!(
+            tool_call_preview("grep_files", &input),
+            r#""fn main"  in src"#,
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_grep_files_with_glob() {
+        let input = serde_json::json!({
+            "pattern": "TODO",
+            "path": ".",
+            "file_glob": "*.rs"
+        });
+        assert_eq!(
+            tool_call_preview("grep_files", &input),
+            r#""TODO"  in .  [*.rs]"#,
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_find_files_no_type() {
+        let input = serde_json::json!({ "pattern": "*.toml", "path": "." });
+        assert_eq!(
+            tool_call_preview("find_files", &input),
+            "*.toml  in .",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_find_files_with_type() {
+        let input = serde_json::json!({ "pattern": "mod.rs", "path": "src", "type": "f" });
+        assert_eq!(
+            tool_call_preview("find_files", &input),
+            "mod.rs  in src  [type=f]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_web_search() {
+        let input = serde_json::json!({ "query": "leptos signals" });
+        assert_eq!(tool_call_preview("web_search", &input), "leptos signals");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_fetch_url_with_postprocess() {
+        let input = serde_json::json!({
+            "url": "https://example.com/data",
+            "postprocess": "grep -n pattern"
+        });
+        assert_eq!(
+            tool_call_preview("fetch_url", &input),
+            "https://example.com/data  [grep -n pattern]",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_fetch_url_no_postprocess() {
+        let input = serde_json::json!({ "url": "https://example.com", "postprocess": "" });
+        assert_eq!(
+            tool_call_preview("fetch_url", &input),
+            "https://example.com",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_unknown_tool_falls_back_to_json() {
+        let input = serde_json::json!({ "foo": "bar" });
+        let result = tool_call_preview("my_custom_tool", &input);
+        // Must contain the field name and value from the JSON.
+        assert!(result.contains("foo"), "fallback must include field name: {result}");
+        assert!(result.contains("bar"), "fallback must include field value: {result}");
     }
 }

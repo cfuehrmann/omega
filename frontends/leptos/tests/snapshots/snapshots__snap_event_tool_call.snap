@@ -2,5 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="tool_call" data-event-kind="tool_call" class="block block-tool-call"><div class="block-label-row"><span class="block-label"><span data-testid="leptos-tool-name">run_command</span><!></span><button data-testid="leptos-tool-call-input" class="block-label-row-btn">input</button></div><pre data-testid="leptos-tool-input" class="block-tool-input">{
-  "command": "echo hi"</pre></div>
+<div data-testid="leptos-event-block" data-event-type="tool_call" data-event-kind="tool_call" class="block block-tool-call"><div class="block-label-row"><!><span class="block-label"><span data-testid="leptos-tool-name">run_command</span></span><span data-testid="leptos-tool-input" class="block-tool-preview">echo hi</span><button data-testid="leptos-tool-call-input" class="block-label-row-btn">input</button></div></div>
