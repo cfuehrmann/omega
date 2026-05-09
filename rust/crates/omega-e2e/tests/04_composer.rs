@@ -464,13 +464,65 @@ async fn composer_completion_accept() {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Stub composer is gone (negative)
+// 8. Composer hidden before any session exists
+// ---------------------------------------------------------------------------
+
+/// The composer must not be in the DOM until a session is active.
+/// Before any session: picker auto-opens, WS is connected, but
+/// `session_info` is None so the `<Show>` guard keeps the composer out.
+#[tokio::test]
+#[ignore = "browser"]
+async fn composer_hidden_without_session() {
+    let h = TestHarness::launch().await.expect("launch");
+    // WS is connected and the picker has auto-opened, but no session
+    // exists yet. Give the reactive system a tick to settle.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let present: bool = h
+        .eval("!!document.querySelector('[data-testid=\"leptos-composer\"]')")
+        .await
+        .expect("eval composer presence");
+    assert!(
+        !present,
+        "composer must not be in the DOM before a session exists"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 9. Composer appears once a session is created
+// ---------------------------------------------------------------------------
+
+/// The inverse: creating a session via `+ new session` must cause the
+/// composer to mount. Confirms the `<Show when=session_has_loaded>` guard
+/// fires in both directions.
+#[tokio::test]
+#[ignore = "browser"]
+async fn composer_visible_after_session() {
+    let h = TestHarness::launch().await.expect("launch");
+    // No session yet — composer absent.
+    let before: bool = h
+        .eval("!!document.querySelector('[data-testid=\"leptos-composer\"]')")
+        .await
+        .expect("eval before session");
+    assert!(!before, "composer must be absent before session creation");
+
+    h.new_session().await.expect("new session");
+
+    // Session now active — composer must mount.
+    h.wait_for_selector(COMPOSER, Duration::from_secs(5))
+        .await
+        .expect("composer did not appear after session was created");
+}
+
+// ---------------------------------------------------------------------------
+// 10. Stub composer is gone (negative)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "browser"]
 async fn composer_stub_is_gone() {
     let h = TestHarness::launch().await.expect("launch");
+    // Composer only renders once a session is active.
+    h.new_session().await.expect("new session");
 
     // Real composer mounted.
     h.wait_for_selector(COMPOSER, Duration::from_secs(2))

@@ -192,12 +192,18 @@ async fn picker_two_sessions_only_latest_active() {
 // ---------------------------------------------------------------------------
 
 /// ✕ button dismisses the picker; Sessions button re-opens it.
+///
+/// The Sessions button lives on the composer, which is only rendered once
+/// a session exists. So we create a session first (via the auto-opened
+/// picker), then exercise the close / reopen cycle.
 #[tokio::test]
 #[ignore = "browser"]
 async fn picker_close_button_then_reopen() {
     let h = TestHarness::launch().await.expect("launch");
-    h.open_picker().await.expect("open picker");
+    // Create a session so the composer (and its Sessions button) appears.
+    h.new_session().await.expect("new session");
 
+    h.open_picker().await.expect("open picker");
     h.click(PICKER_CLOSE).await.expect("click ✕");
     h.wait_for_detached(PICKER, Duration::from_secs(3))
         .await

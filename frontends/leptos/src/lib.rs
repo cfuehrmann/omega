@@ -150,7 +150,9 @@ pub fn App() -> impl IntoView {
             <SessionPicker />
             <ConversationFeed />
             <UsagePanel />
-            <Composer />
+            <Show when=move || session_has_loaded(store.session_info.with(Option::is_some)) fallback=|| ()>
+                <Composer />
+            </Show>
             <ContextModal />
             <TextModal />
             <DirtyModal />
@@ -188,6 +190,12 @@ fn should_auto_open_picker(connected: bool, has_no_session: bool) -> bool {
     connected && has_no_session
 }
 
+/// Returns true when a session is active and the composer should be rendered.
+/// Extracted so the condition is mutation-tested independently of the reactive Effect.
+fn session_has_loaded(has_session: bool) -> bool {
+    has_session
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +213,13 @@ mod tests {
     #[test]
     fn turn_is_active_false_for_idle() {
         assert!(!turn_is_active(TurnState::Idle));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn session_has_loaded_true_when_session_info_present() {
+        assert!(session_has_loaded(true));
+        assert!(!session_has_loaded(false));
     }
 
     #[wasm_bindgen_test]
