@@ -490,13 +490,6 @@ fn SessionRow(
                     {label}
                 </span>
                 <div class="session-item-actions">
-                    <button
-                        data-testid="leptos-session-insert-at"
-                        title="Insert session path as @ reference in prompt"
-                        on:click=on_insert_at
-                    >
-                        "@ path"
-                    </button>
                     <Show when=move || !active.get() fallback=|| ().into_any()>
                         <button
                             data-testid="leptos-session-resume"
@@ -511,6 +504,13 @@ fn SessionRow(
                             "delete"
                         </button>
                     </Show>
+                    <button
+                        data-testid="leptos-session-insert-at"
+                        title="Insert session path as @ reference in prompt"
+                        on:click=on_insert_at
+                    >
+                        "@ path"
+                    </button>
                 </div>
             </Show>
         </li>
