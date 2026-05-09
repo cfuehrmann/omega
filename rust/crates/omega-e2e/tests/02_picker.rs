@@ -219,10 +219,15 @@ async fn picker_close_button_then_reopen() {
 }
 
 /// Clicking the backdrop (outside the panel) closes the picker.
+///
+/// Requires an active session — backdrop dismissal is locked when no
+/// session exists (operator must pick or create one). See the
+/// `has_session` guard on `on_close` in `picker.rs`.
 #[tokio::test]
 #[ignore = "browser"]
 async fn picker_backdrop_click_closes() {
     let h = TestHarness::launch().await.expect("launch");
+    h.new_session().await.expect("new session");
     h.open_picker().await.expect("open picker");
 
     // Click at the backdrop's top-left so we're guaranteed outside
