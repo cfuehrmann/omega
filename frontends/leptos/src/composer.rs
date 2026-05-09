@@ -214,6 +214,42 @@ pub fn show_secondary_abort(turn_state: TurnState) -> bool {
 // Component
 // ---------------------------------------------------------------------------
 
+/// Shared signal for injecting text into the composer textarea from
+/// outside (e.g. the session picker's "@ path" button).
+///
+/// When set to `Some(item)` the Composer's Effect inserts `@item` at
+/// the current cursor position — using `accept_completion` if the
+/// cursor is already inside an `@`-token, otherwise inserting at the
+/// cursor with a leading space if needed. The signal is immediately
+/// reset to `None` after consumption.
+///
+/// Provided by the `Composer` component at mount; consumed by any
+/// component that holds a reference to the textarea (currently the
+/// session picker's `SessionRow`).
+#[derive(Debug, Clone, Copy)]
+pub struct ComposerInsert(pub RwSignal<Option<String>>);
+
+impl ComposerInsert {
+    /// Construct with no pending insert. Must run inside a leptos
+    /// reactive `Owner` scope.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(RwSignal::new(None))
+    }
+
+    /// Queue `item` for insertion as `@item` at the composer cursor.
+    #[mutants::skip]
+    pub fn insert(self, item: String) {
+        self.0.set(Some(item));
+    }
+}
+
+impl Default for ComposerInsert {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Top-level composer surface. Reads from `SessionStore` (turn_state,
 /// session_info) and `WsClient` (send) via context.
 /// Skipped from mutation testing: all mutations are in reactive signal
@@ -225,6 +261,11 @@ pub fn Composer() -> impl IntoView {
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
 
     let textarea_ref = NodeRef::<html::Textarea>::new();
+
+    // Provide the inject-text context so the session picker can
+    // insert `@<session_dir>` into the composer without prop-drilling.
+    let composer_insert = ComposerInsert::new();
+    provide_context(composer_insert);
 
     // Draft text. The textarea is the canonical source of truth for
     // visible text via `prop:value`; we mirror it into `draft` for
@@ -564,6 +605,52 @@ pub fn Composer() -> impl IntoView {
             }
         }
     };
+
+    // ---- composer-insert Effect (from session picker "@ path" button) ------
+    // When `composer_insert` is set to `Some(item)`, insert `@item` at
+    // the current textarea cursor. If the cursor is inside an existing
+    // `@`-token, `accept_completion` replaces the token; otherwise the
+    // text is inserted raw at the cursor (with a leading space when
+    // the preceding character is not whitespace). The signal is cleared
+    // immediately so the Effect doesn't re-trigger.
+    Effect::new(move |_| {
+        let Some(item) = composer_insert.0.get() else {
+            return;
+        };
+        // Consume immediately to avoid re-triggering.
+        composer_insert.0.set(None);
+
+        let Some((text, cursor)) = read_textarea() else {
+            return;
+        };
+
+        let (new_text, new_cursor) = if let Some(out) = accept_completion(&text, cursor, &item) {
+            // Cursor is inside an @-token — splice it in.
+            (out.new_text, out.new_cursor)
+        } else {
+            // No @-token: insert "@item" at the cursor, prepending a
+            // space if the preceding char is not whitespace.
+            let before = &text[..cursor];
+            let after = &text[cursor..];
+            let space = if before.is_empty() || before.ends_with(char::is_whitespace) {
+                ""
+            } else {
+                " "
+            };
+            let insertion = format!("{}@{}", space, item);
+            let new_cursor = cursor + insertion.len();
+            (format!("{}{}{}", before, insertion, after), new_cursor)
+        };
+
+        set_textarea_state(new_text, new_cursor);
+
+        // Refocus the textarea so the user can continue typing.
+        spawn_local(async move {
+            if let Some(el) = textarea_ref.get_untracked() {
+                let _ = el.focus();
+            }
+        });
+    });
 
     // ---- view --------------------------------------------------------------
 

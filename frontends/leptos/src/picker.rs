@@ -54,6 +54,7 @@ use leptos::task::spawn_local;
 use leptos::web_sys;
 
 use crate::http::get_sessions;
+use crate::composer::ComposerInsert;
 use crate::protocol::ClientFrame;
 use crate::sessions::{SessionListItem, SessionListStore, is_active};
 use crate::store::SessionStore;
@@ -317,6 +318,8 @@ fn SessionRow(
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
+    let composer_insert =
+        use_context::<ComposerInsert>().expect("ComposerInsert must be provided");
 
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
 
@@ -426,6 +429,12 @@ fn SessionRow(
         picker_open.close();
     };
 
+    let on_insert_at = move |_| {
+        let dir = dir_sv.get_value();
+        composer_insert.insert(dir);
+        picker_open.close();
+    };
+
     let active = Memo::new(move |_| {
         let dir = dir_sv.get_value();
         active_dir.with(|d| {
@@ -477,23 +486,29 @@ fn SessionRow(
                 >
                     {label}
                 </span>
-                <Show when=move || active.get() fallback=|| ().into_any()>
-                    <span data-testid="leptos-session-active-marker" class="session-item-active-marker">
-                        " (active)"
-                    </span>
-                </Show>
-                <button
-                    data-testid="leptos-session-resume"
-                    on:click=on_resume
-                >
-                    "resume"
-                </button>
-                <button
-                    data-testid="leptos-session-delete"
-                    on:click=on_delete
-                >
-                    "delete"
-                </button>
+                <div class="session-item-actions">
+                    <button
+                        data-testid="leptos-session-insert-at"
+                        title="Insert session path as @ reference in prompt"
+                        on:click=on_insert_at
+                    >
+                        "@ path"
+                    </button>
+                    <Show when=move || !active.get() fallback=|| ().into_any()>
+                        <button
+                            data-testid="leptos-session-resume"
+                            on:click=on_resume
+                        >
+                            "resume"
+                        </button>
+                        <button
+                            data-testid="leptos-session-delete"
+                            on:click=on_delete
+                        >
+                            "delete"
+                        </button>
+                    </Show>
+                </div>
             </Show>
         </li>
     }

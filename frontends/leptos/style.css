@@ -204,6 +204,7 @@ main > h1 {
 }
 
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -233,15 +234,30 @@ main > h1 {
   color: var(--ctp-blue);
 }
 
-.session-item-active-marker {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ctp-teal);
-  border: 1px solid var(--ctp-teal);
-  border-radius: 3px;
-  padding: 1px 5px;
-  letter-spacing: 0.03em;
-  flex-shrink: 0;
+/* Hover-revealed action buttons, absolutely positioned so they overlay
+ * the label text on the right. A gradient fade blends them in. */
+.session-item-actions {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  /* Gradient mask so buttons don't hard-cut the label text */
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--surface0, #1e1e2e) 18%
+  );
+  padding-left: 28px;
+}
+.session-item:hover .session-item-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Per-row inline-rename group (input + save/cancel). */
@@ -266,9 +282,10 @@ main > h1 {
   outline: none;
 }
 
-/* Common styling for the per-row action buttons (resume / cancel /
- * delete). Shared shape; per-button hover colour picked from the
- * role palette. */
+/* Common styling for the per-row action buttons (insert-at / resume /
+ * cancel / delete). Shared shape; per-button hover colour picked from
+ * the role palette. */
+[data-testid="leptos-session-insert-at"],
 [data-testid="leptos-session-resume"],
 [data-testid="leptos-session-rename-cancel"],
 [data-testid="leptos-session-delete"] {
@@ -283,6 +300,7 @@ main > h1 {
   font-family: var(--font);
   transition: border-color 0.15s, color 0.15s;
 }
+[data-testid="leptos-session-insert-at"]:hover:not(:disabled),
 [data-testid="leptos-session-resume"]:hover:not(:disabled),
 [data-testid="leptos-session-rename-cancel"]:hover:not(:disabled) {
   border-color: var(--ctp-blue);
@@ -292,6 +310,7 @@ main > h1 {
   border-color: var(--red);
   color: var(--red);
 }
+[data-testid="leptos-session-insert-at"]:disabled,
 [data-testid="leptos-session-resume"]:disabled,
 [data-testid="leptos-session-rename-cancel"]:disabled,
 [data-testid="leptos-session-delete"]:disabled {
