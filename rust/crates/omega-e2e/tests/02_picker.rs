@@ -446,6 +446,138 @@ async fn picker_shows_pre_existing_sessions_when_no_active_session() {
         .expect("pre-existing session is listed in the picker");
 }
 
+// ---------------------------------------------------------------------------
+// Regression: Sessions button opens the picker after a session exists
+// ---------------------------------------------------------------------------
+
+/// After creating a session, the picker auto-closes. Clicking the
+/// `Sessions` button must re-open the picker and the existing session
+/// must be visible as a row.
+///
+/// User-reported bug: "now that there _is_ a session, the session modal
+/// doesn't appear at all when I click the Sessions button."
+#[tokio::test]
+#[ignore = "browser"]
+async fn picker_sessions_button_opens_modal_when_session_active() {
+    let h = TestHarness::launch().await.expect("launch");
+
+    // Picker auto-opens (no active session). Create a session.
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker auto-opens");
+    let dir = h.new_session().await.expect("new session");
+
+    // `+ new session` auto-closes the picker.
+    h.wait_for_detached(PICKER, Duration::from_secs(3))
+        .await
+        .expect("picker auto-closes after new");
+    h.wait_for_detached(PICKER_BACKDROP, Duration::from_secs(3))
+        .await
+        .expect("backdrop also gone");
+
+    // Now click the Sessions button — picker must re-appear.
+    h.click(COMPOSER_SESSIONS)
+        .await
+        .expect("click Sessions button");
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker modal appears via Sessions button");
+    h.wait_for_selector(&item_sel(&dir), DEFAULT_TIMEOUT)
+        .await
+        .expect("active session row visible in picker");
+}
+
+/// Toggle: clicking `Sessions` while picker is open closes it; clicking
+/// again re-opens it.
+#[tokio::test]
+#[ignore = "browser"]
+async fn picker_sessions_button_toggles() {
+    let h = TestHarness::launch().await.expect("launch");
+
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker auto-opens");
+    let _ = h.new_session().await.expect("new session");
+    h.wait_for_detached(PICKER, Duration::from_secs(3))
+        .await
+        .expect("picker auto-closes after new");
+
+    // Open via Sessions button.
+    h.click(COMPOSER_SESSIONS)
+        .await
+        .expect("click Sessions (open)");
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker opens");
+
+    // Close via Sessions button (toggle).
+    h.click(COMPOSER_SESSIONS)
+        .await
+        .expect("click Sessions (close)");
+    h.wait_for_detached(PICKER, Duration::from_secs(3))
+        .await
+        .expect("picker closes via toggle");
+
+    // Re-open via Sessions button.
+    h.click(COMPOSER_SESSIONS)
+        .await
+        .expect("click Sessions (re-open)");
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker re-opens after toggle");
+}
+
+/// Same as above but with **pre-existing** sessions on disk plus a
+/// freshly-created session. After auto-open of the picker (no active
+/// session), creating a session should auto-close the picker, and
+/// clicking `Sessions` afterwards must re-open it.
+///
+/// This exercises the path where `SessionRow` was rendered for the
+/// pre-existing session while the composer was hidden — the panic
+/// previously corrupted reactive state and prevented the picker from
+/// re-opening later.
+#[tokio::test]
+#[ignore = "browser"]
+async fn picker_sessions_button_opens_after_preexisting_then_new_flow() {
+    use tempfile::TempDir;
+
+    let sessions_dir = TempDir::new().expect("create sessions dir");
+    std::fs::create_dir(sessions_dir.path().join("2025-01-01T00-00-00-000-abcd1234"))
+        .expect("create pre-existing session dir");
+
+    let h = TestHarness::launch_with_dir(sessions_dir)
+        .await
+        .expect("launch");
+
+    // Auto-open + pre-existing session is listed.
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker auto-opens");
+    h.wait_for_count("[data-testid='leptos-session-item']", 1, DEFAULT_TIMEOUT)
+        .await
+        .expect("pre-existing session listed");
+
+    // Create a NEW session via `+ new session`.
+    let new_dir = h.new_session().await.expect("new session");
+    h.wait_for_detached(PICKER, Duration::from_secs(3))
+        .await
+        .expect("picker auto-closes after new");
+
+    // Click Sessions — picker must re-appear and BOTH sessions visible.
+    h.click(COMPOSER_SESSIONS)
+        .await
+        .expect("click Sessions button");
+    h.wait_for_selector(PICKER, DEFAULT_TIMEOUT)
+        .await
+        .expect("picker re-opens via Sessions button");
+    h.wait_for_selector(&item_sel(&new_dir), DEFAULT_TIMEOUT)
+        .await
+        .expect("new session row visible");
+    h.wait_for_count("[data-testid='leptos-session-item']", 2, DEFAULT_TIMEOUT)
+        .await
+        .expect("both sessions visible (pre-existing + new)");
+}
+
 /// Rename does NOT close the picker.
 #[tokio::test]
 #[ignore = "browser"]
