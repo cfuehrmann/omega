@@ -292,7 +292,12 @@ pub fn SessionPicker() -> impl IntoView {
                             key=|item: &SessionListItem| item.dir.clone()
                             children=move |item: SessionListItem| {
                                 view! {
-                                    <SessionRow item=item active_dir=active_dir editing_dir=editing_dir />
+                                    <SessionRow
+                                        item=item
+                                        active_dir=active_dir
+                                        editing_dir=editing_dir
+                                        backdrop_ref=backdrop_ref
+                                    />
                                 }
                             }
                         />
@@ -331,6 +336,16 @@ fn SessionRow(
     item: SessionListItem,
     active_dir: Memo<Option<String>>,
     editing_dir: RwSignal<Option<String>>,
+    /// Backdrop NodeRef from the parent `SessionPicker`. Used by
+    /// `on_rename_keydown` to synchronously return focus to the picker
+    /// before tearing down the rename input — otherwise focus escapes to
+    /// `<body>` and the picker becomes a focus-less ghost (especially
+    /// problematic when there is no active session and the modal can't be
+    /// dismissed). The post-rename Effect on `SessionPicker` also focuses
+    /// the backdrop, but it does so via `spawn_local`, which runs as a
+    /// microtask — too late: the browser has already moved focus to <body>
+    /// when the focused input was unmounted.
+    backdrop_ref: NodeRef<html::Div>,
 ) -> impl IntoView {
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
@@ -384,13 +399,32 @@ fn SessionRow(
     };
 
     // Enter submits the rename; Escape cancels. No separate save button.
+    //
+    // Both branches stop propagation: keystrokes that finish a rename are
+    // "consumed" by the input and must not surface as picker-level shortcuts.
+    // Both branches also synchronously move focus back to the picker backdrop
+    // *before* tearing down the input. Otherwise the browser reassigns focus
+    // to <body> when the focused input is unmounted, and the picker becomes
+    // a focus-less ghost — particularly bad when there is no active session
+    // and the modal can't be dismissed: the operator has to click into the
+    // panel again before the next keypress is heard. The post-rename Effect
+    // also focuses the backdrop, but it does so via `spawn_local` (a
+    // microtask), which runs *after* the browser has already moved focus to
+    // <body>; doing it inline here closes that gap.
+    let refocus_backdrop = move || {
+        if let Some(el) = backdrop_ref.get_untracked() {
+            let _ = el.focus();
+        }
+    };
     let on_rename_keydown = move |evt: leptos::ev::KeyboardEvent| {
         match evt.key().as_str() {
             "Enter" => {
                 evt.prevent_default();
+                evt.stop_propagation();
                 let name = draft.get();
                 if name.trim().is_empty() {
                     // Empty name — just cancel, same as before.
+                    refocus_backdrop();
                     editing_dir.set(None);
                     return;
                 }
@@ -399,7 +433,10 @@ fn SessionRow(
                     name,
                 };
                 match ws.send(&frame) {
-                    Ok(()) => editing_dir.set(None),
+                    Ok(()) => {
+                        refocus_backdrop();
+                        editing_dir.set(None);
+                    }
                     Err(err) => list.set_error(format!("send RenameSession: {err:?}")),
                 }
             }
@@ -407,6 +444,7 @@ fn SessionRow(
                 // Stop propagation so the Escape doesn't bubble up to
                 // the picker backdrop and close the whole picker.
                 evt.stop_propagation();
+                refocus_backdrop();
                 editing_dir.set(None);
             }
             _ => {}
