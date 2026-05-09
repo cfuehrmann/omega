@@ -220,7 +220,11 @@ async fn happy_path_user_message_yields_text_and_turn_end() {
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
 
     // Reset → another ready.
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let frames = recv_until_type(&mut ws, "ready").await;
     assert!(
         frames.iter().any(|v| v["type"] == "ready"),
@@ -267,7 +271,11 @@ async fn first_reset_creates_session_and_sends_ready() {
     assert!(!sessions_root.exists() || sessions_root.read_dir().unwrap().next().is_none());
 
     // reset → ready, and a session dir now exists on disk.
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let frames = recv_until_type(&mut ws, "ready").await;
     assert!(frames.iter().any(|v| v["type"] == "ready"));
 
@@ -303,7 +311,11 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
     let mut ws = connect(addr).await;
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
 
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
     send_json(
@@ -361,7 +373,11 @@ async fn abort_during_turn_emits_turn_interrupted() {
     let mut ws = connect(addr).await;
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
 
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
     send_json(
@@ -392,7 +408,11 @@ async fn reconnect_new_ws_receives_ready() {
     // First connection.
     let mut ws1 = connect(addr).await;
     assert_eq!(recv_json(&mut ws1).await["type"], "ready");
-    send_json(&mut ws1, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws1,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws1, "ready").await;
 
     // Disconnect.
@@ -442,7 +462,11 @@ async fn invalid_client_frame_emits_agent_error_without_closing_socket() {
     );
 
     // Socket is still alive — a follow-up `reset` works.
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
 }
 
@@ -511,7 +535,11 @@ async fn reconnect_replays_turn_events_filters_text_ready_last() {
     // First WS: reset + user_message, wait for turn_end.
     let mut ws1 = connect(addr).await;
     assert_eq!(recv_json(&mut ws1).await["type"], "ready");
-    send_json(&mut ws1, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws1,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws1, "ready").await;
     send_json(
         &mut ws1,
@@ -718,7 +746,11 @@ async fn reset_frame_order_and_init_events_in_history() {
     let mut ws = connect(addr).await;
     assert_eq!(recv_json(&mut ws).await["type"], "ready"); // pre-session ready
 
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let frames = recv_until_type(&mut ws, "ready").await;
 
     let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
@@ -769,7 +801,11 @@ async fn reconnect_after_reset_replays_init_events_then_ready() {
     // session_started via agent.init()).  No user_message is sent.
     let mut ws1 = connect(addr).await;
     assert_eq!(recv_json(&mut ws1).await["type"], "ready"); // pre-session ready
-    send_json(&mut ws1, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws1,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws1, "ready").await; // ready after reset
 
     // Disconnect.
@@ -821,7 +857,11 @@ async fn rename_session_updates_metadata_for_active_session() {
     let mut ws = connect(addr).await;
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
 
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
     // The active session's directory is the only one in `sessions_root`.
@@ -915,7 +955,11 @@ async fn rename_session_targets_client_provided_dir_not_active_session() {
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
 
     // Make session A the active session.
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
     let session_a_name = std::fs::read_dir(&sessions_root)
         .unwrap()
@@ -992,7 +1036,11 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
 
     // Reset creates session A (does not invoke the LLM).
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
     // Capture which session dirs exist *before* the resume so we can
@@ -1009,7 +1057,7 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
     // Resume from session B.
     send_json(
         &mut ws,
-        serde_json::json!({ "type": "resume_session", "sessionDir": session_b_name }),
+        serde_json::json!({ "type": "resume_session", "sessionDir": session_b_name, "allowDirty": true }),
     )
     .await;
     let frames = recv_until_type(&mut ws, "ready").await;

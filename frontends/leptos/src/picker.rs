@@ -202,6 +202,7 @@ pub fn SessionPicker() -> impl IntoView {
         if let Err(err) = ws.send(&ClientFrame::Reset {
             model: None,
             effort: None,
+            allow_dirty: false,
         }) {
             list.set_error(format!("send Reset: {err:?}"));
             return;
@@ -476,7 +477,7 @@ fn SessionRow(
     // Auto-closes picker on success.
     let on_resume = move |_| {
         let dir = dir_sv.get_value();
-        let frame = ClientFrame::ResumeSession { session_dir: dir };
+        let frame = ClientFrame::ResumeSession { session_dir: dir, allow_dirty: false };
         if let Err(err) = ws.send(&frame) {
             list.set_error(format!("send ResumeSession: {err:?}"));
             return;

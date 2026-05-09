@@ -169,7 +169,11 @@ async fn send_json(ws: &mut WsClient, v: serde_json::Value) {
 /// Perform reset and drain to `ready`; return the session dir name from the
 /// `session_info` frame that arrives in the batch.
 async fn reset_and_ready(ws: &mut WsClient) -> String {
-    send_json(ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let frames = recv_until_type(ws, "ready").await;
     frames
         .iter()
@@ -927,7 +931,7 @@ async fn resume_session_emits_running_then_idle_session_info() {
 
     send_json(
         &mut ws,
-        serde_json::json!({ "type": "resume_session", "sessionDir": session_b_name }),
+        serde_json::json!({ "type": "resume_session", "sessionDir": session_b_name, "allowDirty": true }),
     )
     .await;
     let frames = recv_until_type(&mut ws, "ready").await;
@@ -1097,7 +1101,11 @@ async fn e2e_full_turn_via_http_fake() {
     assert_eq!(r0["type"], "ready");
 
     // Reset — creates a session.
-    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
     let _ = recv_until_type(&mut ws, "ready").await;
 
     // Send a user message — the server calls the HTTP fake.

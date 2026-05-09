@@ -53,7 +53,7 @@ use leptos::prelude::*;
 
 use crate::composer::{Composer, ComposerInsert};
 use crate::context_modal::{ContextModal, ContextModalState};
-use crate::dirty_modal::{DirtyModal, DirtyModalState};
+use crate::dirty_modal::DirtyModal;
 use crate::feed::ConversationFeed;
 use crate::picker::{PickerOpen, SessionPicker};
 use crate::protocol::TurnState;
@@ -80,7 +80,6 @@ pub fn App() -> impl IntoView {
     let text_modal_state = TextModalState::new();
     let picker_open = PickerOpen::new();
     let usage_panel_open = UsagePanelOpen::new();
-    let dirty_modal = DirtyModalState::new();
     let composer_insert = ComposerInsert::new();
     provide_context(store);
     provide_context(list_store);
@@ -88,7 +87,6 @@ pub fn App() -> impl IntoView {
     provide_context(text_modal_state);
     provide_context(picker_open);
     provide_context(usage_panel_open);
-    provide_context(dirty_modal);
     provide_context(composer_insert);
 
     let ws = WsClient::new(
@@ -127,17 +125,6 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Dirty-working-tree warning: show a modal whenever a session whose
-    // working tree has uncommitted changes is opened (fresh or resumed).
-    // The pure `should_open_dirty_modal` predicate (in `dirty_modal`) is
-    // mutation-tested separately; this Effect is the reactive wiring.
-    Effect::new(move |_| {
-        store.session_info.with(|si| {
-            if let Some(info) = si.as_ref() {
-                dirty_modal.check(&info.dir, info.has_pending_changes);
-            }
-        });
-    });
 
     view! {
         // `data-connected` — WS connected flag (Playwright: wait for WS ready).

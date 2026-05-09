@@ -78,6 +78,53 @@ pub enum WsMessage {
         /// New human-readable name written into `session.jsonc`.
         name: String,
     },
+    /// Refusal frame: the operator attempted a `Reset` or `ResumeSession`
+    /// against a working tree with uncommitted git changes, *without* the
+    /// `allow_dirty` opt-in.  The server has done nothing — the previous
+    /// active session (if any) is untouched.  The client is expected to
+    /// surface a confirmation modal; on "Proceed" it re-issues the same
+    /// frame with `allow_dirty: true`, on "Cancel" it discards the intent.
+    ///
+    /// Mirrors the CLI's deny-by-default `--allow-dirty` semantics.
+    PendingChangesWarning { intent: PendingChangesIntent },
+}
+
+/// What the operator was about to do when the dirty-tree gate fired.
+///
+/// Echoed back inside [`WsMessage::PendingChangesWarning`] so the client
+/// can re-issue the exact same frame with `allow_dirty: true` after the
+/// operator confirms — no client-side bookkeeping required.
+#[derive(Debug, Clone)]
+pub enum PendingChangesIntent {
+    /// `Reset { model, effort }` was attempted.
+    Reset {
+        model: Option<String>,
+        effort: Option<String>,
+    },
+    /// `ResumeSession { session_dir }` was attempted.
+    ResumeSession { session_dir: String },
+}
+
+impl PendingChangesIntent {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Reset { model, effort } => {
+                let mut obj = serde_json::Map::new();
+                obj.insert("kind".to_owned(), serde_json::Value::from("reset"));
+                if let Some(m) = model {
+                    obj.insert("model".to_owned(), serde_json::Value::from(m.clone()));
+                }
+                if let Some(e) = effort {
+                    obj.insert("effort".to_owned(), serde_json::Value::from(e.clone()));
+                }
+                serde_json::Value::Object(obj)
+            }
+            Self::ResumeSession { session_dir } => serde_json::json!({
+                "kind": "resume_session",
+                "sessionDir": session_dir,
+            }),
+        }
+    }
 }
 
 impl WsMessage {
@@ -147,6 +194,10 @@ impl WsMessage {
                 "type": "session_renamed",
                 "sessionDir": session_dir,
                 "name": name,
+            }),
+            Self::PendingChangesWarning { intent } => serde_json::json!({
+                "type": "pending_changes_warning",
+                "intent": intent.to_json(),
             }),
         }
     }

@@ -53,6 +53,9 @@ pub struct SessionState {
     /// composer auto-fires a `continue` WS message. Cleared on disconnect
     /// and on `ResetDone`. Never sent to the server — purely a UI promise.
     pub pre_committed: bool,
+    /// Mirrors [`SessionStore::pending_changes_warning`].  See the
+    /// signal docstring for semantics.
+    pub pending_changes_warning: Option<crate::protocol::PendingChangesIntent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +77,13 @@ pub struct SessionStore {
     pub transport_errors: RwSignal<Vec<String>>,
     /// See [`SessionState::pre_committed`].
     pub pre_committed: RwSignal<bool>,
+    /// `Some(intent)` when the server rejected the most recent
+    /// `Reset`/`ResumeSession` because the working tree is dirty and
+    /// `allow_dirty` was not set.  Drives the dirty-warning modal: when
+    /// `Some`, the modal is open; "Cancel" sets to `None`, "Proceed"
+    /// re-issues the original frame with `allow_dirty: true` (then
+    /// sets to `None`).
+    pub pending_changes_warning: RwSignal<Option<crate::protocol::PendingChangesIntent>>,
 }
 
 impl Default for SessionStore {
@@ -99,6 +109,7 @@ impl SessionStore {
             streaming_thinking: RwSignal::new(String::new()),
             transport_errors: RwSignal::new(Vec::new()),
             pre_committed: RwSignal::new(false),
+            pending_changes_warning: RwSignal::new(None),
         }
     }
 
@@ -157,6 +168,14 @@ impl SessionStore {
                 // sessions' fates; intentional no-op here.
             }
 
+            WsMessage::PendingChangesWarning { intent } => {
+                // Dirty-tree gate fired before the server destroyed the
+                // active session.  The conversation store is unchanged;
+                // we just record the intent so the dirty modal can
+                // open and offer Cancel / Proceed.
+                self.pending_changes_warning.set(Some(intent));
+            }
+
             WsMessage::Text { text } => {
                 self.streaming_text.update(|s| s.push_str(&text));
             }
@@ -194,6 +213,7 @@ impl SessionStore {
             streaming_thinking: self.streaming_thinking.get_untracked(),
             transport_errors: self.transport_errors.get_untracked(),
             pre_committed: self.pre_committed.get_untracked(),
+            pending_changes_warning: self.pending_changes_warning.get_untracked(),
         }
     }
 }

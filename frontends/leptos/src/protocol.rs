@@ -53,6 +53,34 @@ use omega_types::OmegaEvent;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
+// Pending-changes warning payload
+// ---------------------------------------------------------------------------
+
+/// Mirror of the server's `PendingChangesIntent`: what the operator was
+/// about to do when the dirty-tree gate fired.  The client uses this to
+/// re-issue the original frame with `allow_dirty: true` after the
+/// operator confirms via the dirty-warning modal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingChangesIntent {
+    Reset {
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ResumeSession { session_dir: String },
+}
+
+/// Helper for `#[serde(skip_serializing_if = ...)]` on `bool` fields
+/// where the default `false` should be omitted from the wire.
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde requires &T
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+// ---------------------------------------------------------------------------
 // Server-derived turn state
 // ---------------------------------------------------------------------------
 
@@ -178,6 +206,12 @@ pub enum WsMessage {
     PauseRequested(PauseRequestedEvent),
     TurnPaused(TurnPausedEvent),
     TurnContinued(TurnContinuedEvent),
+    /// A `Reset` or `ResumeSession` frame was rejected because the
+    /// working tree has uncommitted git changes and `allow_dirty` was
+    /// not set.  The previous active session (if any) is untouched.
+    /// `intent` echoes the original parameters so the client can
+    /// re-issue with `allow_dirty: true` on operator confirmation.
+    PendingChangesWarning { intent: PendingChangesIntent },
 }
 
 impl WsMessage {
@@ -194,7 +228,8 @@ impl WsMessage {
             | Self::SessionInfo(_)
             | Self::History(_)
             | Self::SessionDeleted { .. }
-            | Self::SessionRenamed { .. } => return None,
+            | Self::SessionRenamed { .. }
+            | Self::PendingChangesWarning { .. } => return None,
             // Stream signals — never persisted as events.
             Self::Text { .. } | Self::Thinking { .. } | Self::ThinkingBlockComplete { .. } => {
                 return None;
@@ -256,10 +291,14 @@ pub enum ClientFrame {
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+        #[serde(rename = "allowDirty", skip_serializing_if = "is_false")]
+        allow_dirty: bool,
     },
     #[serde(rename_all = "camelCase")]
     ResumeSession {
         session_dir: String,
+        #[serde(rename = "allowDirty", skip_serializing_if = "is_false")]
+        allow_dirty: bool,
     },
     #[serde(rename_all = "camelCase")]
     RenameSession {
@@ -526,6 +565,7 @@ mod tests {
     fn client_frame_resume_session_uses_camel_case_field() {
         let frame = ClientFrame::ResumeSession {
             session_dir: "abc".into(),
+            allow_dirty: false,
         };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"resume_session","sessionDir":"abc"}"#);
@@ -533,7 +573,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn client_frame_reset_omits_absent_model_and_effort() {
-        let frame = ClientFrame::Reset { model: None, effort: None };
+        let frame = ClientFrame::Reset { model: None, effort: None, allow_dirty: false };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"reset"}"#);
     }

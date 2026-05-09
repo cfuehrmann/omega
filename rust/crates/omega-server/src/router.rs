@@ -45,7 +45,7 @@ use omega_types::events::PauseRequestedEvent;
 
 use crate::AppState;
 use crate::session::{ActiveSession, SessionInfoCache};
-use crate::ws_message::WsMessage;
+use crate::ws_message::{PendingChangesIntent, WsMessage};
 
 // ---------------------------------------------------------------------------
 // History replay — filter constants and helper
@@ -322,11 +322,22 @@ enum ClientFrame {
         model: Option<String>,
         #[serde(default)]
         effort: Option<String>,
+        /// Operator opt-in to proceed even when the working tree has
+        /// uncommitted git changes.  Mirrors the CLI's `--allow-dirty`
+        /// flag: deny-by-default, the GUI sets this to `true` only after
+        /// the operator clicks "Proceed" on the dirty-tree warning modal.
+        #[serde(default, rename = "allowDirty")]
+        allow_dirty: bool,
     },
     /// Resume a prior session: spawn a new session and synthesise a
     /// summary of `session_dir`'s history via the resumption LLM call.
     #[serde(rename_all = "camelCase")]
-    ResumeSession { session_dir: String },
+    ResumeSession {
+        session_dir: String,
+        /// See [`ClientFrame::Reset::allow_dirty`].
+        #[serde(default)]
+        allow_dirty: bool,
+    },
     /// Rename the session at `session_dir` by writing `name` into its
     /// `session.jsonc` metadata. The target need NOT be the currently
     /// active session — the picker lets users rename any session.
@@ -590,10 +601,15 @@ async fn dispatch_client_frame(
         ClientFrame::Pause => handle_pause(state, tx).await,
         ClientFrame::Continue { content } => handle_continue(state, content).await,
         ClientFrame::Abort => handle_abort(state).await,
-        ClientFrame::Reset { model, effort } => handle_reset(state, tx, model, effort).await,
-        ClientFrame::ResumeSession { session_dir } => {
-            handle_resume_session(state, tx, session_dir).await
-        }
+        ClientFrame::Reset {
+            model,
+            effort,
+            allow_dirty,
+        } => handle_reset(state, tx, model, effort, allow_dirty).await,
+        ClientFrame::ResumeSession {
+            session_dir,
+            allow_dirty,
+        } => handle_resume_session(state, tx, session_dir, allow_dirty).await,
         ClientFrame::RenameSession { session_dir, name } => {
             handle_rename_session(state, tx, session_dir, name).await
         }
@@ -835,7 +851,24 @@ async fn handle_reset(
     tx: &UnboundedSender<WsMessage>,
     model: Option<String>,
     effort: Option<String>,
+    allow_dirty: bool,
 ) -> Result<(), String> {
+    // Pre-flight dirty-tree gate.  Mirrors the CLI's deny-by-default
+    // `--allow-dirty` semantics: if the working tree is dirty and the
+    // operator hasn't explicitly opted in, refuse to touch the active
+    // session and ask the client for confirmation.  The previous active
+    // session (if any) is left untouched so "Cancel" in the UI is a true
+    // no-op.
+    if !allow_dirty {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        if git_has_pending_changes(&cwd) {
+            let _ = tx.send(WsMessage::PendingChangesWarning {
+                intent: PendingChangesIntent::Reset { model, effort },
+            });
+            return Ok(());
+        }
+    }
+
     // Tell any in-flight turn to wind down so the orphan agent doesn't
     // keep using the cwd / disk paths after we replace the slot.
     {
@@ -881,9 +914,21 @@ async fn handle_resume_session(
     state: &AppState,
     tx: &UnboundedSender<WsMessage>,
     session_dir: String,
+    allow_dirty: bool,
 ) -> Result<(), String> {
     if !session_dir_re().is_match(&session_dir) {
         return Err(format!("invalid sessionDir: {session_dir}"));
+    }
+
+    // Pre-flight dirty-tree gate — see `handle_reset` for the rationale.
+    if !allow_dirty {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        if git_has_pending_changes(&cwd) {
+            let _ = tx.send(WsMessage::PendingChangesWarning {
+                intent: PendingChangesIntent::ResumeSession { session_dir },
+            });
+            return Ok(());
+        }
     }
 
     // Tell any in-flight turn to wind down so the orphan agent doesn't
@@ -1242,9 +1287,14 @@ mod tests {
     fn client_frame_reset_without_fields_parses_with_none_defaults() {
         let f: ClientFrame = serde_json::from_str(r#"{"type":"reset"}"#).unwrap();
         match f {
-            ClientFrame::Reset { model, effort } => {
+            ClientFrame::Reset {
+                model,
+                effort,
+                allow_dirty,
+            } => {
                 assert_eq!(model, None);
                 assert_eq!(effort, None);
+                assert!(!allow_dirty, "allow_dirty defaults to false");
             }
             other => panic!("expected Reset, got {other:?}"),
         }
@@ -1256,9 +1306,14 @@ mod tests {
             serde_json::from_str(r#"{"type":"reset","model":"claude-opus-4-7","effort":"high"}"#)
                 .unwrap();
         match f {
-            ClientFrame::Reset { model, effort } => {
+            ClientFrame::Reset {
+                model,
+                effort,
+                allow_dirty,
+            } => {
                 assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
                 assert_eq!(effort.as_deref(), Some("high"));
+                assert!(!allow_dirty);
             }
             other => panic!("expected Reset, got {other:?}"),
         }
@@ -1277,8 +1332,12 @@ mod tests {
         )
         .unwrap();
         match f {
-            ClientFrame::ResumeSession { session_dir } => {
+            ClientFrame::ResumeSession {
+                session_dir,
+                allow_dirty,
+            } => {
                 assert_eq!(session_dir, "2025-01-01T00-00-00-000-deadbeef");
+                assert!(!allow_dirty);
             }
             other => panic!("expected ResumeSession, got {other:?}"),
         }
