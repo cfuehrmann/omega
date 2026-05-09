@@ -281,6 +281,116 @@ async fn picker_resume_auto_closes() {
         .expect("picker closes on resume");
 }
 
+// ---------------------------------------------------------------------------
+// `@ path` button — regression: must NEVER discard existing prompt text
+// (issue: two clicks in a row, no manual typing in between, the second
+// click was overwriting the first session's path).
+// ---------------------------------------------------------------------------
+
+/// Two `@ path` clicks on different sessions, with **no manual typing**
+/// between them, must result in BOTH paths being present in the textarea.
+///
+/// Repro for the bug the operator hit: the textarea is empty, so after
+/// the first click it contains exactly `@.omega/sessions/<a>/` — a string
+/// that, walked back from `text.len()`, looks like one unbroken `@`-token
+/// with no preceding whitespace. `insert_item_text` then routes through
+/// `accept_completion`, which *replaces* that whole token with the
+/// second session's path. The first session's reference is lost.
+#[tokio::test]
+#[ignore = "browser"]
+async fn picker_at_path_twice_preserves_both_paths() {
+    let h = TestHarness::launch().await.expect("launch");
+
+    // Two fresh sessions. Picker auto-closes after each `+ new`,
+    // so we re-open between them.
+    h.open_picker().await.expect("open picker");
+    let a = h.new_session().await.expect("first new session");
+    h.open_picker().await.expect("re-open picker (1)");
+    let b = h.new_session().await.expect("second new session");
+    assert_ne!(a, b, "the two sessions must have distinct dirs");
+
+    // Sanity: textarea starts empty (operator has typed nothing).
+    let initial: String = h
+        .eval("document.querySelector('[data-testid=\"leptos-composer-input\"]').value")
+        .await
+        .expect("read initial input value");
+    assert_eq!(
+        initial, "",
+        "textarea must be empty before first @ path click"
+    );
+
+    // First @ path click — on session A. Picker auto-closes per
+    // `on_insert_at` in picker.rs.
+    h.open_picker().await.expect("re-open picker (2)");
+    h.click(&item_action_sel(&a, "leptos-session-insert-at"))
+        .await
+        .expect("click @ path on a");
+    h.wait_for_detached(PICKER, Duration::from_secs(3))
+        .await
+        .expect("picker auto-closes on @ path");
+
+    // After the first click, the textarea should hold A's path —
+    // and only A's path. Wait for it to actually land (the insert
+    // happens via a leptos Effect on the next tick).
+    let path_a = format!(".omega/sessions/{a}/");
+    let path_b = format!(".omega/sessions/{b}/");
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let v: String = h
+            .eval("document.querySelector('[data-testid=\"leptos-composer-input\"]').value")
+            .await
+            .expect("read input after first click");
+        if v.contains(&path_a) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "textarea never picked up A's path; last = {v:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // CRITICAL: do NOT type anything into the textarea between clicks.
+    // The bug only surfaces when the textarea contents look like a
+    // bare unbroken @-token at the time of the second click.
+
+    // Second @ path click — on session B.
+    h.open_picker().await.expect("re-open picker (3)");
+    h.click(&item_action_sel(&b, "leptos-session-insert-at"))
+        .await
+        .expect("click @ path on b");
+    h.wait_for_detached(PICKER, Duration::from_secs(3))
+        .await
+        .expect("picker auto-closes on second @ path");
+
+    // Wait for B's path to appear — then assert A's path is STILL
+    // there. The bug manifests as A being replaced by B.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let final_value = loop {
+        let v: String = h
+            .eval("document.querySelector('[data-testid=\"leptos-composer-input\"]').value")
+            .await
+            .expect("read input after second click");
+        if v.contains(&path_b) {
+            break v;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "textarea never picked up B's path; last = {v:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+
+    assert!(
+        final_value.contains(&path_a),
+        "second @ path click discarded A's path. \n  expected to contain: {path_a:?}\n  expected to contain: {path_b:?}\n  got: {final_value:?}"
+    );
+    assert!(
+        final_value.contains(&path_b),
+        "second @ path click did not insert B's path. got: {final_value:?}"
+    );
+}
+
 /// Rename does NOT close the picker.
 #[tokio::test]
 #[ignore = "browser"]

@@ -130,41 +130,28 @@ pub fn accept_completion(text: &str, cursor: usize, item: &str) -> Option<Accept
 /// Compute the new textarea state after the session-picker's `@path` button
 /// is clicked with `item` as the path to insert.
 ///
-/// The cursor is **always treated as `text.len()`** — the textarea is
-/// typically unfocused when the picker button fires, and browsers may
-/// report a stale or zero `selectionStart`. Treating the insertion point
-/// as the end of the existing text is the only semantically correct choice:
-/// the operator is _appending_ context, not splicing into the middle of a
-/// sentence.
+/// **Always appends** `@item` at the end of the existing text:
 ///
-/// Two cases:
-/// 1. The text already ends with an `@`-token (e.g. the operator typed `@`
-///    and then clicked the picker) → the token is replaced via
-///    [`accept_completion`], exactly as the keyboard-completion dropdown
-///    would do.
-/// 2. No trailing `@`-token → `@item` is appended with a leading space
-///    unless `text` is empty or already ends in whitespace.
+/// - Empty text → `@item`.
+/// - Text ending in whitespace → `<text>@item` (no extra space).
+/// - Anything else → `<text> @item` (one separator space).
 ///
-/// Returns `(new_text, new_cursor)`. The cursor lands immediately after
-/// the inserted `@item`.
+/// We deliberately do **not** splice into a trailing `@`-token the way
+/// the keyboard `@`-completion popup does. The picker is conceptually
+/// "add a session reference", not "finish the half-typed token". Two
+/// `@path` clicks in a row on an empty textarea must keep both paths
+/// — and the only way to guarantee that is to never replace existing
+/// content. The cursor lands immediately after the inserted `@item`.
 #[must_use]
 pub fn insert_item_text(text: &str, item: &str) -> (String, usize) {
-    let cursor = text.len();
-    if let Some(out) = accept_completion(text, cursor, item) {
-        // Text ends with an @-token — splice the chosen path in.
-        (out.new_text, out.new_cursor)
+    let space = if text.is_empty() || text.ends_with(char::is_whitespace) {
+        ""
     } else {
-        // No trailing @-token: append "@item", with a leading space
-        // unless the text is empty or already ends in whitespace.
-        let space = if text.is_empty() || text.ends_with(char::is_whitespace) {
-            ""
-        } else {
-            " "
-        };
-        let insertion = format!("{}@{}", space, item);
-        let new_cursor = cursor + insertion.len();
-        (format!("{}{}", text, insertion), new_cursor)
-    }
+        " "
+    };
+    let insertion = format!("{}@{}", space, item);
+    let new_cursor = text.len() + insertion.len();
+    (format!("{}{}", text, insertion), new_cursor)
 }
 
 // ---------------------------------------------------------------------------
@@ -384,11 +371,16 @@ mod tests {
 
     // ---- insert_item_text -------------------------------------------------
     //
-    // These tests cover the picker's "@path" button logic. The critical
-    // invariant: existing prompt text is NEVER discarded — the path is
-    // always appended (or replaces a trailing @-token), regardless of the
-    // stale/zero cursor position that browsers report after a textarea
-    // loses focus.
+    // The picker's "@ path" button always APPENDS — it never replaces
+    // anything. The keyboard `@`-completion popup is a separate flow
+    // that does prefix-replacement, but the picker is just "add a
+    // session reference at the end of whatever is already there".
+    //
+    // The critical regression these tests guard against: two `@path`
+    // clicks in a row on a textarea that started empty must keep both
+    // paths. The full DOM-level repro is in
+    // `omega-e2e/tests/02_picker.rs::picker_at_path_twice_preserves_both_paths`;
+    // the unit case below pins the same invariant in fast-feedback form.
 
     #[wasm_bindgen_test]
     fn insert_item_appends_to_non_empty_text_with_space() {
@@ -412,40 +404,20 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn insert_item_replaces_trailing_at_token() {
-        // Operator typed "@" then opened the picker — the token is
-        // replaced rather than appended, matching keyboard-completion
-        // behavior.
-        let (text, cursor) = insert_item_text("check @", ".omega/sessions/abc123/");
-        assert_eq!(text, "check @.omega/sessions/abc123/");
+    fn insert_item_after_existing_at_path_appends_both() {
+        // Regression for the overwrite bug: when the textarea already
+        // contains exactly `@<path>` (no leading prose, no whitespace),
+        // a second click must NOT treat that as a half-typed @-token
+        // and replace it. Both paths must survive.
+        let (text, cursor) = insert_item_text("@.omega/sessions/a/", ".omega/sessions/b/");
+        assert_eq!(text, "@.omega/sessions/a/ @.omega/sessions/b/");
         assert_eq!(cursor, text.len());
-    }
-
-    #[wasm_bindgen_test]
-    fn insert_item_replaces_trailing_at_token_with_partial_prefix() {
-        let (text, cursor) = insert_item_text("fix @.omega/sessions/", ".omega/sessions/abc/");
-        assert_eq!(text, "fix @.omega/sessions/abc/");
-        assert_eq!(cursor, text.len());
-    }
-
-    #[wasm_bindgen_test]
-    fn insert_item_preserves_full_prompt_text() {
-        // Regression test for the overwrite bug: clicking the @path button
-        // must NEVER discard the existing prompt. Whatever the operator
-        // typed should still be present verbatim as a prefix of new_text.
-        let prompt = "please fix the login bug in";
-        let (text, _) = insert_item_text(prompt, ".omega/sessions/abc/");
-        assert!(
-            text.starts_with(prompt),
-            "existing prompt was discarded: got {text:?}"
-        );
     }
 
     #[wasm_bindgen_test]
     fn insert_item_cursor_lands_after_inserted_item() {
         let item = ".omega/sessions/xyz/";
         let (text, cursor) = insert_item_text("prompt", item);
-        // cursor should point right after "@<item>"
         assert_eq!(&text[..cursor], &format!("prompt @{}", item));
         assert_eq!(cursor, text.len());
     }
