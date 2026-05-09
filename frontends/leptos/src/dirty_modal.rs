@@ -121,18 +121,18 @@ pub fn DirtyModal() -> impl IntoView {
                     </div>
                     <div class="leptos-dirty-modal-actions">
                         <button
-                            class="leptos-dirty-modal-cancel"
-                            data-testid="leptos-dirty-modal-cancel"
-                            on:click=on_cancel
-                        >
-                            "Cancel"
-                        </button>
-                        <button
                             class="leptos-dirty-modal-ok"
                             data-testid="leptos-dirty-modal-ok"
                             on:click=on_proceed
                         >
                             "Proceed anyway"
+                        </button>
+                        <button
+                            class="leptos-dirty-modal-cancel"
+                            data-testid="leptos-dirty-modal-cancel"
+                            on:click=on_cancel
+                        >
+                            "Cancel"
                         </button>
                     </div>
                 </div>

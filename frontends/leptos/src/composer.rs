@@ -646,7 +646,7 @@ pub fn Composer() -> impl IntoView {
     // "Sessions" button toggles the picker (Phase 3.9 TODO-1).
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
     let on_sessions_click = move |_| {
-        if picker_open.0.get_untracked() {
+        if picker_open.open.get_untracked() {
             picker_open.close();
         } else {
             picker_open.open();
@@ -666,7 +666,7 @@ pub fn Composer() -> impl IntoView {
             <button
                 class="leptos-composer-sessions"
                 data-testid="leptos-composer-sessions"
-                data-panel-open=move || picker_open.0.get().to_string()
+                data-panel-open=move || picker_open.open.get().to_string()
                 on:click=on_sessions_click
             >
                 "Sessions"

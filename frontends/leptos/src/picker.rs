@@ -79,26 +79,50 @@ use crate::ws::WsClient;
 /// Wrapped in a newtype so `provide_context` / `use_context` find a
 /// unique type — leptos's context lookup is type-keyed.
 #[derive(Debug, Clone, Copy)]
-pub struct PickerOpen(pub RwSignal<bool>);
+pub struct PickerOpen {
+    /// Whether the picker is currently visible.
+    pub open: RwSignal<bool>,
+    /// Set to `true` when the operator triggers a session swap (Reset or
+    /// ResumeSession) from the picker.  Consumed by the auto-close Effect
+    /// in [`SessionPicker`]: when `session_info.dir` next changes to a
+    /// different value, the picker auto-closes if this flag is set, then
+    /// clears the flag.  This replaces the prior imperative
+    /// `picker_open.close()` immediately after `ws.send()`, which closed
+    /// the picker even when the server rejected the swap with a
+    /// `pending_changes_warning` — leaving the operator with no way back
+    /// to the picker after Cancel.
+    pub swap_pending: RwSignal<bool>,
+}
 
 impl PickerOpen {
-    /// Construct fresh state (picker hidden). Must run inside a leptos
-    /// reactive `Owner` scope.
+    /// Construct fresh state (picker hidden, no swap pending). Must run
+    /// inside a leptos reactive `Owner` scope.
     #[must_use]
     pub fn new() -> Self {
-        Self(RwSignal::new(false))
+        Self {
+            open: RwSignal::new(false),
+            swap_pending: RwSignal::new(false),
+        }
     }
 
     /// Open the picker.
     #[mutants::skip] // reactive signal write; covered by e2e harness picker tests.
     pub fn open(self) {
-        self.0.set(true);
+        self.open.set(true);
     }
 
     /// Close the picker.
     #[mutants::skip] // reactive signal write; covered by e2e harness picker tests.
     pub fn close(self) {
-        self.0.set(false);
+        self.open.set(false);
+    }
+
+    /// Record that the operator is attempting a session swap.  The
+    /// auto-close Effect in [`SessionPicker`] will close the picker once
+    /// the swap actually lands (i.e. `session_info.dir` changes).
+    #[mutants::skip] // reactive signal write; covered by e2e harness picker tests.
+    pub fn mark_swap_pending(self) {
+        self.swap_pending.set(true);
     }
 }
 
@@ -152,6 +176,27 @@ pub fn SessionPicker() -> impl IntoView {
         dir
     });
 
+    // Auto-close the picker when an operator-initiated session swap
+    // (Reset / ResumeSession) actually lands.  `mark_swap_pending` is
+    // called from `on_new_click` / `on_resume`; this Effect waits for
+    // `session_info.dir` to change to a different value and then closes
+    // the picker.  Guarding on `swap_pending` is what distinguishes a
+    // user-initiated swap from the initial WS-connect `session_info`
+    // broadcast (which must NOT close the picker on first load).  If the
+    // server rejects the swap with a `pending_changes_warning`, dir does
+    // not change and the picker stays open behind the warning modal.
+    Effect::new(move |prev: Option<Option<String>>| {
+        let dir = conv
+            .session_info
+            .with(|si| si.as_ref().map(|s| s.dir.clone()));
+        let prev = prev.flatten();
+        if prev != dir && dir.is_some() && picker_open.swap_pending.get_untracked() {
+            picker_open.swap_pending.set(false);
+            picker_open.close();
+        }
+        dir
+    });
+
     // True when a session is active — used to lock down all close vectors
     // when no session exists (the operator must pick or create one).
     let has_session = Memo::new(move |_| conv.session_info.with(Option::is_some));
@@ -197,7 +242,11 @@ pub fn SessionPicker() -> impl IntoView {
             .with(|si| si.as_ref().map(|s| s.dir.clone()))
     });
 
-    // TODO-2: Reset auto-closes the picker.
+    // TODO-2: Reset auto-closes the picker.  Auto-close fires reactively
+    // when `session_info.dir` next changes (see Effect below) — not
+    // imperatively after `ws.send()`.  This way, if the server rejects
+    // the swap with a `pending_changes_warning`, the picker stays open
+    // behind the warning modal so Cancel returns the operator to it.
     let on_new_click = move |_| {
         if let Err(err) = ws.send(&ClientFrame::Reset {
             model: None,
@@ -207,7 +256,7 @@ pub fn SessionPicker() -> impl IntoView {
             list.set_error(format!("send Reset: {err:?}"));
             return;
         }
-        picker_open.close();
+        picker_open.mark_swap_pending();
     };
 
     // TODO-1: close handler shared by `✕` button and backdrop click.
@@ -240,7 +289,7 @@ pub fn SessionPicker() -> impl IntoView {
         move |evt: leptos::ev::MouseEvent| evt.stop_propagation();
 
     view! {
-        <Show when=move || picker_open.0.get() fallback=|| ()>
+        <Show when=move || picker_open.open.get() fallback=|| ()>
             <div
                 class="picker-backdrop"
                 data-testid="leptos-picker-backdrop"
@@ -474,7 +523,9 @@ fn SessionRow(
     // assistant message + extracted basis. The conversation feed
     // (3.3) renders the resulting `resuming_session` /
     // `session_resumed` events through the status family.
-    // Auto-closes picker on success.
+    // Auto-closes picker reactively once the new `session_info.dir`
+    // arrives (see SessionPicker's auto-close Effect).  See
+    // `on_new_click` for the rationale.
     let on_resume = move |_| {
         let dir = dir_sv.get_value();
         let frame = ClientFrame::ResumeSession { session_dir: dir, allow_dirty: false };
@@ -482,7 +533,7 @@ fn SessionRow(
             list.set_error(format!("send ResumeSession: {err:?}"));
             return;
         }
-        picker_open.close();
+        picker_open.mark_swap_pending();
     };
 
     let on_insert_at = move |_| {

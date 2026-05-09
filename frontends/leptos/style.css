@@ -1373,23 +1373,48 @@ main > h1 {
   padding: 10px 16px 14px;
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
   border-top: 1px solid var(--border);
 }
 
-.leptos-dirty-modal-ok {
+.leptos-dirty-modal-ok,
+.leptos-dirty-modal-cancel {
   background: none;
-  border: 1px solid var(--yellow);
   border-radius: 3px;
-  color: var(--yellow);
   font-family: var(--font);
   font-size: 13px;
   padding: 4px 16px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.leptos-dirty-modal-ok:hover {
-  background: var(--yellow);
+
+.leptos-dirty-modal-ok {
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+.leptos-dirty-modal-ok:hover,
+.leptos-dirty-modal-ok:focus-visible {
+  background: var(--red);
   color: var(--base);
+  outline: none;
+}
+.leptos-dirty-modal-ok:active {
+  background: var(--red);
+  color: var(--base);
+  filter: brightness(0.9);
+}
+
+.leptos-dirty-modal-cancel {
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.leptos-dirty-modal-cancel:hover,
+.leptos-dirty-modal-cancel:focus-visible {
+  border-color: var(--text);
+  outline: none;
+}
+.leptos-dirty-modal-cancel:active {
+  background: var(--bg);
 }
 
 /* ── Status chip (inline in the composer row) ───────────────────────────────────────────── */
