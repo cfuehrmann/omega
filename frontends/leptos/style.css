@@ -494,8 +494,10 @@ main > h1 {
 /* Per-kind variants: border colour + foreground colour. */
 .block-user           { border-color: var(--user);   color: var(--user); }
 .block-assistant      { border-color: var(--border); color: var(--text); }
-.block-tool-call      { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
-.block-tool-result    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
+.block-tool-call      { border-color: var(--yellow); color: var(--yellow); font-size: 13px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.block-tool-result    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.block-tool-call:hover,
+.block-tool-result:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 .block-status         { border-color: var(--mauve);  color: var(--mauve);  font-size: 13px; }
 .block-error          { border-color: var(--red);    color: var(--red); }
 

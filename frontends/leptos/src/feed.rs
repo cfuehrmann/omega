@@ -548,7 +548,7 @@ fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoVi
 /// 1-based ordinal *n* is rendered at the start of the label row so the
 /// user can pair calls with their results on the same line.
 /// A 2-line / 300-byte preview follows the tool name inline;
-/// an `[input]` button opens the full JSON in a [`TextModal`].
+/// clicking the block opens the full JSON in a [`TextModal`].
 #[component]
 fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
@@ -562,7 +562,7 @@ fn ToolCallBlock(
     let full_input = serde_json::to_string_pretty(&event.input)
         .unwrap_or_else(|_| "{}".to_owned());
     // Human-readable preview: tool-specific field extraction rather than raw
-    // JSON. Full JSON always reachable via the [input] modal button.
+    // JSON. Full JSON always reachable by clicking the block.
     // Limits: 2 lines / 300 bytes.
     let raw_preview = tool_call_preview(&name, &event.input);
     let preview = truncate_preview(&raw_preview, 2, 300)
@@ -571,19 +571,16 @@ fn ToolCallBlock(
     let modal_title = format!("tool_call: {name}");
 
     view! {
-        <div class="block-label-row">
+        <div
+            class="block-label-row"
+            data-testid="leptos-tool-call-input"
+            on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
+        >
             {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
             <span class="block-label">
                 <span data-testid="leptos-tool-name">{name.clone()}</span>
             </span>
             <span class="block-tool-preview" data-testid="leptos-tool-input">{preview}</span>
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-tool-call-input"
-                on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
-            >
-                "input"
-            </button>
         </div>
     }
 }
@@ -663,7 +660,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
 /// * When `corr` is `Some(n)`, a yellow `<span class="corr-badge">` with
 ///   the 1-based ordinal is shown at the start of the label row.
 /// * A 2-line / 300-byte output preview is rendered on its own line below
-///   the label row, left-aligned; a `[payload]` button opens a
+///   the label row, left-aligned; clicking the block opens a
 ///   [`TextModal`] with the full output.
 #[component]
 fn ToolResultBlock(
@@ -682,20 +679,18 @@ fn ToolResultBlock(
     let full_for_modal = full;
 
     view! {
-        <div class="block-label-row">
-            {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
-            <span class="block-label" data-testid="leptos-tool-result-name">
-                "result"
-            </span>
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-tool-result-payload"
-                on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
-            >
-                "payload"
-            </button>
+        <div
+            data-testid="leptos-tool-result-payload"
+            on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
+        >
+            <div class="block-label-row">
+                {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
+                <span class="block-label" data-testid="leptos-tool-result-name">
+                    "result"
+                </span>
+            </div>
+            <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
         </div>
-        <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
     }
 }
 

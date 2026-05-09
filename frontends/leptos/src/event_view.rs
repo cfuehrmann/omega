@@ -253,8 +253,7 @@ pub fn truncate_to_lines(s: &str, max_lines: usize) -> Option<String> {
 ///
 /// Byte truncation always cuts at a UTF-8 character boundary so the
 /// output is always valid UTF-8. No trailing ellipsis is appended —
-/// the `[input]` / `[payload]` modal button already signals that more
-/// content exists.
+/// clicking the block to open the modal signals that more content exists.
 #[must_use]
 pub fn truncate_preview(s: &str, max_lines: usize, max_bytes: usize) -> Option<String> {
     let line_cut = truncate_to_lines(s, max_lines);
