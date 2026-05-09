@@ -459,6 +459,17 @@ async fn send_session_info_and_history(state: &AppState, tx: &UnboundedSender<Ws
         return;
     };
     // Safe to await inner locks now that active_session is released.
+    //
+    // Re-evaluate pending changes at WS-connect time.  `has_pending_changes`
+    // is computed once at session creation; if the operator cleaned up the
+    // working tree outside Omega the cache would stay stale.  Re-checking on
+    // every reconnect (browser refresh, network blip) keeps the flag fresh
+    // without the expense of a background watcher.
+    {
+        let mut cache = info_cache_arc.lock().await;
+        let cwd_path = std::path::PathBuf::from(&cache.cwd);
+        cache.has_pending_changes = git_has_pending_changes(&cwd_path);
+    }
     let session_info = build_session_info(&info_cache_arc, &turn_state_arc).await;
     let _ = tx.send(session_info);
     let events = read_history_events(&events_file).await;

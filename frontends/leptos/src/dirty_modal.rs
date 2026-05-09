@@ -21,6 +21,50 @@
 use leptos::prelude::*;
 
 // ---------------------------------------------------------------------------
+// sessionStorage persistence
+// ---------------------------------------------------------------------------
+
+/// `sessionStorage` key used to remember which session dir the operator has
+/// already been warned about.  `sessionStorage` survives browser refresh
+/// within the same tab but resets when the tab is closed, which is exactly
+/// the scope we want.
+const STORAGE_KEY: &str = "omega.dirty_modal.last_dir";
+
+/// Read the last-acknowledged session dir from `sessionStorage`.
+///
+/// Returns an empty string when storage is unavailable (non-WASM build,
+/// private-browsing mode with blocked storage, etc.).
+#[cfg(target_arch = "wasm32")]
+#[mutants::skip] // browser API; covered by e2e tests
+fn load_last_triggered_dir() -> String {
+    web_sys::window()
+        .and_then(|w| w.session_storage().ok().flatten())
+        .and_then(|s| s.get_item(STORAGE_KEY).ok().flatten())
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_last_triggered_dir() -> String {
+    String::new()
+}
+
+/// Persist `dir` to `sessionStorage` so that a browser refresh in the same
+/// tab does not re-open the modal for a session the operator has already
+/// acknowledged.
+#[cfg(target_arch = "wasm32")]
+#[mutants::skip] // browser API; covered by e2e tests
+fn save_last_triggered_dir(dir: &str) {
+    if let Some(storage) = web_sys::window()
+        .and_then(|w| w.session_storage().ok().flatten())
+    {
+        let _ = storage.set_item(STORAGE_KEY, dir);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_last_triggered_dir(_dir: &str) {}
+
+// ---------------------------------------------------------------------------
 // Pure trigger predicate
 // ---------------------------------------------------------------------------
 
@@ -59,12 +103,16 @@ pub struct DirtyModalState {
 impl DirtyModalState {
     /// Create a new, closed state.
     ///
+    /// `last_triggered_dir` is seeded from `sessionStorage` so that a
+    /// browser refresh in the same tab does not re-open the modal for a
+    /// session the operator already acknowledged.
+    ///
     /// Must be called inside a leptos reactive `Owner` scope.
     #[must_use]
     pub fn new() -> Self {
         Self {
             is_open: RwSignal::new(false),
-            last_triggered_dir: RwSignal::new(String::new()),
+            last_triggered_dir: RwSignal::new(load_last_triggered_dir()),
         }
     }
 
@@ -76,11 +124,13 @@ impl DirtyModalState {
         let last = self.last_triggered_dir.get_untracked();
         if should_open_dirty_modal(current_dir, &last, has_pending_changes) {
             self.last_triggered_dir.set(current_dir.to_owned());
+            save_last_triggered_dir(current_dir);
             self.is_open.set(true);
         } else if current_dir != last.as_str() {
             // New session without pending changes: update the dir so a
             // subsequent in-session change can't incorrectly re-trigger.
             self.last_triggered_dir.set(current_dir.to_owned());
+            save_last_triggered_dir(current_dir);
         }
     }
 
@@ -171,7 +221,32 @@ mod tests {
     use leptos::reactive::owner::Owner;
     use wasm_bindgen_test::wasm_bindgen_test;
 
+    /// Clear the `sessionStorage` key before each test so tests are isolated
+    /// from one another.  No-op on non-WASM builds.
+    fn clear_dirty_modal_storage() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(storage) =
+                web_sys::window().and_then(|w| w.session_storage().ok().flatten())
+            {
+                let _ = storage.remove_item(STORAGE_KEY);
+            }
+        }
+    }
+
+    /// Standard test wrapper: clears sessionStorage then runs `f` inside a
+    /// fresh reactive owner.  Use [`with_owner_keep_storage`] when the test
+    /// intentionally spans two owner scopes to simulate a page refresh.
     fn with_owner<F: FnOnce()>(f: F) {
+        clear_dirty_modal_storage();
+        let owner = Owner::new();
+        owner.with(f);
+    }
+
+    /// Like `with_owner` but does **not** clear sessionStorage first —
+    /// used by the refresh regression test to carry storage across two
+    /// simulated "page loads".
+    fn with_owner_keep_storage<F: FnOnce()>(f: F) {
         let owner = Owner::new();
         owner.with(f);
     }
@@ -298,6 +373,43 @@ mod tests {
             // Same dir, now with pending — should NOT open (dir already recorded).
             s.check("/session-a", true);
             assert!(!s.is_open.get_untracked());
+        });
+    }
+
+    // ---- Refresh regression (Bug 1) -----------------------------------------
+
+    #[wasm_bindgen_test]
+    fn refresh_does_not_reopen_for_previously_acknowledged_dirty_session() {
+        // Regression for: modal re-fires on browser refresh because
+        // `last_triggered_dir` was not persisted across page loads.
+        //
+        // This test requires a real browser sessionStorage.  The
+        // wasm-bindgen-test runner uses Node.js where sessionStorage is
+        // absent; in that environment the test is a no-op (the feature is
+        // still verified by the e2e suite which runs against Chromium).
+        let Some(storage) =
+            web_sys::window().and_then(|w| w.session_storage().ok().flatten())
+        else {
+            return; // Node.js runner — skip gracefully
+        };
+        let _ = storage.remove_item(STORAGE_KEY); // explicit clean slate
+
+        // --- First page load ---
+        with_owner_keep_storage(|| {
+            let s = DirtyModalState::new();
+            s.check("/session-abc", true);
+            assert!(s.is_open.get_untracked(), "modal should open on first load");
+            s.dismiss();
+        });
+
+        // --- Simulated browser refresh (new owner = new page context) ---
+        with_owner_keep_storage(|| {
+            let s = DirtyModalState::new(); // reads "/session-abc" from sessionStorage
+            s.check("/session-abc", true); // same dir → must NOT reopen
+            assert!(
+                !s.is_open.get_untracked(),
+                "modal must not reopen after browser refresh for same session"
+            );
         });
     }
 }

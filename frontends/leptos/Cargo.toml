@@ -70,6 +70,8 @@ web-sys                  = { version = "=0.3.98", features = [
     "NodeList",
     "Node",
     "DomTokenList",
+    # Phase 3.11 — dirty-modal sessionStorage persistence (dirty_modal.rs).
+    "Storage",
 ] }
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }
