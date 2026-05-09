@@ -493,6 +493,12 @@ fn SessionRow(
         picker_open.close();
     };
 
+    // True when *any* session is active — used to hide the @ path button
+    // when the picker is acting as a mandatory session-selection dialog (no
+    // active session means the composer/prompt is not usable, so inserting
+    // a path reference there makes no sense).
+    let has_any_session = move || active_dir.with(Option::is_some);
+
     let active = Memo::new(move |_| {
         let dir = dir_sv.get_value();
         active_dir.with(|d| {
@@ -559,13 +565,15 @@ fn SessionRow(
                             "delete"
                         </button>
                     </Show>
-                    <button
-                        data-testid="leptos-session-insert-at"
-                        title="Insert session path as @ reference in prompt"
-                        on:click=on_insert_at
-                    >
-                        "@ path"
-                    </button>
+                    <Show when=has_any_session fallback=|| ()>
+                        <button
+                            data-testid="leptos-session-insert-at"
+                            title="Insert session path as @ reference in prompt"
+                            on:click=on_insert_at
+                        >
+                            "@ path"
+                        </button>
+                    </Show>
                 </div>
             </Show>
         </li>
