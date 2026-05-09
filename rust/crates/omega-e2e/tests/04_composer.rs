@@ -409,22 +409,40 @@ async fn composer_completion_accept() {
     .await
     .expect("completion popup never appeared");
 
-    // At least one item.
-    let count: u32 = h
-        .eval(
-            "document.querySelectorAll('[data-testid=\"leptos-composer-completion-item\"]').length",
-        )
-        .await
-        .expect("item count");
-    assert!(count > 0, "completion popup empty");
-
-    // First item's data-completion value.
-    let first: String = h
-        .eval(
-            "document.querySelector('[data-testid=\"leptos-composer-completion-item\"]').getAttribute('data-completion')",
-        )
-        .await
-        .expect("first data-completion");
+    // Wait for the completion items to settle to the children of rust/.
+    //
+    // Timing race: `fill` types each character individually, so `on_input`
+    // fires (and `query_completion` is called) for every prefix: "", "r",
+    // "ru", "rus", "rust", "rust/".  The fetch for prefix "rust" may return
+    // first and open the popup with ["rust/"], before the fetch for prefix
+    // "rust/" arrives and replaces it with the actual children
+    // ("rust/.cargo/", "rust/Cargo.lock", …).  Reading `first` while the
+    // popup still shows the stale ["rust/"] entry causes the subsequent
+    // `format!("@{first}")` assertion to disagree with what Enter actually
+    // accepted (which by that point is the settled item).
+    //
+    // Solution: poll until no item is exactly "rust/" — which is the
+    // intermediate sentinel — and at least one item is present.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let first = loop {
+        let candidate: String = h
+            .eval(
+                "document.querySelector('[data-testid=\"leptos-composer-completion-item\"]')\
+                 ?.getAttribute('data-completion') ?? ''",
+            )
+            .await
+            .expect("first data-completion poll");
+        // Intermediate state: popup shows ["rust/"] from the "rust" prefix
+        // query.  Settled state: children such as "rust/.cargo/".
+        if !candidate.is_empty() && candidate != "rust/" {
+            break candidate;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "completion items never settled to children of rust/ (last = {candidate:?})"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     assert!(!first.is_empty(), "first item missing data-completion");
 
     // ArrowDown highlights first; Enter accepts.
