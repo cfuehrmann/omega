@@ -932,6 +932,23 @@ impl Agent {
                                     // Re-emitted later with assistant_hash filled.
                                 }
                                 OmegaEvent::LlmResponse(lr) => {
+                                    // SCHEMA-8 Phase 3 commit 3c: detect
+                                    // compaction via usage.iterations.
+                                    // Anthropic surfaces automatic prompt
+                                    // compaction as a UsageIteration entry
+                                    // with type=="compaction". When seen,
+                                    // clear self.history / context_hashes so
+                                    // the next turn starts from a fresh
+                                    // baseline.  The legacy OmegaEvent::Compacted
+                                    // handler below stays until Phase 6.5
+                                    // because MockProvider scripts (and the
+                                    // goldens) still emit it directly.
+                                    if let Some(iters) = lr.usage.iterations.as_ref()
+                                        && iters.iter().any(|it| it.iteration_type == "compaction")
+                                    {
+                                        self.history.clear();
+                                        self.context_hashes.clear();
+                                    }
                                     llm_response = Some(lr);
                                 }
                                 OmegaEvent::LlmRetry(retry) => {
@@ -1656,6 +1673,15 @@ impl Agent {
                         let event = *boxed;
                         match event {
                             OmegaEvent::LlmResponse(lr) => {
+                                // SCHEMA-8 Phase 3 commit 3c: detect
+                                // compaction via usage.iterations (mirror
+                                // of send_message).
+                                if let Some(iters) = lr.usage.iterations.as_ref()
+                                    && iters.iter().any(|it| it.iteration_type == "compaction")
+                                {
+                                    self.history.clear();
+                                    self.context_hashes.clear();
+                                }
                                 llm_response = Some(lr);
                             }
                             OmegaEvent::LlmRetry(retry) => {
