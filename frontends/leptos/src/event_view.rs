@@ -78,6 +78,12 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::LlmError(_)
         | OmegaEvent::TransportError(_)
         | OmegaEvent::TurnInterrupted(_) => EventKind::Error,
+        // SCHEMA-8 additive variants. Block events surface as Assistant
+        // content; lifecycle markers are Status. Phase 4 will give them
+        // proper rendering / coalescing.
+        OmegaEvent::TextBlock(_)
+        | OmegaEvent::ThinkingBlock(_)
+        | OmegaEvent::ToolUseBlock(_) => EventKind::Assistant,
         OmegaEvent::SessionStarted(_)
         | OmegaEvent::ServerStarted(_)
         | OmegaEvent::ServerStopped(_)
@@ -91,7 +97,10 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::SessionResumed(_)
         | OmegaEvent::PauseRequested(_)
         | OmegaEvent::TurnPaused(_)
-        | OmegaEvent::TurnContinued(_) => EventKind::Status,
+        | OmegaEvent::TurnContinued(_)
+        | OmegaEvent::LlmResponseStarted(_)
+        | OmegaEvent::LlmResponseEnded(_)
+        | OmegaEvent::LlmResponseDiscarded(_) => EventKind::Status,
     }
 }
 
@@ -151,6 +160,13 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::PauseRequested(_) => "pause_requested",
         OmegaEvent::TurnPaused(_) => "turn_paused",
         OmegaEvent::TurnContinued(_) => "turn_continued",
+        // SCHEMA-8 additive variants — Phase 1b stubs.
+        OmegaEvent::LlmResponseStarted(_) => "llm_response_started",
+        OmegaEvent::LlmResponseEnded(_) => "llm_response_ended",
+        OmegaEvent::LlmResponseDiscarded(_) => "llm_response_discarded",
+        OmegaEvent::TextBlock(_) => "text_block",
+        OmegaEvent::ThinkingBlock(_) => "thinking_block",
+        OmegaEvent::ToolUseBlock(_) => "tool_use_block",
     }
 }
 
@@ -555,6 +571,7 @@ mod tests {
                 cache_creation_input_tokens: None,
                 cache_read_input_tokens: None,
                 service_tier: None,
+                iterations: None,
             },
             context_hash: "deadbeef".into(),
             text: Some("hello".into()),

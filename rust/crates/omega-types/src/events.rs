@@ -89,6 +89,32 @@ pub struct LlmResponseUsage {
     /// Service tier used; absent or `"standard"` is the baseline.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
+    /// Per-iteration breakdown when server-side compaction fires.
+    /// Anthropic's response usage object exposes this as `iterations`,
+    /// each entry tagged with `type` (e.g. `"compaction"`, `"message"`).
+    /// Absent on responses that did not hit compaction; baseline
+    /// non-compaction responses serialise without this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<UsageIteration>>,
+}
+
+/// One entry in [`LlmResponseUsage::iterations`].  Mirrors Anthropic's
+/// per-iteration usage shape verbatim.  The wire `type` discriminator
+/// (e.g. `"compaction"`, `"message"`) is held in [`Self::iteration_type`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageIteration {
+    /// Iteration kind, e.g. `"compaction"` or `"message"`. Stored under
+    /// the wire field name `type`.
+    #[serde(rename = "type")]
+    pub iteration_type: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +212,95 @@ pub struct LlmResponseEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_summary: Option<Value>,
 }
+
+// ---------------------------------------------------------------------------
+// SCHEMA-8 — additive new event structs (Phase 1b)
+//
+// These coexist with the legacy `LlmResponseEvent` / `CompactedEvent` /
+// `text_fragment` / `thinking_fragment` shapes during the SCHEMA-8
+// migration.  The legacy variants are deleted in a final cleanup commit
+// after every consumer has migrated to the new grammar.
+// ---------------------------------------------------------------------------
+
+/// Opener emitted on the first signal of any kind from a freshly-started
+/// provider stream within a turn iteration. Pairs with either
+/// [`LlmResponseEndedEvent`] (success) or [`LlmResponseDiscardedEvent`]
+/// (abandonment).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmResponseStartedEvent {
+    pub time: ISOTimestamp,
+}
+
+/// Successful close of a provider stream.  Strict subset of
+/// [`LlmResponseEvent`] minus the `text` / `thinking` /
+/// `streaming_start` interval-summary fields, which now live on
+/// [`TextBlockEvent`] / [`ThinkingBlockEvent`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmResponseEndedEvent {
+    pub time: ISOTimestamp,
+    pub stop_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleared_tool_uses: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleared_input_tokens: Option<i64>,
+    pub usage: LlmResponseUsage,
+    /// FK into `context.jsonl` for the assistant record written for this response.
+    pub context_hash: ContextHash,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_summary: Option<Value>,
+}
+
+/// Pure marker.  Closer for [`LlmResponseStartedEvent`] when the
+/// response is abandoned mid-stream.  Always immediately precedes
+/// `LlmRetry`, `LlmError`, or `TurnInterrupted`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmResponseDiscardedEvent {
+    pub time: ISOTimestamp,
+}
+
+/// One text content block from a streamed assistant response.  Emitted
+/// at the provider's `content_block_stop` for a `text` block.  `partial`
+/// is `true` only when the block was cut off by abandonment
+/// ([`LlmResponseDiscardedEvent`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextBlockEvent {
+    pub time: ISOTimestamp,
+    pub text: String,
+    pub partial: bool,
+}
+
+/// One thinking content block from a streamed assistant response.
+///
+/// Invariant: `signature.is_none() iff partial == true`.  Both fields
+/// are kept on the wire even though they are redundant — the explicit
+/// `partial` flag matches sibling block events and avoids a special-case
+/// at every consumer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThinkingBlockEvent {
+    pub time: ISOTimestamp,
+    pub thinking: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    pub partial: bool,
+}
+
+/// One `tool_use` content block from a streamed assistant response.
+/// Emitted at the provider's `content_block_stop`.  When `partial:
+/// true`, `input` may be malformed JSON; the agent does not dispatch
+/// partial blocks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolUseBlockEvent {
+    pub time: ISOTimestamp,
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+    pub partial: bool,
+}
+
+// ---------------------------------------------------------------------------
+// End of SCHEMA-8 additive structs.
+// ---------------------------------------------------------------------------
 
 /// A tool invocation by the agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -380,6 +495,16 @@ pub enum OmegaEvent {
     PauseRequested(PauseRequestedEvent),
     TurnPaused(TurnPausedEvent),
     TurnContinued(TurnContinuedEvent),
+
+    // --- SCHEMA-8 additive variants -----------------------------------------
+    // These coexist with `LlmResponse` / `Compacted` during the migration.
+    // The legacy variants are removed once every consumer has migrated.
+    LlmResponseStarted(LlmResponseStartedEvent),
+    LlmResponseEnded(LlmResponseEndedEvent),
+    LlmResponseDiscarded(LlmResponseDiscardedEvent),
+    TextBlock(TextBlockEvent),
+    ThinkingBlock(ThinkingBlockEvent),
+    ToolUseBlock(ToolUseBlockEvent),
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +626,7 @@ mod tests {
                 cache_creation_input_tokens: Some(10),
                 cache_read_input_tokens: None,
                 service_tier: None,
+                iterations: None,
             },
             context_hash: "aabbccddeeff0011".into(),
             text: Some("Hello!".into()),
@@ -670,5 +796,220 @@ mod tests {
             }
             other => panic!("unexpected variant: {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // SCHEMA-8 — Phase 1b additive types: round-trip coverage.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn llm_response_started_round_trip() {
+        let ev = OmegaEvent::LlmResponseStarted(LlmResponseStartedEvent {
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "llm_response_started");
+        assert_eq!(v["time"], "2024-01-15T12:00:00.000Z");
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn llm_response_ended_round_trip() {
+        let ev = OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+            time: "2024-01-15T12:00:01.000Z".into(),
+            stop_reason: "end_turn".into(),
+            cleared_tool_uses: Some(2),
+            cleared_input_tokens: Some(123),
+            usage: LlmResponseUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                service_tier: None,
+                iterations: None,
+            },
+            context_hash: "aabbccddeeff0011".into(),
+            response_summary: None,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "llm_response_ended");
+        assert_eq!(v["stopReason"], "end_turn");
+        assert_eq!(v["clearedToolUses"], 2);
+        assert_eq!(v["clearedInputTokens"], 123);
+        assert_eq!(v["contextHash"], "aabbccddeeff0011");
+        // No legacy interval-summary fields on the new event.
+        assert!(v.get("text").is_none() || v["text"].is_null());
+        assert!(v.get("thinking").is_none() || v["thinking"].is_null());
+        assert!(v.get("streamingStart").is_none() || v["streamingStart"].is_null());
+        // Usage `iterations` absent when None (skip_serializing_if).
+        assert!(v["usage"].get("iterations").is_none() || v["usage"]["iterations"].is_null());
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn llm_response_discarded_round_trip() {
+        let ev = OmegaEvent::LlmResponseDiscarded(LlmResponseDiscardedEvent {
+            time: "2024-01-15T12:00:02.000Z".into(),
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "llm_response_discarded");
+        assert_eq!(v["time"], "2024-01-15T12:00:02.000Z");
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn text_block_round_trip() {
+        let ev = OmegaEvent::TextBlock(TextBlockEvent {
+            time: "2024-01-15T12:00:03.000Z".into(),
+            text: "hello, world".into(),
+            partial: false,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "text_block");
+        assert_eq!(v["text"], "hello, world");
+        assert_eq!(v["partial"], false);
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn text_block_partial_serialises_explicitly() {
+        let ev = OmegaEvent::TextBlock(TextBlockEvent {
+            time: "2024-01-15T12:00:03.000Z".into(),
+            text: "par".into(),
+            partial: true,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["partial"], true);
+    }
+
+    #[test]
+    fn thinking_block_round_trip_full() {
+        let ev = OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+            time: "2024-01-15T12:00:04.000Z".into(),
+            thinking: "hmm".into(),
+            signature: Some("sig_abc".into()),
+            partial: false,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "thinking_block");
+        assert_eq!(v["thinking"], "hmm");
+        assert_eq!(v["signature"], "sig_abc");
+        assert_eq!(v["partial"], false);
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn thinking_block_partial_drops_signature() {
+        // Invariant: signature.is_none() iff partial == true.
+        let ev = OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+            time: "2024-01-15T12:00:04.000Z".into(),
+            thinking: "hm".into(),
+            signature: None,
+            partial: true,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert!(v.get("signature").is_none() || v["signature"].is_null());
+        assert_eq!(v["partial"], true);
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn tool_use_block_round_trip() {
+        let ev = OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+            time: "2024-01-15T12:00:05.000Z".into(),
+            id: "toolu_xyz".into(),
+            name: "read_file".into(),
+            input: serde_json::json!({"path": "foo.txt"}),
+            partial: false,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "tool_use_block");
+        assert_eq!(v["id"], "toolu_xyz");
+        assert_eq!(v["name"], "read_file");
+        assert_eq!(v["input"]["path"], "foo.txt");
+        assert_eq!(v["partial"], false);
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn usage_iteration_round_trip() {
+        let it = UsageIteration {
+            iteration_type: "compaction".into(),
+            input_tokens: 80,
+            output_tokens: 0,
+            cache_creation_input_tokens: Some(40),
+            cache_read_input_tokens: None,
+            service_tier: None,
+        };
+        let v = serde_json::to_value(&it).unwrap();
+        // Wire field name is `type` (Anthropic shape).
+        assert_eq!(v["type"], "compaction");
+        assert_eq!(v["input_tokens"], 80);
+        assert_eq!(v["output_tokens"], 0);
+        assert_eq!(v["cache_creation_input_tokens"], 40);
+        assert!(
+            v.get("cache_read_input_tokens").is_none() || v["cache_read_input_tokens"].is_null()
+        );
+        let back: UsageIteration = serde_json::from_value(v).unwrap();
+        assert_eq!(it, back);
+    }
+
+    #[test]
+    fn llm_response_usage_with_iterations_serialises() {
+        let usage = LlmResponseUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            service_tier: None,
+            iterations: Some(vec![
+                UsageIteration {
+                    iteration_type: "compaction".into(),
+                    input_tokens: 80,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                },
+                UsageIteration {
+                    iteration_type: "message".into(),
+                    input_tokens: 20,
+                    output_tokens: 50,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                },
+            ]),
+        };
+        let v = serde_json::to_value(&usage).unwrap();
+        assert_eq!(v["iterations"][0]["type"], "compaction");
+        assert_eq!(v["iterations"][1]["type"], "message");
+        let back: LlmResponseUsage = serde_json::from_value(v).unwrap();
+        assert_eq!(usage, back);
+    }
+
+    /// Backward-compat: a usage object written before `iterations` was
+    /// added must still deserialise, with `iterations: None`.
+    #[test]
+    fn llm_response_usage_without_iterations_round_trips() {
+        let json = serde_json::json!({
+            "input_tokens": 10,
+            "output_tokens": 5
+        });
+        let usage: LlmResponseUsage = serde_json::from_value(json).unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 5);
+        assert!(usage.iterations.is_none());
+        // And re-serialising omits the `iterations` key entirely (None
+        // — skip_serializing_if).
+        let v = serde_json::to_value(&usage).unwrap();
+        assert!(v.get("iterations").is_none());
     }
 }

@@ -180,194 +180,70 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 1a DONE — commit 3eac05a)
+## CURRENT STATE (Phase 1b DONE — next: Phase 2)
 
-**Phase 1a complete.** StreamSignal extended with `index: usize` on
-every variant + two new completion variants:
-- `TextBlockComplete { index, text }`
-- `ToolUseBlockComplete { index, id, name, input }`
-- `ThinkingBlockComplete { index, signature }` (added index)
+**Phase 1b complete.** All new SCHEMA-8 event-side types added to
+`rust/crates/omega-types/src/events.rs` purely additively:
 
-All consumers updated mechanically. Anthropic provider passes the real
-SSE `parsed.index`; Ollama hardcodes 0. The agent (in both
-`process_provider_stream` and `resume_loop` paths) absorbs the two new
-block-complete signals silently — Phase 3 wires them into the indexed
-slot machinery.
+- New structs: `LlmResponseStartedEvent`, `LlmResponseEndedEvent`,
+  `LlmResponseDiscardedEvent`, `TextBlockEvent`, `ThinkingBlockEvent`,
+  `ToolUseBlockEvent`, `UsageIteration`.
+- New `OmegaEvent` variants: `LlmResponseStarted`, `LlmResponseEnded`,
+  `LlmResponseDiscarded`, `TextBlock`, `ThinkingBlock`, `ToolUseBlock`.
+- `LlmResponseUsage` extended with `iterations: Option<Vec<UsageIteration>>`
+  (skip_serializing_if=Option::is_none, default — backward compatible).
+- 11 new round-trip tests cover the new shapes + the
+  legacy-without-iterations deserialise path.
+- `events_reference.rs` golden snapshot extended from 22 to 28 variants
+  (renamed test, regenerated `.snap`, deleted stale `_22_` snapshot).
+- Frontend exhaustive-match sites patched with minimal stubs:
+  `feed.rs::render_event_body`, `event_view.rs::kind_for`,
+  `event_view.rs::event_type_tag`. Phase 4/5 will replace the stubs
+  with real rendering.
+- Every `LlmResponseUsage { ... }` literal updated workspace-wide to
+  add `iterations: None,` (12 call sites).
 
-Gate: `just rust-gate` GREEN. Insta snapshots regenerated for the two
-stream tests. Phase-0 context.jsonl goldens unchanged (byte-equal).
+Legacy `LlmResponseEvent`, `CompactedEvent`, and the
+`text_fragment`/`thinking_fragment` fields on `LlmRetryEvent` are KEPT.
+They get removed in a final Phase 6.5 cleanup commit once every
+producer/consumer has migrated to the new grammar.
 
-**Next session resumes here — start of Phase 1b.**
+Gate: `just rust-gate` GREEN end-to-end (rust workspace build, leptos
+wasm build, leptos lib tests, leptos snapshot tests, fmt, clippy -D
+warnings, cargo test, cargo machete). Phase-0 context.jsonl goldens
+still byte-equal (no semantic change to context construction yet).
 
-## Phase 1b — events.rs additions (NEXT)
+**Phase 1 is now complete (1a + 1b shipped).** Next session resumes at
+Phase 2 — provider migration in `omega-core/src/anthropic.rs` and
+`omega-core/src/ollama.rs`.
 
-Goal: add new event-side types alongside existing ones, fully
-additive. Workspace must stay green.
+## Phase 2 — providers (NEXT)
 
-File: `rust/crates/omega-types/src/events.rs` (~700 lines currently).
+Goal: providers stop emitting mid-stream `OmegaEvent::ToolCall`; instead
+they emit per-block completion `StreamSignal`s
+(`TextBlockComplete`/`ThinkingBlockComplete`/`ToolUseBlockComplete`)
+with the real Anthropic SSE `content_block_start.index`. Drop
+`streaming_start` synthesis. Pull Anthropic's usage `iterations` array
+into `LlmResponseUsage.iterations`. Strip `all_text`/`all_thinking`
+accumulators (moved to the agent in Phase 3).
 
-Add these structs (mirror existing ones' derives:
-`Debug, Clone, PartialEq, Eq, Serialize, Deserialize`):
+Detailed strategy still open — must keep gate green: producers can
+emit BOTH legacy and new shapes during the migration, OR the agent can
+be taught to consume both. Decide at the start of Phase 2.
 
-```rust
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LlmResponseStartedEvent {
-    pub time: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LlmResponseEndedEvent {
-    pub time: String,
-    pub stop_reason: String,
-    pub usage: LlmResponseUsage,
-    pub context_hash: ContextHash,
-    pub response_summary: ResponseSummary,
-    // Phase 1 carry-over flags (cleared_text/cleared_thinking/cleared_tool_uses):
-    // mirror whatever LlmResponseEvent has for these. Check the existing struct
-    // before deciding which fields to carry.
-    pub cleared_text: bool,
-    pub cleared_thinking: bool,
-    pub cleared_tool_uses: bool,
-    // NOTE: explicitly NO text/thinking/streaming_start — those belong on
-    // TextBlockEvent / ThinkingBlockEvent.
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LlmResponseDiscardedEvent {
-    pub time: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextBlockEvent {
-    pub time: String,
-    pub text: String,
-    pub partial: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ThinkingBlockEvent {
-    pub time: String,
-    pub thinking: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
-    pub partial: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolUseBlockEvent {
-    pub time: String,
-    pub id: String,
-    pub name: String,
-    pub input: serde_json::Value,
-    pub partial: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UsageIteration {
-    #[serde(rename = "type")]
-    pub iteration_type: String,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    // Add cache_* + service_tier if present in Anthropic's iteration shape.
-    // Worth grepping Anthropic SDK or the existing CompactedEvent's usage
-    // field shape for guidance.
-}
-```
-
-Then:
-
-1. Add `iterations: Option<Vec<UsageIteration>>` to `LlmResponseUsage`
-   with `#[serde(skip_serializing_if = "Option::is_none", default)]`.
-   Verify existing tests still serialise byte-identically when None.
-
-2. Add to `OmegaEvent`:
-   ```rust
-   #[serde(rename = "llm_response_started")]
-   LlmResponseStarted(LlmResponseStartedEvent),
-   #[serde(rename = "llm_response_ended")]
-   LlmResponseEnded(LlmResponseEndedEvent),
-   #[serde(rename = "llm_response_discarded")]
-   LlmResponseDiscarded(LlmResponseDiscardedEvent),
-   #[serde(rename = "text_block")]
-   TextBlock(TextBlockEvent),
-   #[serde(rename = "thinking_block")]
-   ThinkingBlock(ThinkingBlockEvent),
-   #[serde(rename = "tool_use_block")]
-   ToolUseBlock(ToolUseBlockEvent),
-   ```
-   KEEP existing `LlmResponse`, `Compacted` variants.
-
-3. Add round-trip tests at bottom of file for each new variant. Mirror
-   the style of existing `*_event_round_trips` tests.
-
-4. The `events_reference.rs` golden test in `omega-types/tests/` may
-   enumerate all OmegaEvent variants — check & extend if so.
-
-5. The frontend's `protocol.rs` may need to enumerate new OmegaEvent
-   variants in its `kind_for` mapper or similar exhaustive match.
-   Since the frontend's WsMessage uses `#[serde(tag = "type")]` and
-   doesn't know about the new tags, this is technically backward
-   compat for now (frontend ignores unknown tags? need to verify) —
-   but if any exhaustive match exists, add stubs.
-
-6. Run `just rust-gate` + leptos checks.
-
-7. Commit: `schema-8(phase-1b): add new event variants & usage iterations`.
-
-After Phase 1b: Phase 1 complete. Next is Phase 2 (provider migration).
-
-## CURRENT STATE (mid-Phase 1, in-progress)
-
-**Just done:** Rewrote `rust/crates/omega-types/src/stream_signal.rs`.
-All 5 StreamSignal variants now carry `index: usize`:
-- `Text { index, text }`
-- `Thinking { index, text }`
-- `TextBlockComplete { index, text }`  (NEW)
-- `ThinkingBlockComplete { index, signature }`  (added `index`)
-- `ToolUseBlockComplete { index, id, name, input }`  (NEW)
-
-File has 5 round-trip tests covering each variant.
-
-**Next step (Phase 1 continuation):**
-
-1. Update all StreamSignal call sites to add `index: 0` (or pattern
-   `index: _`). Specific list of sites is in the prior "StreamSignal
-   callers needing index: 0 updates" section.
-2. Run `cargo build --workspace` in `rust/` to find any sites I missed.
-3. Run `cargo test --workspace` from `rust/` — should be green.
-4. Then start `events.rs` Phase 1 changes:
-   - Add struct `LlmResponseStartedEvent { time }`.
-   - Add struct `LlmResponseEndedEvent` (clone of `LlmResponseEvent`
-     minus `text`/`thinking`/`streaming_start` fields).
-   - Add struct `LlmResponseDiscardedEvent { time }`.
-   - Add struct `TextBlockEvent { time, text, partial }`.
-   - Add struct `ThinkingBlockEvent { time, thinking, signature: Option<String>, partial }`.
-   - Add struct `ToolUseBlockEvent { time, id, name, input: Value, partial }`.
-   - Add struct `UsageIteration { iteration_type: String, input_tokens: i64, output_tokens: i64, ... }`.
-     The wire field name for `iteration_type` is `"type"` (Anthropic shape) —
-     use `#[serde(rename = "type")]` since `type` is a Rust keyword.
-   - Add field `iterations: Option<Vec<UsageIteration>>` to `LlmResponseUsage`
-     with `#[serde(skip_serializing_if = "Option::is_none")]`.
-   - Add OmegaEvent variants: `LlmResponseStarted`, `LlmResponseEnded`,
-     `LlmResponseDiscarded`, `TextBlock`, `ThinkingBlock`, `ToolUseBlock`.
-     KEEP existing variants. The serde tag values become
-     `llm_response_started`, `llm_response_ended`, `llm_response_discarded`,
-     `text_block`, `thinking_block`, `tool_use_block`.
-   - Add round-trip tests for each new variant inside the existing
-     `#[cfg(test)] mod tests` block.
-   - DO NOT delete `LlmResponseEvent`, `CompactedEvent`, or
-     `OmegaEvent::{LlmResponse, Compacted}`. They get cleaned up in
-     final Phase 6.5 cleanup commit after consumers migrate.
-   - DO NOT strip `text_fragment`/`thinking_fragment` from `LlmRetryEvent`.
-
-5. Verify `cargo test -p omega-types` passes.
-6. Run full gate: `just rust-gate`.
-7. Commit Phase 1 with message:
-   `schema-8(phase-1): purely additive type extensions for new event grammar`
-   explicitly noting the additive deviation from plan + cleanup commit
-   deferred to Phase 6.5.
-8. Update progress file marking Phase 1 done.
-9. Push (3 commits since last push when this lands).
+File sketch:
+- `anthropic.rs::content_block_stop` for `tool_use`: emit
+  `StreamSignal::ToolUseBlockComplete { index, id, name, input }`
+  instead of `OmegaEvent::ToolCall(...)`.
+- `anthropic.rs::content_block_stop` for `text`: emit
+  `StreamSignal::TextBlockComplete { index, text }`.
+- `anthropic.rs::content_block_stop` for `thinking`: keep emitting
+  `ThinkingBlockComplete{index, signature}` (already in place from 1a).
+- `anthropic.rs::message_stop`: stop emitting `LlmResponse.text`,
+  `.thinking`, `.streaming_start`. Pull `iterations` from raw usage if
+  present.
+- `ollama.rs`: same shape; `index = 0` everywhere (no parallel blocks).
+- `retry.rs::track_fragment`: removed; agent owns abandonment in Phase 3.
 
 ## Notes for resuming after context compaction
 

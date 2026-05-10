@@ -1,4 +1,4 @@
-//! All-22-variants `OmegaEvent` reference snapshot.
+//! All-28-variants `OmegaEvent` reference snapshot.
 //!
 //! This file is the living wire-format reference for `events.jsonl`.  It
 //! contains exactly one example of every `OmegaEvent` variant, serialised
@@ -14,17 +14,25 @@
 //!
 //! The per-variant unit tests in `src/events.rs` stay — they pin specific
 //! mutants the catalogue snapshot wouldn't reliably catch.
+//!
+//! SCHEMA-8 note: variants 23–28 cover the Phase 1b additive grammar
+//! (`LlmResponseStarted`, `LlmResponseEnded`, `LlmResponseDiscarded`,
+//! `TextBlock`, `ThinkingBlock`, `ToolUseBlock`).  They will eventually
+//! replace the legacy `LlmResponse` and the `text_fragment` /
+//! `thinking_fragment` fields on `LlmRetry`; for now they coexist.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use omega_types::OmegaEvent;
 use omega_types::events::{
     AgentErrorEvent, CompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
-    LlmCallEvent, LlmErrorEvent, LlmResponseEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason,
+    LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
+    LlmResponseEvent, LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason,
     ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
-    ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, ToolCallEvent,
-    ToolResultEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
-    TurnMetrics, TurnPausedEvent, UserMessageEvent,
+    ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
+    TurnPausedEvent, UsageIteration, UserMessageEvent,
 };
 use serde_json::json;
 
@@ -115,6 +123,7 @@ fn all_22_events() -> Vec<OmegaEvent> {
                 cache_creation_input_tokens: Some(480),
                 cache_read_input_tokens: None,
                 service_tier: None,
+                iterations: None,
             },
             context_hash: HASH.into(),
             text: Some("The directory contains: README.md, src/, tests/.".into()),
@@ -212,6 +221,68 @@ fn all_22_events() -> Vec<OmegaEvent> {
             time: T.into(),
             mode: ContinueMode::Manual,
         }),
+        // ----- SCHEMA-8 additive variants ------------------------------------
+        // 23. LlmResponseStarted — opener for a fresh provider stream.
+        OmegaEvent::LlmResponseStarted(LlmResponseStartedEvent { time: T.into() }),
+        // 24. LlmResponseEnded — successful close.  Carries usage with
+        //     a populated `iterations` array (this is what makes a
+        //     `Compacted` event redundant in the new grammar).
+        OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+            time: T.into(),
+            stop_reason: "end_turn".into(),
+            cleared_tool_uses: None,
+            cleared_input_tokens: None,
+            usage: LlmResponseUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                service_tier: None,
+                iterations: Some(vec![
+                    UsageIteration {
+                        iteration_type: "compaction".into(),
+                        input_tokens: 80,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: Some(40),
+                        cache_read_input_tokens: None,
+                        service_tier: None,
+                    },
+                    UsageIteration {
+                        iteration_type: "message".into(),
+                        input_tokens: 20,
+                        output_tokens: 50,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: Some(40),
+                        service_tier: None,
+                    },
+                ]),
+            },
+            context_hash: HASH.into(),
+            response_summary: None,
+        }),
+        // 25. LlmResponseDiscarded — closer for an abandoned stream.
+        OmegaEvent::LlmResponseDiscarded(LlmResponseDiscardedEvent { time: T.into() }),
+        // 26. TextBlock — one complete text content block.
+        OmegaEvent::TextBlock(TextBlockEvent {
+            time: T.into(),
+            text: "Hello, world.".into(),
+            partial: false,
+        }),
+        // 27. ThinkingBlock — one complete thinking block (signature present).
+        OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+            time: T.into(),
+            thinking: "Let me check the directory.".into(),
+            signature: Some("sig_ref_01".into()),
+            partial: false,
+        }),
+        // 28. ToolUseBlock — one complete tool_use content block.
+        OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+            time: T.into(),
+            id: CORR_ID.into(),
+            name: "list_dir".into(),
+            input: json!({"path": "."}),
+            partial: false,
+        }),
     ]
 }
 
@@ -222,12 +293,13 @@ fn all_22_events() -> Vec<OmegaEvent> {
 /// Snapshot every `OmegaEvent` variant in a single JSON array.
 ///
 /// `[].id` is the only field name `"id"` that appears in the serialised
-/// output — on `ToolCallEvent` and `ToolResultEvent`.  Both instances of
-/// `CORR_ID` are replaced with `[id_1]`, proving they carry the same value.
+/// output — on `ToolCallEvent`, `ToolResultEvent`, and `ToolUseBlockEvent`.
+/// All instances of `CORR_ID` are replaced with `[id_1]`, proving they
+/// carry the same value.
 #[test]
-fn all_22_variants_reference() {
+fn all_28_variants_reference() {
     let events = all_22_events();
-    assert_eq!(events.len(), 22, "exactly 22 OmegaEvent variants");
+    assert_eq!(events.len(), 28, "exactly 28 OmegaEvent variants");
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {

@@ -348,6 +348,7 @@ mod tests {
                 cache_creation_input_tokens: if cw == 0 { None } else { Some(cw) },
                 cache_read_input_tokens: if cr == 0 { None } else { Some(cr) },
                 service_tier: None,
+                iterations: None,
             },
             context_hash: "abc".into(),
             text: None,

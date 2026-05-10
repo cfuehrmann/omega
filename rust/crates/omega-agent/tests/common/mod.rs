@@ -178,6 +178,7 @@ pub fn make_llm_response(
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
             service_tier: None,
+            iterations: None,
         },
         context_hash: String::new(),
         text: text.map(str::to_owned),

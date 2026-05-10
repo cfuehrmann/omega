@@ -180,6 +180,7 @@ fn stream_impl(
                             cache_creation_input_tokens: None,
                             cache_read_input_tokens: None,
                             service_tier: None,
+                            iterations: None,
                         },
                         context_hash: String::new(),
                         text: if all_text.is_empty() { None } else { Some(all_text.clone()) },

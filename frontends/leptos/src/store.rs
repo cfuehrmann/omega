@@ -580,6 +580,7 @@ mod tests {
                     cache_creation_input_tokens: None,
                     cache_read_input_tokens: None,
                     service_tier: None,
+                    iterations: None,
                 },
                 context_hash: "deadbeef".into(),
                 text: None,

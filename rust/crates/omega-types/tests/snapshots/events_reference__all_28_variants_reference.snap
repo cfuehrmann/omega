@@ -165,5 +165,60 @@ expression: events
     "type": "turn_continued",
     "time": "2024-01-15T12:00:00.000Z",
     "mode": "manual"
+  },
+  {
+    "type": "llm_response_started",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "llm_response_ended",
+    "time": "2024-01-15T12:00:00.000Z",
+    "stopReason": "end_turn",
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "iterations": [
+        {
+          "type": "compaction",
+          "input_tokens": 80,
+          "output_tokens": 0,
+          "cache_creation_input_tokens": 40
+        },
+        {
+          "type": "message",
+          "input_tokens": 20,
+          "output_tokens": 50,
+          "cache_read_input_tokens": 40
+        }
+      ]
+    },
+    "contextHash": "deadbeefcafe1234"
+  },
+  {
+    "type": "llm_response_discarded",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "text_block",
+    "time": "2024-01-15T12:00:00.000Z",
+    "text": "Hello, world.",
+    "partial": false
+  },
+  {
+    "type": "thinking_block",
+    "time": "2024-01-15T12:00:00.000Z",
+    "thinking": "Let me check the directory.",
+    "signature": "sig_ref_01",
+    "partial": false
+  },
+  {
+    "type": "tool_use_block",
+    "time": "2024-01-15T12:00:00.000Z",
+    "id": "[id_1]",
+    "name": "list_dir",
+    "input": {
+      "path": "."
+    },
+    "partial": false
   }
 ]

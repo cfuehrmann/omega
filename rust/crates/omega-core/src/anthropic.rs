@@ -295,6 +295,7 @@ fn stream_impl(
                             cache_creation_input_tokens: cache_creation,
                             cache_read_input_tokens: cache_read,
                             service_tier: service_tier.clone(),
+                            iterations: None,
                         },
                         context_hash: String::new(),
                         text: if all_text.is_empty() { None } else { Some(all_text.clone()) },

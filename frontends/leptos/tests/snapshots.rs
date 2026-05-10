@@ -102,6 +102,7 @@ fn assistant_usage() -> LlmResponseUsage {
         cache_read_input_tokens: None,
         cache_creation_input_tokens: None,
         service_tier: None,
+        iterations: None,
     }
 }
 

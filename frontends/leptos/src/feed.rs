@@ -561,6 +561,43 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
             <span class="block-body">{format!("mode: {:?}", e.mode)}</span>
         }
         .into_any(),
+
+        // ----- SCHEMA-8 additive variants ----------------------------------
+        // Phase 1b ships the wire grammar; Phase 4 will replace these stubs
+        // with proper rendering (block coalescing, partial-block markers).
+        OmegaEvent::LlmResponseStarted(_) => view! {
+            <span class="block-label">"llm_response_started"</span>
+        }
+        .into_any(),
+
+        OmegaEvent::LlmResponseEnded(e) => view! {
+            <span class="block-label">"llm_response_ended"</span>
+            <span class="block-body">{format!("stop: {}", e.stop_reason)}</span>
+        }
+        .into_any(),
+
+        OmegaEvent::LlmResponseDiscarded(_) => view! {
+            <span class="block-label">"llm_response_discarded"</span>
+        }
+        .into_any(),
+
+        OmegaEvent::TextBlock(e) => view! {
+            <span class="block-label">"text_block"</span>
+            <pre class="block-body">{e.text}</pre>
+        }
+        .into_any(),
+
+        OmegaEvent::ThinkingBlock(e) => view! {
+            <span class="block-label">"thinking_block"</span>
+            <pre class="block-body">{e.thinking}</pre>
+        }
+        .into_any(),
+
+        OmegaEvent::ToolUseBlock(e) => view! {
+            <span class="block-label">"tool_use_block"</span>
+            <span class="block-body">{format!("{} ({})", e.name, e.id)}</span>
+        }
+        .into_any(),
     }
 }
 

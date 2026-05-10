@@ -215,6 +215,7 @@ fn llm_response_event(stop_reason: &str, text: Option<&str>) -> AgentItem {
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
             service_tier: None,
+            iterations: None,
         },
         context_hash: String::new(),
         text: text.map(str::to_owned),
