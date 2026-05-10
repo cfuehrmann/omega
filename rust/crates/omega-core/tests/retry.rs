@@ -328,8 +328,18 @@ async fn gives_up_after_max_attempts() {
 /// `overloaded_error` payload, which the provider lifts to
 /// `LlmError::Stream { message }` whose `message` contains
 /// `"overloaded_error"` — making it retryable per `is_retryable`.
+/// SCHEMA-8 Phase 2: text / thinking fragment tracking is no
+/// longer the retry wrapper's job — abandonment moves to the agent,
+/// which knows how to emit the matching block-completion closers in
+/// the next phase.  The legacy `text_fragment` / `thinking_fragment`
+/// fields on `LlmRetryEvent` therefore stay `None` at this layer.
+///
+/// (We still drive a real mid-stream-then-retry scenario here so we
+/// keep coverage that the wrapper retries correctly when text *has*
+/// already streamed before the error — it just no longer surfaces
+/// the fragment.)
 #[tokio::test]
-async fn populates_text_fragment_when_text_streamed_before_error() {
+async fn retry_event_carries_no_fragments_after_mid_stream_text() {
     let server = MockServer::start().await;
 
     // First response: a text delta then an SSE error event (mid-stream).
@@ -395,10 +405,10 @@ async fn populates_text_fragment_when_text_streamed_before_error() {
 
     let retries = retry_events(&items);
     assert_eq!(retries.len(), 1, "exactly one retry");
-    assert_eq!(
-        retries[0].text_fragment.as_deref(),
-        Some("partial answer"),
-        "text streamed before error should appear in text_fragment"
+    assert!(
+        retries[0].text_fragment.is_none(),
+        "Phase 2: text_fragment is no longer populated by the retry wrapper, got {:?}",
+        retries[0].text_fragment,
     );
     assert!(retries[0].thinking_fragment.is_none());
 }

@@ -20,7 +20,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use futures::stream::{self, Stream};
 use omega_types::events::LlmRetryEvent;
-use omega_types::{LlmRetryReason, OmegaEvent, StreamSignal};
+use omega_types::{LlmRetryReason, OmegaEvent};
 use rand::RngExt;
 
 use crate::provider::{AgentItemStream, Provider};
@@ -95,8 +95,6 @@ struct LoopState<P: Provider + ?Sized> {
     config: RetryConfig,
     attempt: u32,
     current: Option<AgentItemStream>,
-    text_fragment: String,
-    thinking_fragment: String,
     done: bool,
 }
 
@@ -112,8 +110,6 @@ fn retry_loop<P: Provider + ?Sized + 'static>(
         config,
         attempt: 0,
         current: Some(initial_stream),
-        text_fragment: String::new(),
-        thinking_fragment: String::new(),
         done: false,
     };
 
@@ -127,7 +123,6 @@ fn retry_loop<P: Provider + ?Sized + 'static>(
         let next = stream.next().await;
         match next {
             Some(Ok(item)) => {
-                track_fragment(&item, &mut s.text_fragment, &mut s.thinking_fragment);
                 s.current = Some(stream);
                 Some((Ok(item), s))
             }
@@ -142,37 +137,22 @@ fn retry_loop<P: Provider + ?Sized + 'static>(
                     Some((Err(err), s))
                 } else {
                     let (sleep_for, reason) = compute_backoff(&err, next_attempt, &s.config);
-                    let event = build_retry_event(
-                        &err,
-                        next_attempt,
-                        sleep_for,
-                        reason,
-                        &s.text_fragment,
-                        &s.thinking_fragment,
-                    );
+                    // SCHEMA-8 Phase 2: text / thinking fragment
+                    // tracking moves to the agent (it knows about
+                    // abandonment closers).  The retry event still
+                    // carries the legacy `text_fragment` /
+                    // `thinking_fragment` fields for now (deleted in
+                    // Phase 6.5), but the provider-side wrapper sets
+                    // them to `None`.
+                    let event = build_retry_event(&err, next_attempt, sleep_for, reason);
                     s.attempt = next_attempt;
                     tokio::time::sleep(sleep_for).await;
                     s.current = Some(s.inner.stream(s.request.clone()));
-                    s.text_fragment.clear();
-                    s.thinking_fragment.clear();
                     Some((Ok(AgentItem::event(event)), s))
                 }
             }
         }
     })
-}
-
-fn track_fragment(item: &AgentItem, text: &mut String, thinking: &mut String) {
-    match item {
-        AgentItem::Signal(StreamSignal::Text { text: t, .. }) => text.push_str(t),
-        AgentItem::Signal(StreamSignal::Thinking { text: t, .. }) => thinking.push_str(t),
-        AgentItem::Signal(
-            StreamSignal::ThinkingBlockComplete { .. }
-            | StreamSignal::TextBlockComplete { .. }
-            | StreamSignal::ToolUseBlockComplete { .. },
-        )
-        | AgentItem::Event(_) => {}
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,8 +202,6 @@ fn build_retry_event(
     attempt: u32,
     wait_for: Duration,
     reason: Option<LlmRetryReason>,
-    text_fragment: &str,
-    thinking_fragment: &str,
 ) -> OmegaEvent {
     let now = Utc::now();
     let retry_at =
@@ -231,16 +209,6 @@ fn build_retry_event(
     let error_body: Option<serde_json::Value> = match err {
         LlmError::Http { body, .. } => serde_json::from_str(body).ok(),
         _ => None,
-    };
-    let text_fragment = if text_fragment.is_empty() {
-        None
-    } else {
-        Some(text_fragment.to_owned())
-    };
-    let thinking_fragment = if thinking_fragment.is_empty() {
-        None
-    } else {
-        Some(thinking_fragment.to_owned())
     };
     OmegaEvent::LlmRetry(LlmRetryEvent {
         time: now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
@@ -250,8 +218,10 @@ fn build_retry_event(
         error: format!("{err}"),
         retry_at: Some(retry_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         error_body,
-        text_fragment,
-        thinking_fragment,
+        // SCHEMA-8 Phase 2: legacy fragment fields now always None;
+        // abandonment moves to the agent.
+        text_fragment: None,
+        thinking_fragment: None,
         reason,
     })
 }
