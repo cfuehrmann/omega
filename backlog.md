@@ -82,6 +82,21 @@ When every retry is consumed, the final fallback yields a bare `agent_error`
 with no `llm_error` event. The worst crash path has the least diagnostic
 coverage. Fix: emit `llm_error` before `agent_error` on exhaustion.
 
+### SCHEMA-8 — Append-only event grammar
+
+**[backlog/schema-8.md](backlog/schema-8.md)**
+
+Major refactor of the event schema to make `events.jsonl` strictly
+append-only at the UI level. Replaces `LlmResponse` (interval-summary) with
+an `LlmResponseStarted` / `LlmResponseEnded` pair plus per-content-block
+events (`TextBlock`, `ThinkingBlock`, `ToolUseBlock`). Drops `Compacted`
+(folded into `LlmResponseEnded.usage.iterations`). Re-purposes `ToolCall` to
+agent-dispatch time. Folds in CTX-ORDER: replaces flat per-kind streaming
+accumulators with an order-preserving block-index-keyed accumulator so
+context.jsonl is correct under interleaved thinking. Hard cutover; no
+backward compatibility. Gated on Phase 0 golden context.jsonl tests for
+safety.
+
 ---
 
 ## P3 — Low priority / deferred
