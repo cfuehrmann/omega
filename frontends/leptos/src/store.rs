@@ -246,12 +246,11 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming_text.set(String::new());
             store.streaming_thinking.set(String::new());
         }
-        // `LlmResponse` finalises the prior streaming-text accumulator
-        // (the model yields it as a `text` block in the response).
-        OmegaEvent::LlmResponse(_) => {
-            store.streaming_text.set(String::new());
-            store.streaming_thinking.set(String::new());
-        }
+        // SCHEMA-8 Phase 4d — the legacy `LlmResponse` event is still on
+        // the wire (the agent emits it as a band-aid until Phase 6.5) but
+        // the store no longer consumes it.  The streaming-buffer clear it
+        // used to drive now happens on `LlmResponseEnded` and the per-block
+        // events (`TextBlock` / `ThinkingBlock`); see the arms below.
         // SCHEMA-8 Phase 4a — `LlmResponseStarted` opens a fresh
         // response container.  The streaming buffers are global (one
         // text + one thinking accumulator across the whole turn) and
@@ -618,7 +617,12 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn llm_response_event_clears_streaming_accumulators() {
+    fn llm_response_event_is_inert_post_phase_4d() {
+        // SCHEMA-8 Phase 4d — the legacy `LlmResponse` event still
+        // arrives on the wire (agent band-aid until 6.5) but the store
+        // no longer consumes it: applying it must leave the streaming
+        // accumulators untouched.  The clear-on-end semantics now ride
+        // on `LlmResponseEnded` (covered by its own test).
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
@@ -650,8 +654,14 @@ mod tests {
                 response_summary: None,
             }));
             let snap = s.snapshot();
-            assert!(snap.streaming_text.is_empty());
-            assert!(snap.streaming_thinking.is_empty());
+            assert_eq!(
+                snap.streaming_text, "partial",
+                "legacy LlmResponse must NOT clear streaming_text post-4d"
+            );
+            assert_eq!(
+                snap.streaming_thinking, "musing",
+                "legacy LlmResponse must NOT clear streaming_thinking post-4d"
+            );
         });
     }
 
