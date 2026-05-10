@@ -146,16 +146,30 @@ async fn multi_tool_turn_renders_every_family() {
         first_name.contains("run_command"),
         "tool name not run_command: {first_name:?}"
     );
+    // SCHEMA-8 Phase 5e — ToolCallBlock is now a slim identity row; the
+    // input preview moved to the sibling ToolUseBlock (data-testid
+    // `leptos-tool-use-input`) which arrived earlier in the stream.
+    // The 3 tool_use_block events should mirror the 3 tool_calls
+    // (paired by provider tool_use_id).
+    let tool_use_blocks = count(
+        &h,
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"tool_use_block\"]",
+    )
+    .await;
+    assert_eq!(
+        tool_use_blocks, 3,
+        "expected 3 tool_use_blocks paired with tool_calls, got {tool_use_blocks}"
+    );
     let first_input = h
         .text_content(
-            "[data-testid=\"leptos-feed\"] [data-event-type=\"tool_call\"] \
-             [data-testid=\"leptos-tool-input\"]",
+            "[data-testid=\"leptos-feed\"] [data-event-type=\"tool_use_block\"] \
+             [data-testid=\"leptos-tool-use-input\"]",
         )
         .await
-        .expect("read tool input");
+        .expect("read tool_use_block input preview");
     assert!(
         first_input.contains("sleep 0.6"),
-        "tool input missing sleep 0.6: {first_input:?}"
+        "tool_use_block preview missing sleep 0.6: {first_input:?}"
     );
 
     // 3 tool_results, all kind=tool_result

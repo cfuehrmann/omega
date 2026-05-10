@@ -130,21 +130,25 @@ async fn text_modal_esc_closes() {
     send_message(&h, "hello").await;
     wait_for_one_turn_end(&h).await;
 
-    // Wait for a tool_call block to appear in the feed.
+    // Wait for a tool_use_block row to appear in the feed. SCHEMA-8 Phase 5d
+    // moved the click-to-open-TextModal affordance from the slim
+    // ToolCallBlock onto the ToolUseBlock row, which carries the full
+    // tool input payload.
     h.wait_for_selector(
-        "[data-testid='leptos-feed'] [data-event-type='tool_call']",
+        "[data-testid='leptos-feed'] [data-event-type='tool_use_block'] \
+         [data-testid='leptos-tool-use-block']",
         T,
     )
     .await
-    .expect("tool_call block appeared");
+    .expect("tool_use_block row appeared");
 
-    // Click the tool-call input row — opens TextModal.
+    // Click the tool_use_block row — opens TextModal with the full input.
     h.click(
-        "[data-testid='leptos-feed'] [data-event-type='tool_call'] \
-         [data-testid='leptos-tool-call-input']",
+        "[data-testid='leptos-feed'] [data-event-type='tool_use_block'] \
+         [data-testid='leptos-tool-use-block']",
     )
     .await
-    .expect("click tool-call row");
+    .expect("click tool_use_block row");
 
     // TextModal must open.
     h.wait_for_selector(TEXT_MODAL, T)

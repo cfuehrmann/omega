@@ -451,6 +451,36 @@ fn snap_event_tool_call() {
 }
 
 #[test]
+fn snap_event_tool_call_with_corr_badge() {
+    // SCHEMA-8 Phase 5e — slim ToolCallBlock with a corr badge for a
+    // multi-call group.  Verifies the layout is
+    // [corr-badge] tool_call <name> id=<id>  (no preview, no on:click).
+    let html = render(|| {
+        let ev = ev_tool_call();
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev corr=Some(2) /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_tool_use_block_with_corr_badge() {
+    // SCHEMA-8 Phase 5e — ToolUseBlock paired with its sibling ToolCall
+    // via the same provider tool_use_id; the corr badge is rendered at
+    // the start of the row alongside the modal-opening label.
+    let html = render(|| {
+        let ev = ev_tool_use(
+            "run_command",
+            serde_json::json!({ "command": "ls -la" }),
+        );
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev corr=Some(2) /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
 fn snap_event_tool_result_ok() {
     let html = render(|| {
         let ev = ev_tool_result("hi\n", false);

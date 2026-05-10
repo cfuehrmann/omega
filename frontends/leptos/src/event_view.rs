@@ -302,55 +302,62 @@ pub fn truncate_preview(s: &str, max_lines: usize, max_bytes: usize) -> Option<S
 ///   so the number would add visual noise without helping the user.
 /// * `ToolResult` events get `Some(n)` matching the `ToolCall` with the
 ///   same `id`, subject to the same single-call suppression.
+/// * `ToolUseBlock` events (SCHEMA-8 Phase 5e) get `Some(n)` matching the
+///   `ToolCall` with the same `id` (the provider's `tool_use_id` flows
+///   through both events), subject to the same single-call suppression.
+///   This lets the operator visually pair the tool_use block emitted on
+///   the response side with the tool_call dispatch and its result.
 /// * All other events get `None`.
+///
+/// `ToolUseBlock` typically appears *before* its sibling `ToolCall` in the
+/// event stream (tool_use blocks land during streaming; the dispatch is
+/// emitted after `LlmResponseEnded`). The algorithm processes each
+/// `LlmCall`-delimited group in two phases:
+///   1. Walk the group forward to number `ToolCall` events and build an
+///      id→corr map.
+///   2. Walk the group again to fill `ToolUseBlock` and `ToolResult`
+///      corrs from the map.
 ///
 /// Designed to be called once per reactive frame in `ConversationFeed`
 /// so that numbers stay consistent across the entire displayed feed.
 #[must_use]
 pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
     let mut result = vec![None; events.len()];
-    let mut counter = 0usize;
-    let mut id_map: HashMap<String, usize> = HashMap::new();
-
-    // Pass 1 — assign corrs exactly as before.
-    for (i, ev) in events.iter().enumerate() {
-        match ev {
-            OmegaEvent::LlmCall(_) => {
-                counter = 0;
-                id_map.clear();
-            }
-            OmegaEvent::ToolCall(e) => {
-                counter += 1;
-                id_map.insert(e.id.clone(), counter);
-                result[i] = Some(counter);
-            }
-            OmegaEvent::ToolResult(e) => {
-                result[i] = id_map.get(&e.id).copied();
-            }
-            _ => {}
-        }
-    }
-
-    // Pass 2 — suppress corrs in groups that have ≤ 1 tool call.
-    // Groups are delimited by `LlmCall` events; everything before the
-    // first `LlmCall` forms an implicit group.
-    let mut group_start = 0usize;
     let n = events.len();
+    let mut group_start = 0usize;
     let mut i = 0usize;
+
     while i <= n {
         let at_boundary = i == n || matches!(events[i], OmegaEvent::LlmCall(_));
         if at_boundary {
-            let max_in_group = result[group_start..i]
-                .iter()
-                .filter_map(|x| *x)
-                .max()
-                .unwrap_or(0);
-            if max_in_group <= 1 {
+            // Phase A — number ToolCall events in this group, build id→corr map.
+            let mut counter = 0usize;
+            let mut id_map: HashMap<String, usize> = HashMap::new();
+            for j in group_start..i {
+                if let OmegaEvent::ToolCall(e) = &events[j] {
+                    counter += 1;
+                    id_map.insert(e.id.clone(), counter);
+                    result[j] = Some(counter);
+                }
+            }
+            // Phase B — lookup ToolUseBlock + ToolResult corrs by id.
+            for j in group_start..i {
+                match &events[j] {
+                    OmegaEvent::ToolUseBlock(e) => {
+                        result[j] = id_map.get(&e.id).copied();
+                    }
+                    OmegaEvent::ToolResult(e) => {
+                        result[j] = id_map.get(&e.id).copied();
+                    }
+                    _ => {}
+                }
+            }
+            // Phase C — suppress corrs in groups with ≤1 tool call.
+            if counter <= 1 {
                 for slot in &mut result[group_start..i] {
                     *slot = None;
                 }
             }
-            // Next group starts after the LlmCall event itself.
             group_start = i + 1;
         }
         i += 1;
@@ -539,8 +546,8 @@ mod tests {
         LlmResponseEvent, LlmResponseUsage, LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
         ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
         SessionResumedEvent, SessionStartedEvent, ToolCallEvent, ToolResultEvent,
-        TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
-        TurnPausedEvent, UserMessageEvent,
+        ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
+        TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
     use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
     use serde_json::json;
@@ -1205,6 +1212,16 @@ mod tests {
         })
     }
 
+    fn make_tool_use_block(id: &str) -> OmegaEvent {
+        OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            id: id.into(),
+            name: "run_command".into(),
+            input: serde_json::json!({}),
+            partial: false,
+        })
+    }
+
     fn make_user() -> OmegaEvent {
         OmegaEvent::UserMessage(UserMessageEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
@@ -1319,6 +1336,88 @@ mod tests {
         assert_eq!(
             assign_tool_corr(&events),
             vec![None, None, None],
+        );
+    }
+
+    // ---- ToolUseBlock correlation (SCHEMA-8 Phase 5e) -----------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_tool_use_block_pairs_with_tool_call() {
+        // ToolUseBlock arrives BEFORE its sibling ToolCall in the stream
+        // (tool_use blocks land during streaming; the dispatch is emitted
+        // after LlmResponseEnded). The algorithm still pairs them by id.
+        let events = vec![
+            make_tool_use_block("id1"),
+            make_tool_use_block("id2"),
+            // (LlmResponseEnded would normally go here, but it doesn't
+            // affect correlation — only LlmCall is a group boundary.)
+            make_tool_call("id1"),
+            make_tool_call("id2"),
+            make_tool_result("id1"),
+            make_tool_result("id2"),
+        ];
+        assert_eq!(
+            assign_tool_corr(&events),
+            vec![Some(1), Some(2), Some(1), Some(2), Some(1), Some(2)],
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_tool_use_block_single_call_suppressed() {
+        // Single-call group: the single ToolUseBlock + ToolCall + ToolResult
+        // triple all get None (nothing to pair within the group).
+        let events = vec![
+            make_tool_use_block("id1"),
+            make_tool_call("id1"),
+            make_tool_result("id1"),
+        ];
+        assert_eq!(assign_tool_corr(&events), vec![None, None, None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_tool_use_block_orphan_gets_none() {
+        // ToolUseBlock without a matching ToolCall (e.g. response was
+        // discarded mid-flight before the agent dispatched the tool).
+        // Counter stays at 0, suppression rule clears everything.
+        let events = vec![
+            make_tool_use_block("id1"),
+            make_tool_use_block("id2"),
+        ];
+        assert_eq!(assign_tool_corr(&events), vec![None, None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_tool_use_block_partial_match_still_numbers_rest() {
+        // Two ToolUseBlocks but only one ToolCall (the other was never
+        // dispatched). Counter reaches 2? No — only ToolCall increments
+        // the counter. So counter = 1, suppression kicks in, everything
+        // becomes None.
+        let events = vec![
+            make_tool_use_block("id1"),
+            make_tool_use_block("id2"),
+            make_tool_call("id1"),
+        ];
+        assert_eq!(assign_tool_corr(&events), vec![None, None, None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_tool_corr_tool_use_block_two_calls_one_use_block_numbered() {
+        // 2 ToolCalls (counter=2, suppression skipped), 1 ToolUseBlock that
+        // matches the second ToolCall by id. The matched ToolUseBlock gets
+        // Some(2); the orphan ToolCall stays Some(1).
+        let events = vec![
+            make_tool_use_block("id2"),
+            make_tool_call("id1"),
+            make_tool_call("id2"),
+        ];
+        assert_eq!(
+            assign_tool_corr(&events),
+            vec![Some(2), Some(1), Some(2)],
         );
     }
 

@@ -827,6 +827,7 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
                     data-testid="leptos-tool-use-block"
                     on:click=move |_| text_modal.open(modal_title.clone(), full_input.clone())
                 >
+                    {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
                     {if partial {
                         view! {
                             <span
@@ -933,43 +934,34 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
 // Tool-call block (TODO-C)
 // ---------------------------------------------------------------------------
 
-/// One `tool_call` row — Phase 3.10 TODO-C.
+/// One `tool_call` row — SCHEMA-8 Phase 5e slim layout.
 ///
-/// Label is the tool name (not the literal string `"tool_call"`).
-/// When `corr` is `Some(n)`, a yellow `<span class="corr-badge">` with the
-/// 1-based ordinal *n* is rendered at the start of the label row so the
-/// user can pair calls with their results on the same line.
-/// A 2-line / 300-byte preview follows the tool name inline;
-/// clicking the block opens the full JSON in a [`TextModal`].
+/// Phase 5e moves the full input modal to `ToolUseBlock` (which arrives
+/// earlier in the stream and carries the same provider-assigned id).
+/// `ToolCallBlock` is now a single label row showing dispatch metadata:
+///   `[corr-badge] tool_call <name> id=<id>`
+///
+/// When `corr` is `Some(n)`, the yellow `<span class="corr-badge">` is
+/// rendered first so the operator can pair the call with the sibling
+/// `ToolUseBlock` and `ToolResult` on the same line.  The id is shown in a
+/// `block-meta` span so the visual link is explicit — useful when a turn
+/// dispatches several tools in parallel.
 #[component]
 fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
-    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
-
     let name = event.name.clone();
-
-    let full_input = serde_json::to_string_pretty(&event.input).unwrap_or_else(|_| "{}".to_owned());
-    // Human-readable preview: tool-specific field extraction rather than raw
-    // JSON. Full JSON always reachable by clicking the block.
-    // Limits: 2 lines / 300 bytes.
-    let raw_preview = tool_call_preview(&name, &event.input);
-    let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
-    let full_for_modal = full_input;
-    let modal_title = format!("tool_call: {name}");
+    let id_meta = format!("id={}", event.id);
 
     view! {
-        <div
-            class="block-label-row"
-            data-testid="leptos-tool-call-input"
-            on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
-        >
+        <div class="block-label-row" data-testid="leptos-tool-call-input">
             {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
             <span class="block-label">
-                <span data-testid="leptos-tool-name">{name.clone()}</span>
+                "tool_call "
+                <span data-testid="leptos-tool-name">{name}</span>
             </span>
-            <span class="block-tool-preview" data-testid="leptos-tool-input">{preview}</span>
+            <span class="block-meta" data-testid="leptos-tool-call-id">{id_meta}</span>
         </div>
     }
 }
