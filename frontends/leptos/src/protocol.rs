@@ -180,14 +180,17 @@ pub enum WsMessage {
     SessionRenamed { session_dir: String, name: String },
 
     // --- Forwarded `StreamSignal` payloads -----------------------------------
-    /// Streaming assistant text fragment.
-    Text { text: String },
-    /// Streaming thinking-block fragment.
-    Thinking { text: String },
+    /// Streaming assistant text fragment.  `index` matches Anthropic's
+    /// `content_block_start.index` so the per-block streaming buffer
+    /// can route deltas to the correct slot (SCHEMA-8 Phase 5a).
+    Text { index: usize, text: String },
+    /// Streaming thinking-block fragment.  `index` carries the same
+    /// semantics as on [`Self::Text`].
+    Thinking { index: usize, text: String },
     /// End-of-thinking-block marker (carries cryptographic signature).
-    /// The UI ignores it; preserved so `apply` can reset the thinking
-    /// accumulator.
-    ThinkingBlockComplete { signature: String },
+    /// The UI ignores the signature; `index` lets `apply` drop the
+    /// matching slot from the thinking streaming buffer.
+    ThinkingBlockComplete { index: usize, signature: String },
 
     // --- Forwarded `OmegaEvent` payloads (21 — `agent_error` merged above) ---
     SessionStarted(SessionStartedEvent),
@@ -497,24 +500,46 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn text_signal_round_trips() {
-        match parse(r#"{"type":"text","text":"hello"}"#) {
-            WsMessage::Text { text } => assert_eq!(text, "hello"),
+        match parse(r#"{"type":"text","index":0,"text":"hello"}"#) {
+            WsMessage::Text { index, text } => {
+                assert_eq!(index, 0);
+                assert_eq!(text, "hello");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn text_signal_with_nonzero_index() {
+        // Interleaved-thinking can revisit older indices; the wire
+        // value must round-trip 1:1.  SCHEMA-8 Phase 5a.
+        match parse(r#"{"type":"text","index":3,"text":"world"}"#) {
+            WsMessage::Text { index, text } => {
+                assert_eq!(index, 3);
+                assert_eq!(text, "world");
+            }
             other => panic!("wrong variant: {other:?}"),
         }
     }
 
     #[wasm_bindgen_test]
     fn thinking_signal_round_trips() {
-        match parse(r#"{"type":"thinking","text":"musing"}"#) {
-            WsMessage::Thinking { text } => assert_eq!(text, "musing"),
+        match parse(r#"{"type":"thinking","index":1,"text":"musing"}"#) {
+            WsMessage::Thinking { index, text } => {
+                assert_eq!(index, 1);
+                assert_eq!(text, "musing");
+            }
             other => panic!("wrong variant: {other:?}"),
         }
     }
 
     #[wasm_bindgen_test]
-    fn thinking_block_complete_carries_signature() {
-        match parse(r#"{"type":"thinking_block_complete","signature":"sig"}"#) {
-            WsMessage::ThinkingBlockComplete { signature } => assert_eq!(signature, "sig"),
+    fn thinking_block_complete_carries_index_and_signature() {
+        match parse(r#"{"type":"thinking_block_complete","index":2,"signature":"sig"}"#) {
+            WsMessage::ThinkingBlockComplete { index, signature } => {
+                assert_eq!(index, 2);
+                assert_eq!(signature, "sig");
+            }
             other => panic!("wrong variant: {other:?}"),
         }
     }
@@ -552,7 +577,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn into_omega_event_returns_none_for_signals() {
-        let sig = WsMessage::Text { text: "x".into() };
+        let sig = WsMessage::Text {
+            index: 0,
+            text: "x".into(),
+        };
         assert!(sig.into_omega_event().is_none());
     }
 

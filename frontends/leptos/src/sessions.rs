@@ -412,7 +412,7 @@ mod tests {
             s.set_sessions(before.clone());
             s.apply(&WsMessage::Ready);
             s.apply(&WsMessage::ResetDone);
-            s.apply(&WsMessage::Text { text: "x".into() });
+            s.apply(&WsMessage::Text { index: 0, text: "x".into() });
             assert_eq!(s.snapshot().sessions, before);
         });
     }

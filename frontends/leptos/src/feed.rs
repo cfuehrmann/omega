@@ -12,7 +12,8 @@
 //!    │         └── match → typed body view per OmegaEvent variant
 //!    │              └── ToolResult: <ToolResultBlock> with payload modal (TODO-C)
 //!    │                   └── pure `truncate_preview(s, 2, 200)`
-//!    ├── <StreamingTail>     (live append into the active assistant block)
+//!    ├── <For each=streaming_text>   (one in-flight placeholder per index)
+//!    ├── <For each=streaming_thinking>
 //!    └── <div sentinel/>     (Effect-driven scrollIntoView seam)
 //! ```
 //!
@@ -24,14 +25,17 @@
 //! mutation-gap pattern as 3.1's `ws.rs::WsClient::send` and 3.2's
 //! `picker.rs` event handlers.
 //!
-//! ## Streaming-text strategy
+//! ## Streaming-text strategy (SCHEMA-8 Phase 5a)
 //!
-//! Direct append: `StreamingTail` reads `streaming_text` once per
-//! re-render, which leptos triggers per-`Text`-frame because
-//! `SessionStore::apply` calls `streaming_text.update(|s|
-//! s.push_str(...))`. Per-keystroke reactivity. No rAF buffer; if 3.6
-//! introduces markdown rendering and per-frame work becomes expensive,
-//! that's the point at which a buffer earns its keep.
+//! Direct append.  `streaming_text` / `streaming_thinking` are
+//! `RwSignal<BTreeMap<usize, String>>` keyed by Anthropic
+//! `content_block_start.index`; the in-flight overlays render one
+//! `<div data-testid="leptos-streaming-text">` per live slot, so
+//! interleaved thinking can coexist without a global accumulator.
+//! Leptos triggers per-`Text`-frame re-renders because
+//! `SessionStore::apply` calls `streaming_text.update(|m|
+//! m.entry(index).or_default().push_str(...))`.  Per-keystroke
+//! reactivity.  No rAF buffer.
 
 use leptos::ev;
 use leptos::html;
@@ -160,13 +164,16 @@ pub fn ConversationFeed() -> impl IntoView {
 
     // Auto-scroll Effect.
     //
-    // We subscribe explicitly to `events.with(Vec::len)`,
-    // `streaming_text.with(String::len)`, and
-    // `streaming_thinking.with(String::len)` so the effect re-runs on
-    // every event append AND every streamed-text fragment AND every
-    // streamed-thinking fragment — but NOT on signals that the feed
-    // doesn't display directly. We do NOT subscribe to `auto_scroll`
-    // itself: reading it via `get_untracked` keeps the gate-flip out
+    // We subscribe explicitly to `events.with(Vec::len)`, plus a
+    // BTreeMap-summing closure over `streaming_text` and
+    // `streaming_thinking` so the effect re-runs on every event
+    // append AND every streamed-text/thinking fragment — but NOT on
+    // signals the feed doesn't display directly. SCHEMA-8 Phase 5a
+    // replaced the per-`String` length probe with a per-map total
+    // length sum so any append to any slot still re-triggers the
+    // effect.
+    //
+    // We do NOT subscribe to `auto_scroll` itself: reading it via `get_untracked` keeps the gate-flip out
     // of the effect's dependency set so an `on:scroll`-induced flip
     // doesn't itself trigger a scroll-into-view.
     //
@@ -197,8 +204,12 @@ pub fn ConversationFeed() -> impl IntoView {
     let raf_id_eff = Rc::clone(&raf_id);
     Effect::new(move |_| {
         let _ = store.events.with(Vec::len);
-        let _ = store.streaming_text.with(String::len);
-        let _ = store.streaming_thinking.with(String::len);
+        let _ = store
+            .streaming_text
+            .with(|m| m.values().map(String::len).sum::<usize>());
+        let _ = store
+            .streaming_thinking
+            .with(|m| m.values().map(String::len).sum::<usize>());
         // Also subscribe to `scroll_demand` so that the ↓ button (which
         // increments the counter) triggers an immediate scroll without
         // performing any direct DOM manipulation in the click handler.
@@ -350,7 +361,7 @@ pub fn ConversationFeed() -> impl IntoView {
                     key=|(idx, _, corr): &(usize, OmegaEvent, Option<usize>)| (*idx, *corr)
                     children=|(idx, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr idx=Some(idx) /> }
                 />
-                <StreamingTail />
+                <StreamingPlaceholders />
                 <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" />
             </section>
             <Show when=move || !auto_scroll.get()>
@@ -1192,44 +1203,81 @@ mod tests {
     }
 }
 
-/// Live overlay rendered after the persisted-event list. Two
-/// conditional blocks: streaming text (assistant family) and streaming
-/// thinking (status family). Each is a plain `<Show>` over the
-/// corresponding signal's emptiness; per-keystroke reactivity comes
-/// from leptos's signal subscription on the inner text node.
+/// Per-index live overlays rendered after the persisted-event list.
+/// Iterates the `streaming_text` and `streaming_thinking` `BTreeMap`s
+/// in index order; each entry yields one `<div data-testid=
+/// "leptos-streaming-{text,thinking}">` block.  Slots drain as the
+/// matching `TextBlock` / `ThinkingBlock` event lands (Phase 5a:
+/// blocks complete in start order, so the lowest-keyed slot is the
+/// one this event finalises). When the map is empty no DOM is
+/// emitted.
+///
+/// `data-testid` mirrors today's selectors (06_feed, 07_scroll,
+/// 03_markdown) so e2e probes that `querySelector` the first match
+/// continue to hit the in-flight block they were testing against.
+///
+/// ## Reactivity contract
+///
+/// `<For>` is keyed on the index alone, not on `(index, text)`. Leptos
+/// invokes the `children` closure exactly once per new key, so reading
+/// the text by value at key time would freeze the slot to its first
+/// fragment. Instead the child closure builds a `move ||` closure that
+/// re-reads `streaming_text.with(|m| m.get(&i).cloned())` on every
+/// append; the inner `<pre>` text node subscribes to that closure and
+/// updates per-fragment.
 #[component]
-fn StreamingTail() -> impl IntoView {
+fn StreamingPlaceholders() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
 
     let assistant_class = css_class_for(EventKind::Assistant);
     let status_class = css_class_for(EventKind::Status);
 
     view! {
-        <Show
-            when=move || !store.streaming_text.with(String::is_empty)
-            fallback=|| ().into_any()
-        >
-            <div
-                class=format!("{assistant_class} block-streaming")
-                data-testid="leptos-streaming-text"
-                data-event-kind="assistant"
-            >
-                <span class="block-label">"assistant (streaming)"</span>
-                <pre class="block-body">{move || store.streaming_text.get()}</pre>
-            </div>
-        </Show>
-        <Show
-            when=move || !store.streaming_thinking.with(String::is_empty)
-            fallback=|| ().into_any()
-        >
-            <div
-                class=format!("{status_class} block-streaming")
-                data-testid="leptos-streaming-thinking"
-                data-event-kind="status"
-            >
-                <span class="block-label">"thinking (streaming)"</span>
-                <pre class="block-body">{move || store.streaming_thinking.get()}</pre>
-            </div>
-        </Show>
+        <For
+            each=move || {
+                store.streaming_text.with(|m| m.keys().copied().collect::<Vec<usize>>())
+            }
+            key=|i: &usize| *i
+            children=move |i: usize| {
+                let text = move || {
+                    store
+                        .streaming_text
+                        .with(|m| m.get(&i).cloned().unwrap_or_default())
+                };
+                view! {
+                    <div
+                        class=format!("{assistant_class} block-streaming")
+                        data-testid="leptos-streaming-text"
+                        data-event-kind="assistant"
+                    >
+                        <span class="block-label">"assistant (streaming)"</span>
+                        <pre class="block-body">{text}</pre>
+                    </div>
+                }
+            }
+        />
+        <For
+            each=move || {
+                store.streaming_thinking.with(|m| m.keys().copied().collect::<Vec<usize>>())
+            }
+            key=|i: &usize| *i
+            children=move |i: usize| {
+                let text = move || {
+                    store
+                        .streaming_thinking
+                        .with(|m| m.get(&i).cloned().unwrap_or_default())
+                };
+                view! {
+                    <div
+                        class=format!("{status_class} block-streaming")
+                        data-testid="leptos-streaming-thinking"
+                        data-event-kind="status"
+                    >
+                        <span class="block-label">"thinking (streaming)"</span>
+                        <pre class="block-body">{text}</pre>
+                    </div>
+                }
+            }
+        />
     }
 }
