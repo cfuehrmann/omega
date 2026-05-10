@@ -14,7 +14,7 @@ pub mod context_store;
 pub mod event_store;
 pub mod session_dir;
 
-pub use context_hash::{ContextHash, hash_from_str, random_hash};
+pub use context_hash::{ContextHash, content_hash, hash_from_str, random_hash};
 pub use context_store::{ContextRecord, ContextStore};
 pub use event_store::EventStore;
 pub use session_dir::{
