@@ -140,7 +140,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 - Check `usage.iterations` for `compaction` entry → do `history.clear()`.
 - End of Phase 3: lock interleaved-thinking golden.
 
-### Phase 4 — Frontend protocol & store — **TODO**
+### Phase 4 — Frontend protocol & store — **DONE** (2026-05-13, commits 4c657a5..a3484a4)
 ### Phase 5 — Frontend UI blocks — **TODO**
 ### Phase 6 — Tests (T1–T5) — **TODO**
 ### Phase 7 — Snapshots and docs — **TODO**
@@ -180,7 +180,244 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 3 DONE — next: Phase 4)
+## CURRENT STATE (Phase 4 DONE — next: Phase 5)
+
+**Phase 4 complete.** Five commits on `develop`, all gates green
+(`just rust-gate` + `cargo test -p omega-e2e --tests -- --ignored
+--test-threads=1` + `cargo test -p omega-agent --test goldens`):
+
+- `4c657a5` schema-8(phase-4a): store routes LlmResponseStarted →
+  clear streaming buffers
+- `898ef01` schema-8(phase-4b): TextBlock/ThinkingBlock/ToolUseBlock
+  renderers + data-block-id on EventBlock + per-block streaming-
+  buffer drain side-effects
+- `11b9d4a` schema-8(phase-4c): mute legacy LlmResponseBlock; promote
+  LlmResponseEnded to the assistant header block; LlmResponseDiscarded
+  marker; 06_feed + 04_composer selectors point at text_block
+- `2e6395b` schema-8(phase-4d): drop OmegaEvent::LlmResponse arm from
+  store::apply_event_side_effects (legacy event is inert in the store;
+  renderer arm returns ().into_any() to keep the empty wrapper)
+- `a3484a4` schema-8(phase-4e): T6 browser-refresh replay test
+  (`rust/crates/omega-e2e/tests/09_refresh.rs` —
+  data_block_ids_stable_across_reload_post_turn_end) + harness gains
+  `TestHarness::reload()`
+
+What the frontend looks like now:
+
+- **Store** (`frontends/leptos/src/store.rs`):
+  - `LlmResponseStarted` clears streaming_text/streaming_thinking.
+  - `TextBlock` clears streaming_text (the persisted block takes
+    over from the in-flight buffer); `ThinkingBlock` clears
+    streaming_thinking. Both partial and non-partial variants.
+  - `LlmResponseEnded` and `LlmResponseDiscarded` both clear the
+    streaming buffers.
+  - The legacy `OmegaEvent::LlmResponse` is inert — it still arrives
+    on the wire (band-aid until Phase 6.5) but no longer triggers
+    any side-effect or visible body. The test
+    `legacy_llm_response_event_is_inert_in_store` locks this.
+  - All new events flow through the catch-all `into_omega_event`
+    branch and land in the `events` Vec; their position in that Vec
+    is the `data-block-id`.
+
+- **Feed** (`frontends/leptos/src/feed.rs`):
+  - `EventBlock` carries `data-block-id` from the `<For>` index
+    (prop is `Option<usize>`; harness omits it ⇒ no attribute).
+  - `TextBlockBlock` renders `MarkdownBody` inside
+    `<div data-testid="leptos-assistant-text">`; `[partial]` indicator
+    when the partial flag is set. This is now the sole owner of the
+    assistant-text rendering surface.
+  - `ThinkingBlockBlock` renders thinking content + signature length;
+    `[partial]` marker on partial.
+  - `ToolUseBlockBlock` renders tool name + input via
+    `tool_call_preview`; `[partial]` marker on partial.
+  - `LlmResponseEndedBlock` is the new assistant header — label
+    "assistant" + stop_reason + [context]/[payload] buttons +
+    `<div data-testid="leptos-assistant-usage">…</div>` usage line.
+    NO `[thinking]` button (thinking lives in ThinkingBlock siblings).
+    NO body markdown (lives in TextBlock siblings).
+  - `LlmResponseDiscardedBlock` is a minimal "[response discarded]"
+    marker.
+  - Legacy `LlmResponseBlock` component is DELETED. Its match arm in
+    `render_event_body` returns `().into_any()` — the EventBlock
+    wrapper with `data-event-type="llm_response"` still exists
+    (empty body), so any selector relying on that boundary still
+    works.
+
+- **kind_for** (`frontends/leptos/src/event_view.rs`):
+  - TextBlock/ThinkingBlock/ToolUseBlock → Assistant
+  - LlmResponseStarted/Ended/Discarded → Status (touched in 3b only;
+    NOT changed in Phase 4 — these blocks are metadata/affordances
+    around assistant content, distinct from the assistant body)
+
+- **Snapshot fixtures** (`frontends/leptos/tests/snapshots.rs`):
+  - `ev_assistant(text)` now emits a `TextBlock` event (was
+    `LlmResponseEvent`). The 7 assistant_* snapshots reblessed to
+    show the slimmer TextBlock wrapper.
+  - New: `ev_llm_response_ended()` helper + `snap_event_llm_response_ended`
+    snapshot to lock the assistant-header rendering.
+  - 8 reblessed + 1 new = 29 total host snapshots, all green.
+
+- **E2e selectors**:
+  - 06_feed.rs: queries `[data-event-type="text_block"]` for the
+    final assistant text (was `[data-event-type="llm_response"]`).
+  - 04_composer.rs: same selector update for `composer_send_pong`.
+  - 03_markdown.rs: untouched — its `[data-testid="md-body"]` query
+    still works since TextBlock owns the markdown surface now.
+  - 09_refresh.rs: new (T6).
+
+- **Test harness** (`rust/crates/omega-e2e/src/lib.rs`):
+  - `TestHarness::reload()` wraps `page.reload()` and re-waits for
+    `<main data-connected="true">`.
+
+What's still on the wire / in the codebase that the new path doesn't
+use (slated for Phase 6.5 cleanup):
+
+- Agent's `LlmResponse.text` / `.thinking` band-aid still populates
+  the legacy field on every `LlmResponseEnded` (so the legacy event
+  still arrives populated; the store just ignores it now).
+- `OmegaEvent::Compacted` MockProvider-driven legacy variant still
+  handled in the agent. Real providers emit compaction via
+  `usage.iterations` (Phase 2+3 work).
+- `LlmResponseEvent.text/.thinking/.streaming_start`,
+  `LlmRetryEvent.{thinking_fragment, text_fragment}`,
+  `CompactedEvent`, `OmegaEvent::Compacted` variant — all kept until
+  Phase 6.5.
+
+Gate verification: GREEN on all of
+  - `just rust-gate`
+  - `cargo test -p omega-agent --test goldens` (11 passed)
+  - `cargo test -p omega-e2e --tests -- --ignored --test-threads=1`
+    (51 passed including both known 07_scroll flakes)
+  - `cargo test --target wasm32-unknown-unknown -p leptos --lib`
+    (364 passed — includes 8 new store tests for Phase 4)
+  - `cargo test --test snapshots --no-default-features --features
+    ssr` (29 host snapshots)
+
+## Phase 5 — Frontend UI blocks (NEXT)
+
+Goal: polish the per-block UI affordances. Phase 4 landed the wiring
+(events flow into the store, block events render their content,
+header/closer events render their meta affordances). Phase 5 adds the
+visual polish + the bits that Phase 4 explicitly deferred:
+
+### Per `backlog/schema-8.md` § Phase 5 (items 39-49)
+
+- **39. Remove `StreamingTail` component.** Today's overlay renders
+  the global `streaming_text` / `streaming_thinking` accumulators as
+  a single tail at the bottom of the feed. Replace with per-block
+  placeholder rendering driven by per-INDEX streaming buffers (the
+  wire StreamSignal `Text`/`Thinking` variants carry `index` since
+  Phase 1a). This requires:
+  - Server WS: forward `index` field on the Text/Thinking signals
+    (currently the wire WsMessage::Text/Thinking only has `text`).
+  - Store: replace `streaming_text: RwSignal<String>` with
+    `streaming_text: RwSignal<HashMap<usize, String>>` (or BTreeMap).
+    Append per-index. Drain entry when matching TextBlock arrives.
+  - Feed: render placeholders for in-flight indices interleaved with
+    persisted block events.
+  - This is the harder Phase 5 commit. Touches protocol.rs +
+    server-side WsMessage + store + feed.
+
+- **40. `LlmResponseStartedBlock`** — currently a stub returning
+  `().into_any()`. Real treatment: discreet header (timestamp or
+  small "↳ assistant" pill), resolves to nothing visible once
+  `LlmResponseEnded` arrives. Or stays invisible — the spec is
+  intentionally loose. Probably leave as `().into_any()` and let the
+  TextBlock/ThinkingBlock/ToolUseBlock siblings carry visual identity.
+
+- **41. `TextBlockBlock` (DONE in 4b) — polish**:
+  - Already renders MarkdownBody + leptos-assistant-text wrapper.
+  - TODO: per-index live-streaming buffer pickup (item 39's
+    consequence). When the persisted block hasn't landed yet, render
+    from `streaming_text[index]`.
+  - TODO: "discarded" styling for partial:true (currently just shows
+    "[partial]"). Strike-through / greyed out per the spec.
+
+- **42. `ThinkingBlockBlock` (DONE in 4b) — polish**:
+  - Collapsed-by-default accordion. Today it's a plain `<details>`
+    with summary "thinking". Need the modal affordance: long thinking
+    content opens in `TextModal`.
+  - "discarded" indicator on partial (signature: None).
+
+- **43. `ToolUseBlockBlock` (DONE in 4b) — polish**:
+  - Today shows name + `tool_call_preview` input. Need: full input via
+    `TextModal` on click. "discarded" styling for partial:true.
+  - NOTE: this is rendered IN ADDITION to the actual `ToolCall` event
+    (which dispatches the tool). Phase 6.5 may consolidate.
+
+- **44. `LlmResponseEndedBlock` (DONE in 4c) — polish**:
+  - Has [context] + [payload] buttons + usage line. Drop `[thinking]`
+    button — done.
+  - TODO: `[compacted]` badge when `usage.iterations` contains a
+    compaction entry. Click → iterations breakdown modal.
+
+- **45. `LlmResponseDiscardedBlock` (DONE in 4c) — polish**:
+  - Today: minimal `[response discarded]` text marker. Spec wants
+    "response discarded — N partial blocks above" — needs to count
+    sibling partial blocks (requires lookback in the store, or pass
+    sibling-count via render context).
+
+- **46. Update `ToolCallBlock`**: slim it (name + correlated id only).
+  Full input is now on `ToolUseBlockBlock`. Click correlates to
+  `ToolResultBlock` below by id.
+
+- **47. `ToolResultBlock` — leave as-is unless polish needed**.
+
+- **48. EventBlock dispatcher + kind_for** — Phase 4 already wired
+  these. Phase 5 polish: maybe re-classify LlmResponseEnded → Assistant
+  if the visual identity warrants (it shows label "assistant"). Decide
+  in Phase 5.
+
+- **49. kind_for** — Phase 4 left the new variants as Status
+  (Started/Ended/Discarded) and Assistant (TextBlock/ThinkingBlock/
+  ToolUseBlock). Drop the legacy `Compacted`/`LlmResponse` mappings
+  in Phase 6.5.
+
+### Plausible commit breakdown (sketch)
+
+1. **5a — per-index streaming buffer + StreamingTail removal**: the
+   big structural item (39 + 41-live). Touches server WS, protocol,
+   store, feed.
+2. **5b — partial:true "discarded" styling** across TextBlock/
+   ThinkingBlock/ToolUseBlock (41/42/43).
+3. **5c — ThinkingBlockBlock TextModal affordance** (42).
+4. **5d — ToolUseBlockBlock TextModal affordance** + correlate to
+   sibling ToolCall (43 + 46 prep).
+5. **5e — Slim ToolCallBlock; correlation to ToolUseBlock above +
+   ToolResult below** (46).
+6. **5f — [compacted] badge on LlmResponseEndedBlock** (44).
+7. **5g — "N partial blocks" count on LlmResponseDiscardedBlock** (45).
+8. **5h — final cleanup pass + bless snapshots for any incidental
+   changes**.
+
+(Some of 5b/5f/5g may be combinable into single commits.)
+
+### Migration discipline (same as Phases 2-4)
+
+- Phase 0 goldens MUST remain byte-equal (Phase 5 is frontend-only;
+  should not touch context.jsonl).
+- omega-e2e suite must stay green. Some tests may need updating as
+  affordances change (e.g. if `[thinking]` button removal in 4c
+  broke something — check `02_picker.rs` and the 06_feed family).
+- Snapshot tests will rebless every visual change. Diff each `.snap`
+  before committing.
+- Push every ≈3 commits as before.
+
+### Notes for resuming after context compaction
+
+Current develop tip after Phase 4: `a3484a4` (this progress-doc
+commit follows immediately after).
+Gate commands:
+  - `just rust-gate`
+  - `cargo test -p omega-e2e --tests -- --ignored --test-threads=1`
+  - `cargo test -p omega-agent --test goldens`
+Full plan: `backlog/schema-8.md` § Phase 5.
+Progress: this file.
+Known flakes: 07_scroll's `scroll_tailing` +
+`tailing_survives_rapid_streaming_after_button_click`. Both pass solo /
+on re-run. Not introduced by SCHEMA-8.
+
+## CURRENT STATE (Phase 3 DONE — next: Phase 4) [historical]
 
 **Phase 3 complete.** Five commits on `develop`, all green on
 `just rust-gate` + the omega-e2e ignored suite:
@@ -477,7 +714,7 @@ Gate command: `just rust-gate`.
 Goldens replay: `cd rust && cargo test -p omega-agent --test goldens`.
 Full plan: `backlog/schema-8.md`.
 
-## CURRENT STATE (Phase 1b DONE — next: Phase 2)
+## CURRENT STATE (Phase 1b DONE — next: Phase 2) [historical]
 
 **Phase 1b complete.** All new SCHEMA-8 event-side types added to
 `rust/crates/omega-types/src/events.rs` purely additively:
