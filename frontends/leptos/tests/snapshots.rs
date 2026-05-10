@@ -144,6 +144,15 @@ fn ev_thinking_partial(thinking: &str) -> OmegaEvent {
     })
 }
 
+fn ev_thinking(thinking: &str) -> OmegaEvent {
+    OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+        time: "2025-01-01T00:00:01.250Z".into(),
+        thinking: thinking.into(),
+        signature: Some("sig_xyz".into()),
+        partial: false,
+    })
+}
+
 fn ev_tool_use_partial(name: &str, input: serde_json::Value) -> OmegaEvent {
     OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
         time: "2025-01-01T00:00:01.500Z".into(),
@@ -344,6 +353,20 @@ fn snap_event_text_block_partial_discarded() {
 fn snap_event_thinking_block_partial_discarded() {
     let html = render(|| {
         let ev = ev_thinking_partial("thinking interrupted mid-stream");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_thinking_block_with_expand_button() {
+    // SCHEMA-8 Phase 5c — non-partial ThinkingBlock has a TextModal
+    // affordance (`expand` button) so long chains-of-thought can be
+    // popped out into a scrollable overlay.
+    let html = render(|| {
+        let ev = ev_thinking("chain of thought\u{2026}");
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }

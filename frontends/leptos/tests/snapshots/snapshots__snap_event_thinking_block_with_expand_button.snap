@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="thinking_block" data-event-kind="assistant" class="block block-assistant"><div class="block-label-row"><span class="block-label">thinking</span><button data-testid="leptos-thinking-block-expand" class="block-label-row-btn">expand</button></div><pre data-testid="leptos-thinking-block-body" class="block-body">chain of thought…</pre></div>

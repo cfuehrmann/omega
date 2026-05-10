@@ -737,18 +737,42 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
             // SCHEMA-8 Phase 5b — partial thinking renders greyed +
             // struck-through with a "Discarded thinking — N chars"
             // header per spec § "Discarded-block styling".
+            //
+            // SCHEMA-8 Phase 5c — a `expand` button on the label row
+            // opens TextModal with the full thinking text.  The inline
+            // `<pre>` is still rendered (line-clamped via CSS) so short
+            // thinking is readable without a click, but long chains-of-
+            // thought get the full overlay treatment that matches
+            // `payload` / `context` buttons elsewhere.
+            let text_modal =
+                use_context::<TextModalState>().expect("TextModalState must be provided");
             let partial = e.partial;
             let char_count = e.thinking.chars().count();
+            let thinking_full = e.thinking.clone();
+            let modal_title =
+                if partial { "thinking (discarded)" } else { "thinking" };
             view! {
-                {if partial {
-                    view! {
-                        <span class="block-discarded-header" data-testid="leptos-block-partial">
-                            {format!("Discarded thinking — {char_count} chars")}
-                        </span>
-                    }.into_any()
-                } else {
-                    view! { <span class="block-label">"thinking"</span> }.into_any()
-                }}
+                <div class="block-label-row">
+                    {if partial {
+                        view! {
+                            <span
+                                class="block-discarded-header"
+                                data-testid="leptos-block-partial"
+                            >
+                                {format!("Discarded thinking — {char_count} chars")}
+                            </span>
+                        }.into_any()
+                    } else {
+                        view! { <span class="block-label">"thinking"</span> }.into_any()
+                    }}
+                    <button
+                        class="block-label-row-btn"
+                        data-testid="leptos-thinking-block-expand"
+                        on:click=move |_| text_modal.open(modal_title, thinking_full.clone())
+                    >
+                        "expand"
+                    </button>
+                </div>
                 <pre
                     class=if partial { "block-body block-discarded-body" } else { "block-body" }
                     data-testid="leptos-thinking-block-body"
