@@ -130,13 +130,14 @@ fn stream_impl(
                     if streaming_start.is_none() {
                         streaming_start = Some(now_iso());
                     }
-                    yield AgentItem::Signal(StreamSignal::Text { text: content.clone() });
+                    yield AgentItem::Signal(StreamSignal::Text { index: 0, text: content.clone() });
                 }
                 if let Some(thinking) = parsed.message.thinking.as_ref()
                     && !thinking.is_empty()
                 {
                     all_thinking.push_str(thinking);
                     yield AgentItem::Signal(StreamSignal::Thinking {
+                        index: 0,
                         text: thinking.clone(),
                     });
                 }

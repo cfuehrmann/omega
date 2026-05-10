@@ -207,6 +207,7 @@ async fn happy_path_user_message_yields_text_and_turn_end() {
     // One LLM call: a Signal::Text "hello" then end_turn LlmResponse.
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "hello".to_owned(),
         })),
         Ok(llm_response("end_turn", Some("hello"))),
@@ -524,6 +525,7 @@ async fn reconnect_replays_turn_events_filters_text_ready_last() {
     // One turn: a text signal followed by an end_turn response.
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "hello".to_owned(),
         })),
         Ok(llm_response("end_turn", Some("hello"))),

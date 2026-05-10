@@ -230,11 +230,13 @@ async fn run(
     while let Some(item) = stream.next().await {
         match item {
             omega_core::AgentItem::Signal(sig) => match sig {
-                omega_types::StreamSignal::Text { text } => {
+                omega_types::StreamSignal::Text { text, .. } => {
                     print!("{text}");
                 }
                 omega_types::StreamSignal::Thinking { .. }
-                | omega_types::StreamSignal::ThinkingBlockComplete { .. } => {
+                | omega_types::StreamSignal::ThinkingBlockComplete { .. }
+                | omega_types::StreamSignal::TextBlockComplete { .. }
+                | omega_types::StreamSignal::ToolUseBlockComplete { .. } => {
                     // Thinking blocks and their completion signals are not
                     // shown in CLI output.
                 }

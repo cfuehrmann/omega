@@ -965,7 +965,7 @@ async fn compaction_block_yields_compacted_then_llm_response() {
     let mut iter = items.iter();
 
     match iter.next().expect("first item") {
-        AgentItem::Signal(omega_types::StreamSignal::Text { text }) => {
+        AgentItem::Signal(omega_types::StreamSignal::Text { text, .. }) => {
             assert_eq!(text, "Hello", "text-delta surfaces normally");
         }
         other => panic!("expected text Signal, got {other:?}"),

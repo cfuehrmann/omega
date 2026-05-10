@@ -196,12 +196,12 @@ fn stream_impl(
                                 if streaming_start.is_none() {
                                     streaming_start = Some(now_iso());
                                 }
-                                yield AgentItem::Signal(StreamSignal::Text { text });
+                                yield AgentItem::Signal(StreamSignal::Text { index: parsed.index, text });
                             }
                             (ContentBlockDelta::ThinkingDelta { thinking }, BlockAccum::Thinking { thinking: t, .. }) => {
                                 t.push_str(&thinking);
                                 all_thinking.push_str(&thinking);
-                                yield AgentItem::Signal(StreamSignal::Thinking { text: thinking });
+                                yield AgentItem::Signal(StreamSignal::Thinking { index: parsed.index, text: thinking });
                             }
                             (ContentBlockDelta::InputJsonDelta { partial_json }, BlockAccum::ToolUse { partial_json: pj, .. }) => {
                                 pj.push_str(&partial_json);
@@ -218,7 +218,7 @@ fn stream_impl(
                     match blocks.remove(&parsed.index) {
                         Some(BlockAccum::Thinking { signature, .. }) => {
                             yield AgentItem::Signal(
-                                StreamSignal::ThinkingBlockComplete { signature },
+                                StreamSignal::ThinkingBlockComplete { index: parsed.index, signature },
                             );
                         }
                         Some(BlockAccum::ToolUse { id, name, partial_json }) => {

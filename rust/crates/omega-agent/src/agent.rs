@@ -677,19 +677,28 @@ impl Agent {
                     match item {
                         Ok(AgentItem::Signal(sig)) => {
                             let forward = match &sig {
-                                StreamSignal::Text { text } => {
+                                StreamSignal::Text { text, .. } => {
                                     text_buf.push_str(text);
                                     true
                                 }
-                                StreamSignal::Thinking { text } => {
+                                StreamSignal::Thinking { text, .. } => {
                                     current_thinking.push_str(text);
                                     true
                                 }
-                                StreamSignal::ThinkingBlockComplete { signature } => {
+                                StreamSignal::ThinkingBlockComplete { signature, .. } => {
                                     let thinking = std::mem::take(&mut current_thinking);
                                     completed_thinking_blocks
                                         .push((thinking, signature.clone()));
                                     false // internal signal, not forwarded to UI
+                                }
+                                StreamSignal::TextBlockComplete { .. }
+                                | StreamSignal::ToolUseBlockComplete { .. } => {
+                                    // SCHEMA-8 Phase 1: variants exist but the
+                                    // agent does not yet route by index.  The
+                                    // current accumulator-based path still wins;
+                                    // these are absorbed silently until Phase 3
+                                    // wires the indexed slot machinery.
+                                    false
                                 }
                             };
                             if forward {
@@ -1286,18 +1295,25 @@ impl Agent {
                 match item {
                     Ok(AgentItem::Signal(sig)) => {
                         let forward = match &sig {
-                            StreamSignal::Text { text } => {
+                            StreamSignal::Text { text, .. } => {
                                 text_buf.push_str(text);
                                 true
                             }
-                            StreamSignal::Thinking { text } => {
+                            StreamSignal::Thinking { text, .. } => {
                                 current_thinking.push_str(text);
                                 true
                             }
-                            StreamSignal::ThinkingBlockComplete { signature } => {
+                            StreamSignal::ThinkingBlockComplete { signature, .. } => {
                                 let thinking = std::mem::take(&mut current_thinking);
                                 completed_thinking_blocks
                                     .push((thinking, signature.clone()));
+                                false
+                            }
+                            StreamSignal::TextBlockComplete { .. }
+                            | StreamSignal::ToolUseBlockComplete { .. } => {
+                                // SCHEMA-8 Phase 1: variants exist but the
+                                // agent does not yet route by index. Absorbed
+                                // until Phase 3 wires the indexed slot machinery.
                                 false
                             }
                         };

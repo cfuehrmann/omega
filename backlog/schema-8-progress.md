@@ -180,6 +180,149 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
+## CURRENT STATE (mid-Phase 1, in-progress)
+
+**Just done:** Rewrote `rust/crates/omega-types/src/stream_signal.rs`.
+All 5 StreamSignal variants now carry `index: usize`:
+- `Text { index, text }`
+- `Thinking { index, text }`
+- `TextBlockComplete { index, text }`  (NEW)
+- `ThinkingBlockComplete { index, signature }`  (added `index`)
+- `ToolUseBlockComplete { index, id, name, input }`  (NEW)
+
+File has 5 round-trip tests covering each variant.
+
+**Next step (Phase 1 continuation):**
+
+1. Update all StreamSignal call sites to add `index: 0` (or pattern
+   `index: _`). Specific list of sites is in the prior "StreamSignal
+   callers needing index: 0 updates" section.
+2. Run `cargo build --workspace` in `rust/` to find any sites I missed.
+3. Run `cargo test --workspace` from `rust/` — should be green.
+4. Then start `events.rs` Phase 1 changes:
+   - Add struct `LlmResponseStartedEvent { time }`.
+   - Add struct `LlmResponseEndedEvent` (clone of `LlmResponseEvent`
+     minus `text`/`thinking`/`streaming_start` fields).
+   - Add struct `LlmResponseDiscardedEvent { time }`.
+   - Add struct `TextBlockEvent { time, text, partial }`.
+   - Add struct `ThinkingBlockEvent { time, thinking, signature: Option<String>, partial }`.
+   - Add struct `ToolUseBlockEvent { time, id, name, input: Value, partial }`.
+   - Add struct `UsageIteration { iteration_type: String, input_tokens: i64, output_tokens: i64, ... }`.
+     The wire field name for `iteration_type` is `"type"` (Anthropic shape) —
+     use `#[serde(rename = "type")]` since `type` is a Rust keyword.
+   - Add field `iterations: Option<Vec<UsageIteration>>` to `LlmResponseUsage`
+     with `#[serde(skip_serializing_if = "Option::is_none")]`.
+   - Add OmegaEvent variants: `LlmResponseStarted`, `LlmResponseEnded`,
+     `LlmResponseDiscarded`, `TextBlock`, `ThinkingBlock`, `ToolUseBlock`.
+     KEEP existing variants. The serde tag values become
+     `llm_response_started`, `llm_response_ended`, `llm_response_discarded`,
+     `text_block`, `thinking_block`, `tool_use_block`.
+   - Add round-trip tests for each new variant inside the existing
+     `#[cfg(test)] mod tests` block.
+   - DO NOT delete `LlmResponseEvent`, `CompactedEvent`, or
+     `OmegaEvent::{LlmResponse, Compacted}`. They get cleaned up in
+     final Phase 6.5 cleanup commit after consumers migrate.
+   - DO NOT strip `text_fragment`/`thinking_fragment` from `LlmRetryEvent`.
+
+5. Verify `cargo test -p omega-types` passes.
+6. Run full gate: `just rust-gate`.
+7. Commit Phase 1 with message:
+   `schema-8(phase-1): purely additive type extensions for new event grammar`
+   explicitly noting the additive deviation from plan + cleanup commit
+   deferred to Phase 6.5.
+8. Update progress file marking Phase 1 done.
+9. Push (3 commits since last push when this lands).
+
+## Notes for resuming after context compaction
+
+The full plan source: `backlog/schema-8.md`.
+The progress/state file: `backlog/schema-8-progress.md` (this file).
+Goldens: `rust/crates/omega-agent/tests/goldens/<fixture>/{context.jsonl,notes.md}`.
+Goldens harness: `rust/crates/omega-agent/tests/goldens.rs`.
+
+Recent commits (verify with `git log --oneline | head`):
+- `30ef152` schema-8: add T6 browser-refresh replay acceptance criterion
+- `bed0b9e` schema-8: expand progress notes with discovered details
+- `9da7414` schema-8(phase-0): defensive byte-equal goldens for context.jsonl
+
+Gate command: `just rust-gate` (rust-only, no Playwright e2e). Full
+Playwright e2e: `just gate`. Pre-commit hook runs full gate; can use
+`git commit --no-verify` if intentionally landing red intermediate code.
+
+Gate runs `cargo clippy -- -D warnings` (without `--tests`); pre-existing
+clippy `--tests` warnings on develop are not gate-failing.
+
+## Phase 1 strategy decision (PRAGMATIC DEVIATION FROM PLAN)
+
+The plan literally says Phase 1 *renames* `LlmResponseEvent` →
+`LlmResponseEndedEvent`, *strips* fields, *deletes* `CompactedEvent`, etc.
+Doing this in one commit breaks every consumer (omega-core, omega-agent,
+frontends/leptos, omega-server, omega-mock-server, omega-e2e, omega-cli
+plus all their tests) until the corresponding consumer phase ships. The
+gate runs the whole workspace.
+
+**Decision: Phase 1 is purely ADDITIVE.**
+- Add new event variants alongside the old ones (`LlmResponseEnded` next
+  to `LlmResponse`; `Compacted` stays).
+- Add new event structs: `LlmResponseStartedEvent`, `LlmResponseEndedEvent`
+  (with the *new* field set — no text/thinking/streaming_start),
+  `LlmResponseDiscardedEvent`, `TextBlockEvent`, `ThinkingBlockEvent`,
+  `ToolUseBlockEvent`, `UsageIteration`.
+- KEEP `LlmResponseEvent`, `CompactedEvent`, `text_fragment`,
+  `thinking_fragment` for now — they get deleted in a final cleanup
+  commit (Phase 6.5) once all consumers have migrated.
+- StreamSignal: I do extend existing `Text`/`Thinking`/`ThinkingBlockComplete`
+  with `index` because the new variants need consistent shape and the
+  set of construction sites is small (~14 sites listed below). Add
+  `TextBlockComplete` and `ToolUseBlockComplete` as net-new variants.
+- Add `iterations: Option<Vec<UsageIteration>>` to `LlmResponseUsage`
+  (skip_serializing_if=Option::is_none, fully backward-compat).
+
+End-state matches the plan exactly. The journey adds intermediate
+duplication that gets cleaned up at the very end. Each commit stays
+green on the full workspace gate.
+
+## StreamSignal callers needing `index: 0` updates (Phase 1 mechanical)
+
+- `rust/crates/omega-types/src/stream_signal.rs` (the type itself + 2 tests)
+- `rust/crates/omega-server/src/ws_message.rs` (lines 261, 271)
+- `rust/crates/omega-server/tests/ws_router.rs` (lines 573, 852)
+- `rust/crates/omega-server/tests/ws.rs` (lines 209, 526)
+- `rust/crates/omega-cli/src/main.rs` (lines 233, 236-237 — patterns)
+- `rust/crates/omega-core/src/retry.rs` (lines 167-169 — patterns)
+- `rust/crates/omega-core/src/ollama.rs` (lines 133, 139)
+- `rust/crates/omega-core/src/anthropic.rs` (lines 199, 204, 220-221)
+- `rust/crates/omega-core/tests/anthropic.rs` (line 968 — pattern)
+- `rust/crates/omega-agent/src/agent.rs` (lines 680, 684, 688, 1289, 1293, 1297 — patterns)
+- `rust/crates/omega-agent/tests/goldens.rs` (lines 211, 235-238, 242-245, 249, 279, 303, 330-333, 336, 352-355, 371, 403, 406, 423, 453, 467 — constructions; will need re-capture of goldens since `index` field will now appear in StreamSignal serialization, BUT goldens compare context.jsonl which doesn't contain signals, so they should stay byte-equal)
+- `rust/crates/omega-agent/tests/common/mod.rs` (lines 214-217 — patterns)
+- `rust/crates/omega-agent/tests/internal.rs` (lines 209, 218, 239 — constructions)
+
+For delta signals, providers should compute the actual block index;
+for Phase 1 (additive only, no semantics change), every call site
+uses `index: 0` since the agent doesn't yet route by index.
+
+## Frontend / WS deserialization model
+
+- `omega-server/src/ws_message.rs` has its own `WsMessage` enum.
+  Its `Item(Box<AgentItem>)` variant is `#[serde(untagged)]` for
+  AgentItem, so `OmegaEvent` variants flow through verbatim with their
+  own `#[serde(tag = "type")]` discriminator. Frontend's WsMessage
+  deserializes `OmegaEvent` variants directly inside `Item`.
+- `frontends/leptos/src/protocol.rs` mirrors the OmegaEvent variants
+  it cares about as variants of its own `WsMessage` enum (e.g.
+  `LlmResponse(LlmResponseEvent)` imports the omega-types struct).
+  Adding NEW OmegaEvent variants doesn't break existing frontend
+  deserialization — unknown tags fail per-message but the frontend
+  only sees messages it expects.
+- HOWEVER: if a NEW event variant is emitted on the wire, the frontend
+  must add a matching WsMessage variant or the deserializer fails. So
+  Phase 2 (providers start emitting new events) must be coupled with
+  Phase 4 (frontend WsMessage adds matching variants), OR Phase 2 keeps
+  emitting BOTH old + new events until Phase 4 lands.
+- For Phase 1 (only adds variants to OmegaEvent, doesn't emit them),
+  no wire format change → frontend doesn't need updating.
+
 ## Active session decisions
 
 - **Time strategy for goldens: SCRUB**, not freeze. The plan permits either;

@@ -216,6 +216,10 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 omega_types::StreamSignal::ThinkingBlockComplete { .. } => {
                     "Signal:ThinkingBlockComplete"
                 }
+                omega_types::StreamSignal::TextBlockComplete { .. } => "Signal:TextBlockComplete",
+                omega_types::StreamSignal::ToolUseBlockComplete { .. } => {
+                    "Signal:ToolUseBlockComplete"
+                }
             },
             AgentItem::Event(boxed) => match boxed.as_ref() {
                 OmegaEvent::UserMessage(_) => "UserMessage",

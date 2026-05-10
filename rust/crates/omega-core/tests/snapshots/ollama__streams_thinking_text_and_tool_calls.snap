@@ -4,14 +4,17 @@ expression: project(&items)
 ---
 [
   {
+    "index": 0,
     "text": "Let me think.",
     "type": "thinking"
   },
   {
+    "index": 0,
     "text": "Hello",
     "type": "text"
   },
   {
+    "index": 0,
     "text": ", world!",
     "type": "text"
   },

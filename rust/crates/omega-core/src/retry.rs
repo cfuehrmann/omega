@@ -164,9 +164,14 @@ fn retry_loop<P: Provider + ?Sized + 'static>(
 
 fn track_fragment(item: &AgentItem, text: &mut String, thinking: &mut String) {
     match item {
-        AgentItem::Signal(StreamSignal::Text { text: t }) => text.push_str(t),
-        AgentItem::Signal(StreamSignal::Thinking { text: t }) => thinking.push_str(t),
-        AgentItem::Signal(StreamSignal::ThinkingBlockComplete { .. }) | AgentItem::Event(_) => {}
+        AgentItem::Signal(StreamSignal::Text { text: t, .. }) => text.push_str(t),
+        AgentItem::Signal(StreamSignal::Thinking { text: t, .. }) => thinking.push_str(t),
+        AgentItem::Signal(
+            StreamSignal::ThinkingBlockComplete { .. }
+            | StreamSignal::TextBlockComplete { .. }
+            | StreamSignal::ToolUseBlockComplete { .. },
+        )
+        | AgentItem::Event(_) => {}
     }
 }
 

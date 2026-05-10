@@ -4,18 +4,22 @@ expression: project(&items)
 ---
 [
   {
+    "index": 0,
     "text": "Let me think.",
     "type": "thinking"
   },
   {
+    "index": 0,
     "signature": "sig123",
     "type": "thinking_block_complete"
   },
   {
+    "index": 1,
     "text": "Hello",
     "type": "text"
   },
   {
+    "index": 1,
     "text": ", world!",
     "type": "text"
   },

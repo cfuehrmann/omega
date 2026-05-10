@@ -209,6 +209,7 @@ fn scrub_time_passes_through_no_match() {
 fn script_simple_turn() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Hello, world!".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("Hello, world!"), 7, 4)),
@@ -233,20 +234,25 @@ fn script_thinking_blocks() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         // First thinking block + signature.
         Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
             text: "First, let me consider…".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            index: 0,
             signature: "sig-thinking-1".to_owned(),
         })),
         // Second thinking block immediately after the first.
         Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
             text: "Wait — let me double-check.".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            index: 0,
             signature: "sig-thinking-2".to_owned(),
         })),
         // Single text block — comes after both thinking blocks.
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Here is the answer: 42.".to_owned(),
         })),
         Ok(make_llm_response(
@@ -277,6 +283,7 @@ async fn fixture_thinking_blocks() {
 fn script_parallel_tool_calls_call1() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Let me look around.".to_owned(),
         })),
         // Two tool_use events emitted by the provider mid-stream.
@@ -301,6 +308,7 @@ fn script_parallel_tool_calls_call1() -> Vec<Result<AgentItem, LlmError>> {
 fn script_parallel_tool_calls_call2() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Done.".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("Done."), 18, 3)),
@@ -328,12 +336,15 @@ async fn fixture_parallel_tool_calls() {
 fn script_multi_thinking_tools_call1() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
             text: "Plan: list, then read.".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            index: 0,
             signature: "sig-plan".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Looking at the workspace.".to_owned(),
         })),
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
@@ -350,9 +361,11 @@ fn script_multi_thinking_tools_call1() -> Vec<Result<AgentItem, LlmError>> {
 fn script_multi_thinking_tools_call2() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
             text: "Now I will pick a file.".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            index: 0,
             signature: "sig-pick".to_owned(),
         })),
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
@@ -369,6 +382,7 @@ fn script_multi_thinking_tools_call2() -> Vec<Result<AgentItem, LlmError>> {
 fn script_multi_thinking_tools_call3() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "All done.".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("All done."), 14, 3)),
@@ -401,9 +415,11 @@ fn script_mid_stream_retry() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         // Partial pre-retry content the agent must throw away.
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Partial answer that will be retried…".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
             text: "Half-baked thought".to_owned(),
         })),
         // RetryingProvider has slept and is about to re-issue.
@@ -421,6 +437,7 @@ fn script_mid_stream_retry() -> Vec<Result<AgentItem, LlmError>> {
         }))),
         // Post-retry content — this is what gets persisted.
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Final answer.".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("Final answer."), 11, 4)),
@@ -451,6 +468,7 @@ fn script_compaction() -> Vec<Result<AgentItem, LlmError>> {
     vec![
         // Some pre-compaction text the agent will discard.
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "About to be compacted…".to_owned(),
         })),
         // Server-side compaction fires.
@@ -465,6 +483,7 @@ fn script_compaction() -> Vec<Result<AgentItem, LlmError>> {
         // Post-compaction content — this is what gets persisted as
         // the new assistant message.
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "Picking up after compaction.".to_owned(),
         })),
         Ok(make_llm_response(

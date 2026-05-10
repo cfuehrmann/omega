@@ -571,6 +571,7 @@ async fn turn_end_emits_session_info_with_idle_turn_state() {
     let provider = Arc::new(MockProvider::new());
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "hi".to_owned(),
         })),
         Ok(llm_response_event("end_turn", Some("hi"))),
@@ -850,6 +851,7 @@ async fn history_streaming_flag_absent_after_turn_completes() {
     let provider = Arc::new(MockProvider::new());
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "hi".to_owned(),
         })),
         Ok(llm_response_event("end_turn", Some("hi"))),

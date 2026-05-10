@@ -259,21 +259,25 @@ mod tests {
     #[test]
     fn item_signal_text_serialises_with_type_text() {
         let sig = AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "hello".to_owned(),
         });
         let v = WsMessage::Item(Box::new(sig)).to_json();
         assert_eq!(v["type"], "text");
         assert_eq!(v["text"], "hello");
+        assert_eq!(v["index"], 0);
     }
 
     #[test]
     fn item_signal_thinking_serialises_with_type_thinking() {
         let sig = AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
             text: "musing".to_owned(),
         });
         let v = WsMessage::Item(Box::new(sig)).to_json();
         assert_eq!(v["type"], "thinking");
         assert_eq!(v["text"], "musing");
+        assert_eq!(v["index"], 0);
     }
 
     #[test]

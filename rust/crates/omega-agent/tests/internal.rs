@@ -207,6 +207,7 @@ async fn compacted_event_clears_history_and_persists_usage() {
     // Turn 1.
     provider.push_response(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "ok1".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("ok1"), 100, 1)),
@@ -216,6 +217,7 @@ async fn compacted_event_clears_history_and_persists_usage() {
     // Turn 2.
     provider.push_response(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "ok2".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("ok2"), 200, 2)),
@@ -237,6 +239,7 @@ async fn compacted_event_clears_history_and_persists_usage() {
     provider.push_response(vec![
         Ok(compacted_item(usage.clone())),
         Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
             text: "summary".to_owned(),
         })),
         Ok(make_llm_response("end_turn", Some("summary"), 80_500, 250)),
