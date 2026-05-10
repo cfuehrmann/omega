@@ -178,8 +178,8 @@ fixture).
 This phase is the safety net. Every later phase is gated on these tests
 passing.
 
-**0a. Capture golden context.jsonl fixtures from current main**, using
-deterministic mock-provider scripts. Cover:
+**0a. Capture golden context.jsonl fixtures from develop tip (before any
+SCHEMA-8 code change)**, using deterministic mock-provider scripts. Cover:
 
 - Simple turn (one user message, one text-only response, no tools).
 - Turn with thinking blocks (extended thinking enabled).
@@ -192,28 +192,47 @@ deterministic mock-provider scripts. Cover:
   tool_use₃` (or similar interleave). The current main may produce an
   *incorrect* context.jsonl for this fixture — see 0b.
 
-**0b. Manually inspect each captured golden** for correctness:
+**0b. Manually inspect each captured golden** for correctness against
+what the mock script said the API returned:
 
 - Each thinking block has a distinct, non-empty signature.
-- Block order matches the mock script.
+- Block order matches the mock script's `content_block_start.index`
+  sequence.
 - No concatenation across same-kind blocks.
 - No reordering across different-kind blocks.
 
-If the interleaved-thinking fixture's golden is incorrect on current main
-(very likely — flat accumulators reorder kinds), **do not lock that
-golden yet**. Proceed with the other fixtures locked; revisit after
-Phase 3 introduces the order-preserving accumulator.
+A golden only counts as locked once it has been read and judged correct.
+A capture that just happens to reflect current behaviour is not a golden
+— it is a regression trap.
+
+If the interleaved-thinking fixture's capture is incorrect on the
+pre-refactor codebase (very likely — flat accumulators reorder kinds),
+**do not lock that fixture's golden yet**. Check in the fixture script
+without a golden file, mark its replay test `#[ignore]` with a comment
+pointing to Phase 3, and proceed. The other fixtures' goldens are locked
+normally.
 
 **0c. Write a replay test harness** in `omega-agent/tests/` that:
 
 - Runs the agent against each fixture's mock-provider script.
 - Reads the resulting `.omega/sessions/<ts>/context.jsonl`.
-- Asserts byte-equality with the captured golden.
+- Asserts byte-equality with the captured golden file in the repo.
 - Runs as part of `cargo test`.
 
-Phases 1–7 may not merge unless all golden tests pass, with the documented
-exception that the interleaved-thinking golden is captured fresh from the
-new code at the end of Phase 3 (and frozen there).
+The goldens are checked in as test data alongside the fixtures. The
+refactor proceeds entirely on the develop branch — no checkout of an
+earlier commit is needed during phases 1–7. The goldens are static
+files; the comparison is always "current code output vs. checked-in
+file".
+
+Phases 1–7 may not merge unless all golden tests pass. If a phase
+legitimately needs to change a golden (which should be rare and only
+if the *fixture script* changed), the update lands in a dedicated
+commit with a message explaining why the new output is correct, after
+manual inspection of the diff.
+
+The interleaved-thinking fixture's golden is captured fresh from the
+new code at the end of Phase 3 and frozen there — see Phase 3.
 
 ### Phase 1 — Schema (Rust types)
 
@@ -472,6 +491,20 @@ or behavioural change.
 - Phase 6 tests are deliberately split: per-crate tests fix as that
   crate's phase finishes; e2e suite is fully red until Phase 5 is done.
 - Phase 0 golden tests run from Phase 0 onwards; they MUST stay green.
+
+## Notes on terminology
+
+- **"Golden" / "snapshot" / "approval" / "characterization" test** are
+  synonyms in different communities for the same pattern: capture
+  output to a file, manually verify, commit, then assert future runs
+  match the file byte-for-byte. See the discussion in the commit message
+  / PR description for context.
+- **Byte-equality, not structural equality**: `context.jsonl` is
+  content-addressed by hash. A harmless-looking change to JSON field
+  ordering or whitespace silently invalidates every existing session's
+  hash chain. Goldens compare bytes, not parsed structures.
+- **"Before" baseline = develop tip prior to any SCHEMA-8 commit**, not
+  a different branch. Phase 0 is purely additive on develop.
 
 ## Acceptance criteria
 
