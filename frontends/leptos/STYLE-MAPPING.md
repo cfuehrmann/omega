@@ -67,7 +67,7 @@ grep -rh 'class="' frontends/leptos/src/*.rs \
 | `.block.error-b`, `.block.interrupt` | renamed | `.block-error` | |
 | `.block.info` | adapt | `.block.block-status[data-event-type="session_started"]`, `…[data-event-type="server_started"]`, `…[data-event-type="server_stopped"]`, `…[data-event-type="compacted"]`, `…[data-event-type="resuming_session"]`, `…[data-event-type="session_resumed"]` | Phase 3.9 TODO-3: info lifecycle events get `--ctp-overlay2` border + `--ctp-subtext0` fg via per-event-type rules. |
 | `.block.retry` | adapt | `.block.block-status[data-event-type="llm_retry"]` | Phase 3.9 TODO-3: llm_retry restored to `--peach` (matching SolidJS) via per-event-type rule overriding the `.block-status` mauve. |
-| `.block.streaming` (streaming label cursor) | adapt | `.block-streaming` | Leptos's `StreamingTail` adds a `block-streaming` class. The `.block-label::after` blinking ● keeps Mocha's pulse keyframes. |
+| `.block.streaming` (streaming label cursor) | adapt | `.block-streaming` | Each per-index streaming placeholder (Phase 5a) carries the `block-streaming` class. The `.block-label::after` blinking ● keeps Mocha's pulse keyframes. |
 | `.block-label` | pass-through | `.block-label` | Verbatim. |
 | `.block-label-meta` | dead | — | Not emitted; meta lives in `.block-meta`. |
 | `.block-body` | pass-through | `.block-body` | Verbatim. |

@@ -577,7 +577,7 @@ main > h1 {
   color: var(--ctp-subtext1);
 }
 
-/* Streaming overlay (StreamingTail). Adds a pulsing ● to the label. */
+/* Streaming overlay (per-index placeholder, Phase 5a). Adds a pulsing ● to the label. */
 .block-streaming .block-label::after {
   content: " ●";
   color: var(--green);
