@@ -418,3 +418,144 @@ async fn verify_record_rejects_tampered_role() {
         Err(StoreError::HashMismatch { .. })
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Multi-record round-trip (workspace-level integration)
+// ---------------------------------------------------------------------------
+
+/// Drives a realistic four-message conversation through `ContextStore`
+/// and checks every record at the integration level:
+///
+///   1. User asks a question.
+///   2. Assistant emits a `Thinking` block, a `Text` block, and a
+///      `ToolUse` block (read_file).
+///   3. User returns the corresponding `ToolResult` block.
+///   4. Assistant emits the final answer as `Text`.
+///
+/// For every record we assert:
+///
+/// - `append()` returned the same hash that `read_all()` reports.
+/// - `verify_record()` accepts the record as untampered.
+/// - The hash is exactly what `content_hash(&role, &content)` would
+///   produce for the same `(role, content)` — i.e. the writer and
+///   the hashing free function agree end-to-end.
+///
+/// Then we tamper with the second record's content and prove that
+/// `verify_record` rejects exactly that record while the other three
+/// still verify cleanly — a positive demonstration that the
+/// integrity check is record-local rather than session-global.
+#[tokio::test]
+async fn multi_record_session_round_trips_and_verifies_per_record() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+
+    // Build the four messages.
+    let m1_role = Role::User;
+    let m1_content = vec![text_block("What does foo.txt contain?")];
+
+    let m2_role = Role::Assistant;
+    let m2_content = vec![
+        ContentBlock::Thinking {
+            thinking: "I should read the file.".to_owned(),
+            signature: Some("sig-1".to_owned()),
+        },
+        ContentBlock::Text {
+            text: "Let me check.".to_owned(),
+        },
+        ContentBlock::ToolUse {
+            id: "tu_1".to_owned(),
+            name: "read_file".to_owned(),
+            input: serde_json::json!({ "path": "foo.txt" }),
+        },
+    ];
+
+    let m3_role = Role::User;
+    let m3_content = vec![ContentBlock::ToolResult {
+        tool_use_id: "tu_1".to_owned(),
+        content: "hello world\n".to_owned(),
+        is_error: false,
+    }];
+
+    let m4_role = Role::Assistant;
+    let m4_content = vec![text_block("The file contains: hello world")];
+
+    // Append all four; record the hashes append() returned.
+    #[allow(clippy::unwrap_used)]
+    let h1 = store.append(m1_role, m1_content.clone()).await.unwrap();
+    #[allow(clippy::unwrap_used)]
+    let h2 = store.append(m2_role, m2_content.clone()).await.unwrap();
+    #[allow(clippy::unwrap_used)]
+    let h3 = store.append(m3_role, m3_content.clone()).await.unwrap();
+    #[allow(clippy::unwrap_used)]
+    let h4 = store.append(m4_role, m4_content.clone()).await.unwrap();
+    let append_hashes = [h1, h2, h3, h4];
+
+    // Read everything back.
+    #[allow(clippy::unwrap_used)]
+    let records = store.read_all().await.unwrap();
+    assert_eq!(
+        records.len(),
+        4,
+        "expected 4 records, got {}",
+        records.len()
+    );
+
+    // (role, content) tuples in the same order as the messages above,
+    // for cross-checking against content_hash directly.
+    let expected = [
+        (Role::User, m1_content),
+        (Role::Assistant, m2_content),
+        (Role::User, m3_content),
+        (Role::Assistant, m4_content),
+    ];
+
+    // Per-record assertions: hash agreement, free-function agreement,
+    // and verify_record acceptance.
+    for (i, record) in records.iter().enumerate() {
+        let (ref role, ref content) = expected[i];
+        assert_eq!(
+            record.hash, append_hashes[i],
+            "record {i}: append() hash differs from read_all() hash",
+        );
+        assert_eq!(
+            record.hash,
+            content_hash(role, content),
+            "record {i}: stored hash diverges from content_hash(&role, &content)",
+        );
+        assert_eq!(record.role, *role, "record {i}: role round-trip diverged");
+        assert_eq!(
+            record.content, *content,
+            "record {i}: content round-trip diverged",
+        );
+        assert!(
+            ContextStore::verify_record(record).is_ok(),
+            "record {i}: verify_record rejected an untampered record",
+        );
+    }
+
+    // All four hashes must be distinct — the four messages have
+    // distinct (role, content), so a collision would point at a real
+    // hashing bug rather than at chance.
+    let mut seen = std::collections::HashSet::new();
+    for r in &records {
+        assert!(
+            seen.insert(r.hash.clone()),
+            "unexpected hash collision in multi-record session: {:?}",
+            r.hash,
+        );
+    }
+
+    // Tamper with record 1 (the assistant turn): replace its content
+    // with something different.  Only that record should fail
+    // verify_record; the other three remain valid — proves integrity
+    // checks are record-local.
+    let mut tampered = records;
+    tampered[1].content = vec![text_block("injected text")];
+    assert!(ContextStore::verify_record(&tampered[0]).is_ok());
+    assert!(matches!(
+        ContextStore::verify_record(&tampered[1]),
+        Err(StoreError::HashMismatch { .. })
+    ));
+    assert!(ContextStore::verify_record(&tampered[2]).is_ok());
+    assert!(ContextStore::verify_record(&tampered[3]).is_ok());
+}
