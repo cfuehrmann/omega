@@ -1,7 +1,7 @@
 //! Integration tests for `ContextStore` and `ContextHash` — real file I/O
 //! via temp directories.
 
-use omega_store::{ContextRecord, ContextStore, content_hash, hash_from_str};
+use omega_store::{ContextRecord, ContextStore, StoreError, content_hash, hash_from_str};
 use omega_types::{ContentBlock, Role};
 
 // ---------------------------------------------------------------------------
@@ -340,4 +340,81 @@ async fn read_all_skips_blank_and_malformed_lines() {
     let records = store.read_all().await.unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].role, Role::User);
+}
+
+// ---------------------------------------------------------------------------
+// verify_record — T-INT (tamper detection)
+// ---------------------------------------------------------------------------
+
+/// Happy path: an unmodified record verifies successfully.
+#[tokio::test]
+async fn verify_record_accepts_unmodified_round_tripped_record() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+    #[allow(clippy::unwrap_used)]
+    store
+        .append(Role::User, vec![text_block("original")])
+        .await
+        .unwrap();
+    #[allow(clippy::unwrap_used)]
+    let records = store.read_all().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(ContextStore::verify_record(&records[0]).is_ok());
+}
+
+/// T-INT — tampering with `content` after the record is written must be
+/// surfaced by `verify_record`.  The stored hash points at the original
+/// content; an attacker who rewrites the message body cannot also fix
+/// up the hash without recomputing it, and that is exactly what this
+/// check catches.
+#[tokio::test]
+async fn verify_record_rejects_tampered_content() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+    #[allow(clippy::unwrap_used)]
+    let original_hash = store
+        .append(Role::User, vec![text_block("original instruction")])
+        .await
+        .unwrap();
+
+    #[allow(clippy::unwrap_used)]
+    let mut records = store.read_all().await.unwrap();
+    // Rewrite the message body in memory — simulating an attacker
+    // editing context.jsonl while leaving the hash field intact.
+    records[0].content = vec![text_block("rewritten instruction")];
+
+    match ContextStore::verify_record(&records[0]) {
+        Err(StoreError::HashMismatch { stored, recomputed }) => {
+            assert_eq!(stored, original_hash);
+            assert_ne!(recomputed, original_hash);
+            // Recomputed hash must match a fresh content_hash over the
+            // tampered content — proves the mismatch is reported
+            // against the *current* (role, content), not a stale value.
+            assert_eq!(
+                recomputed,
+                content_hash(&records[0].role, &records[0].content)
+            );
+        }
+        other => panic!("expected HashMismatch, got {other:?}"),
+    }
+}
+
+/// Tampering with the role alone is just as detectable as tampering
+/// with the content — role is part of the canonical hash input.
+#[tokio::test]
+async fn verify_record_rejects_tampered_role() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+    #[allow(clippy::unwrap_used)]
+    store
+        .append(Role::User, vec![text_block("hello")])
+        .await
+        .unwrap();
+    #[allow(clippy::unwrap_used)]
+    let mut records = store.read_all().await.unwrap();
+    records[0].role = Role::Assistant;
+    assert!(matches!(
+        ContextStore::verify_record(&records[0]),
+        Err(StoreError::HashMismatch { .. })
+    ));
 }

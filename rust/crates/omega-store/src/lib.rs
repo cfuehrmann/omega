@@ -38,6 +38,20 @@ pub enum StoreError {
     /// A string passed to [`hash_from_str`] did not match `[0-9a-f]{16}`.
     #[error("invalid context hash: {0:?}")]
     InvalidHash(String),
+
+    /// A [`ContextRecord`] failed integrity verification: its stored
+    /// `hash` does not match the [`content_hash`] of its current
+    /// `(role, content)`.  Indicates tampering or corruption.
+    ///
+    /// [`ContextRecord`]: crate::ContextRecord
+    /// [`content_hash`]: crate::content_hash
+    #[error("context record hash mismatch: stored={stored}, recomputed={recomputed}")]
+    HashMismatch {
+        /// The hash stored on the record as read from disk.
+        stored: ContextHash,
+        /// The hash recomputed from `(role, content)` at verify time.
+        recomputed: ContextHash,
+    },
 }
 
 /// Convenience `Result` alias for `omega-store` operations.

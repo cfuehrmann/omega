@@ -146,4 +146,33 @@ impl ContextStore {
             content,
         }
     }
+
+    /// Verify that a [`ContextRecord`]'s stored `hash` still matches the
+    /// [`content_hash`] of its current `(role, content)`.
+    ///
+    /// Use this on records freshly read back from `context.jsonl` to
+    /// detect tampering or on-disk corruption: an attacker who edits a
+    /// message in place — for instance, to retroactively rewrite a
+    /// past user instruction — leaves the stored 16-hex hash pointing
+    /// at the *original* content, and that mismatch is what this
+    /// function surfaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::HashMismatch`] when the stored hash does
+    /// not match the recomputed [`content_hash`] of `(role, content)`.
+    ///
+    /// [`content_hash`]: crate::content_hash
+    /// [`StoreError::HashMismatch`]: crate::StoreError::HashMismatch
+    pub fn verify_record(record: &ContextRecord) -> Result<()> {
+        let recomputed = content_hash(&record.role, &record.content);
+        if recomputed == record.hash {
+            Ok(())
+        } else {
+            Err(StoreError::HashMismatch {
+                stored: record.hash.clone(),
+                recomputed,
+            })
+        }
+    }
 }
