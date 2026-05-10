@@ -1,0 +1,2 @@
+{"hash":"f0032fcbca6bb171","time":"<scrubbed>","role":"user","content":[{"type":"text","text":"what is the answer?"}]}
+{"hash":"05e3c14a9c4345b7","time":"<scrubbed>","role":"assistant","content":[{"type":"thinking","thinking":"First, let me consider…","signature":"sig-thinking-1"},{"type":"thinking","thinking":"Wait — let me double-check.","signature":"sig-thinking-2"},{"type":"text","text":"Here is the answer: 42."}]}

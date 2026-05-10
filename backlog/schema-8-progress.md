@@ -75,7 +75,30 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 
 ## Phase-by-phase progress
 
-### Phase 0 — Defensive harness — **TODO**
+### Phase 0 — Defensive harness — **DONE** (commit pending)
+- 6 fixtures captured under `rust/crates/omega-agent/tests/goldens/`:
+  `simple_turn`, `thinking_blocks`, `parallel_tool_calls`,
+  `multi_thinking_tools`, `mid_stream_retry`, `compaction`.
+- Each fixture has a `context.jsonl` golden plus a `notes.md` plausibility
+  checklist (Phase 0b).
+- Replay test `tests/goldens.rs` byte-compares scrubbed-time output
+  against the goldens; 10 tests total (4 scrubber unit tests + 6
+  fixtures). All pass.
+- **Trade-off recorded in harness doc**: goldens are MockProvider-driven
+  (direct `AgentItem` injection), not SSE-driven. The plan's preference
+  was full provider-stack coverage; cost was high (compaction's SSE
+  format is undocumented; mid-stream retry needs multi-attempt
+  scripting + clock control — same reason `internal.rs` already uses
+  MockProvider for those flows). Parser-level emission is locked
+  separately by Phase 2 tests; integration is covered by the existing
+  CLI/server e2e suites. The pragmatic split is documented at the top
+  of `tests/goldens.rs`.
+- Time field: scrubbed (`"time":"<scrubbed>"`) before comparison rather
+  than frozen — simpler, no production code touched.
+- `thinking_blocks` script is non-interleaved (thinking-1, thinking-2,
+  text). Genuinely interleaved case is the Phase-3 fixture.
+
+### Phase 0 — Defensive harness — (original plan)
 - Capture goldens for context.jsonl from develop tip BEFORE any code change.
 - Fixtures listed in plan: simple turn, thinking blocks, parallel tool calls,
   multiple thinking + tool calls, mid-stream retry+recovery, server-side
