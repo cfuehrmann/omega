@@ -112,7 +112,7 @@ fn ev_assistant(text: &str) -> OmegaEvent {
         cleared_tool_uses: None,
         cleared_input_tokens: None,
         usage: assistant_usage(),
-        context_hash: "abcd1234ef56".into(),
+        context_hash: "abcd1234ef560000".into(),
         text: Some(text.into()),
         thinking: None,
         streaming_start: None,
@@ -126,7 +126,7 @@ fn ev_tool_call() -> OmegaEvent {
         id: "toolu_test".into(),
         name: "run_command".into(),
         input: serde_json::json!({ "command": "echo hi" }),
-        context_hash: "abcd1234ef56".into(),
+        context_hash: "abcd1234ef560000".into(),
     })
 }
 
@@ -177,7 +177,7 @@ fn ev_llm_call() -> OmegaEvent {
         time: "2025-01-01T00:00:01.000Z".into(),
         url: "https://api.anthropic.com/v1/messages".into(),
         model: "claude-sonnet-4-6".into(),
-        context_hashes: vec!["aaaaaaaaaaaa".into(), "bbbbbbbbbbbb".into()],
+        context_hashes: vec!["aaaaaaaaaaaa0000".into(), "bbbbbbbbbbbb0000".into()],
         cache_breakpoint_index: Some(2),
         request_bytes: 1234,
         request_summary: Some(serde_json::json!({"system": "test"})),

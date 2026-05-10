@@ -38,7 +38,7 @@ mod common;
 const T: &str = "2024-01-15T12:00:00.000Z";
 
 /// An example context hash (12 hex chars = 6 bytes of random).
-const HASH: &str = "deadbeefcafe";
+const HASH: &str = "deadbeefcafe1234";
 
 /// The shared id for the correlated ToolCall / ToolResult triple.
 const CORR_ID: &str = "toolu_ref_01";

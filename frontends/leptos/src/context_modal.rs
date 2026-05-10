@@ -20,7 +20,7 @@
 //!
 //! ```jsonc
 //! {
-//!   "hash": "deadbeefcafe",
+//!   "hash": "deadbeefcafe1234",
 //!   "time": "2024-01-01T00:00:00.000Z",
 //!   "role": "user",
 //!   "content": [ { "type": "text", "text": "…" } ]
@@ -775,13 +775,13 @@ mod tests {
     #[wasm_bindgen_test]
     fn context_record_round_trips_with_optional_time() {
         let json = r#"{
-            "hash": "deadbeefcafe",
+            "hash": "deadbeefcafe1234",
             "time": "2024-01-01T00:00:00.000Z",
             "role": "user",
             "content": [{"type":"text","text":"hi"}]
         }"#;
         let rec: ContextRecord = serde_json::from_str(json).unwrap();
-        assert_eq!(rec.hash, "deadbeefcafe");
+        assert_eq!(rec.hash, "deadbeefcafe1234");
         assert_eq!(rec.time.as_deref(), Some("2024-01-01T00:00:00.000Z"));
         assert_eq!(rec.role, "user");
         assert!(rec.content.is_array());
@@ -790,7 +790,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn context_record_round_trips_without_optional_time() {
         let json = r#"{
-            "hash": "deadbeefcafe",
+            "hash": "deadbeefcafe1234",
             "role": "assistant",
             "content": "plain text"
         }"#;
@@ -813,7 +813,7 @@ mod tests {
             time: "2024-01-01T00:00:00.000Z".into(),
             url: "https://api.example/v1/messages".into(),
             model: "claude-sonnet-4-6".into(),
-            context_hashes: vec!["deadbeefcafe".into()],
+            context_hashes: vec!["deadbeefcafe1234".into()],
             cache_breakpoint_index: Some(0),
             request_bytes: 1234,
             request_summary: None,
@@ -852,14 +852,14 @@ mod tests {
         with_owner(|| {
             let s = ContextModalState::new();
             let mut e1 = fixture_event();
-            e1.context_hashes = vec!["aaa111111111".into()];
+            e1.context_hashes = vec!["aaa1111111110000".into()];
             s.open(e1);
             let mut e2 = fixture_event();
-            e2.context_hashes = vec!["bbb222222222".into()];
+            e2.context_hashes = vec!["bbb2222222220000".into()];
             s.open(e2);
             assert_eq!(
                 s.0.get_untracked().unwrap().context_hashes,
-                vec!["bbb222222222".to_string()]
+                vec!["bbb2222222220000".to_string()]
             );
         });
     }
@@ -868,9 +868,9 @@ mod tests {
     fn modal_state_open_hash_sets_single_hash() {
         with_owner(|| {
             let s = ContextModalState::new();
-            s.open_hash("deadbeef1234".into());
+            s.open_hash("deadbeef12340000".into());
             let ev = s.0.get_untracked().expect("modal should be open after open_hash");
-            assert_eq!(ev.context_hashes, vec!["deadbeef1234".to_string()]);
+            assert_eq!(ev.context_hashes, vec!["deadbeef12340000".to_string()]);
         });
     }
 

@@ -33,7 +33,7 @@ expression: events
     "url": "https://api.anthropic.com/v1/messages",
     "model": "claude-sonnet-4-6",
     "contextHashes": [
-      "deadbeefcafe"
+      "deadbeefcafe1234"
     ],
     "cacheBreakpointIndex": null,
     "requestBytes": 1234
@@ -46,7 +46,7 @@ expression: events
     "input": {
       "path": "."
     },
-    "contextHash": "deadbeefcafe"
+    "contextHash": "deadbeefcafe1234"
   },
   {
     "type": "tool_result",
@@ -67,7 +67,7 @@ expression: events
       "output_tokens": 64,
       "cache_creation_input_tokens": 480
     },
-    "contextHash": "deadbeefcafe",
+    "contextHash": "deadbeefcafe1234",
     "text": "The directory contains: README.md, src/, tests/.",
     "streamingStart": "2024-01-15T12:00:00.000Z"
   },

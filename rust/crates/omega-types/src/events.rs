@@ -463,11 +463,11 @@ mod tests {
             id: "tool_abc".into(),
             name: "read_file".into(),
             input: serde_json::json!({"path": "foo.txt"}),
-            context_hash: "aabbccddeeff".into(),
+            context_hash: "aabbccddeeff0011".into(),
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "tool_call");
-        assert_eq!(v["contextHash"], "aabbccddeeff");
+        assert_eq!(v["contextHash"], "aabbccddeeff0011");
         // input should be inlined as-is
         assert_eq!(v["input"]["path"], "foo.txt");
     }
@@ -502,7 +502,7 @@ mod tests {
                 cache_read_input_tokens: None,
                 service_tier: None,
             },
-            context_hash: "aabbccddeeff".into(),
+            context_hash: "aabbccddeeff0011".into(),
             text: Some("Hello!".into()),
             thinking: None,
             streaming_start: None,
@@ -531,14 +531,14 @@ mod tests {
             time: "2024-01-15T12:00:05.000Z".into(),
             url: "https://api.anthropic.com/v1/messages".into(),
             model: "claude-sonnet-4-6".into(),
-            context_hashes: vec!["aabbccddeeff".into()],
+            context_hashes: vec!["aabbccddeeff0011".into()],
             cache_breakpoint_index: None,
             request_bytes: 1234,
             request_summary: None,
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "llm_call");
-        assert_eq!(v["contextHashes"][0], "aabbccddeeff");
+        assert_eq!(v["contextHashes"][0], "aabbccddeeff0011");
         // cacheBreakpointIndex: None → null in JSON (no skip_serializing_if)
         assert!(v["cacheBreakpointIndex"].is_null());
     }
