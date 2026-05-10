@@ -56,9 +56,9 @@
 //!   indirectly via the Playwright spec.
 //! - Click-outside-backdrop dismissal **not implemented** — the visible
 //!   close button is the only dismissal vector. Phase 3.6 polish.
-//! - Escape-key dismissal **not implemented** — same reason.
 //! - Focus trap inside the modal **not implemented**. Phase 3.6.
 
+use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use omega_types::events::LlmCallEvent;
@@ -409,6 +409,24 @@ pub fn ContextModal() -> impl IntoView {
 
     let on_close = move |_| state.close();
 
+    // Focusable backdrop: auto-focused on mount so Esc reaches the
+    // keydown handler even before the operator clicks inside.
+    let backdrop_ref = NodeRef::<html::Div>::new();
+    Effect::new(move |_| {
+        if backdrop_ref.get().is_some() {
+            spawn_local(async move {
+                if let Some(el) = backdrop_ref.get_untracked() {
+                    let _ = el.focus();
+                }
+            });
+        }
+    });
+    let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
+        if evt.key() == "Escape" {
+            state.close();
+        }
+    };
+
     view! {
         <Show
             when=move || state.0.with(Option::is_some)
@@ -422,6 +440,9 @@ pub fn ContextModal() -> impl IntoView {
             <div
                 class="leptos-context-modal-backdrop"
                 data-testid="leptos-context-modal-backdrop"
+                node_ref=backdrop_ref
+                tabindex="-1"
+                on:keydown=on_keydown
             >
                 <div
                     class="leptos-context-modal"

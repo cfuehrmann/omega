@@ -98,12 +98,85 @@ pub struct TestHarness {
     _browser: Browser,
 }
 
+/// JS init script installed via `Page::evaluate_on_new_document` in
+/// [`TestHarness::launch_with_ws_spy`]. Runs before the page's own
+/// scripts so it captures the `WebSocket` instance as soon as the
+/// Leptos bundle creates it.
+///
+/// After the page connects, `window.__omegaWsInstance` holds the live
+/// WS and `inject_ws_frame` can dispatch synthetic server frames.
+const WS_SPY_INIT_SCRIPT: &str = r"
+    (() => {
+        window.__omegaWsInstance = null;
+        const Orig = window.WebSocket;
+        window.WebSocket = function(url, protos) {
+            const ws = (protos !== undefined)
+                ? new Orig(url, protos)
+                : new Orig(url);
+            window.__omegaWsInstance = ws;
+            return ws;
+        };
+        Object.setPrototypeOf(window.WebSocket, Orig);
+        window.WebSocket.prototype = Orig.prototype;
+    })()
+";
+
 impl TestHarness {
     /// Spawn the server, wait for `/health`, launch headless Chrome,
     /// open `/`, wait for WS connect.
     pub async fn launch() -> Result<Self> {
         let sessions_dir = TempDir::new().context("create tempdir for sessions")?;
         Self::launch_with_dir(sessions_dir).await
+    }
+
+    /// Like [`Self::launch`] but additionally installs a WebSocket spy
+    /// script via `Page::evaluate_on_new_document` so that the live WS
+    /// instance is captured before the page's own scripts run. Required
+    /// by tests that call [`Self::inject_ws_frame`].
+    pub async fn launch_with_ws_spy() -> Result<Self> {
+        let sessions_dir = TempDir::new().context("create tempdir for sessions")?;
+        let main_port = pick_free_port()?;
+        let ctrl_port = pick_free_port()?;
+        let server_child = spawn_mock_server(main_port, ctrl_port, sessions_dir.path())?;
+        let base_url = format!("http://127.0.0.1:{main_port}");
+        let ctrl_url = format!("http://127.0.0.1:{ctrl_port}");
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .context("build reqwest client")?;
+
+        wait_for_health(&http, &base_url).await?;
+
+        let (browser, handler_task) = launch_browser().await?;
+
+        // Open a blank page first so we can install the WS spy init
+        // script before the real page's JS executes.
+        let page = browser
+            .new_page("about:blank")
+            .await
+            .context("open blank page")?;
+        page.evaluate_on_new_document(WS_SPY_INIT_SCRIPT)
+            .await
+            .context("install WS spy init script")?;
+        page.goto(format!("{base_url}/")).await.context("goto /")?;
+
+        let harness = Self {
+            page,
+            base_url,
+            ctrl_url,
+            http,
+            _sessions_dir: sessions_dir,
+            server_child: Some(server_child),
+            handler_task: Some(handler_task),
+            _browser: browser,
+        };
+
+        harness
+            .wait_for_attr("main", "data-connected", "true", DEFAULT_TIMEOUT)
+            .await
+            .context("wait for WS data-connected=true (ws_spy launch)")?;
+
+        Ok(harness)
     }
 
     /// Like [`Self::launch`] but uses a caller-supplied `sessions_dir`.
@@ -452,6 +525,73 @@ impl TestHarness {
             .into_value()
             .map_err(|e| anyhow!("eval into_value: {e}"))?;
         Ok(v)
+    }
+
+    /// Focus the element identified by `sel` (via `.focus()`) and
+    /// dispatch a `keydown` event with `key: "Escape"` that bubbles
+    /// through the DOM. This exercises Leptos `on:keydown` handlers
+    /// without a CDP round-trip and without triggering a synthetic
+    /// mouse click (which could close modals that dismiss on backdrop
+    /// click before the key handler fires).
+    pub async fn press_escape_on(&self, sel: &str) -> Result<()> {
+        self.wait_for_selector(sel, DEFAULT_TIMEOUT).await?;
+        let script = format!(
+            "(() => {{\n\
+                const el = document.querySelector({sel});\n\
+                if (!el) return false;\n\
+                el.focus();\n\
+                el.dispatchEvent(new KeyboardEvent('keydown', {{\n\
+                    key: 'Escape', code: 'Escape',\n\
+                    bubbles: true, cancelable: true\n\
+                }}));\n\
+                return true;\n\
+            }})()",
+            sel = json_str(sel),
+        );
+        let ok: bool = self
+            .page
+            .evaluate(script)
+            .await?
+            .into_value()
+            .unwrap_or(false);
+        if !ok {
+            bail!("press_escape_on: element not found: {sel}");
+        }
+        Ok(())
+    }
+
+    /// Dispatch a synthetic WebSocket `message` event carrying `json`
+    /// as the frame data. Requires that the page was opened with
+    /// [`Self::launch_with_ws_spy`] so that
+    /// `window.__omegaWsInstance` is populated.
+    ///
+    /// The Leptos store's `apply` reducer processes the frame exactly
+    /// as if it had arrived over the wire.
+    pub async fn inject_ws_frame(&self, json: &str) -> Result<()> {
+        let script = format!(
+            "(() => {{\n\
+                const ws = window.__omegaWsInstance;\n\
+                if (!ws) return false;\n\
+                const ev = new MessageEvent('message', {{\n\
+                    data: {data},\n\
+                    bubbles: false,\n\
+                    cancelable: false\n\
+                }});\n\
+                ws.dispatchEvent(ev);\n\
+                return true;\n\
+            }})()",
+            data = serde_json::to_string(json).unwrap_or_else(|_| "\"\"".into()),
+        );
+        let ok: bool = self
+            .page
+            .evaluate(script)
+            .await?
+            .into_value()
+            .unwrap_or(false);
+        if !ok {
+            bail!("inject_ws_frame: __omegaWsInstance not found (use launch_with_ws_spy)");
+        }
+        Ok(())
     }
 
     /// Install a JS WS-message recorder so tests can inspect the

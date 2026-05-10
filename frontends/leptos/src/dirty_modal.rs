@@ -22,7 +22,9 @@
 //!   tears down the previous active session and creates the new one
 //!   normally.
 
+use leptos::html;
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 
 use crate::protocol::{ClientFrame, PendingChangesIntent};
 use crate::store::SessionStore;
@@ -69,6 +71,24 @@ pub fn DirtyModal() -> impl IntoView {
         store.pending_changes_warning.set(None);
     };
 
+    // Focusable backdrop: auto-focused on mount so Esc acts as Cancel
+    // even before the operator clicks inside.
+    let backdrop_ref = NodeRef::<html::Div>::new();
+    Effect::new(move |_| {
+        if backdrop_ref.get().is_some() {
+            spawn_local(async move {
+                if let Some(el) = backdrop_ref.get_untracked() {
+                    let _ = el.focus();
+                }
+            });
+        }
+    });
+    let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
+        if evt.key() == "Escape" {
+            store.pending_changes_warning.set(None);
+        }
+    };
+
     let on_proceed = move |_: leptos::ev::MouseEvent| {
         // Take the intent (clear the signal) and re-issue with allow_dirty=true.
         let intent = store.pending_changes_warning.get_untracked();
@@ -92,6 +112,9 @@ pub fn DirtyModal() -> impl IntoView {
             <div
                 class="leptos-dirty-modal-backdrop"
                 data-testid="leptos-dirty-modal-backdrop"
+                node_ref=backdrop_ref
+                tabindex="-1"
+                on:keydown=on_keydown
             >
                 <div
                     class="leptos-dirty-modal"

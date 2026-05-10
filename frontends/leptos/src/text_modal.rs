@@ -8,7 +8,9 @@
 //! * `tool_call`    — `[payload]` button               (TODO-C)
 //! * `tool_result`  — `[payload]` button               (TODO-C)
 
+use leptos::html;
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 
 // ---------------------------------------------------------------------------
 // Modal state
@@ -59,6 +61,24 @@ pub fn TextModal() -> impl IntoView {
         use_context::<TextModalState>().expect("TextModalState must be provided");
     let on_close = move |_: leptos::ev::MouseEvent| state.close();
 
+    // Focusable backdrop: auto-focused on mount so Esc reaches the
+    // keydown handler even before the operator clicks inside.
+    let backdrop_ref = NodeRef::<html::Div>::new();
+    Effect::new(move |_| {
+        if backdrop_ref.get().is_some() {
+            spawn_local(async move {
+                if let Some(el) = backdrop_ref.get_untracked() {
+                    let _ = el.focus();
+                }
+            });
+        }
+    });
+    let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
+        if evt.key() == "Escape" {
+            state.close();
+        }
+    };
+
     view! {
         <Show
             when=move || state.0.with(Option::is_some)
@@ -67,6 +87,9 @@ pub fn TextModal() -> impl IntoView {
             <div
                 class="leptos-text-modal-backdrop"
                 data-testid="leptos-text-modal-backdrop"
+                node_ref=backdrop_ref
+                tabindex="-1"
+                on:keydown=on_keydown
             >
                 <div
                     class="leptos-text-modal"
