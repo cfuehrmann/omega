@@ -266,6 +266,22 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming_text.set(String::new());
             store.streaming_thinking.set(String::new());
         }
+        // SCHEMA-8 Phase 4b — block events finalise the corresponding
+        // streaming accumulator.  At the moment a block event arrives
+        // (partial=true or partial=false) the persisted event in
+        // `events` carries the same content the buffer was holding, so
+        // the buffer is now redundant and must be cleared to avoid
+        // double-rendering the same fragment in both `StreamingTail`
+        // and the per-block renderer.  `ToolUseBlock` has no global
+        // buffer to clear (input streams via provider deltas that the
+        // server doesn't currently forward), so it falls through to
+        // the catch-all and only appends to `events`.
+        OmegaEvent::TextBlock(_) => {
+            store.streaming_text.set(String::new());
+        }
+        OmegaEvent::ThinkingBlock(_) => {
+            store.streaming_thinking.set(String::new());
+        }
         // Mirror server-side model/effort changes into the cached
         // `session_info` so reactive consumers (the composer, the
         // debug view) see the latest value without a fresh
@@ -306,8 +322,9 @@ mod tests {
     use leptos::reactive::owner::Owner;
     use omega_types::events::{
         AgentErrorEvent, EffortChangedEvent, LlmResponseEvent, LlmResponseStartedEvent,
-        LlmResponseUsage, ModelChangedEvent, PauseRequestedEvent, TurnContinuedEvent, TurnEndEvent,
-        TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
+        LlmResponseUsage, ModelChangedEvent, PauseRequestedEvent, TextBlockEvent,
+        ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
+        TurnPausedEvent, UserMessageEvent,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -661,6 +678,109 @@ mod tests {
                 snap.events.last().unwrap(),
                 OmegaEvent::LlmResponseStarted(_)
             ));
+        });
+    }
+
+    // ---- SCHEMA-8 Phase 4b: block events drain matching streaming buffers --
+
+    #[wasm_bindgen_test]
+    fn text_block_event_clears_streaming_text_buffer() {
+        // When a `TextBlock` event lands the persisted event in `events`
+        // owns the content the live `Text` deltas had been accumulating
+        // into `streaming_text`.  The buffer is now redundant and must
+        // be cleared so `StreamingTail` doesn't double-render the same
+        // fragment alongside the per-block renderer.  This holds for
+        // both `partial:false` (block completed normally) and
+        // `partial:true` (mid-stream abandonment): in both cases the
+        // event carries the full accumulated text up to that point.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(WsMessage::Text {
+                text: "hello".into(),
+            });
+            assert_eq!(s.snapshot().streaming_text, "hello");
+            s.apply(WsMessage::TextBlock(TextBlockEvent {
+                time: "t".into(),
+                text: "hello world".into(),
+                partial: false,
+            }));
+            // The streaming buffer is drained; the persisted event has
+            // landed in the events list.
+            let snap = s.snapshot();
+            assert!(snap.streaming_text.is_empty());
+            assert!(matches!(
+                snap.events.last().unwrap(),
+                OmegaEvent::TextBlock(_)
+            ));
+            // Thinking buffer is untouched (no `ThinkingBlock` arrived).
+            assert!(snap.streaming_thinking.is_empty());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn text_block_partial_also_clears_streaming_text_buffer() {
+        // Partial blocks (emitted just before `LlmResponseDiscarded`
+        // on mid-stream abandonment) carry the same content the live
+        // buffer was holding, so the buffer is equally redundant.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(WsMessage::Text {
+                text: "abandoned".into(),
+            });
+            assert_eq!(s.snapshot().streaming_text, "abandoned");
+            s.apply(WsMessage::TextBlock(TextBlockEvent {
+                time: "t".into(),
+                text: "abandoned".into(),
+                partial: true,
+            }));
+            assert!(s.snapshot().streaming_text.is_empty());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn thinking_block_event_clears_streaming_thinking_buffer() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(WsMessage::Thinking {
+                text: "musing".into(),
+            });
+            assert_eq!(s.snapshot().streaming_thinking, "musing");
+            s.apply(WsMessage::ThinkingBlock(ThinkingBlockEvent {
+                time: "t".into(),
+                thinking: "musing complete".into(),
+                signature: Some("sig".into()),
+                partial: false,
+            }));
+            let snap = s.snapshot();
+            assert!(snap.streaming_thinking.is_empty());
+            assert!(matches!(
+                snap.events.last().unwrap(),
+                OmegaEvent::ThinkingBlock(_)
+            ));
+            // Text buffer untouched.
+            assert!(snap.streaming_text.is_empty());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn thinking_block_partial_also_clears_streaming_thinking_buffer() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(WsMessage::Thinking {
+                text: "abandoned".into(),
+            });
+            assert_eq!(s.snapshot().streaming_thinking, "abandoned");
+            s.apply(WsMessage::ThinkingBlock(ThinkingBlockEvent {
+                time: "t".into(),
+                thinking: "abandoned".into(),
+                signature: None,
+                partial: true,
+            }));
+            assert!(s.snapshot().streaming_thinking.is_empty());
         });
     }
 

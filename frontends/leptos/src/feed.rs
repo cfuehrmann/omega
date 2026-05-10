@@ -58,8 +58,8 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag,
-    should_autoscroll, tool_call_preview, truncate_preview,
+    assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
+    tool_call_preview, truncate_preview, EventKind,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -85,7 +85,9 @@ use crate::text_modal::TextModalState;
 #[wasm_bindgen::prelude::wasm_bindgen(module = "/src/mermaid.js")]
 extern "C" {
     #[wasm_bindgen(js_name = "renderMermaid", catch)]
-    fn js_render_mermaid(container: &web_sys::Element) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
+    fn js_render_mermaid(
+        container: &web_sys::Element,
+    ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
 
     #[wasm_bindgen(js_name = "addCopyButtons")]
     fn js_add_copy_buttons(container: &web_sys::Element);
@@ -222,9 +224,9 @@ pub fn ConversationFeed() -> impl IntoView {
                 raf_id_eff.set(None);
             }
 
-            let prog_clone        = Rc::clone(&prog_state_eff);
+            let prog_clone = Rc::clone(&prog_state_eff);
             let scroll_pending_cb = Rc::clone(&scroll_pending_eff);
-            let raf_id_cb         = Rc::clone(&raf_id_eff);
+            let raf_id_cb = Rc::clone(&raf_id_eff);
             // scroll_ref and auto_scroll are Copy + 'static — captured by copy.
             let cb = Closure::once(move || {
                 raf_id_cb.set(None);
@@ -241,9 +243,10 @@ pub fn ConversationFeed() -> impl IntoView {
                 scroll_pending_cb.set(false);
             });
 
-            match web_sys::window()
-                .and_then(|win| win.request_animation_frame(cb.as_ref().unchecked_ref()).ok())
-            {
+            match web_sys::window().and_then(|win| {
+                win.request_animation_frame(cb.as_ref().unchecked_ref())
+                    .ok()
+            }) {
                 Some(id) => {
                     raf_id_eff.set(Some(id));
                     cb.forget(); // JS owns the callback until it fires
@@ -345,7 +348,7 @@ pub fn ConversationFeed() -> impl IntoView {
                             .collect::<Vec<(usize, OmegaEvent, Option<usize>)>>()
                     }
                     key=|(idx, _, corr): &(usize, OmegaEvent, Option<usize>)| (*idx, *corr)
-                    children=|(_, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr /> }
+                    children=|(idx, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr idx=Some(idx) /> }
                 />
                 <StreamingTail />
                 <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" />
@@ -399,12 +402,32 @@ pub fn ConversationFeed() -> impl IntoView {
 /// pairs within the same `LlmCall` group (see [`assign_tool_corr`]).
 /// When called from the snapshot harness without a corr argument it
 /// defaults to `None` and no superscript is rendered.
+///
+/// `idx` is the event's 0-based position in the session's events list.
+/// It is rendered as a `data-block-id` attribute on the outer wrapper
+/// so the Phase 0 T6 browser-refresh replay test (and any future DOM
+/// inspection) can verify per-event identity is stable across reloads:
+/// replaying `events.jsonl` produces the same list in the same order,
+/// hence the same indices.  The snapshot harness in `tests/snapshots.rs`
+/// renders fixtures one at a time without a positional context and so
+/// omits `idx`; the attribute is then not emitted, keeping existing
+/// snapshots stable.
 #[component]
-pub fn EventBlock(event: OmegaEvent, #[prop(optional_no_strip)] corr: Option<usize>) -> impl IntoView {
+pub fn EventBlock(
+    event: OmegaEvent,
+    #[prop(optional_no_strip)] corr: Option<usize>,
+    #[prop(optional_no_strip)] idx: Option<usize>,
+) -> impl IntoView {
     let kind = kind_for(&event);
     let class = css_class_for(kind);
     let kind_str = kind_tag(kind);
     let event_type = event_type_tag(&event);
+    // Leptos omits an attribute when its value is `None`, so the
+    // snapshot harness (which doesn't pass `idx`) emits the wrapper
+    // unchanged.  Live renders from `<ConversationFeed/>` always
+    // pass `Some(idx)` so `data-block-id` is always present in the
+    // running app.
+    let block_id = idx.map(|i| i.to_string());
 
     view! {
         <div
@@ -412,6 +435,7 @@ pub fn EventBlock(event: OmegaEvent, #[prop(optional_no_strip)] corr: Option<usi
             data-testid="leptos-event-block"
             data-event-type=event_type
             data-event-kind=kind_str
+            data-block-id=block_id
         >
             {render_event_body(event, corr)}
         </div>
@@ -563,8 +587,13 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         .into_any(),
 
         // ----- SCHEMA-8 additive variants ----------------------------------
-        // Phase 1b ships the wire grammar; Phase 4 will replace these stubs
-        // with proper rendering (block coalescing, partial-block markers).
+        // Phase 1b shipped the wire grammar; Phase 4b replaces the
+        // text/thinking/tool_use stubs with real per-block renderers.
+        // `LlmResponseStarted` / `LlmResponseEnded` / `LlmResponseDiscarded`
+        // remain stubs here — Phase 4c switches the visible response
+        // container to be driven by those events (today the legacy
+        // `LlmResponse` band-aid renders the assistant block, so the
+        // opener/closer events are still visually inert).
         OmegaEvent::LlmResponseStarted(_) => view! {
             <span class="block-label">"llm_response_started"</span>
         }
@@ -581,23 +610,92 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         }
         .into_any(),
 
-        OmegaEvent::TextBlock(e) => view! {
-            <span class="block-label">"text_block"</span>
-            <pre class="block-body">{e.text}</pre>
+        // `TextBlock`: one finalised (or partial) text span from an
+        // assistant response.  Renders the same markdown surface as
+        // the legacy `LlmResponseBlock` (which still wraps the full
+        // `lr.text` band-aid until Phase 4d), with the
+        // `leptos-assistant-text` testid so existing Playwright
+        // selectors continue to match.  06_feed grabs the *last*
+        // such wrapper to verify final assistant text, which is the
+        // same content the final `TextBlock` event carries.
+        //
+        // `partial:true` blocks are emitted just before
+        // `LlmResponseDiscarded` on mid-stream abandonment (retry on
+        // transient error); they carry whatever text had accumulated
+        // up to the abandonment point and we mark them visibly so a
+        // human reader can tell the assistant didn't actually "say"
+        // this.
+        OmegaEvent::TextBlock(e) => {
+            let partial = e.partial;
+            view! {
+                <div data-testid="leptos-assistant-text">
+                    <MarkdownBody text=e.text />
+                </div>
+                {partial.then(|| view! {
+                    <span class="block-partial-marker" data-testid="leptos-block-partial">
+                        "[partial — response discarded]"
+                    </span>
+                })}
+            }
+            .into_any()
         }
-        .into_any(),
 
-        OmegaEvent::ThinkingBlock(e) => view! {
-            <span class="block-label">"thinking_block"</span>
-            <pre class="block-body">{e.thinking}</pre>
+        // `ThinkingBlock`: one finalised (or partial) thinking
+        // segment.  Phase 4b keeps this minimal — a labelled
+        // `<pre>` matching the legacy thinking modal's plain-text
+        // surface so the content is at least visible.  Phase 5 will
+        // promote it to a proper collapsible accordion (replacing
+        // the current `[thinking]` modal button on the legacy
+        // `LlmResponseBlock`).
+        //
+        // `signature.is_none()` iff `partial == true` per the
+        // type-level invariant in `omega-types::events`.
+        OmegaEvent::ThinkingBlock(e) => {
+            let partial = e.partial;
+            view! {
+                <span class="block-label">"thinking"</span>
+                <pre class="block-body" data-testid="leptos-thinking-block-body">
+                    {e.thinking}
+                </pre>
+                {partial.then(|| view! {
+                    <span class="block-partial-marker" data-testid="leptos-block-partial">
+                        "[partial — response discarded]"
+                    </span>
+                })}
+            }
+            .into_any()
         }
-        .into_any(),
 
-        OmegaEvent::ToolUseBlock(e) => view! {
-            <span class="block-label">"tool_use_block"</span>
-            <span class="block-body">{format!("{} ({})", e.name, e.id)}</span>
+        // `ToolUseBlock`: a tool_use block inside an assistant
+        // response, before the tool actually runs.  Visually the
+        // legacy `ToolCallBlock` already renders the dispatch event
+        // emitted from the tool-runner side; this new event is
+        // emitted from the *response* side and carries the
+        // provider-assigned tool_use id.  Phase 4b renders it as a
+        // compact label + preview line so it's visible without
+        // duplicating the full `ToolCallBlock` UI (modal, corr
+        // badge); Phase 5 will reconcile the two so each tool use
+        // shows up exactly once.
+        OmegaEvent::ToolUseBlock(e) => {
+            let partial = e.partial;
+            let raw_preview = tool_call_preview(&e.name, &e.input);
+            let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
+            view! {
+                <span class="block-label">
+                    "tool_use "
+                    <span data-testid="leptos-tool-use-name">{e.name}</span>
+                </span>
+                <span class="block-tool-preview" data-testid="leptos-tool-use-input">
+                    {preview}
+                </span>
+                {partial.then(|| view! {
+                    <span class="block-partial-marker" data-testid="leptos-block-partial">
+                        "[partial — response discarded]"
+                    </span>
+                })}
+            }
+            .into_any()
         }
-        .into_any(),
     }
 }
 
@@ -623,8 +721,7 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
 fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoView {
     let context_modal =
         use_context::<ContextModalState>().expect("ContextModalState must be provided");
-    let text_modal =
-        use_context::<TextModalState>().expect("TextModalState must be provided");
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
     // Extract all fields before any moves into closures.
     let stop_reason = event.stop_reason.clone();
@@ -645,8 +742,7 @@ fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoVi
     );
 
     // Serialise *before* the text move so the whole event is captured.
-    let event_json = serde_json::to_string_pretty(&event)
-        .unwrap_or_else(|_| "{}".to_owned());
+    let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
 
     // The outer `<div data-testid="leptos-assistant-text">` wraps
     // MarkdownBody so existing Playwright selectors still work after
@@ -712,19 +808,16 @@ fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
-    let text_modal =
-        use_context::<TextModalState>().expect("TextModalState must be provided");
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
     let name = event.name.clone();
 
-    let full_input = serde_json::to_string_pretty(&event.input)
-        .unwrap_or_else(|_| "{}".to_owned());
+    let full_input = serde_json::to_string_pretty(&event.input).unwrap_or_else(|_| "{}".to_owned());
     // Human-readable preview: tool-specific field extraction rather than raw
     // JSON. Full JSON always reachable by clicking the block.
     // Limits: 2 lines / 300 bytes.
     let raw_preview = tool_call_preview(&name, &event.input);
-    let preview = truncate_preview(&raw_preview, 2, 300)
-        .unwrap_or(raw_preview);
+    let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
     let full_for_modal = full_input;
     let modal_title = format!("tool_call: {name}");
 
@@ -761,10 +854,9 @@ fn ToolCallBlock(
 /// compact.
 #[component]
 fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
-    let context_modal = use_context::<ContextModalState>()
-        .expect("ContextModalState must be provided");
-    let text_modal =
-        use_context::<TextModalState>().expect("TextModalState must be provided");
+    let context_modal =
+        use_context::<ContextModalState>().expect("ContextModalState must be provided");
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
     // Inline meta: ctx count · bytes (shown on the label row).
     let inline_meta = format!(
@@ -782,8 +874,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
     );
     let payload_text = format!(
         "request_bytes: {}\n\n--- request_summary ---\n{}",
-        event.request_bytes,
-        request_summary_str,
+        event.request_bytes, request_summary_str,
     );
 
     // Clone the event for the context modal; the payload text is moved.
@@ -825,14 +916,12 @@ fn ToolResultBlock(
     event: omega_types::events::ToolResultEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
-    let text_modal =
-        use_context::<TextModalState>().expect("TextModalState must be provided");
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
     let name = event.name.clone();
     let full = event.output.clone();
     // 2-line / 300-byte inline preview; full output reachable via the payload modal.
-    let preview = truncate_preview(&full, 2, 300)
-        .unwrap_or_else(|| full.clone());
+    let preview = truncate_preview(&full, 2, 300).unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
 
@@ -1102,7 +1191,6 @@ mod tests {
         assert!(!is_mermaid_language("flow"));
     }
 }
-
 
 /// Live overlay rendered after the persisted-event list. Two
 /// conditional blocks: streaming text (assistant family) and streaming
