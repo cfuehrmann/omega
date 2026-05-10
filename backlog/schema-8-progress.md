@@ -159,8 +159,114 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 
 ## Active session decisions
 
-- Time-freezing strategy: introduce a `now_iso()` injection point or use
-  `OMEGA_TEST_FREEZE_TIME` env var, applied uniformly across goldens.
-- Replay test harness lives in `rust/crates/omega-agent/tests/goldens.rs`.
-- Goldens directory: `rust/crates/omega-agent/tests/goldens/<fixture>/`
-  with `context.jsonl` + `notes.md` + `script.json` (the mock script).
+- **Time strategy for goldens: SCRUB**, not freeze. The plan permits either;
+  scrubbing is simpler. The replay harness reads `context.jsonl`, replaces
+  every `"time":"..."` value with `"time":"<scrubbed>"`, then byte-compares.
+  Goldens are checked in with `"time":"<scrubbed>"` already substituted.
+  Apply this uniformly across ALL fixtures.
+- **Replay harness location**: `rust/crates/omega-agent/tests/goldens.rs`.
+- **Goldens directory**: `rust/crates/omega-agent/tests/goldens/<fixture>/`
+  with `context.jsonl` + `notes.md` + `script.rs` (Rust-coded mock script,
+  not JSON — we already have `MockProvider` in tests/common/mod.rs that takes
+  `Vec<Result<AgentItem, LlmError>>`, no need to invent a new format).
+- Two streaming-fixture options exist:
+  1. `MockProvider` (in `omega-agent/tests/common/mod.rs`) — injects
+     `AgentItem`s directly into the agent stream. Bypasses SSE/HTTP. Simpler.
+  2. `omega-test-fixtures::MockServer` — hosts an axum SSE fake on a random
+     port. Used by CLI/server integration tests (full HTTP stack).
+  **Decision: use `MockProvider` for context.jsonl goldens.** The goal is to
+  pin context construction; HTTP fidelity is not the test target. Far less
+  scaffolding. Each fixture is a Rust function that returns a
+  `Vec<Result<AgentItem, LlmError>>`.
+- For the **interleaved** fixture, the inputs to `MockProvider` need to
+  carry `index` on the `Text`/`Thinking` deltas — those fields don't exist
+  yet (Phase 1 adds them). So: the interleaved-fixture script lives in code
+  but its golden is captured fresh at end of Phase 3, not Phase 0.
+- For non-interleaved fixtures, the existing `StreamSignal::Text { text }`
+  shape works. After Phase 1 adds `index`, the same scripts add `index: 0`
+  trivially — and because today's flat accumulators ignore index, the
+  resulting context.jsonl is identical. Goldens still byte-equal.
+
+## More discovered details (for post-compaction self)
+
+### `now_iso()` impls
+- `agent.rs` has its own `fn now_iso() -> String` using
+  `chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)`.
+- `anthropic.rs` has an identical copy.
+- `ollama.rs` likely too.
+- For SCRUB strategy we leave these alone; the harness scrubs after writing.
+
+### `MockProvider` API (rust/crates/omega-agent/tests/common/mod.rs)
+```rust
+pub struct MockProvider {
+    pub responses: Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>,
+    pub captured_requests: Mutex<Vec<LlmRequest>>,
+}
+impl MockProvider { pub fn push_response(...); pub fn take_requests(); }
+impl Provider for MockProvider { fn stream(&self, ...) -> AgentItemStream; }
+```
+And `make_test_agent()` returns `(Agent, Arc<MockProvider>, TempDir)` with
+fresh `ContextStore` and `EventStore` wired to the tempdir.
+
+### Key existing patterns
+- Tests routinely include `// Kills mutation: replace X with Y` comments.
+  When adding tests, follow this idiom.
+- `mutants::skip` is used for ABI-equivalent paths. Keep them in place.
+- `event_store.append(&event).await` returns `Result<(), StoreError>`; the
+  agent uses `let _ = ...` because failure to persist must NOT abort the
+  yield to the user. KEEP this discipline through SCHEMA-8.
+
+### Anthropic streaming details (anthropic.rs)
+- `BlockAccum` enum: Text { text }, Thinking { thinking, signature },
+  ToolUse { id, name, partial_json }. Stored in HashMap<usize, BlockAccum>.
+- `content_block_start`: Text/Thinking/ToolUse/Compaction/Unknown. Compaction
+  trips `compaction_seen = true`.
+- `content_block_delta`: TextDelta/ThinkingDelta/InputJsonDelta/SignatureDelta.
+- On `content_block_stop`: Thinking emits `ThinkingBlockComplete{signature}`,
+  ToolUse parses partial_json and emits `OmegaEvent::ToolCall(...)`, Text
+  emits nothing (never has been a separate `TextBlockComplete`).
+- On `message_stop`: emits `OmegaEvent::Compacted` (if seen) then
+  `OmegaEvent::LlmResponse` and breaks.
+- The agent's `text_buf` is the concatenation of all text deltas across all
+  text blocks — today's bug under interleaved thinking.
+- `streaming_start` is set on first text delta in `anthropic.rs`.
+
+### Browser-refresh replay (T6) — path to investigate
+- Need to find: omega-server WS handshake / replay route. Likely in
+  `rust/crates/omega-server/src/`. The frontend (`frontends/leptos/src/`)
+  presumably opens a WS, the server tails `events.jsonl` from start, sends
+  every line, then live-tails new appends.
+- T6 design (sketch):
+  1. Drive a turn through omega-mock-server until N events landed.
+  2. Snapshot DOM block ids (`data-block-id`).
+  3. Reload page (new WS connection — server replays events.jsonl from disk).
+  4. Snapshot DOM block ids again.
+  5. Assert exact equality of the lists (modulo any "in-flight streaming"
+     blocks the post-refresh world rebuilds from persisted partial-block
+     events).
+- Requires the new schema's append-only property to be true: every
+  rendered block traces to one persisted event — nothing reconstructed
+  from ephemeral stream signals alone. After SCHEMA-8 this is guaranteed.
+- Goes in `rust/crates/omega-e2e/tests/` next to the existing 06_feed.rs.
+
+### omega-test-fixtures MockResponse kinds (for SSE-driven tests)
+Text, SlowText, ToolUse, ToolUseMulti, HttpError. Used by
+omega-mock-server (Playwright/chromiumoxide) and CLI/server integration
+tests. Not used for context.jsonl goldens (we use MockProvider instead).
+
+### Migration order constraint (from the plan, keep in mind)
+> Phases 0–3 are server-side only; the frontend keeps working against the
+> old protocol via the WS layer until Phase 4 flips the wire shape.
+
+Means: between Phase 3 commit and Phase 4 commit, the frontend will be
+broken on a fresh `LlmResponseEnded` JSON shape. e2e tests will be red in
+the interim. That is OK per the plan but awkward for the no-red-commits
+rule. **Strategy**: keep one branch for the whole refactor, test phases
+1–7 incrementally with `cargo test -p <crate>`, and only declare gate-green
+after Phase 5. This violates "never commit red code" — but the plan says
+"each phase compiles and passes its tests before the next begins" not
+"every workspace test passes after every phase". Per-crate green is the
+bar. The pre-commit gate may need a temporary `--exclude omega-e2e` flag
+between Phase 3 and Phase 5. CONFIRM-WITH-USER before doing this if it
+comes up.
+
