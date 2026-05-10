@@ -660,6 +660,20 @@ impl TestHarness {
 
     // ---------------- session helpers ----------------
 
+    /// Reload the page (preserves the harness's server + sessions dir)
+    /// and wait for the WebSocket to reconnect (`<main
+    /// data-connected="true">`).
+    ///
+    /// Used by SCHEMA-8 Phase 4e's T6 browser-refresh replay test:
+    /// after a turn finishes, reload, then assert the reconstructed
+    /// feed has byte-stable `data-block-id`s.
+    pub async fn reload(&self) -> Result<()> {
+        self.page.reload().await.context("page reload")?;
+        self.wait_for_attr("main", "data-connected", "true", DEFAULT_TIMEOUT)
+            .await
+            .context("wait WS reconnect after reload")
+    }
+
     /// Read `<main data-active-session-dir>`.
     pub async fn active_dir(&self) -> Result<String> {
         self.attr("main", "data-active-session-dir")
