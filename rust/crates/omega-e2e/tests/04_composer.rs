@@ -119,12 +119,13 @@ async fn composer_send_pong() {
         .await
         .expect("turn_end never landed");
 
-    // Final llm_response carries "pong".
+    // Final assistant text block carries "pong" (SCHEMA-8 Phase 4c —
+    // assistant body now lives in `text_block`, not in `llm_response`).
     let body: String = h
         .eval(
             r#"(() => {
                 const blocks = document.querySelectorAll(
-                    '[data-testid="leptos-feed"] [data-event-type="llm_response"] [data-testid="leptos-assistant-text"]'
+                    '[data-testid="leptos-feed"] [data-event-type="text_block"] [data-testid="leptos-assistant-text"]'
                 );
                 if (blocks.length === 0) return '';
                 return blocks[blocks.length - 1].textContent;

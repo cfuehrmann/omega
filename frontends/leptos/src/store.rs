@@ -282,6 +282,20 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
         OmegaEvent::ThinkingBlock(_) => {
             store.streaming_thinking.set(String::new());
         }
+        // SCHEMA-8 Phase 4c — response closers drain both streaming
+        // accumulators.  Mirrors the legacy `LlmResponse` arm (still
+        // present below as the band-aid) so the global buffers settle
+        // back to empty at every response boundary, whether
+        // successful (`LlmResponseEnded`) or abandoned
+        // (`LlmResponseDiscarded`).  The per-block `TextBlock` /
+        // `ThinkingBlock` arms above will usually have drained them
+        // already; these arms are belt-and-braces for the (legal)
+        // case of a response that produces zero blocks before
+        // ending/discarding.
+        OmegaEvent::LlmResponseEnded(_) | OmegaEvent::LlmResponseDiscarded(_) => {
+            store.streaming_text.set(String::new());
+            store.streaming_thinking.set(String::new());
+        }
         // Mirror server-side model/effort changes into the cached
         // `session_info` so reactive consumers (the composer, the
         // debug view) see the latest value without a fresh
@@ -321,10 +335,10 @@ mod tests {
     use super::*;
     use leptos::reactive::owner::Owner;
     use omega_types::events::{
-        AgentErrorEvent, EffortChangedEvent, LlmResponseEvent, LlmResponseStartedEvent,
-        LlmResponseUsage, ModelChangedEvent, PauseRequestedEvent, TextBlockEvent,
-        ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
-        TurnPausedEvent, UserMessageEvent,
+        AgentErrorEvent, EffortChangedEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
+        LlmResponseEvent, LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent,
+        PauseRequestedEvent, TextBlockEvent, ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent,
+        TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -781,6 +795,89 @@ mod tests {
                 partial: true,
             }));
             assert!(s.snapshot().streaming_thinking.is_empty());
+        });
+    }
+
+    // ---- SCHEMA-8 Phase 4c: response-closer side-effects ----------------
+
+    #[wasm_bindgen_test]
+    fn llm_response_ended_clears_both_streaming_accumulators() {
+        // `LlmResponseEnded` is the closer for `LlmResponseStarted` on a
+        // successful response.  The per-block arms above usually drain
+        // both buffers by the time this fires; this arm is
+        // belt-and-braces for the (legal) case of a response that
+        // produces zero block events (e.g. an empty tool-only reply) —
+        // any straggling deltas in the global accumulators must be
+        // cleared so the next response opens with empty buffers.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(WsMessage::Text {
+                text: "leftover text".into(),
+            });
+            s.apply(WsMessage::Thinking {
+                text: "leftover thinking".into(),
+            });
+            s.apply(WsMessage::LlmResponseEnded(LlmResponseEndedEvent {
+                time: "t".into(),
+                stop_reason: "end_turn".into(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 1,
+                    output_tokens: 2,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                    service_tier: None,
+                    iterations: None,
+                },
+                context_hash: "h".into(),
+                response_summary: None,
+            }));
+            let snap = s.snapshot();
+            assert!(
+                snap.streaming_text.is_empty(),
+                "streaming_text not drained on LlmResponseEnded: {:?}",
+                snap.streaming_text
+            );
+            assert!(
+                snap.streaming_thinking.is_empty(),
+                "streaming_thinking not drained on LlmResponseEnded: {:?}",
+                snap.streaming_thinking
+            );
+            assert!(matches!(
+                snap.events.last().unwrap(),
+                OmegaEvent::LlmResponseEnded(_)
+            ));
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn llm_response_discarded_clears_both_streaming_accumulators() {
+        // `LlmResponseDiscarded` is the closer for an abandoned
+        // response.  Same drain contract as `LlmResponseEnded` — the
+        // preceding partial `TextBlock` / `ThinkingBlock` events
+        // usually do the draining, but a discard with zero blocks is
+        // legal and must still settle the buffers.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(WsMessage::Text {
+                text: "in flight".into(),
+            });
+            s.apply(WsMessage::Thinking {
+                text: "in flight".into(),
+            });
+            s.apply(WsMessage::LlmResponseDiscarded(LlmResponseDiscardedEvent {
+                time: "t".into(),
+            }));
+            let snap = s.snapshot();
+            assert!(snap.streaming_text.is_empty());
+            assert!(snap.streaming_thinking.is_empty());
+            assert!(matches!(
+                snap.events.last().unwrap(),
+                OmegaEvent::LlmResponseDiscarded(_)
+            ));
         });
     }
 

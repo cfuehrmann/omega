@@ -178,7 +178,10 @@ async fn multi_tool_turn_renders_every_family() {
         .expect("count mismatched tool_result kinds");
     assert_eq!(mismatched, 0, "tool_result blocks with wrong kind");
 
-    // last llm_response is kind=assistant + contains "done multi"
+    // last llm_response is kind=assistant; last text_block carries
+    // the final assistant text (SCHEMA-8 Phase 4c — the legacy
+    // `LlmResponseBlock` body is muted; markdown lives in `TextBlock`
+    // siblings, the closer `LlmResponseEnded` only carries affordances).
     let last_kind: String = h
         .eval(
             "(() => {\
@@ -194,7 +197,7 @@ async fn multi_tool_turn_renders_every_family() {
         .eval(
             "(() => {\
                const xs = document.querySelectorAll(\
-                 '[data-testid=\"leptos-feed\"] [data-event-type=\"llm_response\"]');\
+                 '[data-testid=\"leptos-feed\"] [data-event-type=\"text_block\"]');\
                if (!xs.length) return '';\
                const t = xs[xs.length - 1].querySelector(\
                  '[data-testid=\"leptos-assistant-text\"]');\
@@ -307,7 +310,7 @@ async fn streaming_overlay_appears_live_and_resolves() {
         .eval(
             "(() => {\
                const xs = document.querySelectorAll(\
-                 '[data-testid=\"leptos-feed\"] [data-event-type=\"llm_response\"]');\
+                 '[data-testid=\"leptos-feed\"] [data-event-type=\"text_block\"]');\
                if (!xs.length) return '';\
                const t = xs[xs.length - 1].querySelector(\
                  '[data-testid=\"leptos-assistant-text\"]');\

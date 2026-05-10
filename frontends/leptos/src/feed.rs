@@ -58,8 +58,8 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag, should_autoscroll,
-    tool_call_preview, truncate_preview, EventKind,
+    EventKind, assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag,
+    should_autoscroll, tool_call_preview, truncate_preview,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -215,8 +215,8 @@ pub fn ConversationFeed() -> impl IntoView {
         // ── wasm32: defer one frame so all child Effects finish first ──
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::closure::Closure;
             use wasm_bindgen::JsCast as _;
+            use wasm_bindgen::closure::Closure;
 
             // Cancel stale rAF from a previous update that hasn't fired yet.
             if let (Some(id), Some(win)) = (raf_id_eff.get(), web_sys::window()) {
@@ -455,7 +455,19 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         }
         .into_any(),
 
-        OmegaEvent::LlmResponse(e) => view! { <LlmResponseBlock event=e /> }.into_any(),
+        // SCHEMA-8 Phase 4c — legacy `LlmResponse` band-aid is
+        // visually muted.  Its `text` / `thinking` content is now
+        // sourced from sibling `TextBlock` / `ThinkingBlock` events;
+        // its `usage` / `context_hash` / `stop_reason` affordances
+        // are now sourced from the sibling `LlmResponseEnded` event.
+        // The legacy `OmegaEvent::LlmResponse` still arrives on the
+        // wire (band-aid stays until Phase 6.5) and is still pushed
+        // into `events` so block ordering is preserved — it just
+        // contributes an empty `EventBlock` wrapper to the DOM
+        // (which still carries `data-event-type="llm_response"`
+        // `data-event-kind="assistant"` for any selector that needs
+        // to find the legacy boundary).
+        OmegaEvent::LlmResponse(_) => ().into_any(),
 
         OmegaEvent::ToolCall(e) => view! { <ToolCallBlock event=e corr=corr /> }.into_any(),
 
@@ -599,14 +611,26 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         }
         .into_any(),
 
-        OmegaEvent::LlmResponseEnded(e) => view! {
-            <span class="block-label">"llm_response_ended"</span>
-            <span class="block-body">{format!("stop: {}", e.stop_reason)}</span>
-        }
+        // `LlmResponseEnded`: closer for a successful response.
+        // Renders the affordances side of the legacy
+        // `LlmResponseBlock` (label-row with stop reason + `context`
+        // + `payload` buttons, plus usage line) but *not* the
+        // markdown body — that lives in sibling `TextBlock`
+        // events.  No `thinking` button: thinking lives in sibling
+        // `ThinkingBlock` events.  Same testids as `LlmResponseBlock`
+        // so existing modal-open selectors keep matching once Phase
+        // 4d drops the legacy renderer.
+        OmegaEvent::LlmResponseEnded(e) => LlmResponseEndedBlock(LlmResponseEndedBlockProps {
+            event: e.clone(),
+        })
         .into_any(),
 
+        // `LlmResponseDiscarded`: closer for an abandoned response.
+        // Inline marker; the preceding partial block-events carry the
+        // actual content the user saw before abandonment.
         OmegaEvent::LlmResponseDiscarded(_) => view! {
-            <span class="block-label">"llm_response_discarded"</span>
+            <span class="block-label">"assistant"</span>
+            <span class="block-body block-discarded">"[response discarded]"</span>
         }
         .into_any(),
 
@@ -700,35 +724,32 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
 }
 
 // ---------------------------------------------------------------------------
-// LLM-response block (Phase 3.10 TODO-A)
+// LLM-response-ended block (SCHEMA-8 Phase 4c)
 // ---------------------------------------------------------------------------
 
-/// One `llm_response` row with four affordances:
+/// Closer for [`omega_types::events::LlmResponseStartedEvent`] when
+/// the response completes successfully.  This is the *affordances*
+/// side of the legacy `LlmResponseBlock` (deleted in 4c): stop-reason
+/// label,
+/// `[context]` + `[payload]` buttons, and the usage line.  The
+/// markdown body lives in sibling [`OmegaEvent::TextBlock`] events;
+/// thinking text lives in sibling [`OmegaEvent::ThinkingBlock`]
+/// events — so there is no `[thinking]` button here and no
+/// `leptos-assistant-text` wrapper.
 ///
-/// 1. Stop reason inline in the label (`assistant  (end_turn)`).
-/// 2. `[context]` button — opens the context modal for the response's
-///    `context_hash`.
-/// 3. `[payload]` button — opens the text modal with the full event JSON.
-/// 4. `[thinking]` button — visible only when `thinking` is non-empty;
-///    opens the text modal with the thinking text; always the leftmost button.
-///
-/// Usage line shows all four token buckets including the cache breakdown
-/// required by TODO-A-5 (BUG-C regression detector).
-/// Mutations skipped: `has_thinking` bool-inversion requires DOM to observe;
-/// thinking-block display is verified by the e2e harness.
+/// Testids mirror `LlmResponseBlock` (`leptos-llm-response-context`,
+/// `leptos-llm-response-payload`, `leptos-assistant-usage`) so the
+/// Phase 4d cutover can drop the legacy renderer without touching
+/// any Playwright selector.
 #[mutants::skip]
 #[component]
-fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoView {
+fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> impl IntoView {
     let context_modal =
         use_context::<ContextModalState>().expect("ContextModalState must be provided");
     let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
-    // Extract all fields before any moves into closures.
     let stop_reason = event.stop_reason.clone();
     let context_hash = event.context_hash.clone();
-
-    let thinking_text = event.thinking.clone().unwrap_or_default();
-    let has_thinking = !thinking_text.is_empty();
 
     let cache_read = event.usage.cache_read_input_tokens.unwrap_or(0);
     let cache_write = event.usage.cache_creation_input_tokens.unwrap_or(0);
@@ -741,13 +762,7 @@ fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoVi
         event.stop_reason,
     );
 
-    // Serialise *before* the text move so the whole event is captured.
     let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
-
-    // The outer `<div data-testid="leptos-assistant-text">` wraps
-    // MarkdownBody so existing Playwright selectors still work after
-    // Phase 3.6 swapped the inner `<pre>` for the markdown surface.
-    let text = event.text.unwrap_or_default();
 
     view! {
         <div class="block-label-row">
@@ -757,18 +772,6 @@ fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoVi
                     {format!("  ({stop_reason})")}
                 </span>
             </span>
-            <Show when=move || has_thinking fallback=|| ().into_any()>
-                <button
-                    class="block-label-row-btn"
-                    data-testid="leptos-llm-response-thinking"
-                    on:click={
-                        let t = thinking_text.clone();
-                        move |_| text_modal.open("thinking", t.clone())
-                    }
-                >
-                    "thinking"
-                </button>
-            </Show>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-llm-response-context"
@@ -779,13 +782,10 @@ fn LlmResponseBlock(event: omega_types::events::LlmResponseEvent) -> impl IntoVi
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-llm-response-payload"
-                on:click=move |_| text_modal.open("llm_response payload", event_json.clone())
+                on:click=move |_| text_modal.open("llm_response_ended payload", event_json.clone())
             >
                 "payload"
             </button>
-        </div>
-        <div data-testid="leptos-assistant-text">
-            <MarkdownBody text=text />
         </div>
         <span class="block-meta" data-testid="leptos-assistant-usage">{usage_line}</span>
     }

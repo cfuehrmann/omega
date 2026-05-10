@@ -30,9 +30,9 @@ use leptos::reactive::owner::Owner;
 use leptos::tachys::view::RenderHtml;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, LlmCallEvent, LlmResponseEvent, LlmResponseUsage, ResumingSessionEvent,
-    SessionResumedEvent, SessionStartedEvent, ToolCallEvent, ToolResultEvent, TurnEndEvent,
-    TurnMetrics, UserMessageEvent,
+    AgentErrorEvent, LlmCallEvent, LlmResponseEndedEvent, LlmResponseUsage, ResumingSessionEvent,
+    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ToolCallEvent, ToolResultEvent,
+    TurnEndEvent, TurnMetrics, UserMessageEvent,
 };
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
@@ -106,17 +106,30 @@ fn assistant_usage() -> LlmResponseUsage {
     }
 }
 
+/// SCHEMA-8 Phase 4c: assistant text now lives in `TextBlockEvent`,
+/// not in `LlmResponseEvent.text` (band-aid is still on the wire but
+/// the renderer is muted).  All `snap_event_assistant_*` snapshots
+/// drive the new `TextBlock` renderer here — same `MarkdownBody`
+/// surface, same `data-testid="leptos-assistant-text"` wrapper.
 fn ev_assistant(text: &str) -> OmegaEvent {
-    OmegaEvent::LlmResponse(LlmResponseEvent {
+    OmegaEvent::TextBlock(TextBlockEvent {
         time: "2025-01-01T00:00:01.000Z".into(),
+        text: text.into(),
+        partial: false,
+    })
+}
+
+/// New affordance row: stop-reason label + `[context]` + `[payload]`
+/// + usage line.  No body, no thinking button (those live in sibling
+/// `TextBlock` / `ThinkingBlock` events).
+fn ev_llm_response_ended() -> OmegaEvent {
+    OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+        time: "2025-01-01T00:00:01.500Z".into(),
         stop_reason: "end_turn".into(),
         cleared_tool_uses: None,
         cleared_input_tokens: None,
         usage: assistant_usage(),
         context_hash: "abcd1234ef560000".into(),
-        text: Some(text.into()),
-        thinking: None,
-        streaming_start: None,
         response_summary: None,
     })
 }
@@ -293,6 +306,17 @@ fn snap_event_assistant_html_is_escaped() {
         !html.contains("<script>"),
         "raw HTML survived markdown render: {html}",
     );
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_llm_response_ended() {
+    let html = render(|| {
+        let ev = ev_llm_response_ended();
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
     insta::assert_snapshot!(html);
 }
 
