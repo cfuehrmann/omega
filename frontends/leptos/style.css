@@ -424,6 +424,27 @@ main > h1 {
 .block-tool-call:hover .corr-badge,
 .block-tool-result:hover .corr-badge { color: var(--ctp-blue); }
 
+/* SCHEMA-8 Phase 5f — server-side compaction badge on LlmResponseEnded.
+ * Rendered inline in the label row when `usage.iterations` carries a
+ * `type="compaction"` entry.  Yellow on a subtle background so it reads
+ * as a one-shot annotation, not a button. */
+.block-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: var(--font);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.block-badge-compacted {
+  color: var(--yellow);
+  background: rgba(249, 226, 175, 0.12);
+  border: 1px solid rgba(249, 226, 175, 0.25);
+}
+
 /* Inline preview text sitting on the same label row as the tool name. */
 .block-tool-preview {
   color: var(--ctp-subtext1);

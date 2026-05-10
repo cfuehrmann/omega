@@ -33,6 +33,7 @@ use omega_types::events::{
     AgentErrorEvent, LlmCallEvent, LlmResponseEndedEvent, LlmResponseUsage, ResumingSessionEvent,
     SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent,
     ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnEndEvent, TurnMetrics,
+    UsageIteration,
     UserMessageEvent,
 };
 use omega_web::context_modal::{ContextModal, ContextModalState};
@@ -183,6 +184,45 @@ fn ev_llm_response_ended() -> OmegaEvent {
         cleared_tool_uses: None,
         cleared_input_tokens: None,
         usage: assistant_usage(),
+        context_hash: "abcd1234ef560000".into(),
+        response_summary: None,
+    })
+}
+
+/// SCHEMA-8 Phase 5f — LlmResponseEnded with a server-side compaction
+/// entry in `usage.iterations`.  Drives the `[compacted]` badge in the
+/// label row.
+fn ev_llm_response_ended_compacted() -> OmegaEvent {
+    OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+        time: "2025-01-01T00:00:01.500Z".into(),
+        stop_reason: "end_turn".into(),
+        cleared_tool_uses: None,
+        cleared_input_tokens: None,
+        usage: LlmResponseUsage {
+            input_tokens: 32,
+            output_tokens: 7,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+            service_tier: None,
+            iterations: Some(vec![
+                UsageIteration {
+                    iteration_type: "compaction".into(),
+                    input_tokens: 4096,
+                    output_tokens: 32,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                },
+                UsageIteration {
+                    iteration_type: "message".into(),
+                    input_tokens: 32,
+                    output_tokens: 7,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                },
+            ]),
+        },
         context_hash: "abcd1234ef560000".into(),
         response_summary: None,
     })
@@ -433,6 +473,22 @@ fn snap_event_assistant_html_is_escaped() {    let html = render(|| {
 fn snap_event_llm_response_ended() {
     let html = render(|| {
         let ev = ev_llm_response_ended();
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_llm_response_ended_compacted() {
+    // SCHEMA-8 Phase 5f — a response whose usage carries an
+    // `iterations` array including a `type="compaction"` entry must
+    // surface a yellow `[compacted]` badge in the label row.  This
+    // pins the badge presence + ordering and verifies the
+    // `[context]` / `[payload]` buttons remain on the row.
+    let html = render(|| {
+        let ev = ev_llm_response_ended_compacted();
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }

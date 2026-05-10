@@ -890,6 +890,21 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
     let stop_reason = event.stop_reason.clone();
     let context_hash = event.context_hash.clone();
 
+    // SCHEMA-8 Phase 5f — surface server-side context compaction.
+    // Anthropic's response usage object exposes per-iteration usage when
+    // server-side compaction fires; we detect it by scanning
+    // `usage.iterations` for a `type == "compaction"` entry.  When
+    // present, render a yellow `[compacted]` badge in the label row so
+    // the operator can see at a glance which response triggered a
+    // server-side context trim (distinct from any client-side trimming
+    // that may surface elsewhere).
+    let compacted = event
+        .usage
+        .iterations
+        .as_ref()
+        .map(|iters| iters.iter().any(|it| it.iteration_type == "compaction"))
+        .unwrap_or(false);
+
     let cache_read = event.usage.cache_read_input_tokens.unwrap_or(0);
     let cache_write = event.usage.cache_creation_input_tokens.unwrap_or(0);
     let usage_line = format!(
@@ -911,6 +926,15 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
                     {format!("  ({stop_reason})")}
                 </span>
             </span>
+            {compacted.then(|| view! {
+                <span
+                    class="block-badge block-badge-compacted"
+                    data-testid="leptos-compacted-badge"
+                    title="server-side context compaction fired on this response"
+                >
+                    "compacted"
+                </span>
+            })}
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-llm-response-context"
