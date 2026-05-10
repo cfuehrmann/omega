@@ -19,7 +19,7 @@
 //! live in [`RetryingProvider`](omega_core::RetryingProvider) — context
 //! compaction, tool-result clearing, model-context-window recovery).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -55,6 +55,137 @@ use crate::session_resume::{
 use crate::system_prompt::build_system_prompt;
 
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+
+// ---------------------------------------------------------------------------
+// SCHEMA-8 Phase 3: per-block streaming accumulators
+//
+// Each [`Provider`] stream is a sequence of indexed `content_block_start` /
+// `..._delta` / `content_block_stop` events.  The agent collects each block
+// into its own `BlockSlot` keyed by the API's `index`, then assembles the
+// assistant message in index order.  This replaces the legacy flat
+// accumulators (`text_buf`, `current_thinking`, `completed_thinking_blocks`,
+// `tool_uses`) that grouped by kind and reordered interleaved blocks.
+//
+// Phase 3 staging:
+//   * commit 3a (this commit) introduces the slots in parallel with the flat
+//     accumulators; the flat path still wins for context.jsonl assembly so
+//     all 6 Phase-0 goldens stay byte-equal.
+//   * commit 3e drops the flat path and locks the interleaved-thinking
+//     golden.
+// ---------------------------------------------------------------------------
+
+/// One in-flight assistant content block, keyed by the provider's
+/// `content_block_start.index`.  Variants mirror the three
+/// `content_block_start` shapes Anthropic emits.
+///
+/// `sealed` flips to `true` on the matching `*BlockComplete` signal.  An
+/// unsealed slot at the moment a stream is abandoned (`LlmRetry` /
+/// `LlmError` / `TurnInterrupted` mid-stream) yields a
+/// `partial: true` block event in Phase 3 commit 3d.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // commit 3a populates slots; commits 3b/3e consume them.
+enum BlockSlot {
+    Text {
+        text: String,
+        sealed: bool,
+    },
+    Thinking {
+        thinking: String,
+        signature: Option<String>,
+        sealed: bool,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+        sealed: bool,
+    },
+}
+
+/// Append a text delta to slot `idx`, creating an empty `Text` slot if
+/// missing.  Logs and ignores type mismatches (defensive — providers
+/// shouldn't send a `Text` delta against a non-text slot).
+fn append_text_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, delta: &str) {
+    let slot = slots.entry(idx).or_insert_with(|| BlockSlot::Text {
+        text: String::new(),
+        sealed: false,
+    });
+    if let BlockSlot::Text { text, .. } = slot {
+        text.push_str(delta);
+    }
+    // Type mismatch: provider sent a `Text` delta against a slot already
+    // typed as Thinking/ToolUse.  Drop — a provider bug we can't recover
+    // from cleanly here.  Phase 3 commit 3e's index-ordered assembly will
+    // surface anything that slips through as a context-record discrepancy
+    // detected by goldens.
+}
+
+/// Append a thinking delta to slot `idx`, creating an empty `Thinking`
+/// slot if missing.
+fn append_thinking_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, delta: &str) {
+    let slot = slots.entry(idx).or_insert_with(|| BlockSlot::Thinking {
+        thinking: String::new(),
+        signature: None,
+        sealed: false,
+    });
+    if let BlockSlot::Thinking { thinking, .. } = slot {
+        thinking.push_str(delta);
+    }
+    // See `append_text_slot` for the type-mismatch rationale.
+}
+
+/// Mark a `Text` slot sealed.  Creates an empty `Text` slot if missing
+/// (an empty text block is rare but legal — the provider is telling us
+/// it's done either way).
+fn seal_text_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize) {
+    let slot = slots.entry(idx).or_insert_with(|| BlockSlot::Text {
+        text: String::new(),
+        sealed: false,
+    });
+    if let BlockSlot::Text { sealed, .. } = slot {
+        *sealed = true;
+    }
+    // See `append_text_slot` for the type-mismatch rationale.
+}
+
+/// Mark a `Thinking` slot sealed and record its signature.  Creates an
+/// empty `Thinking` slot if missing (rare but legal).
+fn seal_thinking_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, sig: String) {
+    let slot = slots.entry(idx).or_insert_with(|| BlockSlot::Thinking {
+        thinking: String::new(),
+        signature: None,
+        sealed: false,
+    });
+    if let BlockSlot::Thinking {
+        signature, sealed, ..
+    } = slot
+    {
+        *signature = Some(sig);
+        *sealed = true;
+    }
+    // See `append_text_slot` for the type-mismatch rationale.
+}
+
+/// Insert (or overwrite) a sealed `ToolUse` slot at `idx`.  `ToolUse`
+/// blocks arrive whole on `ToolUseBlockComplete` — there are no
+/// per-delta accumulators in Phase 2's wire shape.
+fn insert_tool_use_slot(
+    slots: &mut BTreeMap<usize, BlockSlot>,
+    idx: usize,
+    id: String,
+    name: String,
+    input: Value,
+) {
+    slots.insert(
+        idx,
+        BlockSlot::ToolUse {
+            id,
+            name,
+            input,
+            sealed: true,
+        },
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Context-management configuration (BUG-D fix)
@@ -667,6 +798,11 @@ impl Agent {
                 let mut current_thinking = String::new();
                 let mut completed_thinking_blocks: Vec<(String, String)> = Vec::new();
                 let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
+                // SCHEMA-8 Phase 3 commit 3a: per-block slots accumulated in
+                // parallel with the flat path above.  The flat path still
+                // wins; commit 3e drops it and assembles the assistant
+                // message from `slots` in index order.
+                let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
                 let mut llm_response: Option<LlmResponseEvent> = None;
                 let mut stream_error: Option<LlmError> = None;
 
@@ -677,31 +813,35 @@ impl Agent {
                     match item {
                         Ok(AgentItem::Signal(sig)) => {
                             let forward = match &sig {
-                                StreamSignal::Text { text, .. } => {
+                                StreamSignal::Text { index, text } => {
                                     text_buf.push_str(text);
+                                    append_text_slot(&mut slots, *index, text);
                                     true
                                 }
-                                StreamSignal::Thinking { text, .. } => {
+                                StreamSignal::Thinking { index, text } => {
                                     current_thinking.push_str(text);
+                                    append_thinking_slot(&mut slots, *index, text);
                                     true
                                 }
-                                StreamSignal::ThinkingBlockComplete { signature, .. } => {
+                                StreamSignal::ThinkingBlockComplete { index, signature } => {
                                     let thinking = std::mem::take(&mut current_thinking);
                                     completed_thinking_blocks
                                         .push((thinking, signature.clone()));
+                                    seal_thinking_slot(&mut slots, *index, signature.clone());
                                     false // internal signal, not forwarded to UI
                                 }
-                                StreamSignal::TextBlockComplete { .. } => {
+                                StreamSignal::TextBlockComplete { index, .. } => {
                                     // SCHEMA-8 Phase 2: indexed text
                                     // delivery; the agent's current
                                     // accumulator-based reconstruction
                                     // (`text_buf`) still wins.  Phase 3
-                                    // routes by index via a BTreeMap of
-                                    // slots and drops `text_buf`.
+                                    // routes by index via `slots` and
+                                    // drops `text_buf` in commit 3e.
+                                    seal_text_slot(&mut slots, *index);
                                     false
                                 }
                                 StreamSignal::ToolUseBlockComplete {
-                                    id, name, input, ..
+                                    index, id, name, input,
                                 } => {
                                     // SCHEMA-8 Phase 2: providers no
                                     // longer emit `OmegaEvent::ToolCall`
@@ -715,6 +855,13 @@ impl Agent {
                                         name.clone(),
                                         input.clone(),
                                     ));
+                                    insert_tool_use_slot(
+                                        &mut slots,
+                                        *index,
+                                        id.clone(),
+                                        name.clone(),
+                                        input.clone(),
+                                    );
                                     false
                                 }
                             };
@@ -741,6 +888,7 @@ impl Agent {
                                     text_buf.clear();
                                     current_thinking.clear();
                                     completed_thinking_blocks.clear();
+                                    slots.clear();
                                     let ev = OmegaEvent::LlmRetry(retry);
                                     let _ = self.event_store.append(&ev).await;
                                     yield AgentItem::event(ev);
@@ -1302,6 +1450,10 @@ impl Agent {
             let mut text_buf = String::new();
             let mut current_thinking = String::new();
             let mut completed_thinking_blocks: Vec<(String, String)> = Vec::new();
+            // SCHEMA-8 Phase 3 commit 3a: per-block slots accumulated in
+            // parallel with the flat path above.  The flat path still wins
+            // for the resumption-summary path; commit 3e drops it.
+            let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
             let mut llm_response: Option<LlmResponseEvent> = None;
             let mut stream_error: Option<LlmError> = None;
 
@@ -1312,29 +1464,45 @@ impl Agent {
                 match item {
                     Ok(AgentItem::Signal(sig)) => {
                         let forward = match &sig {
-                            StreamSignal::Text { text, .. } => {
+                            StreamSignal::Text { index, text } => {
                                 text_buf.push_str(text);
+                                append_text_slot(&mut slots, *index, text);
                                 true
                             }
-                            StreamSignal::Thinking { text, .. } => {
+                            StreamSignal::Thinking { index, text } => {
                                 current_thinking.push_str(text);
+                                append_thinking_slot(&mut slots, *index, text);
                                 true
                             }
-                            StreamSignal::ThinkingBlockComplete { signature, .. } => {
+                            StreamSignal::ThinkingBlockComplete { index, signature } => {
                                 let thinking = std::mem::take(&mut current_thinking);
                                 completed_thinking_blocks
                                     .push((thinking, signature.clone()));
+                                seal_thinking_slot(&mut slots, *index, signature.clone());
                                 false
                             }
-                            StreamSignal::TextBlockComplete { .. }
-                            | StreamSignal::ToolUseBlockComplete { .. } => {
-                                // SCHEMA-8 Phase 2: indexed completion
-                                // signals.  This call is the
+                            StreamSignal::TextBlockComplete { index, .. } => {
+                                // SCHEMA-8 Phase 2/3a: indexed completion
+                                // signal.  This call is the
                                 // resumption-summary one-off — no
                                 // tools requested and the
-                                // accumulator-based text path still
-                                // wins, so both are absorbed here
-                                // until Phase 3 wires indexed slots.
+                                // accumulator-based text path still wins
+                                // until commit 3e.
+                                seal_text_slot(&mut slots, *index);
+                                false
+                            }
+                            StreamSignal::ToolUseBlockComplete { index, id, name, input } => {
+                                // Resumption-summary call must not
+                                // request tools, but mirror the seal so
+                                // any provider misbehaviour is caught by
+                                // commit 3d's abandonment closers.
+                                insert_tool_use_slot(
+                                    &mut slots,
+                                    *index,
+                                    id.clone(),
+                                    name.clone(),
+                                    input.clone(),
+                                );
                                 false
                             }
                         };
@@ -1352,6 +1520,7 @@ impl Agent {
                                 text_buf.clear();
                                 current_thinking.clear();
                                 completed_thinking_blocks.clear();
+                                slots.clear();
                                 let ev = OmegaEvent::LlmRetry(retry);
                                 let _ = self.event_store.append(&ev).await;
                                 yield AgentItem::event(ev);
