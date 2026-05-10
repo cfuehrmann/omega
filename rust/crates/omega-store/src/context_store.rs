@@ -5,8 +5,12 @@
 //! [`ContextRecord`] — a [`Message`](omega_types::conversation) augmented with a
 //! [`ContextHash`] primary key and an ISO 8601 timestamp.
 //!
-//! The hash returned by [`ContextStore::append`] is used as a foreign key in
+//! The hash returned by [`ContextStore::append`] is the deterministic
+//! [`content_hash`] of `(role, content)`; it is used as a foreign key in
 //! `events.jsonl` (`LlmCallEvent.context_hashes`, etc.).
+//!
+//! Two appends with identical `(role, content)` therefore produce the
+//! same hash by design — see HASH-1 in `backlog/hash-1.md`.
 
 use std::path::PathBuf;
 
@@ -14,7 +18,7 @@ use chrono::Utc;
 use omega_types::{ContentBlock, Role};
 use serde::{Deserialize, Serialize};
 
-use crate::{ContextHash, Result, StoreError, random_hash};
+use crate::{ContextHash, Result, StoreError, content_hash};
 
 // ---------------------------------------------------------------------------
 // ContextRecord
@@ -25,7 +29,14 @@ use crate::{ContextHash, Result, StoreError, random_hash};
 /// Extends a conversation message with persistence metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextRecord {
-    /// Unique primary key: 12 lowercase hex characters (6 random bytes).
+    /// Unique primary key: the deterministic [`content_hash`] of
+    /// `(role, content)` — 16 lowercase hex characters (first 8 bytes
+    /// of `sha256` over the canonical `(role, content)` encoding).
+    ///
+    /// Two records with identical `(role, content)` have the same
+    /// `hash` by design.  See HASH-1 in `backlog/hash-1.md`.
+    ///
+    /// [`content_hash`]: crate::content_hash
     pub hash: ContextHash,
     /// ISO 8601 UTC timestamp when this record was appended.
     pub time: String,
@@ -54,11 +65,13 @@ impl ContextStore {
         Self { path }
     }
 
-    /// Build a [`ContextRecord`] (random hash, current UTC time) and append
-    /// it to `context.jsonl`.
+    /// Build a [`ContextRecord`] (deterministic content hash, current UTC
+    /// time) and append it to `context.jsonl`.
     ///
-    /// Returns the generated [`ContextHash`] so the caller can reference it
-    /// as a foreign key in `events.jsonl` without re-reading the file.
+    /// Returns the [`ContextHash`] computed from `(role, content)` so the
+    /// caller can reference it as a foreign key in `events.jsonl` without
+    /// re-reading the file.  Identical `(role, content)` produces the
+    /// same hash on every call.
     ///
     /// # Errors
     ///
@@ -119,11 +132,15 @@ impl ContextStore {
     }
 
     /// Build a [`ContextRecord`] without writing it — useful for testing the
-    /// record shape without I/O.
+    /// record shape without I/O.  The returned record's hash is the
+    /// deterministic [`content_hash`] of `(role, content)`.
+    ///
+    /// [`content_hash`]: crate::content_hash
     #[must_use]
     pub fn build_record(role: Role, content: Vec<ContentBlock>) -> ContextRecord {
+        let hash = content_hash(&role, &content);
         ContextRecord {
-            hash: random_hash(),
+            hash,
             time: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             role,
             content,

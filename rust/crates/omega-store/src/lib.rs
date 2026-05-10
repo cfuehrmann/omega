@@ -35,7 +35,7 @@ pub enum StoreError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// A string passed to [`hash_from_str`] did not match `[0-9a-f]{12}`.
+    /// A string passed to [`hash_from_str`] did not match `[0-9a-f]{16}`.
     #[error("invalid context hash: {0:?}")]
     InvalidHash(String),
 }

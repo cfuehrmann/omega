@@ -1,7 +1,7 @@
 //! Integration tests for `ContextStore` and `ContextHash` — real file I/O
 //! via temp directories.
 
-use omega_store::{ContextRecord, ContextStore, hash_from_str};
+use omega_store::{ContextRecord, ContextStore, content_hash, hash_from_str};
 use omega_types::{ContentBlock, Role};
 
 // ---------------------------------------------------------------------------
@@ -26,30 +26,36 @@ fn text_block(text: &str) -> ContentBlock {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn hash_from_str_accepts_valid_12_hex() {
+fn hash_from_str_accepts_valid_16_hex() {
     #[allow(clippy::unwrap_used)]
-    let h = hash_from_str("0123456789ab").unwrap();
-    assert_eq!(h.as_ref(), "0123456789ab");
+    let h = hash_from_str("0123456789abcdef").unwrap();
+    assert_eq!(h.as_ref(), "0123456789abcdef");
+}
+
+// T-LEN — the legacy 12-char length is unambiguously rejected.
+#[test]
+fn hash_from_str_rejects_legacy_12_char() {
+    assert!(hash_from_str("0123456789ab").is_err());
 }
 
 #[test]
 fn hash_from_str_rejects_uppercase_letters() {
-    assert!(hash_from_str("0123456789AB").is_err());
+    assert!(hash_from_str("0123456789ABCDEF").is_err());
 }
 
 #[test]
 fn hash_from_str_rejects_too_short() {
-    assert!(hash_from_str("0123456789a").is_err());
+    assert!(hash_from_str("0123456789abcde").is_err());
 }
 
 #[test]
 fn hash_from_str_rejects_too_long() {
-    assert!(hash_from_str("0123456789abc").is_err());
+    assert!(hash_from_str("0123456789abcdef0").is_err());
 }
 
 #[test]
 fn hash_from_str_rejects_non_hex_chars() {
-    assert!(hash_from_str("0123456789xz").is_err());
+    assert!(hash_from_str("0123456789abcdez").is_err());
 }
 
 #[test]
@@ -64,8 +70,16 @@ fn hash_from_str_rejects_empty_string() {
 #[test]
 fn build_record_has_valid_hash() {
     let record = ContextStore::build_record(Role::User, vec![text_block("hi")]);
-    // hash must be 12 lowercase hex chars
+    // hash must be 16 lowercase hex chars
     assert!(hash_from_str(record.hash.as_ref()).is_ok());
+}
+
+#[test]
+fn build_record_hash_is_deterministic_content_hash() {
+    let role = Role::User;
+    let content = vec![text_block("hi")];
+    let record = ContextStore::build_record(role.clone(), content.clone());
+    assert_eq!(record.hash, content_hash(&role, &content));
 }
 
 #[test]
@@ -142,7 +156,57 @@ async fn two_appends_produce_different_hashes() {
         .await
         .unwrap();
 
-    assert_ne!(h1, h2, "consecutive hashes must be different");
+    assert_ne!(
+        h1, h2,
+        "distinct (role, content) must produce distinct hashes"
+    );
+}
+
+// T-RT — the hash returned by `append` equals `content_hash(role, content)`,
+// and the same hash recomputed from the on-disk record's deserialised
+// fields matches the on-disk hash.  Catches any serialisation asymmetry
+// (e.g., a `skip_serializing_if` that omits a field on write but defaults
+// it on read).
+#[tokio::test]
+async fn append_then_verify_roundtrip() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path.clone());
+
+    let role = Role::Assistant;
+    let content = vec![text_block("ok")];
+
+    #[allow(clippy::unwrap_used)]
+    let returned = store.append(role.clone(), content.clone()).await.unwrap();
+    let recomputed = content_hash(&role, &content);
+    assert_eq!(returned, recomputed);
+
+    #[allow(clippy::unwrap_used)]
+    let line = std::fs::read_to_string(&path).unwrap();
+    #[allow(clippy::unwrap_used)]
+    let record: ContextRecord = serde_json::from_str(line.trim_end()).unwrap();
+    assert_eq!(record.hash, recomputed);
+    assert_eq!(content_hash(&record.role, &record.content), record.hash);
+}
+
+// T-CONT — identical (role, content) on two separate appends produces
+// identical hashes.  Documents the intentional collision-by-design.
+#[tokio::test]
+async fn duplicate_content_yields_same_hash() {
+    let (_guard, path) = temp_context_file();
+    let store = ContextStore::new(path);
+
+    let role = Role::User;
+    let content = vec![text_block("hi")];
+
+    #[allow(clippy::unwrap_used)]
+    let h1 = store.append(role.clone(), content.clone()).await.unwrap();
+    #[allow(clippy::unwrap_used)]
+    let h2 = store.append(role.clone(), content.clone()).await.unwrap();
+
+    assert_eq!(
+        h1, h2,
+        "identical (role, content) must yield identical content hash",
+    );
 }
 
 #[tokio::test]

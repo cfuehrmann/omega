@@ -40,12 +40,9 @@ use crate::{Result, StoreError};
 pub struct ContextHash(String);
 
 impl ContextHash {
-    /// Returns `true` iff `s` is exactly 16 lowercase hex characters
-    /// **or** exactly 12 (the legacy random-id length, kept accepted in
-    /// Phase 1 only — Phase 2 narrows this to 16 only).
+    /// Returns `true` iff `s` is exactly 16 lowercase hex characters.
     fn is_valid(s: &str) -> bool {
-        (s.len() == 16 || s.len() == 12)
-            && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        s.len() == 16 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     }
 
     /// Construct a [`ContextHash`] from a string our hashing path
@@ -95,11 +92,12 @@ pub fn random_hash() -> ContextHash {
 }
 
 /// Parse a [`ContextHash`] from an existing string, validating it matches
-/// `[0-9a-f]{16}` (or, transitionally, `[0-9a-f]{12}`).
+/// `[0-9a-f]{16}`.
 ///
 /// # Errors
 ///
-/// Returns [`StoreError::InvalidHash`] if `s` is not a valid hash.
+/// Returns [`StoreError::InvalidHash`] if `s` is not exactly 16 lowercase
+/// hex characters.
 pub fn hash_from_str(s: &str) -> Result<ContextHash> {
     if ContextHash::is_valid(s) {
         Ok(ContextHash(s.to_owned()))
@@ -139,6 +137,10 @@ mod tests {
 
     #[test]
     fn random_hash_is_12_hex_chars() {
+        // random_hash is the soon-to-be-removed legacy generator (Phase 3).
+        // It still produces 12-char strings, but those strings are now
+        // *invalid* under hash_from_str — see hash_from_str_rejects_12_char
+        // (T-LEN).
         let h = random_hash();
         assert_eq!(h.as_ref().len(), 12);
         assert!(
@@ -154,10 +156,10 @@ mod tests {
         assert_eq!(h.to_string(), h.as_ref());
     }
 
+    // T-LEN — length-12 hashes are now unambiguously rejected.
     #[test]
-    fn hash_from_str_accepts_valid_12() {
-        let h = hash_from_str("0123456789ab").unwrap();
-        assert_eq!(h.as_ref(), "0123456789ab");
+    fn hash_from_str_rejects_12_char() {
+        assert!(hash_from_str("0123456789ab").is_err());
     }
 
     #[test]
@@ -168,13 +170,12 @@ mod tests {
 
     #[test]
     fn hash_from_str_rejects_uppercase() {
-        assert!(hash_from_str("0123456789AB").is_err());
         assert!(hash_from_str("0123456789ABCDEF").is_err());
     }
 
     #[test]
     fn hash_from_str_rejects_short() {
-        assert!(hash_from_str("0123456789a").is_err());
+        assert!(hash_from_str("0123456789abcde").is_err());
     }
 
     #[test]
@@ -184,14 +185,14 @@ mod tests {
 
     #[test]
     fn hash_from_str_rejects_non_hex() {
-        assert!(hash_from_str("0123456789xz").is_err());
+        assert!(hash_from_str("0123456789abcdez").is_err());
     }
 
     #[test]
     fn into_string_works() {
-        let h = hash_from_str("aabbccddeeff").unwrap();
+        let h = hash_from_str("aabbccddeeff0011").unwrap();
         let s: String = h.into();
-        assert_eq!(s, "aabbccddeeff");
+        assert_eq!(s, "aabbccddeeff0011");
     }
 
     // -----------------------------------------------------------------
