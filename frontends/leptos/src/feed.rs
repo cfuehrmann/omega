@@ -124,8 +124,13 @@ pub fn ConversationFeed() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
 
     let scroll_ref = NodeRef::<html::Section>::new();
-    let sentinel_ref = NodeRef::<html::Div>::new();
     let auto_scroll = RwSignal::new(true);
+    // Counter incremented by the ↓ button.  The auto-scroll Effect subscribes
+    // to it so that clicking the button triggers an immediate rAF scroll (with
+    // correct `prog_state` stamp) without any direct DOM manipulation from the
+    // click handler.  `RwSignal<u32>` is `Send + Sync + \'static` so it can be
+    // captured inside `<Show>` children.
+    let scroll_demand = RwSignal::new(0u32);
     // Chromium 148+ dispatches scroll events as macrotasks, so the
     // event can fire *after* new content has been appended (growing
     // scrollHeight), making should_autoscroll() spuriously return false.
@@ -139,6 +144,17 @@ pub fn ConversationFeed() -> impl IntoView {
     // grace window.
     let prog_state: Rc<Cell<(f64, i32)>> = Rc::new(Cell::new((-10_000.0, 0)));
     const PROG_SCROLL_GRACE_MS: f64 = 150.0;
+
+    // True from the moment the auto-scroll Effect fires (scheduling a rAF)
+    // until the rAF callback finishes its set_scroll_top call.  During this
+    // window, the browser may fire scroll events caused by our own content
+    // mutations (streaming-text removal, event-block insertion, copy-button
+    // injection).  Those events arrive with a scroll_top that is not at the
+    // new bottom (because the content height is still settling), which would
+    // make should_autoscroll() return false and silently kill tailing.
+    // Suppressing all scroll events while this flag is set and auto_scroll
+    // is true prevents that.
+    let scroll_pending: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     // Auto-scroll Effect.
     //
@@ -168,6 +184,7 @@ pub fn ConversationFeed() -> impl IntoView {
     // `sentinel.scroll_into_view()` (value is clamped to legal max).
     // We stamp `prog_state` so the on_scroll handler can suppress the
     // deferred scroll echo that Chromium 148+ fires after set_scroll_top.
+    let scroll_pending_eff = Rc::clone(&scroll_pending);
     let prog_state_eff = Rc::clone(&prog_state);
     // Tracks any pending rAF id so we can cancel it on the next update.
     // Only needed on wasm32; declared under cfg so the host build sees no
@@ -180,9 +197,18 @@ pub fn ConversationFeed() -> impl IntoView {
         let _ = store.events.with(Vec::len);
         let _ = store.streaming_text.with(String::len);
         let _ = store.streaming_thinking.with(String::len);
+        // Also subscribe to `scroll_demand` so that the ↓ button (which
+        // increments the counter) triggers an immediate scroll without
+        // performing any direct DOM manipulation in the click handler.
+        let _ = scroll_demand.get();
         if !auto_scroll.get_untracked() {
             return;
         }
+
+        // Signal that a programmatic scroll is in flight.  Any scroll event
+        // that arrives between now and the rAF completing is a transient side
+        // effect of content changes, not a user scroll.
+        scroll_pending_eff.set(true);
 
         // ── wasm32: defer one frame so all child Effects finish first ──
         #[cfg(target_arch = "wasm32")]
@@ -196,13 +222,15 @@ pub fn ConversationFeed() -> impl IntoView {
                 raf_id_eff.set(None);
             }
 
-            let prog_clone  = Rc::clone(&prog_state_eff);
-            let raf_id_cb   = Rc::clone(&raf_id_eff);
+            let prog_clone        = Rc::clone(&prog_state_eff);
+            let scroll_pending_cb = Rc::clone(&scroll_pending_eff);
+            let raf_id_cb         = Rc::clone(&raf_id_eff);
             // scroll_ref and auto_scroll are Copy + 'static — captured by copy.
             let cb = Closure::once(move || {
                 raf_id_cb.set(None);
                 // Re-check: user may have scrolled up in the one-frame gap.
                 if !auto_scroll.get_untracked() {
+                    scroll_pending_cb.set(false);
                     return;
                 }
                 if let Some(section) = scroll_ref.get() {
@@ -210,6 +238,7 @@ pub fn ConversationFeed() -> impl IntoView {
                     prog_clone.set((now_ms(), sh));
                     section.set_scroll_top(sh);
                 }
+                scroll_pending_cb.set(false);
             });
 
             match web_sys::window()
@@ -227,6 +256,7 @@ pub fn ConversationFeed() -> impl IntoView {
                         prog_state_eff.set((now_ms(), sh));
                         section.set_scroll_top(sh);
                     }
+                    scroll_pending_eff.set(false);
                 }
             }
         }
@@ -237,9 +267,11 @@ pub fn ConversationFeed() -> impl IntoView {
             let sh = section.scroll_height();
             prog_state_eff.set((now_ms(), sh));
             section.set_scroll_top(sh);
+            scroll_pending_eff.set(false);
         }
     });
 
+    let scroll_pending_scroll = Rc::clone(&scroll_pending);
     let prog_state_scroll = Rc::clone(&prog_state);
     let on_scroll = move |_ev: ev::Event| {
         let Some(el) = scroll_ref.get() else {
@@ -262,6 +294,14 @@ pub fn ConversationFeed() -> impl IntoView {
         //      grown since we set it (confirming new content arrived).
         // A genuine user scroll-to-top yields scroll_top ≈ 0 which never
         // satisfies condition 3, so it is always processed.
+        // While a programmatic scroll is in flight (Effect fired, rAF not
+        // yet completed), ANY scroll event with auto_scroll=true is a
+        // transient side effect of content mutations (streaming-text removal,
+        // event-block insertion).  Suppress it so tailing is not killed.
+        if scroll_pending_scroll.get() && auto_scroll.get_untracked() {
+            return;
+        }
+
         let (prog_ts, prog_sh) = prog_state_scroll.get();
         let elapsed = now_ms() - prog_ts;
         if elapsed < PROG_SCROLL_GRACE_MS && auto_scroll.get_untracked() {
@@ -308,7 +348,7 @@ pub fn ConversationFeed() -> impl IntoView {
                     children=|(_, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr /> }
                 />
                 <StreamingTail />
-                <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" node_ref=sentinel_ref />
+                <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" />
             </section>
             <Show when=move || !auto_scroll.get()>
                 <button
@@ -316,10 +356,24 @@ pub fn ConversationFeed() -> impl IntoView {
                     data-testid="scroll-to-bottom"
                     aria-label="Scroll to bottom"
                     on:click=move |_| {
+                        // Re-enable tailing and demand an immediate scroll.
+                        //
+                        // Previously this called `sentinel.scroll_into_view()`
+                        // which did NOT update `prog_state`.  On Chromium 148+
+                        // that scroll is dispatched as a macrotask: when a
+                        // streaming chunk arrives in the gap the rAF has already
+                        // stamped `prog_state` with a *newer* scrollHeight, so
+                        // the old event fails the echo check, `should_autoscroll`
+                        // returns false, and tailing is silently killed.
+                        //
+                        // Fix: increment `scroll_demand` which the auto-scroll
+                        // Effect subscribes to.  The Effect re-runs, schedules
+                        // its rAF, and that callback does `set_scroll_top` +
+                        // `prog_state` stamp — exactly the same path as any
+                        // streaming-content update.  No direct DOM interaction
+                        // here means no untracked scroll event, no race.
                         auto_scroll.set(true);
-                        if let Some(el) = sentinel_ref.get_untracked() {
-                            el.scroll_into_view();
-                        }
+                        scroll_demand.update(|n| *n += 1);
                     }
                 >
                     "↓"

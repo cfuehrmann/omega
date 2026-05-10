@@ -10,6 +10,12 @@
 // and `[data-testid="scroll-to-bottom"]`.  No pixel-position assertions
 // except in `scroll_lands_at_bottom_after_copy_buttons` which explicitly
 // measures the scroll gap to pin the rAF-deferred scroll fix.
+//
+// `tailing_survives_rapid_streaming_after_button_click` is the regression
+// test for the bug where the ↓ button called `sentinel.scroll_into_view()`
+// without updating `prog_state`.  Chromium 148+ deferred that scroll event
+// as a macrotask; new streaming content arrived before the event fired,
+// making `should_autoscroll` return false and silently killing tailing.
 
 #![allow(
     clippy::expect_used,
@@ -325,4 +331,154 @@ async fn scroll_lands_at_bottom_after_copy_buttons() {
         "feed should be at the true bottom after copy-button injection \
          (rAF-deferred scroll fix)",
     );
+}
+
+// ---------------------------------------------------------------------------
+// tailing_survives_rapid_streaming_after_button_click
+// ---------------------------------------------------------------------------
+
+/// Regression test for the deferred-scroll-event bug.
+///
+/// **Root cause**: the ↓ button previously called
+/// `sentinel.scroll_into_view()` *without* updating `prog_state`.  On
+/// Chromium 148+ that scroll is dispatched as a macrotask.  When a
+/// streaming chunk arrives in the gap (rAF fires, `set_scroll_top` runs,
+/// `prog_state` is updated to a *newer* scrollHeight), the old event
+/// fails the echo check (wrong position) and
+/// `should_autoscroll(old_sh − clientH, clientH, new_sh, 40)` returns
+/// `false` — silently killing tailing mid-turn.
+///
+/// **Red path** (without fix): at least one of the ~50 rapid-arrival
+/// polls sees `data-auto-scroll = "false"` and the assertion fires.
+///
+/// **Green path** (with fix): the button handler uses
+/// `section.set_scroll_top(sh)` and stamps `prog_state`, so the deferred
+/// echo is correctly suppressed and tailing is never disabled.
+#[tokio::test]
+#[ignore = "browser"]
+async fn tailing_survives_rapid_streaming_after_button_click() {
+    let h = TestHarness::launch().await.expect("launch");
+    h.reset_calls().await.expect("reset");
+
+    // ── Phase 1: overflow the feed so scroll-up is possible ──────────────
+    h.load_script(tall_script())
+        .await
+        .expect("load tall script");
+    h.new_session().await.expect("new session");
+    send_message(&h, "fill the feed").await;
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
+        1,
+        T_TURN,
+    )
+    .await
+    .expect("first turn_end");
+
+    // ── Phase 2: disable tailing ─────────────────────────────────────────
+    h.eval::<bool>(
+        "(() => { \
+           const el = document.querySelector('[data-testid=\"leptos-feed\"]'); \
+           if (el) el.scrollTop = 0; \
+           return true; \
+         })()",
+    )
+    .await
+    .expect("scroll to top");
+    h.wait_for_attr(
+        "[data-testid=\"leptos-feed\"]",
+        "data-auto-scroll",
+        "false",
+        T,
+    )
+    .await
+    .expect("data-auto-scroll should be false after scroll-up");
+
+    // ── Phase 3: start a rapid-streaming turn ────────────────────────────
+    //
+    // 60 chunks × 15 ms = 900 ms total stream window.  Each chunk is a
+    // full line of text (≈20 px), so after a few chunks arrive the
+    // scrollHeight grows well past the 40-px threshold that triggers the
+    // bug.  The ↓ button is already visible (tailing is off from Phase 2).
+    h.load_script(vec![MockResponse::SlowText {
+        text: (0..60)
+            .map(|i| format!("Rapid stream line {i}: padding to grow scrollHeight quickly.\n"))
+            .collect(),
+        chunks: 60,
+        delay_ms: 15,
+    }])
+    .await
+    .expect("load rapid script");
+    send_message(&h, "start rapid streaming").await;
+
+    // Wait for the first streaming chunk to land — the turn is now live.
+    h.wait_for_selector("[data-testid=\"leptos-streaming-text\"]", T)
+        .await
+        .expect("streaming text should appear");
+
+    // ── Phase 4: click ↓ while streaming is active ───────────────────────
+    h.click("[data-testid=\"scroll-to-bottom\"]")
+        .await
+        .expect("click ↓");
+    h.wait_for_attr(
+        "[data-testid=\"leptos-feed\"]",
+        "data-auto-scroll",
+        "true",
+        T,
+    )
+    .await
+    .expect("tailing should be re-enabled immediately after button click");
+
+    // ── Phase 5: tailing must stay ON through streaming AND turn completion ──
+    //
+    // We poll every 20 ms and continue until the turn-end event has been
+    // in the feed for at least 300 ms.  This covers two failure modes:
+    //   a) The deferred scroll_into_view echo arrives during streaming and
+    //      flips auto_scroll to false (the original sentinel.scroll_into_view
+    //      race).
+    //   b) When the streaming text is removed at turn completion the browser
+    //      fires a scroll event with a scroll_top that is below the new
+    //      bottom (because event blocks have already been added).  Without
+    //      the scroll_pending guard, should_autoscroll() returns false and
+    //      tailing is killed right as the turn finishes.
+    let poll_start = std::time::Instant::now();
+    let mut grace_start: Option<std::time::Instant> = None;
+    loop {
+        let val: String = h
+            .eval(
+                "document.querySelector('[data-testid=\"leptos-feed\"]')\
+                  .getAttribute('data-auto-scroll')",
+            )
+            .await
+            .expect("read data-auto-scroll");
+        assert_eq!(
+            val, "true",
+            "tailing was disabled mid-turn (scroll_pending race or \
+             deferred sentinel echo)"
+        );
+
+        // Check whether the second turn_end has landed.
+        let turn_count: i64 = h
+            .eval(
+                "document.querySelectorAll(\
+                  '[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]'\
+                ).length",
+            )
+            .await
+            .unwrap_or(0);
+        if turn_count >= 2 {
+            match grace_start {
+                None => grace_start = Some(std::time::Instant::now()),
+                Some(t) if t.elapsed() >= Duration::from_millis(300) => break,
+                Some(_) => {}
+            }
+        } else {
+            // Reset grace if somehow turn_end disappeared (shouldn't happen).
+            grace_start = None;
+        }
+
+        if poll_start.elapsed() > Duration::from_secs(10) {
+            panic!("second turn_end never landed within 10 s");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

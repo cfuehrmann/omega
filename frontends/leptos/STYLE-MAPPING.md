@@ -206,8 +206,9 @@ All dead — Leptos has no bottom panel today.
 
 A small set of `.leptos-*` rules with no SolidJS counterpart:
 
-- `.leptos-feed-sentinel` — invisible sentinel `<div>` for the auto-scroll
-  `scrollIntoView` Effect. Zero-height, no border.
+- `.leptos-feed-sentinel` — invisible zero-height sentinel `<div>` at the
+  end of the feed. Used as a DOM anchor; the auto-scroll Effect uses
+  `section.set_scroll_top(scrollHeight)` rather than `scrollIntoView`.
 - `.leptos-composer-completion`, `-item`, `-hl`, `-dir` — file-path popup
   inside `.leptos-composer-textarea-wrap`. Mirrors `.fc-*` rules.
 - `.leptos-composer-primary`, `.leptos-composer-abort`,
