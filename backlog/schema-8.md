@@ -2,6 +2,8 @@
 
 **Status:** open. Hard cutover; no backward compatibility with old `events.jsonl`.
 
+**Depends on:** [HASH-1](hash-1.md) — deterministic content-derived `ContextHash`. HASH-1 ships first; SCHEMA-8 builds on byte-stable `context.jsonl`.
+
 ## Why
 
 Today's persisted event grammar mixes two ontologies:
@@ -61,8 +63,26 @@ accumulators) but answer different questions. SCHEMA-8 changes the right
 column — and additionally restructures the source accumulators so the
 left column is provably faithful to the API order under interleaved
 thinking. Signatures and per-block structure in context.jsonl semantics
-do not change; only the assembly mechanism is replaced (with byte-equal
-output verified by golden tests).
+do not change; only the assembly mechanism is replaced (with structural
+equality verified by golden tests — see below for why structural and not
+byte-level).
+
+### Note on `ContextHash`
+
+After HASH-1 ships, `ContextHash` is a deterministic content-derived
+hash (16 lowercase hex chars, sha256 prefix of canonical-JSON of
+`(role, content)`). This means:
+
+- Two runs of the same fixture produce byte-identical `context.jsonl`
+  files. SCHEMA-8 golden tests can use **byte-equal comparison** rather
+  than projection.
+- The hash on disk verifies against the content on disk; integrity
+  checks become possible (see HASH-1 Phase 4).
+- The hash ABI depends on `Role` and `ContentBlock` field/variant
+  declaration order. SCHEMA-8 does **not** modify either type, so the
+  HASH-1 lockdown values continue to hold throughout this refactor.
+  If a phase ever needs to touch those types, stop and discuss — it is
+  a session-invalidation event.
 
 ## What changes
 
@@ -192,44 +212,62 @@ SCHEMA-8 code change)**, using deterministic mock-provider scripts. Cover:
   tool_use₃` (or similar interleave). The current main may produce an
   *incorrect* context.jsonl for this fixture — see 0b.
 
-**0b. Manually inspect each captured golden** for correctness against
-what the mock script said the API returned:
+**0b. Plausibility-check each captured golden** for correctness against
+what the mock script said the API returned. The implementation agent
+performs and documents this check in writing — the user reviews the
+written notes, not the JSON. For each fixture, write a short
+`notes.md` next to the golden file recording:
 
-- Each thinking block has a distinct, non-empty signature.
-- Block order matches the mock script's `content_block_start.index`
-  sequence.
-- No concatenation across same-kind blocks.
-- No reordering across different-kind blocks.
+- Number of thinking blocks captured = number of
+  `content_block_start { type: "thinking" }` events in the script.
+- Each thinking block's text equals the script's concatenated
+  `thinking_delta`s for that index.
+- Each thinking block's signature equals the script's `signature_delta`
+  for that index. Signatures across blocks are distinct.
+- Block order in the captured `Vec<ContentBlock>` matches the script's
+  `content_block_start.index` order.
+- No concatenation across same-kind blocks; no reordering across
+  different-kind blocks.
 
-A golden only counts as locked once it has been read and judged correct.
-A capture that just happens to reflect current behaviour is not a golden
-— it is a regression trap.
+A golden only counts as locked once its `notes.md` exists and confirms
+the above. A capture that just happens to reflect current behaviour
+without the documented check is not a golden — it is a regression trap.
 
 If the interleaved-thinking fixture's capture is incorrect on the
 pre-refactor codebase (very likely — flat accumulators reorder kinds),
 **do not lock that fixture's golden yet**. Check in the fixture script
-without a golden file, mark its replay test `#[ignore]` with a comment
-pointing to Phase 3, and proceed. The other fixtures' goldens are locked
-normally.
+and a `notes.md` describing the *expected* (correct) output, mark its
+replay test `#[ignore]` with a comment pointing to Phase 3, and
+proceed. The other fixtures' goldens are locked normally.
 
 **0c. Write a replay test harness** in `omega-agent/tests/` that:
 
 - Runs the agent against each fixture's mock-provider script.
 - Reads the resulting `.omega/sessions/<ts>/context.jsonl`.
-- Asserts byte-equality with the captured golden file in the repo.
+- Compares it **byte-equal** against the checked-in golden file.
 - Runs as part of `cargo test`.
 
-The goldens are checked in as test data alongside the fixtures. The
-refactor proceeds entirely on the develop branch — no checkout of an
-earlier commit is needed during phases 1–7. The goldens are static
-files; the comparison is always "current code output vs. checked-in
-file".
+Byte-equal comparison is sound because HASH-1 made `ContextHash`
+deterministic. The only remaining non-deterministic field is
+`ContextRecord.time` (wall-clock); the harness either freezes the
+clock during fixture replay (preferred), or scrubs the `time` field
+before comparison. Pick one consistently across all fixtures.
+
+The goldens are real `context.jsonl` files checked in under
+`omega-agent/tests/goldens/<fixture-name>/context.jsonl`. The refactor
+proceeds entirely on the develop branch — no checkout of an earlier
+commit is needed during phases 1–7.
+
+Each fixture also gets a `notes.md` next to its golden documenting what
+was verified during Phase 0b. The implementation agent owns these
+plausibility checks and writes them up; the user reviews the notes
+(rather than the JSON) and signs off.
 
 Phases 1–7 may not merge unless all golden tests pass. If a phase
-legitimately needs to change a golden (which should be rare and only
-if the *fixture script* changed), the update lands in a dedicated
-commit with a message explaining why the new output is correct, after
-manual inspection of the diff.
+legitimately needs to change a golden (rare — only if the *fixture
+script* changed), the update lands in a dedicated commit with the
+`notes.md` updated and a message explaining why the new output is
+correct.
 
 The interleaved-thinking fixture's golden is captured fresh from the
 new code at the end of Phase 3 and frozen there — see Phase 3.
@@ -448,9 +486,9 @@ this point on, all golden tests run on every commit.
     - **T3 — events ↔ context cross-check**: assert `events.jsonl`
       content-block events (in order) name the same content as
       `context.jsonl` assistant ContentBlocks (in order).
-    - **T4 — context.jsonl byte-equality** (Phase 0): replay each
-      golden fixture, assert byte-equality with the captured
-      golden.
+    - **T4 — context.jsonl byte equality** (Phase 0): replay each
+      golden fixture, assert byte-equal with the captured golden
+      (with `time` frozen or scrubbed consistently across fixtures).
     - **T5 — append-only DOM invariant**: e2e test that records DOM
       block ids before and after each event arrives during a synthetic
       turn (streaming text, multiple thinking blocks, parallel tool
@@ -462,6 +500,55 @@ this point on, all golden tests run on every commit.
 54. Refresh Leptos SSR snapshots if any reference old block shapes.
 55. Update `docs/schema.md` if it exists, or write it as part of this
     work.
+
+### Phase 8 — Mutation testing
+
+Final validation that the test suite for SCHEMA-8 actually catches
+bugs, not just exercises code. Targets the two crates where the
+refactor concentrates:
+
+- `omega-core` — streaming accumulator, content-block index handling,
+  provider event emission.
+- `omega-agent` — abandonment-closer logic, ToolCall dispatch,
+  per-block event emission, agent-state machine.
+
+**Steps:**
+
+56. After Phase 7 is green, run:
+    ```
+    cd rust && cargo mutants -p omega-core --timeout 60
+    cd rust && cargo mutants -p omega-agent --timeout 600
+    ```
+57. Triage every survivor. For each one, decide:
+    - **Real gap**: write a test that catches it, re-run.
+    - **Acceptable miss**: documented in `rust/SCHEMA-8-MUTANTS.md`
+      with explicit justification (e.g., a debug-format helper whose
+      exact output is not part of the contract).
+58. Aim for **zero unjustified survivors** in:
+    - `omega-core/src/anthropic.rs` (streaming accumulator, signal
+      emission)
+    - `omega-agent/src/agent.rs` (event emission, abandonment
+      closers, ToolCall dispatch)
+    Mutations elsewhere are noted but not chased as part of SCHEMA-8.
+59. Record results in `rust/SCHEMA-8-MUTANTS.md`: total mutants per
+    crate, caught, unviable, missed, plus per-miss justification.
+
+**Particularly high-value mutations to confirm are caught:**
+
+- Off-by-one on the streaming block index when assembling
+  `assistant_blocks` — must fail T2 (block order).
+- Swapping the order of `LlmResponseEnded` and `ToolCall` emission —
+  must fail an e2e ordering test.
+- Replacing `signature: Some(_)` with `signature: None` on a
+  successfully-completed thinking block — must fail T1 or a context
+  byte-equality golden.
+- Skipping the `LlmResponseDiscarded` emission before `LlmRetry` —
+  must fail an append-only invariant test (T5) or a retry-flow test.
+- Concatenating two thinking blocks during accumulator assembly —
+  must fail T1 (signatures distinct) and T2 (block order).
+
+If any of the above survive, the test suite has a real gap; do not
+proceed to merge until they are caught.
 
 ## UI design choices
 
@@ -496,22 +583,30 @@ or behavioural change.
 
 - **"Golden" / "snapshot" / "approval" / "characterization" test** are
   synonyms in different communities for the same pattern: capture
-  output to a file, manually verify, commit, then assert future runs
-  match the file byte-for-byte. See the discussion in the commit message
-  / PR description for context.
-- **Byte-equality, not structural equality**: `context.jsonl` is
-  content-addressed by hash. A harmless-looking change to JSON field
-  ordering or whitespace silently invalidates every existing session's
-  hash chain. Goldens compare bytes, not parsed structures.
+  output to a file, manually verify it is correct, commit, then assert
+  future runs match the file. The discipline that makes the pattern
+  work is the manual verification step; without it the test only
+  locks in current behaviour, not correctness.
+- **Byte equality**: the comparison is bytes-on-disk. After HASH-1,
+  `context.jsonl` is fully deterministic save the `time` field, which
+  is either frozen (preferred) or scrubbed before comparison.
 - **"Before" baseline = develop tip prior to any SCHEMA-8 commit**, not
-  a different branch. Phase 0 is purely additive on develop.
+  a different branch. Phase 0 is purely additive on develop, on top
+  of HASH-1.
+- **Goldens are checked-in real `context.jsonl` files** plus a
+  `notes.md` per fixture documenting the Phase 0b plausibility check.
+  Reviewers read the `notes.md`; the test compares bytes (with the
+  `time` field handled consistently across fixtures).
 
 ## Acceptance criteria
 
 - All workspace tests pass after the cutover, including the five
   defensive tests T1–T5.
 - All Phase 0 golden context.jsonl fixtures replay byte-equal under the
-  new agent.
+  new agent (with `time` frozen or scrubbed consistently).
+- `cargo mutants -p omega-agent` and `cargo mutants -p omega-core`
+  report zero unjustified survivors in the streaming accumulator and
+  event-emission paths. Results recorded in `rust/SCHEMA-8-MUTANTS.md`.
 - `events.jsonl` of a fresh session contains no `LlmResponse`,
   `Compacted`, `text_fragment`, `thinking_fragment` strings.
 - `events.jsonl` of a non-interleaved streaming response contains, in
