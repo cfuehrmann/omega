@@ -117,7 +117,9 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
             "ToolResult",
             "UserMessage",
             "LlmCall",
+            "LlmResponseStarted",
             "LlmResponse",
+            "LlmResponseEnded",
             "TurnEnd",
         ],
         "dangling-repair sequence diverged"
@@ -314,10 +316,13 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
         vec![
             "UserMessage",
             "LlmCall",
+            "LlmResponseStarted",
             "LlmError",
             "UserMessage",
             "LlmCall",
+            "LlmResponseStarted",
             "LlmResponse",
+            "LlmResponseEnded",
             "TurnEnd",
         ],
         "nudge sequence diverged"

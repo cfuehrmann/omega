@@ -241,6 +241,12 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::PauseRequested(_) => "PauseRequested",
                 OmegaEvent::TurnPaused(_) => "TurnPaused",
                 OmegaEvent::TurnContinued(_) => "TurnContinued",
+                OmegaEvent::LlmResponseStarted(_) => "LlmResponseStarted",
+                OmegaEvent::LlmResponseEnded(_) => "LlmResponseEnded",
+                OmegaEvent::LlmResponseDiscarded(_) => "LlmResponseDiscarded",
+                OmegaEvent::TextBlock(_) => "TextBlock",
+                OmegaEvent::ThinkingBlock(_) => "ThinkingBlock",
+                OmegaEvent::ToolUseBlock(_) => "ToolUseBlock",
                 _ => "OtherEvent",
             },
         })

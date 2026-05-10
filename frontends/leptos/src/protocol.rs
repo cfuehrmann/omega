@@ -39,14 +39,19 @@
 //! - 22 [`omega_types::OmegaEvent`] tags forwarded via `Item`. The
 //!   `agent_error` event tag merges into the envelope variant via the
 //!   payload-disambiguation trick above, so 21 dedicated event variants
-//!   appear here.
+//!   appear here.  SCHEMA-8 Phase 3 commit 3b adds 6 more —
+//!   `llm_response_started`, `llm_response_ended`,
+//!   `llm_response_discarded`, `text_block`, `thinking_block`,
+//!   `tool_use_block` — bringing the total to 27 event variants.
 
 use omega_types::events::{
-    CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
-    LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent,
-    ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
-    ToolCallEvent, ToolResultEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
-    TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEndedEvent,
+    LlmResponseEvent, LlmResponseDiscardedEvent, LlmResponseStartedEvent, LlmRetryEvent,
+    ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
+    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
+    TurnPausedEvent, UserMessageEvent,
 };
 use omega_types::events::AgentErrorEvent;
 use omega_types::OmegaEvent;
@@ -206,6 +211,22 @@ pub enum WsMessage {
     PauseRequested(PauseRequestedEvent),
     TurnPaused(TurnPausedEvent),
     TurnContinued(TurnContinuedEvent),
+
+    // --- SCHEMA-8 additive event variants (Phase 3 commit 3b) --------------
+    // These coexist on the wire with their legacy counterparts
+    // (`LlmResponse` / `Compacted`) until the SCHEMA-8 cutover removes
+    // the legacy variants.  The leptos UI accepts them so wire
+    // deserialisation succeeds; Phase 4 wires up proper rendering
+    // (block coalescing, partial-block markers, discarded-stream
+    // styling).  Today they're forwarded to `events.push(ev)` as-is
+    // and rendered by `feed.rs`'s minimal stubs.
+    LlmResponseStarted(LlmResponseStartedEvent),
+    LlmResponseEnded(LlmResponseEndedEvent),
+    LlmResponseDiscarded(LlmResponseDiscardedEvent),
+    TextBlock(TextBlockEvent),
+    ThinkingBlock(ThinkingBlockEvent),
+    ToolUseBlock(ToolUseBlockEvent),
+
     /// A `Reset` or `ResumeSession` frame was rejected because the
     /// working tree has uncommitted git changes and `allow_dirty` was
     /// not set.  The previous active session (if any) is untouched.
@@ -261,6 +282,13 @@ impl WsMessage {
             Self::PauseRequested(e) => OmegaEvent::PauseRequested(e),
             Self::TurnPaused(e) => OmegaEvent::TurnPaused(e),
             Self::TurnContinued(e) => OmegaEvent::TurnContinued(e),
+            // SCHEMA-8 additive variants (Phase 3 commit 3b).
+            Self::LlmResponseStarted(e) => OmegaEvent::LlmResponseStarted(e),
+            Self::LlmResponseEnded(e) => OmegaEvent::LlmResponseEnded(e),
+            Self::LlmResponseDiscarded(e) => OmegaEvent::LlmResponseDiscarded(e),
+            Self::TextBlock(e) => OmegaEvent::TextBlock(e),
+            Self::ThinkingBlock(e) => OmegaEvent::ThinkingBlock(e),
+            Self::ToolUseBlock(e) => OmegaEvent::ToolUseBlock(e),
         })
     }
 }

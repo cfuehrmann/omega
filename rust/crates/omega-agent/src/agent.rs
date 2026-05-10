@@ -33,10 +33,11 @@ use omega_core::{
 };
 use omega_types::StreamSignal;
 use omega_types::events::{
-    AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEvent,
-    ModelChangedEvent, ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent,
-    SessionStartedEvent, ToolCallEvent, ToolResultEvent, TurnContinuedEvent, TurnEndEvent,
-    TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEndedEvent,
+    LlmResponseEvent, LlmResponseStartedEvent, ModelChangedEvent, ResumingSessionEvent,
+    ServerStartedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent,
+    TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
@@ -805,13 +806,39 @@ impl Agent {
                 let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
                 let mut llm_response: Option<LlmResponseEvent> = None;
                 let mut stream_error: Option<LlmError> = None;
+                // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
+                // each provider stream.  Cleared on `LlmRetry` mid-stream
+                // so the retried stream gets its own opener; cleared
+                // again after `LlmResponseEnded` so the next iteration's
+                // first signal triggers a new opener.
+                let mut response_started = false;
 
                 while let Some(item) = provider_stream.next().await {
                     if cancel.is_cancelled() {
                         break;
                     }
+
+                    // SCHEMA-8 Phase 3 commit 3b: emit `LlmResponseStarted`
+                    // on the first item of a freshly-started provider
+                    // stream.  Errors don't open a stream — the closer
+                    // for an error path is `LlmResponseDiscarded`
+                    // (commit 3d), and we need an opener for that to
+                    // close.  So include `Err(_)` too.
+                    if !response_started {
+                        response_started = true;
+                        let started = OmegaEvent::LlmResponseStarted(
+                            LlmResponseStartedEvent { time: now_iso() },
+                        );
+                        let _ = self.event_store.append(&started).await;
+                        yield AgentItem::event(started);
+                    }
+
                     match item {
                         Ok(AgentItem::Signal(sig)) => {
+                            // Block events to emit after the inner match
+                            // completes its accumulator updates.  Used by
+                            // the `*BlockComplete` arms below.
+                            let mut block_event: Option<OmegaEvent> = None;
                             let forward = match &sig {
                                 StreamSignal::Text { index, text } => {
                                     text_buf.push_str(text);
@@ -826,18 +853,33 @@ impl Agent {
                                 StreamSignal::ThinkingBlockComplete { index, signature } => {
                                     let thinking = std::mem::take(&mut current_thinking);
                                     completed_thinking_blocks
-                                        .push((thinking, signature.clone()));
+                                        .push((thinking.clone(), signature.clone()));
                                     seal_thinking_slot(&mut slots, *index, signature.clone());
+                                    block_event = Some(OmegaEvent::ThinkingBlock(
+                                        ThinkingBlockEvent {
+                                            time: now_iso(),
+                                            thinking,
+                                            signature: Some(signature.clone()),
+                                            partial: false,
+                                        },
+                                    ));
                                     false // internal signal, not forwarded to UI
                                 }
-                                StreamSignal::TextBlockComplete { index, .. } => {
+                                StreamSignal::TextBlockComplete { index, text } => {
                                     // SCHEMA-8 Phase 2: indexed text
                                     // delivery; the agent's current
                                     // accumulator-based reconstruction
                                     // (`text_buf`) still wins.  Phase 3
-                                    // routes by index via `slots` and
-                                    // drops `text_buf` in commit 3e.
+                                    // commit 3e routes by index via
+                                    // `slots` and drops `text_buf`.
                                     seal_text_slot(&mut slots, *index);
+                                    block_event = Some(OmegaEvent::TextBlock(
+                                        TextBlockEvent {
+                                            time: now_iso(),
+                                            text: text.clone(),
+                                            partial: false,
+                                        },
+                                    ));
                                     false
                                 }
                                 StreamSignal::ToolUseBlockComplete {
@@ -862,9 +904,22 @@ impl Agent {
                                         name.clone(),
                                         input.clone(),
                                     );
+                                    block_event = Some(OmegaEvent::ToolUseBlock(
+                                        ToolUseBlockEvent {
+                                            time: now_iso(),
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            input: input.clone(),
+                                            partial: false,
+                                        },
+                                    ));
                                     false
                                 }
                             };
+                            if let Some(be) = block_event {
+                                let _ = self.event_store.append(&be).await;
+                                yield AgentItem::event(be);
+                            }
                             if forward {
                                 yield AgentItem::Signal(sig);
                             }
@@ -889,6 +944,10 @@ impl Agent {
                                     current_thinking.clear();
                                     completed_thinking_blocks.clear();
                                     slots.clear();
+                                    // SCHEMA-8 Phase 3 commit 3b: the
+                                    // retried stream gets its own
+                                    // `LlmResponseStarted` opener.
+                                    response_started = false;
                                     let ev = OmegaEvent::LlmRetry(retry);
                                     let _ = self.event_store.append(&ev).await;
                                     yield AgentItem::event(ev);
@@ -1021,6 +1080,29 @@ impl Agent {
                 };
 
                 // --- Build + persist the assistant context record ---------
+                // SCHEMA-8 Phase 3 band-aid: snapshot text/thinking BEFORE
+                // assistant_blocks assembly drains them, so we can repopulate
+                // the legacy `LlmResponse.text` / `.thinking` fields for the
+                // frontend until Phase 4. Removed in commit 3e.
+                let bandaid_text = if text_buf.is_empty() {
+                    None
+                } else {
+                    Some(text_buf.clone())
+                };
+                let bandaid_thinking = {
+                    let mut parts: Vec<String> = completed_thinking_blocks
+                        .iter()
+                        .map(|(t, _)| t.clone())
+                        .collect();
+                    if !current_thinking.is_empty() {
+                        parts.push(current_thinking.clone());
+                    }
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join("\n\n"))
+                    }
+                };
                 let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
                 for (thinking, signature) in completed_thinking_blocks.drain(..) {
                     assistant_blocks.push(ContentBlock::Thinking {
@@ -1070,9 +1152,29 @@ impl Agent {
                 tot_cache_creation += lr.usage.cache_creation_input_tokens.unwrap_or(0);
                 tot_cache_read += lr.usage.cache_read_input_tokens.unwrap_or(0);
                 let stop_reason = lr.stop_reason.clone();
+                // SCHEMA-8 Phase 3 commit 3b: build the additive
+                // `LlmResponseEnded` event before moving `lr` into the
+                // legacy `LlmResponse` event so both can be emitted.
+                // Phase 4 removes the legacy emission; until then both
+                // are on the wire and the frontend prefers whichever
+                // it has wired up.
+                let ended_ev = OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+                    time: now_iso(),
+                    stop_reason: lr.stop_reason.clone(),
+                    cleared_tool_uses: lr.cleared_tool_uses,
+                    cleared_input_tokens: lr.cleared_input_tokens,
+                    usage: lr.usage.clone(),
+                    context_hash: lr.context_hash.clone(),
+                    response_summary: lr.response_summary.clone(),
+                });
+                // SCHEMA-8 Phase 3 band-aid: see snapshot above.
+                lr.text = bandaid_text;
+                lr.thinking = bandaid_thinking;
                 let response_ev = OmegaEvent::LlmResponse(lr);
                 let _ = self.event_store.append(&response_ev).await;
                 yield AgentItem::event(response_ev);
+                let _ = self.event_store.append(&ended_ev).await;
+                yield AgentItem::event(ended_ev);
 
                 // --- Tool dispatch ----------------------------------------
                 if stop_reason == "tool_use" && !tool_uses.is_empty() {
@@ -1456,13 +1558,25 @@ impl Agent {
             let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
             let mut llm_response: Option<LlmResponseEvent> = None;
             let mut stream_error: Option<LlmError> = None;
+            // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
+            // each provider stream (same pattern as `send_message`).
+            let mut response_started = false;
 
             while let Some(item) = provider_stream.next().await {
                 if cancel.is_cancelled() {
                     break;
                 }
+                if !response_started {
+                    response_started = true;
+                    let started = OmegaEvent::LlmResponseStarted(
+                        LlmResponseStartedEvent { time: now_iso() },
+                    );
+                    let _ = self.event_store.append(&started).await;
+                    yield AgentItem::event(started);
+                }
                 match item {
                     Ok(AgentItem::Signal(sig)) => {
+                        let mut block_event: Option<OmegaEvent> = None;
                         let forward = match &sig {
                             StreamSignal::Text { index, text } => {
                                 text_buf.push_str(text);
@@ -1477,11 +1591,19 @@ impl Agent {
                             StreamSignal::ThinkingBlockComplete { index, signature } => {
                                 let thinking = std::mem::take(&mut current_thinking);
                                 completed_thinking_blocks
-                                    .push((thinking, signature.clone()));
+                                    .push((thinking.clone(), signature.clone()));
                                 seal_thinking_slot(&mut slots, *index, signature.clone());
+                                block_event = Some(OmegaEvent::ThinkingBlock(
+                                    ThinkingBlockEvent {
+                                        time: now_iso(),
+                                        thinking,
+                                        signature: Some(signature.clone()),
+                                        partial: false,
+                                    },
+                                ));
                                 false
                             }
-                            StreamSignal::TextBlockComplete { index, .. } => {
+                            StreamSignal::TextBlockComplete { index, text } => {
                                 // SCHEMA-8 Phase 2/3a: indexed completion
                                 // signal.  This call is the
                                 // resumption-summary one-off — no
@@ -1489,6 +1611,13 @@ impl Agent {
                                 // accumulator-based text path still wins
                                 // until commit 3e.
                                 seal_text_slot(&mut slots, *index);
+                                block_event = Some(OmegaEvent::TextBlock(
+                                    TextBlockEvent {
+                                        time: now_iso(),
+                                        text: text.clone(),
+                                        partial: false,
+                                    },
+                                ));
                                 false
                             }
                             StreamSignal::ToolUseBlockComplete { index, id, name, input } => {
@@ -1503,9 +1632,22 @@ impl Agent {
                                     name.clone(),
                                     input.clone(),
                                 );
+                                block_event = Some(OmegaEvent::ToolUseBlock(
+                                    ToolUseBlockEvent {
+                                        time: now_iso(),
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                        input: input.clone(),
+                                        partial: false,
+                                    },
+                                ));
                                 false
                             }
                         };
+                        if let Some(be) = block_event {
+                            let _ = self.event_store.append(&be).await;
+                            yield AgentItem::event(be);
+                        }
                         if forward {
                             yield AgentItem::Signal(sig);
                         }
@@ -1521,6 +1663,9 @@ impl Agent {
                                 current_thinking.clear();
                                 completed_thinking_blocks.clear();
                                 slots.clear();
+                                // SCHEMA-8 Phase 3 commit 3b: retried
+                                // stream gets its own opener.
+                                response_started = false;
                                 let ev = OmegaEvent::LlmRetry(retry);
                                 let _ = self.event_store.append(&ev).await;
                                 yield AgentItem::event(ev);
@@ -1580,6 +1725,24 @@ impl Agent {
             // -----------------------------------------------------------------
             // Step 9: persist the assistant context record.
             // -----------------------------------------------------------------
+            // SCHEMA-8 Phase 3 band-aid: snapshot text/thinking BEFORE
+            // assistant_blocks assembly drains them, so we can repopulate
+            // the legacy `LlmResponse.text` / `.thinking` fields for the
+            // frontend until Phase 4. Removed in commit 3e.
+            let bandaid_thinking_resume = {
+                let mut parts: Vec<String> = completed_thinking_blocks
+                    .iter()
+                    .map(|(t, _)| t.clone())
+                    .collect();
+                if !current_thinking.is_empty() {
+                    parts.push(current_thinking.clone());
+                }
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join("\n\n"))
+                }
+            };
             let assembled_text = std::mem::take(&mut text_buf);
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
             for (thinking, signature) in completed_thinking_blocks.drain(..) {
@@ -1614,9 +1777,27 @@ impl Agent {
             // Step 10: emit LlmResponse with hash filled.
             // -----------------------------------------------------------------
             lr.context_hash = assistant_hash.as_ref().to_owned();
+            // SCHEMA-8 Phase 3 commit 3b: build the additive
+            // `LlmResponseEnded` event before moving `lr`.
+            let ended_ev = OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+                time: now_iso(),
+                stop_reason: lr.stop_reason.clone(),
+                cleared_tool_uses: lr.cleared_tool_uses,
+                cleared_input_tokens: lr.cleared_input_tokens,
+                usage: lr.usage.clone(),
+                context_hash: lr.context_hash.clone(),
+                response_summary: lr.response_summary.clone(),
+            });
+            // SCHEMA-8 Phase 3 band-aid: see snapshot above.
+            if !assembled_text.is_empty() {
+                lr.text = Some(assembled_text.clone());
+            }
+            lr.thinking = bandaid_thinking_resume;
             let response_ev = OmegaEvent::LlmResponse(lr);
             let _ = self.event_store.append(&response_ev).await;
             yield AgentItem::event(response_ev);
+            let _ = self.event_store.append(&ended_ev).await;
+            yield AgentItem::event(ended_ev);
 
             // -----------------------------------------------------------------
             // Step 11: extract summary, seed history, emit SessionResumed.
