@@ -7,7 +7,9 @@
 //     → click ↓   → tailing (button gone, new events follow sentinel)
 //
 // Observable surface: `data-auto-scroll` on `[data-testid="leptos-feed"]`
-// and `[data-testid="scroll-to-bottom"]`.  No pixel-position assertions.
+// and `[data-testid="scroll-to-bottom"]`.  No pixel-position assertions
+// except in `scroll_lands_at_bottom_after_copy_buttons` which explicitly
+// measures the scroll gap to pin the rAF-deferred scroll fix.
 
 #![allow(
     clippy::expect_used,
@@ -247,5 +249,80 @@ async fn scroll_tailing() {
     assert!(
         !btn_final,
         "scroll-to-bottom button should remain absent while tailing"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// scroll_lands_at_bottom_after_copy_buttons
+// ---------------------------------------------------------------------------
+
+/// Regression test for the rAF-deferred auto-scroll fix.
+///
+/// `js_add_copy_buttons` (called from `MarkdownBody`'s post-mount Effect)
+/// appends a `<button class="code-copy-btn">` to every `<pre>` in the
+/// rendered markdown, increasing `scrollHeight` *after* the naive
+/// synchronous scroll would have fired.  The rAF-deferred scroll in
+/// `ConversationFeed` must read `scrollHeight` only after all child Effects
+/// have committed their DOM mutations.
+///
+/// **Red path** (without the rAF fix): the auto-scroll Effect reads
+/// `scrollHeight` before copy buttons are injected; the scroll lands several
+/// tens of pixels short of the true bottom, so `wait_for_feed_at_bottom`
+/// times out and the test fails.
+///
+/// **Green path** (with the rAF fix): the rAF callback fires after all
+/// synchronous Effects, sees the final `scrollHeight`, and the gap is < 3 px.
+#[tokio::test]
+#[ignore = "browser"]
+async fn scroll_lands_at_bottom_after_copy_buttons() {
+    let h = TestHarness::launch().await.expect("launch");
+    h.reset_calls().await.expect("reset");
+
+    // 30 filler lines overflow the viewport; five fenced code blocks each
+    // produce one copy button (~30 px each) via js_add_copy_buttons — that’s
+    // ~150 px of height added after the naive scroll would have been set.
+    let filler: String = (0..30)
+        .map(|i| format!("Filler line {i} — padding so the feed overflows the viewport.\n"))
+        .collect();
+    let code_blocks: String = ["rust", "python", "javascript", "bash", "go"]
+        .iter()
+        .enumerate()
+        .map(|(i, lang)| format!("\n```{lang}\nfn example_{i}() {{ /* {lang} */ }}\n```\n"))
+        .collect();
+    let text = format!("{filler}\nCode blocks (each adds a copy button):\n{code_blocks}");
+
+    h.load_script(vec![MockResponse::Text {
+        text,
+        input_tokens: 20,
+        output_tokens: 80,
+    }])
+    .await
+    .expect("load script");
+
+    h.new_session().await.expect("new session");
+
+    send_message(&h, "show me some code").await;
+
+    // Wait for all events to persist, including turn_end.
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
+        1,
+        T_TURN,
+    )
+    .await
+    .expect("turn_end never landed");
+
+    // Wait for copy buttons — proof that js_add_copy_buttons has run and
+    // expanded scrollHeight beyond the pre-enhancement value.
+    h.wait_for_selector("[data-testid=\"code-copy-btn\"]", T)
+        .await
+        .expect("copy buttons should appear after markdown rendering");
+
+    // The feed must be scrolled to the physical bottom (gap < 3 px).
+    // Without the rAF fix, the naive scroll targets the pre-copy-button
+    // scrollHeight, leaving a gap of ~150 px that never closes.
+    h.wait_for_feed_at_bottom(3.0, T).await.expect(
+        "feed should be at the true bottom after copy-button injection \
+         (rAF-deferred scroll fix)",
     );
 }

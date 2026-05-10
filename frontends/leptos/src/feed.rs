@@ -152,13 +152,30 @@ pub fn ConversationFeed() -> impl IntoView {
     // of the effect's dependency set so an `on:scroll`-induced flip
     // doesn't itself trigger a scroll-into-view.
     //
-    // We use `set_scroll_top(scroll_height)` instead of
-    // `sentinel.scroll_into_view()` to keep the scroll synchronous
-    // (value is clamped by the browser to the legal maximum).
-    // We also stamp `last_prog_scroll_ts` so the on_scroll handler
-    // can suppress the deferred scroll event that Chromium 148+ fires
-    // after new content has already been appended (see comment above).
+    // The actual scroll is deferred by one animation frame (rAF) so
+    // that all synchronous Leptos Effects — including each EventBlock's
+    // MarkdownBody post-mount Effect that calls enhance_md_body /
+    // js_add_copy_buttons and injects copy-button DOM nodes — have
+    // committed their mutations before we read scrollHeight.  Without
+    // this deferral, scrollHeight is stale (pre-enhancement) and the
+    // most recent event ends up partially clipped at the bottom.
+    //
+    // The rAF callback re-checks auto_scroll in case the user scrolled
+    // up in the one-frame gap, and cancels any stale pending rAF when a
+    // newer content update arrives before the previous frame fires.
+    //
+    // We use `set_scroll_top(scroll_height)` rather than
+    // `sentinel.scroll_into_view()` (value is clamped to legal max).
+    // We stamp `prog_state` so the on_scroll handler can suppress the
+    // deferred scroll echo that Chromium 148+ fires after set_scroll_top.
     let prog_state_eff = Rc::clone(&prog_state);
+    // Tracks any pending rAF id so we can cancel it on the next update.
+    // Only needed on wasm32; declared under cfg so the host build sees no
+    // unused-variable warning.
+    #[cfg(target_arch = "wasm32")]
+    let raf_id: Rc<Cell<Option<i32>>> = Rc::new(Cell::new(None));
+    #[cfg(target_arch = "wasm32")]
+    let raf_id_eff = Rc::clone(&raf_id);
     Effect::new(move |_| {
         let _ = store.events.with(Vec::len);
         let _ = store.streaming_text.with(String::len);
@@ -166,6 +183,56 @@ pub fn ConversationFeed() -> impl IntoView {
         if !auto_scroll.get_untracked() {
             return;
         }
+
+        // ── wasm32: defer one frame so all child Effects finish first ──
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::closure::Closure;
+            use wasm_bindgen::JsCast as _;
+
+            // Cancel stale rAF from a previous update that hasn't fired yet.
+            if let (Some(id), Some(win)) = (raf_id_eff.get(), web_sys::window()) {
+                let _ = win.cancel_animation_frame(id);
+                raf_id_eff.set(None);
+            }
+
+            let prog_clone  = Rc::clone(&prog_state_eff);
+            let raf_id_cb   = Rc::clone(&raf_id_eff);
+            // scroll_ref and auto_scroll are Copy + 'static — captured by copy.
+            let cb = Closure::once(move || {
+                raf_id_cb.set(None);
+                // Re-check: user may have scrolled up in the one-frame gap.
+                if !auto_scroll.get_untracked() {
+                    return;
+                }
+                if let Some(section) = scroll_ref.get() {
+                    let sh = section.scroll_height();
+                    prog_clone.set((now_ms(), sh));
+                    section.set_scroll_top(sh);
+                }
+            });
+
+            match web_sys::window()
+                .and_then(|win| win.request_animation_frame(cb.as_ref().unchecked_ref()).ok())
+            {
+                Some(id) => {
+                    raf_id_eff.set(Some(id));
+                    cb.forget(); // JS owns the callback until it fires
+                }
+                None => {
+                    // rAF unavailable: fall back to immediate scroll.
+                    drop(cb);
+                    if let Some(section) = scroll_ref.get() {
+                        let sh = section.scroll_height();
+                        prog_state_eff.set((now_ms(), sh));
+                        section.set_scroll_top(sh);
+                    }
+                }
+            }
+        }
+
+        // ── non-wasm (host tests): scroll immediately, no rAF ──
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(section) = scroll_ref.get() {
             let sh = section.scroll_height();
             prog_state_eff.set((now_ms(), sh));

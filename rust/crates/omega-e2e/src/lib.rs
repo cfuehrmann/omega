@@ -258,6 +258,41 @@ impl TestHarness {
         }
     }
 
+    /// Poll until `scrollHeight − scrollTop − clientHeight < threshold_px` for
+    /// `[data-testid="leptos-feed"]`, or until `timeout` elapses.
+    ///
+    /// Use this to verify the rAF-deferred auto-scroll landed at the true
+    /// physical bottom — not a pre-enhancement stale value.
+    pub async fn wait_for_feed_at_bottom(
+        &self,
+        threshold_px: f64,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let gap: f64 = self
+                .eval(
+                    "(() => { \
+                       const el = document.querySelector('[data-testid=\"leptos-feed\"]'); \
+                       if (!el) return 9999.0; \
+                       return el.scrollHeight - el.scrollTop - el.clientHeight; \
+                     })()",
+                )
+                .await
+                .unwrap_or(9999.0);
+            if gap < threshold_px {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "timed out: feed not at bottom; gap={gap:.1}px \
+                     (threshold={threshold_px}px)"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }
+
     /// Wait until `document.querySelector(sel)` returns null.
     pub async fn wait_for_detached(&self, sel: &str, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
