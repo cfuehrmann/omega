@@ -252,6 +252,20 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming_text.set(String::new());
             store.streaming_thinking.set(String::new());
         }
+        // SCHEMA-8 Phase 4a — `LlmResponseStarted` opens a fresh
+        // response container.  The streaming buffers are global (one
+        // text + one thinking accumulator across the whole turn) and
+        // are cleared by `UserMessage` already at turn-start; clearing
+        // again here is defensive against a leftover fragment from a
+        // discarded prior response inside the same turn (the agent
+        // already emits partial-flagged block events + a
+        // `LlmResponseDiscarded` before retrying, which will drain the
+        // buffers in Phase 4b/4c, but this belt-and-braces clear makes
+        // the invariant explicit at the start of every response).
+        OmegaEvent::LlmResponseStarted(_) => {
+            store.streaming_text.set(String::new());
+            store.streaming_thinking.set(String::new());
+        }
         // Mirror server-side model/effort changes into the cached
         // `session_info` so reactive consumers (the composer, the
         // debug view) see the latest value without a fresh
@@ -289,12 +303,12 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
+    use leptos::reactive::owner::Owner;
     use omega_types::events::{
-        AgentErrorEvent, EffortChangedEvent, LlmResponseEvent, LlmResponseUsage,
-        ModelChangedEvent, PauseRequestedEvent, TurnContinuedEvent, TurnEndEvent,
+        AgentErrorEvent, EffortChangedEvent, LlmResponseEvent, LlmResponseStartedEvent,
+        LlmResponseUsage, ModelChangedEvent, PauseRequestedEvent, TurnContinuedEvent, TurnEndEvent,
         TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
-    use leptos::reactive::owner::Owner;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     /// Run `f` inside a fresh leptos `Owner`. Required because
@@ -364,7 +378,9 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             // Pre-populate accumulators so the reset is observable.
-            s.apply(WsMessage::Text { text: "leftover".into() });
+            s.apply(WsMessage::Text {
+                text: "leftover".into(),
+            });
             s.apply(WsMessage::Thinking { text: "x".into() });
 
             let frame = WsMessage::History(crate::protocol::HistoryPayload {
@@ -436,10 +452,12 @@ mod tests {
     fn event_agent_error_appends_to_events_not_transport_errors() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::AgentError(AgentErrorPayload::Event(AgentErrorEvent {
-                time: "2024-01-01T00:00:00.000Z".into(),
-                error: "oops".into(),
-            })));
+            s.apply(WsMessage::AgentError(AgentErrorPayload::Event(
+                AgentErrorEvent {
+                    time: "2024-01-01T00:00:00.000Z".into(),
+                    error: "oops".into(),
+                },
+            )));
             let snap = s.snapshot();
             assert_eq!(snap.events.len(), 1);
             assert!(matches!(snap.events[0], OmegaEvent::AgentError(_)));
@@ -453,8 +471,12 @@ mod tests {
     fn text_signals_concatenate_into_streaming_text() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::Text { text: "Hello".into() });
-            s.apply(WsMessage::Text { text: ", world".into() });
+            s.apply(WsMessage::Text {
+                text: "Hello".into(),
+            });
+            s.apply(WsMessage::Text {
+                text: ", world".into(),
+            });
             assert_eq!(s.snapshot().streaming_text, "Hello, world");
         });
     }
@@ -474,7 +496,9 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(WsMessage::Thinking { text: "x".into() });
-            s.apply(WsMessage::ThinkingBlockComplete { signature: "sig".into() });
+            s.apply(WsMessage::ThinkingBlockComplete {
+                signature: "sig".into(),
+            });
             assert!(s.snapshot().streaming_thinking.is_empty());
         });
     }
@@ -498,7 +522,9 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text { text: "partial".into() });
+            s.apply(WsMessage::Text {
+                text: "partial".into(),
+            });
             s.apply(turn_end());
             let snap = s.snapshot();
             assert_eq!(snap.turn_state, TurnState::Idle);
@@ -565,8 +591,12 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text { text: "partial".into() });
-            s.apply(WsMessage::Thinking { text: "musing".into() });
+            s.apply(WsMessage::Text {
+                text: "partial".into(),
+            });
+            s.apply(WsMessage::Thinking {
+                text: "musing".into(),
+            });
             assert!(!s.snapshot().streaming_text.is_empty());
             assert!(!s.snapshot().streaming_thinking.is_empty());
             s.apply(WsMessage::LlmResponse(LlmResponseEvent {
@@ -594,6 +624,46 @@ mod tests {
         });
     }
 
+    // ---- SCHEMA-8 Phase 4a: LlmResponseStarted opens a fresh container --
+
+    #[wasm_bindgen_test]
+    fn llm_response_started_clears_streaming_accumulators() {
+        // The opener event has no visible UI change yet (Phase 4b/4c).
+        // What it MUST do at the store level is reset any leftover
+        // streaming-buffer content from a discarded prior response
+        // within the same turn, so block-event content for the new
+        // response can stream into a clean buffer.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            // Simulate a leftover fragment from a previous discarded
+            // response (deltas streamed in, the response was
+            // abandoned by retry, and the partial-block events have
+            // already been emitted but the deltas haven't been
+            // cleared on this code path yet).
+            s.apply(WsMessage::Text {
+                text: "leftover".into(),
+            });
+            s.apply(WsMessage::Thinking {
+                text: "stale".into(),
+            });
+            assert!(!s.snapshot().streaming_text.is_empty());
+            assert!(!s.snapshot().streaming_thinking.is_empty());
+            s.apply(WsMessage::LlmResponseStarted(LlmResponseStartedEvent {
+                time: "t".into(),
+            }));
+            let snap = s.snapshot();
+            assert!(snap.streaming_text.is_empty());
+            assert!(snap.streaming_thinking.is_empty());
+            // The opener event itself appended to the events list
+            // (via the catch-all in `apply`, unchanged).
+            assert!(matches!(
+                snap.events.last().unwrap(),
+                OmegaEvent::LlmResponseStarted(_)
+            ));
+        });
+    }
+
     // ---- model_changed / effort_changed mirror to session_info -----------
 
     #[wasm_bindgen_test]
@@ -606,10 +676,7 @@ mod tests {
                 time: "t".into(),
                 model: "claude-opus-4-7".into(),
             }));
-            assert_eq!(
-                s.snapshot().session_info.unwrap().model,
-                "claude-opus-4-7"
-            );
+            assert_eq!(s.snapshot().session_info.unwrap().model, "claude-opus-4-7");
         });
     }
 

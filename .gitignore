@@ -36,6 +36,9 @@ test-results/
 # test output logs (e.g. playwright run logs written by just test-browser-log)
 test-output/
 
+# Agent scratch notes (not committed)
+.notes/
+
 # logs
 logs
 *.log
