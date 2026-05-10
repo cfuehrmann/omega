@@ -1,5 +1,6 @@
 ---
 source: crates/omega-core/tests/anthropic.rs
+assertion_line: 462
 expression: project(&items)
 ---
 [
@@ -24,15 +25,19 @@ expression: project(&items)
     "type": "text"
   },
   {
-    "contextHash": "",
+    "index": 1,
+    "text": "Hello, world!",
+    "type": "text_block_complete"
+  },
+  {
     "id": "toolu_42",
+    "index": 2,
     "input": {
       "a": 1,
       "b": 2
     },
     "name": "calc",
-    "time": "[time]",
-    "type": "tool_call"
+    "type": "tool_use_block_complete"
   },
   {
     "contextHash": "",
@@ -52,9 +57,6 @@ expression: project(&items)
       }
     },
     "stopReason": "tool_use",
-    "streamingStart": "[time]",
-    "text": "Hello, world!",
-    "thinking": "Let me think.",
     "time": "[time]",
     "type": "llm_response",
     "usage": {

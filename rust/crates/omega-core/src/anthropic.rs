@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use eventsource_stream::Eventsource;
 use futures::stream::TryStreamExt;
-use omega_types::events::{CompactedEvent, LlmResponseEvent, ToolCallEvent};
+use omega_types::events::{LlmResponseEvent, UsageIteration};
 use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -127,17 +127,16 @@ fn stream_impl(
         let mut sse = bytes.eventsource();
 
         let mut blocks: HashMap<usize, BlockAccum> = HashMap::new();
-        let mut all_text = String::new();
-        let mut all_thinking = String::new();
         let mut input_tokens: i64 = 0;
         let mut output_tokens: i64 = 0;
         let mut cache_creation: Option<i64> = None;
         let mut cache_read: Option<i64> = None;
         let mut service_tier: Option<String> = None;
         let mut stop_reason = String::from("unknown");
-        let mut streaming_start: Option<String> = None;
-        // Server-side compaction tracking (mirrors src/agent.ts:1432–1469).
-        let mut compaction_seen = false;
+        // Raw `usage` object captured from message_start / message_delta.
+        // SCHEMA-8: used to extract Anthropic's per-iteration breakdown
+        // (`iterations[]`) into `LlmResponseUsage.iterations` so the agent
+        // can detect server-side compaction without a separate event.
         let mut usage_value: serde_json::Map<String, Value> = serde_json::Map::new();
         let mut cleared_tool_uses: Option<i64> = None;
         let mut cleared_input_tokens: Option<i64> = None;
@@ -163,11 +162,14 @@ fn stream_impl(
                     msg_type = parsed.message.msg_type;
                     msg_role = parsed.message.role;
                     msg_model = parsed.message.model;
-                    // Capture the raw usage object verbatim so the
-                    // Compacted event can carry every field Anthropic
-                    // sends (e.g. `iterations[]`, `service_tier`).  The
-                    // typed parse above already proved the data is
-                    // valid JSON, so this second parse cannot fail.
+                    // Capture the raw usage object verbatim so we can
+                    // extract every field Anthropic sends (e.g.
+                    // `iterations[]`, `service_tier`) into
+                    // `LlmResponseUsage` at message_stop.  The typed
+                    // parse above already proved the data is valid
+                    // JSON, so this second parse cannot fail.
+                    //
+                    // SCHEMA-8 Phase 2: previously fed `OmegaEvent::Compacted`.
                     let raw: Value = parse_data(&ev.data)?;
                     if let Some(obj) = raw
                         .get("message")
@@ -178,10 +180,12 @@ fn stream_impl(
                     }
                 }
                 "content_block_start" => {
+                    // SCHEMA-8 Phase 2: a `Compaction` content block is
+                    // observed but no longer materialised as an event;
+                    // compaction is now signalled by the `iterations[]`
+                    // entries on `LlmResponseUsage` (extracted at
+                    // message_stop), and acted on by the agent.
                     let parsed: ContentBlockStartData = parse_data(&ev.data)?;
-                    if matches!(&parsed.content_block, ContentBlockStart::Compaction) {
-                        compaction_seen = true;
-                    }
                     if let Some(accum) = BlockAccum::from_start(parsed.content_block) {
                         blocks.insert(parsed.index, accum);
                     }
@@ -192,15 +196,10 @@ fn stream_impl(
                         match (parsed.delta, accum) {
                             (ContentBlockDelta::TextDelta { text }, BlockAccum::Text { text: t }) => {
                                 t.push_str(&text);
-                                all_text.push_str(&text);
-                                if streaming_start.is_none() {
-                                    streaming_start = Some(now_iso());
-                                }
                                 yield AgentItem::Signal(StreamSignal::Text { index: parsed.index, text });
                             }
                             (ContentBlockDelta::ThinkingDelta { thinking }, BlockAccum::Thinking { thinking: t, .. }) => {
                                 t.push_str(&thinking);
-                                all_thinking.push_str(&thinking);
                                 yield AgentItem::Signal(StreamSignal::Thinking { index: parsed.index, text: thinking });
                             }
                             (ContentBlockDelta::InputJsonDelta { partial_json }, BlockAccum::ToolUse { partial_json: pj, .. }) => {
@@ -214,12 +213,24 @@ fn stream_impl(
                     }
                 }
                 "content_block_stop" => {
+                    // SCHEMA-8 Phase 2: emit per-block completion
+                    // signals carrying the real SSE index.  The agent
+                    // owns tool dispatch (post-LlmResponse) and assistant
+                    // block reconstruction, so we no longer emit
+                    // `OmegaEvent::ToolCall` mid-stream.
                     let parsed: ContentBlockStopData = parse_data(&ev.data)?;
                     match blocks.remove(&parsed.index) {
+                        Some(BlockAccum::Text { text }) => {
+                            yield AgentItem::Signal(StreamSignal::TextBlockComplete {
+                                index: parsed.index,
+                                text,
+                            });
+                        }
                         Some(BlockAccum::Thinking { signature, .. }) => {
-                            yield AgentItem::Signal(
-                                StreamSignal::ThinkingBlockComplete { index: parsed.index, signature },
-                            );
+                            yield AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+                                index: parsed.index,
+                                signature,
+                            });
                         }
                         Some(BlockAccum::ToolUse { id, name, partial_json }) => {
                             let input: Value = if partial_json.is_empty() {
@@ -229,15 +240,14 @@ fn stream_impl(
                                     message: format!("malformed tool_use JSON: {e}"),
                                 })?
                             };
-                            yield AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
-                                time: now_iso(),
+                            yield AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
+                                index: parsed.index,
                                 id,
                                 name,
                                 input,
-                                context_hash: String::new(),
-                            }));
+                            });
                         }
-                        _ => {}
+                        None => {}
                     }
                 }
                 "message_delta" => {
@@ -252,8 +262,8 @@ fn stream_impl(
                     if parsed.usage.cache_read_input_tokens.is_some() {
                         cache_read = parsed.usage.cache_read_input_tokens;
                     }
-                    // Merge the raw usage object so the Compacted event
-                    // (if any) carries the final iteration breakdown.
+                    // Merge the raw usage object so we keep the final
+                    // iteration breakdown for `LlmResponseUsage.iterations`.
                     let raw: Value = parse_data(&ev.data)?;
                     if let Some(obj) = raw.get("usage").and_then(Value::as_object) {
                         for (k, v) in obj {
@@ -278,12 +288,12 @@ fn stream_impl(
                     }
                 }
                 "message_stop" => {
-                    if compaction_seen {
-                        yield AgentItem::event(OmegaEvent::Compacted(CompactedEvent {
-                            time: now_iso(),
-                            usage: Value::Object(usage_value.clone()),
-                        }));
-                    }
+                    // SCHEMA-8 Phase 2: no longer synthesise
+                    // `OmegaEvent::Compacted` or populate `text` /
+                    // `thinking` / `streaming_start` on `LlmResponse` —
+                    // the agent reconstructs assistant content from the
+                    // per-block completion signals (and from
+                    // `iterations[]` for compaction detection).
                     yield AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
                         time: now_iso(),
                         stop_reason: stop_reason.clone(),
@@ -295,12 +305,12 @@ fn stream_impl(
                             cache_creation_input_tokens: cache_creation,
                             cache_read_input_tokens: cache_read,
                             service_tier: service_tier.clone(),
-                            iterations: None,
+                            iterations: extract_iterations(&usage_value),
                         },
                         context_hash: String::new(),
-                        text: if all_text.is_empty() { None } else { Some(all_text.clone()) },
-                        thinking: if all_thinking.is_empty() { None } else { Some(all_thinking.clone()) },
-                        streaming_start: streaming_start.clone(),
+                        text: None,
+                        thinking: None,
+                        streaming_start: None,
                         // Mirror TS `elideAnthropicResponse`: keep all
                         // envelope fields verbatim; omit content (lives in
                         // context.jsonl).
@@ -359,6 +369,20 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Extract Anthropic's `iterations[]` array from the captured raw
+/// `usage` object into typed [`UsageIteration`] entries.  Returns
+/// `None` when the array is absent (the common path — plain turns) or
+/// when the array fails to deserialise (treated as best-effort: the
+/// agent will simply not see iteration entries it can't parse).
+///
+/// SCHEMA-8 Phase 2: this is the single source of truth for
+/// server-side compaction detection downstream — the parser no longer
+/// emits `OmegaEvent::Compacted`.
+fn extract_iterations(usage_value: &serde_json::Map<String, Value>) -> Option<Vec<UsageIteration>> {
+    let arr = usage_value.get("iterations")?.as_array()?;
+    serde_json::from_value(Value::Array(arr.clone())).ok()
 }
 
 // ---------------------------------------------------------------------------

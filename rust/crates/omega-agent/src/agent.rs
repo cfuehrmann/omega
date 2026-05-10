@@ -691,13 +691,30 @@ impl Agent {
                                         .push((thinking, signature.clone()));
                                     false // internal signal, not forwarded to UI
                                 }
-                                StreamSignal::TextBlockComplete { .. }
-                                | StreamSignal::ToolUseBlockComplete { .. } => {
-                                    // SCHEMA-8 Phase 1: variants exist but the
-                                    // agent does not yet route by index.  The
-                                    // current accumulator-based path still wins;
-                                    // these are absorbed silently until Phase 3
-                                    // wires the indexed slot machinery.
+                                StreamSignal::TextBlockComplete { .. } => {
+                                    // SCHEMA-8 Phase 2: indexed text
+                                    // delivery; the agent's current
+                                    // accumulator-based reconstruction
+                                    // (`text_buf`) still wins.  Phase 3
+                                    // routes by index via a BTreeMap of
+                                    // slots and drops `text_buf`.
+                                    false
+                                }
+                                StreamSignal::ToolUseBlockComplete {
+                                    id, name, input, ..
+                                } => {
+                                    // SCHEMA-8 Phase 2: providers no
+                                    // longer emit `OmegaEvent::ToolCall`
+                                    // mid-stream; the agent now collects
+                                    // tool uses straight off the stream
+                                    // signal and dispatches them after
+                                    // `LlmResponse` (with the proper
+                                    // assistant context_hash).
+                                    tool_uses.push((
+                                        id.clone(),
+                                        name.clone(),
+                                        input.clone(),
+                                    ));
                                     false
                                 }
                             };
@@ -1311,9 +1328,13 @@ impl Agent {
                             }
                             StreamSignal::TextBlockComplete { .. }
                             | StreamSignal::ToolUseBlockComplete { .. } => {
-                                // SCHEMA-8 Phase 1: variants exist but the
-                                // agent does not yet route by index. Absorbed
-                                // until Phase 3 wires the indexed slot machinery.
+                                // SCHEMA-8 Phase 2: indexed completion
+                                // signals.  This call is the
+                                // resumption-summary one-off — no
+                                // tools requested and the
+                                // accumulator-based text path still
+                                // wins, so both are absorbed here
+                                // until Phase 3 wires indexed slots.
                                 false
                             }
                         };

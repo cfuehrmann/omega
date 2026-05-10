@@ -685,14 +685,18 @@ async fn parse_retry_after_nonfinite_is_none() {
 // now_iso produces valid RFC3339
 // ---------------------------------------------------------------------------
 
-/// `LlmResponse.time` and `LlmResponse.streaming_start` must be valid
-/// RFC3339 timestamps, not empty strings or nonsense.
-/// Catches: `replace now_iso -> String with String::new()` and
+/// `LlmResponse.time` must be a valid RFC3339 timestamp.  Catches:
+/// `replace now_iso -> String with String::new()` and
 /// `replace now_iso -> String with "xyzzy".into()` mutants.
+///
+/// SCHEMA-8 Phase 2: `streaming_start` is no longer populated by the
+/// parser — the agent owns text-block timing now.  This test asserts
+/// it is `None` so a regression that re-introduces server-side
+/// synthesis is caught immediately.
 #[tokio::test]
 async fn response_event_time_fields_are_valid_rfc3339() {
     let server = MockServer::start().await;
-    // Include a text block so `streaming_start` is populated.
+    // Plain text response; SCHEMA-8 no longer derives `streaming_start`.
     let body = sse_body(&[
         (
             "message_start",
@@ -760,10 +764,11 @@ async fn response_event_time_fields_are_valid_rfc3339() {
     chrono::DateTime::parse_from_rfc3339(&resp.time)
         .expect("LlmResponse.time must be valid RFC3339");
 
-    if let Some(ss) = &resp.streaming_start {
-        chrono::DateTime::parse_from_rfc3339(ss)
-            .expect("LlmResponse.streaming_start must be valid RFC3339");
-    }
+    assert!(
+        resp.streaming_start.is_none(),
+        "SCHEMA-8: provider no longer synthesises streaming_start; got {:?}",
+        resp.streaming_start,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -873,17 +878,25 @@ async fn request_body_omits_context_management_when_none() {
 
 /// SSE shape with a `compaction` content block followed by a regular
 /// text block must yield, in order:
-///   1. `Signal::Text` for each text delta,
-///   2. `OmegaEvent::Compacted`,
+///   1. `Signal::Text` for each text delta of the trailing text block,
+///   2. `Signal::TextBlockComplete` for the trailing text block,
 ///   3. `OmegaEvent::LlmResponse`.
 ///
-/// Mirrors `src/agent.ts:1432–1453`.  Catches mutants that:
-///   - flip the `compaction_seen = true` assignment,
-///   - swap the order so `LlmResponse` precedes `Compacted`,
-///   - delete the `if compaction_seen` guard (would emit Compacted on
-///     every turn — counter-tested by `non_compacting_response_emits_no_compacted`).
+/// The compaction block itself produces no items — its presence is
+/// only observable via the `iterations[]` entries on
+/// `LlmResponseUsage`, which Anthropic emits in `message_delta.usage`
+/// when server-side compaction fires.
+///
+/// SCHEMA-8 Phase 2: this test used to expect a separate
+/// `OmegaEvent::Compacted` event between (1) and (3); the agent now
+/// owns compaction handling and reads it off `LlmResponseUsage`.
+/// Catches mutants that:
+///   - re-introduce a `Compacted` event from the parser,
+///   - swap the order so `LlmResponse` precedes the trailing text,
+///   - drop the trailing `TextBlockComplete` for the post-compaction
+///     text block.
 #[tokio::test]
-async fn compaction_block_yields_compacted_then_llm_response() {
+async fn compaction_block_followed_by_text_completes_normally() {
     let server = MockServer::start().await;
     let body = sse_body(&[
         (
@@ -960,24 +973,24 @@ async fn compaction_block_yields_compacted_then_llm_response() {
     let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    // Expect: Text("Hello"), Compacted, LlmResponse — in that order.
+    // Expect: Text("Hello"), TextBlockComplete(index=1, text="Hello"),
+    // LlmResponse — in that order.  No Compacted event.
     use omega_types::OmegaEvent;
     let mut iter = items.iter();
 
     match iter.next().expect("first item") {
-        AgentItem::Signal(omega_types::StreamSignal::Text { text, .. }) => {
+        AgentItem::Signal(omega_types::StreamSignal::Text { text, index }) => {
             assert_eq!(text, "Hello", "text-delta surfaces normally");
+            assert_eq!(*index, 1, "text delta carries the SSE index");
         }
         other => panic!("expected text Signal, got {other:?}"),
     }
-    match iter.next().expect("second item").as_event() {
-        Some(OmegaEvent::Compacted(c)) => {
-            assert_eq!(
-                c.usage["input_tokens"], 80_500,
-                "Compacted.usage carries input_tokens from message_start"
-            );
+    match iter.next().expect("second item") {
+        AgentItem::Signal(omega_types::StreamSignal::TextBlockComplete { index, text }) => {
+            assert_eq!(*index, 1, "TextBlockComplete carries the SSE index");
+            assert_eq!(text, "Hello", "TextBlockComplete carries the full text");
         }
-        other => panic!("expected Compacted event second, got {other:?}"),
+        other => panic!("expected TextBlockComplete signal second, got {other:?}"),
     }
     match iter.next().expect("third item").as_event() {
         Some(OmegaEvent::LlmResponse(_)) => {}
@@ -986,11 +999,19 @@ async fn compaction_block_yields_compacted_then_llm_response() {
     assert!(iter.next().is_none(), "no further items expected");
 }
 
-/// `Compacted.usage` must carry every field Anthropic sends — including
-/// nested arrays like `iterations[]` — verbatim.  Catches mutants that
-/// drop unrecognised fields when capturing usage.
+/// `LlmResponseUsage.iterations` must carry every entry Anthropic
+/// sends in the `iterations[]` array of the message-delta usage
+/// object — verbatim, including all token-count fields and the `type`
+/// discriminator.
+///
+/// SCHEMA-8 Phase 2: replaces the old
+/// `compaction_usage_carries_iterations_verbatim` assertion against
+/// `OmegaEvent::Compacted.usage["iterations"]`; iterations are now
+/// surfaced typed on `LlmResponse.usage.iterations`.  Catches mutants
+/// that drop, re-shape, or re-order the array on the way through
+/// `extract_iterations`.
 #[tokio::test]
-async fn compaction_usage_carries_iterations_verbatim() {
+async fn iterations_array_is_carried_to_llm_response_usage() {
     let server = MockServer::start().await;
     let body = sse_body(&[
         (
@@ -1050,26 +1071,31 @@ async fn compaction_usage_carries_iterations_verbatim() {
     let items = collect_ok(&provider, simple_request()).await;
 
     use omega_types::OmegaEvent;
-    let compacted = items
+    let lr = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::Compacted(c)) => Some(c),
+            Some(OmegaEvent::LlmResponse(r)) => Some(r),
             _ => None,
         })
-        .expect("Compacted event present");
+        .expect("LlmResponse event present");
 
-    // input_tokens from message_start, output_tokens from message_delta.
-    assert_eq!(compacted.usage["input_tokens"], 80_500);
-    assert_eq!(compacted.usage["output_tokens"], 350);
-    assert_eq!(compacted.usage["service_tier"], "standard");
-    let iters = compacted.usage["iterations"]
-        .as_array()
-        .expect("iterations array preserved");
+    // Anthropic-published top-level fields still ride `usage`.
+    assert_eq!(lr.usage.input_tokens, 80_500);
+    assert_eq!(lr.usage.output_tokens, 350);
+    assert_eq!(lr.usage.service_tier.as_deref(), Some("standard"));
+
+    let iters = lr
+        .usage
+        .iterations
+        .as_ref()
+        .expect("iterations array preserved on LlmResponseUsage");
     assert_eq!(iters.len(), 2);
-    assert_eq!(iters[0]["type"], "compaction");
-    assert_eq!(iters[0]["input_tokens"], 80_000);
-    assert_eq!(iters[1]["type"], "message");
-    assert_eq!(iters[1]["output_tokens"], 50);
+    assert_eq!(iters[0].iteration_type, "compaction");
+    assert_eq!(iters[0].input_tokens, 80_000);
+    assert_eq!(iters[0].output_tokens, 300);
+    assert_eq!(iters[1].iteration_type, "message");
+    assert_eq!(iters[1].input_tokens, 500);
+    assert_eq!(iters[1].output_tokens, 50);
 }
 
 /// `applied_edits` containing `clear_tool_uses_20250919` must populate
@@ -1320,11 +1346,13 @@ async fn request_body_has_three_cache_control_markers() {
     );
 }
 
-/// Plain text-only response must NOT emit a `Compacted` event.
-/// Counter-test for `compaction_block_yields_compacted_then_llm_response` —
-/// catches a mutant that hard-codes `compaction_seen = true`.
+/// Plain text-only response must NOT emit a `Compacted` event AND
+/// must report `LlmResponseUsage.iterations` as `None` — there's no
+/// compaction marker to surface.  Counter-test for
+/// `compaction_block_followed_by_text_completes_normally` and
+/// `iterations_array_is_carried_to_llm_response_usage`.
 #[tokio::test]
-async fn non_compacting_response_emits_no_compacted() {
+async fn non_compacting_response_emits_no_compaction_signal() {
     let server = MockServer::start().await;
     mount_happy(&server).await;
 
@@ -1336,15 +1364,31 @@ async fn non_compacting_response_emits_no_compacted() {
         !items
             .iter()
             .any(|i| matches!(i.as_event(), Some(OmegaEvent::Compacted(_)))),
-        "no Compacted event should appear on a plain turn"
+        "SCHEMA-8: parser no longer emits Compacted on any turn"
+    );
+
+    let lr = items
+        .iter()
+        .find_map(|i| match i.as_event() {
+            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            _ => None,
+        })
+        .expect("LlmResponse event present");
+    assert!(
+        lr.usage.iterations.is_none(),
+        "plain turn must not surface iterations: {:?}",
+        lr.usage.iterations,
     );
 }
 
-/// `Compacted.time` must be a valid RFC3339 timestamp, not an empty
-/// string or placeholder.  Catches the standard `now_iso → ""` and
-/// `now_iso → "xyzzy"` mutants on the new code path.
+/// `LlmResponse.time` must be a valid RFC3339 timestamp on a
+/// compaction-trigger turn too — catches the standard `now_iso → ""`
+/// and `now_iso → "xyzzy"` mutants on the post-compaction code path.
+///
+/// SCHEMA-8 Phase 2: replaces the old `compacted_event_time_is_valid_rfc3339`
+/// test (Compacted is no longer emitted by the parser).
 #[tokio::test]
-async fn compacted_event_time_is_valid_rfc3339() {
+async fn llm_response_time_on_compacting_turn_is_valid_rfc3339() {
     let server = MockServer::start().await;
     let body = sse_body(&[
         (
@@ -1394,14 +1438,13 @@ async fn compacted_event_time_is_valid_rfc3339() {
     let items = collect_ok(&provider, simple_request()).await;
 
     use omega_types::OmegaEvent;
-    let compacted = items
+    let lr = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::Compacted(c)) => Some(c),
+            Some(OmegaEvent::LlmResponse(r)) => Some(r),
             _ => None,
         })
-        .expect("Compacted event present");
+        .expect("LlmResponse event present on compaction turn");
 
-    chrono::DateTime::parse_from_rfc3339(&compacted.time)
-        .expect("Compacted.time must be valid RFC3339");
+    chrono::DateTime::parse_from_rfc3339(&lr.time).expect("LlmResponse.time must be valid RFC3339");
 }
