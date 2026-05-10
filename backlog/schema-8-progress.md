@@ -128,7 +128,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   Strip `all_text`/`all_thinking` accumulators.
 - `retry.rs::track_fragment` removed; agent owns abandonment now.
 
-### Phase 3 — Agent — **TODO** (the big one)
+### Phase 3 — Agent — **DONE** (2026-05-12, commits c10b72c..6e16ce9)
 - Replace flat accumulators with `BTreeMap<usize, BlockSlot>` keyed by API
   `content_block_start.index`.
 - Emit `LlmResponseStarted` on first signal.
@@ -180,7 +180,161 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 2 DONE — next: Phase 3)
+## CURRENT STATE (Phase 3 DONE — next: Phase 4)
+
+**Phase 3 complete.** Five commits on `develop`, all green on
+`just rust-gate` + the omega-e2e ignored suite:
+
+- `c10b72c` schema-8(phase-3a): introduce BTreeMap<usize, BlockSlot>
+  in parallel
+- `dd9a171` schema-8(phase-3b): emit per-block events + opener/closer
+  pair (+ leptos WsMessage mirror + frontend-compat band-aid for
+  legacy LlmResponse.text)
+- `7fd7a39` schema-8(phase-3c): detect compaction via
+  usage.iterations
+- `cd43fc3` schema-8(phase-3d): emit partial block events +
+  LlmResponseDiscarded on mid-stream abandonment
+- `6e16ce9` schema-8(phase-3e): drop flat accumulators + lock
+  interleaved-thinking golden
+
+What the agent looks like now:
+
+- `assistant_blocks` is built from `BTreeMap<usize, BlockSlot>` in
+  key order. The flat `text_buf`/`current_thinking`/
+  `completed_thinking_blocks` accumulators are gone from both
+  `send_message` and `perform_resumption`.
+- StreamSignals are the sole source of truth for text/thinking/
+  tool_use blocks coming via the wire. `OmegaEvent::ToolCall`
+  (still emitted by MockProvider scripts in goldens.rs and
+  internal.rs) continues to feed the legacy `tool_uses: Vec`,
+  which is concatenated after the slot extracts for dispatch.
+  Both legacy match arms (`OmegaEvent::ToolCall`,
+  `OmegaEvent::Compacted`) remain — deleted in Phase 6.5.
+- New events emitted: `LlmResponseStarted`, `TextBlock`,
+  `ThinkingBlock`, `ToolUseBlock`, `LlmResponseEnded`,
+  `LlmResponseDiscarded`. Legacy `LlmResponse` is still emitted
+  alongside `LlmResponseEnded` (band-aid until Phase 4 frontend
+  cutover; legacy field deleted in Phase 6.5).
+- `LlmResponse.text` / `.thinking` are repopulated post-assembly
+  from the assembled slot blocks. This is the frontend-compat
+  band-aid keeping the 11 03_markdown e2e tests green; it goes
+  away when Phase 4 wires the leptos store to TextBlock/
+  ThinkingBlock directly.
+- Compaction detection: `lr.usage.iterations` is checked for a
+  `"compaction"` entry; if present, `history.clear()` +
+  `context_hashes.clear()`. (Legacy `OmegaEvent::Compacted` handler
+  still in place for MockProvider scripts.)
+- Abandonment closers: when `LlmRetry`/`LlmError`/`TurnInterrupted`
+  arrives mid-stream, the agent emits `partial: true` block events
+  for any unsealed slot, then `LlmResponseDiscarded`, then the
+  terminal event. Slots are cleared via `std::mem::take` so the
+  next attempt starts fresh.
+- Block-event emission carries `data-block-id` material via the
+  block-id fields on the new event types (used by Phase 4/5
+  frontend and the Phase 0 T6 browser-refresh replay test).
+
+Goldens state: 7 fixtures locked, all replay byte-equal.
+  - simple_turn, thinking_blocks, parallel_tool_calls,
+    multi_thinking_tools, mid_stream_retry, compaction (Phase 0).
+  - interleaved_thinking (NEW, Phase 3e — Phase 0's deferred case).
+
+Script-side tweaks in 3e to give each block a distinct slot index
+(mechanical, no semantic change to context.jsonl):
+  - `script_thinking_blocks`: thinking@0+complete@0, thinking@1+
+    complete@1, text@2.
+  - `script_multi_thinking_tools` call1: text@1 (was text@0;
+    thinking is @0).
+  - All other scripts unchanged (single-block streams or slots
+    already cleared between blocks).
+
+Gate verification: `just rust-gate` GREEN. `cargo test -p omega-e2e
+--tests -- --ignored --test-threads=1` GREEN end-to-end (after
+re-running two `07_scroll` flakes — `scroll_tailing` and
+`tailing_survives_rapid_streaming_after_button_click` — both pass
+solo and are unrelated to the slot refactor).
+
+## Phase 4 — frontend protocol & store (NEXT)
+
+Goal: cut the leptos frontend over to the new event grammar so the
+`LlmResponse.text` / `.thinking` band-aid in the agent can come out
+in Phase 6.5.
+
+### Pre-existing scaffolding from Phase 3
+
+- `frontends/leptos/src/protocol.rs` already mirrors the new
+  WsMessage variants (`LlmResponseStarted`, `LlmResponseEnded`,
+  `LlmResponseDiscarded`, `TextBlock`, `ThinkingBlock`,
+  `ToolUseBlock`) — landed in 3b. Deserialization works; the
+  store just doesn't route them yet.
+- Phase 1b stubs in `feed.rs::render_event_body`,
+  `event_view.rs::kind_for`, `event_view.rs::event_type_tag`
+  return placeholder shapes for the new variants. Phase 4/5
+  replaces those stubs.
+
+### Required changes (per plan)
+
+In `frontends/leptos/src/store.rs`:
+  - On `LlmResponseStarted`: open a new response container
+    keyed by `response_id` (or whatever stable id the event
+    carries; confirm the field name).
+  - On `TextBlock` / `ThinkingBlock` / `ToolUseBlock`: append
+    a block child to the response container with the
+    `data-block-id` from the event. `partial: true` blocks
+    render with an in-flight indicator.
+  - On `LlmResponseEnded`: close the container; finalize
+    usage display.
+  - On `LlmResponseDiscarded`: mark the container as discarded;
+    keep partial children visible (per the Phase 0 acceptance:
+    "5xx mid-stream: llm_response_started, partial blocks*,
+    llm_response_discarded, llm_retry, …").
+  - Stop reading `LlmResponse.text` / `.thinking`. The legacy
+    `LlmResponse` event still arrives (the band-aid emits both);
+    the store should ignore it during Phase 4 to prove the new
+    path covers all UI.
+
+### Migration discipline
+
+- Phase 0 goldens MUST remain byte-equal (they test
+  context.jsonl, not the frontend; should be untouched by
+  Phase 4 work, but re-run `cargo test -p omega-agent
+  --test goldens` after each commit anyway).
+- omega-e2e (especially `03_markdown.rs`, `06_feed.rs`,
+  `07_scroll.rs`) must stay green. These currently depend on
+  the band-aid `lr.text`/`.thinking`; once the store reads from
+  block events, the band-aid is dead code (removed in 6.5).
+- The leptos snapshot tests will likely need re-blessing as the
+  new variants land in `event_view`. Diff each `.snap` change
+  before committing.
+- Push every 3 commits as before.
+
+### Plausible commit breakdown (sketch)
+
+1. Store: route `LlmResponseStarted` → open container; stop
+   ignoring it. No visible UI change yet (container is empty;
+   legacy `LlmResponse` still renders).
+2. Store: route `TextBlock` / `ThinkingBlock` / `ToolUseBlock` →
+   render inside the container. Snapshot tests rebless. e2e
+   should still pass because both paths render the same content.
+3. Store: route `LlmResponseEnded` + `LlmResponseDiscarded`.
+   Switch the store to PREFER block-event children over
+   `lr.text`/`.thinking`; visually identical.
+4. Drop the legacy `LlmResponse` consumer in the store (still
+   on the wire — band-aid stays until 6.5).
+5. T6 browser-refresh replay test (rust/crates/omega-e2e/tests/
+   08_refresh.rs or similar): reload mid-turn + post-TurnEnd,
+   assert DOM `data-block-id` equality. (Per the 2025 user
+   addition to the acceptance criteria.)
+
+### Notes for resuming after context compaction
+
+Current develop tip after Phase 3: `6e16ce9` (progress-doc commit
+follows immediately after).
+Gate: `just rust-gate` (rust-only) and `cargo test -p omega-e2e
+--tests -- --ignored --test-threads=1` (Playwright e2e).
+Full plan: `backlog/schema-8.md` § Phase 4.
+Progress: this file.
+
+## CURRENT STATE (Phase 2 DONE — next: Phase 3) [historical]
 
 **Phase 2 complete.** Three commits on `develop`, all green on the
 full `just rust-gate`:
