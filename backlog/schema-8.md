@@ -623,6 +623,14 @@ or behavioural change.
   ever disappearing, replacing, or relocating, verified by T5.
 - Context.jsonl is byte-equal to current main on every non-interleaved
   fixture, and demonstrably correct on the interleaved fixture.
+- **Browser-refresh replay**: e2e test that mid-turn (after some streamed
+  content blocks but before `LlmResponseEnded`) reloads the page and
+  asserts the reconstructed feed contains the same blocks in the same
+  order with the same `data-block-id`s — i.e. replaying `events.jsonl`
+  from disk reproduces the live-streamed UI exactly. A second variant
+  reloads after a completed turn (post-`TurnEnd`) and asserts the same
+  byte-stable reconstruction. The append-only grammar makes this
+  reproducible by construction; the test pins the property.
 
 ## Out of scope (deferred)
 
