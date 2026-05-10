@@ -62,8 +62,8 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, assign_tool_corr, css_class_for, event_type_tag, kind_for, kind_tag,
-    should_autoscroll, tool_call_preview, truncate_preview,
+    EventKind, assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, kind_for,
+    kind_tag, should_autoscroll, tool_call_preview, truncate_preview,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -351,15 +351,19 @@ pub fn ConversationFeed() -> impl IntoView {
                     each=move || {
                         let events = store.events.get();
                         let corrs = assign_tool_corr(&events);
+                        let partials = assign_partial_counts(&events);
                         events
                             .into_iter()
                             .enumerate()
                             .zip(corrs)
-                            .map(|((idx, ev), corr)| (idx, ev, corr))
-                            .collect::<Vec<(usize, OmegaEvent, Option<usize>)>>()
+                            .zip(partials)
+                            .map(|(((idx, ev), corr), partial_count)| {
+                                (idx, ev, corr, partial_count)
+                            })
+                            .collect::<Vec<(usize, OmegaEvent, Option<usize>, Option<usize>)>>()
                     }
-                    key=|(idx, _, corr): &(usize, OmegaEvent, Option<usize>)| (*idx, *corr)
-                    children=|(idx, event, corr): (usize, OmegaEvent, Option<usize>)| view! { <EventBlock event=event corr=corr idx=Some(idx) /> }
+                    key=|(idx, _, corr, partial): &(usize, OmegaEvent, Option<usize>, Option<usize>)| (*idx, *corr, *partial)
+                    children=|(idx, event, corr, partial_count): (usize, OmegaEvent, Option<usize>, Option<usize>)| view! { <EventBlock event=event corr=corr idx=Some(idx) partial_count=partial_count /> }
                 />
                 <StreamingPlaceholders />
                 <div class="leptos-feed-sentinel" data-testid="leptos-feed-sentinel" />
@@ -428,6 +432,7 @@ pub fn EventBlock(
     event: OmegaEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
     #[prop(optional_no_strip)] idx: Option<usize>,
+    #[prop(optional_no_strip)] partial_count: Option<usize>,
 ) -> impl IntoView {
     let kind = kind_for(&event);
     let class = css_class_for(kind);
@@ -456,7 +461,7 @@ pub fn EventBlock(
             data-block-id=block_id
             data-partial=partial_attr
         >
-            {render_event_body(event, corr)}
+            {render_event_body(event, corr, partial_count)}
         </div>
     }
 }
@@ -483,7 +488,11 @@ fn event_is_partial(event: &OmegaEvent) -> bool {
 /// site. The big match here is necessary (each arm needs typed field
 /// access); the *family decision* is carved out into the pure
 /// `kind_for` in `event_view.rs`.
-fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
+fn render_event_body(
+    event: OmegaEvent,
+    corr: Option<usize>,
+    partial_count: Option<usize>,
+) -> AnyView {
     match event {
         OmegaEvent::UserMessage(e) => view! {
             <span class="block-label">"user_message"</span>
@@ -663,10 +672,23 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
 
         // `LlmResponseDiscarded`: closer for an abandoned response.
         // Inline marker; the preceding partial block-events carry the
-        // actual content the user saw before abandonment.
+        // actual content the user saw before abandonment.  When
+        // `partial_count` is supplied (live `ConversationFeed`, via
+        // `assign_partial_counts`), surface the `N partial blocks`
+        // meta so the operator can tell "network blip before any
+        // content" (`0`) from "discarded after N partials" (`>0`).
+        // Snapshot fixtures that omit the prop emit no meta line.
         OmegaEvent::LlmResponseDiscarded(_) => view! {
             <span class="block-label">"assistant"</span>
             <span class="block-body block-discarded">"[response discarded]"</span>
+            {partial_count.map(|n| view! {
+                <span
+                    class="block-meta"
+                    data-testid="leptos-partial-block-count"
+                >
+                    {format!("{n} partial blocks")}
+                </span>
+            })}
         }
         .into_any(),
 

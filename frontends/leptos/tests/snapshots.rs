@@ -30,11 +30,10 @@ use leptos::reactive::owner::Owner;
 use leptos::tachys::view::RenderHtml;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, LlmCallEvent, LlmResponseEndedEvent, LlmResponseUsage, ResumingSessionEvent,
-    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent,
-    ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnEndEvent, TurnMetrics,
-    UsageIteration,
-    UserMessageEvent,
+    AgentErrorEvent, LlmCallEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
+    LlmResponseUsage, ResumingSessionEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TurnEndEvent, TurnMetrics, UsageIteration, UserMessageEvent,
 };
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
@@ -476,6 +475,37 @@ fn snap_event_llm_response_ended() {
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_llm_response_discarded_with_partial_count() {
+    // SCHEMA-8 Phase 5g — a `LlmResponseDiscarded` event rendered
+    // alongside `partial_count=Some(3)` (as the live `ConversationFeed`
+    // computes via `assign_partial_counts`) must surface an `N partial
+    // blocks` meta line so the operator can tell "network blip before
+    // any content" (0) from "discarded after N partials" (>0).
+    let html = render(|| {
+        let ev = OmegaEvent::LlmResponseDiscarded(LlmResponseDiscardedEvent {
+            time: "2025-01-01T00:00:01.000Z".into(),
+        });
+        view! { <EventBlock event=ev partial_count=Some(3) /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_llm_response_discarded_zero_partials() {
+    // Zero partials — the meta line still renders with `0 partial blocks`
+    // to disambiguate "abandoned immediately after `LlmResponseStarted`"
+    // (no content streamed) from "never had a `partial_count` to begin
+    // with" (snapshot-harness fixtures that omit the prop).
+    let html = render(|| {
+        let ev = OmegaEvent::LlmResponseDiscarded(LlmResponseDiscardedEvent {
+            time: "2025-01-01T00:00:01.000Z".into(),
+        });
+        view! { <EventBlock event=ev partial_count=Some(0) /> }
     });
     insta::assert_snapshot!(html);
 }

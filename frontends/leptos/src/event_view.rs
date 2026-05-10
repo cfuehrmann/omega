@@ -366,6 +366,51 @@ pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
     result
 }
 
+/// SCHEMA-8 Phase 5g — number of `partial: true` sibling blocks
+/// preceding each `LlmResponseDiscarded` event in the same response.
+///
+/// Returns a vector aligned to `events`: every index is `None` except
+/// for `LlmResponseDiscarded` indices, which carry `Some(count)` where
+/// `count` is how many `partial:true` `TextBlock` / `ThinkingBlock` /
+/// `ToolUseBlock` events appear between the most recent
+/// `LlmResponseStarted` (or the start of the events vec) and this
+/// `LlmResponseDiscarded`.  Used by the discarded-response renderer to
+/// surface an `N partial blocks` count next to the closer.
+///
+/// Counting resets at each `LlmResponseStarted` so that a session
+/// containing multiple rounds attributes each abandonment to its own
+/// batch of partials.  `LlmResponseEnded` resets too — a discarded
+/// response is never preceded by a clean Ended in the same round.
+#[must_use]
+pub fn assign_partial_counts(events: &[OmegaEvent]) -> Vec<Option<usize>> {
+    let mut result = vec![None; events.len()];
+    let mut partial_count = 0usize;
+
+    for (i, event) in events.iter().enumerate() {
+        match event {
+            OmegaEvent::LlmResponseStarted(_) | OmegaEvent::LlmResponseEnded(_) => {
+                partial_count = 0;
+            }
+            OmegaEvent::TextBlock(e) if e.partial => {
+                partial_count += 1;
+            }
+            OmegaEvent::ThinkingBlock(e) if e.partial => {
+                partial_count += 1;
+            }
+            OmegaEvent::ToolUseBlock(e) if e.partial => {
+                partial_count += 1;
+            }
+            OmegaEvent::LlmResponseDiscarded(_) => {
+                result[i] = Some(partial_count);
+                partial_count = 0;
+            }
+            _ => {}
+        }
+    }
+
+    result
+}
+
 // ---------------------------------------------------------------------------
 // Tool-call preview
 // ---------------------------------------------------------------------------
@@ -543,10 +588,12 @@ mod tests {
 
     use omega_types::events::{
         AgentErrorEvent, CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
-        LlmResponseEvent, LlmResponseUsage, LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
+        LlmResponseDiscardedEvent, LlmResponseEvent, LlmResponseStartedEvent, LlmResponseUsage,
+        LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
         ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
         SessionResumedEvent, SessionStartedEvent, ToolCallEvent, ToolResultEvent,
-        ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
+        ToolUseBlockEvent, TextBlockEvent, ThinkingBlockEvent, TransportErrorEvent,
+        TurnContinuedEvent, TurnEndEvent,
         TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
     use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
@@ -1419,6 +1466,175 @@ mod tests {
             assign_tool_corr(&events),
             vec![Some(2), Some(1), Some(2)],
         );
+    }
+
+    // ---- assign_partial_counts (SCHEMA-8 Phase 5g) --------------------
+
+    fn make_llm_response_started() -> OmegaEvent {
+        OmegaEvent::LlmResponseStarted(LlmResponseStartedEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+        })
+    }
+
+    fn make_llm_response_discarded() -> OmegaEvent {
+        OmegaEvent::LlmResponseDiscarded(LlmResponseDiscardedEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+        })
+    }
+
+    fn make_text_block(partial: bool) -> OmegaEvent {
+        OmegaEvent::TextBlock(TextBlockEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            text: "hi".into(),
+            partial,
+        })
+    }
+
+    fn make_thinking_block(partial: bool) -> OmegaEvent {
+        OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            thinking: "hmm".into(),
+            signature: if partial { None } else { Some("sig".into()) },
+            partial,
+        })
+    }
+
+    fn make_partial_tool_use_block(id: &str) -> OmegaEvent {
+        OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+            time: "2024-01-01T00:00:00.000Z".into(),
+            id: id.into(),
+            name: "run_command".into(),
+            input: serde_json::json!({}),
+            partial: true,
+        })
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_empty_returns_empty() {
+        assert_eq!(assign_partial_counts(&[]), vec![]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_no_discarded_all_none() {
+        // No LlmResponseDiscarded → every slot is None even if partials exist.
+        let events = vec![
+            make_llm_response_started(),
+            make_text_block(true),
+            make_text_block(false),
+        ];
+        assert_eq!(assign_partial_counts(&events), vec![None, None, None]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_counts_mixed_partial_siblings() {
+        // Started, partial Text, partial Thinking, partial ToolUse, Discarded
+        // → result at Discarded index = Some(3); all other slots None.
+        let events = vec![
+            make_llm_response_started(),
+            make_text_block(true),
+            make_thinking_block(true),
+            make_partial_tool_use_block("id1"),
+            make_llm_response_discarded(),
+        ];
+        assert_eq!(
+            assign_partial_counts(&events),
+            vec![None, None, None, None, Some(3)],
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_resets_between_responses() {
+        // Response 1: Started, partial Text, Ended  (no Discarded → no count).
+        // Response 2: Started, 2 partial blocks, Discarded → Some(2).
+        // Counter must reset on Started (and on Ended) so response 2's count
+        // doesn't include response 1's partial.
+        let events = vec![
+            make_llm_response_started(),
+            make_text_block(true),
+            OmegaEvent::LlmResponseEnded(
+                omega_types::events::LlmResponseEndedEvent {
+                    time: "2024-01-01T00:00:00.000Z".into(),
+                    stop_reason: "end_turn".into(),
+                    cleared_tool_uses: None,
+                    cleared_input_tokens: None,
+                    usage: LlmResponseUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                        service_tier: None,
+                        iterations: None,
+                    },
+                    context_hash: "deadbeef".into(),
+                    response_summary: None,
+                },
+            ),
+            make_llm_response_started(),
+            make_text_block(true),
+            make_thinking_block(true),
+            make_llm_response_discarded(),
+        ];
+        let result = assign_partial_counts(&events);
+        assert_eq!(result[6], Some(2));
+        for (i, slot) in result.iter().enumerate() {
+            if i != 6 {
+                assert_eq!(*slot, None, "slot {i} should be None");
+            }
+        }
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_partial_false_blocks_not_counted() {
+        // Non-partial blocks (partial=false) MUST NOT be counted as discarded.
+        let events = vec![
+            make_llm_response_started(),
+            make_text_block(false),
+            make_text_block(false),
+            make_thinking_block(false),
+            make_llm_response_discarded(),
+        ];
+        assert_eq!(
+            assign_partial_counts(&events),
+            vec![None, None, None, None, Some(0)],
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_discarded_with_no_partials_is_zero() {
+        // Discarded immediately after Started (no content streamed) → Some(0).
+        // Operator can tell "network blip before any block" from
+        // "discarded after N partials".
+        let events = vec![
+            make_llm_response_started(),
+            make_llm_response_discarded(),
+        ];
+        assert_eq!(assign_partial_counts(&events), vec![None, Some(0)]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn assign_partial_counts_two_discards_each_counted_separately() {
+        // Two abandoned responses in the same session: each Discarded reports
+        // only its own preceding partials.
+        let events = vec![
+            make_llm_response_started(),
+            make_text_block(true),
+            make_llm_response_discarded(),
+            make_llm_response_started(),
+            make_text_block(true),
+            make_thinking_block(true),
+            make_partial_tool_use_block("id1"),
+            make_llm_response_discarded(),
+        ];
+        let result = assign_partial_counts(&events);
+        assert_eq!(result[2], Some(1));
+        assert_eq!(result[7], Some(3));
     }
 
     #[wasm_bindgen_test]
