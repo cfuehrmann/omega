@@ -851,19 +851,17 @@ impl Agent {
 
                 // --- Drain the provider stream -----------------------------
                 let mut provider_stream = self.provider.stream(request);
-                let mut text_buf = String::new();
-                // `current_thinking` accumulates text for the thinking block
-                // currently streaming.  `completed_thinking_blocks` holds
-                // (thinking_text, signature) for each block that has finished;
-                // each becomes one ContentBlock::Thinking in the context record.
-                let mut current_thinking = String::new();
-                let mut completed_thinking_blocks: Vec<(String, String)> = Vec::new();
-                let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
-                // SCHEMA-8 Phase 3 commit 3a: per-block slots accumulated in
-                // parallel with the flat path above.  The flat path still
-                // wins; commit 3e drops it and assembles the assistant
-                // message from `slots` in index order.
+                // SCHEMA-8 Phase 3 commit 3e: `slots` is now the sole
+                // source of truth for text/thinking/tool_use blocks
+                // that come via stream signals.  Index-ordered
+                // assembly after `LlmResponse` (below) drains them
+                // into `assistant_blocks`.
                 let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
+                // `tool_uses` still collects legacy `OmegaEvent::ToolCall`
+                // emissions from `MockProvider` scripts (goldens.rs,
+                // internal.rs).  Removed in Phase 6.5 along with the
+                // legacy event.
+                let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
                 let mut llm_response: Option<LlmResponseEvent> = None;
                 let mut stream_error: Option<LlmError> = None;
                 // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
@@ -901,24 +899,30 @@ impl Agent {
                             let mut block_event: Option<OmegaEvent> = None;
                             let forward = match &sig {
                                 StreamSignal::Text { index, text } => {
-                                    text_buf.push_str(text);
                                     append_text_slot(&mut slots, *index, text);
                                     true
                                 }
                                 StreamSignal::Thinking { index, text } => {
-                                    current_thinking.push_str(text);
                                     append_thinking_slot(&mut slots, *index, text);
                                     true
                                 }
                                 StreamSignal::ThinkingBlockComplete { index, signature } => {
-                                    let thinking = std::mem::take(&mut current_thinking);
-                                    completed_thinking_blocks
-                                        .push((thinking.clone(), signature.clone()));
+                                    // SCHEMA-8 Phase 3e: read the
+                                    // assembled thinking text back from
+                                    // the slot after sealing.  Replaces
+                                    // the legacy `current_thinking`
+                                    // snapshot.
                                     seal_thinking_slot(&mut slots, *index, signature.clone());
+                                    let thinking_text = match slots.get(index) {
+                                        Some(BlockSlot::Thinking { thinking, .. }) => {
+                                            thinking.clone()
+                                        }
+                                        _ => String::new(),
+                                    };
                                     block_event = Some(OmegaEvent::ThinkingBlock(
                                         ThinkingBlockEvent {
                                             time: now_iso(),
-                                            thinking,
+                                            thinking: thinking_text,
                                             signature: Some(signature.clone()),
                                             partial: false,
                                         },
@@ -926,12 +930,6 @@ impl Agent {
                                     false // internal signal, not forwarded to UI
                                 }
                                 StreamSignal::TextBlockComplete { index, text } => {
-                                    // SCHEMA-8 Phase 2: indexed text
-                                    // delivery; the agent's current
-                                    // accumulator-based reconstruction
-                                    // (`text_buf`) still wins.  Phase 3
-                                    // commit 3e routes by index via
-                                    // `slots` and drops `text_buf`.
                                     seal_text_slot(&mut slots, *index);
                                     block_event = Some(OmegaEvent::TextBlock(
                                         TextBlockEvent {
@@ -945,18 +943,14 @@ impl Agent {
                                 StreamSignal::ToolUseBlockComplete {
                                     index, id, name, input,
                                 } => {
-                                    // SCHEMA-8 Phase 2: providers no
-                                    // longer emit `OmegaEvent::ToolCall`
-                                    // mid-stream; the agent now collects
-                                    // tool uses straight off the stream
-                                    // signal and dispatches them after
-                                    // `LlmResponse` (with the proper
-                                    // assistant context_hash).
-                                    tool_uses.push((
-                                        id.clone(),
-                                        name.clone(),
-                                        input.clone(),
-                                    ));
+                                    // SCHEMA-8 Phase 3e: signals only
+                                    // populate `slots`.  The legacy
+                                    // `tool_uses` Vec is now reserved
+                                    // for `OmegaEvent::ToolCall`
+                                    // emissions (MockProvider scripts);
+                                    // both feeds merge into
+                                    // `combined_tool_uses` at assembly
+                                    // time.
                                     insert_tool_use_slot(
                                         &mut slots,
                                         *index,
@@ -1016,10 +1010,10 @@ impl Agent {
                                     // about to re-issue the call; throw away
                                     // any partial assistant content we
                                     // accumulated and forward the event so the
-                                    // UI can roll back.
-                                    text_buf.clear();
-                                    current_thinking.clear();
-                                    completed_thinking_blocks.clear();
+                                    // UI can roll back.  In Phase 3e the
+                                    // slot drain inside
+                                    // `make_abandonment_closers` is the
+                                    // only state to reset.
                                     // SCHEMA-8 Phase 3 commit 3d: emit
                                     // partial-block events for any
                                     // unsealed slots, then
@@ -1193,48 +1187,64 @@ impl Agent {
                 };
 
                 // --- Build + persist the assistant context record ---------
-                // SCHEMA-8 Phase 3 band-aid: snapshot text/thinking BEFORE
-                // assistant_blocks assembly drains them, so we can repopulate
-                // the legacy `LlmResponse.text` / `.thinking` fields for the
-                // frontend until Phase 4. Removed in commit 3e.
-                let bandaid_text = if text_buf.is_empty() {
-                    None
-                } else {
-                    Some(text_buf.clone())
-                };
-                let bandaid_thinking = {
-                    let mut parts: Vec<String> = completed_thinking_blocks
-                        .iter()
-                        .map(|(t, _)| t.clone())
-                        .collect();
-                    if !current_thinking.is_empty() {
-                        parts.push(current_thinking.clone());
-                    }
-                    if parts.is_empty() {
-                        None
-                    } else {
-                        Some(parts.join("\n\n"))
-                    }
-                };
+                // SCHEMA-8 Phase 3 commit 3e: assemble `assistant_blocks`
+                // from `slots` in BTreeMap (= insertion-index) order so
+                // interleaved thinking/text blocks land in the API
+                // content-block order the model emitted.  Legacy
+                // `OmegaEvent::ToolCall` entries (still emitted by
+                // MockProvider scripts — removed Phase 6.5) are appended
+                // after the slot blocks.  `lr_text_parts` and
+                // `lr_thinking_parts` feed the band-aid that repopulates
+                // `LlmResponse.text` / `.thinking` for the leptos
+                // frontend until Phase 4 cuts it over.
+                let mut combined_tool_uses: Vec<(String, String, Value)> = Vec::new();
                 let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-                for (thinking, signature) in completed_thinking_blocks.drain(..) {
-                    assistant_blocks.push(ContentBlock::Thinking {
-                        thinking,
-                        signature: Some(signature),
-                    });
-                }
-                if !text_buf.is_empty() {
-                    assistant_blocks.push(ContentBlock::Text {
-                        text: std::mem::take(&mut text_buf),
-                    });
+                let mut lr_text_parts: Vec<String> = Vec::new();
+                let mut lr_thinking_parts: Vec<String> = Vec::new();
+                for (_, slot) in std::mem::take(&mut slots) {
+                    match slot {
+                        BlockSlot::Text { text, .. } if !text.is_empty() => {
+                            lr_text_parts.push(text.clone());
+                            assistant_blocks.push(ContentBlock::Text { text });
+                        }
+                        BlockSlot::Thinking {
+                            thinking, signature, ..
+                        } => {
+                            lr_thinking_parts.push(thinking.clone());
+                            assistant_blocks.push(ContentBlock::Thinking {
+                                thinking,
+                                signature,
+                            });
+                        }
+                        BlockSlot::ToolUse {
+                            id, name, input, ..
+                        } => {
+                            combined_tool_uses.push((id.clone(), name.clone(), input.clone()));
+                            assistant_blocks.push(ContentBlock::ToolUse { id, name, input });
+                        }
+                        // Skip empty Text slots (rare — sealed without
+                        // any deltas) so they don't bloat the record.
+                        BlockSlot::Text { .. } => {}
+                    }
                 }
                 for (id, name, input) in &tool_uses {
+                    combined_tool_uses.push((id.clone(), name.clone(), input.clone()));
                     assistant_blocks.push(ContentBlock::ToolUse {
                         id: id.clone(),
                         name: name.clone(),
                         input: input.clone(),
                     });
                 }
+                let bandaid_text = if lr_text_parts.is_empty() {
+                    None
+                } else {
+                    Some(lr_text_parts.join(""))
+                };
+                let bandaid_thinking = if lr_thinking_parts.is_empty() {
+                    None
+                } else {
+                    Some(lr_thinking_parts.join("\n\n"))
+                };
 
                 let assistant_hash = match self
                     .context_store
@@ -1290,9 +1300,9 @@ impl Agent {
                 yield AgentItem::event(ended_ev);
 
                 // --- Tool dispatch ----------------------------------------
-                if stop_reason == "tool_use" && !tool_uses.is_empty() {
+                if stop_reason == "tool_use" && !combined_tool_uses.is_empty() {
                     // Emit ToolCall events with assistant_hash filled in.
-                    for (id, name, input) in &tool_uses {
+                    for (id, name, input) in &combined_tool_uses {
                         let tc = OmegaEvent::ToolCall(ToolCallEvent {
                             time: now_iso(),
                             id: id.clone(),
@@ -1306,7 +1316,7 @@ impl Agent {
 
                     // Concurrent dispatch — clone (id, name, input, cancel)
                     // into each future so they don't borrow self.
-                    let mut futures: FuturesUnordered<_> = tool_uses
+                    let mut futures: FuturesUnordered<_> = combined_tool_uses
                         .iter()
                         .enumerate()
                         .map(|(i, (id, name, input))| {
@@ -1344,7 +1354,7 @@ impl Agent {
                         by_id.insert(id, (res.content, res.is_error));
                     }
 
-                    let result_blocks: Vec<ContentBlock> = tool_uses
+                    let result_blocks: Vec<ContentBlock> = combined_tool_uses
                         .iter()
                         .map(|(id, _, _)| {
                             // FuturesUnordered always produces one entry per
@@ -1662,12 +1672,10 @@ impl Agent {
             // Step 5: drain the provider stream.
             // -----------------------------------------------------------------
             let mut provider_stream = self.provider.stream(request);
-            let mut text_buf = String::new();
-            let mut current_thinking = String::new();
-            let mut completed_thinking_blocks: Vec<(String, String)> = Vec::new();
-            // SCHEMA-8 Phase 3 commit 3a: per-block slots accumulated in
-            // parallel with the flat path above.  The flat path still wins
-            // for the resumption-summary path; commit 3e drops it.
+            // SCHEMA-8 Phase 3 commit 3e: `slots` is the sole source of
+            // truth for text/thinking blocks; resumption never emits
+            // tool_use, but the slot machinery is shared with
+            // `send_message` and handles the type uniformly.
             let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
             let mut llm_response: Option<LlmResponseEvent> = None;
             let mut stream_error: Option<LlmError> = None;
@@ -1692,24 +1700,23 @@ impl Agent {
                         let mut block_event: Option<OmegaEvent> = None;
                         let forward = match &sig {
                             StreamSignal::Text { index, text } => {
-                                text_buf.push_str(text);
                                 append_text_slot(&mut slots, *index, text);
                                 true
                             }
                             StreamSignal::Thinking { index, text } => {
-                                current_thinking.push_str(text);
                                 append_thinking_slot(&mut slots, *index, text);
                                 true
                             }
                             StreamSignal::ThinkingBlockComplete { index, signature } => {
-                                let thinking = std::mem::take(&mut current_thinking);
-                                completed_thinking_blocks
-                                    .push((thinking.clone(), signature.clone()));
                                 seal_thinking_slot(&mut slots, *index, signature.clone());
+                                let thinking_text = match slots.get(index) {
+                                    Some(BlockSlot::Thinking { thinking, .. }) => thinking.clone(),
+                                    _ => String::new(),
+                                };
                                 block_event = Some(OmegaEvent::ThinkingBlock(
                                     ThinkingBlockEvent {
                                         time: now_iso(),
-                                        thinking,
+                                        thinking: thinking_text,
                                         signature: Some(signature.clone()),
                                         partial: false,
                                     },
@@ -1717,12 +1724,6 @@ impl Agent {
                                 false
                             }
                             StreamSignal::TextBlockComplete { index, text } => {
-                                // SCHEMA-8 Phase 2/3a: indexed completion
-                                // signal.  This call is the
-                                // resumption-summary one-off — no
-                                // tools requested and the
-                                // accumulator-based text path still wins
-                                // until commit 3e.
                                 seal_text_slot(&mut slots, *index);
                                 block_event = Some(OmegaEvent::TextBlock(
                                     TextBlockEvent {
@@ -1781,9 +1782,9 @@ impl Agent {
                                 llm_response = Some(lr);
                             }
                             OmegaEvent::LlmRetry(retry) => {
-                                text_buf.clear();
-                                current_thinking.clear();
-                                completed_thinking_blocks.clear();
+                                // SCHEMA-8 Phase 3 commit 3e: slot drain
+                                // inside `make_abandonment_closers` is
+                                // the only state reset on retry.
                                 // SCHEMA-8 Phase 3 commit 3d: emit
                                 // partial-block events + LlmResponseDiscarded
                                 // closer BEFORE the retry event.
@@ -1879,37 +1880,45 @@ impl Agent {
             // -----------------------------------------------------------------
             // Step 9: persist the assistant context record.
             // -----------------------------------------------------------------
-            // SCHEMA-8 Phase 3 band-aid: snapshot text/thinking BEFORE
-            // assistant_blocks assembly drains them, so we can repopulate
-            // the legacy `LlmResponse.text` / `.thinking` fields for the
-            // frontend until Phase 4. Removed in commit 3e.
-            let bandaid_thinking_resume = {
-                let mut parts: Vec<String> = completed_thinking_blocks
-                    .iter()
-                    .map(|(t, _)| t.clone())
-                    .collect();
-                if !current_thinking.is_empty() {
-                    parts.push(current_thinking.clone());
-                }
-                if parts.is_empty() {
-                    None
-                } else {
-                    Some(parts.join("\n\n"))
-                }
-            };
-            let assembled_text = std::mem::take(&mut text_buf);
+            // SCHEMA-8 Phase 3 commit 3e: assemble from `slots` in index
+            // order.  Resumption never emits tool_use blocks, so any
+            // `ToolUse` slot here is a provider/server bug; we still
+            // include it for traceability (the type-mismatch policy in
+            // `make_abandonment_closers` and the slot helpers is to
+            // surface, not silently drop).  `assembled_text` is needed
+            // verbatim by `extract_summary_from_response` below.
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-            for (thinking, signature) in completed_thinking_blocks.drain(..) {
-                assistant_blocks.push(ContentBlock::Thinking {
-                    thinking,
-                    signature: Some(signature),
-                });
+            let mut lr_text_parts: Vec<String> = Vec::new();
+            let mut lr_thinking_parts: Vec<String> = Vec::new();
+            for (_, slot) in std::mem::take(&mut slots) {
+                match slot {
+                    BlockSlot::Text { text, .. } if !text.is_empty() => {
+                        lr_text_parts.push(text.clone());
+                        assistant_blocks.push(ContentBlock::Text { text });
+                    }
+                    BlockSlot::Thinking {
+                        thinking, signature, ..
+                    } => {
+                        lr_thinking_parts.push(thinking.clone());
+                        assistant_blocks.push(ContentBlock::Thinking {
+                            thinking,
+                            signature,
+                        });
+                    }
+                    BlockSlot::ToolUse {
+                        id, name, input, ..
+                    } => {
+                        assistant_blocks.push(ContentBlock::ToolUse { id, name, input });
+                    }
+                    BlockSlot::Text { .. } => {}
+                }
             }
-            if !assembled_text.is_empty() {
-                assistant_blocks.push(ContentBlock::Text {
-                    text: assembled_text.clone(),
-                });
-            }
+            let assembled_text = lr_text_parts.join("");
+            let bandaid_thinking_resume = if lr_thinking_parts.is_empty() {
+                None
+            } else {
+                Some(lr_thinking_parts.join("\n\n"))
+            };
             let assistant_hash = match self
                 .context_store
                 .append(Role::Assistant, assistant_blocks)

@@ -1,0 +1,2 @@
+{"hash":"59e10fb2138c8ee7","time":"<scrubbed>","role":"user","content":[{"type":"text","text":"think step by step"}]}
+{"hash":"4e5a41291a66eaaa","time":"<scrubbed>","role":"assistant","content":[{"type":"thinking","thinking":"Step 1: think.","signature":"sig-step1"},{"type":"text","text":"Then I answer:"},{"type":"thinking","thinking":"Wait — reconsider.","signature":"sig-step3"},{"type":"text","text":"Final: yes."}]}

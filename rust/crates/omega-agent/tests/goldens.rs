@@ -232,7 +232,7 @@ async fn fixture_simple_turn() {
 
 fn script_thinking_blocks() -> Vec<Result<AgentItem, LlmError>> {
     vec![
-        // First thinking block + signature.
+        // First thinking block + signature (index 0).
         Ok(AgentItem::Signal(StreamSignal::Thinking {
             index: 0,
             text: "First, let me consider…".to_owned(),
@@ -241,18 +241,20 @@ fn script_thinking_blocks() -> Vec<Result<AgentItem, LlmError>> {
             index: 0,
             signature: "sig-thinking-1".to_owned(),
         })),
-        // Second thinking block immediately after the first.
+        // Second thinking block (index 1) — distinct slot so SCHEMA-8
+        // Phase 3e's index-ordered assembly produces two thinking blocks
+        // instead of one concatenated one.
         Ok(AgentItem::Signal(StreamSignal::Thinking {
-            index: 0,
+            index: 1,
             text: "Wait — let me double-check.".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
-            index: 0,
+            index: 1,
             signature: "sig-thinking-2".to_owned(),
         })),
-        // Single text block — comes after both thinking blocks.
+        // Single text block (index 2) — comes after both thinking blocks.
         Ok(AgentItem::Signal(StreamSignal::Text {
-            index: 0,
+            index: 2,
             text: "Here is the answer: 42.".to_owned(),
         })),
         Ok(make_llm_response(
@@ -343,8 +345,13 @@ fn script_multi_thinking_tools_call1() -> Vec<Result<AgentItem, LlmError>> {
             index: 0,
             signature: "sig-plan".to_owned(),
         })),
+        // Text block at index 1 (distinct from the thinking slot above)
+        // so SCHEMA-8 Phase 3e's index-ordered assembly keeps both
+        // blocks.  The legacy ToolCall below feeds the agent's tool_uses
+        // Vec (MockProvider still emits the legacy event) and is
+        // appended after the slot-derived blocks.
         Ok(AgentItem::Signal(StreamSignal::Text {
-            index: 0,
+            index: 1,
             text: "Looking at the workspace.".to_owned(),
         })),
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
@@ -498,4 +505,65 @@ fn script_compaction() -> Vec<Result<AgentItem, LlmError>> {
 #[tokio::test]
 async fn fixture_compaction() {
     run_fixture("compaction", "please compact", vec![script_compaction()]).await;
+}
+
+// ---------------------------------------------------------------------------
+// Fixture: interleaved_thinking — SCHEMA-8 Phase 3e bug-fix lock.
+//
+// Stream emits content blocks in the order `thinking₀ → text₁ →
+// thinking₂ → text₃`.  Today's flat accumulators (replaced in 3e)
+// would group these into `[thinking, thinking, text, text]` and
+// concatenate same-kind text — losing the API content-block order
+// that matters once the `interleaved-thinking-2025-05-14` beta is
+// enabled.  Phase 3e's `BTreeMap<usize, BlockSlot>` assembly
+// preserves the emission order; this golden locks the corrected
+// shape (four distinct blocks, API order).
+// ---------------------------------------------------------------------------
+
+fn script_interleaved_thinking() -> Vec<Result<AgentItem, LlmError>> {
+    vec![
+        Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 0,
+            text: "Step 1: think.".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            index: 0,
+            signature: "sig-step1".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 1,
+            text: "Then I answer:".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::TextBlockComplete {
+            index: 1,
+            text: "Then I answer:".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::Thinking {
+            index: 2,
+            text: "Wait — reconsider.".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::ThinkingBlockComplete {
+            index: 2,
+            signature: "sig-step3".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 3,
+            text: "Final: yes.".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::TextBlockComplete {
+            index: 3,
+            text: "Final: yes.".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", None, 13, 9)),
+    ]
+}
+
+#[tokio::test]
+async fn fixture_interleaved_thinking() {
+    run_fixture(
+        "interleaved_thinking",
+        "think step by step",
+        vec![script_interleaved_thinking()],
+    )
+    .await;
 }
