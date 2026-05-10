@@ -19,22 +19,18 @@ expression: project(&items)
     "type": "text"
   },
   {
-    "contextHash": "",
     "id": "tc_1",
+    "index": 0,
     "input": {
       "a": 1,
       "b": 2
     },
     "name": "calc",
-    "time": "[time]",
-    "type": "tool_call"
+    "type": "tool_use_block_complete"
   },
   {
     "contextHash": "",
     "stopReason": "tool_calls",
-    "streamingStart": "[time]",
-    "text": "Hello, world!",
-    "thinking": "Let me think.",
     "time": "[time]",
     "type": "llm_response",
     "usage": {

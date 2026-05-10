@@ -289,20 +289,22 @@ async fn synthesises_tool_call_id_when_missing() {
     let provider = OllamaProvider::new().with_base_url(server.uri());
     let items = collect_ok(&provider, simple_request()).await;
 
-    let tool_call = items
+    let tool_id = items
         .iter()
-        .find_map(|i| {
-            if let Some(omega_types::OmegaEvent::ToolCall(tc)) = i.as_event() {
-                Some(tc)
-            } else {
-                None
-            }
+        .find_map(|i| match i {
+            // SCHEMA-8 Phase 2: Ollama emits a
+            // `ToolUseBlockComplete` signal instead of a mid-stream
+            // `OmegaEvent::ToolCall`.
+            omega_core::AgentItem::Signal(omega_types::StreamSignal::ToolUseBlockComplete {
+                id,
+                ..
+            }) => Some(id.clone()),
+            _ => None,
         })
-        .expect("expected a tool_call event");
+        .expect("expected a tool-use-block-complete signal");
     assert!(
-        tool_call.id.starts_with("ollama_tool_"),
-        "id should be synthesised, got {:?}",
-        tool_call.id
+        tool_id.starts_with("ollama_tool_"),
+        "id should be synthesised, got {tool_id:?}"
     );
 }
 

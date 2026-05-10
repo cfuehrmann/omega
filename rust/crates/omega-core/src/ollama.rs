@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use async_stream::try_stream;
-use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::events::LlmResponseEvent;
 use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -96,12 +96,14 @@ fn stream_impl(
 
         let mut bytes = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
-        let mut all_text = String::new();
-        let mut all_thinking = String::new();
         let mut input_tokens: i64 = 0;
         let mut output_tokens: i64 = 0;
-        let mut streaming_start: Option<String> = None;
         let mut yielded_tool_calls = false;
+        // SCHEMA-8: per-block index counter for the synthetic
+        // `ToolUseBlockComplete` signals.  Ollama's wire format has
+        // no SSE-style content-block indices, so we mint a monotonic
+        // sequence (0, 1, ...) the agent can route by.
+        let mut next_tool_use_index: usize = 0;
 
         loop {
             let next = futures::StreamExt::next(&mut bytes).await;
@@ -126,16 +128,11 @@ fn stream_impl(
                 if let Some(content) = parsed.message.content.as_ref()
                     && !content.is_empty()
                 {
-                    all_text.push_str(content);
-                    if streaming_start.is_none() {
-                        streaming_start = Some(now_iso());
-                    }
                     yield AgentItem::Signal(StreamSignal::Text { index: 0, text: content.clone() });
                 }
                 if let Some(thinking) = parsed.message.thinking.as_ref()
                     && !thinking.is_empty()
                 {
-                    all_thinking.push_str(thinking);
                     yield AgentItem::Signal(StreamSignal::Thinking {
                         index: 0,
                         text: thinking.clone(),
@@ -144,13 +141,18 @@ fn stream_impl(
                 if let Some(tool_calls) = parsed.message.tool_calls {
                     for tc in tool_calls {
                         let id = tc.id.unwrap_or_else(synth_tool_id);
-                        yield AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
-                            time: now_iso(),
+                        // SCHEMA-8 Phase 2: providers no longer emit
+                        // `OmegaEvent::ToolCall` mid-stream.  Surface
+                        // each tool call as a per-block completion
+                        // signal carrying a synthetic block index;
+                        // the agent dispatches it after `LlmResponse`.
+                        yield AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
+                            index: next_tool_use_index,
                             id,
                             name: tc.function.name,
                             input: tc.function.arguments,
-                            context_hash: String::new(),
-                        }));
+                        });
+                        next_tool_use_index += 1;
                         yielded_tool_calls = true;
                     }
                 }
@@ -183,9 +185,13 @@ fn stream_impl(
                             iterations: None,
                         },
                         context_hash: String::new(),
-                        text: if all_text.is_empty() { None } else { Some(all_text.clone()) },
-                        thinking: if all_thinking.is_empty() { None } else { Some(all_thinking.clone()) },
-                        streaming_start: streaming_start.clone(),
+                        // SCHEMA-8 Phase 2: assistant content is
+                        // reconstructed by the agent from the
+                        // streamed signals; the provider no longer
+                        // duplicates it on `LlmResponse`.
+                        text: None,
+                        thinking: None,
+                        streaming_start: None,
                         response_summary: None,
                     }));
                     return;
