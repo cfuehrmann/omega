@@ -121,7 +121,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   `ThinkingBlockComplete{signature}` with `{index, signature}`; new
   `TextBlockComplete{index, text}` and `ToolUseBlockComplete{index, id, name, input}`.
 
-### Phase 2 — Providers — **TODO**
+### Phase 2 — Providers — **DONE** (2026-05-10)
 - Anthropic + Ollama: stop emitting `ToolCall` mid-stream; emit per-block
   complete signals at `content_block_stop`. Drop `streaming_start`. Pull
   iterations array from Anthropic usage into `LlmResponseUsage.iterations`.
@@ -179,6 +179,149 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 - HASH-1 lockdown depends on `Role`/`ContentBlock` field/variant order — do NOT
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
+
+## CURRENT STATE (Phase 2 DONE — next: Phase 3)
+
+**Phase 2 complete.** Three commits on `develop`, all green on the
+full `just rust-gate`:
+
+- `3b78394` schema-8(phase-2a): anthropic provider → per-block
+  completion signals
+- `4fb3448` schema-8(phase-2b): ollama provider → per-block completion
+  signals
+- `7ac743c` schema-8(phase-2c): retry wrapper no longer tracks fragments
+
+Provider-side cutover landed in full:
+
+- Anthropic `content_block_stop` emits the matching
+  `StreamSignal::*BlockComplete` carrying the real SSE `index`:
+  `TextBlockComplete { index, text }`,
+  `ThinkingBlockComplete { index, signature }` (in place since 1a),
+  `ToolUseBlockComplete { index, id, name, input }`.
+- Anthropic no longer emits `OmegaEvent::ToolCall` mid-stream and no
+  longer emits `OmegaEvent::Compacted`. Server-side compaction is
+  surfaced via `LlmResponseUsage.iterations` (extracted from the raw
+  usage object via the new `extract_iterations` helper).
+- Anthropic + Ollama `LlmResponse.text` / `.thinking` /
+  `.streaming_start` are always `None` now. The `all_text` /
+  `all_thinking` / `streaming_start` accumulators are gone from both
+  providers. (The `LlmResponseEvent` type still has the legacy
+  fields — deleted in Phase 6.5.)
+- Ollama emits `ToolUseBlockComplete` with a synthetic monotonic
+  `next_tool_use_index` (Ollama has no SSE block indices).
+- `retry.rs::track_fragment` removed; `LoopState.text_fragment` /
+  `.thinking_fragment` removed; `build_retry_event` no longer takes
+  the fragment params and writes `text_fragment: None` /
+  `thinking_fragment: None` on `LlmRetryEvent`.
+
+Agent change is intentionally minimal:
+`StreamSignal::ToolUseBlockComplete { id, name, input, .. }` now
+pushes `(id, name, input)` into `tool_uses` (replacing the previous
+path that captured `OmegaEvent::ToolCall` mid-stream). The flat
+accumulators (`text_buf`, `current_thinking`,
+`completed_thinking_blocks`) and the existing handlers for
+`OmegaEvent::ToolCall` and `OmegaEvent::Compacted` STAY — they're
+still used by MockProvider scripts in `goldens.rs` and `internal.rs`,
+and keeping them is what kept the goldens byte-equal across the cut.
+
+Gate verification: `just rust-gate` GREEN end-to-end. Phase-0
+goldens still byte-equal across all 6 fixtures.
+
+## Phase 2 strategy decision (recorded for future reference)
+
+The Phase 2 prompt offered two options:
+  (A) Providers emit BOTH legacy and new shapes; agent flips in Phase 3.
+  (B) Providers emit ONLY the new shapes; agent path rewrites alongside.
+
+**Decision: Option B-lite.** Real providers cut over fully (per the
+plan's literal text — "stop emitting", "strip"). Agent gets one
+additive change to consume `ToolUseBlockComplete`. Existing
+`OmegaEvent::ToolCall` and `OmegaEvent::Compacted` handlers in the
+agent stay in place — the MockProvider scripts in goldens.rs and
+internal.rs still emit those legacy variants directly, and the agent
+must handle them until Phase 3 reworks the accumulators.
+
+Why not pure-additive (option A): the plan literally requires removals
+in Phase 2. Doing them in providers now (without restructuring the
+agent) makes the Phase 2 → Phase 3 boundary a clean swap rather than a
+coexistence cleanup, and produces the smallest intermediate diff.
+
+## Phase 3 — agent (NEXT, the big one)
+
+Goal: restructure agent-side assistant content reconstruction to
+preserve API content-block index order, and own all the abandonment /
+closing logic that Phase 2 stripped from the providers.
+
+### Required changes (per plan)
+
+In `rust/crates/omega-agent/src/agent.rs`:
+
+- Replace flat accumulators (`text_buf`, `current_thinking`,
+  `completed_thinking_blocks`, `tool_uses`) with a
+  `BTreeMap<usize, BlockSlot>` keyed by API
+  `content_block_start.index` (carried on every `StreamSignal`).
+  Each slot is one of `Text | Thinking | ToolUse`, accumulating its
+  own deltas.
+- Emit `OmegaEvent::LlmResponseStarted` on the first signal of a
+  response stream (replacing the implicit `streaming_start` field).
+- On each `*BlockComplete` signal: emit
+  `OmegaEvent::TextBlock` / `ThinkingBlock` / `ToolUseBlock` for
+  the corresponding slot, then mark it sealed.
+- After `OmegaEvent::LlmResponseEnded` arrives (note: providers still
+  emit legacy `OmegaEvent::LlmResponse` — in this phase the agent
+  swaps to *also* emitting `LlmResponseEnded`, or pivots its
+  consumption; decide at the start of Phase 3 like we did for Phase 2):
+    * For each non-partial `ToolUseBlock`, emit `OmegaEvent::ToolCall`
+      with the proper `context_hash`, then dispatch.
+    * Build the assistant message from blocks in **index order**.
+- Compaction detection: check `lr.usage.iterations` for an entry of
+  type `"compaction"`; if present do `history.clear()` /
+  `context_hashes.clear()`. (The agent's existing
+  `OmegaEvent::Compacted` handler may stay until 6.5 to keep MockProvider
+  scripts working — same pattern we used for `ToolCall`.)
+- **Abandonment closers (replaces `track_fragment`):** when a
+  `LlmRetry`/`LlmError`/`TurnInterrupted` arrives mid-stream,
+  emit `partial: true` block events for any unsealed slot, then
+  emit `OmegaEvent::LlmResponseDiscarded` before the
+  `LlmRetry` / etc.
+- End of Phase 3: lock the interleaved-thinking golden (which Phase 0
+  deferred because today's flat accumulators reorder).
+
+### Migration discipline (same as Phase 2)
+
+- `OmegaEvent::LlmResponse` (legacy) keeps coexisting with
+  `OmegaEvent::LlmResponseEnded` until Phase 6.5. Frontend hasn't
+  migrated yet (Phase 4 does that).
+- Phase 0 goldens MUST remain byte-equal on the 6 non-interleaved
+  fixtures. Run `cd rust && cargo test -p omega-agent --test goldens`
+  after every commit.
+- Phase 3 *will* change the shape of `events.jsonl` because the agent
+  starts emitting the new block events. That's expected. Goldens only
+  cover `context.jsonl`; the latter is built from assistant content,
+  which should remain identical for non-interleaved fixtures (same
+  text / thinking / tool_use blocks, just collected by index).
+
+### Plausible commit breakdown (sketch)
+
+1. Introduce `BTreeMap<usize, BlockSlot>` accumulators behind a
+   feature gate / parallel path; old path still wins. Verify
+   goldens byte-equal.
+2. Switch agent to consume `*BlockComplete` signals and emit the
+   new block events (still also emitting legacy `LlmResponse`).
+3. Compaction detection via `usage.iterations`; emit synthetic
+   `Compacted` for backward compat.
+4. Abandonment closers: on retry/error mid-stream, emit partial
+   block events + `LlmResponseDiscarded`.
+5. Drop the flat-accumulator path; lock interleaved-thinking golden.
+
+(Each step ends green. Push every ≈3 commits.)
+
+### Notes for resuming after context compaction
+
+Current develop tip after Phase 2 push: `7ac743c`.
+Gate command: `just rust-gate`.
+Goldens replay: `cd rust && cargo test -p omega-agent --test goldens`.
+Full plan: `backlog/schema-8.md`.
 
 ## CURRENT STATE (Phase 1b DONE — next: Phase 2)
 
