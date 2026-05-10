@@ -141,7 +141,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 - End of Phase 3: lock interleaved-thinking golden.
 
 ### Phase 4 — Frontend protocol & store — **DONE** (2026-05-13, commits 4c657a5..a3484a4)
-### Phase 5 — Frontend UI blocks — **TODO**
+### Phase 5 — Frontend UI blocks — **DONE** (2026-05-14, commits 7c74d51..6ed6044)
 ### Phase 6 — Tests (T1–T5) — **TODO**
 ### Phase 7 — Snapshots and docs — **TODO**
 ### Phase 8 — Mutation testing — **TODO**
@@ -180,7 +180,117 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 4 DONE — next: Phase 5)
+## CURRENT STATE (Phase 5 DONE — next: Phase 6 / 6.5 band-aid removal)
+
+**Phase 5 complete.** Eight commits on `develop`, all gates green
+(`just rust-gate` + `cargo test -p omega-e2e --tests -- --ignored
+--test-threads=1` + `cargo test -p omega-agent --test goldens`):
+
+- `7c74d51` schema-8(phase-5a): per-index streaming buffer; drop
+  `StreamingTail`. `streaming_text`/`streaming_thinking` become
+  `RwSignal<BTreeMap<usize, String>>`. Per-index `<For>` renders one
+  `data-testid="leptos-streaming-text"` (or `-thinking`) `<div>` per
+  in-flight content-block index. Drain via `pop_first()` on TextBlock /
+  ThinkingBlock event (relies on Anthropic's start-order block completion
+  guarantee, so no `index` field on event types needed). Server already
+  forwarded `index` since Phase 1a — only the leptos `protocol.rs` mirror
+  needed adding. 51/51 e2e on first run, including both previously-flaky
+  07_scroll tests.
+- `4a51636` schema-8(phase-5b): "discarded" styling on partial TextBlock /
+  ThinkingBlock / ToolUseBlock. `data-partial="true"` on the outer
+  EventBlock wrapper (dashed border), `block-discarded-header` shows
+  `"Discarded — N chars text"` / `"Discarded thinking — N chars"` /
+  `"Discarded tool_use — name"`, and `block-discarded-body` (opacity
+  0.55, line-through) on the inner content.
+- `3a7cf01` schema-8(phase-5c): ThinkingBlockBlock gets an `[expand]`
+  button (`data-testid="leptos-thinking-block-expand"`) opening TextModal
+  with the full thinking text. Layout adds `block-label-row` wrapper.
+  Works for both partial and non-partial.
+- `d909c4c` schema-8(phase-5d): ToolUseBlockBlock's entire
+  `block-label-row` is clickable to open TextModal with the
+  pretty-printed full input JSON. Modal title
+  `"tool_use payload — {name}"` (or `— (discarded) —` for partial).
+- `5170e36` schema-8(phase-5e): slim ToolCallBlock to just `tool_call
+  <name>` + `id=<id>` meta (no preview, no on:click — full input now
+  lives on the ToolUseBlock sibling). `assign_tool_corr` extended to
+  ALSO assign corrs to ToolUseBlock by `id`: a triple (ToolUseBlock,
+  ToolCall, ToolResult) sharing an id all show the same corr badge
+  when 2+ tool-calls exist in the group. Adapted `06_feed.rs`
+  (`multi_tool_turn_renders_every_family`) and `08_modal_esc.rs`
+  (`text_modal_esc_closes`) to point at the new selectors.
+- `693dc96` schema-8(phase-5f): `[compacted]` badge on
+  LlmResponseEndedBlock when `usage.iterations` contains a
+  `iteration_type == "compaction"` entry. `data-testid="leptos-compacted-badge"`,
+  `block-badge-compacted` CSS (yellow palette).
+- `f6b3172` schema-8(phase-5g): `N partial blocks` count on
+  LlmResponseDiscardedBlock. Helper `assign_partial_counts(&events) ->
+  Vec<Option<usize>>` mirrors `assign_tool_corr` shape; counter resets
+  at LlmResponseStarted/Ended/Discarded; only LlmResponseDiscarded
+  indices get `Some(N)`. Wired through the `<For>` mapping as a new
+  `partial_count` prop on `EventBlock`.
+- `6ed6044` schema-8(phase-5h): cleanup pass — drop two stale
+  `StreamingTail` doc references in `style.css` + `STYLE-MAPPING.md`.
+  No code change. Phase-5-introduced clippy / build are warning-free;
+  the two pre-existing warnings (`context_modal.rs:252`,
+  `usage_panel.rs:87`) are NOT from SCHEMA-8 and the gate doesn't
+  scope clippy to the leptos crate.
+
+Gate counts post-Phase-5 (vs end of Phase 4):
+
+  - host snapshots: 39 (was 29; +10 across 5a–5g; several existing
+    snapshots reblessed for structural changes)
+  - wasm tests: 378 (was 364; +14 across 5a–5g — mostly
+    `assign_tool_corr` extension tests in 5e and `assign_partial_counts`
+    tests in 5g)
+  - e2e: 51 (unchanged — 5a updated the two 07_scroll "flakes" which
+    now pass deterministically; 5e adapted 06_feed +
+    08_modal_esc to the new slim-ToolCall + modal-on-ToolUseBlock
+    selectors)
+  - goldens: 11 (unchanged — Phase 5 was frontend-only;
+    `context.jsonl` untouched)
+  - `just rust-gate`: green throughout
+
+### What the frontend looks like now after Phase 5
+
+- **Streaming overlay** is per-content-block-index: one
+  `<div data-testid="leptos-streaming-text">` (or `-thinking`) per
+  in-flight index. Drains as TextBlock/ThinkingBlock events land in
+  the events vec. `StreamingTail` deleted.
+- **Partial blocks** (TextBlock/ThinkingBlock/ToolUseBlock with
+  `partial: true`) carry `data-partial="true"` on the EventBlock
+  wrapper, render a yellow "Discarded — …" header, and grey/strike
+  the body content. Operator can tell at a glance which content was
+  abandoned mid-stream.
+- **ThinkingBlock** has an `[expand]` button that opens TextModal
+  with the full thinking text. Works for both partial and non-partial.
+- **ToolUseBlock** — the entire label row is clickable to open
+  TextModal with the pretty-printed full input JSON.
+- **ToolCallBlock** — slim. Just `tool_call <name>` + `id=<id>` meta
+  + optional corr-badge. No preview, no modal click. The full input
+  is now solely on the ToolUseBlock sibling.
+- **Correlation** — ToolUseBlock + ToolCall + ToolResult sharing an
+  `id` all show the same corr-badge when 2+ tool-calls exist in the
+  LlmCall group. Single-tool groups still suppress the badges.
+- **LlmResponseEndedBlock** carries a `[compacted]` badge when the
+  response triggered context compaction (yellow, in the label row).
+- **LlmResponseDiscardedBlock** shows `N partial blocks` meta. `N=0`
+  means a network blip with no streamed content; `N>0` means
+  visible struck-through partials above this row.
+
+### What's untouched (slated for Phase 6.5 band-aid removal)
+
+- `LlmResponseEvent.{text, thinking, streaming_start}` still populated
+  by the agent — still on the wire. The store ignores them (the
+  inert-legacy test added in 4d locks this). Remove in 6.5.
+- `OmegaEvent::Compacted` MockProvider-driven legacy variant still
+  handled in the agent. Remove in 6.5.
+- `LlmRetryEvent.{text_fragment, thinking_fragment}` — same. Remove in
+  6.5.
+- `CompactedEvent` type — same. Remove in 6.5.
+
+--- end Phase-5 summary ---
+
+## Original Phase 4 commits (kept for trail)
 
 **Phase 4 complete.** Five commits on `develop`, all gates green
 (`just rust-gate` + `cargo test -p omega-e2e --tests -- --ignored
