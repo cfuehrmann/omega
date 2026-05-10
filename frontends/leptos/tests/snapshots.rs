@@ -163,6 +163,16 @@ fn ev_tool_use_partial(name: &str, input: serde_json::Value) -> OmegaEvent {
     })
 }
 
+fn ev_tool_use(name: &str, input: serde_json::Value) -> OmegaEvent {
+    OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+        time: "2025-01-01T00:00:01.500Z".into(),
+        id: "toolu_complete".into(),
+        name: name.into(),
+        input,
+        partial: false,
+    })
+}
+
 /// New affordance row: stop-reason label + `[context]` + `[payload]`
 /// + usage line.  No body, no thinking button (those live in sibling
 /// `TextBlock` / `ThinkingBlock` events).
@@ -380,6 +390,23 @@ fn snap_event_tool_use_block_partial_discarded() {
         let ev = ev_tool_use_partial(
             "run_command",
             serde_json::json!({ "command": "echo partial" }),
+        );
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_tool_use_block_with_modal_affordance() {
+    // SCHEMA-8 Phase 5d — non-partial ToolUseBlock wraps its label
+    // and preview in a clickable .block-label-row whose on:click
+    // opens TextModal with the full pretty-printed input JSON.
+    let html = render(|| {
+        let ev = ev_tool_use(
+            "run_command",
+            serde_json::json!({ "command": "ls -la", "timeout_s": 30 }),
         );
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());

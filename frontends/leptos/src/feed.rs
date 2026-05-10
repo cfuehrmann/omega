@@ -800,35 +800,61 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
             // abandoned dispatch (the input was being streamed when
             // the connection died, so the preview is whatever JSON
             // had accumulated up to abandonment).
+            //
+            // SCHEMA-8 Phase 5d — clicking anywhere on the row opens
+            // TextModal with the full pretty-printed input JSON,
+            // mirroring ToolCallBlock's existing affordance.  This is
+            // the canonical "what arguments was the model planning to
+            // call this tool with?" surface and replaces the truncated
+            // inline preview as the operator's drill-down path.
+            let text_modal =
+                use_context::<TextModalState>().expect("TextModalState must be provided");
             let partial = e.partial;
             let name = e.name.clone();
+            let name_for_label = name.clone();
             let raw_preview = tool_call_preview(&e.name, &e.input);
             let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
+            let full_input =
+                serde_json::to_string_pretty(&e.input).unwrap_or_else(|_| "{}".to_owned());
+            let modal_title = if partial {
+                format!("tool_use payload (discarded) — {name}")
+            } else {
+                format!("tool_use payload — {name}")
+            };
             view! {
-                {if partial {
-                    view! {
-                        <span class="block-discarded-header" data-testid="leptos-block-partial">
-                            {format!("Discarded tool_use — {name}")}
-                        </span>
-                    }.into_any()
-                } else {
-                    view! {
-                        <span class="block-label">
-                            "tool_use "
-                            <span data-testid="leptos-tool-use-name">{name}</span>
-                        </span>
-                    }.into_any()
-                }}
-                <span
-                    class=if partial {
-                        "block-tool-preview block-discarded-body"
-                    } else {
-                        "block-tool-preview"
-                    }
-                    data-testid="leptos-tool-use-input"
+                <div
+                    class="block-label-row"
+                    data-testid="leptos-tool-use-block"
+                    on:click=move |_| text_modal.open(modal_title.clone(), full_input.clone())
                 >
-                    {preview}
-                </span>
+                    {if partial {
+                        view! {
+                            <span
+                                class="block-discarded-header"
+                                data-testid="leptos-block-partial"
+                            >
+                                {format!("Discarded tool_use — {name}")}
+                            </span>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <span class="block-label">
+                                "tool_use "
+                                <span data-testid="leptos-tool-use-name">{name_for_label}</span>
+                            </span>
+                        }.into_any()
+                    }}
+                    <span
+                        class=if partial {
+                            "block-tool-preview block-discarded-body"
+                        } else {
+                            "block-tool-preview"
+                        }
+                        data-testid="leptos-tool-use-input"
+                    >
+                        {preview}
+                    </span>
+                </div>
             }
             .into_any()
         }
