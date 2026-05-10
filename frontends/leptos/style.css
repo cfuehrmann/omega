@@ -568,6 +568,39 @@ main > h1 {
   50%      { opacity: 0.3; }
 }
 
+/* SCHEMA-8 Phase 5b — discarded (partial:true) block styling.
+ * `data-partial="true"` is stamped by `EventBlock` on the outer
+ * wrapper of TextBlock/ThinkingBlock/ToolUseBlock events that the
+ * agent emits immediately before `LlmResponseDiscarded` on
+ * mid-stream abandonment.  We don't strike the wrapper as a whole
+ * (the "Discarded — N chars" header must stay readable) — the
+ * renderer applies `block-discarded-body` to the inner body so only
+ * the abandoned content gets struck.
+ *
+ * Visual contract:
+ *   - opacity 0.55 so the block is recognisably present but
+ *     visually demoted vs. settled siblings,
+ *   - line-through the body to telegraph "this content was never
+ *     committed",
+ *   - the header sits at full opacity in a yellow italic to draw
+ *     the eye before the reader parses the struck text.
+ */
+[data-testid="leptos-event-block"][data-partial="true"] {
+  border-style: dashed;
+}
+.block-discarded-header {
+  display: inline-block;
+  color: var(--ctp-yellow);
+  font-style: italic;
+  font-size: 12px;
+  margin-right: 8px;
+}
+.block-discarded-body {
+  opacity: 0.55;
+  text-decoration: line-through;
+  text-decoration-color: var(--ctp-overlay1);
+}
+
 /* ─────────────────────────────────────────────────────────────────
  * Markdown body — pass-through from SolidJS (verbatim rules).
  * ───────────────────────────────────────────────────────────────── */

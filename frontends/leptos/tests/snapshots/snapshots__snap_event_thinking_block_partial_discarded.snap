@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="thinking_block" data-event-kind="assistant" data-partial="true" class="block block-assistant"><span data-testid="leptos-block-partial" class="block-discarded-header">Discarded thinking — 31 chars</span><pre data-testid="leptos-thinking-block-body" class="block-body block-discarded-body">thinking interrupted mid-stream</pre></div>

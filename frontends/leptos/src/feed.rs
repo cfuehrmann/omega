@@ -440,6 +440,13 @@ pub fn EventBlock(
     // running app.
     let block_id = idx.map(|i| i.to_string());
 
+    // SCHEMA-8 Phase 5b — surface `partial: true` on the wrapper so
+    // CSS (and e2e selectors) can grey/strike-through every child of
+    // a discarded block uniformly.  `event_is_partial` returns `None`
+    // for non-partial events so the attribute is omitted on stable
+    // blocks; existing snapshots stay byte-equal.
+    let partial_attr = event_is_partial(&event).then_some("true");
+
     view! {
         <div
             class=class
@@ -447,9 +454,27 @@ pub fn EventBlock(
             data-event-type=event_type
             data-event-kind=kind_str
             data-block-id=block_id
+            data-partial=partial_attr
         >
             {render_event_body(event, corr)}
         </div>
+    }
+}
+
+/// `true` when this event carries a `partial: true` flag (the agent
+/// mints these immediately before `LlmResponseDiscarded` for mid-stream
+/// abandonment).  Used by [`EventBlock`] to stamp `data-partial="true"`
+/// on the outer wrapper.
+///
+/// Only the three streamable block variants (`TextBlock`,
+/// `ThinkingBlock`, `ToolUseBlock`) carry the flag; every other event
+/// returns `false`.
+fn event_is_partial(event: &OmegaEvent) -> bool {
+    match event {
+        OmegaEvent::TextBlock(e) => e.partial,
+        OmegaEvent::ThinkingBlock(e) => e.partial,
+        OmegaEvent::ToolUseBlock(e) => e.partial,
+        _ => false,
     }
 }
 
@@ -661,18 +686,41 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         // human reader can tell the assistant didn't actually "say"
         // this.
         OmegaEvent::TextBlock(e) => {
+            // SCHEMA-8 Phase 5b — partial text blocks render greyed +
+            // struck-through with a "Discarded — N chars" header per
+            // spec § "Discarded-block styling".  Header sits BEFORE
+            // the markdown body so a reader sees the disclaimer
+            // before the discarded content; both share the
+            // `block-discarded-*` classes that style.css picks up.
+            // The header keeps `data-testid="leptos-block-partial"`
+            // for any future selector-driven assertions.
+            //
+            // Non-partial branch keeps the exact pre-5b markup
+            // (no `class=` attribute, no leading marker comment)
+            // so existing snapshots / e2e selectors stay byte-equal.
             let partial = e.partial;
-            view! {
-                <div data-testid="leptos-assistant-text">
-                    <MarkdownBody text=e.text />
-                </div>
-                {partial.then(|| view! {
-                    <span class="block-partial-marker" data-testid="leptos-block-partial">
-                        "[partial — response discarded]"
+            if partial {
+                let char_count = e.text.chars().count();
+                view! {
+                    <span class="block-discarded-header" data-testid="leptos-block-partial">
+                        {format!("Discarded — {char_count} chars text")}
                     </span>
-                })}
+                    <div
+                        data-testid="leptos-assistant-text"
+                        class="block-discarded-body"
+                    >
+                        <MarkdownBody text=e.text />
+                    </div>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <div data-testid="leptos-assistant-text">
+                        <MarkdownBody text=e.text />
+                    </div>
+                }
+                .into_any()
             }
-            .into_any()
         }
 
         // `ThinkingBlock`: one finalised (or partial) thinking
@@ -686,17 +734,27 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         // `signature.is_none()` iff `partial == true` per the
         // type-level invariant in `omega-types::events`.
         OmegaEvent::ThinkingBlock(e) => {
+            // SCHEMA-8 Phase 5b — partial thinking renders greyed +
+            // struck-through with a "Discarded thinking — N chars"
+            // header per spec § "Discarded-block styling".
             let partial = e.partial;
+            let char_count = e.thinking.chars().count();
             view! {
-                <span class="block-label">"thinking"</span>
-                <pre class="block-body" data-testid="leptos-thinking-block-body">
+                {if partial {
+                    view! {
+                        <span class="block-discarded-header" data-testid="leptos-block-partial">
+                            {format!("Discarded thinking — {char_count} chars")}
+                        </span>
+                    }.into_any()
+                } else {
+                    view! { <span class="block-label">"thinking"</span> }.into_any()
+                }}
+                <pre
+                    class=if partial { "block-body block-discarded-body" } else { "block-body" }
+                    data-testid="leptos-thinking-block-body"
+                >
                     {e.thinking}
                 </pre>
-                {partial.then(|| view! {
-                    <span class="block-partial-marker" data-testid="leptos-block-partial">
-                        "[partial — response discarded]"
-                    </span>
-                })}
             }
             .into_any()
         }
@@ -712,22 +770,41 @@ fn render_event_body(event: OmegaEvent, corr: Option<usize>) -> AnyView {
         // badge); Phase 5 will reconcile the two so each tool use
         // shows up exactly once.
         OmegaEvent::ToolUseBlock(e) => {
+            // SCHEMA-8 Phase 5b — partial tool_use blocks render
+            // greyed + struck-through with a "Discarded tool_use
+            // — {name}" header.  The name is informative even for an
+            // abandoned dispatch (the input was being streamed when
+            // the connection died, so the preview is whatever JSON
+            // had accumulated up to abandonment).
             let partial = e.partial;
+            let name = e.name.clone();
             let raw_preview = tool_call_preview(&e.name, &e.input);
             let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
             view! {
-                <span class="block-label">
-                    "tool_use "
-                    <span data-testid="leptos-tool-use-name">{e.name}</span>
-                </span>
-                <span class="block-tool-preview" data-testid="leptos-tool-use-input">
+                {if partial {
+                    view! {
+                        <span class="block-discarded-header" data-testid="leptos-block-partial">
+                            {format!("Discarded tool_use — {name}")}
+                        </span>
+                    }.into_any()
+                } else {
+                    view! {
+                        <span class="block-label">
+                            "tool_use "
+                            <span data-testid="leptos-tool-use-name">{name}</span>
+                        </span>
+                    }.into_any()
+                }}
+                <span
+                    class=if partial {
+                        "block-tool-preview block-discarded-body"
+                    } else {
+                        "block-tool-preview"
+                    }
+                    data-testid="leptos-tool-use-input"
+                >
                     {preview}
                 </span>
-                {partial.then(|| view! {
-                    <span class="block-partial-marker" data-testid="leptos-block-partial">
-                        "[partial — response discarded]"
-                    </span>
-                })}
             }
             .into_any()
         }

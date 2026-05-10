@@ -31,8 +31,9 @@ use leptos::tachys::view::RenderHtml;
 use omega_types::OmegaEvent;
 use omega_types::events::{
     AgentErrorEvent, LlmCallEvent, LlmResponseEndedEvent, LlmResponseUsage, ResumingSessionEvent,
-    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ToolCallEvent, ToolResultEvent,
-    TurnEndEvent, TurnMetrics, UserMessageEvent,
+    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent,
+    ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnEndEvent, TurnMetrics,
+    UserMessageEvent,
 };
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
@@ -116,6 +117,40 @@ fn ev_assistant(text: &str) -> OmegaEvent {
         time: "2025-01-01T00:00:01.000Z".into(),
         text: text.into(),
         partial: false,
+    })
+}
+
+/// SCHEMA-8 Phase 5b — fixtures for the three partial-block
+/// renderers.  The agent mints `partial: true` block events just
+/// before `LlmResponseDiscarded` on mid-stream abandonment
+/// (retry-on-transient-error).  The renderers stamp `data-partial=
+/// "true"` on the outer wrapper plus `block-discarded-{header,body}`
+/// classes on the inner pieces so CSS can grey + strike-through the
+/// content while keeping the disclaimer readable.
+fn ev_assistant_partial(text: &str) -> OmegaEvent {
+    OmegaEvent::TextBlock(TextBlockEvent {
+        time: "2025-01-01T00:00:01.000Z".into(),
+        text: text.into(),
+        partial: true,
+    })
+}
+
+fn ev_thinking_partial(thinking: &str) -> OmegaEvent {
+    OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+        time: "2025-01-01T00:00:01.250Z".into(),
+        thinking: thinking.into(),
+        signature: None,
+        partial: true,
+    })
+}
+
+fn ev_tool_use_partial(name: &str, input: serde_json::Value) -> OmegaEvent {
+    OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+        time: "2025-01-01T00:00:01.500Z".into(),
+        id: "toolu_partial".into(),
+        name: name.into(),
+        input,
+        partial: true,
     })
 }
 
@@ -295,8 +330,43 @@ fn snap_event_assistant_diff() {
 }
 
 #[test]
-fn snap_event_assistant_html_is_escaped() {
+fn snap_event_text_block_partial_discarded() {
     let html = render(|| {
+        let ev = ev_assistant_partial("partial text never settled");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_thinking_block_partial_discarded() {
+    let html = render(|| {
+        let ev = ev_thinking_partial("thinking interrupted mid-stream");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_tool_use_block_partial_discarded() {
+    let html = render(|| {
+        let ev = ev_tool_use_partial(
+            "run_command",
+            serde_json::json!({ "command": "echo partial" }),
+        );
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_assistant_html_is_escaped() {    let html = render(|| {
         let ev = ev_assistant("hello <script>alert(1)</script>");
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());

@@ -5,4 +5,4 @@ expression: html
 <div data-testid="leptos-event-block" data-event-type="text_block" data-event-kind="assistant" class="block block-assistant"><div data-testid="leptos-assistant-text"><div data-testid="md-body" class="block-body md-body"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody>
 <tr><td>1</td><td>2</td></tr>
 </tbody></table>
-</div></div><!></div>
+</div></div></div>

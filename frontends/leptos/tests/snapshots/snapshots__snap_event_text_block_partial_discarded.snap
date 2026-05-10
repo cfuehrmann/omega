@@ -1,0 +1,6 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="text_block" data-event-kind="assistant" data-partial="true" class="block block-assistant"><span data-testid="leptos-block-partial" class="block-discarded-header">Discarded — 26 chars text</span><div data-testid="leptos-assistant-text" class="block-discarded-body"><div data-testid="md-body" class="block-body md-body"><p>partial text never settled</p>
+</div></div></div>
