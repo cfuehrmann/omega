@@ -317,6 +317,7 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
             "UserMessage",
             "LlmCall",
             "LlmResponseStarted",
+            "LlmResponseDiscarded",
             "LlmError",
             "UserMessage",
             "LlmCall",

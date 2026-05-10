@@ -33,11 +33,11 @@ use omega_core::{
 };
 use omega_types::StreamSignal;
 use omega_types::events::{
-    AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEndedEvent,
-    LlmResponseEvent, LlmResponseStartedEvent, ModelChangedEvent, ResumingSessionEvent,
-    ServerStartedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent,
-    TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
+    LlmResponseEndedEvent, LlmResponseEvent, LlmResponseStartedEvent, ModelChangedEvent,
+    ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
@@ -186,6 +186,66 @@ fn insert_tool_use_slot(
             sealed: true,
         },
     );
+}
+
+/// SCHEMA-8 Phase 3 commit 3d: build the abandonment-closer event
+/// sequence for a response stream that was cut short by
+/// `LlmRetry` / `LlmError` / `TurnInterrupted` before the provider
+/// could surface its terminal `LlmResponse`.
+///
+/// For each UNSEALED `BlockSlot` left in `slots` (in index order),
+/// emit a `partial: true` variant of the corresponding
+/// `TextBlock` / `ThinkingBlock` / `ToolUseBlock` event so the
+/// consumer has explicit closure for every opened block.  Sealed
+/// slots had their final `partial: false` event emitted on their
+/// `*BlockComplete` signal and are skipped here to avoid duplicate
+/// emission.
+///
+/// Finally, append the `LlmResponseDiscarded` marker so the
+/// consumer knows the response stream was abandoned.  Always
+/// emitted when this helper is called, even if `slots` was empty
+/// — the caller is expected to gate on `response_started`.
+fn make_abandonment_closers(slots: BTreeMap<usize, BlockSlot>) -> Vec<OmegaEvent> {
+    let mut events: Vec<OmegaEvent> = slots
+        .into_values()
+        .filter_map(|slot| match slot {
+            BlockSlot::Text {
+                text,
+                sealed: false,
+            } if !text.is_empty() => Some(OmegaEvent::TextBlock(TextBlockEvent {
+                time: now_iso(),
+                text,
+                partial: true,
+            })),
+            BlockSlot::Thinking {
+                thinking,
+                signature,
+                sealed: false,
+            } if !thinking.is_empty() => Some(OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+                time: now_iso(),
+                thinking,
+                signature,
+                partial: true,
+            })),
+            BlockSlot::ToolUse {
+                id,
+                name,
+                input,
+                sealed: false,
+            } => Some(OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+                time: now_iso(),
+                id,
+                name,
+                input,
+                partial: true,
+            })),
+            _ => None,
+        })
+        .collect();
+    events.push(OmegaEvent::LlmResponseDiscarded(
+        LlmResponseDiscardedEvent { time: now_iso() },
+    ));
+    events
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +1020,21 @@ impl Agent {
                                     text_buf.clear();
                                     current_thinking.clear();
                                     completed_thinking_blocks.clear();
-                                    slots.clear();
+                                    // SCHEMA-8 Phase 3 commit 3d: emit
+                                    // partial-block events for any
+                                    // unsealed slots, then
+                                    // `LlmResponseDiscarded`, BEFORE the
+                                    // retry event itself.  Replaces the
+                                    // implicit fragment tracking that
+                                    // retry.rs::track_fragment used to do.
+                                    if response_started {
+                                        for closer in make_abandonment_closers(
+                                            std::mem::take(&mut slots),
+                                        ) {
+                                            let _ = self.event_store.append(&closer).await;
+                                            yield AgentItem::event(closer);
+                                        }
+                                    }
                                     // SCHEMA-8 Phase 3 commit 3b: the
                                     // retried stream gets its own
                                     // `LlmResponseStarted` opener.
@@ -999,6 +1073,15 @@ impl Agent {
 
                 // --- Handle abort during streaming -------------------------
                 if cancel.is_cancelled() {
+                    // SCHEMA-8 Phase 3 commit 3d: closer pair before
+                    // the interrupt. `response_started` does not need
+                    // resetting because we `return` immediately.
+                    if response_started {
+                        for closer in make_abandonment_closers(std::mem::take(&mut slots)) {
+                            let _ = self.event_store.append(&closer).await;
+                            yield AgentItem::event(closer);
+                        }
+                    }
                     let ev = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                         time: now_iso(),
                         reason: Some(InterruptReason::Aborted),
@@ -1010,6 +1093,19 @@ impl Agent {
 
                 // --- Handle stream error -----------------------------------
                 if let Some(err) = stream_error {
+                    // SCHEMA-8 Phase 3 commit 3d: closer pair before
+                    // the LlmError event.  After the error path,
+                    // control either falls through to the nudge
+                    // retry below (whose own next-turn iteration
+                    // re-declares response_started=false) or returns
+                    // — either way no further read of
+                    // `response_started` happens in this scope.
+                    if response_started {
+                        for closer in make_abandonment_closers(std::mem::take(&mut slots)) {
+                            let _ = self.event_store.append(&closer).await;
+                            yield AgentItem::event(closer);
+                        }
+                    }
                     let llm_err_ev = OmegaEvent::LlmError(LlmErrorEvent {
                         time: now_iso(),
                         url: ANTHROPIC_URL.to_owned(),
@@ -1688,7 +1784,17 @@ impl Agent {
                                 text_buf.clear();
                                 current_thinking.clear();
                                 completed_thinking_blocks.clear();
-                                slots.clear();
+                                // SCHEMA-8 Phase 3 commit 3d: emit
+                                // partial-block events + LlmResponseDiscarded
+                                // closer BEFORE the retry event.
+                                if response_started {
+                                    for closer in make_abandonment_closers(
+                                        std::mem::take(&mut slots),
+                                    ) {
+                                        let _ = self.event_store.append(&closer).await;
+                                        yield AgentItem::event(closer);
+                                    }
+                                }
                                 // SCHEMA-8 Phase 3 commit 3b: retried
                                 // stream gets its own opener.
                                 response_started = false;
@@ -1717,6 +1823,19 @@ impl Agent {
             // Step 6: cancellation — mirror TS, clean stop, no TurnInterrupted.
             // -----------------------------------------------------------------
             if cancel.is_cancelled() {
+                // SCHEMA-8 Phase 3 commit 3d: closer pair before the
+                // silent cancel return. perform_resumption deliberately
+                // does NOT emit `TurnInterrupted` (clean-stop semantics
+                // mirrored from the TS reference), but the closer pair
+                // still fires so consumers observe an abandoned
+                // response stream.  No `response_started=false`
+                // needed — we `return` next.
+                if response_started {
+                    for closer in make_abandonment_closers(std::mem::take(&mut slots)) {
+                        let _ = self.event_store.append(&closer).await;
+                        yield AgentItem::event(closer);
+                    }
+                }
                 return;
             }
 
@@ -1724,6 +1843,15 @@ impl Agent {
             // Step 7: terminal stream error.
             // -----------------------------------------------------------------
             if let Some(err) = stream_error {
+                // SCHEMA-8 Phase 3 commit 3d: closer pair.  No
+                // `response_started=false` needed — we `return` after
+                // surfacing LlmError.
+                if response_started {
+                    for closer in make_abandonment_closers(std::mem::take(&mut slots)) {
+                        let _ = self.event_store.append(&closer).await;
+                        yield AgentItem::event(closer);
+                    }
+                }
                 let llm_err_ev = OmegaEvent::LlmError(LlmErrorEvent {
                     time: now_iso(),
                     url: ANTHROPIC_URL.to_owned(),
