@@ -61,7 +61,7 @@ mod common;
 
 use common::{collect_stream, make_llm_response, make_test_agent, tags};
 use omega_core::{AgentItem, ContentBlock, LlmError, Message, Role};
-use omega_store::random_hash;
+use omega_store::content_hash;
 use omega_types::events::CompactedEvent;
 use omega_types::{OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
@@ -92,9 +92,11 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
             input: json!({ "path": "missing.txt" }),
         }],
     };
+    let user_hash = content_hash(&user_msg.role, &user_msg.content);
+    let assistant_hash = content_hash(&assistant_msg.role, &assistant_msg.content);
     agent.seed_history(
         vec![user_msg, assistant_msg],
-        vec![random_hash(), random_hash()],
+        vec![user_hash, assistant_hash],
     );
 
     // Provider just returns a clean reply for the resumed turn.

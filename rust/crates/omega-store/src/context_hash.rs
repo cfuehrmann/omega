@@ -76,21 +76,6 @@ pub fn content_hash(role: &Role, content: &[ContentBlock]) -> ContextHash {
     ContextHash::from_validated(hex::encode(prefix))
 }
 
-/// Generate a fresh [`ContextHash`] from 6 cryptographically random bytes.
-///
-/// **Deprecated path**, retained only through Phase 1 of HASH-1.  New code
-/// should use [`content_hash`].  This function will be removed in Phase 3.
-#[must_use]
-pub fn random_hash() -> ContextHash {
-    let bytes: [u8; 6] = rand::random();
-    let hex = bytes.iter().fold(String::with_capacity(12), |mut s, b| {
-        use std::fmt::Write as _;
-        let _ = write!(s, "{b:02x}");
-        s
-    });
-    ContextHash(hex)
-}
-
 /// Parse a [`ContextHash`] from an existing string, validating it matches
 /// `[0-9a-f]{16}`.
 ///
@@ -130,31 +115,6 @@ mod tests {
     use super::*;
     use omega_types::{ContentBlock, Role};
     use serde_json::json;
-
-    // -----------------------------------------------------------------
-    // Existing random-id tests (kept through Phase 1)
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn random_hash_is_12_hex_chars() {
-        // random_hash is the soon-to-be-removed legacy generator (Phase 3).
-        // It still produces 12-char strings, but those strings are now
-        // *invalid* under hash_from_str — see hash_from_str_rejects_12_char
-        // (T-LEN).
-        let h = random_hash();
-        assert_eq!(h.as_ref().len(), 12);
-        assert!(
-            h.as_ref()
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        );
-    }
-
-    #[test]
-    fn random_hash_display_equals_inner() {
-        let h = random_hash();
-        assert_eq!(h.to_string(), h.as_ref());
-    }
 
     // T-LEN — length-12 hashes are now unambiguously rejected.
     #[test]

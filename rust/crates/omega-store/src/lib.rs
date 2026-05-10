@@ -2,7 +2,7 @@
 //!
 //! This crate owns all on-disk I/O for a session:
 //!
-//! - [`context_hash`] — the [`ContextHash`] newtype and generation helpers.
+//! - [`context_hash`] — the [`ContextHash`] newtype and [`content_hash`] function.
 //! - [`session_dir`]  — session folder creation, naming, and metadata I/O.
 //! - [`event_store`]  — [`EventStore`]: append [`OmegaEvent`]s to `events.jsonl`.
 //! - [`context_store`]— [`ContextStore`]: append context records to `context.jsonl`.
@@ -14,7 +14,7 @@ pub mod context_store;
 pub mod event_store;
 pub mod session_dir;
 
-pub use context_hash::{ContextHash, content_hash, hash_from_str, random_hash};
+pub use context_hash::{ContextHash, content_hash, hash_from_str};
 pub use context_store::{ContextRecord, ContextStore};
 pub use event_store::EventStore;
 pub use session_dir::{
