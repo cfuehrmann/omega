@@ -63,6 +63,24 @@
 //! before comparison. The plan permits either freezing the clock or
 //! scrubbing; scrubbing is simpler and keeps production code untouched.
 //! Apply uniformly across all fixtures.
+//!
+//! # T4 — context.jsonl comparison is byte-level (Phase 6, item 53)
+//!
+//! The comparison performed by each test in this file is **byte-level**,
+//! not a structural projection. Comparing the scrubbed JSONL string
+//! character-by-character means any addition, deletion, reordering, or
+//! rename of a field — including inside a `ContentBlock` — is detected
+//! immediately as a golden mismatch.
+//!
+//! This property is load-bearing for SCHEMA-8: the `ContextHash` that
+//! threads through `events.jsonl` is computed from `(role, content)`, so
+//! byte-identical `context.jsonl` implies identical hashes (HASH-1).
+//! `ContentBlock` field serialisation is therefore frozen by these goldens
+//! and cannot drift silently.
+//!
+//! To understand *why* a golden has changed: inspect the diff, confirm
+//! the new shape is intentional, then re-capture with
+//! `OMEGA_GOLDEN_UPDATE=1 cargo test -p omega-agent --test goldens`.
 
 #![allow(
     clippy::expect_used,
