@@ -3,4 +3,4 @@ source: tests/snapshots.rs
 expression: html
 ---
 <div data-testid="leptos-event-block" data-event-type="tool_result" data-event-kind="error" class="block block-error"><div data-testid="leptos-tool-result-payload"><div class="block-label-row"><!><span class="block-label" data-testid="leptos-tool-result-name">result</span><button data-testid="leptos-tool-result-payload-btn" class="block-label-row-btn">output</button></div><pre data-testid="leptos-tool-result-body" class="block-body">boom
-</pre></div></div>
+</pre></div><span class="block-timestamp">00:00:03</span></div>

@@ -459,6 +459,46 @@ pub enum OmegaEvent {
     ToolUseBlock(ToolUseBlockEvent),
 }
 
+impl OmegaEvent {
+    /// Returns the timestamp of this event.
+    ///
+    /// Every event variant carries a `time: ISOTimestamp` field; this
+    /// method provides uniform access without a `match` at every call
+    /// site.  The compiler enforces exhaustiveness, so adding a new
+    /// variant without a `time` field will fail here.
+    #[must_use]
+    pub fn time(&self) -> &ISOTimestamp {
+        match self {
+            Self::SessionStarted(e) => &e.time,
+            Self::ServerStarted(e) => &e.time,
+            Self::ServerStopped(e) => &e.time,
+            Self::UserMessage(e) => &e.time,
+            Self::LlmCall(e) => &e.time,
+            Self::ToolCall(e) => &e.time,
+            Self::ToolResult(e) => &e.time,
+            Self::TurnEnd(e) => &e.time,
+            Self::LlmError(e) => &e.time,
+            Self::AgentError(e) => &e.time,
+            Self::TurnInterrupted(e) => &e.time,
+            Self::LlmRetry(e) => &e.time,
+            Self::ModelChanged(e) => &e.time,
+            Self::EffortChanged(e) => &e.time,
+            Self::TransportError(e) => &e.time,
+            Self::ResumingSession(e) => &e.time,
+            Self::SessionResumed(e) => &e.time,
+            Self::PauseRequested(e) => &e.time,
+            Self::TurnPaused(e) => &e.time,
+            Self::TurnContinued(e) => &e.time,
+            Self::LlmResponseStarted(e) => &e.time,
+            Self::LlmResponseEnded(e) => &e.time,
+            Self::LlmResponseDiscarded(e) => &e.time,
+            Self::TextBlock(e) => &e.time,
+            Self::ThinkingBlock(e) => &e.time,
+            Self::ToolUseBlock(e) => &e.time,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

@@ -415,6 +415,7 @@ main > h1 {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  position: relative; /* anchor for .block-timestamp */
 }
 
 .block-label {
@@ -1337,6 +1338,8 @@ main > h1 {
   flex-wrap: wrap;
   /* Keep left-margin consistent with plain .block-label rows. */
   margin-bottom: 2px;
+  /* Reserve space on the right for the absolutely-positioned timestamp. */
+  padding-right: 56px;
 }
 
 /* Push the first standalone button (direct child of .block-label-row) to the
@@ -1430,6 +1433,7 @@ main > h1 {
   .block-label-row {
     position: relative;
     flex-wrap: nowrap;
+    padding-right: 0; /* actions wrapper is absolute here; no reserved strip needed */
   }
   /* Standalone buttons always visible on narrow screens */
   .block-label-row > .block-label-row-btn {
@@ -1454,6 +1458,26 @@ main > h1 {
   .block-label-info {
     display: none;
   }
+}
+
+/* Timestamp — shown in the top-right corner of every block on hover.
+ * Absolutely positioned so it stays rightmost of all content and
+ * vertically aligned across all events (same `right` anchor).
+ * `pointer-events: none` keeps it from blocking any buttons below. */
+.block-timestamp {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.block:hover .block-timestamp {
+  opacity: 0.8;
 }
 
 /* Correlation-integer superscript on tool_call and tool_result blocks.

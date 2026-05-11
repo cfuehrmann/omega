@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="llm_response_discarded" data-event-kind="status" class="block block-status"><span class="block-label">assistant</span><span class="block-body block-discarded">[response discarded]</span><span data-testid="leptos-partial-block-count" class="block-meta">0 partial blocks</span></div>
+<div data-testid="leptos-event-block" data-event-type="llm_response_discarded" data-event-kind="status" class="block block-status"><span class="block-label">assistant</span><span class="block-body block-discarded">[response discarded]</span><span data-testid="leptos-partial-block-count" class="block-meta">0 partial blocks</span><span class="block-timestamp">00:00:01</span></div>

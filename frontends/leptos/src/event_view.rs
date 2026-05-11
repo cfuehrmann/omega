@@ -575,6 +575,21 @@ pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Time formatting
+// ---------------------------------------------------------------------------
+
+/// Extract the `HH:MM:SS` portion of an ISO-8601 timestamp for compact
+/// inline display.
+///
+/// `"2025-01-15T12:34:56.789Z"` → `"12:34:56"`.  Falls back to the full
+/// raw string when the input is shorter than expected (should never
+/// happen in practice — all `ISOTimestamp` values are RFC-3339).
+#[must_use]
+pub fn format_time(iso: &str) -> &str {
+    iso.get(11..19).unwrap_or(iso)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1870,5 +1885,28 @@ mod tests {
         // Must contain the field name and value from the JSON.
         assert!(result.contains("foo"), "fallback must include field name: {result}");
         assert!(result.contains("bar"), "fallback must include field value: {result}");
+    }
+
+    // -----------------------------------------------------------------------
+    // format_time
+    // -----------------------------------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn format_time_extracts_hms() {
+        assert_eq!(format_time("2025-01-15T12:34:56.789Z"), "12:34:56");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn format_time_midnight() {
+        assert_eq!(format_time("2025-01-15T00:00:00.000Z"), "00:00:00");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn format_time_fallback_on_short_input() {
+        // Malformed input must not panic; returns the raw string.
+        assert_eq!(format_time("short"), "short");
     }
 }

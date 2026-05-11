@@ -62,8 +62,8 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, kind_for,
-    kind_tag, should_autoscroll, tool_call_preview, truncate_preview,
+    EventKind, assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time,
+    kind_for, kind_tag, should_autoscroll, tool_call_preview, truncate_preview,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -438,6 +438,7 @@ pub fn EventBlock(
     let class = css_class_for(kind);
     let kind_str = kind_tag(kind);
     let event_type = event_type_tag(&event);
+    let time = format_time(event.time()).to_owned();
     // Leptos omits an attribute when its value is `None`, so the
     // snapshot harness (which doesn't pass `idx`) emits the wrapper
     // unchanged.  Live renders from `<ConversationFeed/>` always
@@ -462,6 +463,7 @@ pub fn EventBlock(
             data-partial=partial_attr
         >
             {render_event_body(event, corr, partial_count)}
+            <span class="block-timestamp">{time}</span>
         </div>
     }
 }
