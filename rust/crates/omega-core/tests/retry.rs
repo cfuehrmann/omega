@@ -138,7 +138,7 @@ async fn passes_through_a_clean_stream() {
     let provider = anthropic_with_retry(&server, 3);
     let items = collect_all(&provider, anthropic_request()).await;
 
-    // No retry events; a single Text signal + LlmResponse event.
+    // No retry events; a single Text signal + LlmResponseEnded event.
     assert!(retry_events(&items).is_empty(), "no retry should fire");
     assert!(
         items.iter().all(Result::is_ok),

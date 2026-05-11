@@ -593,7 +593,7 @@ async fn propagates_beta_header() {
         .with_beta("interleaved-thinking-2025-05-14");
 
     let items = collect_ok(&provider, simple_request()).await;
-    assert_eq!(items.len(), 1, "expected only the LlmResponse event");
+    assert_eq!(items.len(), 1, "expected only the LlmResponseEnded event");
 }
 
 // ---------------------------------------------------------------------------
@@ -685,8 +685,8 @@ async fn parse_retry_after_nonfinite_is_none() {
 // now_iso produces valid RFC3339
 // ---------------------------------------------------------------------------
 
-/// `LlmResponse.time` must be a valid RFC3339 timestamp.  Catches:
-/// `replace now_iso -> String with String::new()` and
+/// `LlmResponseEndedEvent.time` must be a valid RFC3339 timestamp.
+/// Catches: `replace now_iso -> String with String::new()` and
 /// `replace now_iso -> String with "xyzzy".into()` mutants.
 ///
 /// SCHEMA-8 Phase 2: `streaming_start` is no longer populated by the
@@ -759,7 +759,7 @@ async fn response_event_time_fields_are_valid_rfc3339() {
             Some(omega_types::OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("expected LlmResponse event");
+        .expect("expected LlmResponseEnded event");
 
     chrono::DateTime::parse_from_rfc3339(&resp.time)
         .expect("LlmResponseEnded.time must be valid RFC3339");
@@ -771,9 +771,12 @@ async fn response_event_time_fields_are_valid_rfc3339() {
 //
 // These tests exercise the request-shape opt-in (`context_management`),
 // the SSE compaction-block parser, the `applied_edits` extraction, and the
-// `Compacted → LlmResponse` ordering at the provider level.  They mirror
-// the TS reference points at `src/agent.ts:1432–1469` and the SSE shape
-// captured in `src/compacted.test.ts`.
+// compaction-block → trailing-text → `LlmResponseEnded` ordering at the
+// provider level.  They mirror the TS reference points at
+// `src/agent.ts:1432–1469` and the SSE shape captured in
+// `src/compacted.test.ts`.  (SCHEMA-8 Phase 6.5a removed the separate
+// `OmegaEvent::Compacted` variant; compaction is now surfaced via
+// `LlmResponseEnded.usage.iterations`.)
 // ---------------------------------------------------------------------------
 
 /// Build a minimal happy-path SSE envelope.  Used by tests that don't need
@@ -882,12 +885,11 @@ async fn request_body_omits_context_management_when_none() {
 /// `LlmResponseUsage`, which Anthropic emits in `message_delta.usage`
 /// when server-side compaction fires.
 ///
-/// SCHEMA-8 Phase 2: this test used to expect a separate
-/// `OmegaEvent::Compacted` variant was removed (Phase 6.5a); compaction is
-/// detected via `LlmResponseEnded.usage.iterations`.
-/// Catches mutants that:
+/// SCHEMA-8 Phase 6.5a removed the separate `OmegaEvent::Compacted`
+/// variant; compaction is now detected via
+/// `LlmResponseEnded.usage.iterations`.  Catches mutants that:
 ///   - re-introduce a `Compacted` event from the parser,
-///   - swap the order so `LlmResponse` precedes the trailing text,
+///   - swap the order so `LlmResponseEnded` precedes the trailing text,
 ///   - drop the trailing `TextBlockComplete` for the post-compaction
 ///     text block.
 #[tokio::test]
@@ -969,7 +971,7 @@ async fn compaction_block_followed_by_text_completes_normally() {
     let items = collect_ok(&provider, simple_request()).await;
 
     // Expect: Text("Hello"), TextBlockComplete(index=1, text="Hello"),
-    // LlmResponse — in that order.  No Compacted event.
+    // LlmResponseEnded — in that order.  No separate Compacted event.
     use omega_types::OmegaEvent;
     let mut iter = items.iter();
 
@@ -1072,7 +1074,7 @@ async fn iterations_array_is_carried_to_llm_response_usage() {
             Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("LlmResponse event present");
+        .expect("LlmResponseEnded event present");
 
     // Anthropic-published top-level fields still ride `usage`.
     assert_eq!(lr.usage.input_tokens, 80_500);
@@ -1094,7 +1096,7 @@ async fn iterations_array_is_carried_to_llm_response_usage() {
 }
 
 /// `applied_edits` containing `clear_tool_uses_20250919` must populate
-/// `LlmResponse.cleared_tool_uses` and `cleared_input_tokens`.
+/// `LlmResponseEnded.cleared_tool_uses` and `cleared_input_tokens`.
 /// Mirrors `src/agent.ts:1455–1469`.
 #[tokio::test]
 async fn applied_edits_populates_cleared_fields() {
@@ -1150,7 +1152,7 @@ async fn applied_edits_populates_cleared_fields() {
             Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("LlmResponse present");
+        .expect("LlmResponseEnded present");
 
     assert_eq!(resp.cleared_tool_uses, Some(7));
     assert_eq!(resp.cleared_input_tokens, Some(42_000));
@@ -1213,7 +1215,7 @@ async fn applied_edits_other_type_leaves_cleared_fields_none() {
             Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("LlmResponse present");
+        .expect("LlmResponseEnded present");
 
     assert!(
         resp.cleared_tool_uses.is_none(),
@@ -1341,9 +1343,10 @@ async fn request_body_has_three_cache_control_markers() {
     );
 }
 
-/// Plain text-only response must NOT emit a `Compacted` event AND
-/// must report `LlmResponseUsage.iterations` as `None` — there's no
-/// compaction marker to surface.  Counter-test for
+/// Plain text-only response must report `LlmResponseUsage.iterations`
+/// as `None` — there's no compaction marker to surface, and there is no
+/// longer any standalone `Compacted` event (removed Phase 6.5a).
+/// Counter-test for
 /// `compaction_block_followed_by_text_completes_normally` and
 /// `iterations_array_is_carried_to_llm_response_usage`.
 #[tokio::test]
@@ -1363,7 +1366,7 @@ async fn non_compacting_response_emits_no_compaction_signal() {
             Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("LlmResponse event present");
+        .expect("LlmResponseEnded event present");
     assert!(
         lr.usage.iterations.is_none(),
         "plain turn must not surface iterations: {:?}",
@@ -1371,7 +1374,7 @@ async fn non_compacting_response_emits_no_compaction_signal() {
     );
 }
 
-/// `LlmResponse.time` must be a valid RFC3339 timestamp on a
+/// `LlmResponseEndedEvent.time` must be a valid RFC3339 timestamp on a
 /// compaction-trigger turn too — catches the standard `now_iso → ""`
 /// and `now_iso → "xyzzy"` mutants on the post-compaction code path.
 ///
@@ -1434,7 +1437,8 @@ async fn llm_response_time_on_compacting_turn_is_valid_rfc3339() {
             Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("LlmResponse event present on compaction turn");
+        .expect("LlmResponseEnded event present on compaction turn");
 
-    chrono::DateTime::parse_from_rfc3339(&lr.time).expect("LlmResponse.time must be valid RFC3339");
+    chrono::DateTime::parse_from_rfc3339(&lr.time)
+        .expect("LlmResponseEnded.time must be valid RFC3339");
 }

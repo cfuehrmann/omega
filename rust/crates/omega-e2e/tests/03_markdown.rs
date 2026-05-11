@@ -1,7 +1,7 @@
 //! Port of `e2e/leptos-markdown.spec.ts` (11 cases).
 //!
 //! Drives the conversation feed against a real WebSocket session
-//! and validates that the assistant's `llm_response` text gains
+//! and validates that the assistant's `text_block` content gains
 //! the same markdown affordances as the SolidJS `MdBody`:
 //!
 //! * paragraphs, lists, headings, links, GFM tables
@@ -26,7 +26,7 @@ const MD_BODY: &str = "[data-testid=\"md-body\"]";
 const TURN_END: &str = "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]";
 
 /// Drive a single assistant-only turn that emits exactly the given
-/// markdown text in the `llm_response` event.  Mirrors
+/// markdown text in the `text_block` event.  Mirrors
 /// `runAssistantTurn` from the original Playwright spec.
 async fn run_assistant_turn(h: &TestHarness, markdown: &str) {
     h.reset_calls().await.expect("reset_calls");

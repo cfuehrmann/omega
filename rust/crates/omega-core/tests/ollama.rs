@@ -570,14 +570,14 @@ async fn with_client_custom_header_is_propagated() {
         .with_base_url(server.uri());
     // `collect_ok` panics if any item is Err (e.g. 404 when header absent).
     let items = collect_ok(&provider, simple_request()).await;
-    assert_eq!(items.len(), 1, "expected LlmResponse event");
+    assert_eq!(items.len(), 1, "expected LlmResponseEnded event");
 }
 
 // ---------------------------------------------------------------------------
-// now_iso — LlmResponse time fields must be valid RFC3339
+// now_iso — LlmResponseEnded time fields must be valid RFC3339
 // ---------------------------------------------------------------------------
 
-/// `LlmResponse.time` must be a valid RFC3339 timestamp.
+/// `LlmResponseEndedEvent.time` must be a valid RFC3339 timestamp.
 /// Catches: `replace now_iso -> String with String::new()` and
 /// `replace now_iso -> String with "xyzzy".into()`.
 #[tokio::test]

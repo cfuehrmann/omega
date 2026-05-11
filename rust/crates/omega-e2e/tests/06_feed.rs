@@ -3,11 +3,12 @@
 // Four cases:
 // 1. multi-tool turn — three sequential `run_command` tool turns +
 //    final text. Asserts every event family/kind shows up: user_message,
-//    tool_call (×3), tool_result (×3), llm_response (final), status.
+//    tool_call (×3), tool_result (×3), text_block (final),
+//    llm_response_ended (status), turn_end.
 // 2. streaming text — `longStream` emits 8 chunks × 100 ms; the
 //    streaming overlay is visible during the turn and clears after
 //    `turn_end`, with the assembled text living in the persisted
-//    `llm_response`.
+//    `text_block`.
 // 3. tool-result truncation (TODO-C, Phase 3.10) — `read_file` against
 //    `rust-migration.md`. The inline preview is bounded to 2 lines,
 //    no `[show more]` toggle exists, the `[payload]` button opens
@@ -258,7 +259,7 @@ async fn multi_tool_turn_renders_every_family() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Streaming text overlay appears live and resolves into llm_response
+// 2. Streaming text overlay appears live and resolves into text_block
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -306,8 +307,8 @@ async fn streaming_overlay_appears_live_and_resolves() {
         "streaming overlay never showed expected prefix; last={last:?}"
     );
 
-    // After turn_end, overlay is gone and llm_response carries the
-    // post-stream "done stream" final.
+    // After turn_end, overlay is gone and the final text_block carries
+    // the post-stream "done stream" text.
     h.wait_for_count(
         "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
         1,
@@ -335,7 +336,7 @@ async fn streaming_overlay_appears_live_and_resolves() {
         .expect("read final assistant text");
     assert!(
         last_text.contains("done stream"),
-        "expected 'done stream' in final llm_response: {last_text:?}"
+        "expected 'done stream' in final text_block: {last_text:?}"
     );
 }
 
