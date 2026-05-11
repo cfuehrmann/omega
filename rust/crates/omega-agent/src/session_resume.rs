@@ -1369,4 +1369,35 @@ mod tests {
             "error text should be truncated to 120: {result}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // FU-1 — post-loop flush inner guard: whitespace-only TextBlock must not
+    //         emit a stray "\nAgent: " line.
+    //
+    // Targets the `session_resume.rs:270:12 delete !` mutant identified in
+    // rust/SCHEMA-8-MUTANTS.md § "omega-agent non-focal survivors".  Without
+    // the `!text.is_empty()` inner guard in the post-loop flush block, the
+    // mutant changes `if !text.is_empty()` → `if text.is_empty()`, which
+    // causes `format!("\nAgent: ")` (no body) to be pushed when
+    // `pending_text` contains only whitespace.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn project_turn_whitespace_only_text_block_no_agent_line_emitted() {
+        // A turn whose TextBlock carries only whitespace, followed by no
+        // LlmResponseEnded (interrupted turn).  The post-loop flush path fires;
+        // `joined.trim()` == "" so the Agent line must be suppressed.
+        let evs = vec![
+            user_msg("q"),
+            text_block("   \n  \t  "), // all whitespace — trims to ""
+            // No LlmResponseEnded → in-loop flush is skipped.
+            // TurnInterrupted(None) closes the turn without adding an Agent line.
+            turn_interrupted(None),
+        ];
+        let result = extract_resumption_basis(&evs);
+        assert!(
+            !result.contains("\nAgent: "),
+            "whitespace-only TextBlock must not emit a stray Agent line: {result:?}"
+        );
+    }
 }

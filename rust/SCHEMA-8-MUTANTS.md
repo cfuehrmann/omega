@@ -72,14 +72,14 @@ Initial command:
 cd rust && cargo mutants -p omega-agent --timeout 600
 ```
 
-| Bucket    | Initial run | After Phase 8a catching tests |
-| --------- | ----------- | ----------------------------- |
-| Total     |  156        | 156                           |
-| Caught    |   51        |  58                           |
-| Unviable  |   93        |  93                           |
-| Timeouts  |    0        |   0                           |
-| **Missed (focal)**     | **7**  | **0** |
-| **Missed (non-focal)** | **5**  | **5** |
+| Bucket    | Initial run | After Phase 8a catching tests | After FU-1 |
+| --------- | ----------- | ----------------------------- | ---------- |
+| Total     |  156        | 156                           | 156        |
+| Caught    |   51        |  58                           |  59        |
+| Unviable  |   93        |  93                           |  93        |
+| Timeouts  |    0        |   0                           |   0        |
+| **Missed (focal)**     | **7**  | **0** | **0** |
+| **Missed (non-focal)** | **5**  | **5** | **4** |
 
 The retest after adding `abandonment_closer_tests` was scoped to
 `agent.rs` for speed:
@@ -147,11 +147,11 @@ materialise or were caught. The plan's list, with status:
 
 ### omega-agent non-focal survivors (out of scope per plan)
 
-Five MISSED mutants live in `crates/omega-agent/src/session_resume.rs`,
+Four MISSED mutants live in `crates/omega-agent/src/session_resume.rs`,
 in the `project_turn` helper that produces a human-readable summary
 string from a turn's event sequence. `project_turn` is *not* on the
 zero-survivor list (it sits behind the resumption-summary prompt, not
-the wire-shape contract). Each survivor is an equivalent-mutant case:
+the wire-shape contract). All four survivors are equivalent-mutant cases:
 
 | Location | Mutation | Why it survives |
 | --- | --- | --- |
@@ -159,23 +159,15 @@ the wire-shape contract). Each survivor is an equivalent-mutant case:
 | `session_resume.rs:226:48` | replace `!pending_text.is_empty()` with `false` | This arm would *never* fire, leaving `pending_text` un-cleared. The post-loop flush block at `:267` then emits the same string the in-loop branch would have. Output identical. |
 | `session_resume.rs:226:48` | delete `!` | Same as the `false` replacement. |
 | `session_resume.rs:267:8` | delete `!` (flush guard) | When `pending_text` is empty, the inner `if !text.is_empty()` again short-circuits the push. Output identical. |
-| `session_resume.rs:270:12` | delete `!` (inner guard) | If `text` is `""`, `format!("\nAgent: ")` is pushed instead of being skipped; but in every test fixture `pending_text` carries non-empty content before reaching this line, so no fixture triggers the divergence. |
 
-The first four are **equivalent mutants** — the outer guards are
-defensive fast-paths, and the inner `!text.is_empty()` already enforces
-the user-visible invariant. Removing the outer guard changes
-performance, not behaviour.
-
-The fifth is a **real coverage gap in `project_turn`** but not on the
-SCHEMA-8 focal-file list. `project_turn` is consumed only by the
-resumption-summary prompt, where an extra `"\nAgent: "` line in the
-summary text would be cosmetic rather than wire-shape-breaking, and
-the cost of synthesising a fixture (an LLM turn that produces only
-whitespace text blocks) outweighs the value of catching this one
-mutation. Logged here per the Phase 8 plan rule that non-focal
-survivors must be noted with explicit justification, not chased.
-Tracked as FU-1 in `backlog/schema-8.md` § "Follow-ups discovered
-during execution" for a future tidy pass.
+The fifth non-focal survivor from Phase 8 (`session_resume.rs:270:12 delete !`
+on the inner `!text.is_empty()` guard) was a **real coverage gap** and has
+been closed by FU-1: `project_turn_whitespace_only_text_block_no_agent_line_emitted`
+in `session_resume.rs::tests` constructs a turn with an all-whitespace `TextBlock`
+and no `LlmResponseEnded`, and asserts that no stray `"\nAgent: "` line appears.
+The mutant now registers as CAUGHT (confirmed by re-running
+`cargo mutants -p omega-agent --file 'crates/omega-agent/src/session_resume.rs' --timeout 120`:
+4 missed, 24 caught, 34 unviable — see FU-1 run output).
 
 ---
 
@@ -187,6 +179,14 @@ To reproduce the post-Phase-8a focal-file run:
 cd rust && cargo mutants -p omega-agent --timeout 600 \
   --file 'crates/omega-agent/src/agent.rs'
 # 45 mutants tested in 72s: 17 caught, 28 unviable, 0 missed
+```
+
+To reproduce the FU-1 non-focal file run (confirms :270:12 is now caught):
+
+```
+cd rust && cargo mutants -p omega-agent \
+  --file 'crates/omega-agent/src/session_resume.rs' --timeout 120
+# 62 mutants tested: 4 missed, 24 caught, 34 unviable
 ```
 
 To reproduce the omega-core baseline:
