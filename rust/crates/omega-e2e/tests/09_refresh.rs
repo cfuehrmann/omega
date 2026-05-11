@@ -12,11 +12,14 @@
 // connection and `into_omega_event` is deterministic, the indices
 // must be identical pre- and post-reload.
 //
-// This file exercises the post-TurnEnd variant. A mid-turn variant
-// (reload between `LlmResponseStarted` and `LlmResponseEnded`) is
-// the harder stretch case; the post-TurnEnd variant alone covers
-// the T6 acceptance criterion (replay correctness of the persisted
-// `events.jsonl`).
+// Two variants:
+//   1. Post-TurnEnd reload (`data_block_ids_stable_across_reload_post_turn_end`):
+//      reload after the turn completes; asserts byte-stable feed reconstruction.
+//   2. Mid-turn reload (`data_block_ids_stable_across_reload_mid_turn`):
+//      reload between `LlmResponseStarted` and `LlmResponseEnded` while the
+//      provider is still streaming; asserts that the blocks persisted before
+//      the reload have stable IDs, and that the completed post-reload feed
+//      contains those blocks as a prefix.
 
 #![allow(
     clippy::expect_used,
@@ -187,5 +190,125 @@ async fn data_block_ids_stable_across_reload_post_turn_end() {
     assert_eq!(
         pre_text, post_text,
         "assistant text drifted across reload: pre={pre_text:?} post={post_text:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T6 — mid-turn reload reconstructs the same persisted prefix
+// ---------------------------------------------------------------------------
+
+/// Reload the page while the provider is still streaming (between
+/// `LlmResponseStarted` and `LlmResponseEnded`) and assert that the blocks
+/// that were persisted to `events.jsonl` before the reload have stable
+/// `data-block-id`s in the reconstructed feed.
+///
+/// Uses `MockResponse::SlowText` (8 chunks × 800 ms = 6.4 s streaming window)
+/// to guarantee a wide-enough gap between `LlmResponseStarted` and
+/// `LlmResponseEnded` for the reload to land mid-stream.
+///
+/// The `TextBlock`, `LlmResponseEnded`, and `TurnEnd` events are NOT yet
+/// persisted at the moment of snapshot; they arrive after the server finishes
+/// streaming on the new WS connection.  The assertion therefore checks that
+/// the pre-reload blocks are a prefix of the completed post-reload feed.
+#[tokio::test]
+#[ignore = "browser"]
+async fn data_block_ids_stable_across_reload_mid_turn() {
+    let h = TestHarness::launch().await.expect("launch");
+    h.reset_calls().await.expect("reset");
+    // 8 chunks × 800 ms inter-chunk delay ≈ 6.4 s total streaming time.
+    // This gives ample time to see LlmResponseStarted, snapshot, and reload
+    // before content_block_stop (which triggers TextBlock persistence).
+    h.load_script(vec![MockResponse::SlowText {
+        text: "mid-turn reload streaming text for replay test".into(),
+        chunks: 8,
+        delay_ms: 800,
+    }])
+    .await
+    .expect("load script");
+
+    h.new_session().await.expect("new session");
+    send_message(&h, "drive a slow streaming turn").await;
+
+    // Wait for the LlmResponseStarted event block — this confirms the turn is
+    // in-flight and at least one event past UserMessage/LlmCall is persisted.
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] \
+         [data-testid=\"leptos-event-block\"][data-event-type=\"llm_response_started\"]",
+        1,
+        T_TURN,
+    )
+    .await
+    .expect("llm_response_started never appeared pre-reload");
+
+    // Snapshot while the stream is in-flight (only persisted event blocks).
+    let pre = snapshot_blocks(&h).await;
+    assert!(
+        pre.len() >= 2,
+        "expected ≥2 blocks mid-stream (user_message + llm_response_started \
+         at minimum), got {}",
+        pre.len()
+    );
+    // Confirm we are genuinely mid-turn: TurnEnd must not have landed yet.
+    let has_turn_end_pre = pre.iter().any(|(_, t, _)| t == "turn_end");
+    assert!(
+        !has_turn_end_pre,
+        "turn_end appeared before reload — missed the mid-turn window; pre={pre:?}"
+    );
+
+    // Reload while the provider is still streaming.
+    h.reload().await.expect("reload page");
+
+    // The server-side agent continues to stream.  Wait for the turn to
+    // complete on the reconnected WS connection.
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] \
+         [data-testid=\"leptos-event-block\"][data-event-type=\"turn_end\"]",
+        1,
+        T_TURN,
+    )
+    .await
+    .expect("turn_end never landed post-reload");
+
+    let post = snapshot_blocks(&h).await;
+
+    // The post-reload feed must have at least as many blocks as pre-reload
+    // (the turn has now completed, so new blocks arrived after reconnect).
+    assert!(
+        post.len() >= pre.len(),
+        "post-reload feed ({} blocks) is shorter than pre-reload ({} blocks); \
+         post={post:?}",
+        post.len(),
+        pre.len()
+    );
+
+    // The blocks that were persisted before the reload must appear at the
+    // same positions (same data-block-id, data-event-type, data-event-kind)
+    // in the reconstructed post-reload feed.
+    let post_prefix = &post[..pre.len()];
+    assert_eq!(
+        pre, post_prefix,
+        "pre-reload blocks are not a stable prefix of the post-reload feed:\n\
+         pre       = {pre:?}\n\
+         post[..N] = {post_prefix:?}\n\
+         post (full) = {post:?}"
+    );
+
+    // Sanity: the completed feed must contain the scripted text in a TextBlock.
+    let last_text: String = h
+        .eval(
+            "(() => {\
+               const xs = document.querySelectorAll(\
+                 '[data-testid=\"leptos-feed\"] [data-event-type=\"text_block\"]');\
+               if (!xs.length) return '';\
+               const t = xs[xs.length - 1].querySelector(\
+                 '[data-testid=\"leptos-assistant-text\"]');\
+               return t ? t.textContent : '';\
+             })()",
+        )
+        .await
+        .expect("read last assistant text post-reload");
+    assert!(
+        last_text.contains("mid-turn reload streaming text"),
+        "post-reload TextBlock missing scripted text: {last_text:?}"
     );
 }
