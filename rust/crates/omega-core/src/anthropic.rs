@@ -98,6 +98,29 @@ fn stream_impl(
 ) -> impl futures::Stream<Item = Result<AgentItem, LlmError>> + Send + 'static {
     async_stream::try_stream! {
         let body = build_request_body(&request);
+        // DEBUG: when OMEGA_DEBUG_REQUEST_DIR is set, dump the outgoing
+        // request body and key headers to a timestamped file. Used to
+        // diff local-run bodies against bench-run bodies when investigating
+        // why Anthropic returns 0/0 for cache_creation/cache_read in bench.
+        // Strip this block once the caching gap is understood.
+        if let Ok(dir) = std::env::var("OMEGA_DEBUG_REQUEST_DIR") {
+            let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%3f").to_string();
+            let path = std::path::Path::new(&dir).join(format!("request_{ts}.json"));
+            let dump = serde_json::json!({
+                "headers": {
+                    "anthropic-version": ANTHROPIC_VERSION,
+                    "anthropic-beta": beta,
+                    "content-type": "application/json",
+                    "accept": "text/event-stream",
+                },
+                "url": url,
+                "body": body,
+            });
+            if let Ok(json) = serde_json::to_string_pretty(&dump) {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(&path, json);
+            }
+        }
         let mut req = client
             .post(&url)
             .header("x-api-key", &api_key)
