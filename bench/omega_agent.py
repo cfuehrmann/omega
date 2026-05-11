@@ -34,7 +34,14 @@ OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
 OMEGA_RUST_INSTALL_DIR = "/home/agent/omega-rust"
 OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/rust/target/release/omega"
-OMEGA_RUST_SESSION_ROOT = "/tmp/omega-rust-sessions"
+# Sessions are written into Harbor's bind-mounted agent logs directory
+# (/logs/agent inside the container <-> trial_dir/agent on the host).  This
+# means events.jsonl and context.jsonl appear on the host filesystem live
+# during the run -- no explicit download step, and survives abrupt
+# termination (timeout, OOM) where a finally block wouldn't run.  Harbor's
+# `chmod 777 /logs/agent` at container start ensures the agent user can
+# write here, and the recursive chown at teardown fixes host-side ownership.
+OMEGA_RUST_SESSION_ROOT = "/logs/agent/omega-session"
 # No Python-side timeout: harbor wraps run() with asyncio.wait_for(timeout=task.agent_timeout_sec),
 # which fires an AgentTimeoutError at the correct per-task deadline.  Adding our own inner
 # timeout_sec would fire earlier for long-deadline tasks (e.g. winning-avg-corewars has 3600 s)
@@ -171,29 +178,16 @@ class OmegaAgent(BaseInstalledAgent):
         )
 
         try:
-            await self.exec_as_agent(
-                environment, command=cmd
-            )
+            await self.exec_as_agent(environment, command=cmd)
         finally:
-            # Always pull events.jsonl and context.jsonl to the host logs
-            # dir so that populate_context_post_run, Harbor's UI, and the
-            # Omega web UI replay script can read the full session — even
-            # when the CLI exits non-zero.  Each download is wrapped
-            # independently so one failure cannot prevent the other.
-            try:
-                await environment.download_file(
-                    f"{OMEGA_SESSION_DIR}/events.jsonl",
-                    self.logs_dir / "events.jsonl",
-                )
-            except Exception:
-                pass
-            try:
-                await environment.download_file(
-                    f"{OMEGA_SESSION_DIR}/context.jsonl",
-                    self.logs_dir / "context.jsonl",
-                )
-            except Exception:
-                pass
+            for src, dest in (
+                ("/tmp/omega-session/events.jsonl", "events.jsonl"),
+                ("/tmp/omega-session/context.jsonl", "context.jsonl"),
+            ):
+                try:
+                    await environment.download_file(src, self.logs_dir / dest)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Context / trajectory
@@ -225,13 +219,20 @@ class OmegaAgent(BaseInstalledAgent):
                     break  # only one turn_end per session
 
 
+
 class OmegaRustAgent(OmegaAgent):
     """Omega Rust binary, built from source in the task container.
 
-    This class supplements `OmegaAgent` (TypeScript / Bun) and shares its
-    ``populate_context_post_run`` implementation.  The install step compiles
-    the ``omega-cli`` crate instead of running ``bun install``.  The run step
-    invokes the native binary directly.
+    This class supplements `OmegaAgent` (TypeScript / Bun).  The install step
+    compiles the ``omega-cli`` crate instead of running ``bun install``.  The
+    run step invokes the native binary directly and writes session files into
+    Harbor's bind-mounted /logs/agent tree, so events.jsonl / context.jsonl
+    appear on the host filesystem live (no download step required).
+
+    ``populate_context_post_run`` is overridden because the Rust CLI creates
+    a timestamped subdirectory under --session-root, so events.jsonl lives at
+    ``<logs_dir>/omega-session/<timestamp>/events.jsonl`` rather than at the
+    flat path used by the TS adapter.
 
     Usage
     -----
@@ -321,9 +322,12 @@ class OmegaRustAgent(OmegaAgent):
             )
 
         flags = self.build_cli_flags()
-        # Run omega, then copy the session files to fixed well-known paths so
-        # the finally block can download them without knowing the auto-generated
-        # session directory name.
+        # Sessions go straight into the bind-mounted /logs/agent tree.
+        # events.jsonl and context.jsonl are visible on the host the moment
+        # the kernel flushes -- no cp dance, no download_file, and crucially
+        # the data survives even if this exec is killed mid-flight (e.g.
+        # AgentTimeoutError) because nothing has to run afterwards to get it
+        # out of the container.
         cmd = (
             f"mkdir -p {OMEGA_RUST_SESSION_ROOT}"
             f" && cd /app 2>/dev/null || true"
@@ -332,24 +336,48 @@ class OmegaRustAgent(OmegaAgent):
             f" --model {shlex.quote(self._parsed_model_name)}"
             f" --session-root {OMEGA_RUST_SESSION_ROOT}"
             f" {flags}"
-            # After the run (success or failure), publish the session files to
-            # fixed paths.  The semicolon ensures this runs even if omega exits
-            # non-zero (e.g. turn_interrupted).
-            f" ; SESS=$(ls -1t {OMEGA_RUST_SESSION_ROOT} | head -1)"
-            f" && cp {OMEGA_RUST_SESSION_ROOT}/$SESS/events.jsonl"
-            f"       /tmp/omega-rust-events.jsonl 2>/dev/null || true"
-            f" && cp {OMEGA_RUST_SESSION_ROOT}/$SESS/context.jsonl"
-            f"       /tmp/omega-rust-context.jsonl 2>/dev/null || true"
         )
+        await self.exec_as_agent(environment, command=cmd)
 
-        try:
-            await self.exec_as_agent(environment, command=cmd)
-        finally:
-            for src, dest in (
-                ("/tmp/omega-rust-events.jsonl", "events.jsonl"),
-                ("/tmp/omega-rust-context.jsonl", "context.jsonl"),
-            ):
+    # ------------------------------------------------------------------
+    # Context / trajectory
+    # ------------------------------------------------------------------
+
+    def populate_context_post_run(self, context: "AgentContext") -> None:
+        """Read aggregate token counts from the latest session's events.jsonl.
+
+        The Rust CLI writes to ``<logs_dir>/omega-session/<timestamp>/`` (a
+        timestamped subdir created by omega's ``make_session_dir``), so we
+        pick the newest one.  In a normal run there is only one.
+        """
+        session_root = self.logs_dir / "omega-session"
+        if not session_root.is_dir():
+            return
+        subdirs = sorted(
+            (p for p in session_root.iterdir() if p.is_dir()),
+            key=lambda p: p.name,
+        )
+        if not subdirs:
+            return
+        events_file = subdirs[-1] / "events.jsonl"
+        if not events_file.exists():
+            return
+
+        with events_file.open() as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
                 try:
-                    await environment.download_file(src, self.logs_dir / dest)
-                except Exception:
-                    pass
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if event.get("type") == "turn_end":
+                    metrics = event.get("metrics", {})
+                    context.n_input_tokens = metrics.get("inputTokens")
+                    context.n_output_tokens = metrics.get("outputTokens")
+                    cache_read = metrics.get("cacheReadTokens", 0) or 0
+                    cache_write = metrics.get("cacheCreationTokens", 0) or 0
+                    context.n_cache_tokens = cache_read + cache_write
+                    break  # only one turn_end per session
