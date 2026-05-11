@@ -452,6 +452,8 @@ pub fn EventBlock(
     // for non-partial events so the attribute is omitted on stable
     // blocks; existing snapshots stay byte-equal.
     let partial_attr = event_is_partial(&event).then_some("true");
+    // Must be computed before `render_event_body` moves `event`.
+    let has_lr = event_has_label_row(&event);
 
     view! {
         <div
@@ -463,7 +465,7 @@ pub fn EventBlock(
             data-partial=partial_attr
         >
             {render_event_body(event, corr, partial_count)}
-            <span class="block-timestamp">{time}</span>
+            {(!has_lr).then(|| view! { <span class="block-timestamp">{time}</span> })}
         </div>
     }
 }
@@ -483,6 +485,21 @@ fn event_is_partial(event: &OmegaEvent) -> bool {
         OmegaEvent::ToolUseBlock(e) => e.partial,
         _ => false,
     }
+}
+
+/// `true` when this event renders a `.block-label-row` that carries
+/// the timestamp pill at its right end.  Used by [`EventBlock`] to
+/// skip the outer `.block-timestamp` fallback for those events.
+fn event_has_label_row(event: &OmegaEvent) -> bool {
+    matches!(
+        event,
+        OmegaEvent::LlmCall(_)
+            | OmegaEvent::LlmResponseEnded(_)
+            | OmegaEvent::ToolCall(_)
+            | OmegaEvent::ToolResult(_)
+            | OmegaEvent::ThinkingBlock(_)
+            | OmegaEvent::ToolUseBlock(_)
+    )
 }
 
 /// Per-variant body view. Returns `AnyView` so the match arms can each
@@ -747,6 +764,7 @@ fn render_event_body(
             // serves as an indicator of the current collapsed/expanded state.
             let needs_toggle = e.thinking.lines().count() > 3;
             let expanded = RwSignal::new(false);
+            let time_pill = format_time(&e.time).to_owned();
             view! {
                 <div class="block-label-row">
                     {if partial {
@@ -770,6 +788,7 @@ fn render_event_body(
                             {move || if expanded.get() { "less" } else { "more" }}
                         </button>
                     })}
+                    <span class="block-timestamp-pill">{time_pill}</span>
                 </div>
                 <pre
                     class=move || {
@@ -830,6 +849,7 @@ fn render_event_body(
             } else {
                 format!("tool_use payload — {name}")
             };
+            let time_pill = format_time(&e.time).to_owned();
             view! {
                 <div
                     class="block-label-row"
@@ -863,6 +883,7 @@ fn render_event_body(
                     >
                         {preview}
                     </span>
+                    <span class="block-timestamp-pill">{time_pill}</span>
                 </div>
             }
             .into_any()
@@ -923,6 +944,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
     );
 
     let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
+    let time_pill = format_time(&event.time).to_owned();
 
     view! {
         <div class="block-label-row">
@@ -961,6 +983,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
                     "payload"
                 </button>
             </div>
+            <span class="block-timestamp-pill">{time_pill}</span>
         </div>
     }
 }
@@ -1000,6 +1023,7 @@ fn ToolCallBlock(
     let full_input =
         serde_json::to_string_pretty(&event.input).unwrap_or_else(|_| "{}".to_owned());
     let modal_title = format!("tool_call input — {}", event.name);
+    let time_pill = format_time(&event.time).to_owned();
 
     view! {
         <div class="block-label-row" data-testid="leptos-tool-call-input">
@@ -1013,6 +1037,7 @@ fn ToolCallBlock(
             >
                 "input"
             </button>
+            <span class="block-timestamp-pill">{time_pill}</span>
         </div>
     }
 }
@@ -1059,6 +1084,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
     );
 
     // Clone the event for the context modal; the payload text is moved.
+    let time_pill = format_time(&event.time).to_owned();
     let event_for_ctx = event;
 
     view! {
@@ -1079,6 +1105,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
             >
                 "payload"
             </button>
+            <span class="block-timestamp-pill">{time_pill}</span>
         </div>
     }
 }
@@ -1107,6 +1134,7 @@ fn ToolResultBlock(
     let preview = truncate_preview(&full, 2, 300).unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
+    let time_pill = format_time(&event.time).to_owned();
 
     view! {
         <div data-testid="leptos-tool-result-payload">
@@ -1122,6 +1150,7 @@ fn ToolResultBlock(
                 >
                     "output"
                 </button>
+                <span class="block-timestamp-pill">{time_pill}</span>
             </div>
             <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
         </div>

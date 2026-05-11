@@ -1338,8 +1338,6 @@ main > h1 {
   flex-wrap: wrap;
   /* Keep left-margin consistent with plain .block-label rows. */
   margin-bottom: 2px;
-  /* Reserve space on the right for the absolutely-positioned timestamp. */
-  padding-right: 56px;
 }
 
 /* Push the first standalone button (direct child of .block-label-row) to the
@@ -1433,7 +1431,6 @@ main > h1 {
   .block-label-row {
     position: relative;
     flex-wrap: nowrap;
-    padding-right: 0; /* actions wrapper is absolute here; no reserved strip needed */
   }
   /* Standalone buttons always visible on narrow screens */
   .block-label-row > .block-label-row-btn {
@@ -1474,6 +1471,9 @@ main > h1 {
  * Absolutely positioned so it stays rightmost of all content and
  * vertically aligned across all events (same `right` anchor).
  * `pointer-events: none` keeps it from blocking any buttons below. */
+/* Timestamp shown on hover for events that have no label row (user
+ * messages, status events, text blocks, etc.).  Absolutely positioned
+ * so it overlays the top-right corner of the block. */
 .block-timestamp {
   position: absolute;
   top: 6px;
@@ -1485,16 +1485,38 @@ main > h1 {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;
-  /* Same background as the block so the timestamp overlays any text
-   * that happens to sit underneath it in the top-right corner. */
   background: var(--bg2);
-  /* Invisible border aligns the text baseline with .block-label-row-btn,
-   * which has border: 1px + padding-top: 1px offsetting its text. */
-  border: 1px solid transparent;
-  padding-top: 1px;
 }
 .block:hover .block-timestamp {
   opacity: 0.8;
+}
+
+/* Timestamp pill for events with a label row (llm_call, tool_call,
+ * tool_result, thinking, tool_use, llm_response_ended).  Sits at the
+ * right end of the row, styled like .block-label-row-btn but
+ * non-interactive (cursor: default, pointer-events: none). */
+.block-timestamp-pill {
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 3px;
+  color: var(--ctp-subtext0);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: none;
+  cursor: default;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.block:hover .block-timestamp-pill {
+  opacity: 0.8;
+}
+/* When the row has no buttons (e.g. ThinkingBlock without expand,
+ * ToolUseBlock), push the pill to the right with auto left-margin. */
+.block-label-row:not(:has(.block-label-row-btn)) .block-timestamp-pill {
+  margin-left: auto;
 }
 
 /* Correlation-integer superscript on tool_call and tool_result blocks.
