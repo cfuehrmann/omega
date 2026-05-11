@@ -142,7 +142,8 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 
 ### Phase 4 — Frontend protocol & store — **DONE** (2026-05-13, commits 4c657a5..a3484a4)
 ### Phase 5 — Frontend UI blocks — **DONE** (2026-05-14, commits 7c74d51..6ed6044)
-### Phase 6 — Tests (T1–T5) — **TODO**
+### Phase 6.5 — Legacy band-aid removal — **DONE** (commits 21ce5d8..08d9791)
+### Phase 6 — Tests (T1–T5) — **NEXT**
 ### Phase 7 — Snapshots and docs — **TODO**
 ### Phase 8 — Mutation testing — **TODO**
 
@@ -180,7 +181,85 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 5 DONE — next: Phase 6 / 6.5 band-aid removal)
+## CURRENT STATE (Phase 6.5 DONE — next: Phase 6 T1–T5 defensive tests)
+
+**Phase 6.5 complete.** Two commits on `develop` (all Phase 6.5 items
+merged into one because they all touch the same files), all gates green
+(`just rust-gate` + `cargo test -p omega-e2e --tests -- --ignored
+--test-threads=1` + `cargo test -p omega-agent --test goldens`):
+
+- `21ce5d8` schema-8(phase-6.5a-d): drop OmegaEvent::Compacted,
+  ::LlmResponse, LlmResponseEvent, CompactedEvent + band-aid.
+  All four sub-items landed together because they touch the same files.
+  - **6.5a** – OmegaEvent::Compacted + CompactedEvent removed everywhere
+    (events.rs, agent.rs, session_resume.rs, common/mod.rs, internal.rs,
+    goldens.rs, protocol.rs, event_view.rs, feed.rs).  The
+    compaction-detection golden `script_compaction()` now signals
+    compaction via `LlmResponseEndedEvent.usage.iterations`
+    (type=="compaction") instead of emitting a Compacted item.
+    The internal test `compacted_event_clears_history_and_persists_usage`
+    rewritten to use iterations-in-usage for compaction detection.
+  - **6.5b** – LlmResponseEvent.{text,thinking,streaming_start} deleted;
+    struct was then identical to LlmResponseEndedEvent so it was deleted
+    outright.  OmegaEvent::LlmResponse variant deleted.  Agent
+    band-aid (lr_text_parts / lr_thinking_parts / bandaid_text /
+    bandaid_thinking / legacy LlmResponse emission) removed from both
+    send_message and perform_resumption.  Anthropic + Ollama providers
+    now emit OmegaEvent::LlmResponseEnded as the terminal event
+    (context_hash still filled by the agent after writing the context
+    record).  session_resume.rs / project_turn now accumulates TextBlock
+    events and flushes on LlmResponseEnded instead of reading
+    LlmResponse.text.  store.rs test
+    llm_response_event_is_inert_post_phase_4d deleted.
+  - **6.5c** – LlmRetryEvent.{text_fragment,thinking_fragment} removed
+    from the struct and from retry.rs construction.
+  - **6.5d** – CompactedEvent type gone (subsumed by 6.5a).
+- `08d9791` schema-8(phase-6.5e): e2e feed test selector fixed —
+  data-event-type="llm_response" → "llm_response_ended", kind
+  "assistant" → "status" (LlmResponseEnded is EventKind::Status).
+
+Gate counts post-Phase-6.5:
+
+  - goldens: 11 (unchanged — 6.5 is server/agent-side;
+    context.jsonl stays byte-equal)
+  - wasm tests: 376 (was 378; lost 2: llm_response_event_is_inert test
+    + kind_compacted_is_status test)
+  - host snapshots: 39 (unchanged)
+  - e2e: 51 (unchanged — 06_feed.rs selector updated in 6.5e)
+  - `just rust-gate`: green throughout
+
+### What the type surface looks like now after Phase 6.5
+
+- **OmegaEvent variants (26 total):** SessionStarted, ServerStarted,
+  ServerStopped, UserMessage, LlmCall, LlmResponseStarted,
+  LlmResponseEnded, LlmResponseDiscarded, TextBlock, ThinkingBlock,
+  ToolUseBlock, ToolCall, ToolResult, TurnEnd, LlmError, AgentError,
+  TurnInterrupted, LlmRetry, ModelChanged, EffortChanged,
+  TransportError, ResumingSession, SessionResumed, PauseRequested,
+  TurnPaused, TurnContinued.
+- **LlmResponseEndedEvent fields:** time, stop_reason,
+  cleared_tool_uses, cleared_input_tokens, usage (LlmResponseUsage
+  with optional iterations), context_hash, response_summary.
+- **LlmRetryEvent fields:** time, attempt, http_status, wait_ms,
+  error, retry_at, error_body, reason. (text_fragment +
+  thinking_fragment removed.)
+- **Agent event loop:** The provider now emits
+  OmegaEvent::LlmResponseEnded as the terminal event (with
+  context_hash: String::new()); the agent fills in context_hash after
+  writing the context record, then persists and emits.  No duplicate
+  LlmResponse emission.
+- **session_resume.rs extract_resumption_basis:** reads TextBlock
+  events and flushes accumulated text on LlmResponseEnded.  Old
+  sessions with llm_response entries in events.jsonl are harmlessly
+  skipped by the filter_map deserialization in router.rs.
+
+### Carry-overs to Phase 6 (none remaining from 6.5)
+
+Nothing from Phase 6.5 carries over.  The band-aids are gone.
+
+--- end Phase-6.5 summary ---
+
+## CURRENT STATE (Phase 5 DONE) [historical — superseded by 6.5 above]
 
 **Phase 5 complete.** Eight commits on `develop`, all gates green
 (`just rust-gate` + `cargo test -p omega-e2e --tests -- --ignored
@@ -277,18 +356,15 @@ Gate counts post-Phase-5 (vs end of Phase 4):
   means a network blip with no streamed content; `N>0` means
   visible struck-through partials above this row.
 
-### What's untouched (slated for Phase 6.5 band-aid removal)
+### What was untouched in Phase 5 (cleaned up in Phase 6.5)
 
-- `LlmResponseEvent.{text, thinking, streaming_start}` still populated
-  by the agent — still on the wire. The store ignores them (the
-  inert-legacy test added in 4d locks this). Remove in 6.5.
-- `OmegaEvent::Compacted` MockProvider-driven legacy variant still
-  handled in the agent. Remove in 6.5.
-- `LlmRetryEvent.{text_fragment, thinking_fragment}` — same. Remove in
-  6.5.
-- `CompactedEvent` type — same. Remove in 6.5.
+All of the following were removed in Phase 6.5:
 
---- end Phase-5 summary ---
+- ~~`LlmResponseEvent.{text, thinking, streaming_start}` + the agent band-aid~~ → **DONE Phase 6.5b**
+- ~~`OmegaEvent::Compacted` + `CompactedEvent`~~ → **DONE Phase 6.5a**
+- ~~`LlmRetryEvent.{text_fragment, thinking_fragment}`~~ → **DONE Phase 6.5c**
+
+--- end Phase-5 summary (historical) ---
 
 ## Original Phase 4 commits (kept for trail)
 
