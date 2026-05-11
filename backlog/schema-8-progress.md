@@ -145,7 +145,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 ### Phase 6.5 — Legacy band-aid removal — **DONE** (commits 21ce5d8..08d9791)
 ### Phase 6 — Tests (T1–T5) — **DONE** (commits 370d66a..59b2b25)
 ### Phase 7 — Snapshots and docs — **DONE**
-### Phase 8 — Mutation testing — **TODO**
+### Phase 8 — Mutation testing — **DONE**
 
 ## Acceptance criteria recap (must verify before declaring done)
 
@@ -181,7 +181,83 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 7 DONE — next: Phase 8 Mutation testing)
+## CURRENT STATE (Phase 8 DONE — SCHEMA-8 complete)
+
+**Phase 8 complete.** Three commits on `develop`, all gates green:
+
+- `schema-8(phase-8a): mutation-catching tests for make_abandonment_closers`
+  Adds an inline `#[cfg(test)] mod abandonment_closer_tests` block at the
+  end of `rust/crates/omega-agent/src/agent.rs` (11 unit tests mirroring
+  the existing `elide_request_tests` pattern). The tests pin the
+  per-slot emission contract of `make_abandonment_closers`:
+  * non-empty Text/Thinking slots emit `partial:true` block events with
+    the expected content (signature forwarded untouched on Thinking),
+  * empty Text/Thinking slots emit *no* block event, only the
+    `LlmResponseDiscarded` marker,
+  * sealed slots are skipped (the closer never re-emits a block already
+    flushed by the `*BlockComplete` path),
+  * the unsealed-`ToolUse` arm — defensive code unreachable from the
+    current stream loop because `insert_tool_use_slot` always seals on
+    insert — is exercised by constructing the slot map directly,
+  * mixed slots emit in `BTreeMap` index order (API-declared block
+    order, matching Phase 2's wire-shape invariant).
+  These 11 tests close the seven `agent.rs` survivors flagged by the
+  initial `cargo mutants -p omega-agent` run.
+
+- `schema-8(phase-8b): record mutation-testing results in rust/SCHEMA-8-MUTANTS.md`
+  New report at `rust/SCHEMA-8-MUTANTS.md` (200 lines). Covers both
+  focal crates with per-bucket counts, the seven now-caught `agent.rs`
+  survivors with the test that catches each, justification for the two
+  `retry.rs` timeouts (out of focal scope; behaviourally caught — the
+  mutation drives an infinite retry loop), and justification for the
+  five `session_resume.rs::project_turn` non-focal survivors (four are
+  equivalent mutants where the outer `!pending_text.is_empty()` guard
+  is a fast-path that the inner `!text.is_empty()` guard already
+  enforces; the fifth is a real but cosmetic coverage gap, not on the
+  zero-survivor list per the Phase 8 plan).
+
+- `schema-8(phase-8c): record Phase 8 done in backlog/schema-8-progress.md`
+  This commit.
+
+### Phase 8 results (final numbers)
+
+| Crate | Total | Caught | Unviable | Timeouts | Missed (focal) | Missed (non-focal) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `omega-core` | 100 | 59 | 39 | 2 | **0** | 0 |
+| `omega-agent` (initial) | 156 | 51 | 93 | 0 | 7 | 5 |
+| `omega-agent` (post-8a, agent.rs only) | 45 | 17 | 28 | 0 | **0** | n/a |
+
+Focal-file zero-survivor target met:
+* `omega-core/src/anthropic.rs` — 0 survivors (baseline run).
+* `omega-agent/src/agent.rs` — 0 survivors after Phase 8a.
+
+High-value mutations from the Phase 8 plan: all either caught or did
+not materialise as cargo-mutants operators (statement-swap, struct-literal
+field replacement, source-concatenation site mutations have no
+corresponding mutant kind). See `rust/SCHEMA-8-MUTANTS.md` § "High-value
+mutations from the Phase 8 plan" for per-item disposition.
+
+Gate counts post-Phase-8:
+
+  - goldens: 11 (unchanged)
+  - defensive: 3 (unchanged)
+  - omega-agent lib unit tests: +11 in `abandonment_closer_tests`
+    (was 110, now 121)
+  - wasm tests: 376 (unchanged)
+  - host snapshots: 39 (unchanged)
+  - `just rust-gate`: green
+  (e2e not re-run: Phase 8a touches only inline unit tests in `agent.rs`
+  and the new `rust/SCHEMA-8-MUTANTS.md` doc; no e2e infrastructure
+  changes.)
+
+SCHEMA-8 implementation complete. All eight phases (0 through 8) have
+landed on `develop`. The streaming-event wire shape, slot-assembly
+discipline, defensive harness, snapshot battery, documentation, and
+mutation coverage are all in place.
+
+--- end Phase-8 summary ---
+
+## PRIOR STATE (Phase 7 DONE)
 
 **Phase 7 complete.** Single commit on `develop`, all gates green:
 
