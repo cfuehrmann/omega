@@ -641,3 +641,40 @@ or behavioural change.
 - Enabling the `interleaved-thinking-2025-05-14` Anthropic beta. SCHEMA-8
   makes the agent and storage *correct* under interleaved streams; turning
   the beta on is a separate decision.
+
+## Follow-ups discovered during execution
+
+Small items surfaced after the planning doc was frozen. Not blockers
+for SCHEMA-8 closure; logged here so they don't get lost.
+
+### FU-1 — `session_resume::project_turn` empty-text inner-guard gap
+
+Phase 8 (`cargo mutants -p omega-agent`) flagged five survivors in
+`crates/omega-agent/src/session_resume.rs::project_turn`. Four are
+equivalent mutants (outer `!pending_text.is_empty()` fast-path that the
+inner guard already enforces). The fifth is real:
+
+* `session_resume.rs:270:12 delete !` on the inner `!text.is_empty()`
+  guard inside the post-loop flush block. Without the guard, an
+  all-whitespace `pending_text` would push a stray `"\nAgent: "` line
+  into the resumption summary instead of being skipped.
+
+Impact is cosmetic: `project_turn` builds the human-readable summary
+that the resumption-prompt feeds back to the model. A stray line in
+that summary would be ugly but not wire-shape-breaking. Out of focal
+scope for SCHEMA-8 (`agent.rs` and `anthropic.rs` only) but worth a
+small test in a future tidy pass. See `rust/SCHEMA-8-MUTANTS.md` §
+"omega-agent non-focal survivors" for the full triage.
+
+### FU-2 — Mid-turn browser-refresh replay variant
+
+`rust/crates/omega-e2e/tests/09_refresh.rs` implements the
+post-TurnEnd variant of the T6 browser-refresh replay test. The
+acceptance-criteria text in this doc lists a mid-turn variant as well
+("after some streamed content blocks but before `LlmResponseEnded`").
+The file header explicitly documents the Phase 4e decision that the
+post-TurnEnd variant alone covers T6's replay-correctness contract,
+because `events.jsonl` is what gets replayed and the mid-turn
+in-memory state isn't distinct from a post-turn replay of the same
+persisted prefix. Adding the mid-turn variant remains a useful stress
+test but is not a SCHEMA-8 blocker.

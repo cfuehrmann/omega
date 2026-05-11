@@ -174,6 +174,8 @@ the cost of synthesising a fixture (an LLM turn that produces only
 whitespace text blocks) outweighs the value of catching this one
 mutation. Logged here per the Phase 8 plan rule that non-focal
 survivors must be noted with explicit justification, not chased.
+Tracked as FU-1 in `backlog/schema-8.md` § "Follow-ups discovered
+during execution" for a future tidy pass.
 
 ---
 
