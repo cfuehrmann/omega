@@ -137,13 +137,6 @@ fn retry_loop<P: Provider + ?Sized + 'static>(
                     Some((Err(err), s))
                 } else {
                     let (sleep_for, reason) = compute_backoff(&err, next_attempt, &s.config);
-                    // SCHEMA-8 Phase 2: text / thinking fragment
-                    // tracking moves to the agent (it knows about
-                    // abandonment closers).  The retry event still
-                    // carries the legacy `text_fragment` /
-                    // `thinking_fragment` fields for now (deleted in
-                    // Phase 6.5), but the provider-side wrapper sets
-                    // them to `None`.
                     let event = build_retry_event(&err, next_attempt, sleep_for, reason);
                     s.attempt = next_attempt;
                     tokio::time::sleep(sleep_for).await;
@@ -218,10 +211,6 @@ fn build_retry_event(
         error: format!("{err}"),
         retry_at: Some(retry_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
         error_body,
-        // SCHEMA-8 Phase 2: legacy fragment fields now always None;
-        // abandonment moves to the agent.
-        text_fragment: None,
-        thinking_fragment: None,
         reason,
     })
 }

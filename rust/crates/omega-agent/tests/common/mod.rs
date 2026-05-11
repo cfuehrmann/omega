@@ -29,7 +29,7 @@ use futures::stream::BoxStream;
 use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_store::{ContextStore, EventStore};
-use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{LlmResponseUsage, OmegaEvent};
 use tempfile::TempDir;
 
@@ -137,7 +137,7 @@ pub fn make_test_agent() -> (Agent, Arc<MockProvider>, TempDir) {
 // ---------------------------------------------------------------------------
 
 /// Build a transcript for a single LLM call that returns a `tool_use`
-/// stop reason: one `ToolCall` event followed by an `LlmResponse` with
+/// stop reason: one `ToolCall` event followed by an `LlmResponseEnded` with
 /// `stop_reason = "tool_use"`.  The agent will dispatch the named tool
 /// and then hit the post-tool_results seam on its next loop iteration.
 pub fn make_tool_use_items(
@@ -153,21 +153,16 @@ pub fn make_tool_use_items(
             input,
             context_hash: String::new(),
         }))),
-        Ok(make_llm_response("tool_use", None, 10, 5)),
+        Ok(make_llm_response("tool_use", 10, 5)),
     ]
 }
 
-/// Build a default `LlmResponseEvent` with sensible test values.
+/// Build a default `LlmResponseEndedEvent` with sensible test values.
 ///
 /// `context_hash` is left empty so the agent fills it in (matching real
 /// providers).
-pub fn make_llm_response(
-    stop_reason: &str,
-    text: Option<&str>,
-    input_tokens: i64,
-    output_tokens: i64,
-) -> AgentItem {
-    AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
+pub fn make_llm_response(stop_reason: &str, input_tokens: i64, output_tokens: i64) -> AgentItem {
+    AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
         time: "2024-01-01T00:00:00.000Z".to_owned(),
         stop_reason: stop_reason.to_owned(),
         cleared_tool_uses: None,
@@ -181,9 +176,6 @@ pub fn make_llm_response(
             iterations: None,
         },
         context_hash: String::new(),
-        text: text.map(str::to_owned),
-        thinking: None,
-        streaming_start: None,
         response_summary: None,
     }))
 }
@@ -225,7 +217,6 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
             AgentItem::Event(boxed) => match boxed.as_ref() {
                 OmegaEvent::UserMessage(_) => "UserMessage",
                 OmegaEvent::LlmCall(_) => "LlmCall",
-                OmegaEvent::LlmResponse(_) => "LlmResponse",
                 OmegaEvent::ToolCall(_) => "ToolCall",
                 OmegaEvent::ToolResult(_) => "ToolResult",
                 OmegaEvent::TurnEnd(_) => "TurnEnd",
@@ -237,7 +228,6 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::SessionResumed(_) => "SessionResumed",
                 OmegaEvent::ModelChanged(_) => "ModelChanged",
                 OmegaEvent::EffortChanged(_) => "EffortChanged",
-                OmegaEvent::Compacted(_) => "Compacted",
                 OmegaEvent::PauseRequested(_) => "PauseRequested",
                 OmegaEvent::TurnPaused(_) => "TurnPaused",
                 OmegaEvent::TurnContinued(_) => "TurnContinued",

@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use async_stream::try_stream;
-use omega_types::events::LlmResponseEvent;
+use omega_types::events::LlmResponseEndedEvent;
 use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -171,7 +171,7 @@ fn stream_impl(
                     if let Some(c) = parsed.eval_count {
                         output_tokens = c;
                     }
-                    yield AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
+                    yield AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
                         time: now_iso(),
                         stop_reason,
                         cleared_tool_uses: None,
@@ -185,13 +185,6 @@ fn stream_impl(
                             iterations: None,
                         },
                         context_hash: String::new(),
-                        // SCHEMA-8 Phase 2: assistant content is
-                        // reconstructed by the agent from the
-                        // streamed signals; the provider no longer
-                        // duplicates it on `LlmResponse`.
-                        text: None,
-                        thinking: None,
-                        streaming_start: None,
                         response_summary: None,
                     }));
                     return;

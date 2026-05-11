@@ -187,39 +187,12 @@ pub struct LlmCallEvent {
     pub request_summary: Option<Value>,
 }
 
-/// An LLM response received by the agent.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmResponseEvent {
-    pub time: ISOTimestamp,
-    pub stop_reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cleared_tool_uses: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cleared_input_tokens: Option<i64>,
-    pub usage: LlmResponseUsage,
-    /// FK into `context.jsonl` for the assistant record written for this response.
-    pub context_hash: ContextHash,
-    /// Full assembled assistant text, if any.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    /// Full assembled thinking content, if any (multiple blocks concatenated).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<String>,
-    /// ISO timestamp of the first streaming text delta.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub streaming_start: Option<ISOTimestamp>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_summary: Option<Value>,
-}
-
 // ---------------------------------------------------------------------------
-// SCHEMA-8 — additive new event structs (Phase 1b)
+// SCHEMA-8 — event structs (Phase 1b+6.5)
 //
-// These coexist with the legacy `LlmResponseEvent` / `CompactedEvent` /
-// `text_fragment` / `thinking_fragment` shapes during the SCHEMA-8
-// migration.  The legacy variants are deleted in a final cleanup commit
-// after every consumer has migrated to the new grammar.
+// The legacy `LlmResponseEvent` / `CompactedEvent` / `text_fragment` /
+// `thinking_fragment` shapes were removed in Phase 6.5 after every
+// consumer migrated to the new block-grammar events.
 // ---------------------------------------------------------------------------
 
 /// Opener emitted on the first signal of any kind from a freshly-started
@@ -231,10 +204,7 @@ pub struct LlmResponseStartedEvent {
     pub time: ISOTimestamp,
 }
 
-/// Successful close of a provider stream.  Strict subset of
-/// [`LlmResponseEvent`] minus the `text` / `thinking` /
-/// `streaming_start` interval-summary fields, which now live on
-/// [`TextBlockEvent`] / [`ThinkingBlockEvent`].
+/// Successful close of a provider stream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmResponseEndedEvent {
@@ -361,14 +331,6 @@ pub struct TurnInterruptedEvent {
     pub reason: Option<InterruptReason>,
 }
 
-/// Server-side compaction fired during this turn.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CompactedEvent {
-    pub time: ISOTimestamp,
-    /// Full usage object from the API response (structure varies; kept verbatim).
-    pub usage: Value,
-}
-
 /// LLM provider call retried after a transient error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -386,12 +348,6 @@ pub struct LlmRetryEvent {
     /// Full structured error body from the provider, kept verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_body: Option<Value>,
-    /// Partial thinking content accumulated before the error.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_fragment: Option<String>,
-    /// Partial text content accumulated before the error.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text_fragment: Option<String>,
     /// Why the retry fired.  Absent for ordinary policy-driven retries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<LlmRetryReason>,
@@ -478,14 +434,12 @@ pub enum OmegaEvent {
     ServerStopped(ServerStoppedEvent),
     UserMessage(UserMessageEvent),
     LlmCall(LlmCallEvent),
-    LlmResponse(LlmResponseEvent),
     ToolCall(ToolCallEvent),
     ToolResult(ToolResultEvent),
     TurnEnd(TurnEndEvent),
     LlmError(LlmErrorEvent),
     AgentError(AgentErrorEvent),
     TurnInterrupted(TurnInterruptedEvent),
-    Compacted(CompactedEvent),
     LlmRetry(LlmRetryEvent),
     ModelChanged(ModelChangedEvent),
     EffortChanged(EffortChangedEvent),
@@ -496,9 +450,7 @@ pub enum OmegaEvent {
     TurnPaused(TurnPausedEvent),
     TurnContinued(TurnContinuedEvent),
 
-    // --- SCHEMA-8 additive variants -----------------------------------------
-    // These coexist with `LlmResponse` / `Compacted` during the migration.
-    // The legacy variants are removed once every consumer has migrated.
+    // --- SCHEMA-8 block-grammar variants (Phase 1b) -------------------------
     LlmResponseStarted(LlmResponseStartedEvent),
     LlmResponseEnded(LlmResponseEndedEvent),
     LlmResponseDiscarded(LlmResponseDiscardedEvent),
@@ -614,8 +566,10 @@ mod tests {
     }
 
     #[test]
-    fn llm_response_usage_snake_case() {
-        let ev = OmegaEvent::LlmResponse(LlmResponseEvent {
+    fn llm_response_ended_usage_snake_case() {
+        // Phase 6.5: verifies LlmResponseEnded (the sole response terminal
+        // event) serialises usage fields in snake_case as expected.
+        let ev = OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
             time: "2024-01-15T12:00:04.000Z".into(),
             stop_reason: "end_turn".into(),
             cleared_tool_uses: None,
@@ -629,13 +583,10 @@ mod tests {
                 iterations: None,
             },
             context_hash: "aabbccddeeff0011".into(),
-            text: Some("Hello!".into()),
-            thinking: None,
-            streaming_start: None,
             response_summary: None,
         });
         let v = serde_json::to_value(&ev).unwrap();
-        assert_eq!(v["type"], "llm_response");
+        assert_eq!(v["type"], "llm_response_ended");
         assert_eq!(v["stopReason"], "end_turn");
         // usage fields: snake_case (Anthropic API native)
         assert_eq!(v["usage"]["input_tokens"], 100);
@@ -646,8 +597,6 @@ mod tests {
             v["usage"].get("cache_read_input_tokens").is_none()
                 || v["usage"]["cache_read_input_tokens"].is_null()
         );
-        // Optional event fields absent when None
-        assert!(v.get("thinking").is_none() || v["thinking"].is_null());
     }
 
     #[test]
@@ -710,8 +659,6 @@ mod tests {
             error: "rate limited".into(),
             retry_at: None,
             error_body: None,
-            thinking_fragment: None,
-            text_fragment: None,
             reason: Some(LlmRetryReason::RetryAfter),
         });
         let v = serde_json::to_value(&ev).unwrap();
@@ -732,24 +679,6 @@ mod tests {
         assert_eq!(v["type"], "resuming_session");
         assert_eq!(v["resumedFrom"], "20240115_120000");
         assert_eq!(v["name"], "my session");
-    }
-
-    #[test]
-    fn compacted_usage_is_opaque() {
-        let raw_usage = serde_json::json!({
-            "input_tokens": 100,
-            "output_tokens": 50,
-            "iterations": [
-                {"type": "compaction", "input_tokens": 80},
-                {"type": "message",    "input_tokens": 20}
-            ]
-        });
-        let ev = OmegaEvent::Compacted(CompactedEvent {
-            time: "2024-01-15T12:00:11.000Z".into(),
-            usage: raw_usage.clone(),
-        });
-        let v = serde_json::to_value(&ev).unwrap();
-        assert_eq!(v["usage"], raw_usage);
     }
 
     // -----------------------------------------------------------------------

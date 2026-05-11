@@ -30,7 +30,7 @@ use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_server::{ActiveSession, AppState, build_router};
 use omega_store::{ContextStore, EventStore, SessionPaths};
-use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -152,8 +152,8 @@ async fn send_json(ws: &mut WsClient, v: serde_json::Value) {
 // Mock transcript helpers (mirrors crates/omega-agent/tests/common/mod.rs)
 // ---------------------------------------------------------------------------
 
-fn llm_response(stop_reason: &str, text: Option<&str>) -> AgentItem {
-    AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
+fn llm_response(stop_reason: &str) -> AgentItem {
+    AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
         time: "2024-01-01T00:00:00.000Z".to_owned(),
         stop_reason: stop_reason.to_owned(),
         cleared_tool_uses: None,
@@ -167,9 +167,6 @@ fn llm_response(stop_reason: &str, text: Option<&str>) -> AgentItem {
             iterations: None,
         },
         context_hash: String::new(),
-        text: text.map(str::to_owned),
-        thinking: None,
-        streaming_start: None,
         response_summary: None,
     }))
 }
@@ -187,7 +184,7 @@ fn tool_use_items(
             input,
             context_hash: String::new(),
         }))),
-        Ok(llm_response("tool_use", None)),
+        Ok(llm_response("tool_use")),
     ]
 }
 
@@ -205,13 +202,13 @@ fn write_scratch(dir: &Path) -> PathBuf {
 async fn happy_path_user_message_yields_text_and_turn_end() {
     let tmp = TempDir::new().unwrap();
     let provider = Arc::new(MockProvider::new());
-    // One LLM call: a Signal::Text "hello" then end_turn LlmResponse.
+    // One LLM call: a Signal::Text "hello" then end_turn LlmResponseEnded.
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::Text {
             index: 0,
             text: "hello".to_owned(),
         })),
-        Ok(llm_response("end_turn", Some("hello"))),
+        Ok(llm_response("end_turn")),
     ]);
 
     let state = make_test_state(provider, tmp.path().join("sessions"));
@@ -305,7 +302,7 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response("end_turn", Some("done")))]);
+    provider.push(vec![Ok(llm_response("end_turn"))]);
 
     let state = make_test_state(provider, tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
@@ -367,7 +364,7 @@ async fn abort_during_turn_emits_turn_interrupted() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response("end_turn", Some("done")))]);
+    provider.push(vec![Ok(llm_response("end_turn"))]);
 
     let state = make_test_state(provider, tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
@@ -529,7 +526,7 @@ async fn reconnect_replays_turn_events_filters_text_ready_last() {
             index: 0,
             text: "hello".to_owned(),
         })),
-        Ok(llm_response("end_turn", Some("hello"))),
+        Ok(llm_response("end_turn")),
     ]);
 
     let state = make_test_state(Arc::clone(&provider), sessions_root.clone());
@@ -620,7 +617,7 @@ async fn reconnect_replays_turn_events_filters_text_ready_last() {
         event_types[1], "session_started",
         "second event in history must be session_started; got {event_types:?}",
     );
-    for ty in &["user_message", "llm_call", "llm_response", "turn_end"] {
+    for ty in &["user_message", "llm_call", "llm_response_ended", "turn_end"] {
         assert!(
             event_types.contains(ty),
             "history.events must contain {ty}; got {event_types:?}",
@@ -1027,10 +1024,7 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
 
     let provider = Arc::new(MockProvider::new());
     // Resumption summary turn: a single end_turn LLM response with summary text.
-    provider.push(vec![Ok(llm_response(
-        "end_turn",
-        Some("<summary>resumed-context</summary>"),
-    ))]);
+    provider.push(vec![Ok(llm_response("end_turn"))]);
 
     let state = make_test_state(Arc::clone(&provider), sessions_root.clone());
     let addr = spawn_server(state).await;

@@ -591,13 +591,13 @@ async fn response_event_time_is_valid_rfc3339() {
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(omega_types::OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(omega_types::OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
-        .expect("expected LlmResponse event");
+        .expect("expected LlmResponseEnded event");
 
     chrono::DateTime::parse_from_rfc3339(&resp.time)
-        .expect("LlmResponse.time must be valid RFC3339");
+        .expect("LlmResponseEnded.time must be valid RFC3339");
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-//! All-28-variants `OmegaEvent` reference snapshot.
+//! All-26-variants `OmegaEvent` reference snapshot.
 //!
 //! This file is the living wire-format reference for `events.jsonl`.  It
 //! contains exactly one example of every `OmegaEvent` variant, serialised
@@ -9,30 +9,27 @@
 //!
 //! - `ToolCall` and `ToolResult` that share the same `id` (shown as `[id_1]`
 //!   in both, proving the same value is in both events).
-//! - The following `LlmResponse` has `cleared_tool_uses: 1`, completing the
-//!   tool-call lifecycle.
+//! - `ToolCall` and `ToolResult` complete the tool-call lifecycle.
 //!
 //! The per-variant unit tests in `src/events.rs` stay — they pin specific
 //! mutants the catalogue snapshot wouldn't reliably catch.
 //!
-//! SCHEMA-8 note: variants 23–28 cover the Phase 1b additive grammar
+//! SCHEMA-8 note: variants 21–26 cover the Phase 1b additive grammar
 //! (`LlmResponseStarted`, `LlmResponseEnded`, `LlmResponseDiscarded`,
-//! `TextBlock`, `ThinkingBlock`, `ToolUseBlock`).  They will eventually
-//! replace the legacy `LlmResponse` and the `text_fragment` /
-//! `thinking_fragment` fields on `LlmRetry`; for now they coexist.
+//! `TextBlock`, `ThinkingBlock`, `ToolUseBlock`).  Phase 6.5 removed
+//! the legacy `LlmResponse` and `Compacted` variants.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, CompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
-    LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-    LlmResponseEvent, LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason,
-    ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
-    ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
-    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
-    TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
-    TurnPausedEvent, UsageIteration, UserMessageEvent,
+    AgentErrorEvent, ContinueMode, EffortChangedEvent, InterruptReason, LlmCallEvent,
+    LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent,
+    LlmResponseUsage, LlmRetryEvent, LlmRetryReason, ModelChangedEvent, PauseRequestedEvent,
+    ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
+    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
+    ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
+    TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UsageIteration, UserMessageEvent,
 };
 use serde_json::json;
 
@@ -57,9 +54,9 @@ const CORR_ID: &str = "toolu_ref_01";
 
 /// Build one representative example of every `OmegaEvent` variant.
 ///
-/// The correlated triple (positions 6–8) uses the same `id` to demonstrate
+/// The correlated pair (positions 6–7) uses the same `id` to demonstrate
 /// id propagation.  Every other value is illustrative but realistic.
-fn all_22_events() -> Vec<OmegaEvent> {
+fn all_26_events() -> Vec<OmegaEvent> {
     vec![
         // 1. SessionStarted
         OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -111,27 +108,7 @@ fn all_22_events() -> Vec<OmegaEvent> {
             duration_ms: 8,
             output: "README.md\nsrc/\ntests/".into(),
         }),
-        // 8. LlmResponse — correlated triple, part 3 (cleared_tool_uses: 1)
-        OmegaEvent::LlmResponse(LlmResponseEvent {
-            time: T.into(),
-            stop_reason: "end_turn".into(),
-            cleared_tool_uses: Some(1),
-            cleared_input_tokens: None,
-            usage: LlmResponseUsage {
-                input_tokens: 512,
-                output_tokens: 64,
-                cache_creation_input_tokens: Some(480),
-                cache_read_input_tokens: None,
-                service_tier: None,
-                iterations: None,
-            },
-            context_hash: HASH.into(),
-            text: Some("The directory contains: README.md, src/, tests/.".into()),
-            thinking: None,
-            streaming_start: Some(T.into()),
-            response_summary: None,
-        }),
-        // 9. TurnEnd
+        // 8. TurnEnd
         OmegaEvent::TurnEnd(TurnEndEvent {
             time: T.into(),
             metrics: TurnMetrics {
@@ -141,33 +118,24 @@ fn all_22_events() -> Vec<OmegaEvent> {
                 cache_read_tokens: None,
             },
         }),
-        // 10. LlmError
+        // 9. LlmError
         OmegaEvent::LlmError(LlmErrorEvent {
             time: T.into(),
             url: "https://api.anthropic.com/v1/messages".into(),
             error: "HTTP 429: rate limit exceeded".into(),
             http_status: Some(429),
         }),
-        // 11. AgentError
+        // 10. AgentError
         OmegaEvent::AgentError(AgentErrorEvent {
             time: T.into(),
             error: "Tool execution failed: permission denied".into(),
         }),
-        // 12. TurnInterrupted
+        // 11. TurnInterrupted
         OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
             time: T.into(),
             reason: Some(InterruptReason::Aborted),
         }),
-        // 13. Compacted
-        OmegaEvent::Compacted(CompactedEvent {
-            time: T.into(),
-            usage: json!({
-                "input_tokens": 100,
-                "output_tokens": 50,
-                "cache_creation_input_tokens": 80
-            }),
-        }),
-        // 14. LlmRetry
+        // 12. LlmRetry
         OmegaEvent::LlmRetry(LlmRetryEvent {
             time: T.into(),
             attempt: 2,
@@ -179,52 +147,50 @@ fn all_22_events() -> Vec<OmegaEvent> {
                 "type": "error",
                 "error": {"type": "rate_limit_error", "message": "Too many requests"}
             })),
-            thinking_fragment: None,
-            text_fragment: Some("partial response text".into()),
             reason: Some(LlmRetryReason::RetryAfter),
         }),
-        // 15. ModelChanged
+        // 13. ModelChanged
         OmegaEvent::ModelChanged(ModelChangedEvent {
             time: T.into(),
             model: "claude-opus-4-6".into(),
         }),
-        // 16. EffortChanged
+        // 14. EffortChanged
         OmegaEvent::EffortChanged(EffortChangedEvent {
             time: T.into(),
             effort: "high".into(),
         }),
-        // 17. TransportError
+        // 15. TransportError
         OmegaEvent::TransportError(TransportErrorEvent {
             time: T.into(),
             error: "WebSocket connection closed unexpectedly".into(),
             context: Some("client 192.168.1.42".into()),
         }),
-        // 18. ResumingSession
+        // 16. ResumingSession
         OmegaEvent::ResumingSession(ResumingSessionEvent {
             time: T.into(),
             resumed_from: "20240114_090000".into(),
             name: Some("prior session".into()),
             basis: "The agent fixed a bug in the parser.".into(),
         }),
-        // 19. SessionResumed
+        // 17. SessionResumed
         OmegaEvent::SessionResumed(SessionResumedEvent {
             time: T.into(),
             resumed_from: "20240114_090000".into(),
             summary: "Fixed a bug in the parser module.".into(),
         }),
-        // 20. PauseRequested
+        // 18. PauseRequested
         OmegaEvent::PauseRequested(PauseRequestedEvent { time: T.into() }),
-        // 21. TurnPaused
+        // 19. TurnPaused
         OmegaEvent::TurnPaused(TurnPausedEvent { time: T.into() }),
-        // 22. TurnContinued
+        // 20. TurnContinued
         OmegaEvent::TurnContinued(TurnContinuedEvent {
             time: T.into(),
             mode: ContinueMode::Manual,
         }),
         // ----- SCHEMA-8 additive variants ------------------------------------
-        // 23. LlmResponseStarted — opener for a fresh provider stream.
+        // 21. LlmResponseStarted — opener for a fresh provider stream.
         OmegaEvent::LlmResponseStarted(LlmResponseStartedEvent { time: T.into() }),
-        // 24. LlmResponseEnded — successful close.  Carries usage with
+        // 22. LlmResponseEnded — successful close.  Carries usage with
         //     a populated `iterations` array (this is what makes a
         //     `Compacted` event redundant in the new grammar).
         OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
@@ -260,22 +226,22 @@ fn all_22_events() -> Vec<OmegaEvent> {
             context_hash: HASH.into(),
             response_summary: None,
         }),
-        // 25. LlmResponseDiscarded — closer for an abandoned stream.
+        // 23. LlmResponseDiscarded — closer for an abandoned stream.
         OmegaEvent::LlmResponseDiscarded(LlmResponseDiscardedEvent { time: T.into() }),
-        // 26. TextBlock — one complete text content block.
+        // 24. TextBlock — one complete text content block.
         OmegaEvent::TextBlock(TextBlockEvent {
             time: T.into(),
             text: "Hello, world.".into(),
             partial: false,
         }),
-        // 27. ThinkingBlock — one complete thinking block (signature present).
+        // 25. ThinkingBlock — one complete thinking block (signature present).
         OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
             time: T.into(),
             thinking: "Let me check the directory.".into(),
             signature: Some("sig_ref_01".into()),
             partial: false,
         }),
-        // 28. ToolUseBlock — one complete tool_use content block.
+        // 26. ToolUseBlock — one complete tool_use content block.
         OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
             time: T.into(),
             id: CORR_ID.into(),
@@ -297,9 +263,9 @@ fn all_22_events() -> Vec<OmegaEvent> {
 /// All instances of `CORR_ID` are replaced with `[id_1]`, proving they
 /// carry the same value.
 #[test]
-fn all_28_variants_reference() {
-    let events = all_22_events();
-    assert_eq!(events.len(), 28, "exactly 28 OmegaEvent variants");
+fn all_26_variants_reference() {
+    let events = all_26_events();
+    assert_eq!(events.len(), 26, "exactly 26 OmegaEvent variants");
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {

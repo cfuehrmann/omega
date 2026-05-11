@@ -500,20 +500,6 @@ fn render_event_body(
         }
         .into_any(),
 
-        // SCHEMA-8 Phase 4c — legacy `LlmResponse` band-aid is
-        // visually muted.  Its `text` / `thinking` content is now
-        // sourced from sibling `TextBlock` / `ThinkingBlock` events;
-        // its `usage` / `context_hash` / `stop_reason` affordances
-        // are now sourced from the sibling `LlmResponseEnded` event.
-        // The legacy `OmegaEvent::LlmResponse` still arrives on the
-        // wire (band-aid stays until Phase 6.5) and is still pushed
-        // into `events` so block ordering is preserved — it just
-        // contributes an empty `EventBlock` wrapper to the DOM
-        // (which still carries `data-event-type="llm_response"`
-        // `data-event-kind="assistant"` for any selector that needs
-        // to find the legacy boundary).
-        OmegaEvent::LlmResponse(_) => ().into_any(),
-
         OmegaEvent::ToolCall(e) => view! { <ToolCallBlock event=e corr=corr /> }.into_any(),
 
         OmegaEvent::ToolResult(e) => view! { <ToolResultBlock event=e corr=corr /> }.into_any(),
@@ -588,14 +574,7 @@ fn render_event_body(
         }
         .into_any(),
 
-        OmegaEvent::Compacted(e) => {
-            let line = serde_json::to_string(&e.usage).unwrap_or_else(|_| "{}".into());
-            view! {
-                <span class="block-label">"compacted"</span>
-                <pre class="block-body">{line}</pre>
-            }
-            .into_any()
-        }
+
 
         OmegaEvent::LlmRetry(e) => view! {
             <span class="block-label">"llm_retry"</span>
@@ -647,10 +626,8 @@ fn render_event_body(
         // Phase 1b shipped the wire grammar; Phase 4b replaces the
         // text/thinking/tool_use stubs with real per-block renderers.
         // `LlmResponseStarted` / `LlmResponseEnded` / `LlmResponseDiscarded`
-        // remain stubs here — Phase 4c switches the visible response
-        // container to be driven by those events (today the legacy
-        // `LlmResponse` band-aid renders the assistant block, so the
-        // opener/closer events are still visually inert).
+        // are lifecycle markers; `LlmResponseEnded` has its own renderer
+        // below (context hash badge, compacted badge, usage summary).
         OmegaEvent::LlmResponseStarted(_) => view! {
             <span class="block-label">"llm_response_started"</span>
         }

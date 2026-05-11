@@ -34,10 +34,10 @@ use omega_core::{
 use omega_types::StreamSignal;
 use omega_types::events::{
     AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
-    LlmResponseEndedEvent, LlmResponseEvent, LlmResponseStartedEvent, ModelChangedEvent,
-    ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent, SessionStartedEvent,
-    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
-    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent, ResumingSessionEvent,
+    ServerStartedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent,
+    TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
@@ -859,10 +859,9 @@ impl Agent {
                 let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
                 // `tool_uses` still collects legacy `OmegaEvent::ToolCall`
                 // emissions from `MockProvider` scripts (goldens.rs,
-                // internal.rs).  Removed in Phase 6.5 along with the
-                // legacy event.
+                // internal.rs).  Removed in Phase 6 fixture refresh.
                 let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
-                let mut llm_response: Option<LlmResponseEvent> = None;
+                let mut llm_response: Option<LlmResponseEndedEvent> = None;
                 let mut stream_error: Option<LlmError> = None;
                 // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
                 // each provider stream.  Cleared on `LlmRetry` mid-stream
@@ -985,18 +984,12 @@ impl Agent {
                                     tool_uses.push((tc.id, tc.name, tc.input));
                                     // Re-emitted later with assistant_hash filled.
                                 }
-                                OmegaEvent::LlmResponse(lr) => {
-                                    // SCHEMA-8 Phase 3 commit 3c: detect
-                                    // compaction via usage.iterations.
-                                    // Anthropic surfaces automatic prompt
-                                    // compaction as a UsageIteration entry
-                                    // with type=="compaction". When seen,
-                                    // clear self.history / context_hashes so
-                                    // the next turn starts from a fresh
-                                    // baseline.  The legacy OmegaEvent::Compacted
-                                    // handler below stays until Phase 6.5
-                                    // because MockProvider scripts (and the
-                                    // goldens) still emit it directly.
+                                OmegaEvent::LlmResponseEnded(lr) => {
+                                    // Phase 6.5: detect compaction via
+                                    // usage.iterations. When a
+                                    // type=="compaction" iteration is present,
+                                    // clear history so the next turn starts
+                                    // from a fresh baseline.
                                     if let Some(iters) = lr.usage.iterations.as_ref()
                                         && iters.iter().any(|it| it.iteration_type == "compaction")
                                     {
@@ -1037,19 +1030,7 @@ impl Agent {
                                     let _ = self.event_store.append(&ev).await;
                                     yield AgentItem::event(ev);
                                 }
-                                OmegaEvent::Compacted(c) => {
-                                    // Server-side compaction fired — discard
-                                    // prior history (including the user msg
-                                    // that triggered this turn) so the next
-                                    // call sends only from this compaction
-                                    // block onward.  Mirrors
-                                    // src/agent.ts:1432–1453.
-                                    self.history.clear();
-                                    self.context_hashes.clear();
-                                    let ev = OmegaEvent::Compacted(c);
-                                    let _ = self.event_store.append(&ev).await;
-                                    yield AgentItem::event(ev);
-                                }
+
                                 other => {
                                     // Forward unmodified — provider may emit
                                     // future event types we don't yet model.
@@ -1169,11 +1150,11 @@ impl Agent {
                     return;
                 }
 
-                // --- Should have an LlmResponse now ------------------------
+                // --- Should have an LlmResponseEnded now -------------------
                 let Some(mut lr) = llm_response else {
                     let ae = OmegaEvent::AgentError(AgentErrorEvent {
                         time: now_iso(),
-                        error: "Provider stream ended without LlmResponse".to_owned(),
+                        error: "Provider stream ended without LlmResponseEnded".to_owned(),
                     });
                     let _ = self.event_store.append(&ae).await;
                     yield AgentItem::event(ae);
@@ -1187,30 +1168,22 @@ impl Agent {
                 };
 
                 // --- Build + persist the assistant context record ---------
-                // SCHEMA-8 Phase 3 commit 3e: assemble `assistant_blocks`
-                // from `slots` in BTreeMap (= insertion-index) order so
-                // interleaved thinking/text blocks land in the API
-                // content-block order the model emitted.  Legacy
-                // `OmegaEvent::ToolCall` entries (still emitted by
-                // MockProvider scripts — removed Phase 6.5) are appended
-                // after the slot blocks.  `lr_text_parts` and
-                // `lr_thinking_parts` feed the band-aid that repopulates
-                // `LlmResponse.text` / `.thinking` for the leptos
-                // frontend until Phase 4 cuts it over.
+                // Assemble `assistant_blocks` from `slots` in BTreeMap
+                // (= insertion-index) order so interleaved thinking/text
+                // blocks land in the API content-block order the model
+                // emitted.  Legacy `OmegaEvent::ToolCall` entries (still
+                // emitted by MockProvider scripts — removed Phase 6
+                // fixture refresh) are appended after the slot blocks.
                 let mut combined_tool_uses: Vec<(String, String, Value)> = Vec::new();
                 let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
-                let mut lr_text_parts: Vec<String> = Vec::new();
-                let mut lr_thinking_parts: Vec<String> = Vec::new();
                 for (_, slot) in std::mem::take(&mut slots) {
                     match slot {
                         BlockSlot::Text { text, .. } if !text.is_empty() => {
-                            lr_text_parts.push(text.clone());
                             assistant_blocks.push(ContentBlock::Text { text });
                         }
                         BlockSlot::Thinking {
                             thinking, signature, ..
                         } => {
-                            lr_thinking_parts.push(thinking.clone());
                             assistant_blocks.push(ContentBlock::Thinking {
                                 thinking,
                                 signature,
@@ -1235,16 +1208,6 @@ impl Agent {
                         input: input.clone(),
                     });
                 }
-                let bandaid_text = if lr_text_parts.is_empty() {
-                    None
-                } else {
-                    Some(lr_text_parts.join(""))
-                };
-                let bandaid_thinking = if lr_thinking_parts.is_empty() {
-                    None
-                } else {
-                    Some(lr_thinking_parts.join("\n\n"))
-                };
 
                 let assistant_hash = match self
                     .context_store
@@ -1275,27 +1238,7 @@ impl Agent {
                 tot_cache_creation += lr.usage.cache_creation_input_tokens.unwrap_or(0);
                 tot_cache_read += lr.usage.cache_read_input_tokens.unwrap_or(0);
                 let stop_reason = lr.stop_reason.clone();
-                // SCHEMA-8 Phase 3 commit 3b: build the additive
-                // `LlmResponseEnded` event before moving `lr` into the
-                // legacy `LlmResponse` event so both can be emitted.
-                // Phase 4 removes the legacy emission; until then both
-                // are on the wire and the frontend prefers whichever
-                // it has wired up.
-                let ended_ev = OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
-                    time: now_iso(),
-                    stop_reason: lr.stop_reason.clone(),
-                    cleared_tool_uses: lr.cleared_tool_uses,
-                    cleared_input_tokens: lr.cleared_input_tokens,
-                    usage: lr.usage.clone(),
-                    context_hash: lr.context_hash.clone(),
-                    response_summary: lr.response_summary.clone(),
-                });
-                // SCHEMA-8 Phase 3 band-aid: see snapshot above.
-                lr.text = bandaid_text;
-                lr.thinking = bandaid_thinking;
-                let response_ev = OmegaEvent::LlmResponse(lr);
-                let _ = self.event_store.append(&response_ev).await;
-                yield AgentItem::event(response_ev);
+                let ended_ev = OmegaEvent::LlmResponseEnded(lr);
                 let _ = self.event_store.append(&ended_ev).await;
                 yield AgentItem::event(ended_ev);
 
@@ -1677,7 +1620,7 @@ impl Agent {
             // tool_use, but the slot machinery is shared with
             // `send_message` and handles the type uniformly.
             let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
-            let mut llm_response: Option<LlmResponseEvent> = None;
+            let mut llm_response: Option<LlmResponseEndedEvent> = None;
             let mut stream_error: Option<LlmError> = None;
             // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
             // each provider stream (same pattern as `send_message`).
@@ -1769,10 +1712,9 @@ impl Agent {
                     Ok(AgentItem::Event(boxed)) => {
                         let event = *boxed;
                         match event {
-                            OmegaEvent::LlmResponse(lr) => {
-                                // SCHEMA-8 Phase 3 commit 3c: detect
-                                // compaction via usage.iterations (mirror
-                                // of send_message).
+                            OmegaEvent::LlmResponseEnded(lr) => {
+                                // Phase 6.5: detect compaction via
+                                // usage.iterations (same as send_message).
                                 if let Some(iters) = lr.usage.iterations.as_ref()
                                     && iters.iter().any(|it| it.iteration_type == "compaction")
                                 {
@@ -1865,12 +1807,12 @@ impl Agent {
             }
 
             // -----------------------------------------------------------------
-            // Step 8: provider must have emitted an LlmResponse.
+            // Step 8: provider must have emitted an LlmResponseEnded.
             // -----------------------------------------------------------------
             let Some(mut lr) = llm_response else {
                 let ae = OmegaEvent::AgentError(AgentErrorEvent {
                     time: now_iso(),
-                    error: "Provider stream ended without LlmResponse".to_owned(),
+                    error: "Provider stream ended without LlmResponseEnded".to_owned(),
                 });
                 let _ = self.event_store.append(&ae).await;
                 yield AgentItem::event(ae);
@@ -1880,16 +1822,12 @@ impl Agent {
             // -----------------------------------------------------------------
             // Step 9: persist the assistant context record.
             // -----------------------------------------------------------------
-            // SCHEMA-8 Phase 3 commit 3e: assemble from `slots` in index
-            // order.  Resumption never emits tool_use blocks, so any
-            // `ToolUse` slot here is a provider/server bug; we still
-            // include it for traceability (the type-mismatch policy in
-            // `make_abandonment_closers` and the slot helpers is to
-            // surface, not silently drop).  `assembled_text` is needed
-            // verbatim by `extract_summary_from_response` below.
+            // Assemble from `slots` in index order.  Resumption never emits
+            // tool_use blocks, so any `ToolUse` slot here is a
+            // provider/server bug; we still include it for traceability.
+            // `assembled_text` is needed by `extract_summary_from_response`.
             let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
             let mut lr_text_parts: Vec<String> = Vec::new();
-            let mut lr_thinking_parts: Vec<String> = Vec::new();
             for (_, slot) in std::mem::take(&mut slots) {
                 match slot {
                     BlockSlot::Text { text, .. } if !text.is_empty() => {
@@ -1899,7 +1837,6 @@ impl Agent {
                     BlockSlot::Thinking {
                         thinking, signature, ..
                     } => {
-                        lr_thinking_parts.push(thinking.clone());
                         assistant_blocks.push(ContentBlock::Thinking {
                             thinking,
                             signature,
@@ -1914,11 +1851,6 @@ impl Agent {
                 }
             }
             let assembled_text = lr_text_parts.join("");
-            let bandaid_thinking_resume = if lr_thinking_parts.is_empty() {
-                None
-            } else {
-                Some(lr_thinking_parts.join("\n\n"))
-            };
             let assistant_hash = match self
                 .context_store
                 .append(Role::Assistant, assistant_blocks)
@@ -1937,28 +1869,10 @@ impl Agent {
             };
 
             // -----------------------------------------------------------------
-            // Step 10: emit LlmResponse with hash filled.
+            // Step 10: emit LlmResponseEnded with context_hash filled.
             // -----------------------------------------------------------------
             lr.context_hash = assistant_hash.as_ref().to_owned();
-            // SCHEMA-8 Phase 3 commit 3b: build the additive
-            // `LlmResponseEnded` event before moving `lr`.
-            let ended_ev = OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
-                time: now_iso(),
-                stop_reason: lr.stop_reason.clone(),
-                cleared_tool_uses: lr.cleared_tool_uses,
-                cleared_input_tokens: lr.cleared_input_tokens,
-                usage: lr.usage.clone(),
-                context_hash: lr.context_hash.clone(),
-                response_summary: lr.response_summary.clone(),
-            });
-            // SCHEMA-8 Phase 3 band-aid: see snapshot above.
-            if !assembled_text.is_empty() {
-                lr.text = Some(assembled_text.clone());
-            }
-            lr.thinking = bandaid_thinking_resume;
-            let response_ev = OmegaEvent::LlmResponse(lr);
-            let _ = self.event_store.append(&response_ev).await;
-            yield AgentItem::event(response_ev);
+            let ended_ev = OmegaEvent::LlmResponseEnded(lr);
             let _ = self.event_store.append(&ended_ev).await;
             yield AgentItem::event(ended_ev);
 

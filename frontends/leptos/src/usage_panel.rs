@@ -17,7 +17,7 @@
 //! ## Pure helpers (mutation-tested)
 //!
 //! - [`last_turn_counts`]  — finds the last `TurnEnd` event's metrics
-//! - [`live_turn_counts`]  — sums `LlmResponse` usages since last `UserMessage`
+//! - [`live_turn_counts`]  — sums `LlmResponseEnded` usages since last `UserMessage`
 //! - [`session_counts`]    — sums all `TurnEnd` metrics across the session
 //!
 //! All three operate on the flat `Vec<OmegaEvent>` already held by the
@@ -112,8 +112,8 @@ pub fn last_turn_counts(events: &[OmegaEvent]) -> Option<TokenCounts> {
     })
 }
 
-/// Accumulates `LlmResponse` token usage since the most recent
-/// `UserMessage`. Returns zero counts when no `LlmResponse` has been
+/// Accumulates `LlmResponseEnded` token usage since the most recent
+/// `UserMessage`. Returns zero counts when no `LlmResponseEnded` has been
 /// seen in the current turn yet (e.g. streaming hasn't reached the first
 /// response boundary).
 pub fn live_turn_counts(events: &[OmegaEvent]) -> TokenCounts {
@@ -125,7 +125,7 @@ pub fn live_turn_counts(events: &[OmegaEvent]) -> TokenCounts {
 
     let mut acc = TokenCounts::default();
     for ev in &events[start..] {
-        if let OmegaEvent::LlmResponse(e) = ev {
+        if let OmegaEvent::LlmResponseEnded(e) = ev {
             acc.fresh_in += e.usage.input_tokens;
             acc.cache_write_in += e.usage.cache_creation_input_tokens.unwrap_or(0);
             acc.cache_read_in += e.usage.cache_read_input_tokens.unwrap_or(0);
@@ -314,7 +314,7 @@ mod tests {
 
     use super::*;
     use omega_types::events::{
-        LlmResponseEvent, LlmResponseUsage, TurnEndEvent, TurnMetrics, UserMessageEvent,
+        LlmResponseEndedEvent, LlmResponseUsage, TurnEndEvent, TurnMetrics, UserMessageEvent,
     };
 
     fn user_msg(content: &str) -> OmegaEvent {
@@ -337,7 +337,7 @@ mod tests {
     }
 
     fn llm_response(fresh: i64, cw: i64, cr: i64, out: i64) -> OmegaEvent {
-        OmegaEvent::LlmResponse(LlmResponseEvent {
+        OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
             time: "t".into(),
             stop_reason: "end_turn".into(),
             cleared_tool_uses: None,
@@ -351,9 +351,6 @@ mod tests {
                 iterations: None,
             },
             context_hash: "abc".into(),
-            text: None,
-            thinking: None,
-            streaming_start: None,
             response_summary: None,
         })
     }
@@ -433,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn live_turn_counts_ignores_non_llm_response_events() {
+    fn live_turn_counts_ignores_non_llm_response_ended_events() {
         let evs = vec![
             user_msg("hi"),
             turn_end(99, 0, 0, 99), // not an LlmResponse — ignored

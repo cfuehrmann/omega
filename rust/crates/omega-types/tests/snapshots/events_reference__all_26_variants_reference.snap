@@ -58,20 +58,6 @@ expression: events
     "output": "README.md\nsrc/\ntests/"
   },
   {
-    "type": "llm_response",
-    "time": "2024-01-15T12:00:00.000Z",
-    "stopReason": "end_turn",
-    "clearedToolUses": 1,
-    "usage": {
-      "input_tokens": 512,
-      "output_tokens": 64,
-      "cache_creation_input_tokens": 480
-    },
-    "contextHash": "deadbeefcafe1234",
-    "text": "The directory contains: README.md, src/, tests/.",
-    "streamingStart": "2024-01-15T12:00:00.000Z"
-  },
-  {
     "type": "turn_end",
     "time": "2024-01-15T12:00:00.000Z",
     "metrics": {
@@ -98,15 +84,6 @@ expression: events
     "reason": "aborted"
   },
   {
-    "type": "compacted",
-    "time": "2024-01-15T12:00:00.000Z",
-    "usage": {
-      "cache_creation_input_tokens": 80,
-      "input_tokens": 100,
-      "output_tokens": 50
-    }
-  },
-  {
     "type": "llm_retry",
     "time": "2024-01-15T12:00:00.000Z",
     "attempt": 2,
@@ -121,7 +98,6 @@ expression: events
       },
       "type": "error"
     },
-    "textFragment": "partial response text",
     "reason": "retry-after"
   },
   {

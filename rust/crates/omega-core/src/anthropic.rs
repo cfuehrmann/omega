@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use eventsource_stream::Eventsource;
 use futures::stream::TryStreamExt;
-use omega_types::events::{LlmResponseEvent, UsageIteration};
+use omega_types::events::{LlmResponseEndedEvent, UsageIteration};
 use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -288,13 +288,9 @@ fn stream_impl(
                     }
                 }
                 "message_stop" => {
-                    // SCHEMA-8 Phase 2: no longer synthesise
-                    // `OmegaEvent::Compacted` or populate `text` /
-                    // `thinking` / `streaming_start` on `LlmResponse` —
-                    // the agent reconstructs assistant content from the
-                    // per-block completion signals (and from
-                    // `iterations[]` for compaction detection).
-                    yield AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
+                    // context_hash is left empty here; the agent fills it
+                    // after writing the assistant context record.
+                    yield AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
                         time: now_iso(),
                         stop_reason: stop_reason.clone(),
                         cleared_tool_uses,
@@ -308,9 +304,6 @@ fn stream_impl(
                             iterations: extract_iterations(&usage_value),
                         },
                         context_hash: String::new(),
-                        text: None,
-                        thinking: None,
-                        streaming_start: None,
                         // Mirror TS `elideAnthropicResponse`: keep all
                         // envelope fields verbatim; omit content (lives in
                         // context.jsonl).

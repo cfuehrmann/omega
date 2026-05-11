@@ -201,6 +201,9 @@ fn project_turn(turn: &Turn, index: usize) -> String {
     // tool_call id → (name, input)
     let mut tool_calls: HashMap<String, (String, serde_json::Value)> = HashMap::new();
     let mut in_paused_window = false;
+    // Accumulate TextBlock text; flush on LlmResponseEnded (or at end of the
+    // loop for interrupted turns that never received LlmResponseEnded).
+    let mut pending_text: Vec<String> = Vec::new();
 
     for event in &turn.events {
         match event {
@@ -217,10 +220,16 @@ fn project_turn(turn: &Turn, index: usize) -> String {
             OmegaEvent::TurnContinued(_) => {
                 in_paused_window = false;
             }
-            OmegaEvent::LlmResponse(e) => {
-                if let Some(text) = &e.text {
-                    lines.push(format!("\nAgent: {}", text.trim()));
+            OmegaEvent::TextBlock(e) => {
+                pending_text.push(e.text.clone());
+            }
+            OmegaEvent::LlmResponseEnded(_) if !pending_text.is_empty() => {
+                let joined = pending_text.join("");
+                let text = joined.trim();
+                if !text.is_empty() {
+                    lines.push(format!("\nAgent: {text}"));
                 }
+                pending_text.clear();
             }
             OmegaEvent::ToolCall(e) => {
                 tool_calls.insert(e.id.clone(), (e.name.clone(), e.input.clone()));
@@ -250,10 +259,16 @@ fn project_turn(turn: &Turn, index: usize) -> String {
                     lines.push("\n[Turn interrupted due to error]".to_owned());
                 }
             }
-            OmegaEvent::Compacted(_) => {
-                lines.push("\n[Context compacted by server]".to_owned());
-            }
             _ => {}
+        }
+    }
+
+    // Flush any text not followed by LlmResponseEnded (e.g. interrupted turns).
+    if !pending_text.is_empty() {
+        let joined = pending_text.join("");
+        let text = joined.trim();
+        if !text.is_empty() {
+            lines.push(format!("\nAgent: {text}"));
         }
     }
 
@@ -420,10 +435,10 @@ mod tests {
     use omega_types::{
         ContinueMode, OmegaEvent,
         events::{
-            AgentErrorEvent, CompactedEvent, EffortChangedEvent, InterruptReason, LlmResponseEvent,
-            LlmResponseUsage, ModelChangedEvent, SessionResumedEvent, ToolCallEvent,
-            ToolResultEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
-            TurnPausedEvent, UserMessageEvent,
+            AgentErrorEvent, EffortChangedEvent, InterruptReason, LlmResponseEndedEvent,
+            LlmResponseUsage, ModelChangedEvent, SessionResumedEvent, TextBlockEvent,
+            ToolCallEvent, ToolResultEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
+            TurnMetrics, TurnPausedEvent, UserMessageEvent,
         },
     };
 
@@ -458,8 +473,16 @@ mod tests {
         })
     }
 
-    fn llm_response(text: Option<&str>) -> OmegaEvent {
-        OmegaEvent::LlmResponse(LlmResponseEvent {
+    fn text_block(text: &str) -> OmegaEvent {
+        OmegaEvent::TextBlock(TextBlockEvent {
+            time: t(),
+            text: text.to_owned(),
+            partial: false,
+        })
+    }
+
+    fn llm_response_ended() -> OmegaEvent {
+        OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
             time: t(),
             stop_reason: "end_turn".to_owned(),
             cleared_tool_uses: None,
@@ -473,9 +496,6 @@ mod tests {
                 iterations: None,
             },
             context_hash: "aabbcc".to_owned(),
-            text: text.map(str::to_owned),
-            thinking: None,
-            streaming_start: None,
             response_summary: None,
         })
     }
@@ -529,13 +549,6 @@ mod tests {
         OmegaEvent::AgentError(AgentErrorEvent {
             time: t(),
             error: error.to_owned(),
-        })
-    }
-
-    fn compacted() -> OmegaEvent {
-        OmegaEvent::Compacted(CompactedEvent {
-            time: t(),
-            usage: serde_json::json!({}),
         })
     }
 
@@ -896,8 +909,8 @@ mod tests {
 
     #[test]
     fn basis_events_outside_turn_returns_placeholder() {
-        // LlmResponse before any user_message — no turns formed.
-        let evs = vec![llm_response(Some("hi"))];
+        // TextBlock + LlmResponseEnded before any user_message — no turns formed.
+        let evs = vec![text_block("hi"), llm_response_ended()];
         assert_eq!(
             extract_resumption_basis(&evs),
             "(empty session — no turns recorded)"
@@ -929,14 +942,20 @@ mod tests {
 
     #[test]
     fn basis_llm_response_renders_with_agent_prefix() {
-        let evs = vec![user_msg("q"), llm_response(Some("answer")), turn_end()];
+        let evs = vec![
+            user_msg("q"),
+            text_block("answer"),
+            llm_response_ended(),
+            turn_end(),
+        ];
         let result = extract_resumption_basis(&evs);
         assert!(result.contains("Agent: answer"), "got: {result}");
     }
 
     #[test]
     fn basis_llm_response_without_text_emits_nothing() {
-        let evs = vec![user_msg("q"), llm_response(None), turn_end()];
+        // No TextBlock before LlmResponseEnded — nothing emitted.
+        let evs = vec![user_msg("q"), llm_response_ended(), turn_end()];
         let result = extract_resumption_basis(&evs);
         assert!(!result.contains("Agent:"), "got: {result}");
     }
@@ -1071,20 +1090,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // extract_resumption_basis — compacted
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn basis_compacted_renders_bracketed_text() {
-        let evs = vec![user_msg("q"), compacted(), turn_end()];
-        let result = extract_resumption_basis(&evs);
-        assert!(
-            result.contains("[Context compacted by server]"),
-            "got: {result}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
     // extract_resumption_basis — pause/continue interjection window
     // -----------------------------------------------------------------------
 
@@ -1166,9 +1171,10 @@ mod tests {
 
     #[test]
     fn basis_events_outside_turn_are_dropped() {
-        // LlmResponse before first user_message is outside any turn.
+        // TextBlock + LlmResponseEnded before first user_message is outside any turn.
         let evs = vec![
-            llm_response(Some("stray")),
+            text_block("stray"),
+            llm_response_ended(),
             user_msg("real user"),
             turn_end(),
         ];

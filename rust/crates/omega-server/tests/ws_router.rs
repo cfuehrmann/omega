@@ -51,7 +51,7 @@ use futures::{SinkExt, StreamExt, stream::BoxStream};
 use insta::assert_snapshot;
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_server::{AppState, build_router};
-use omega_types::events::{LlmResponseEvent, ToolCallEvent};
+use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{OmegaEvent, StreamSignal};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -203,8 +203,8 @@ fn redact(mut v: serde_json::Value) -> serde_json::Value {
 // Mock transcript helpers
 // ---------------------------------------------------------------------------
 
-fn llm_response_event(stop_reason: &str, text: Option<&str>) -> AgentItem {
-    AgentItem::event(OmegaEvent::LlmResponse(LlmResponseEvent {
+fn llm_response_event(stop_reason: &str) -> AgentItem {
+    AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
         time: "2024-01-01T00:00:00.000Z".to_owned(),
         stop_reason: stop_reason.to_owned(),
         cleared_tool_uses: None,
@@ -218,9 +218,6 @@ fn llm_response_event(stop_reason: &str, text: Option<&str>) -> AgentItem {
             iterations: None,
         },
         context_hash: String::new(),
-        text: text.map(str::to_owned),
-        thinking: None,
-        streaming_start: None,
         response_summary: None,
     }))
 }
@@ -238,7 +235,7 @@ fn tool_use_items(
             input,
             context_hash: String::new(),
         }))),
-        Ok(llm_response_event("tool_use", None)),
+        Ok(llm_response_event("tool_use")),
     ]
 }
 
@@ -575,7 +572,7 @@ async fn turn_end_emits_session_info_with_idle_turn_state() {
             index: 0,
             text: "hi".to_owned(),
         })),
-        Ok(llm_response_event("end_turn", Some("hi"))),
+        Ok(llm_response_event("end_turn")),
     ]);
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -633,7 +630,7 @@ async fn turn_interrupted_emits_session_info_with_idle_turn_state() {
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
     // Second turn — only reached if abort failed.
-    provider.push(vec![Ok(llm_response_event("end_turn", Some("done")))]);
+    provider.push(vec![Ok(llm_response_event("end_turn"))]);
 
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -682,7 +679,7 @@ async fn turn_paused_emits_session_info_with_paused_turn_state() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response_event("end_turn", Some("done")))]);
+    provider.push(vec![Ok(llm_response_event("end_turn"))]);
 
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -745,7 +742,7 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response_event("end_turn", Some("done")))]);
+    provider.push(vec![Ok(llm_response_event("end_turn"))]);
 
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -810,7 +807,7 @@ async fn history_streaming_flag_true_when_turn_in_flight() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response_event("end_turn", Some("done")))]);
+    provider.push(vec![Ok(llm_response_event("end_turn"))]);
 
     let state = make_state(Arc::clone(&provider), tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
@@ -855,7 +852,7 @@ async fn history_streaming_flag_absent_after_turn_completes() {
             index: 0,
             text: "hi".to_owned(),
         })),
-        Ok(llm_response_event("end_turn", Some("hi"))),
+        Ok(llm_response_event("end_turn")),
     ]);
 
     let state = make_state(Arc::clone(&provider), tmp.path().join("sessions"));
@@ -922,10 +919,7 @@ async fn resume_session_emits_running_then_idle_session_info() {
     .unwrap();
 
     let provider = Arc::new(MockProvider::new());
-    provider.push(vec![Ok(llm_response_event(
-        "end_turn",
-        Some("<summary>ctx</summary>"),
-    ))]);
+    provider.push(vec![Ok(llm_response_event("end_turn"))]);
 
     let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root)).await;
     let mut ws = connect(addr).await;

@@ -1,6 +1,5 @@
 ---
 source: crates/omega-core/tests/anthropic.rs
-assertion_line: 462
 expression: project(&items)
 ---
 [
@@ -58,7 +57,7 @@ expression: project(&items)
     },
     "stopReason": "tool_use",
     "time": "[time]",
-    "type": "llm_response",
+    "type": "llm_response_ended",
     "usage": {
       "cache_creation_input_tokens": 10,
       "cache_read_input_tokens": 5,

@@ -26,14 +26,13 @@
 //!    the same on-disk session — an order of magnitude more setup than
 //!    the in-memory check below.
 //!
-//! 2. **Server-side compaction event.** The Anthropic SSE parser emits
-//!    `OmegaEvent::Compacted` when the API decides to compact context
-//!    server-side.  Reproducing the trigger via the fake would require
-//!    extending it to emit Anthropic's compaction marker frames; the
-//!    payload format is undocumented and only Anthropic's production
-//!    backend ever generates it.  The downstream effect (history +
-//!    context-hash clear) is purely a reaction inside `send_message`,
-//!    so a direct injection test is the right shape.
+//! 2. **Server-side compaction via usage.iterations.** The Anthropic provider
+//!    embeds compaction info in `LlmResponseEnded.usage.iterations` when
+//!    server-side context compaction fires.  The agent detects a
+//!    `type=="compaction"` iteration entry and clears history / context-hashes
+//!    so the next turn starts from a fresh baseline.  Injecting this via the
+//!    `MockProvider` (emitting a `LlmResponseEndedEvent` with the right usage
+//!    payload) is the right shape; real Anthropic SSE is far harder to replicate.
 //!
 //! 3. **Malformed-tool-use JSON nudge.** When the SSE parser surfaces a
 //!    `LlmError::Stream { message: "malformed tool_use JSON: ..." }`,
@@ -62,7 +61,7 @@ mod common;
 use common::{collect_stream, make_llm_response, make_test_agent, tags};
 use omega_core::{AgentItem, ContentBlock, LlmError, Message, Role};
 use omega_store::content_hash;
-use omega_types::events::CompactedEvent;
+use omega_types::events::{LlmResponseEndedEvent, LlmResponseUsage, UsageIteration};
 use omega_types::{OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -100,12 +99,7 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
     );
 
     // Provider just returns a clean reply for the resumed turn.
-    provider.push_response(vec![Ok(make_llm_response(
-        "end_turn",
-        Some("resumed"),
-        3,
-        1,
-    ))]);
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 3, 1))]);
 
     let stream = agent.send_message("continue".to_owned(), CancellationToken::new());
     let items = collect_stream(stream).await;
@@ -118,7 +112,6 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
             "UserMessage",
             "LlmCall",
             "LlmResponseStarted",
-            "LlmResponse",
             "LlmResponseEnded",
             "TurnEnd",
         ],
@@ -180,13 +173,6 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
 // 2. Server-side compaction
 // ---------------------------------------------------------------------------
 
-fn compacted_item(usage: Value) -> AgentItem {
-    AgentItem::event(OmegaEvent::Compacted(CompactedEvent {
-        time: "2024-06-01T00:00:00.000Z".to_owned(),
-        usage,
-    }))
-}
-
 fn read_events_jsonl(path: &std::path::Path) -> Vec<Value> {
     let raw = std::fs::read_to_string(path).expect("events.jsonl readable");
     raw.lines()
@@ -195,13 +181,13 @@ fn read_events_jsonl(path: &std::path::Path) -> Vec<Value> {
         .collect()
 }
 
-/// After two prior happy turns and a third turn that emits `Compacted`,
-/// the agent's `history` must shrink to exactly one entry — the new
-/// post-compaction assistant message.  `context_hashes` must follow
-/// suit (one entry).  A subsequent turn must build on the cleared
-/// history, and its `LlmCall.contextHashes` must contain only the
-/// post-compaction hashes.  The `Compacted` event must be persisted to
-/// `events.jsonl` with its `usage` payload preserved verbatim.
+/// After two prior happy turns and a third turn whose `LlmResponseEnded`
+/// carries a `usage.iterations` entry with `type=="compaction"`, the agent's
+/// `history` must shrink to exactly one entry — the new post-compaction
+/// assistant message.  `context_hashes` must follow suit.  A subsequent turn
+/// must build on the cleared history, and its `LlmCall.contextHashes` must
+/// contain only the post-compaction hashes.  The `llm_response_ended` event
+/// must be persisted to `events.jsonl` with the iterations preserved.
 #[tokio::test]
 async fn compacted_event_clears_history_and_persists_usage() {
     let (mut agent, provider, tmp) = make_test_agent();
@@ -212,7 +198,7 @@ async fn compacted_event_clears_history_and_persists_usage() {
             index: 0,
             text: "ok1".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("ok1"), 100, 1)),
+        Ok(make_llm_response("end_turn", 100, 1)),
     ]);
     let _ = collect_stream(agent.send_message("first".to_owned(), CancellationToken::new())).await;
 
@@ -222,41 +208,56 @@ async fn compacted_event_clears_history_and_persists_usage() {
             index: 0,
             text: "ok2".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("ok2"), 200, 2)),
+        Ok(make_llm_response("end_turn", 200, 2)),
     ]);
     let _ = collect_stream(agent.send_message("second".to_owned(), CancellationToken::new())).await;
     assert_eq!(agent.history().len(), 4);
 
-    // Turn 3: provider emits Compacted with a rich usage payload, then a
-    // post-compaction summary text + LlmResponse.
-    let usage = json!({
-        "input_tokens": 80_500,
-        "output_tokens": 350,
-        "service_tier": "standard",
-        "iterations": [
-            {"type": "compaction", "input_tokens": 80_000, "output_tokens": 300},
-            {"type": "message",    "input_tokens": 500,    "output_tokens": 50}
-        ]
-    });
+    // Turn 3: provider emits LlmResponseEnded with compaction iterations,
+    // signalling server-side compaction. The agent detects
+    // type=="compaction" in usage.iterations and clears history.
     provider.push_response(vec![
-        Ok(compacted_item(usage.clone())),
         Ok(AgentItem::Signal(StreamSignal::Text {
             index: 0,
             text: "summary".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("summary"), 80_500, 250)),
+        Ok(AgentItem::Event(Box::new(OmegaEvent::LlmResponseEnded(
+            LlmResponseEndedEvent {
+                time: "2024-06-01T00:00:00.000Z".to_owned(),
+                stop_reason: "end_turn".to_owned(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 80_500,
+                    output_tokens: 250,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                    iterations: Some(vec![
+                        UsageIteration {
+                            iteration_type: "compaction".to_owned(),
+                            input_tokens: 80_000,
+                            output_tokens: 300,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                        UsageIteration {
+                            iteration_type: "message".to_owned(),
+                            input_tokens: 500,
+                            output_tokens: 50,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                    ]),
+                },
+                context_hash: String::new(),
+                response_summary: None,
+            },
+        )))),
     ]);
-    let items =
-        collect_stream(agent.send_message("third".to_owned(), CancellationToken::new())).await;
-
-    // Compacted appears in the streamed items *before* the LlmResponse.
-    let t = tags(&items);
-    let cidx = t.iter().position(|x| *x == "Compacted").expect("Compacted");
-    let ridx = t
-        .iter()
-        .position(|x| *x == "LlmResponse")
-        .expect("LlmResponse");
-    assert!(cidx < ridx, "Compacted must precede LlmResponse: {t:?}");
+    let _ = collect_stream(agent.send_message("third".to_owned(), CancellationToken::new())).await;
 
     // History collapsed to the lone post-compaction assistant message.
     assert_eq!(agent.history().len(), 1);
@@ -264,12 +265,7 @@ async fn compacted_event_clears_history_and_persists_usage() {
 
     // Turn 4 must build on the cleared history; its LlmCall must carry
     // only the 2 post-compaction context hashes.
-    provider.push_response(vec![Ok(make_llm_response(
-        "end_turn",
-        Some("after"),
-        50,
-        3,
-    ))]);
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 50, 3))]);
     let _ = collect_stream(agent.send_message("fourth".to_owned(), CancellationToken::new())).await;
     assert_eq!(agent.history().len(), 3);
 
@@ -284,12 +280,17 @@ async fn compacted_event_clears_history_and_persists_usage() {
         .expect("contextHashes array");
     assert_eq!(hashes.len(), 2);
 
-    // Compacted persisted with usage verbatim (including `iterations[]`).
-    let compacted = events
+    // The llm_response_ended event must be persisted with its iterations.
+    let ended = events
         .iter()
-        .find(|v| v["type"] == "compacted")
-        .expect("compacted event persisted");
-    assert_eq!(compacted["usage"], usage);
+        .filter(|v| v["type"] == "llm_response_ended")
+        .nth(2) // third turn's ended event (index 2, 0-based)
+        .expect("third llm_response_ended persisted");
+    let iters = ended["usage"]["iterations"]
+        .as_array()
+        .expect("usage.iterations array");
+    assert_eq!(iters.len(), 2);
+    assert_eq!(iters[0]["type"], "compaction");
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +306,7 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
         message: "malformed tool_use JSON: expected `,` at position 17".to_owned(),
     })]);
     // Turn 2: model now produces a clean text reply.
-    provider.push_response(vec![Ok(make_llm_response("end_turn", Some("done"), 6, 2))]);
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 6, 2))]);
 
     let stream = agent.send_message("please".to_owned(), CancellationToken::new());
     let items = collect_stream(stream).await;
@@ -322,7 +323,6 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
             "UserMessage",
             "LlmCall",
             "LlmResponseStarted",
-            "LlmResponse",
             "LlmResponseEnded",
             "TurnEnd",
         ],
@@ -382,12 +382,7 @@ fn echo_tool_response(id: &str, turn_num: usize) -> Vec<Result<AgentItem, LlmErr
             input: serde_json::json!({ "command": format!("echo turn{turn_num}") }),
             context_hash: String::new(),
         }))),
-        Ok(make_llm_response(
-            "tool_use",
-            None,
-            (turn_num * 100) as i64,
-            5,
-        )),
+        Ok(make_llm_response("tool_use", (turn_num * 100) as i64, 5)),
     ]
 }
 
@@ -411,12 +406,7 @@ async fn context_management_present_in_every_llm_request() {
         // Tool-use turn.
         provider.push_response(echo_tool_response(&tool_id, i));
         // Post-tool final turn.
-        provider.push_response(vec![Ok(make_llm_response(
-            "end_turn",
-            Some(&format!("ok{i}")),
-            (i * 100) as i64,
-            3,
-        ))]);
+        provider.push_response(vec![Ok(make_llm_response("end_turn", (i * 100) as i64, 3))]);
     }
 
     for i in 1..=8_usize {
@@ -466,12 +456,7 @@ async fn audit_request_bytes_grow_without_context_management() {
     for i in 1..=6_usize {
         let tool_id = format!("tu_{i:02}");
         provider.push_response(echo_tool_response(&tool_id, i));
-        provider.push_response(vec![Ok(make_llm_response(
-            "end_turn",
-            Some(&format!("ok{i}")),
-            (i * 50) as i64,
-            2,
-        ))]);
+        provider.push_response(vec![Ok(make_llm_response("end_turn", (i * 50) as i64, 2))]);
     }
 
     let mut request_bytes_seq: Vec<i64> = Vec::new();

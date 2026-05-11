@@ -80,7 +80,9 @@ use std::path::PathBuf;
 
 use common::{collect_stream, make_llm_response, make_test_agent};
 use omega_core::{AgentItem, LlmError};
-use omega_types::events::{CompactedEvent, LlmRetryEvent, ToolCallEvent};
+use omega_types::events::{
+    LlmResponseEndedEvent, LlmResponseUsage, LlmRetryEvent, ToolCallEvent, UsageIteration,
+};
 use omega_types::{OmegaEvent, StreamSignal};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -212,7 +214,7 @@ fn script_simple_turn() -> Vec<Result<AgentItem, LlmError>> {
             index: 0,
             text: "Hello, world!".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("Hello, world!"), 7, 4)),
+        Ok(make_llm_response("end_turn", 7, 4)),
     ]
 }
 
@@ -257,12 +259,7 @@ fn script_thinking_blocks() -> Vec<Result<AgentItem, LlmError>> {
             index: 2,
             text: "Here is the answer: 42.".to_owned(),
         })),
-        Ok(make_llm_response(
-            "end_turn",
-            Some("Here is the answer: 42."),
-            12,
-            8,
-        )),
+        Ok(make_llm_response("end_turn", 12, 8)),
     ]
 }
 
@@ -303,7 +300,7 @@ fn script_parallel_tool_calls_call1() -> Vec<Result<AgentItem, LlmError>> {
             input: json!({ "path": "src" }),
             context_hash: String::new(),
         }))),
-        Ok(make_llm_response("tool_use", None, 15, 6)),
+        Ok(make_llm_response("tool_use", 15, 6)),
     ]
 }
 
@@ -313,7 +310,7 @@ fn script_parallel_tool_calls_call2() -> Vec<Result<AgentItem, LlmError>> {
             index: 0,
             text: "Done.".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("Done."), 18, 3)),
+        Ok(make_llm_response("end_turn", 18, 3)),
     ]
 }
 
@@ -361,7 +358,7 @@ fn script_multi_thinking_tools_call1() -> Vec<Result<AgentItem, LlmError>> {
             input: json!({ "path": "." }),
             context_hash: String::new(),
         }))),
-        Ok(make_llm_response("tool_use", None, 9, 5)),
+        Ok(make_llm_response("tool_use", 9, 5)),
     ]
 }
 
@@ -382,7 +379,7 @@ fn script_multi_thinking_tools_call2() -> Vec<Result<AgentItem, LlmError>> {
             input: json!({ "path": "README.md" }),
             context_hash: String::new(),
         }))),
-        Ok(make_llm_response("tool_use", None, 11, 4)),
+        Ok(make_llm_response("tool_use", 11, 4)),
     ]
 }
 
@@ -392,7 +389,7 @@ fn script_multi_thinking_tools_call3() -> Vec<Result<AgentItem, LlmError>> {
             index: 0,
             text: "All done.".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("All done."), 14, 3)),
+        Ok(make_llm_response("end_turn", 14, 3)),
     ]
 }
 
@@ -438,8 +435,6 @@ fn script_mid_stream_retry() -> Vec<Result<AgentItem, LlmError>> {
             error: "overloaded_error".to_owned(),
             retry_at: None,
             error_body: None,
-            thinking_fragment: Some("Half-baked thought".to_owned()),
-            text_fragment: Some("Partial answer that will be retried…".to_owned()),
             reason: None,
         }))),
         // Post-retry content — this is what gets persisted.
@@ -447,7 +442,7 @@ fn script_mid_stream_retry() -> Vec<Result<AgentItem, LlmError>> {
             index: 0,
             text: "Final answer.".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", Some("Final answer."), 11, 4)),
+        Ok(make_llm_response("end_turn", 11, 4)),
     ]
 }
 
@@ -462,43 +457,64 @@ async fn fixture_mid_stream_retry() {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture: compaction — the provider emits a server-side `Compacted` event
-// mid-stream.  The agent clears in-memory history but `context.jsonl` is
+// Fixture: compaction — the provider signals server-side compaction via
+// usage.iterations (type=="compaction") in the LlmResponseEnded event.
+// The agent clears in-memory history so the session context is not
 // append-only: the user message stays, then the new post-compaction
 // assistant message is appended.
-//
-// `usage` carries an opaque API payload kept verbatim; we use a small
-// canned object so the golden stays readable.
 // ---------------------------------------------------------------------------
 
 fn script_compaction() -> Vec<Result<AgentItem, LlmError>> {
     vec![
-        // Some pre-compaction text the agent will discard.
+        // Some pre-compaction text.
         Ok(AgentItem::Signal(StreamSignal::Text {
             index: 0,
             text: "About to be compacted…".to_owned(),
         })),
-        // Server-side compaction fires.
-        Ok(AgentItem::event(OmegaEvent::Compacted(CompactedEvent {
-            time: "2024-01-01T00:00:00.000Z".to_owned(),
-            usage: json!({
-                "input_tokens": 8000,
-                "output_tokens": 250,
-                "compaction": { "saved_tokens": 12345 }
-            }),
-        }))),
         // Post-compaction content — this is what gets persisted as
         // the new assistant message.
         Ok(AgentItem::Signal(StreamSignal::Text {
             index: 0,
             text: "Picking up after compaction.".to_owned(),
         })),
-        Ok(make_llm_response(
-            "end_turn",
-            Some("Picking up after compaction."),
-            42,
-            6,
-        )),
+        // LlmResponseEnded carries usage.iterations with type=="compaction",
+        // signalling the agent to clear history (Phase 6.5 replaces the
+        // former OmegaEvent::Compacted handler).
+        Ok(AgentItem::Event(Box::new(OmegaEvent::LlmResponseEnded(
+            LlmResponseEndedEvent {
+                time: "2024-01-01T00:00:00.000Z".to_owned(),
+                stop_reason: "end_turn".to_owned(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 42,
+                    output_tokens: 6,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                    iterations: Some(vec![
+                        UsageIteration {
+                            iteration_type: "compaction".to_owned(),
+                            input_tokens: 8_000,
+                            output_tokens: 250,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                        UsageIteration {
+                            iteration_type: "message".to_owned(),
+                            input_tokens: 42,
+                            output_tokens: 6,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                    ]),
+                },
+                context_hash: String::new(),
+                response_summary: None,
+            },
+        )))),
     ]
 }
 
@@ -554,7 +570,7 @@ fn script_interleaved_thinking() -> Vec<Result<AgentItem, LlmError>> {
             index: 3,
             text: "Final: yes.".to_owned(),
         })),
-        Ok(make_llm_response("end_turn", None, 13, 9)),
+        Ok(make_llm_response("end_turn", 13, 9)),
     ]
 }
 

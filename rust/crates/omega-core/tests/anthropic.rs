@@ -756,19 +756,14 @@ async fn response_event_time_fields_are_valid_rfc3339() {
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(omega_types::OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(omega_types::OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
         .expect("expected LlmResponse event");
 
     chrono::DateTime::parse_from_rfc3339(&resp.time)
-        .expect("LlmResponse.time must be valid RFC3339");
-
-    assert!(
-        resp.streaming_start.is_none(),
-        "SCHEMA-8: provider no longer synthesises streaming_start; got {:?}",
-        resp.streaming_start,
-    );
+        .expect("LlmResponseEnded.time must be valid RFC3339");
+    // Phase 6.5: streaming_start removed from LlmResponseEndedEvent.
 }
 
 // ---------------------------------------------------------------------------
@@ -880,7 +875,7 @@ async fn request_body_omits_context_management_when_none() {
 /// text block must yield, in order:
 ///   1. `Signal::Text` for each text delta of the trailing text block,
 ///   2. `Signal::TextBlockComplete` for the trailing text block,
-///   3. `OmegaEvent::LlmResponse`.
+///   3. `OmegaEvent::LlmResponseEnded`.
 ///
 /// The compaction block itself produces no items — its presence is
 /// only observable via the `iterations[]` entries on
@@ -888,8 +883,8 @@ async fn request_body_omits_context_management_when_none() {
 /// when server-side compaction fires.
 ///
 /// SCHEMA-8 Phase 2: this test used to expect a separate
-/// `OmegaEvent::Compacted` event between (1) and (3); the agent now
-/// owns compaction handling and reads it off `LlmResponseUsage`.
+/// `OmegaEvent::Compacted` variant was removed (Phase 6.5a); compaction is
+/// detected via `LlmResponseEnded.usage.iterations`.
 /// Catches mutants that:
 ///   - re-introduce a `Compacted` event from the parser,
 ///   - swap the order so `LlmResponse` precedes the trailing text,
@@ -993,8 +988,8 @@ async fn compaction_block_followed_by_text_completes_normally() {
         other => panic!("expected TextBlockComplete signal second, got {other:?}"),
     }
     match iter.next().expect("third item").as_event() {
-        Some(OmegaEvent::LlmResponse(_)) => {}
-        other => panic!("expected LlmResponse event third, got {other:?}"),
+        Some(OmegaEvent::LlmResponseEnded(_)) => {}
+        other => panic!("expected LlmResponseEnded event third, got {other:?}"),
     }
     assert!(iter.next().is_none(), "no further items expected");
 }
@@ -1007,7 +1002,7 @@ async fn compaction_block_followed_by_text_completes_normally() {
 /// SCHEMA-8 Phase 2: replaces the old
 /// `compaction_usage_carries_iterations_verbatim` assertion against
 /// `OmegaEvent::Compacted.usage["iterations"]`; iterations are now
-/// surfaced typed on `LlmResponse.usage.iterations`.  Catches mutants
+/// surfaced typed on `LlmResponseEnded.usage.iterations`.  Catches mutants
 /// that drop, re-shape, or re-order the array on the way through
 /// `extract_iterations`.
 #[tokio::test]
@@ -1074,7 +1069,7 @@ async fn iterations_array_is_carried_to_llm_response_usage() {
     let lr = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
         .expect("LlmResponse event present");
@@ -1152,7 +1147,7 @@ async fn applied_edits_populates_cleared_fields() {
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
         .expect("LlmResponse present");
@@ -1215,7 +1210,7 @@ async fn applied_edits_other_type_leaves_cleared_fields_none() {
     let resp = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
         .expect("LlmResponse present");
@@ -1360,17 +1355,12 @@ async fn non_compacting_response_emits_no_compaction_signal() {
     let items = collect_ok(&provider, simple_request()).await;
 
     use omega_types::OmegaEvent;
-    assert!(
-        !items
-            .iter()
-            .any(|i| matches!(i.as_event(), Some(OmegaEvent::Compacted(_)))),
-        "SCHEMA-8: parser no longer emits Compacted on any turn"
-    );
+    // Phase 6.5: OmegaEvent::Compacted removed from the type; provider never emitted it anyway.
 
     let lr = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
         .expect("LlmResponse event present");
@@ -1441,7 +1431,7 @@ async fn llm_response_time_on_compacting_turn_is_valid_rfc3339() {
     let lr = items
         .iter()
         .find_map(|i| match i.as_event() {
-            Some(OmegaEvent::LlmResponse(r)) => Some(r),
+            Some(OmegaEvent::LlmResponseEnded(r)) => Some(r),
             _ => None,
         })
         .expect("LlmResponse event present on compaction turn");

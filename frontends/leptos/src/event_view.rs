@@ -65,7 +65,6 @@ pub enum EventKind {
 pub fn kind_for(event: &OmegaEvent) -> EventKind {
     match event {
         OmegaEvent::UserMessage(_) => EventKind::User,
-        OmegaEvent::LlmResponse(_) => EventKind::Assistant,
         OmegaEvent::ToolCall(_) => EventKind::ToolCall,
         OmegaEvent::ToolResult(r) => {
             if r.is_error {
@@ -89,7 +88,6 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::ServerStopped(_)
         | OmegaEvent::LlmCall(_)
         | OmegaEvent::TurnEnd(_)
-        | OmegaEvent::Compacted(_)
         | OmegaEvent::LlmRetry(_)
         | OmegaEvent::ModelChanged(_)
         | OmegaEvent::EffortChanged(_)
@@ -143,14 +141,12 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::ServerStopped(_) => "server_stopped",
         OmegaEvent::UserMessage(_) => "user_message",
         OmegaEvent::LlmCall(_) => "llm_call",
-        OmegaEvent::LlmResponse(_) => "llm_response",
         OmegaEvent::ToolCall(_) => "tool_call",
         OmegaEvent::ToolResult(_) => "tool_result",
         OmegaEvent::TurnEnd(_) => "turn_end",
         OmegaEvent::LlmError(_) => "llm_error",
         OmegaEvent::AgentError(_) => "agent_error",
         OmegaEvent::TurnInterrupted(_) => "turn_interrupted",
-        OmegaEvent::Compacted(_) => "compacted",
         OmegaEvent::LlmRetry(_) => "llm_retry",
         OmegaEvent::ModelChanged(_) => "model_changed",
         OmegaEvent::EffortChanged(_) => "effort_changed",
@@ -587,8 +583,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic, clippy::float_cmp)]
 
     use omega_types::events::{
-        AgentErrorEvent, CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
-        LlmResponseDiscardedEvent, LlmResponseEvent, LlmResponseStartedEvent, LlmResponseUsage,
+        AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
+        LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage,
         LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
         ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
         SessionResumedEvent, SessionStartedEvent, ToolCallEvent, ToolResultEvent,
@@ -613,8 +609,8 @@ mod tests {
         })
     }
 
-    fn assistant() -> OmegaEvent {
-        OmegaEvent::LlmResponse(LlmResponseEvent {
+    fn llm_response_ended() -> OmegaEvent {
+        OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
             time: t(),
             stop_reason: "end_turn".into(),
             cleared_tool_uses: None,
@@ -628,9 +624,6 @@ mod tests {
                 iterations: None,
             },
             context_hash: "deadbeef".into(),
-            text: Some("hello".into()),
-            thinking: None,
-            streaming_start: None,
             response_summary: None,
         })
     }
@@ -668,8 +661,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn kind_llm_response_is_assistant() {
-        assert_eq!(kind_for(&assistant()), EventKind::Assistant);
+    fn kind_llm_response_ended_is_status() {
+        assert_eq!(kind_for(&llm_response_ended()), EventKind::Status);
     }
 
     #[wasm_bindgen_test]
@@ -785,15 +778,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn kind_compacted_is_status() {
-        let ev = OmegaEvent::Compacted(CompactedEvent {
-            time: t(),
-            usage: json!({}),
-        });
-        assert_eq!(kind_for(&ev), EventKind::Status);
-    }
-
-    #[wasm_bindgen_test]
     fn kind_llm_retry_is_status() {
         let ev = OmegaEvent::LlmRetry(LlmRetryEvent {
             time: t(),
@@ -803,8 +787,6 @@ mod tests {
             error: "e".into(),
             retry_at: None,
             error_body: None,
-            thinking_fragment: None,
-            text_fragment: None,
             reason: None,
         });
         assert_eq!(kind_for(&ev), EventKind::Status);
@@ -952,7 +934,7 @@ mod tests {
         // breaks this, Playwright specs would silently miss the block.
         let cases: &[(OmegaEvent, &str)] = &[
             (user(), "user_message"),
-            (assistant(), "llm_response"),
+            (llm_response_ended(), "llm_response_ended"),
             (tool_call(), "tool_call"),
             (tool_result(false), "tool_result"),
             (

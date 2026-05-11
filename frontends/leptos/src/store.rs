@@ -271,11 +271,6 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming_text.set(BTreeMap::new());
             store.streaming_thinking.set(BTreeMap::new());
         }
-        // SCHEMA-8 Phase 4d — the legacy `LlmResponse` event is still on
-        // the wire (the agent emits it as a band-aid until Phase 6.5) but
-        // the store no longer consumes it.  The streaming-buffer clear it
-        // used to drive now happens on `LlmResponseEnded` and the per-block
-        // events (`TextBlock` / `ThinkingBlock`); see the arms below.
         // SCHEMA-8 Phase 4a — `LlmResponseStarted` opens a fresh
         // response container.  The streaming buffers are global (one
         // text + one thinking accumulator across the whole turn) and
@@ -365,7 +360,7 @@ mod tests {
     use leptos::reactive::owner::Owner;
     use omega_types::events::{
         AgentErrorEvent, EffortChangedEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-        LlmResponseEvent, LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent,
+        LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent,
         PauseRequestedEvent, TextBlockEvent, ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent,
         TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
@@ -688,59 +683,6 @@ mod tests {
                 mode: omega_types::ContinueMode::Manual,
             }));
             assert_eq!(s.snapshot().turn_state, TurnState::Running);
-        });
-    }
-
-    #[wasm_bindgen_test]
-    fn llm_response_event_is_inert_post_phase_4d() {
-        // SCHEMA-8 Phase 4d — the legacy `LlmResponse` event still
-        // arrives on the wire (agent band-aid until 6.5) but the store
-        // no longer consumes it: applying it must leave the streaming
-        // accumulators untouched.  The clear-on-end semantics now ride
-        // on `LlmResponseEnded` (covered by its own test).
-        with_owner(|| {
-            let s = SessionStore::new();
-            s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
-                index: 0,
-                text: "partial".into(),
-            });
-            s.apply(WsMessage::Thinking {
-                index: 0,
-                text: "musing".into(),
-            });
-            assert!(!s.snapshot().streaming_text.is_empty());
-            assert!(!s.snapshot().streaming_thinking.is_empty());
-            s.apply(WsMessage::LlmResponse(LlmResponseEvent {
-                time: "t".into(),
-                stop_reason: "end_turn".into(),
-                cleared_tool_uses: None,
-                cleared_input_tokens: None,
-                usage: LlmResponseUsage {
-                    input_tokens: 1,
-                    output_tokens: 2,
-                    cache_creation_input_tokens: None,
-                    cache_read_input_tokens: None,
-                    service_tier: None,
-                    iterations: None,
-                },
-                context_hash: "deadbeef".into(),
-                text: None,
-                thinking: None,
-                streaming_start: None,
-                response_summary: None,
-            }));
-            let snap = s.snapshot();
-            assert_eq!(
-                snap.streaming_text.get(&0).map(String::as_str),
-                Some("partial"),
-                "legacy LlmResponse must NOT clear streaming_text post-4d",
-            );
-            assert_eq!(
-                snap.streaming_thinking.get(&0).map(String::as_str),
-                Some("musing"),
-                "legacy LlmResponse must NOT clear streaming_thinking post-4d",
-            );
         });
     }
 

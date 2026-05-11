@@ -148,9 +148,9 @@ async fn passes_through_a_clean_stream() {
         .iter()
         .filter_map(|r| r.as_ref().ok())
         .filter_map(AgentItem::as_event)
-        .filter(|e| matches!(e, OmegaEvent::LlmResponse(_)))
+        .filter(|e| matches!(e, OmegaEvent::LlmResponseEnded(_)))
         .count();
-    assert_eq!(response_count, 1, "exactly one LlmResponse event");
+    assert_eq!(response_count, 1, "exactly one LlmResponseEnded event");
 }
 
 // ---------------------------------------------------------------------------
@@ -178,15 +178,17 @@ async fn retries_a_529_then_succeeds() {
     assert_eq!(retries[0].attempt, 1);
     assert_eq!(retries[0].http_status, Some(529));
     assert!(retries[0].wait_ms >= 1);
-    assert!(retries[0].text_fragment.is_none());
 
     let response_count = items
         .iter()
         .filter_map(|r| r.as_ref().ok())
         .filter_map(AgentItem::as_event)
-        .filter(|e| matches!(e, OmegaEvent::LlmResponse(_)))
+        .filter(|e| matches!(e, OmegaEvent::LlmResponseEnded(_)))
         .count();
-    assert_eq!(response_count, 1, "second attempt's LlmResponse propagates");
+    assert_eq!(
+        response_count, 1,
+        "second attempt's LlmResponseEnded propagates"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +240,7 @@ async fn retries_a_500_then_succeeds_with_ollama() {
         .iter()
         .filter_map(|r| r.as_ref().ok())
         .filter_map(AgentItem::as_event)
-        .filter(|e| matches!(e, OmegaEvent::LlmResponse(_)))
+        .filter(|e| matches!(e, OmegaEvent::LlmResponseEnded(_)))
         .count();
     assert_eq!(response_count, 1);
 }
@@ -318,7 +320,7 @@ async fn gives_up_after_max_attempts() {
 }
 
 // ---------------------------------------------------------------------------
-// `text_fragment` is populated when text streamed before the error
+// text streamed before a retry is captured via abandonment closers (Phase 3b)
 // ---------------------------------------------------------------------------
 
 /// To exercise the "text streamed before error" branch through a real
@@ -405,12 +407,7 @@ async fn retry_event_carries_no_fragments_after_mid_stream_text() {
 
     let retries = retry_events(&items);
     assert_eq!(retries.len(), 1, "exactly one retry");
-    assert!(
-        retries[0].text_fragment.is_none(),
-        "Phase 2: text_fragment is no longer populated by the retry wrapper, got {:?}",
-        retries[0].text_fragment,
-    );
-    assert!(retries[0].thinking_fragment.is_none());
+    // Phase 6.5: text_fragment and thinking_fragment removed from LlmRetryEvent.
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +562,7 @@ async fn retries_transport_errors() {
         .iter()
         .filter_map(|r| r.as_ref().ok())
         .filter_map(AgentItem::as_event)
-        .filter(|e| matches!(e, OmegaEvent::LlmResponse(_)))
+        .filter(|e| matches!(e, OmegaEvent::LlmResponseEnded(_)))
         .count();
     assert_eq!(response_count, 1, "second attempt must succeed");
 }

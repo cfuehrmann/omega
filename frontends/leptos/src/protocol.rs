@@ -36,17 +36,16 @@
 //!   `reset_done`, `session_deleted`, `session_renamed`.
 //! - 3 stream-signal tags forwarded inside the server's `Item` variant:
 //!   `text`, `thinking`, `thinking_block_complete`.
-//! - 22 [`omega_types::OmegaEvent`] tags forwarded via `Item`. The
+//! - 20 [`omega_types::OmegaEvent`] tags forwarded via `Item`. The
 //!   `agent_error` event tag merges into the envelope variant via the
-//!   payload-disambiguation trick above, so 21 dedicated event variants
-//!   appear here.  SCHEMA-8 Phase 3 commit 3b adds 6 more —
-//!   `llm_response_started`, `llm_response_ended`,
-//!   `llm_response_discarded`, `text_block`, `thinking_block`,
-//!   `tool_use_block` — bringing the total to 27 event variants.
+//!   payload-disambiguation trick above, so 19 dedicated event variants
+//!   appear here.  SCHEMA-8 Phase 3 adds 6 block-grammar events;
+//!   Phase 6.5 removes `llm_response` and `compacted`, bringing the
+//!   total to 25 event variants.
 
 use omega_types::events::{
-    CompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEndedEvent,
-    LlmResponseEvent, LlmResponseDiscardedEvent, LlmResponseStartedEvent, LlmRetryEvent,
+    EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEndedEvent,
+    LlmResponseDiscardedEvent, LlmResponseStartedEvent, LlmRetryEvent,
     ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
     ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
     ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
@@ -192,19 +191,17 @@ pub enum WsMessage {
     /// matching slot from the thinking streaming buffer.
     ThinkingBlockComplete { index: usize, signature: String },
 
-    // --- Forwarded `OmegaEvent` payloads (21 — `agent_error` merged above) ---
+    // --- Forwarded `OmegaEvent` payloads (19 — `agent_error` merged above) ---
     SessionStarted(SessionStartedEvent),
     ServerStarted(ServerStartedEvent),
     ServerStopped(ServerStoppedEvent),
     UserMessage(UserMessageEvent),
     LlmCall(LlmCallEvent),
-    LlmResponse(LlmResponseEvent),
     ToolCall(ToolCallEvent),
     ToolResult(ToolResultEvent),
     TurnEnd(TurnEndEvent),
     LlmError(LlmErrorEvent),
     TurnInterrupted(TurnInterruptedEvent),
-    Compacted(CompactedEvent),
     LlmRetry(LlmRetryEvent),
     ModelChanged(ModelChangedEvent),
     EffortChanged(EffortChangedEvent),
@@ -215,14 +212,8 @@ pub enum WsMessage {
     TurnPaused(TurnPausedEvent),
     TurnContinued(TurnContinuedEvent),
 
-    // --- SCHEMA-8 additive event variants (Phase 3 commit 3b) --------------
-    // These coexist on the wire with their legacy counterparts
-    // (`LlmResponse` / `Compacted`) until the SCHEMA-8 cutover removes
-    // the legacy variants.  The leptos UI accepts them so wire
-    // deserialisation succeeds; Phase 4 wires up proper rendering
-    // (block coalescing, partial-block markers, discarded-stream
-    // styling).  Today they're forwarded to `events.push(ev)` as-is
-    // and rendered by `feed.rs`'s minimal stubs.
+    // --- SCHEMA-8 block-grammar event variants (Phase 3 commit 3b) ---------
+    // Legacy `LlmResponse` and `Compacted` variants removed in Phase 6.5.
     LlmResponseStarted(LlmResponseStartedEvent),
     LlmResponseEnded(LlmResponseEndedEvent),
     LlmResponseDiscarded(LlmResponseDiscardedEvent),
@@ -269,13 +260,11 @@ impl WsMessage {
             Self::ServerStopped(e) => OmegaEvent::ServerStopped(e),
             Self::UserMessage(e) => OmegaEvent::UserMessage(e),
             Self::LlmCall(e) => OmegaEvent::LlmCall(e),
-            Self::LlmResponse(e) => OmegaEvent::LlmResponse(e),
             Self::ToolCall(e) => OmegaEvent::ToolCall(e),
             Self::ToolResult(e) => OmegaEvent::ToolResult(e),
             Self::TurnEnd(e) => OmegaEvent::TurnEnd(e),
             Self::LlmError(e) => OmegaEvent::LlmError(e),
             Self::TurnInterrupted(e) => OmegaEvent::TurnInterrupted(e),
-            Self::Compacted(e) => OmegaEvent::Compacted(e),
             Self::LlmRetry(e) => OmegaEvent::LlmRetry(e),
             Self::ModelChanged(e) => OmegaEvent::ModelChanged(e),
             Self::EffortChanged(e) => OmegaEvent::EffortChanged(e),
@@ -285,7 +274,7 @@ impl WsMessage {
             Self::PauseRequested(e) => OmegaEvent::PauseRequested(e),
             Self::TurnPaused(e) => OmegaEvent::TurnPaused(e),
             Self::TurnContinued(e) => OmegaEvent::TurnContinued(e),
-            // SCHEMA-8 additive variants (Phase 3 commit 3b).
+            // SCHEMA-8 block-grammar variants.
             Self::LlmResponseStarted(e) => OmegaEvent::LlmResponseStarted(e),
             Self::LlmResponseEnded(e) => OmegaEvent::LlmResponseEnded(e),
             Self::LlmResponseDiscarded(e) => OmegaEvent::LlmResponseDiscarded(e),
