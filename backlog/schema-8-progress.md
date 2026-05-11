@@ -144,7 +144,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 ### Phase 5 — Frontend UI blocks — **DONE** (2026-05-14, commits 7c74d51..6ed6044)
 ### Phase 6.5 — Legacy band-aid removal — **DONE** (commits 21ce5d8..08d9791)
 ### Phase 6 — Tests (T1–T5) — **DONE** (commits 370d66a..59b2b25)
-### Phase 7 — Snapshots and docs — **NEXT**
+### Phase 7 — Snapshots and docs — **DONE**
 ### Phase 8 — Mutation testing — **TODO**
 
 ## Acceptance criteria recap (must verify before declaring done)
@@ -181,7 +181,75 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 6 DONE — next: Phase 7 Snapshots & docs)
+## CURRENT STATE (Phase 7 DONE — next: Phase 8 Mutation testing)
+
+**Phase 7 complete.** Single commit on `develop`, all gates green:
+
+- `schema-8(phase-7): SSR snapshot audit + docs/schema.md`
+  - **Item 54 (SSR snapshot audit):** grep of
+    `frontends/leptos/tests/snapshots/` for `\bllm_response\b`,
+    `LlmResponseEvent\b`, and `\bcompacted\b` returned one match —
+    `snapshots__snap_event_llm_response_ended_compacted.snap`. Inspection
+    confirmed it is a false positive: the word `compacted` appears as the
+    text content and CSS class of the Phase-5f `[compacted]` badge inside
+    a correct `data-event-type="llm_response_ended"` block. No stale
+    references to the removed `OmegaEvent::Compacted` or
+    `LlmResponseEvent` types anywhere in the snapshot tree. No snapshot
+    update needed; host-snapshots gate stayed at 39/39 green.
+  - **Item 55 (`docs/schema.md`):** new file written from scratch at
+    `docs/schema.md` (499 lines). Covers: all 26 `OmegaEvent` variants
+    with wire-format tables and annotated JSON examples; camelCase-outer /
+    snake_case-nested-usage gotcha on `LlmResponseEndedEvent`; `Option`
+    fields without `#[serde(default)]` gotcha; `LlmCallEvent.cache_breakpoint_index`
+    always-serialized gotcha; `usage.iterations` compaction-detection
+    contract (replacing `OmegaEvent::Compacted`); `LlmRetryEvent` shape
+    after 6.5c (no text_fragment/thinking_fragment); `StreamSignal`
+    grammar; slot-assembly invariants (BTreeMap + empty-text-slot skip +
+    abandonment flush); HASH-1 contract (sha256 first 8 bytes, 16
+    lower-hex, canonical-form ABI); append-only DOM invariant +
+    abandonment semantics (cross-links to `10_append_only.rs` and
+    `09_refresh.rs`). Style matches `docs/internals.md`.
+
+Gate counts post-Phase-7 (unchanged from Phase 6):
+
+  - goldens: 11
+  - defensive: 3
+  - wasm tests: 376
+  - host snapshots: 39
+  - `just rust-gate`: green
+  (e2e not re-run: docs-only change with no snapshot touches)
+
+### Phase 8 resumption plan (Mutation testing)
+
+Run `cargo mutants` against the two focal crates:
+
+```
+cd rust && cargo mutants -p omega-core --timeout 60
+cd rust && cargo mutants -p omega-agent --timeout 600
+```
+
+Triage every survivor:
+- **Real gap:** write a catching test, re-run.
+- **Acceptable miss:** document in `rust/SCHEMA-8-MUTANTS.md` with
+  explicit justification.
+
+Target: zero unjustified survivors in:
+- `omega-core/src/anthropic.rs` — streaming accumulator, signal emission
+- `omega-agent/src/agent.rs` — event emission, abandonment closers,
+  ToolCall dispatch
+
+High-value mutation targets (per `backlog/schema-8.md` § Phase 8):
+- Off-by-one on streaming block index assembly → must fail T2.
+- Swap `LlmResponseEnded` / `ToolCall` emission order → must fail e2e.
+- Replace `signature: Some(_)` with `None` on completed thinking block
+  → must fail T1 or a golden.
+- Skip `LlmResponseDiscarded` emission → must fail T5.
+- Concatenate two thinking blocks → must fail T1 + T2.
+
+Record results in `rust/SCHEMA-8-MUTANTS.md`:
+total mutants per crate, caught, unviable, missed, per-miss justification.
+
+--- end Phase-7 summary ---
 
 **Phase 6 complete.** Three commits on `develop`, all gates green:
 
