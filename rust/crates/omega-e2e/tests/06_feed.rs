@@ -427,10 +427,10 @@ async fn long_tool_result_preview_is_two_lines_payload_modal_full() {
     );
     let preview_len = preview.len();
 
-    // Click [payload].
+    // Click the output button inside the payload block.
     h.click(
         "[data-testid=\"leptos-feed\"] [data-event-type=\"tool_result\"] \
-         [data-testid=\"leptos-tool-result-payload\"]",
+         [data-testid=\"leptos-tool-result-payload-btn\"]",
     )
     .await
     .expect("click [payload]");

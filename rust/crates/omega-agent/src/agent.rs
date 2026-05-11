@@ -84,7 +84,6 @@ const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 /// `LlmError` / `TurnInterrupted` mid-stream) yields a
 /// `partial: true` block event in Phase 3 commit 3d.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // commit 3a populates slots; commits 3b/3e consume them.
 enum BlockSlot {
     Text {
         text: String,

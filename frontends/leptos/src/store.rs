@@ -307,15 +307,12 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             });
         }
         // SCHEMA-8 Phase 4c — response closers drain both streaming
-        // accumulators.  Mirrors the legacy `LlmResponse` arm (still
-        // present below as the band-aid) so the global buffers settle
-        // back to empty at every response boundary, whether
-        // successful (`LlmResponseEnded`) or abandoned
-        // (`LlmResponseDiscarded`).  The per-block `TextBlock` /
-        // `ThinkingBlock` arms above will usually have drained them
-        // already; these arms are belt-and-braces for the (legal)
-        // case of a response that produces zero blocks before
-        // ending/discarding.
+        // accumulators.  Belt-and-braces for the (legal) case of a
+        // response that produces zero block events (e.g. an empty
+        // tool-only reply): the per-block `TextBlock` / `ThinkingBlock`
+        // arms above will usually have drained them already, but any
+        // stragglers must be cleared so the next response opens with
+        // empty buffers.
         OmegaEvent::LlmResponseEnded(_) | OmegaEvent::LlmResponseDiscarded(_) => {
             store.streaming_text.set(BTreeMap::new());
             store.streaming_thinking.set(BTreeMap::new());

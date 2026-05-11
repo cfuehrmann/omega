@@ -670,13 +670,11 @@ fn render_event_body(
         .into_any(),
 
         // `TextBlock`: one finalised (or partial) text span from an
-        // assistant response.  Renders the same markdown surface as
-        // the legacy `LlmResponseBlock` (which still wraps the full
-        // `lr.text` band-aid until Phase 4d), with the
-        // `leptos-assistant-text` testid so existing Playwright
-        // selectors continue to match.  06_feed grabs the *last*
-        // such wrapper to verify final assistant text, which is the
-        // same content the final `TextBlock` event carries.
+        // assistant response.  Renders the markdown surface with the
+        // `leptos-assistant-text` testid so Playwright selectors can
+        // target it.  06_feed grabs the *last* such wrapper to verify
+        // final assistant text, which is the same content the final
+        // `TextBlock` event carries.
         //
         // `partial:true` blocks are emitted just before
         // `LlmResponseDiscarded` on mid-stream abandonment (retry on
@@ -723,12 +721,8 @@ fn render_event_body(
         }
 
         // `ThinkingBlock`: one finalised (or partial) thinking
-        // segment.  Phase 4b keeps this minimal — a labelled
-        // `<pre>` matching the legacy thinking modal's plain-text
-        // surface so the content is at least visible.  Phase 5 will
-        // promote it to a proper collapsible accordion (replacing
-        // the current `[thinking]` modal button on the legacy
-        // `LlmResponseBlock`).
+        // segment.  Renders a labelled `<pre>` with an `expand`
+        // button that opens a `TextModal` for the full content.
         //
         // `signature.is_none()` iff `partial == true` per the
         // type-level invariant in `omega-types::events`.
@@ -875,10 +869,8 @@ fn render_event_body(
 /// events — so there is no `[thinking]` button here and no
 /// `leptos-assistant-text` wrapper.
 ///
-/// Testids mirror `LlmResponseBlock` (`leptos-llm-response-context`,
-/// `leptos-llm-response-payload`, `leptos-assistant-usage`) so the
-/// Phase 4d cutover can drop the legacy renderer without touching
-/// any Playwright selector.
+/// Testids: `leptos-llm-response-context`, `leptos-llm-response-payload`,
+/// `leptos-assistant-usage`.
 #[mutants::skip]
 #[component]
 fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> impl IntoView {

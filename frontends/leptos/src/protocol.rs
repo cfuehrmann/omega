@@ -292,7 +292,6 @@ impl WsMessage {
 /// One frame the client may send to `omega-server`. Mirrors
 /// `omega-server::router::ClientFrame`. Phase 3.1 only requires the
 /// type to exist (no UI sends frames yet); 3.2 wires up actual sends.
-#[allow(dead_code)] // variants constructed by 3.2+ composers
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientFrame {
