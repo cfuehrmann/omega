@@ -629,7 +629,7 @@ fn render_event_body(
         // are lifecycle markers; `LlmResponseEnded` has its own renderer
         // below (context hash badge, compacted badge, usage summary).
         OmegaEvent::LlmResponseStarted(_) => view! {
-            <span class="block-label">"llm_response_started"</span>
+            <span class="block-label">"LLM response start"</span>
         }
         .into_any(),
 
@@ -832,9 +832,8 @@ fn render_event_body(
                         }.into_any()
                     } else {
                         view! {
-                            <span class="block-label">
-                                "tool_use "
-                                <span data-testid="leptos-tool-use-name">{name_for_label}</span>
+                            <span class="block-label" data-testid="leptos-tool-use-name">
+                                {name_for_label}
                             </span>
                         }.into_any()
                     }}
@@ -878,7 +877,6 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
         use_context::<ContextModalState>().expect("ContextModalState must be provided");
     let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
-    let stop_reason = event.stop_reason.clone();
     let context_hash = event.context_hash.clone();
 
     // SCHEMA-8 Phase 5f — surface server-side context compaction.
@@ -898,25 +896,21 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
 
     let cache_read = event.usage.cache_read_input_tokens.unwrap_or(0);
     let cache_write = event.usage.cache_creation_input_tokens.unwrap_or(0);
+    // Stop reason omitted from the usage line — it was redundant with the
+    // label and added visual clutter.
     let usage_line = format!(
-        "in: {}  out: {}  cache_read: {}  cache_write: {}  ({})",
+        "in: {}  out: {}  cache_read: {}  cache_write: {}",
         event.usage.input_tokens,
         event.usage.output_tokens,
         cache_read,
         cache_write,
-        event.stop_reason,
     );
 
     let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
 
     view! {
         <div class="block-label-row">
-            <span class="block-label">
-                "assistant"
-                <span class="block-stop-reason">
-                    {format!("  ({stop_reason})")}
-                </span>
-            </span>
+            <span class="block-label">"LLM response end"</span>
             {compacted.then(|| view! {
                 <span
                     class="block-badge block-badge-compacted"
@@ -926,22 +920,32 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
                     "compacted"
                 </span>
             })}
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-llm-response-context"
-                on:click=move |_| context_modal.open_hash(context_hash.clone())
-            >
-                "context"
-            </button>
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-llm-response-payload"
-                on:click=move |_| text_modal.open("llm_response_ended payload", event_json.clone())
-            >
-                "payload"
-            </button>
+            // Usage info + modal buttons grouped as a single hover-revealed unit.
+            // On narrow screens the whole group is absolutely positioned so it
+            // overlays the label text rather than wrapping to a second line.
+            <div class="block-label-row-actions">
+                <span
+                    class="block-label-info"
+                    data-testid="leptos-assistant-usage"
+                >
+                    {usage_line}
+                </span>
+                <button
+                    class="block-label-row-btn"
+                    data-testid="leptos-llm-response-context"
+                    on:click=move |_| context_modal.open_hash(context_hash.clone())
+                >
+                    "context"
+                </button>
+                <button
+                    class="block-label-row-btn"
+                    data-testid="leptos-llm-response-payload"
+                    on:click=move |_| text_modal.open("llm_response_ended payload", event_json.clone())
+                >
+                    "payload"
+                </button>
+            </div>
         </div>
-        <span class="block-meta" data-testid="leptos-assistant-usage">{usage_line}</span>
     }
 }
 
@@ -973,7 +977,10 @@ fn ToolCallBlock(
     let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
 
     let name = event.name.clone();
-    let id_meta = format!("id={}", event.id);
+    // Build the same inline preview used by ToolUseBlock so tool_call and
+    // tool_use rows look consistent: [corr] name  preview … [input]
+    let raw_preview = tool_call_preview(&event.name, &event.input);
+    let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
     let full_input =
         serde_json::to_string_pretty(&event.input).unwrap_or_else(|_| "{}".to_owned());
     let modal_title = format!("tool_call input — {}", event.name);
@@ -981,11 +988,8 @@ fn ToolCallBlock(
     view! {
         <div class="block-label-row" data-testid="leptos-tool-call-input">
             {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
-            <span class="block-label">
-                "tool_call "
-                <span data-testid="leptos-tool-name">{name}</span>
-            </span>
-            <span class="block-meta" data-testid="leptos-tool-call-id">{id_meta}</span>
+            <span class="block-label" data-testid="leptos-tool-name">{name}</span>
+            <span class="block-tool-preview" data-testid="leptos-tool-call-preview">{preview}</span>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-tool-call-payload"
@@ -1043,7 +1047,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
 
     view! {
         <div class="block-label-row">
-            <span class="block-label">"llm_call"</span>
+            <span class="block-label">"LLM call"</span>
             <span class="block-meta" data-testid="leptos-llm-call-summary">{inline_meta}</span>
             <button
                 class="block-label-row-btn"

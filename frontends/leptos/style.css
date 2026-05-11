@@ -1316,25 +1316,19 @@ main > h1 {
   margin-bottom: 2px;
 }
 
-/* Muted stop-reason appended inside the block-label span. */
-.block-stop-reason {
-  font-size: 11px;
-  font-weight: normal;
-  font-family: var(--font);
-  letter-spacing: 0;
-  opacity: 0.65;
-}
-
-/* Push the button group to the right margin of the label row. */
+/* Push the first standalone button (direct child of .block-label-row) to the
+ * right margin. The .block-label-row-actions wrapper uses margin-left: auto
+ * instead when buttons are grouped inside it. */
 .block-label-row > .block-label-row-btn:first-of-type {
   margin-left: auto;
 }
 
-/* Small pill buttons in the label row: [context], [payload], [thinking].
- * Hidden by default; revealed only while the parent .block is hovered,
- * mirroring the session-modal .session-item-actions behaviour.
- * Because the buttons stay in flex flow (not absolutely positioned),
- * there is no layout shift when they appear or disappear. */
+/* Small pill buttons in the label row: [context], [payload], [thinking], etc.
+ * Two visibility modes:
+ *   a) Standalone direct children of .block-label-row — hidden by default,
+ *      revealed while the parent .block is hovered.
+ *   b) Inside .block-label-row-actions wrapper — the wrapper controls group
+ *      visibility; the buttons inside are always opaque within the wrapper. */
 .block-label-row-btn {
   background: none;
   border: 1px solid var(--ctp-surface2);
@@ -1348,7 +1342,7 @@ main > h1 {
   pointer-events: none;
   transition: opacity 0.15s, border-color 0.1s, color 0.1s;
 }
-/* Reveal buttons when the mouse is over the containing event block. */
+/* Reveal standalone buttons when the mouse is over the containing block. */
 .block:hover .block-label-row-btn {
   opacity: 0.8;
   pointer-events: auto;
@@ -1357,6 +1351,86 @@ main > h1 {
   opacity: 1;
   border-color: var(--ctp-blue);
   color: var(--ctp-blue);
+}
+
+/* Actions wrapper — groups usage info + modal buttons into a single
+ * hover-revealed unit. Used by LlmResponseEndedBlock so the context/payload
+ * buttons and the token-count annotation share one opacity transition.
+ * On narrow screens the wrapper is absolutely positioned so it overlays the
+ * label text from the right rather than pushing it to wrap. */
+.block-label-row-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.block:hover .block-label-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Buttons inside the wrapper are opaque within it — wrapper controls
+ * overall visibility, so individual button opacity is 1. */
+.block-label-row-actions > .block-label-row-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.block-label-row-actions > .block-label-row-btn:hover {
+  opacity: 1;
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+
+/* Inline usage / context info text in the label row.
+ * Visible as part of .block-label-row-actions (wrapper controls opacity).
+ * Truncates on very narrow screens. */
+.block-label-info {
+  font-size: 11px;
+  font-family: var(--font);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Narrow screens: buttons always visible, overlaying the label from the right.
+ * .block-label-row-actions uses absolute positioning to avoid pushing the
+ * label text to a second line — the gradient fade blends it in naturally.
+ * Standalone .block-label-row-btn elements (direct children of the row, used
+ * in tool_call, llm_call, etc.) also become always-visible at this width. */
+@media (max-width: 520px) {
+  .block-label-row {
+    position: relative;
+    flex-wrap: nowrap;
+  }
+  /* Standalone buttons always visible on narrow screens */
+  .block-label-row > .block-label-row-btn {
+    opacity: 1;
+    pointer-events: auto;
+    flex-shrink: 0;
+  }
+  /* Actions wrapper: absolute overlay from the right */
+  .block-label-row-actions {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    align-items: center;
+    opacity: 1;
+    pointer-events: auto;
+    padding-left: 28px;
+    /* Gradient fade so the buttons blend into the block background */
+    background: linear-gradient(to right, transparent, var(--bg2) 28px);
+  }
+  /* Hide verbose info text on narrow screens — buttons take priority */
+  .block-label-info {
+    display: none;
+  }
 }
 
 /* Correlation-integer superscript on tool_call and tool_result blocks.
