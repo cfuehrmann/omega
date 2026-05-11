@@ -192,21 +192,21 @@ async fn multi_tool_turn_renders_every_family() {
         .expect("count mismatched tool_result kinds");
     assert_eq!(mismatched, 0, "tool_result blocks with wrong kind");
 
-    // last llm_response is kind=assistant; last text_block carries
-    // the final assistant text (SCHEMA-8 Phase 4c — the legacy
-    // `LlmResponseBlock` body is muted; markdown lives in `TextBlock`
-    // siblings, the closer `LlmResponseEnded` only carries affordances).
+    // last llm_response_ended is kind=status; last text_block carries
+    // the final assistant text (SCHEMA-8 Phase 6.5 — LlmResponse removed;
+    // markdown lives in TextBlock siblings, LlmResponseEnded carries
+    // only affordances: context hash, [compacted] badge).
     let last_kind: String = h
         .eval(
             "(() => {\
                const xs = document.querySelectorAll(\
-                 '[data-testid=\"leptos-feed\"] [data-event-type=\"llm_response\"]');\
+                 '[data-testid=\"leptos-feed\"] [data-event-type=\"llm_response_ended\"]');\
                return xs.length ? xs[xs.length - 1].getAttribute('data-event-kind') : '';\
              })()",
         )
         .await
-        .expect("read last llm_response kind");
-    assert_eq!(last_kind, "assistant", "last llm_response not assistant");
+        .expect("read last llm_response_ended kind");
+    assert_eq!(last_kind, "status", "last llm_response_ended not status");
     let last_text: String = h
         .eval(
             "(() => {\
