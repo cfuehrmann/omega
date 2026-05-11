@@ -545,3 +545,102 @@ async fn active_effort_reflects_set_effort() {
     let _ = agent.set_effort("medium".to_owned()).await;
     assert_eq!(agent.active_effort(), "medium");
 }
+
+// ---------------------------------------------------------------------------
+// Cache-token propagation into TurnEnd metrics
+// ---------------------------------------------------------------------------
+
+/// A mocked LLM response that reports non-zero cache_creation_input_tokens
+/// and cache_read_input_tokens must surface those values in the emitted
+/// `turn_end` event's `metrics.cacheCreationTokens` / `cacheReadTokens`
+/// fields so that `bench/omega_agent.py:populate_context_post_run` can
+/// accumulate them correctly.
+///
+/// Regression test: the `TurnMetrics` struct has `cache_creation_tokens` /
+/// `cache_read_tokens` fields and the agent must propagate them from the
+/// `LlmResponseUsage.cache_creation_input_tokens` /
+/// `cache_read_input_tokens` fields returned by the Anthropic API.
+#[tokio::test]
+async fn turn_end_metrics_carry_cache_tokens() {
+    let (mut agent, provider, tmp) = make_test_agent();
+
+    // Build a response with non-zero cache tokens.
+    let response_with_cache = AgentItem::Event(Box::new(OmegaEvent::LlmResponseEnded(
+        LlmResponseEndedEvent {
+            time: "2024-01-01T00:00:00.000Z".to_owned(),
+            stop_reason: "end_turn".to_owned(),
+            cleared_tool_uses: None,
+            cleared_input_tokens: None,
+            usage: LlmResponseUsage {
+                input_tokens: 1000,
+                output_tokens: 50,
+                cache_creation_input_tokens: Some(800),
+                cache_read_input_tokens: Some(200),
+                service_tier: None,
+                iterations: None,
+            },
+            context_hash: String::new(),
+            response_summary: None,
+        },
+    )));
+
+    provider.push_response(vec![Ok(response_with_cache)]);
+
+    let stream = agent.send_message("hello".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+
+    // Locate the TurnEnd event.
+    let turn_end = items
+        .iter()
+        .find_map(|item| match item {
+            AgentItem::Event(boxed) => match boxed.as_ref() {
+                OmegaEvent::TurnEnd(ev) => Some(ev.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("turn_end event must be emitted");
+
+    assert_eq!(
+        turn_end.metrics.input_tokens, 1000,
+        "inputTokens mismatch: {:?}",
+        turn_end.metrics
+    );
+    assert_eq!(
+        turn_end.metrics.output_tokens, 50,
+        "outputTokens mismatch: {:?}",
+        turn_end.metrics
+    );
+    assert_eq!(
+        turn_end.metrics.cache_creation_tokens,
+        Some(800),
+        "cacheCreationTokens must be Some(800), got: {:?}",
+        turn_end.metrics
+    );
+    assert_eq!(
+        turn_end.metrics.cache_read_tokens,
+        Some(200),
+        "cacheReadTokens must be Some(200), got: {:?}",
+        turn_end.metrics
+    );
+
+    // Also verify the serialised JSON uses camelCase keys expected by
+    // bench/omega_agent.py:populate_context_post_run.
+    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
+    let turn_end_json = events
+        .iter()
+        .find(|v| v["type"] == "turn_end")
+        .expect("turn_end must be present in events.jsonl");
+
+    let metrics = &turn_end_json["metrics"];
+    assert_eq!(metrics["inputTokens"], 1000, "JSON inputTokens");
+    assert_eq!(metrics["outputTokens"], 50, "JSON outputTokens");
+    assert_eq!(
+        metrics["cacheCreationTokens"], 800,
+        "JSON cacheCreationTokens must be 800, was: {metrics}"
+    );
+    assert_eq!(
+        metrics["cacheReadTokens"], 200,
+        "JSON cacheReadTokens must be 200, was: {metrics}"
+    );
+}
