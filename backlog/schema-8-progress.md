@@ -143,8 +143,8 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 ### Phase 4 — Frontend protocol & store — **DONE** (2026-05-13, commits 4c657a5..a3484a4)
 ### Phase 5 — Frontend UI blocks — **DONE** (2026-05-14, commits 7c74d51..6ed6044)
 ### Phase 6.5 — Legacy band-aid removal — **DONE** (commits 21ce5d8..08d9791)
-### Phase 6 — Tests (T1–T5) — **NEXT**
-### Phase 7 — Snapshots and docs — **TODO**
+### Phase 6 — Tests (T1–T5) — **DONE** (commits 370d66a..59b2b25)
+### Phase 7 — Snapshots and docs — **NEXT**
 ### Phase 8 — Mutation testing — **TODO**
 
 ## Acceptance criteria recap (must verify before declaring done)
@@ -181,7 +181,113 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
   modify those types in SCHEMA-8.
 - `mutants::skip` annotations exist on ABI-equivalent paths — keep them.
 
-## CURRENT STATE (Phase 6.5 DONE — next: Phase 6 T1–T5 defensive tests)
+## CURRENT STATE (Phase 6 DONE — next: Phase 7 Snapshots & docs)
+
+**Phase 6 complete.** Three commits on `develop`, all gates green:
+
+- `370d66a` schema-8(phase-6a): T1-T4 defensive tests for the slot-assembly
+  contract.  New file `rust/crates/omega-agent/tests/defensive.rs` with
+  three host-level tests (T1 signature preservation, T2 block order in
+  context.jsonl, T3 events.jsonl ↔ context.jsonl cross-check).  T4 added
+  as a module-doc annotation in `tests/goldens.rs` making the byte-level
+  context.jsonl comparison contract explicit (HASH-1 determinism +
+  frozen-time-via-scrubber).
+- `09699d2` schema-8(phase-6b): tidy stale `LlmResponse`/`Compacted`
+  doc-comments and `.expect(...)` messages left over from 6.5 in:
+  omega-core/tests/{anthropic,ollama,retry}.rs +
+  omega-e2e/tests/{03_markdown,06_feed}.rs.  Comment-only; no functional
+  change.  Historical "Phase N.M: ... removed" notes preserved.  Also
+  reviewed mock-server `MockResponse` handling (item 51): `Text` →
+  `build_text_sse`, `ToolUse` → `build_tool_use_sse`, `SlowText` →
+  `sse_slow_text_response`, `ToolUseMulti`, `HttpError` — all emit the
+  current SCHEMA-8 SSE shapes; no legacy fields anywhere.
+- `59b2b25` schema-8(phase-6c): T5 append-only DOM invariant in
+  `omega-e2e/tests/10_append_only.rs`.  Uses `launch_with_ws_spy +
+  inject_ws_frame` to synthesise a multi-block stream + mid-stream
+  abandon + retry sequence directly at the WS level, snapshots the set
+  of `data-block-id` attrs after every injection, and asserts the sets
+  are monotonically non-decreasing.  Design rationale captured in the
+  test file's module doc: the mock server has no `MockResponse` variant
+  for "partial stream then abort" (HttpError aborts before any SSE
+  streams), so inject-frame is the only path that exercises the
+  partial-flagged TextBlock/ThinkingBlock + LlmResponseDiscarded
+  sequence end-to-end.  Same pattern as `08_modal_esc.rs`.
+
+Gate counts post-Phase-6:
+
+  - goldens: 11 (unchanged — defensive tests are additive)
+  - defensive: **3** (NEW — T1 signature preservation, T2 block order,
+    T3 events↔context cross-check)
+  - wasm tests: 376 (unchanged)
+  - host snapshots: 39 (unchanged)
+  - e2e: **52** (was 51, +1 for T5 in `10_append_only.rs`)
+  - `just rust-gate`: green throughout
+
+### What T1–T5 actually pin
+
+| Test | Scope | What it would catch |
+|---|---|---|
+| T1 | host (defensive.rs) | Signature merging or swapping across two distinct ThinkingBlock slots — fixture uses sentinel signatures `SIG-ALPHA-...`/`SIG-BETA-...`, both bytes asserted byte-equal to input. |
+| T2 | host (defensive.rs) | Reorder of assistant content blocks in `context.jsonl` away from emission order; fixture interleaves `thinking(0) → text(1) → thinking(2) → text(3) → tool_use(4)` with `stop_reason="end_turn"` so the tool slot lands in context but is not dispatched. |
+| T3 | host (defensive.rs) | `events.jsonl` block events drifting from `context.jsonl` ContentBlocks — same fixture as T2; loops through both lists in lockstep and asserts text/signature/id/name/input bytes match. |
+| T4 | host (goldens.rs) | Quiet byte-shifts in any of the 11 captured fixtures — Phase 0 already enforces this; T4 is a module-doc annotation tying byte-equality to HASH-1 + scrubbed-time so the contract is discoverable. |
+| T5 | e2e (10_append_only.rs) | Any DOM rendering path that removes/reorders an event block under abandon+retry; partial-flagged blocks from the abandoned stream remain visible after the retry's blocks land. |
+
+### Cleanup pass (Phase 6 item 50–51) — landed in `09699d2`
+
+All edits are comment-only; no code paths or selectors changed.  Files
+touched:
+
+- `rust/crates/omega-core/tests/anthropic.rs` — ~10 doc-comments and
+  `.expect(...)` messages re-pointed from `LlmResponse` to
+  `LlmResponseEnded`, one Phase-6.5a comment de-mangled for readability.
+  Historical `// Phase 6.5: OmegaEvent::Compacted removed...` notes kept.
+- `rust/crates/omega-core/tests/ollama.rs` — same treatment, 3 sites.
+- `rust/crates/omega-core/tests/retry.rs` — 1 comment.
+- `rust/crates/omega-e2e/tests/03_markdown.rs` — file-header doc + test
+  doc-comment re-pointed from `llm_response` to `text_block`.
+- `rust/crates/omega-e2e/tests/06_feed.rs` — same treatment, 3 sites.
+
+### Phase 7 plan (Snapshots & docs — 2 items from `backlog/schema-8.md`)
+
+54. **Refresh Leptos SSR snapshots** if any reference old block shapes.
+    Likely a no-op given the host-snapshots gate stayed at 39/39 through
+    Phases 4–6, but worth a one-shot grep through
+    `frontends/leptos/tests/snapshots/__snapshots__/` for `llm_response`
+    (without `_started`/`_ended`/`_discarded` suffix), `compacted`, or
+    `LlmResponse` (the old struct name) before declaring done.
+55. **Write `docs/schema.md`** — the file does **not** exist (only
+    `docs/internals.md` is present).  Document the post-SCHEMA-8 wire
+    shape:
+    - `OmegaEvent` variants (26 total — list in §"What the type surface
+      looks like now after Phase 6.5" below).
+    - `LlmResponseEndedEvent` (camelCase on wire; snake_case in Rust),
+      including the `usage.iterations` compaction-detection contract.
+    - `LlmRetryEvent` shape after 6.5c (no text_fragment/thinking_fragment).
+    - `TextBlockEvent` / `ThinkingBlockEvent` / `ToolUseBlockEvent` shapes
+      with `partial: bool`.
+    - StreamSignal grammar (Text{index}, Thinking{index},
+      TextBlockComplete{index, text}, ThinkingBlockComplete{index, signature},
+      ToolUseBlockComplete{index, id, name, input}).
+    - Slot-assembly invariants (BTreeMap<usize, BlockSlot> keyed by API
+      content_block_start.index; empty Text slots skipped at flush;
+      assembly order = key order = emission order).
+    - HASH-1: `ContextHash = first 16 lower-hex of sha256(canonical_json(
+      (role, content)))`, why byte-equal context.jsonl is feasible.
+    - Append-only DOM invariant + abandonment semantics.
+
+Phase 8 (mutation testing) follows: run `cargo mutants -p omega-core
+--timeout 60` and `cargo mutants -p omega-agent --timeout 600`; triage
+survivors; record in `rust/SCHEMA-8-MUTANTS.md`.
+
+### Carry-overs to Phase 7 (none)
+
+Nothing from Phase 6 carries over.  All five defensive tests landed and
+run on every gate.
+
+--- end Phase-6 summary ---
+
+## CURRENT STATE (Phase 6.5 DONE — next: Phase 6 T1–T5 defensive tests) [historical — superseded by Phase 6 above]
 
 **Phase 6.5 complete.** Two commits on `develop` (all Phase 6.5 items
 merged into one because they all touch the same files), all gates green
