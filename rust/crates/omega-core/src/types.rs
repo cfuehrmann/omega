@@ -40,14 +40,29 @@ pub struct ModelConfig {
     /// Sampling temperature.  `None` lets the provider apply its default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    /// Anthropic extended-thinking budget (tokens).  `None` disables
-    /// explicit-budget thinking.  Ignored by
-    /// [`OllamaProvider`](crate::OllamaProvider).
-    /// When [`Self::adaptive_thinking`] is `true` this field is ignored.
+    /// Legacy Anthropic extended-thinking budget (tokens) for the
+    /// deprecated `thinking: { type: "enabled", budget_tokens: N }` mode.
+    /// Only consulted when [`Self::adaptive_thinking`] is `false`, and
+    /// even then `enabled` mode is deprecated on Opus 4.6 / Sonnet 4.6 and
+    /// rejected outright on Opus 4.7 — see the Adaptive Thinking docs at
+    /// <https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking>.
+    /// Production code in `omega-agent` never sets this; it exists for
+    /// older models (Sonnet 4.5 / Opus 4.5 / earlier) and external callers.
+    /// Ignored by [`OllamaProvider`](crate::OllamaProvider).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<u32>,
-    /// Enable Anthropic adaptive thinking
-    /// (`{ "type": "adaptive", "display": "summarized" }`).
+    /// Enable Anthropic adaptive thinking — serialised as
+    /// `thinking: { "type": "adaptive", "display": "summarized" }`.
+    ///
+    /// This is the recommended (and on Opus 4.7, the only supported)
+    /// thinking mode for all current Claude models. Adaptive mode lets
+    /// the model decide when and how much to think, and automatically
+    /// enables interleaved thinking between tool calls — no
+    /// `anthropic-beta: interleaved-thinking-*` header is required.
+    ///
+    /// Production code in `omega-agent` sets this to `true` on every
+    /// `LlmRequest`; the default is `false` only so that test fixtures
+    /// using `..Default::default()` produce a minimal wire body.
     /// Takes precedence over [`Self::thinking_budget`] when `true`.
     /// Ignored by [`OllamaProvider`](crate::OllamaProvider).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
