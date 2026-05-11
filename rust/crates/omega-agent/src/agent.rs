@@ -2173,3 +2173,298 @@ mod elide_request_tests {
         assert_eq!(arr[0]["cache_control"], "ephemeral");
     }
 }
+
+#[cfg(test)]
+mod abandonment_closer_tests {
+    //! Inline tests pinning [`make_abandonment_closers`]'s emission contract
+    //! (SCHEMA-8 Phase 3 commit 3d).
+    //!
+    //! The integration tests in `tests/internal.rs` exercise only the
+    //! streaming-loop wiring around this helper, not the per-slot emission
+    //! decisions.  Phase 8 (`cargo mutants -p omega-agent`) flagged seven
+    //! survivors that escape the integration tests:
+    //!
+    //! * the `!text.is_empty()` guard (3 mutants: replace-with-true,
+    //!   replace-with-false, `delete !`)
+    //! * the `!thinking.is_empty()` guard (3 mutants)
+    //! * the `BlockSlot::ToolUse { sealed: false, .. }` match arm (1 mutant
+    //!   `delete match arm`)
+    //!
+    //! The first two groups are real gaps: the existing
+    //! `script_mid_stream_retry` golden replays mid-stream retry but its
+    //! oracle is `context.jsonl` byte-equality, which says nothing about
+    //! the `events.jsonl` partial-block emission decisions.  The third
+    //! group is defensive code that the current stream loop can never
+    //! reach (`insert_tool_use_slot` always seals on insert) but whose
+    //! contract is part of Phase 3 commit 3d's spec — we pin it here so
+    //! future changes to the seal discipline can't silently drop it.
+
+    #![allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::wildcard_enum_match_arm
+    )]
+
+    use super::{BlockSlot, make_abandonment_closers};
+    use omega_types::OmegaEvent;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn expect_discarded(ev: &OmegaEvent) {
+        match ev {
+            OmegaEvent::LlmResponseDiscarded(_) => {}
+            other => panic!("expected LlmResponseDiscarded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_slot_map_emits_only_discarded_marker() {
+        // The closer pair degrades to a single marker when nothing was
+        // accumulated before the abandon.
+        let events = make_abandonment_closers(BTreeMap::new());
+        assert_eq!(events.len(), 1);
+        expect_discarded(&events[0]);
+    }
+
+    #[test]
+    fn unsealed_nonempty_text_slot_emits_partial_text_block() {
+        // Catches `agent.rs:215:18 !text.is_empty() -> false` and the
+        // matching `delete !` mutation: with either mutation the partial
+        // TextBlock disappears and only LlmResponseDiscarded would remain.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Text {
+                text: "hello world".to_owned(),
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            OmegaEvent::TextBlock(t) => {
+                assert_eq!(t.text, "hello world");
+                assert!(t.partial, "abandonment TextBlock must be partial");
+            }
+            other => panic!("expected TextBlock, got {other:?}"),
+        }
+        expect_discarded(&events[1]);
+    }
+
+    #[test]
+    fn unsealed_empty_text_slot_emits_no_text_block() {
+        // Catches `agent.rs:215:18 !text.is_empty() -> true`: with the
+        // mutation an empty TextBlock would slip through.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Text {
+                text: String::new(),
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(
+            events.len(),
+            1,
+            "empty text slot must not emit a TextBlock event"
+        );
+        expect_discarded(&events[0]);
+    }
+
+    #[test]
+    fn sealed_text_slot_is_skipped() {
+        // A sealed slot has already had its `partial:false` TextBlock
+        // emitted on `TextBlockComplete`; the closer must not re-emit.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Text {
+                text: "complete".to_owned(),
+                sealed: true,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 1);
+        expect_discarded(&events[0]);
+    }
+
+    #[test]
+    fn unsealed_nonempty_thinking_slot_emits_partial_thinking_block() {
+        // Catches `agent.rs:224:18 !thinking.is_empty() -> false` and
+        // the matching `delete !` mutation.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Thinking {
+                thinking: "deep thought".to_owned(),
+                signature: None,
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            OmegaEvent::ThinkingBlock(t) => {
+                assert_eq!(t.thinking, "deep thought");
+                assert_eq!(t.signature, None);
+                assert!(t.partial, "abandonment ThinkingBlock must be partial");
+            }
+            other => panic!("expected ThinkingBlock, got {other:?}"),
+        }
+        expect_discarded(&events[1]);
+    }
+
+    #[test]
+    fn unsealed_thinking_slot_preserves_signature_when_present() {
+        // The signature can arrive on `signature_delta` before the
+        // model stops streaming; abandonment must forward it untouched.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Thinking {
+                thinking: "half-baked".to_owned(),
+                signature: Some("sig-xyz".to_owned()),
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        match &events[0] {
+            OmegaEvent::ThinkingBlock(t) => {
+                assert_eq!(t.signature.as_deref(), Some("sig-xyz"));
+                assert!(t.partial);
+            }
+            other => panic!("expected ThinkingBlock, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsealed_empty_thinking_slot_emits_no_thinking_block() {
+        // Catches `agent.rs:224:18 !thinking.is_empty() -> true`.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Thinking {
+                thinking: String::new(),
+                signature: None,
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(
+            events.len(),
+            1,
+            "empty thinking slot must not emit a ThinkingBlock event"
+        );
+        expect_discarded(&events[0]);
+    }
+
+    #[test]
+    fn sealed_thinking_slot_is_skipped() {
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::Thinking {
+                thinking: "complete".to_owned(),
+                signature: Some("sig".to_owned()),
+                sealed: true,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 1);
+        expect_discarded(&events[0]);
+    }
+
+    #[test]
+    fn unsealed_tool_use_slot_emits_partial_tool_use_block() {
+        // Catches `agent.rs:230:13 delete match arm BlockSlot::ToolUse { sealed: false, .. }`.
+        //
+        // The current stream loop never produces an unsealed ToolUse
+        // slot (`insert_tool_use_slot` always sets `sealed: true`), but
+        // SCHEMA-8 Phase 3 commit 3d's contract still covers this case
+        // for forward compatibility (e.g. partial `input_json` arriving
+        // at abandonment time in a future schema).  Constructing the
+        // slot map directly is the only way to exercise the arm.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::ToolUse {
+                id: "tool-id-1".to_owned(),
+                name: "calc".to_owned(),
+                input: json!({"x": 1}),
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            OmegaEvent::ToolUseBlock(t) => {
+                assert_eq!(t.id, "tool-id-1");
+                assert_eq!(t.name, "calc");
+                assert_eq!(t.input, json!({"x": 1}));
+                assert!(t.partial, "abandonment ToolUseBlock must be partial");
+            }
+            other => panic!("expected ToolUseBlock, got {other:?}"),
+        }
+        expect_discarded(&events[1]);
+    }
+
+    #[test]
+    fn sealed_tool_use_slot_is_skipped() {
+        // The normal stream path: ToolUseBlockComplete inserts the slot
+        // sealed and emits a `partial:false` ToolUseBlock immediately,
+        // so abandonment must not re-emit.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            0,
+            BlockSlot::ToolUse {
+                id: "tool-id-1".to_owned(),
+                name: "calc".to_owned(),
+                input: json!({}),
+                sealed: true,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 1);
+        expect_discarded(&events[0]);
+    }
+
+    #[test]
+    fn mixed_slots_emit_in_block_index_order() {
+        // Phase 2's wire-shape invariant: assistant blocks are persisted
+        // in API-declared index order.  The closer pair must respect
+        // the same order even when slots are inserted out of order.
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            2,
+            BlockSlot::ToolUse {
+                id: "tu".to_owned(),
+                name: "n".to_owned(),
+                input: json!({}),
+                sealed: false,
+            },
+        );
+        slots.insert(
+            0,
+            BlockSlot::Text {
+                text: "t0".to_owned(),
+                sealed: false,
+            },
+        );
+        slots.insert(
+            1,
+            BlockSlot::Thinking {
+                thinking: "th1".to_owned(),
+                signature: None,
+                sealed: false,
+            },
+        );
+        let events = make_abandonment_closers(slots);
+        assert_eq!(events.len(), 4);
+        assert!(matches!(events[0], OmegaEvent::TextBlock(_)));
+        assert!(matches!(events[1], OmegaEvent::ThinkingBlock(_)));
+        assert!(matches!(events[2], OmegaEvent::ToolUseBlock(_)));
+        expect_discarded(&events[3]);
+    }
+}
