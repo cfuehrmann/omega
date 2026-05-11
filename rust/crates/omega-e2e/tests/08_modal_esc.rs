@@ -102,8 +102,8 @@ async fn picker_esc_closes_with_session() {
 /// effect as clicking that button.
 ///
 /// Setup: open a new session, trigger a tool-call turn (so the feed
-/// gets a `[data-event-type="tool_call"]` row), click the row's label
-/// area (`leptos-tool-call-input`) to open TextModal, then press Esc
+/// gets a `[data-event-type="tool_use_block"]` row), click the row
+/// (`leptos-tool-use-block`) to open TextModal, then press Esc
 /// and verify the modal is dismissed.
 #[tokio::test]
 #[ignore = "browser"]

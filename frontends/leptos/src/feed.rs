@@ -992,51 +992,29 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
 // Tool-call block (TODO-C)
 // ---------------------------------------------------------------------------
 
-/// One `tool_call` row — SCHEMA-8 Phase 5e slim layout.
+/// One `tool_call` row — peer-event slim layout.
 ///
-/// Phase 5e moves the full input modal to `ToolUseBlock` (which arrives
-/// earlier in the stream and carries the same provider-assigned id).
-/// `ToolCallBlock` is now a single label row showing dispatch metadata:
-///   `[corr-badge] tool_call <name> id=<id>`
+/// The card carries only what the `ToolCall` event uniquely contributes:
+/// its identity as a dispatch event, plus the standard timestamp pill
+/// and optional corr-badge gutter.  The tool name and arguments live on
+/// the sibling `ToolUseBlock`; the output lives on the sibling
+/// `ToolResult`.  Each event renders as a peer card, labelled by its
+/// event type — no field is re-derived from neighbours.
 ///
 /// When `corr` is `Some(n)`, the yellow `<span class="corr-badge">` is
-/// rendered first so the operator can pair the call with the sibling
-/// `ToolUseBlock` and `ToolResult` on the same line.  The id is shown in a
-/// `block-meta` span so the visual link is explicit — useful when a turn
-/// dispatches several tools in parallel.
-///
-/// An `[input]` button opens a `TextModal` with the full pretty-printed
-/// tool input JSON.  The button is part of the label row and follows
-/// the same reveal-on-hover pattern as other `.block-label-row-btn`s.
+/// rendered first so the operator can visually pair the call with its
+/// sibling `ToolUseBlock` and `ToolResult`.
 #[component]
 fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
-    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
-
-    let name = event.name.clone();
-    // Build the same inline preview used by ToolUseBlock so tool_call and
-    // tool_use rows look consistent: [corr] name  preview … [input]
-    let raw_preview = tool_call_preview(&event.name, &event.input);
-    let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
-    let full_input =
-        serde_json::to_string_pretty(&event.input).unwrap_or_else(|_| "{}".to_owned());
-    let modal_title = format!("tool_call input — {}", event.name);
     let time_pill = format_time(&event.time).to_owned();
 
     view! {
-        <div class="block-label-row" data-testid="leptos-tool-call-input">
+        <div class="block-label-row" data-testid="leptos-tool-call">
             {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
-            <span class="block-label" data-testid="leptos-tool-name">{name}</span>
-            <span class="block-tool-preview" data-testid="leptos-tool-call-preview">{preview}</span>
-            <button
-                class="block-label-row-btn"
-                data-testid="leptos-tool-call-payload"
-                on:click=move |_| text_modal.open(modal_title.clone(), full_input.clone())
-            >
-                "input"
-            </button>
+            <span class="block-label">"tool call"</span>
             <span class="block-timestamp-pill">{time_pill}</span>
         </div>
     }
@@ -1112,8 +1090,10 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
 
 /// One `tool_result` row — Phase 3.10 TODO-C.
 ///
-/// * Label is the literal text `"result"` (not the tool name) so results
-///   are visually distinct from tool calls at a glance.
+/// * Label is the literal text `"tool result"` (not the tool name) so
+///   results are visually distinct from tool calls at a glance, and the
+///   card identifies itself by its event type — matching the peer
+///   `ToolCallBlock` and `ToolUseBlock` labelling convention.
 /// * When `corr` is `Some(n)`, a yellow `<span class="corr-badge">` with
 ///   the 1-based ordinal is shown at the start of the label row.
 /// * A 2-line / 300-byte output preview is rendered on its own line below
@@ -1141,7 +1121,7 @@ fn ToolResultBlock(
             <div class="block-label-row">
                 {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
                 <span class="block-label" data-testid="leptos-tool-result-name">
-                    "result"
+                    "tool result"
                 </span>
                 <button
                     class="block-label-row-btn"

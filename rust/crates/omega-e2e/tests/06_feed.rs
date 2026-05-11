@@ -136,10 +136,14 @@ async fn multi_tool_turn_renders_every_family() {
     )
     .await;
     assert_eq!(tool_calls, 3, "expected 3 tool_calls, got {tool_calls}");
+    // ToolCallBlock is now a peer-event identity row: it shows only the
+    // "tool call" label + timestamp, never the tool name or args. The
+    // tool name lives on the sibling ToolUseBlock (data-testid
+    // `leptos-tool-use-name`), which arrived earlier in the stream.
     let first_name = h
         .text_content(
-            "[data-testid=\"leptos-feed\"] [data-event-type=\"tool_call\"] \
-             [data-testid=\"leptos-tool-name\"]",
+            "[data-testid=\"leptos-feed\"] [data-event-type=\"tool_use_block\"] \
+             [data-testid=\"leptos-tool-use-name\"]",
         )
         .await
         .expect("read tool name");
@@ -147,9 +151,6 @@ async fn multi_tool_turn_renders_every_family() {
         first_name.contains("run_command"),
         "tool name not run_command: {first_name:?}"
     );
-    // SCHEMA-8 Phase 5e — ToolCallBlock is now a slim identity row; the
-    // input preview moved to the sibling ToolUseBlock (data-testid
-    // `leptos-tool-use-input`) which arrived earlier in the stream.
     // The 3 tool_use_block events should mirror the 3 tool_calls
     // (paired by provider tool_use_id).
     let tool_use_blocks = count(

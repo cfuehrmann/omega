@@ -540,9 +540,9 @@ fn snap_event_tool_call() {
 
 #[test]
 fn snap_event_tool_call_with_corr_badge() {
-    // SCHEMA-8 Phase 5e — slim ToolCallBlock with a corr badge for a
+    // Peer-event slim ToolCallBlock with a corr badge for a
     // multi-call group.  Verifies the layout is
-    // [corr-badge] tool_call <name> id=<id>  (no preview, no on:click).
+    // [corr-badge] "tool call" timestamp  (no name, no preview, no on:click).
     let html = render(|| {
         let ev = ev_tool_call();
         provide_context(TextModalState::new());
