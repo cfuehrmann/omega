@@ -63,7 +63,7 @@ use crate::context_modal::ContextModalState;
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
     EventKind, assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time,
-    kind_for, kind_tag, should_autoscroll, tool_call_preview, truncate_preview,
+    kind_for, kind_tag, should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -762,7 +762,7 @@ fn render_event_body(
             // Only show the toggle when the content exceeds the 3-line clamp.
             // The button is always visible (not hover-gated) because it also
             // serves as an indicator of the current collapsed/expanded state.
-            let needs_toggle = e.thinking.lines().count() > 3;
+            let needs_toggle = virtual_line_count(&e.thinking, 80) > 4;
             let expanded = RwSignal::new(false);
             let time_pill = format_time(&e.time).to_owned();
             view! {

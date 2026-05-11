@@ -252,6 +252,29 @@ pub fn truncate_to_lines(s: &str, max_lines: usize) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Virtual-line count (thinking block toggle gate)
+// ---------------------------------------------------------------------------
+
+/// Count how many display lines `text` would occupy on a notional
+/// `width`-character terminal, treating every hard newline as a line
+/// break and every run of `width` characters as an additional wrapped
+/// line.  Empty lines count as one line each.
+///
+/// This is used to decide whether the thinking-block more/less toggle
+/// should be shown: a single very long line wraps just as visually
+/// imposingly as many short lines, and raw `lines().count()` misses it.
+#[must_use]
+pub fn virtual_line_count(text: &str, width: usize) -> usize {
+    text.lines()
+        .map(|l| {
+            let n = l.chars().count();
+            if n == 0 { 1 } else { n.div_ceil(width) }
+        })
+        .sum::<usize>()
+        .max(if text.is_empty() { 0 } else { 1 })
+}
+
+// ---------------------------------------------------------------------------
 // Byte + line combined preview (tool call / tool result blocks)
 // ---------------------------------------------------------------------------
 
@@ -1160,6 +1183,58 @@ mod tests {
     #[test]
     fn truncate_to_lines_max_zero_nonempty_returns_some_empty() {
         assert_eq!(truncate_to_lines("hello", 0), Some(String::new()));
+    }
+
+    // ---- virtual_line_count --------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_empty_is_zero() {
+        assert_eq!(virtual_line_count("", 80), 0);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_short_single_line() {
+        // 10 chars, width 80 → 1 virtual line.
+        assert_eq!(virtual_line_count("hello world", 80), 1);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_exact_width_is_one_line() {
+        let s = "x".repeat(80);
+        assert_eq!(virtual_line_count(&s, 80), 1);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_one_over_width_wraps_to_two() {
+        let s = "x".repeat(81);
+        assert_eq!(virtual_line_count(&s, 80), 2);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_multiple_hard_lines() {
+        // 3 short hard lines → 3 virtual lines.
+        assert_eq!(virtual_line_count("one\ntwo\nthree", 80), 3);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_long_line_plus_hard_lines() {
+        // 160-char line (2 virtual) + 2 short lines → 4 virtual lines.
+        let long = "x".repeat(160);
+        let s = format!("{long}\nfoo\nbar");
+        assert_eq!(virtual_line_count(&s, 80), 4);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn virtual_line_count_empty_hard_line_counts_as_one() {
+        // "a\n\nb" → line "a" (1) + empty line (1) + line "b" (1) = 3.
+        assert_eq!(virtual_line_count("a\n\nb", 80), 3);
     }
 
     // ---- truncate_preview -------------------------------------------------
