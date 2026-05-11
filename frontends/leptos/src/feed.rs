@@ -1372,7 +1372,6 @@ fn StreamingPlaceholders() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
 
     let assistant_class = css_class_for(EventKind::Assistant);
-    let status_class = css_class_for(EventKind::Status);
 
     view! {
         <For
@@ -1411,11 +1410,14 @@ fn StreamingPlaceholders() -> impl IntoView {
                 };
                 view! {
                     <div
-                        class=format!("{status_class} block-streaming")
+                        class=format!("{assistant_class} block-streaming")
                         data-testid="leptos-streaming-thinking"
-                        data-event-kind="status"
+                        data-event-kind="assistant"
+                        data-event-type="thinking_block"
                     >
-                        <span class="block-label">"thinking (streaming)"</span>
+                        <div class="block-label-row">
+                            <span class="block-label">"thinking"</span>
+                        </div>
                         <pre class="block-body">{text}</pre>
                     </div>
                 }

@@ -1161,14 +1161,52 @@ main > h1 {
   color: var(--llm);
 }
 
-/* llm_response — sapphire border/label; text body stays --text.
- * (SolidJS: `.block.api-response`) */
-.block.block-assistant[data-event-type="llm_response"] {
+/* llm_response_started / llm_response_ended / llm_response_discarded —
+ * sapphire, same as llm_call. These lifecycle markers bracket the assistant
+ * response and form one visual family with the llm_call block. */
+.block.block-status[data-event-type="llm_response_started"],
+.block.block-status[data-event-type="llm_response_ended"],
+.block.block-status[data-event-type="llm_response_discarded"] {
   border-color: var(--llm);
   color: var(--llm);
 }
-.block.block-assistant[data-event-type="llm_response"] .block-body,
-.block.block-assistant[data-event-type="llm_response"] .md-body {
+
+/* text_block — sapphire border/label; content body stays --text. */
+.block.block-assistant[data-event-type="text_block"] {
+  border-color: var(--llm);
+  color: var(--llm);
+}
+.block.block-assistant[data-event-type="text_block"] .block-body,
+.block.block-assistant[data-event-type="text_block"] .md-body {
+  color: var(--text);
+}
+
+/* thinking_block — sapphire border/label; body is de-emphasized (smaller
+ * font, greyish) so thinking reads as context, not the main response. */
+.block.block-assistant[data-event-type="thinking_block"] {
+  border-color: var(--llm);
+  color: var(--llm);
+}
+.block.block-assistant[data-event-type="thinking_block"] .block-body {
+  color: var(--ctp-overlay1);
+  font-size: 12px;
+}
+
+/* tool_use_block — yellow, same as tool-call / tool-result family.
+ * ToolUseBlock events appear during streaming and represent the model's
+ * tool dispatch intent — visually they belong with the tool-call group. */
+.block.block-assistant[data-event-type="tool_use_block"] {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+/* Streaming text placeholder — sapphire (matches text_block / llm-response
+ * family); body text stays --text for readability. */
+.block[data-testid="leptos-streaming-text"] {
+  border-color: var(--llm);
+  color: var(--llm);
+}
+.block[data-testid="leptos-streaming-text"] .block-body {
   color: var(--text);
 }
 
@@ -1204,11 +1242,15 @@ main > h1 {
   color: var(--ctp-subtext0);
 }
 
-/* Streaming-thinking overlay — teal to distinguish thinking from
- * generic status mauve (SolidJS: `.block.thinking`). */
-[data-testid="leptos-streaming-thinking"].block-status {
-  border-color: var(--ctp-teal);
-  color: var(--ctp-teal);
+/* Streaming-thinking body — de-emphasized to match settled ThinkingBlock. */
+[data-testid="leptos-streaming-thinking"] .block-body {
+  color: var(--ctp-overlay1);
+  font-size: 12px;
+}
+/* Blinking pulse circle on the streaming-thinking label inherits sapphire
+ * instead of the default green, matching the block-label colour. */
+.block.block-assistant[data-event-type="thinking_block"].block-streaming .block-label::after {
+  color: var(--llm);
 }
 
 /* ─────────────────────────────────────────────────────────────────
