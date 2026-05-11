@@ -63,6 +63,11 @@
 
   --font:    "Fira Code", "Cascadia Code", "Menlo", "Consolas", monospace;
   --radius:  6px;
+
+  /* Tell the browser the page is dark so native form-control chrome
+   * (select option lists, scrollbars, date pickers, …) renders with
+   * OS dark-mode colours instead of the default bright-white.      */
+  color-scheme: dark;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -899,14 +904,18 @@ main > h1 {
 .leptos-composer-input::placeholder { color: var(--dim); }
 .leptos-composer-input:disabled    { opacity: 0.5; }
 
-/* Native model + effort selects styled to match the SolidJS look. */
+/* Native model + effort selects styled to match the SolidJS look.
+ * background: var(--bg2) — an explicit dark fill ensures the closed
+ * button chrome matches the rest of the composer row. color-scheme
+ * (set on :root above) ensures the browser renders the option-list
+ * popup with dark OS colours rather than the default bright-white. */
 .leptos-composer-model,
 .leptos-composer-effort {
   height: 38px;
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: none;
+  background: var(--bg2);
   color: var(--dim);
   font-family: var(--font);
   font-size: 14px;
