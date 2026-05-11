@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="session_started" data-event-kind="status" class="block block-status"><span class="block-label">session_started</span><span class="block-body">model: claude-sonnet-4-6 · effort: medium</span><span class="block-timestamp">00:00:00</span></div>
+<div data-testid="leptos-event-block" data-event-type="session_started" data-event-kind="status" class="block block-status"><span class="block-label">session_started</span><span class="block-body">model: claude-sonnet-4-6 · effort: medium</span><span class="block-timestamp">00:00:00.000</span></div>

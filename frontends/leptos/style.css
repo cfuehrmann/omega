@@ -1460,7 +1460,17 @@ main > h1 {
   }
 }
 
-/* Timestamp — shown in the top-right corner of every block on hover.
+/* Thinking more/less toggle — always visible regardless of hover, because it
+ * also serves as a visual indicator of the current collapsed/expanded state.
+ * Overrides the default opacity:0 / pointer-events:none of .block-label-row-btn
+ * with higher-specificity rules that cover both the default and hover states. */
+.block-label-row-btn.thinking-toggle-btn,
+.block:hover .block-label-row-btn.thinking-toggle-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+
  * Absolutely positioned so it stays rightmost of all content and
  * vertically aligned across all events (same `right` anchor).
  * `pointer-events: none` keeps it from blocking any buttons below. */
@@ -1475,6 +1485,13 @@ main > h1 {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;
+  /* Same background as the block so the timestamp overlays any text
+   * that happens to sit underneath it in the top-right corner. */
+  background: var(--bg2);
+  /* Invisible border aligns the text baseline with .block-label-row-btn,
+   * which has border: 1px + padding-top: 1px offsetting its text. */
+  border: 1px solid transparent;
+  padding-top: 1px;
 }
 .block:hover .block-timestamp {
   opacity: 0.8;

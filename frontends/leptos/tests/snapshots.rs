@@ -411,10 +411,11 @@ fn snap_event_thinking_block_partial_discarded() {
 
 #[test]
 fn snap_event_thinking_block_collapsed() {
-    // SCHEMA-8 Phase 5c (revised) — settled ThinkingBlock renders
-    // clamped to ~3 lines with a "more" button; no TextModal.
+    // SCHEMA-8 Phase 5c (revised) — settled ThinkingBlock with enough lines
+    // to exceed the 3-line clamp threshold: renders clamped with an always-
+    // visible "more" button; no TextModal.
     let html = render(|| {
-        let ev = ev_thinking("chain of thought\u{2026}");
+        let ev = ev_thinking("step one\nstep two\nstep three\nstep four — exceeds 3-line clamp");
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }

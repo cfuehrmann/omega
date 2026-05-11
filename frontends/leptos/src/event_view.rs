@@ -578,15 +578,15 @@ pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
 // Time formatting
 // ---------------------------------------------------------------------------
 
-/// Extract the `HH:MM:SS` portion of an ISO-8601 timestamp for compact
-/// inline display.
+/// Extract the `HH:MM:SS.mmm` portion of an ISO-8601 timestamp for
+/// compact inline display.
 ///
-/// `"2025-01-15T12:34:56.789Z"` → `"12:34:56"`.  Falls back to the full
-/// raw string when the input is shorter than expected (should never
-/// happen in practice — all `ISOTimestamp` values are RFC-3339).
+/// `"2025-01-15T12:34:56.789Z"` → `"12:34:56.789"`.  Falls back to
+/// the full raw string when the input is shorter than expected (should
+/// never happen in practice — all `ISOTimestamp` values are RFC-3339).
 #[must_use]
 pub fn format_time(iso: &str) -> &str {
-    iso.get(11..19).unwrap_or(iso)
+    iso.get(11..23).unwrap_or(iso)
 }
 
 // ---------------------------------------------------------------------------
@@ -1894,13 +1894,13 @@ mod tests {
     #[wasm_bindgen_test]
     #[test]
     fn format_time_extracts_hms() {
-        assert_eq!(format_time("2025-01-15T12:34:56.789Z"), "12:34:56");
+        assert_eq!(format_time("2025-01-15T12:34:56.789Z"), "12:34:56.789");
     }
 
     #[wasm_bindgen_test]
     #[test]
     fn format_time_midnight() {
-        assert_eq!(format_time("2025-01-15T00:00:00.000Z"), "00:00:00");
+        assert_eq!(format_time("2025-01-15T00:00:00.000Z"), "00:00:00.000");
     }
 
     #[wasm_bindgen_test]

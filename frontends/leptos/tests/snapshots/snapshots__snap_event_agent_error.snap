@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="agent_error" data-event-kind="error" class="block block-error"><span class="block-label">agent_error</span><pre class="block-body">something exploded</pre><span class="block-timestamp">00:00:09</span></div>
+<div data-testid="leptos-event-block" data-event-type="agent_error" data-event-kind="error" class="block block-error"><span class="block-label">agent_error</span><pre class="block-body">something exploded</pre><span class="block-timestamp">00:00:09.000</span></div>

@@ -742,6 +742,10 @@ fn render_event_body(
             // the text is already in the box.
             let partial = e.partial;
             let char_count = e.thinking.chars().count();
+            // Only show the toggle when the content exceeds the 3-line clamp.
+            // The button is always visible (not hover-gated) because it also
+            // serves as an indicator of the current collapsed/expanded state.
+            let needs_toggle = e.thinking.lines().count() > 3;
             let expanded = RwSignal::new(false);
             view! {
                 <div class="block-label-row">
@@ -757,13 +761,15 @@ fn render_event_body(
                     } else {
                         view! { <span class="block-label">"thinking"</span> }.into_any()
                     }}
-                    <button
-                        class="block-label-row-btn"
-                        data-testid="leptos-thinking-block-expand"
-                        on:click=move |_| expanded.update(|v| *v = !*v)
-                    >
-                        {move || if expanded.get() { "less" } else { "more" }}
-                    </button>
+                    {needs_toggle.then(|| view! {
+                        <button
+                            class="block-label-row-btn thinking-toggle-btn"
+                            data-testid="leptos-thinking-block-expand"
+                            on:click=move |_| expanded.update(|v| *v = !*v)
+                        >
+                            {move || if expanded.get() { "less" } else { "more" }}
+                        </button>
+                    })}
                 </div>
                 <pre
                     class=move || {
@@ -772,7 +778,7 @@ fn render_event_body(
                         } else {
                             "block-body"
                         };
-                        if expanded.get() {
+                        if !needs_toggle || expanded.get() {
                             base.to_string()
                         } else {
                             format!("{base} thinking-body-clamped")
