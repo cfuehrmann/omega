@@ -1214,6 +1214,15 @@ main > h1 {
   font-size: 12px;    /* --fs-small — visually smaller to reinforce lower emphasis */
 }
 
+/* Collapsed thinking body: clamp to 3 lines.  The "more" / "less"
+ * button in the label row toggles this class off to expand inline.
+ * Only applied to settled ThinkingBlock events — the streaming
+ * overlay is always fully open so auto-scroll tailing is unaffected. */
+.thinking-body-clamped {
+  max-height: calc(3 * 1.55em); /* 3 lines × global line-height (1.55) */
+  overflow: hidden;
+}
+
 /* tool_use_block — sapphire, same as the LLM response family.
  * ToolUseBlock events appear during streaming as the model's tool
  * dispatch intent and sit in the assistant-response visual family. */

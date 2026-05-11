@@ -410,10 +410,9 @@ fn snap_event_thinking_block_partial_discarded() {
 }
 
 #[test]
-fn snap_event_thinking_block_with_expand_button() {
-    // SCHEMA-8 Phase 5c — non-partial ThinkingBlock has a TextModal
-    // affordance (`expand` button) so long chains-of-thought can be
-    // popped out into a scrollable overlay.
+fn snap_event_thinking_block_collapsed() {
+    // SCHEMA-8 Phase 5c (revised) — settled ThinkingBlock renders
+    // clamped to ~3 lines with a "more" button; no TextModal.
     let html = render(|| {
         let ev = ev_thinking("chain of thought\u{2026}");
         provide_context(ContextModalState::new());

@@ -721,8 +721,11 @@ fn render_event_body(
         }
 
         // `ThinkingBlock`: one finalised (or partial) thinking
-        // segment.  Renders a labelled `<pre>` with an `expand`
-        // button that opens a `TextModal` for the full content.
+        // segment.  Renders a labelled `<pre>` clamped to ~3 lines
+        // with a "more" / "less" toggle.  During streaming the live
+        // overlay in `StreamingPlaceholders` is always fully open so
+        // tailing scrolls correctly; clamping only happens once the
+        // block is settled.
         //
         // `signature.is_none()` iff `partial == true` per the
         // type-level invariant in `omega-types::events`.
@@ -731,19 +734,13 @@ fn render_event_body(
             // struck-through with a "Discarded thinking — N chars"
             // header per spec § "Discarded-block styling".
             //
-            // SCHEMA-8 Phase 5c — a `expand` button on the label row
-            // opens TextModal with the full thinking text.  The inline
-            // `<pre>` is still rendered (line-clamped via CSS) so short
-            // thinking is readable without a click, but long chains-of-
-            // thought get the full overlay treatment that matches
-            // `payload` / `context` buttons elsewhere.
-            let text_modal =
-                use_context::<TextModalState>().expect("TextModalState must be provided");
+            // SCHEMA-8 Phase 5c (revised) — the `<pre>` is clamped to
+            // ~3 lines by default; a "more" / "less" button in the
+            // label row toggles the clamp in-place.  No TextModal:
+            // the text is already in the box.
             let partial = e.partial;
             let char_count = e.thinking.chars().count();
-            let thinking_full = e.thinking.clone();
-            let modal_title =
-                if partial { "thinking (discarded)" } else { "thinking" };
+            let expanded = RwSignal::new(false);
             view! {
                 <div class="block-label-row">
                     {if partial {
@@ -761,13 +758,24 @@ fn render_event_body(
                     <button
                         class="block-label-row-btn"
                         data-testid="leptos-thinking-block-expand"
-                        on:click=move |_| text_modal.open(modal_title, thinking_full.clone())
+                        on:click=move |_| expanded.update(|v| *v = !*v)
                     >
-                        "expand"
+                        {move || if expanded.get() { "less" } else { "more" }}
                     </button>
                 </div>
                 <pre
-                    class=if partial { "block-body block-discarded-body" } else { "block-body" }
+                    class=move || {
+                        let base = if partial {
+                            "block-body block-discarded-body"
+                        } else {
+                            "block-body"
+                        };
+                        if expanded.get() {
+                            base.to_string()
+                        } else {
+                            format!("{base} thinking-body-clamped")
+                        }
+                    }
                     data-testid="leptos-thinking-block-body"
                 >
                     {e.thinking}
