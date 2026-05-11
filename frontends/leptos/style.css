@@ -169,9 +169,9 @@ main > h1 {
 [data-testid="leptos-session-new"] {
   padding: 2px 10px;
   border-radius: var(--radius);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   background: none;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 13px;
   cursor: pointer;
@@ -183,9 +183,9 @@ main > h1 {
 /* ✕ close button in the picker header. */
 .picker-close {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 13px;
   padding: 2px 7px;
@@ -295,9 +295,9 @@ main > h1 {
 [data-testid="leptos-session-rename-cancel"],
 [data-testid="leptos-session-delete"] {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   cursor: pointer;
   font-size: 12px;
   padding: 2px 7px;
@@ -358,9 +358,9 @@ main > h1 {
   width: 2.2rem;
   height: 2.2rem;
   border-radius: 50%;
-  border: 1px solid var(--ctp-overlay2);
+  border: 1px solid var(--ctp-surface2);
   background: var(--ctp-surface1);
-  color: var(--ctp-text);
+  color: var(--ctp-subtext1);
   font-family: var(--font);
   font-size: 1.1rem;
   line-height: 1;
@@ -424,10 +424,11 @@ main > h1 {
   font-weight: bold;
   font-family: var(--font);
   letter-spacing: 0.5px;
-  transition: color 0.15s;
 }
-.block-tool-call:hover .corr-badge,
-.block-tool-result:hover .corr-badge { color: var(--ctp-blue); }
+/* tool_use_block corr-badge matches the block's sapphire colour. */
+.block.block-assistant[data-event-type="tool_use_block"] .corr-badge {
+  color: var(--llm);
+}
 
 /* SCHEMA-8 Phase 5f — server-side compaction badge on LlmResponseEnded.
  * Rendered inline in the label row when `usage.iterations` carries a
@@ -487,7 +488,7 @@ main > h1 {
   font-size: 12px;
   padding: 1px 6px;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.7;
   margin-top: 2px;
 }
 .block-show-more:hover { opacity: 1; }
@@ -503,7 +504,7 @@ main > h1 {
   font-size: 12px;
   padding: 1px 6px;
   cursor: pointer;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 .block-llm-call-open:hover { opacity: 1; border-color: var(--ctp-sapphire); color: var(--ctp-sapphire); }
 
@@ -542,10 +543,8 @@ main > h1 {
 /* Per-kind variants: border colour + foreground colour. */
 .block-user           { border-color: var(--user);   color: var(--user); }
 .block-assistant      { border-color: var(--border); color: var(--text); }
-.block-tool-call      { border-color: var(--yellow); color: var(--yellow); font-size: 13px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
-.block-tool-result    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
-.block-tool-call:hover,
-.block-tool-result:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+.block-tool-call      { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
+.block-tool-result    { border-color: var(--yellow); color: var(--yellow); font-size: 13px; }
 .block-status         { border-color: var(--mauve);  color: var(--mauve);  font-size: 13px; }
 .block-error          { border-color: var(--red);    color: var(--red); }
 
@@ -747,9 +746,9 @@ main > h1 {
   top: 6px;
   right: 8px;
   background: var(--ctp-surface1);
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 12px;
   padding: 2px 7px;
@@ -913,10 +912,10 @@ main > h1 {
 .leptos-composer-effort {
   height: 38px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: var(--radius);
-  background: var(--bg2);
-  color: var(--dim);
+  background: var(--bg);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 14px;
   cursor: pointer;
@@ -939,11 +938,11 @@ main > h1 {
 /* Primary action button — colour + hover keyed off `data-action`. */
 .leptos-composer-primary,
 .leptos-composer-abort {
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   background: none;
   font-family: var(--font);
   font-size: 14px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   border-radius: var(--radius);
   cursor: pointer;
   height: 38px;
@@ -973,9 +972,9 @@ main > h1 {
 /* "Sessions" button — opens the picker modal (Phase 3.9 TODO-1). */
 .leptos-composer-sessions {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: var(--radius);
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 14px;
   height: 38px;
@@ -1076,9 +1075,9 @@ main > h1 {
 
 .leptos-context-modal-close {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 12px;
   padding: 2px 8px;
@@ -1201,12 +1200,12 @@ main > h1 {
   font-size: 12px;
 }
 
-/* tool_use_block — yellow, same as tool-call / tool-result family.
- * ToolUseBlock events appear during streaming and represent the model's
- * tool dispatch intent — visually they belong with the tool-call group. */
+/* tool_use_block — sapphire, same as the LLM response family.
+ * ToolUseBlock events appear during streaming as the model's tool
+ * dispatch intent and sit in the assistant-response visual family. */
 .block.block-assistant[data-event-type="tool_use_block"] {
-  border-color: var(--yellow);
-  color: var(--yellow);
+  border-color: var(--llm);
+  color: var(--llm);
 }
 
 /* Streaming text placeholder — sapphire (matches text_block / llm-response
@@ -1338,9 +1337,9 @@ main > h1 {
  * there is no layout shift when they appear or disappear. */
 .block-label-row-btn {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 11px;
   padding: 1px 6px;
@@ -1415,9 +1414,9 @@ main > h1 {
 
 .leptos-text-modal-close {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 12px;
   padding: 2px 8px;
@@ -1561,9 +1560,9 @@ main > h1 {
 /* "▼ Usage" / "▲ Usage" toggle button — styled like .leptos-composer-sessions */
 .leptos-composer-usage {
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ctp-surface2);
   border-radius: var(--radius);
-  color: var(--dim);
+  color: var(--ctp-subtext0);
   font-family: var(--font);
   font-size: 14px;
   height: 38px;

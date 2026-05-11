@@ -969,13 +969,22 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
 /// `ToolUseBlock` and `ToolResult` on the same line.  The id is shown in a
 /// `block-meta` span so the visual link is explicit — useful when a turn
 /// dispatches several tools in parallel.
+///
+/// An `[input]` button opens a `TextModal` with the full pretty-printed
+/// tool input JSON.  The button is part of the label row and follows
+/// the same reveal-on-hover pattern as other `.block-label-row-btn`s.
 #[component]
 fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
+
     let name = event.name.clone();
     let id_meta = format!("id={}", event.id);
+    let full_input =
+        serde_json::to_string_pretty(&event.input).unwrap_or_else(|_| "{}".to_owned());
+    let modal_title = format!("tool_call input — {}", event.name);
 
     view! {
         <div class="block-label-row" data-testid="leptos-tool-call-input">
@@ -985,6 +994,13 @@ fn ToolCallBlock(
                 <span data-testid="leptos-tool-name">{name}</span>
             </span>
             <span class="block-meta" data-testid="leptos-tool-call-id">{id_meta}</span>
+            <button
+                class="block-label-row-btn"
+                data-testid="leptos-tool-call-payload"
+                on:click=move |_| text_modal.open(modal_title.clone(), full_input.clone())
+            >
+                "input"
+            </button>
         </div>
     }
 }
@@ -1062,8 +1078,10 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
 /// * When `corr` is `Some(n)`, a yellow `<span class="corr-badge">` with
 ///   the 1-based ordinal is shown at the start of the label row.
 /// * A 2-line / 300-byte output preview is rendered on its own line below
-///   the label row, left-aligned; clicking the block opens a
-///   [`TextModal`] with the full output.
+///   the label row, left-aligned.
+/// * An `[output]` button in the label row opens a [`TextModal`] with the
+///   full output.  The whole block is no longer click-to-open; the button
+///   is the only affordance for the modal.
 #[component]
 fn ToolResultBlock(
     event: omega_types::events::ToolResultEvent,
@@ -1073,21 +1091,25 @@ fn ToolResultBlock(
 
     let name = event.name.clone();
     let full = event.output.clone();
-    // 2-line / 300-byte inline preview; full output reachable via the payload modal.
+    // 2-line / 300-byte inline preview; full output reachable via the output modal.
     let preview = truncate_preview(&full, 2, 300).unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
 
     view! {
-        <div
-            data-testid="leptos-tool-result-payload"
-            on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
-        >
+        <div data-testid="leptos-tool-result-payload">
             <div class="block-label-row">
                 {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
                 <span class="block-label" data-testid="leptos-tool-result-name">
                     "result"
                 </span>
+                <button
+                    class="block-label-row-btn"
+                    data-testid="leptos-tool-result-payload-btn"
+                    on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
+                >
+                    "output"
+                </button>
             </div>
             <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
         </div>
