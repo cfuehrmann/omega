@@ -1,6 +1,6 @@
 # Tool-input streaming — end-to-end forwarding of `input_json_delta`
 
-**Status:** complete (steps 1–10 shipped; one e2e browser test deferred — see below).
+**Status:** complete (steps 1–10 shipped; all tests in place).
 
 ## Why
 
@@ -176,14 +176,15 @@ All four listed sites updated inline as each step was implemented.
 | `ws_router` integration: `ToolUseBlockStart` + 2× `ToolInput` + `ToolUseBlock` arrive in order | `omega-server/tests/ws_router.rs::tool_input_streaming_frames_arrive_in_order` | ✅ |
 | Empty-input case: `ToolUseBlockStart` + no `ToolInput` + `ToolUseBlock` drains cleanly | `ws_router.rs::tool_input_streaming_empty_input_drains_cleanly` | ✅ |
 | wasm-bindgen toggle: starts collapsed; flips on update; unconditional for short input | `feed.rs::{tool_use_toggle_starts_collapsed, _flips_on_update, _unconditional_for_short_input}` | ✅ |
-| e2e browser: overlay renders live partial JSON; drains and shows toggle on settlement | `06_feed.rs` — **not yet written** | ⏳ deferred |
+| e2e browser: overlay renders live partial JSON; drains and shows toggle on settlement | `06_feed.rs::streaming_tool_use_overlay_appears_and_resolves` | ✅ |
 
-The deferred browser test requires mounting a live Leptos component and
-injecting WS messages to observe the overlay appearing and resolving.
-There is no existing wasm-component-rendering harness in the project;
-the natural home is a new `async fn streaming_tool_use_overlay_appears_and_resolves`
-in `06_feed.rs`, parallel to the existing
-`streaming_overlay_appears_live_and_resolves`.
+The browser test mounts a `MutationObserver` before submitting so it
+catches the streaming overlay even when the three wire frames
+(`ToolUseBlockStart` / `ToolInput` / `ToolUseBlock`) arrive within a
+single JS task — a polling check at 50 ms would race past the
+intermediate DOM state. After `turn_end` the test asserts the overlay
+is detached and the `leptos-tool-use-block-expand` inline toggle is
+present.
 
 ### Collateral fixes (same commits)
 
@@ -212,7 +213,7 @@ in `06_feed.rs`, parallel to the existing
 | `frontends/leptos/src/protocol.rs` | +2 `WsMessage` variants; docstring |
 | `frontends/leptos/src/store.rs` | +`streaming_tool_use`, reducer rules, snapshot, tests |
 | `frontends/leptos/src/feed.rs` | +overlay; rewrite `ToolUseBlock` arm; scroll guard fix; toggle tests |
-| `rust/crates/omega-e2e/tests/06_feed.rs` | *(pending: overlay e2e test)* |
+| `rust/crates/omega-e2e/tests/06_feed.rs` | +`streaming_tool_use_overlay_appears_and_resolves` |
 | `rust/crates/omega-e2e/tests/07_scroll.rs` | scroll guard fix is in `feed.rs`; test unchanged |
 | `rust/crates/omega-e2e/tests/08_modal_esc.rs` | updated click target for `text_modal_esc_closes` |
 

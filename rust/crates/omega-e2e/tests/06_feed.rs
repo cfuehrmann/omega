@@ -342,6 +342,115 @@ async fn streaming_overlay_appears_live_and_resolves() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Streaming tool-use overlay appears live and resolves into
+//     a collapsed `ToolUseBlock` with the inline expand toggle.
+// ---------------------------------------------------------------------------
+//
+// Mirrors `streaming_overlay_appears_live_and_resolves`. A `MockResponse::ToolUse`
+// with a long-enough JSON input guarantees at least one `ToolInput`
+// frame, which opens a streaming slot in `SessionStore.streaming_tool_use`
+// and mounts `[data-testid="leptos-streaming-tool-use"]`. The slot is
+// drained on the settled `ToolUseBlock` event; afterwards the inline
+// `leptos-tool-use-block-expand` toggle must be present.
+
+#[tokio::test]
+#[ignore = "browser"]
+async fn streaming_tool_use_overlay_appears_and_resolves() {
+    let h = TestHarness::launch().await.expect("launch");
+    h.reset_calls().await.expect("reset");
+
+    // Long command argument → the single `input_json_delta` carries a
+    // sizeable `partial_json` payload, guaranteeing at least one
+    // `ToolInput` wire frame between `ToolUseBlockStart` and the
+    // settled `ToolUseBlock` event.
+    let long_arg = "x".repeat(400);
+    let long_command = format!("echo {long_arg}");
+    h.load_script(vec![
+        MockResponse::ToolUse {
+            id: "toolu_streaming".into(),
+            name: "run_command".into(),
+            input: serde_json::json!({ "command": long_command }),
+        },
+        MockResponse::Text {
+            text: "done tool stream".into(),
+            input_tokens: 10,
+            output_tokens: 5,
+        },
+    ])
+    .await
+    .expect("load script");
+
+    h.new_session().await.expect("new session");
+
+    // Install a `MutationObserver` BEFORE submitting so we capture
+    // the streaming overlay even if it is in the DOM for only a
+    // single rAF — with `MockResponse::ToolUse` the three wire
+    // frames `ToolUseBlockStart` / `ToolInput` / `ToolUseBlock`
+    // arrive back-to-back and a coarse 50 ms poll can miss the
+    // intermediate state. The observer fires synchronously on every
+    // DOM mutation, so any appearance is recorded.
+    let _: bool = h
+        .eval(
+            "(() => {\
+           window.__streamingToolUseSeen = null;\
+           const probe = () => {\
+             if (window.__streamingToolUseSeen !== null) return;\
+             const o = document.querySelector(\
+               '[data-testid=\"leptos-feed\"] \
+                [data-testid=\"leptos-streaming-tool-use\"]');\
+             if (o) window.__streamingToolUseSeen = o.textContent || '';\
+           };\
+           const obs = new MutationObserver(probe);\
+           obs.observe(document.body, \
+             { childList: true, subtree: true, characterData: true });\
+           probe();\
+           return true;\
+         })()",
+        )
+        .await
+        .expect("install MutationObserver");
+
+    send_message(&h, "go tool stream").await;
+
+    // After `turn_end`, the overlay is gone and the inline expand
+    // toggle (rendered unconditionally on the settled `ToolUseBlock`)
+    // is present in the feed.
+    h.wait_for_count(
+        "[data-testid=\"leptos-feed\"] [data-event-type=\"turn_end\"]",
+        1,
+        T_TURN,
+    )
+    .await
+    .expect("turn_end never landed");
+
+    // The observer must have captured the overlay at some point
+    // during streaming, with non-empty text content (at minimum the
+    // tool-name label rendered on `ToolUseBlockStart`).
+    let seen: String = h
+        .eval("window.__streamingToolUseSeen")
+        .await
+        .unwrap_or_default();
+    assert!(
+        !seen.is_empty() && !seen.trim().is_empty(),
+        "streaming tool-use overlay never observed during turn (seen={seen:?})"
+    );
+
+    h.wait_for_detached(
+        "[data-testid=\"leptos-feed\"] [data-testid=\"leptos-streaming-tool-use\"]",
+        T,
+    )
+    .await
+    .expect("streaming tool-use overlay never cleared");
+
+    h.wait_for_selector(
+        "[data-testid=\"leptos-feed\"] [data-testid=\"leptos-tool-use-block-expand\"]",
+        T,
+    )
+    .await
+    .expect("tool-use-block-expand toggle missing after settle");
+}
+
+// ---------------------------------------------------------------------------
 // 3. Tool-result truncation — [payload] modal has full body
 // ---------------------------------------------------------------------------
 
