@@ -1237,6 +1237,50 @@ mod tests {
         assert_eq!(virtual_line_count("a\n\nb", 80), 3);
     }
 
+    // ---- toggle-gate boundary (virtual_line_count > 4) -------------------
+    //
+    // These tests name the _semantic_ meaning of the count: the more/less
+    // toggle button appears iff `virtual_line_count(text, 80) > 4`.
+    // We cover both the hard-newline path and the single-long-line wrap path,
+    // because the whole point of `virtual_line_count` over `lines().count()`
+    // is that a long line counts as multiple visual lines.
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn toggle_gate_four_hard_lines_does_not_trigger() {
+        // 4 short hard lines → virtual_line_count = 4 → NOT > 4 → no toggle.
+        let s = "line one\nline two\nline three\nline four";
+        assert_eq!(virtual_line_count(s, 80), 4);
+        assert!(!(virtual_line_count(s, 80) > 4), "4 lines should not show the toggle");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn toggle_gate_five_hard_lines_triggers() {
+        // 5 short hard lines → virtual_line_count = 5 → > 4 → toggle shown.
+        let s = "line one\nline two\nline three\nline four\nline five";
+        assert_eq!(virtual_line_count(s, 80), 5);
+        assert!(virtual_line_count(s, 80) > 4, "5 lines should show the toggle");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn toggle_gate_single_320_char_line_does_not_trigger() {
+        // 320 chars → div_ceil(320, 80) = 4 virtual lines → NOT > 4 → no toggle.
+        let s = "x".repeat(320);
+        assert_eq!(virtual_line_count(&s, 80), 4);
+        assert!(!(virtual_line_count(&s, 80) > 4), "320-char line should not show the toggle");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn toggle_gate_single_321_char_line_triggers() {
+        // 321 chars → div_ceil(321, 80) = 5 virtual lines → > 4 → toggle shown.
+        let s = "x".repeat(321);
+        assert_eq!(virtual_line_count(&s, 80), 5);
+        assert!(virtual_line_count(&s, 80) > 4, "321-char line should show the toggle");
+    }
+
     // ---- truncate_preview -------------------------------------------------
 
     #[wasm_bindgen_test]

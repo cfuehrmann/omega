@@ -422,6 +422,27 @@ fn snap_event_thinking_block_collapsed() {
         provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
+    assert!(
+        html.contains("data-testid=\"leptos-thinking-block-expand\""),
+        "toggle button must be present when virtual_line_count > 4:\n{html}",
+    );
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_thinking_block_no_toggle_at_four_lines() {
+    // Four short hard lines → virtual_line_count(text, 80) == 4 → NOT > 4
+    // → more/less button must NOT be rendered.
+    let html = render(|| {
+        let ev = ev_thinking("line one\nline two\nline three\nline four");
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    assert!(
+        !html.contains("data-testid=\"leptos-thinking-block-expand\""),
+        "toggle button must be absent when virtual_line_count == 4:\n{html}",
+    );
     insta::assert_snapshot!(html);
 }
 
