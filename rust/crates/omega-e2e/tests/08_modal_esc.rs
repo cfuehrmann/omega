@@ -102,9 +102,9 @@ async fn picker_esc_closes_with_session() {
 /// effect as clicking that button.
 ///
 /// Setup: open a new session, trigger a tool-call turn (so the feed
-/// gets a `[data-event-type="tool_use_block"]` row), click the row
-/// (`leptos-tool-use-block`) to open TextModal, then press Esc
-/// and verify the modal is dismissed.
+/// gets a `tool_result` block with a payload button), click the
+/// "output" button to open TextModal, then press Esc and verify
+/// the modal is dismissed.
 #[tokio::test]
 #[ignore = "browser"]
 async fn text_modal_esc_closes() {
@@ -130,25 +130,23 @@ async fn text_modal_esc_closes() {
     send_message(&h, "hello").await;
     wait_for_one_turn_end(&h).await;
 
-    // Wait for a tool_use_block row to appear in the feed. SCHEMA-8 Phase 5d
-    // moved the click-to-open-TextModal affordance from the slim
-    // ToolCallBlock onto the ToolUseBlock row, which carries the full
-    // tool input payload.
+    // Wait for a tool_result block to appear in the feed; its "output"
+    // button (leptos-tool-result-payload-btn) opens the TextModal.
     h.wait_for_selector(
-        "[data-testid='leptos-feed'] [data-event-type='tool_use_block'] \
-         [data-testid='leptos-tool-use-block']",
+        "[data-testid='leptos-feed'] [data-event-type='tool_result'] \
+         [data-testid='leptos-tool-result-payload-btn']",
         T,
     )
     .await
-    .expect("tool_use_block row appeared");
+    .expect("tool_result payload button appeared");
 
-    // Click the tool_use_block row — opens TextModal with the full input.
+    // Click the "output" button — opens TextModal with the full tool output.
     h.click(
-        "[data-testid='leptos-feed'] [data-event-type='tool_use_block'] \
-         [data-testid='leptos-tool-use-block']",
+        "[data-testid='leptos-feed'] [data-event-type='tool_result'] \
+         [data-testid='leptos-tool-result-payload-btn']",
     )
     .await
-    .expect("click tool_use_block row");
+    .expect("click tool_result payload button");
 
     // TextModal must open.
     h.wait_for_selector(TEXT_MODAL, T)

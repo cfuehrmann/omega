@@ -1,5 +1,0 @@
----
-source: tests/snapshots.rs
-expression: html
----
-<div data-testid="leptos-event-block" data-event-type="tool_use_block" data-event-kind="assistant" class="block block-assistant"><div data-testid="leptos-tool-use-block" class="block-label-row"><!><span data-testid="leptos-tool-use-name" class="block-label">run_command</span><span data-testid="leptos-tool-use-input" class="block-tool-preview">ls -la</span><span class="block-timestamp-pill">00:00:01.500</span></div><!></div>

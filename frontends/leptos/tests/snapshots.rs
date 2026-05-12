@@ -461,10 +461,10 @@ fn snap_event_tool_use_block_partial_discarded() {
 }
 
 #[test]
-fn snap_event_tool_use_block_with_modal_affordance() {
-    // SCHEMA-8 Phase 5d — non-partial ToolUseBlock wraps its label
-    // and preview in a clickable .block-label-row whose on:click
-    // opens TextModal with the full pretty-printed input JSON.
+fn snap_event_tool_use_block_with_toggle() {
+    // SCHEMA-8 Phase 5d (revised) — non-partial ToolUseBlock renders
+    // an unconditional more/less toggle button.  The body <pre> is absent
+    // in the collapsed (initial) state; the toggle button is always present.
     let html = render(|| {
         let ev = ev_tool_use(
             "run_command",

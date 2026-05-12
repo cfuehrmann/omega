@@ -1028,6 +1028,159 @@ async fn rename_active_session_info_cache_reflects_new_name() {
 }
 
 // ---------------------------------------------------------------------------
+// Tool-input streaming signal forwarding (Step 10 / tool-input-streaming.md)
+// ---------------------------------------------------------------------------
+
+/// Drive `MockProvider` with a `ToolUseBlockStart` + 2× `ToolInput` +
+/// `ToolUseBlockComplete` and assert the three WS frames arrive **in order**
+/// with the correct `type` tags.
+///
+/// This simultaneously validates step-3 agent forwarding and step-4 server
+/// transparency: `WsMessage::Item(Box<AgentItem>)` is `#[serde(untagged)]`,
+/// so the new `StreamSignal` variants pass through without any production-code
+/// change to `omega-server`.
+#[tokio::test]
+async fn tool_input_streaming_frames_arrive_in_order() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    provider.push(vec![
+        Ok(AgentItem::Signal(StreamSignal::ToolUseBlockStart {
+            index: 2,
+            id: "tu_abc".to_owned(),
+            name: "bash".to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::ToolInput {
+            index: 2,
+            partial_json: r#"{"cmd": "#.to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::ToolInput {
+            index: 2,
+            partial_json: r#""echo hi"}"#.to_owned(),
+        })),
+        Ok(AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
+            index: 2,
+            id: "tu_abc".to_owned(),
+            name: "bash".to_owned(),
+            input: serde_json::json!({"cmd": "echo hi"}),
+        })),
+        Ok(llm_response_event("tool_use")),
+    ]);
+    let addr = spawn_server(make_state(
+        Arc::clone(&provider),
+        tmp.path().join("sessions"),
+    ))
+    .await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    reset_and_ready(&mut ws).await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "run" }),
+    )
+    .await;
+
+    // Drain until llm_response_ended (which arrives after the tool_use stop).
+    let frames = recv_until_type(&mut ws, "llm_response_ended").await;
+    let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
+
+    // Assert the streaming frames are present and in order.
+    let pos_start = types.iter().position(|&t| t == "tool_use_block_start");
+    let pos_input1 = types.iter().position(|&t| t == "tool_input");
+    let pos_input2 = types.iter().rposition(|&t| t == "tool_input");
+    // ToolUseBlockComplete is consumed by the agent and re-emitted as
+    // the settled OmegaEvent “tool_use_block” (not the raw signal tag).
+    let pos_settled = types.iter().position(|&t| t == "tool_use_block");
+
+    assert!(
+        pos_start.is_some(),
+        "tool_use_block_start frame must be present; got {types:?}"
+    );
+    assert!(
+        pos_input1.is_some() && pos_input2.is_some() && pos_input1 != pos_input2,
+        "two tool_input frames must be present; got {types:?}"
+    );
+    assert!(
+        pos_settled.is_some(),
+        "tool_use_block (settled) frame must be present; got {types:?}"
+    );
+    assert!(
+        pos_start < pos_input1 && pos_input1 < pos_input2 && pos_input2 < pos_settled,
+        "frames must arrive in start → input1 → input2 → settled order; got {types:?}"
+    );
+
+    // Spot-check payload fields on the start frame.
+    let start_frame = frames
+        .iter()
+        .find(|v| v["type"] == "tool_use_block_start")
+        .unwrap();
+    assert_eq!(start_frame["index"], 2);
+    assert_eq!(start_frame["id"], "tu_abc");
+    assert_eq!(start_frame["name"], "bash");
+
+    // Spot-check one of the input frames.
+    let input_frame = frames.iter().find(|v| v["type"] == "tool_input").unwrap();
+    assert_eq!(input_frame["index"], 2);
+    assert!(input_frame["partial_json"].is_string());
+}
+
+/// Empty-input case: `ToolUseBlockStart` with no following `ToolInput`
+/// deltas settles cleanly via `ToolUseBlockComplete`.
+/// Verifies that the buffer drain works when `partial_json` is empty.
+#[tokio::test]
+async fn tool_input_streaming_empty_input_drains_cleanly() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    provider.push(vec![
+        Ok(AgentItem::Signal(StreamSignal::ToolUseBlockStart {
+            index: 0,
+            id: "tu_empty".to_owned(),
+            name: "no_args_tool".to_owned(),
+        })),
+        // No ToolInput frames — tool was called with `input: {}`.
+        Ok(AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
+            index: 0,
+            id: "tu_empty".to_owned(),
+            name: "no_args_tool".to_owned(),
+            input: serde_json::json!({}),
+        })),
+        Ok(llm_response_event("tool_use")),
+    ]);
+    let addr = spawn_server(make_state(
+        Arc::clone(&provider),
+        tmp.path().join("sessions"),
+    ))
+    .await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    reset_and_ready(&mut ws).await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "run" }),
+    )
+    .await;
+
+    let frames = recv_until_type(&mut ws, "llm_response_ended").await;
+    let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
+
+    assert!(
+        types.contains(&"tool_use_block_start"),
+        "tool_use_block_start must arrive; got {types:?}"
+    );
+    // No tool_input frames expected.
+    assert!(
+        !types.contains(&"tool_input"),
+        "no tool_input frames expected for empty input; got {types:?}"
+    );
+    // ToolUseBlockComplete becomes the settled "tool_use_block" OmegaEvent.
+    assert!(
+        types.contains(&"tool_use_block"),
+        "tool_use_block (settled) must arrive; got {types:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Subprocess + HTTP fake test — validates ANTHROPIC_BASE_URL hook (TEST-ARCH-2)
 // ---------------------------------------------------------------------------
 
