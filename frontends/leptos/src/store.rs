@@ -36,6 +36,22 @@ use crate::protocol::{AgentErrorPayload, SessionInfoPayload, TurnState, WsMessag
 // POD snapshot
 // ---------------------------------------------------------------------------
 
+/// One in-progress tool-use block that has been opened by a
+/// [`WsMessage::ToolUseBlockStart`] frame but not yet sealed by a
+/// [`OmegaEvent::ToolUseBlock`].
+///
+/// `partial_json` is the concatenation of every
+/// [`WsMessage::ToolInput`] delta received so far.  It is **not**
+/// guaranteed to be valid JSON until the block is sealed; render it
+/// verbatim during streaming.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingToolUseSlot {
+    pub id: String,
+    pub name: String,
+    pub partial_json: String,
+}
+
 /// Plain-data view of the store's current contents. Used for the
 /// debug-view JSON dump and as the assertion target in unit tests.
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -62,6 +78,12 @@ pub struct SessionState {
     /// composer auto-fires a `continue` WS message. Cleared on disconnect
     /// and on `ResetDone`. Never sent to the server — purely a UI promise.
     pub pre_committed: bool,
+    /// Per-block streaming tool-use buffers; same lifecycle as
+    /// [`Self::streaming_text`] but for `tool_use_block_start` /
+    /// `tool_input` deltas.  An entry is inserted by
+    /// `ToolUseBlockStart`, extended by each `ToolInput`, then drained
+    /// by the sealing `ToolUseBlock` event.
+    pub streaming_tool_use: BTreeMap<usize, StreamingToolUseSlot>,
     /// Mirrors [`SessionStore::pending_changes_warning`].  See the
     /// signal docstring for semantics.
     pub pending_changes_warning: Option<crate::protocol::PendingChangesIntent>,
@@ -85,6 +107,8 @@ pub struct SessionStore {
     pub streaming_text: RwSignal<BTreeMap<usize, String>>,
     /// See [`SessionState::streaming_thinking`].
     pub streaming_thinking: RwSignal<BTreeMap<usize, String>>,
+    /// See [`SessionState::streaming_tool_use`].
+    pub streaming_tool_use: RwSignal<BTreeMap<usize, StreamingToolUseSlot>>,
     pub transport_errors: RwSignal<Vec<String>>,
     /// See [`SessionState::pre_committed`].
     pub pre_committed: RwSignal<bool>,
@@ -118,6 +142,7 @@ impl SessionStore {
             events: RwSignal::new(Vec::new()),
             streaming_text: RwSignal::new(BTreeMap::new()),
             streaming_thinking: RwSignal::new(BTreeMap::new()),
+            streaming_tool_use: RwSignal::new(BTreeMap::new()),
             transport_errors: RwSignal::new(Vec::new()),
             pre_committed: RwSignal::new(false),
             pending_changes_warning: RwSignal::new(None),
@@ -141,6 +166,9 @@ impl SessionStore {
     /// - `ThinkingBlockComplete` → drop the slot at `index` from the
     ///   thinking buffer (block finished, signature recorded
     ///   server-side).
+    /// - `ToolUseBlockStart` → insert a [`StreamingToolUseSlot`] at
+    ///   `index` with `id`/`name` pre-filled and empty `partial_json`.
+    /// - `ToolInput` → append `partial_json` to the slot at `index`.
     /// - Forwarded `OmegaEvent` (incl. `agent_error` event payload) →
     ///   `events.push(ev)` plus turn-state and streaming-accumulator
     ///   side effects keyed off the event type.
@@ -158,6 +186,7 @@ impl SessionStore {
                 self.streaming.set(payload.streaming);
                 self.streaming_text.set(BTreeMap::new());
                 self.streaming_thinking.set(BTreeMap::new());
+                self.streaming_tool_use.set(BTreeMap::new());
             }
 
             WsMessage::ResetDone => {
@@ -165,6 +194,7 @@ impl SessionStore {
                 self.streaming.set(false);
                 self.streaming_text.set(BTreeMap::new());
                 self.streaming_thinking.set(BTreeMap::new());
+                self.streaming_tool_use.set(BTreeMap::new());
                 self.turn_state.set(TurnState::Idle);
                 self.transport_errors.set(Vec::new());
                 // pre_committed is a client-local promise; reset invalidates it.
@@ -213,6 +243,38 @@ impl SessionStore {
                 });
             }
 
+            WsMessage::ToolUseBlockStart { index, id, name } => {
+                // Insert a fresh slot.  If a slot already exists at this
+                // index (shouldn't happen on a well-behaved server) we
+                // overwrite it so the UI stays consistent.
+                self.streaming_tool_use.update(|m| {
+                    m.insert(
+                        index,
+                        StreamingToolUseSlot {
+                            id,
+                            name,
+                            partial_json: String::new(),
+                        },
+                    );
+                });
+            }
+
+            WsMessage::ToolInput {
+                index,
+                partial_json,
+            } => {
+                // Append the delta to the slot opened by
+                // `ToolUseBlockStart`.  If no slot exists yet (race or
+                // replay) we silently create one with empty id/name so
+                // we don't drop data.
+                self.streaming_tool_use.update(|m| {
+                    m.entry(index)
+                        .or_default()
+                        .partial_json
+                        .push_str(&partial_json);
+                });
+            }
+
             // All other variants carry an `OmegaEvent` payload (incl. the
             // `agent_error` *event* shape).
             other => {
@@ -236,6 +298,7 @@ impl SessionStore {
             events: self.events.get_untracked(),
             streaming_text: self.streaming_text.get_untracked(),
             streaming_thinking: self.streaming_thinking.get_untracked(),
+            streaming_tool_use: self.streaming_tool_use.get_untracked(),
             transport_errors: self.transport_errors.get_untracked(),
             pre_committed: self.pre_committed.get_untracked(),
             pending_changes_warning: self.pending_changes_warning.get_untracked(),
@@ -261,6 +324,7 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming.set(true);
             store.streaming_text.set(BTreeMap::new());
             store.streaming_thinking.set(BTreeMap::new());
+            store.streaming_tool_use.set(BTreeMap::new());
         }
         OmegaEvent::TurnContinued(_) => store.turn_state.set(TurnState::Running),
         OmegaEvent::TurnPaused(_) => store.turn_state.set(TurnState::Paused),
@@ -270,6 +334,7 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming.set(false);
             store.streaming_text.set(BTreeMap::new());
             store.streaming_thinking.set(BTreeMap::new());
+            store.streaming_tool_use.set(BTreeMap::new());
         }
         // SCHEMA-8 Phase 4a — `LlmResponseStarted` opens a fresh
         // response container.  The streaming buffers are global (one
@@ -284,6 +349,7 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
         OmegaEvent::LlmResponseStarted(_) => {
             store.streaming_text.set(BTreeMap::new());
             store.streaming_thinking.set(BTreeMap::new());
+            store.streaming_tool_use.set(BTreeMap::new());
         }
         // SCHEMA-8 Phase 4b — block events finalise the corresponding
         // streaming accumulator.  Phase 5a refined the per-`String`
@@ -293,9 +359,10 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
         // the event lands.  `pop_first` is a no-op on an empty buffer
         // (e.g. a block replayed from history that never had live
         // deltas), keeping the arm safe for all replay shapes.
-        // `ToolUseBlock` has no streaming buffer at all (input streams
-        // via provider deltas that the server doesn't currently
-        // forward), so it falls through to the catch-all.
+        // SCHEMA-8 Phase 5b — the sealing `ToolUseBlock` event drains
+        // the lowest-keyed slot in `streaming_tool_use`, mirroring the
+        // `TextBlock` / `ThinkingBlock` logic.  `pop_first` is a no-op
+        // on an empty buffer for replay safety.
         OmegaEvent::TextBlock(_) => {
             store.streaming_text.update(|m| {
                 m.pop_first();
@@ -306,16 +373,21 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
                 m.pop_first();
             });
         }
-        // SCHEMA-8 Phase 4c — response closers drain both streaming
+        OmegaEvent::ToolUseBlock(_) => {
+            store.streaming_tool_use.update(|m| {
+                m.pop_first();
+            });
+        }
+        // SCHEMA-8 Phase 4c — response closers drain all streaming
         // accumulators.  Belt-and-braces for the (legal) case of a
         // response that produces zero block events (e.g. an empty
-        // tool-only reply): the per-block `TextBlock` / `ThinkingBlock`
-        // arms above will usually have drained them already, but any
-        // stragglers must be cleared so the next response opens with
-        // empty buffers.
+        // tool-only reply): the per-block drain arms above will usually
+        // have cleared them already, but any stragglers must be
+        // removed so the next response opens with empty buffers.
         OmegaEvent::LlmResponseEnded(_) | OmegaEvent::LlmResponseDiscarded(_) => {
             store.streaming_text.set(BTreeMap::new());
             store.streaming_thinking.set(BTreeMap::new());
+            store.streaming_tool_use.set(BTreeMap::new());
         }
         // Mirror server-side model/effort changes into the cached
         // `session_info` so reactive consumers (the composer, the
@@ -357,9 +429,9 @@ mod tests {
     use leptos::reactive::owner::Owner;
     use omega_types::events::{
         AgentErrorEvent, EffortChangedEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-        LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent,
-        PauseRequestedEvent, TextBlockEvent, ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent,
-        TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
+        LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent, PauseRequestedEvent,
+        TextBlockEvent, ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
+        TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -874,6 +946,122 @@ mod tests {
                 partial: true,
             }));
             assert!(s.snapshot().streaming_thinking.is_empty());
+        });
+    }
+
+    // ---- SCHEMA-8 Phase 5b: tool-use streaming buffer ------------------
+
+    #[wasm_bindgen_test]
+    fn tool_use_block_start_inserts_slot() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(WsMessage::ToolUseBlockStart {
+                index: 1,
+                id: "tu_abc".into(),
+                name: "bash".into(),
+            });
+            let snap = s.snapshot();
+            let slot = snap.streaming_tool_use.get(&1).expect("slot must exist");
+            assert_eq!(slot.id, "tu_abc");
+            assert_eq!(slot.name, "bash");
+            assert!(slot.partial_json.is_empty());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn tool_input_appends_partial_json() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(WsMessage::ToolUseBlockStart {
+                index: 1,
+                id: "tu_abc".into(),
+                name: "bash".into(),
+            });
+            s.apply(WsMessage::ToolInput {
+                index: 1,
+                partial_json: r#"{"cmd": "ec"#.into(),
+            });
+            s.apply(WsMessage::ToolInput {
+                index: 1,
+                partial_json: r#"ho hi}"#.into(),
+            });
+            let snap = s.snapshot();
+            let slot = snap.streaming_tool_use.get(&1).expect("slot must exist");
+            assert_eq!(slot.partial_json, r#"{"cmd": "echo hi}"#);
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn tool_use_block_event_drains_slot() {
+        use omega_types::events::ToolUseBlockEvent;
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(WsMessage::ToolUseBlockStart {
+                index: 1,
+                id: "tu_abc".into(),
+                name: "bash".into(),
+            });
+            s.apply(WsMessage::ToolInput {
+                index: 1,
+                partial_json: r#"{"cmd":"echo"}"#.into(),
+            });
+            assert!(!s.snapshot().streaming_tool_use.is_empty());
+            s.apply(WsMessage::ToolUseBlock(ToolUseBlockEvent {
+                time: "t".into(),
+                id: "tu_abc".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"cmd": "echo"}),
+                partial: false,
+            }));
+            assert!(
+                s.snapshot().streaming_tool_use.is_empty(),
+                "ToolUseBlock event must drain the slot"
+            );
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn llm_response_ended_clears_tool_use_slots() {
+        use omega_types::events::ToolUseBlockEvent;
+        // Belt-and-braces: if ToolUseBlock events are missing (e.g.
+        // a streaming response cut off) LlmResponseEnded must still
+        // drain any lingering tool-use slots.
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(WsMessage::ToolUseBlockStart {
+                index: 0,
+                id: "tu_1".into(),
+                name: "bash".into(),
+            });
+            assert!(!s.snapshot().streaming_tool_use.is_empty());
+            s.apply(WsMessage::LlmResponseEnded(LlmResponseEndedEvent {
+                time: "t".into(),
+                stop_reason: "end_turn".into(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 1,
+                    output_tokens: 2,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                    service_tier: None,
+                    iterations: None,
+                },
+                context_hash: "h".into(),
+                response_summary: None,
+            }));
+            assert!(
+                s.snapshot().streaming_tool_use.is_empty(),
+                "LlmResponseEnded must drain tool-use slots"
+            );
+            // suppress unused import lint
+            let _ = ToolUseBlockEvent {
+                time: "t".into(),
+                id: "".into(),
+                name: "".into(),
+                input: serde_json::Value::Null,
+                partial: false,
+            };
         });
     }
 

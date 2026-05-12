@@ -238,9 +238,11 @@ async fn run(
                 omega_types::StreamSignal::Thinking { .. }
                 | omega_types::StreamSignal::ThinkingBlockComplete { .. }
                 | omega_types::StreamSignal::TextBlockComplete { .. }
+                | omega_types::StreamSignal::ToolUseBlockStart { .. }
+                | omega_types::StreamSignal::ToolInput { .. }
                 | omega_types::StreamSignal::ToolUseBlockComplete { .. } => {
-                    // Thinking blocks and their completion signals are not
-                    // shown in CLI output.
+                    // Thinking, tool-use streaming signals and block
+                    // completion markers are not shown in CLI output.
                 }
             },
             omega_core::AgentItem::Event(boxed) => {

@@ -186,6 +186,15 @@ fn stream_impl(
                     // entries on `LlmResponseUsage` (extracted at
                     // message_stop), and acted on by the agent.
                     let parsed: ContentBlockStartData = parse_data(&ev.data)?;
+                    // Emit `ToolUseBlockStart` before inserting the slot
+                    // so the UI receives the tool name immediately.
+                    if let ContentBlockStart::ToolUse { ref id, ref name, .. } = parsed.content_block {
+                        yield AgentItem::Signal(StreamSignal::ToolUseBlockStart {
+                            index: parsed.index,
+                            id: id.clone(),
+                            name: name.clone(),
+                        });
+                    }
                     if let Some(accum) = BlockAccum::from_start(parsed.content_block) {
                         blocks.insert(parsed.index, accum);
                     }
@@ -203,6 +212,12 @@ fn stream_impl(
                                 yield AgentItem::Signal(StreamSignal::Thinking { index: parsed.index, text: thinking });
                             }
                             (ContentBlockDelta::InputJsonDelta { partial_json }, BlockAccum::ToolUse { partial_json: pj, .. }) => {
+                                // Emit the fragment before accumulating so the
+                                // UI receives every delta as it arrives.
+                                yield AgentItem::Signal(StreamSignal::ToolInput {
+                                    index: parsed.index,
+                                    partial_json: partial_json.clone(),
+                                });
                                 pj.push_str(&partial_json);
                             }
                             (ContentBlockDelta::SignatureDelta { signature }, BlockAccum::Thinking { signature: sig, .. }) => {

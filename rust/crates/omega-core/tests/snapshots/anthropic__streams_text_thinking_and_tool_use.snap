@@ -31,6 +31,22 @@ expression: project(&items)
   {
     "id": "toolu_42",
     "index": 2,
+    "name": "calc",
+    "type": "tool_use_block_start"
+  },
+  {
+    "index": 2,
+    "partial_json": "{\"a\":",
+    "type": "tool_input"
+  },
+  {
+    "index": 2,
+    "partial_json": "1,\"b\":2}",
+    "type": "tool_input"
+  },
+  {
+    "id": "toolu_42",
+    "index": 2,
     "input": {
       "a": 1,
       "b": 2

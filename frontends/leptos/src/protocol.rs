@@ -34,8 +34,9 @@
 //!
 //! - 7 envelope tags: `ready`, `agent_error`, `session_info`, `history`,
 //!   `reset_done`, `session_deleted`, `session_renamed`.
-//! - 3 stream-signal tags forwarded inside the server's `Item` variant:
-//!   `text`, `thinking`, `thinking_block_complete`.
+//! - 5 stream-signal tags forwarded inside the server's `Item` variant:
+//!   `text`, `thinking`, `thinking_block_complete`, `tool_use_block_start`,
+//!   `tool_input`.
 //! - 20 [`omega_types::OmegaEvent`] tags forwarded via `Item`. The
 //!   `agent_error` event tag merges into the envelope variant via the
 //!   payload-disambiguation trick above, so 19 dedicated event variants
@@ -43,17 +44,16 @@
 //!   Phase 6.5 removes `llm_response` and `compacted`, bringing the
 //!   total to 25 event variants.
 
-use omega_types::events::{
-    EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseEndedEvent,
-    LlmResponseDiscardedEvent, LlmResponseStartedEvent, LlmRetryEvent,
-    ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
-    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
-    TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
-    TurnPausedEvent, UserMessageEvent,
-};
-use omega_types::events::AgentErrorEvent;
 use omega_types::OmegaEvent;
+use omega_types::events::AgentErrorEvent;
+use omega_types::events::{
+    EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
+    LlmResponseEndedEvent, LlmResponseStartedEvent, LlmRetryEvent, ModelChangedEvent,
+    PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStoppedEvent,
+    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
+    ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
+    TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -173,23 +173,51 @@ pub enum WsMessage {
     History(HistoryPayload),
     /// A session directory was deleted on disk.
     #[serde(rename_all = "camelCase")]
-    SessionDeleted { session_dir: String },
+    SessionDeleted {
+        session_dir: String,
+    },
     /// A session was renamed on disk.
     #[serde(rename_all = "camelCase")]
-    SessionRenamed { session_dir: String, name: String },
+    SessionRenamed {
+        session_dir: String,
+        name: String,
+    },
 
     // --- Forwarded `StreamSignal` payloads -----------------------------------
     /// Streaming assistant text fragment.  `index` matches Anthropic's
     /// `content_block_start.index` so the per-block streaming buffer
     /// can route deltas to the correct slot (SCHEMA-8 Phase 5a).
-    Text { index: usize, text: String },
+    Text {
+        index: usize,
+        text: String,
+    },
     /// Streaming thinking-block fragment.  `index` carries the same
     /// semantics as on [`Self::Text`].
-    Thinking { index: usize, text: String },
+    Thinking {
+        index: usize,
+        text: String,
+    },
     /// End-of-thinking-block marker (carries cryptographic signature).
     /// The UI ignores the signature; `index` lets `apply` drop the
     /// matching slot from the thinking streaming buffer.
-    ThinkingBlockComplete { index: usize, signature: String },
+    ThinkingBlockComplete {
+        index: usize,
+        signature: String,
+    },
+    /// Streaming tool-use block opener.  Carries `id` and `name` so
+    /// the UI can render the label immediately, before any
+    /// `ToolInput` deltas arrive.
+    ToolUseBlockStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    /// Streaming partial-JSON fragment for the tool-use block at
+    /// `index`.  Mid-stream content is NOT valid JSON; rendered raw.
+    ToolInput {
+        index: usize,
+        partial_json: String,
+    },
 
     // --- Forwarded `OmegaEvent` payloads (19 — `agent_error` merged above) ---
     SessionStarted(SessionStartedEvent),
@@ -226,7 +254,9 @@ pub enum WsMessage {
     /// not set.  The previous active session (if any) is untouched.
     /// `intent` echoes the original parameters so the client can
     /// re-issue with `allow_dirty: true` on operator confirmation.
-    PendingChangesWarning { intent: PendingChangesIntent },
+    PendingChangesWarning {
+        intent: PendingChangesIntent,
+    },
 }
 
 impl WsMessage {
@@ -246,7 +276,11 @@ impl WsMessage {
             | Self::SessionRenamed { .. }
             | Self::PendingChangesWarning { .. } => return None,
             // Stream signals — never persisted as events.
-            Self::Text { .. } | Self::Thinking { .. } | Self::ThinkingBlockComplete { .. } => {
+            Self::Text { .. }
+            | Self::Thinking { .. }
+            | Self::ThinkingBlockComplete { .. }
+            | Self::ToolUseBlockStart { .. }
+            | Self::ToolInput { .. } => {
                 return None;
             }
             // `agent_error` envelope → not an event; envelope-side error.
@@ -376,8 +410,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn session_renamed_carries_dir_and_name() {
-        let msg =
-            parse(r#"{"type":"session_renamed","sessionDir":"d","name":"my-name"}"#);
+        let msg = parse(r#"{"type":"session_renamed","sessionDir":"d","name":"my-name"}"#);
         match msg {
             WsMessage::SessionRenamed { session_dir, name } => {
                 assert_eq!(session_dir, "d");
@@ -532,6 +565,55 @@ mod tests {
         }
     }
 
+    #[wasm_bindgen_test]
+    fn tool_use_block_start_round_trips() {
+        match parse(r#"{"type":"tool_use_block_start","index":3,"id":"tu_1","name":"bash"}"#) {
+            WsMessage::ToolUseBlockStart { index, id, name } => {
+                assert_eq!(index, 3);
+                assert_eq!(id, "tu_1");
+                assert_eq!(name, "bash");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn tool_input_round_trips() {
+        // partial_json carries raw partial-JSON fragments; verify
+        // the field round-trips without modification.
+        match parse(r#"{"type":"tool_input","index":3,"partial_json":"{cmd:"}"#) {
+            WsMessage::ToolInput {
+                index,
+                partial_json,
+            } => {
+                assert_eq!(index, 3);
+                assert_eq!(partial_json, "{cmd:");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn tool_use_block_start_and_tool_input_return_none_from_into_omega_event() {
+        assert!(
+            WsMessage::ToolUseBlockStart {
+                index: 0,
+                id: "tu".into(),
+                name: "bash".into(),
+            }
+            .into_omega_event()
+            .is_none()
+        );
+        assert!(
+            WsMessage::ToolInput {
+                index: 0,
+                partial_json: "{\"a\"".into(),
+            }
+            .into_omega_event()
+            .is_none()
+        );
+    }
+
     // ---- forwarded events ---------------------------------------------------
 
     #[wasm_bindgen_test]
@@ -586,14 +668,19 @@ mod tests {
             time: "t".into(),
             error: "e".into(),
         }));
-        assert!(matches!(ev.into_omega_event(), Some(OmegaEvent::AgentError(_))));
+        assert!(matches!(
+            ev.into_omega_event(),
+            Some(OmegaEvent::AgentError(_))
+        ));
     }
 
     // ---- ClientFrame --------------------------------------------------------
 
     #[wasm_bindgen_test]
     fn client_frame_user_message_serialises_with_snake_case_tag() {
-        let frame = ClientFrame::UserMessage { content: "hi".into() };
+        let frame = ClientFrame::UserMessage {
+            content: "hi".into(),
+        };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"user_message","content":"hi"}"#);
     }
@@ -617,7 +704,11 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn client_frame_reset_omits_absent_model_and_effort() {
-        let frame = ClientFrame::Reset { model: None, effort: None, allow_dirty: false };
+        let frame = ClientFrame::Reset {
+            model: None,
+            effort: None,
+            allow_dirty: false,
+        };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"reset"}"#);
     }

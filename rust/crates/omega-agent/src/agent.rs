@@ -166,9 +166,10 @@ fn seal_thinking_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, sig: S
     // See `append_text_slot` for the type-mismatch rationale.
 }
 
-/// Insert (or overwrite) a sealed `ToolUse` slot at `idx`.  `ToolUse`
-/// blocks arrive whole on `ToolUseBlockComplete` — there are no
-/// per-delta accumulators in Phase 2's wire shape.
+/// Insert (or overwrite) a sealed `ToolUse` slot at `idx`.
+/// `ToolUseBlockStart` + N×`ToolInput` signals are forwarded to the UI
+/// as they arrive; this helper is called once on `ToolUseBlockComplete`
+/// to seal the slot with the fully-assembled `input` value.
 fn insert_tool_use_slot(
     slots: &mut BTreeMap<usize, BlockSlot>,
     idx: usize,
@@ -904,6 +905,11 @@ impl Agent {
                                     append_thinking_slot(&mut slots, *index, text);
                                     true
                                 }
+                                // Forward tool-use start and delta signals to
+                                // the UI.  No slot effect here — the slot is
+                                // sealed by `ToolUseBlockComplete` below.
+                                StreamSignal::ToolUseBlockStart { .. }
+                                | StreamSignal::ToolInput { .. } => true,
                                 StreamSignal::ThinkingBlockComplete { index, signature } => {
                                     // SCHEMA-8 Phase 3e: read the
                                     // assembled thinking text back from
@@ -1649,6 +1655,11 @@ impl Agent {
                                 append_thinking_slot(&mut slots, *index, text);
                                 true
                             }
+                            // Forward tool-use start and delta signals to
+                            // the UI.  No slot effect here — the slot is
+                            // sealed by `ToolUseBlockComplete` below.
+                            StreamSignal::ToolUseBlockStart { .. }
+                            | StreamSignal::ToolInput { .. } => true,
                             StreamSignal::ThinkingBlockComplete { index, signature } => {
                                 seal_thinking_slot(&mut slots, *index, signature.clone());
                                 let thinking_text = match slots.get(index) {

@@ -1442,3 +1442,227 @@ async fn llm_response_time_on_compacting_turn_is_valid_rfc3339() {
     chrono::DateTime::parse_from_rfc3339(&lr.time)
         .expect("LlmResponseEnded.time must be valid RFC3339");
 }
+
+/// A tool-use SSE sequence must yield:
+///   `ToolUseBlockStart` (index 0) → `ToolInput` × N → `ToolUseBlockComplete` (index 0)
+///
+/// This verifies that the new signals are emitted in the correct order and
+/// that server-side accumulation (for `ToolUseBlockComplete.input`) is
+/// unaffected by the new forwarding.
+#[tokio::test]
+async fn tool_use_block_yields_start_deltas_and_complete_signals() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_tu",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 10, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tu_abc",
+                    "name": "read_file",
+                    "input": {}
+                }
+            }),
+        ),
+        (
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "{\"pa"}
+            }),
+        ),
+        (
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "th\":\"f.txt\"}"}
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use"},
+                "usage": {"output_tokens": 5}
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_types::StreamSignal;
+
+    // Collect only the Signal items for inspection.
+    let signals: Vec<&StreamSignal> = items
+        .iter()
+        .filter_map(|i| match i {
+            AgentItem::Signal(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+
+    // Expected signal sequence: ToolUseBlockStart, ToolInput × 2, ToolUseBlockComplete.
+    assert_eq!(signals.len(), 4, "expected 4 signals, got: {signals:?}");
+
+    // 1. ToolUseBlockStart
+    match signals[0] {
+        StreamSignal::ToolUseBlockStart { index, id, name } => {
+            assert_eq!(*index, 0);
+            assert_eq!(id, "tu_abc");
+            assert_eq!(name, "read_file");
+        }
+        s => panic!("expected ToolUseBlockStart, got {s:?}"),
+    }
+
+    // 2. First ToolInput delta
+    match signals[1] {
+        StreamSignal::ToolInput {
+            index,
+            partial_json,
+        } => {
+            assert_eq!(*index, 0);
+            assert_eq!(partial_json, "{\"pa");
+        }
+        s => panic!("expected ToolInput, got {s:?}"),
+    }
+
+    // 3. Second ToolInput delta
+    match signals[2] {
+        StreamSignal::ToolInput {
+            index,
+            partial_json,
+        } => {
+            assert_eq!(*index, 0);
+            assert_eq!(partial_json, "th\":\"f.txt\"}");
+        }
+        s => panic!("expected ToolInput, got {s:?}"),
+    }
+
+    // 4. ToolUseBlockComplete with fully assembled input
+    match signals[3] {
+        StreamSignal::ToolUseBlockComplete {
+            index,
+            id,
+            name,
+            input,
+        } => {
+            assert_eq!(*index, 0);
+            assert_eq!(id, "tu_abc");
+            assert_eq!(name, "read_file");
+            assert_eq!(input, &serde_json::json!({"path": "f.txt"}));
+        }
+        s => panic!("expected ToolUseBlockComplete, got {s:?}"),
+    }
+}
+
+/// An empty-input tool call (no `input_json_delta` events) must still yield
+/// `ToolUseBlockStart` followed immediately by `ToolUseBlockComplete` with
+/// `input: {}`.
+#[tokio::test]
+async fn tool_use_block_empty_input_yields_start_and_complete_only() {
+    let server = MockServer::start().await;
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_ei",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {"input_tokens": 5, "output_tokens": 0}
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tu_empty",
+                    "name": "bash",
+                    "input": {}
+                }
+            }),
+        ),
+        (
+            "content_block_stop",
+            json!({"type": "content_block_stop", "index": 0}),
+        ),
+        (
+            "message_delta",
+            json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use"},
+                "usage": {"output_tokens": 2}
+            }),
+        ),
+        ("message_stop", json!({"type": "message_stop"})),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let items = collect_ok(&provider, simple_request()).await;
+
+    use omega_types::StreamSignal;
+    let signals: Vec<&StreamSignal> = items
+        .iter()
+        .filter_map(|i| match i {
+            AgentItem::Signal(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        signals.len(),
+        2,
+        "expected 2 signals (start + complete), got: {signals:?}"
+    );
+    assert!(
+        matches!(signals[0], StreamSignal::ToolUseBlockStart { .. }),
+        "first signal must be ToolUseBlockStart",
+    );
+    assert!(
+        matches!(signals[1], StreamSignal::ToolUseBlockComplete { input, .. } if input == &serde_json::json!({})),
+        "second signal must be ToolUseBlockComplete with empty object",
+    );
+}

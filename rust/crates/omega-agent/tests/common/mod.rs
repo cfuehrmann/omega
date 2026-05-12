@@ -213,6 +213,8 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 omega_types::StreamSignal::ToolUseBlockComplete { .. } => {
                     "Signal:ToolUseBlockComplete"
                 }
+                omega_types::StreamSignal::ToolUseBlockStart { .. } => "Signal:ToolUseBlockStart",
+                omega_types::StreamSignal::ToolInput { .. } => "Signal:ToolInput",
             },
             AgentItem::Event(boxed) => match boxed.as_ref() {
                 OmegaEvent::UserMessage(_) => "UserMessage",

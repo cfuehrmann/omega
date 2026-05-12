@@ -31,9 +31,23 @@ pub enum StreamSignal {
     /// the cryptographic signature Anthropic requires when the thinking block
     /// is echoed back in the next API call.  Never forwarded to the UI.
     ThinkingBlockComplete { index: usize, signature: String },
+    /// Emitted at `content_block_start` for a `tool_use` content block.
+    /// Carries `id` and `name` so the UI can render the label immediately,
+    /// before any `ToolInput` deltas arrive.
+    ToolUseBlockStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    /// A partial JSON fragment for the tool-use block at `index`.
+    /// Mid-stream `partial_json` is NOT valid JSON; the UI displays it
+    /// raw.  Only `ToolUseBlockComplete` carries the fully-assembled
+    /// parsed input.
+    ToolInput { index: usize, partial_json: String },
     /// Emitted at `content_block_stop` for a `tool_use` content block. The
     /// `input` is parsed JSON; the agent dispatches the tool only after the
-    /// surrounding `LlmResponseEnded` event has been emitted.
+    /// surrounding `LlmResponseEnded` event has been emitted.  Never
+    /// forwarded to the UI.
     ToolUseBlockComplete {
         index: usize,
         id: String,
@@ -103,6 +117,36 @@ mod tests {
         );
         let back: StreamSignal = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn tool_use_block_start_round_trips() {
+        let s = StreamSignal::ToolUseBlockStart {
+            index: 5,
+            id: "tu_99".into(),
+            name: "bash".into(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"tool_use_block_start","index":5,"id":"tu_99","name":"bash"}"#
+        );
+        let back: StreamSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+    }
+
+    #[test]
+    fn tool_input_round_trips() {
+        let s = StreamSignal::ToolInput {
+            index: 5,
+            partial_json: r#"{"path": "foo"#.into(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: StreamSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "tool_input");
+        assert_eq!(v["index"], 5);
     }
 
     #[test]
