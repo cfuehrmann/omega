@@ -1231,6 +1231,9 @@ main > h1 {
   border-color: var(--llm);
   color: var(--llm);
 }
+.block.block-assistant[data-event-type="tool_use_block"] .block-body {
+  font-family: var(--font); /* match thinking_block body; override UA pre { font-family: monospace } */
+}
 
 /* Streaming text placeholder — sapphire (matches text_block / llm-response
  * family); body text stays --text for readability. */
