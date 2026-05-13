@@ -4,51 +4,49 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
 ---
 {
   "input": {
-    "config": {
-      "max_tokens": 2048,
-      "temperature": 0.5
-    },
+    "model": "claude-opus-4-6",
     "messages": [
       {
+        "role": "user",
         "content": [
           {
-            "text": "What is 2+2?",
-            "type": "text"
+            "type": "text",
+            "text": "What is 2+2?"
           }
-        ],
-        "role": "user"
+        ]
       },
       {
+        "role": "assistant",
         "content": [
           {
+            "type": "tool_use",
             "id": "[id_1]",
+            "name": "calculator",
             "input": {
               "a": 2,
               "b": 2
-            },
-            "name": "calculator",
-            "type": "tool_use"
+            }
           }
-        ],
-        "role": "assistant"
+        ]
       },
       {
+        "role": "user",
         "content": [
           {
-            "content": "4",
+            "type": "tool_result",
             "tool_use_id": "[id_1]",
-            "type": "tool_result"
+            "content": "4"
           }
-        ],
-        "role": "user"
+        ]
       }
     ],
-    "model": "claude-opus-4-6",
     "system": "You are a helpful assistant.",
     "tools": [
       {
+        "name": "calculator",
         "description": "Performs basic arithmetic.",
         "input_schema": {
+          "type": "object",
           "properties": {
             "a": {
               "type": "number"
@@ -60,14 +58,14 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
           "required": [
             "a",
             "b"
-          ],
-          "type": "object"
-        },
-        "name": "calculator"
+          ]
+        }
       },
       {
+        "name": "read_file",
         "description": "Reads a file from disk.",
         "input_schema": {
+          "type": "object",
           "properties": {
             "path": {
               "type": "string"
@@ -75,73 +73,76 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
           },
           "required": [
             "path"
-          ],
-          "type": "object"
-        },
-        "name": "read_file"
-      }
-    ]
-  },
-  "wire_body": {
-    "max_tokens": 2048,
-    "messages": [
-      {
-        "content": [
-          {
-            "text": "What is 2+2?",
-            "type": "text"
-          }
-        ],
-        "role": "user"
-      },
-      {
-        "content": [
-          {
-            "id": "[id_1]",
-            "input": {
-              "a": 2,
-              "b": 2
-            },
-            "name": "calculator",
-            "type": "tool_use"
-          }
-        ],
-        "role": "assistant"
-      },
-      {
-        "content": [
-          {
-            "cache_control": {
-              "type": "ephemeral"
-            },
-            "content": "4",
-            "tool_use_id": "[id_1]",
-            "type": "tool_result"
-          }
-        ],
-        "role": "user"
+          ]
+        }
       }
     ],
+    "config": {
+      "max_tokens": 2048,
+      "temperature": 0.5
+    }
+  },
+  "wire_body": {
     "model": "claude-opus-4-6",
+    "max_tokens": 2048,
     "stream": true,
     "system": [
       {
-        "text": "x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;",
-        "type": "text"
+        "type": "text",
+        "text": "x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;"
       },
       {
+        "type": "text",
+        "text": "You are a helpful assistant.",
         "cache_control": {
           "type": "ephemeral"
-        },
-        "text": "You are a helpful assistant.",
-        "type": "text"
+        }
       }
     ],
-    "temperature": 0.5,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What is 2+2?"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "[id_1]",
+            "name": "calculator",
+            "input": {
+              "a": 2,
+              "b": 2
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "[id_1]",
+            "content": "4",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ],
     "tools": [
       {
+        "name": "calculator",
         "description": "Performs basic arithmetic.",
         "input_schema": {
+          "type": "object",
           "properties": {
             "a": {
               "type": "number"
@@ -153,17 +154,14 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
           "required": [
             "a",
             "b"
-          ],
-          "type": "object"
-        },
-        "name": "calculator"
+          ]
+        }
       },
       {
-        "cache_control": {
-          "type": "ephemeral"
-        },
+        "name": "read_file",
         "description": "Reads a file from disk.",
         "input_schema": {
+          "type": "object",
           "properties": {
             "path": {
               "type": "string"
@@ -171,11 +169,13 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
           },
           "required": [
             "path"
-          ],
-          "type": "object"
+          ]
         },
-        "name": "read_file"
+        "cache_control": {
+          "type": "ephemeral"
+        }
       }
-    ]
+    ],
+    "temperature": 0.5
   }
 }

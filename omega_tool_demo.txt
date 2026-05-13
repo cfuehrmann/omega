@@ -1,1 +1,258 @@
-This file was created by write_file and edited by edit_file during the parallel tool demo.
+# Omega Tool Demo — Streaming Test File
+
+This file exists purely to test the streaming of a large tool-input block in the
+Omega Web UI. It contains a lot of text so the `write_file` call itself is long
+and the UI can render the characters arriving progressively.
+
+---
+
+## Section 1 — The Philosophy of Introspectability
+
+One of the core design principles behind Omega is that any software system — but
+especially an agentic AI system — must be introspectable at runtime and after the
+fact. This is not merely a nice-to-have convenience; in the age of agentic AI it
+is a first-class safety and debugging requirement.
+
+When an agent takes actions in the world — writing files, running shell commands,
+making HTTP requests — the operator needs to be able to answer the following
+questions at any point in time:
+
+  1. What has the agent done so far?
+  2. What is the agent doing right now?
+  3. Why did the agent make a particular decision?
+  4. What will the agent likely do next?
+  5. Can the operator intervene, and if so how?
+
+Omega answers all five questions through its append-only JSONL session log. Every
+event — user message, assistant turn, tool call, tool result, token-usage report,
+error — is written to the log as it happens. The Web UI tails this log over a
+WebSocket and renders each event in real time. The operator always has full
+visibility.
+
+---
+
+## Section 2 — The Event Model
+
+Events in Omega are typed variants of a single Rust enum, serialised to JSON.
+The major variants are:
+
+  - `UserMessage`       — a message submitted by the human operator.
+  - `AssistantChunk`    — a streamed fragment of the model's response text.
+  - `AssistantDone`     — signals that the current assistant turn is complete.
+  - `ToolCall`          — the model has requested a tool invocation; includes
+                          the tool name and its input arguments as JSON.
+  - `ToolResult`        — the result returned by the tool executor; may be
+                          success or error.
+  - `UsageReport`       — token counts (input, output, cache read, cache write)
+                          for the last API round-trip.
+  - `SessionError`      — a non-fatal error that the operator should see.
+  - `AgentDone`         — the agent loop has exited cleanly.
+
+The log is the single source of truth. The in-memory state of the server is
+always reconstructible from a cold replay of the log. This means that if the
+server crashes mid-session, nothing is lost: on restart the session can be
+resumed from the last complete event.
+
+---
+
+## Section 3 — The Leptos Web UI
+
+The Web UI is written in Rust using the Leptos framework, compiled to WebAssembly
+via Trunk. It communicates with the omega-server over:
+
+  - A REST-ish HTTP API for session management (list, create, load).
+  - A WebSocket connection for real-time event streaming.
+
+### Key components
+
+  `feed.rs`
+      The main conversation feed. Renders a vertical list of events, with
+      auto-scroll tailing and a jump-to-bottom button. Each event is passed
+      to `event_view.rs` for rendering.
+
+  `event_view.rs`
+      Dispatches on event type and renders the appropriate widget. Text
+      events go through the Markdown renderer; tool calls show a collapsible
+      code block with syntax highlighting; tool results are rendered
+      similarly but with a success/error badge.
+
+  `composer.rs`
+      The message input area at the bottom of the screen. Supports multi-line
+      input, submit on Ctrl+Enter, and a "thinking" spinner while the agent
+      is running.
+
+  `usage_panel.rs`
+      A compact sidebar or footer panel showing cumulative token usage for
+      the session, broken down by category.
+
+  `sessions.rs`
+      The session picker: lists all persisted sessions, lets the operator
+      create a new one or resume an existing one.
+
+  `diff_render.rs`
+      Renders unified diffs (from `edit_file` tool results) with red/green
+      line colouring using the Catppuccin Mocha palette.
+
+  `markdown.rs`
+      Converts Markdown text to safe HTML using a Rust Markdown library,
+      then injects it into the DOM. Handles code fences with language tags,
+      inline code, bold, italic, tables, and Mermaid diagram blocks.
+
+  `ws.rs`
+      Manages the WebSocket lifecycle: connects on session load, reconnects
+      on drop, deserialises incoming JSON events, and pushes them into a
+      reactive signal that the feed subscribes to.
+
+---
+
+## Section 4 — Catppuccin Mocha Palette Reference
+
+The UI uses the Catppuccin Mocha dark theme throughout. Key colour tokens:
+
+  Base       #1e1e2e   — page background
+  Mantle     #181825   — slightly darker surface (sidebar, headers)
+  Crust      #11111b   — darkest surface (borders, separators)
+  Surface0   #313244   — card / panel background
+  Surface1   #45475a   — secondary surface
+  Surface2   #585b70   — tertiary surface
+  Overlay0   #6c7086   — muted text, placeholders
+  Overlay1   #7f849c   — slightly less muted
+  Overlay2   #9399b2   — even less muted
+  Subtext0   #a6adc8   — secondary text
+  Subtext1   #bac2de   — primary secondary text
+  Text       #cdd6f4   — main body text
+  Lavender   #b4befe   — accent (links, focus rings)
+  Blue       #89b4fa   — info, assistant messages
+  Sapphire   #74c7ec   — tool calls
+  Sky        #89dceb   — tool results
+  Teal       #94e2d5   — success states
+  Green      #a6e3a1   — diff additions, success badges
+  Yellow     #f9e2af   — warnings
+  Peach      #fab387   — soft errors
+  Maroon     #eba0ac   — errors (softer)
+  Red        #f38ba8   — hard errors, diff deletions
+  Mauve      #cba6f7   — user messages, highlights
+  Pink       #f5c2e7   — decorative accents
+  Flamingo   #f2cdcd   — decorative accents (warm)
+  Rosewater  #f5e0dc   — decorative accents (lightest warm)
+
+---
+
+## Section 5 — Rust Workspace Layout
+
+The Cargo workspace lives under `rust/` and contains the following crates:
+
+  omega-types
+      Pure data types shared across all other crates. No logic, no I/O.
+      Defines the `Event` enum, session metadata structs, tool input/output
+      types, and the protocol messages exchanged over WebSocket.
+
+  omega-core
+      LLM provider abstraction. Defines the `LlmProvider` trait and
+      implements it for Anthropic (via the Messages API with streaming) and
+      Ollama (for local model experimentation). Handles retry logic,
+      back-pressure, and streaming reassembly.
+
+  omega-tools
+      Tool implementations. Each tool is a Rust struct implementing the
+      `Tool` trait, which has an `invoke` method that takes a JSON value
+      and returns a `ToolResult`. Tools include: `read_file`, `write_file`,
+      `edit_file`, `run_command`, `run_background`, `wait_for_output`,
+      `write_stdin`, `list_files`, `find_files`, `grep_files`, `web_search`,
+      `fetch_url`.
+
+  omega-agent
+      The core agent loop. Drives the conversation: sends messages to the
+      LLM, receives streamed responses, detects tool calls, dispatches them
+      to omega-tools, feeds results back, and repeats until the model stops
+      calling tools or the turn limit is reached.
+
+  omega-store
+      Session persistence. Reads and writes JSONL log files. Provides an
+      append-only writer used by the agent loop and a replaying reader used
+      by the server to reconstruct session state on load.
+
+  omega-server
+      HTTP + WebSocket server built on Axum. Serves the compiled Leptos
+      WASM bundle, handles session management API routes, and streams events
+      to connected browser clients over WebSocket.
+
+  omega-cli
+      The CLI binary. Parses command-line arguments, constructs the agent
+      with the appropriate provider and tool set, and runs the loop to
+      completion, printing events to stdout.
+
+  omega-e2e
+      End-to-end browser tests using the WebDriver protocol (via
+      fantoccini). Spins up a headless Chromium instance, loads the Omega
+      Web UI, and exercises user flows: creating sessions, submitting
+      messages, observing streamed responses, scrolling the feed, etc.
+
+  omega-mock-server
+      A lightweight mock of the omega-server used by e2e tests. Serves
+      pre-recorded event sequences so tests are deterministic and fast
+      without requiring a live LLM API key.
+
+  omega-test-fixtures
+      Shared test data: sample JSONL session logs, recorded API responses,
+      and helper macros used across the test suite.
+
+---
+
+## Section 6 — Development Workflow
+
+The recommended development loop:
+
+  1. `just server`                 — start the full stack on :3000
+  2. Edit source files
+  3. Trunk hot-reloads the WASM frontend automatically
+  4. For backend changes, Ctrl-C and re-run `just server`
+  5. `git add -A && git commit`    — pre-commit hook runs the full gate
+
+The gate (`just gate`) runs:
+  - `cargo fmt --check`
+  - `cargo clippy -- -D warnings`
+  - `cargo test` (all workspace crates)
+  - `just web-leptos-test`
+  - `just web-leptos-snapshots`
+
+E2e tests (`just rust-e2e`) are heavier and run separately; they require
+a running browser and are tagged `#[ignore]` so they don't block `cargo test`.
+
+---
+
+## Section 7 — Streaming Architecture
+
+When the operator submits a message in the Web UI, the following sequence
+occurs:
+
+  Browser → POST /api/sessions/{id}/messages
+      The composer sends the message text to the server.
+
+  Server → spawns agent task
+      The server starts an async Tokio task running the agent loop for
+      that session.
+
+  Agent → streams to log + broadcasts to WebSocket subscribers
+      As the LLM streams tokens back, the agent emits `AssistantChunk`
+      events. Each event is:
+        (a) appended to the JSONL log on disk
+        (b) broadcast to all WebSocket connections watching that session
+
+  Browser → receives events over WebSocket
+      The `ws.rs` component deserialises each incoming JSON message and
+      pushes it into a Leptos reactive signal.
+
+  Feed → reactively re-renders
+      Because the feed's event list is a reactive signal, Leptos
+      automatically patches the DOM as new events arrive. Only the new
+      node is inserted; existing nodes are not re-rendered.
+
+  Tailing → auto-scroll
+      If `auto_scroll` is `true`, the sentinel element at the bottom of
+      the feed is scrolled into view after each new event, keeping the
+      latest content visible.
+
+---
+
+## EOF

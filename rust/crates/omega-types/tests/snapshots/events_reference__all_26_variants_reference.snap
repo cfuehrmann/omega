@@ -92,11 +92,11 @@ expression: events
     "error": "rate limited",
     "retryAt": "2024-01-15T12:00:00.000Z",
     "errorBody": {
+      "type": "error",
       "error": {
-        "message": "Too many requests",
-        "type": "rate_limit_error"
-      },
-      "type": "error"
+        "type": "rate_limit_error",
+        "message": "Too many requests"
+      }
     },
     "reason": "retry-after"
   },

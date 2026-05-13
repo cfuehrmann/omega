@@ -75,7 +75,7 @@ web-sys                  = { version = "=0.3.98", features = [
 ] }
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }
-serde_json               = "1"
+serde_json               = { version = "1", features = ["preserve_order"] }
 omega-types              = { path = "../../rust/crates/omega-types" }
 
 # HTTP client for `GET /api/sessions` (Phase 3.2). Already a transitive dep

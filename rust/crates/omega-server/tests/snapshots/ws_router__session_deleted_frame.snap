@@ -3,6 +3,6 @@ source: crates/omega-server/tests/ws_router.rs
 expression: "serde_json::to_string_pretty(&frame).unwrap()"
 ---
 {
-  "sessionDir": "2024-06-01T00-00-00-000-cafecafe",
-  "type": "session_deleted"
+  "type": "session_deleted",
+  "sessionDir": "2024-06-01T00-00-00-000-cafecafe"
 }

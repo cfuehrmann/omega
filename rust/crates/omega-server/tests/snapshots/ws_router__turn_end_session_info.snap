@@ -3,11 +3,11 @@ source: crates/omega-server/tests/ws_router.rs
 expression: "serde_json::to_string_pretty(&redact(info)).unwrap()"
 ---
 {
-  "cwd": "[REDACTED]",
+  "type": "session_info",
   "dir": "[REDACTED]",
-  "effort": "medium",
-  "hasPendingChanges": "[REDACTED]",
   "model": "claude-sonnet-4-6",
+  "effort": "medium",
+  "cwd": "[REDACTED]",
   "turnState": "idle",
-  "type": "session_info"
+  "hasPendingChanges": "[REDACTED]"
 }

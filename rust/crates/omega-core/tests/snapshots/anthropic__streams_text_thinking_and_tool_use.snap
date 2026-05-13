@@ -4,82 +4,82 @@ expression: project(&items)
 ---
 [
   {
+    "type": "thinking",
     "index": 0,
-    "text": "Let me think.",
-    "type": "thinking"
+    "text": "Let me think."
   },
   {
+    "type": "thinking_block_complete",
     "index": 0,
-    "signature": "sig123",
-    "type": "thinking_block_complete"
+    "signature": "sig123"
   },
   {
+    "type": "text",
     "index": 1,
-    "text": "Hello",
-    "type": "text"
+    "text": "Hello"
   },
   {
+    "type": "text",
     "index": 1,
-    "text": ", world!",
-    "type": "text"
+    "text": ", world!"
   },
   {
+    "type": "text_block_complete",
     "index": 1,
-    "text": "Hello, world!",
-    "type": "text_block_complete"
+    "text": "Hello, world!"
   },
   {
-    "id": "toolu_42",
+    "type": "tool_use_block_start",
     "index": 2,
+    "id": "toolu_42",
+    "name": "calc"
+  },
+  {
+    "type": "tool_input",
+    "index": 2,
+    "partial_json": "{\"a\":"
+  },
+  {
+    "type": "tool_input",
+    "index": 2,
+    "partial_json": "1,\"b\":2}"
+  },
+  {
+    "type": "tool_use_block_complete",
+    "index": 2,
+    "id": "toolu_42",
     "name": "calc",
-    "type": "tool_use_block_start"
-  },
-  {
-    "index": 2,
-    "partial_json": "{\"a\":",
-    "type": "tool_input"
-  },
-  {
-    "index": 2,
-    "partial_json": "1,\"b\":2}",
-    "type": "tool_input"
-  },
-  {
-    "id": "toolu_42",
-    "index": 2,
     "input": {
       "a": 1,
       "b": 2
-    },
-    "name": "calc",
-    "type": "tool_use_block_complete"
+    }
   },
   {
-    "contextHash": "",
-    "responseSummary": {
-      "content": "[elided — use context hash]",
-      "id": "msg_01",
-      "model": "claude-sonnet-4-6",
-      "role": "assistant",
-      "stop_reason": "tool_use",
-      "type": "message",
-      "usage": {
-        "cache_creation_input_tokens": 10,
-        "cache_read_input_tokens": 5,
-        "input_tokens": 25,
-        "output_tokens": 87,
-        "service_tier": "standard"
-      }
-    },
-    "stopReason": "tool_use",
-    "time": "[time]",
     "type": "llm_response_ended",
+    "time": "[time]",
+    "stopReason": "tool_use",
     "usage": {
-      "cache_creation_input_tokens": 10,
-      "cache_read_input_tokens": 5,
       "input_tokens": 25,
       "output_tokens": 87,
+      "cache_creation_input_tokens": 10,
+      "cache_read_input_tokens": 5,
       "service_tier": "standard"
+    },
+    "contextHash": "",
+    "responseSummary": {
+      "id": "msg_01",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 25,
+        "output_tokens": 87,
+        "cache_creation_input_tokens": 10,
+        "cache_read_input_tokens": 5,
+        "service_tier": "standard"
+      },
+      "content": "[elided — use context hash]"
     }
   }
 ]

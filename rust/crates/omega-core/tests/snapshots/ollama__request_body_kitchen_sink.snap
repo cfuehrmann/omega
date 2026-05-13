@@ -4,51 +4,49 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
 ---
 {
   "input": {
-    "config": {
-      "max_tokens": 2048,
-      "temperature": 0.5
-    },
+    "model": "llama3.2",
     "messages": [
       {
+        "role": "user",
         "content": [
           {
-            "text": "What is 2+2?",
-            "type": "text"
+            "type": "text",
+            "text": "What is 2+2?"
           }
-        ],
-        "role": "user"
+        ]
       },
       {
+        "role": "assistant",
         "content": [
           {
+            "type": "tool_use",
             "id": "[id_1]",
+            "name": "calculator",
             "input": {
               "a": 2,
               "b": 2
-            },
-            "name": "calculator",
-            "type": "tool_use"
+            }
           }
-        ],
-        "role": "assistant"
+        ]
       },
       {
+        "role": "user",
         "content": [
           {
-            "content": "4",
+            "type": "tool_result",
             "tool_use_id": "[id_1]",
-            "type": "tool_result"
+            "content": "4"
           }
-        ],
-        "role": "user"
+        ]
       }
     ],
-    "model": "llama3.2",
     "system": "You are a helpful assistant.",
     "tools": [
       {
+        "name": "calculator",
         "description": "Performs basic arithmetic.",
         "input_schema": {
+          "type": "object",
           "properties": {
             "a": {
               "type": "number"
@@ -60,14 +58,14 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
           "required": [
             "a",
             "b"
-          ],
-          "type": "object"
-        },
-        "name": "calculator"
+          ]
+        }
       },
       {
+        "name": "read_file",
         "description": "Reads a file from disk.",
         "input_schema": {
+          "type": "object",
           "properties": {
             "path": {
               "type": "string"
@@ -75,54 +73,55 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
           },
           "required": [
             "path"
-          ],
-          "type": "object"
-        },
-        "name": "read_file"
+          ]
+        }
       }
-    ]
+    ],
+    "config": {
+      "max_tokens": 2048,
+      "temperature": 0.5
+    }
   },
   "wire_body": {
+    "model": "llama3.2",
     "messages": [
       {
-        "content": "You are a helpful assistant.",
-        "role": "system"
+        "role": "system",
+        "content": "You are a helpful assistant."
       },
       {
-        "content": "What is 2+2?",
-        "role": "user"
+        "role": "user",
+        "content": "What is 2+2?"
       },
       {
-        "content": "",
         "role": "assistant",
+        "content": "",
         "tool_calls": [
           {
             "function": {
+              "name": "calculator",
               "arguments": {
                 "a": 2,
                 "b": 2
-              },
-              "name": "calculator"
+              }
             }
           }
         ]
       },
       {
-        "content": "4",
-        "role": "tool"
+        "role": "tool",
+        "content": "4"
       }
     ],
-    "model": "llama3.2",
-    "options": {
-      "temperature": 0.5
-    },
     "stream": true,
     "tools": [
       {
+        "type": "function",
         "function": {
-          "description": "Performs basic arithmetic.",
           "name": "calculator",
+          "description": "Performs basic arithmetic.",
           "parameters": {
+            "type": "object",
             "properties": {
               "a": {
                 "type": "number"
@@ -134,17 +133,17 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
             "required": [
               "a",
               "b"
-            ],
-            "type": "object"
+            ]
           }
-        },
-        "type": "function"
+        }
       },
       {
+        "type": "function",
         "function": {
-          "description": "Reads a file from disk.",
           "name": "read_file",
+          "description": "Reads a file from disk.",
           "parameters": {
+            "type": "object",
             "properties": {
               "path": {
                 "type": "string"
@@ -152,12 +151,13 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
             },
             "required": [
               "path"
-            ],
-            "type": "object"
+            ]
           }
-        },
-        "type": "function"
+        }
       }
-    ]
+    ],
+    "options": {
+      "temperature": 0.5
+    }
   }
 }
