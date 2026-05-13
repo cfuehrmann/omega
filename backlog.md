@@ -6,64 +6,7 @@ Items are grouped by priority. Detailed plans live in `backlog/*.md`.
 
 ## P0 — Top priority
 
-### WEB-1 — Scroll tailing + jump-to-bottom button ✅ DONE
-
-**Migration defect.** The feed has no visible tailing / non-tailing indicator
-and no way for the user to jump back to the bottom other than manually scrolling.
-
-#### Desired behaviour
-
-| Mode | Trigger | Effect |
-|---|---|---|
-| **Tailing** (default) | App start; reaching bottom; button click | Every new event and every streamed fragment scrolls the sentinel into view. No button shown. |
-| **Non-tailing** | User scrolls up (leaves the `AUTOSCROLL_THRESHOLD_PX = 40 px` grace zone) | Content does **not** move as new events arrive. A ↓ button appears. |
-| Return to tailing | Scroll back to bottom (within threshold) **or** click ↓ button | `auto_scroll` flips to `true`; sentinel scrolled into view immediately; button disappears. |
-
-The ↓ button is a **1:1 indicator**: visible ↔ non-tailing. There is no other
-mode indicator.
-
-#### What already exists (don't re-implement)
-
-- `auto_scroll: RwSignal<bool>` in `ConversationFeed` — already toggled
-  correctly by the `on_scroll` handler via `should_autoscroll()`.
-- `sentinel_ref: NodeRef<html::Div>` — the scroll target.
-- `data-auto-scroll="true"|"false"` on `<section class="leptos-feed">` —
-  already reflects the mode; the e2e harness can use it.
-- `should_autoscroll()` pure function with full unit-test coverage.
-
-#### What to build
-
-1. **Button** — add inside the same `view!` block, conditionally rendered
-   with `<Show when=move || !auto_scroll.get()>`. Clicking it sets
-   `auto_scroll.set(true)` then calls `sentinel_ref.scroll_into_view()`.
-   Give it `data-testid="scroll-to-bottom"` and `aria-label="Scroll to
-   bottom"`.
-
-2. **Layout** — the button must float over the feed. Wrap `<section
-   class="leptos-feed">` and the button together in a `<div
-   class="feed-wrapper">` with `position: relative; flex: 1; min-height:
-   0; overflow: hidden`. Position the button `position: absolute; bottom:
-   1rem; right: 1rem` inside the wrapper. The feed section keeps its
-   existing `flex: 1; overflow-y: auto` but the `flex: 1` moves to the
-   wrapper.
-
-3. **CSS** — `.scroll-to-bottom-btn` styled as a circular icon button
-   (Catppuccin surface1 background, overlay2 border, text colour, 2.2 rem
-   diameter, `border-radius: 50%`, mild `box-shadow`, `font-size: 1.1rem`).
-   Use the Unicode ↓ (`↓`) as the label; no SVG dependency.
-
-4. **e2e test** — add `scroll_tailing` spec to
-   `rust/crates/omega-e2e/tests/06_feed.rs` (or a new `07_scroll.rs`):
-   - Load a session with ≥ 10 events (reuse mock-server scripting).
-   - Assert `data-auto-scroll="true"` and button absent.
-   - Programmatically scroll up via `page.evaluate("el.scrollTop = 0")`
-     on the feed section.
-   - Assert `data-auto-scroll="false"` and button present.
-   - Dispatch a new event (send another mock turn).
-   - Assert feed did **not** scroll (button still present).
-   - Click the button.
-   - Assert `data-auto-scroll="true"` and button absent.
-   - Stream a new turn; assert feed follows (sentinel visible).
+*(No open P0 items.)*
 
 ---
 
@@ -113,12 +56,6 @@ safety. **Depends on HASH-1.**
 
 ## P3 — Low priority / deferred
 
-### TEST-ARCH-5 / TEST-ARCH-6 — Done
-
-Both completed. TEST-ARCH-5 (Leptos SSR snapshots) shipped in Phase 3.6;
-TEST-ARCH-6 (zero-missed workspace sweep) achieved in Phase 4 Step 5.
-See [backlog/test-architecture.md](backlog/test-architecture.md).
-
 ### Advisor tool — blocked on `clear_tool_uses` compatibility
 
 **[backlog/advisor-tool.md](backlog/advisor-tool.md)**
@@ -164,19 +101,6 @@ Investigate whether snapshot testing fits Omega's output surfaces (system prompt
 assembly, event rendering, JSONL shapes). Write a short evaluation; if adopted,
 add a proof-of-concept.
 
-### WEB-1 — Auto-scroll *(promoted to P0; see above)*
-
-### WEB-2 — Live write_file preview
-
-`eager_input_streaming` is already enabled on `write_file` and `edit_file`,
-so input chunks arrive as the model generates them. A future enhancement could
-stream those `input_json_delta` events to the web UI so the user sees file
-content appearing line by line during a large write. This is a UX improvement
-only — it does not reduce agent loop latency, since the tool result cannot be
-sent until the full stream completes. Requires a streaming JSON parser to
-decode partial content-field values, plus UI rendering of in-flight tool
-inputs.
-
 ---
 
 ## Done / removed
@@ -197,3 +121,7 @@ inputs.
 | Eager input streaming | **Done** | `eager_input_streaming: true` added to `write_file` and `edit_file`. Reduces first-chunk latency ~15 s → ~3 s for large file writes. No beta header needed. |
 | Task budget (`task_budget` on `output_config`) | **Declined** | See [backlog/task-budget.md](backlog/task-budget.md). Advisory soft hint, not cost enforcement. Opus 4.7 only. Cost visibility already solved by per-turn/session display; user prefers efficiency over pre-committed budgets. Reopen criteria documented. |
 | UX-1 / UX-2 — Hard-stop semantics + prompt queue | **Superseded & shipped** | Both replaced by pause/resume/interject. See [backlog/pause-resume-interject.md](backlog/pause-resume-interject.md). |
+| WEB-1 — Scroll tailing + jump-to-bottom button | **Done** | Auto-scroll tailing with ↓ button; `07_scroll.rs` e2e tests. |
+| WEB-2 — Live `write_file` / `edit_file` preview | **Done** | Full tool-input streaming pipeline: `ToolUseBlockStart` + `ToolInput` signals emitted by `omega-core`, forwarded by `omega-agent`, rendered as live overlay in `StreamingPlaceholders`; settled view has inline expand toggle. |
+| TEST-ARCH-5 — Leptos SSR snapshots | **Done** | Shipped in Phase 3.6. |
+| TEST-ARCH-6 — Zero-missed workspace sweep | **Done** | Achieved in Phase 4 Step 5. See `backlog/test-architecture.md`. |
