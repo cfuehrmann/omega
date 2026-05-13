@@ -109,7 +109,7 @@ WebSocket-only — never written to `events.jsonl`.
 
 | Variant | Key fields | Notes |
 |---|---|---|
-| `SessionStarted` | `sessionId`, `path`, `model`, `effort`, `systemPrompt`, `omegaCommit` | First event in every session.  `omegaCommit` defaults to `"unknown"` on deserialise when absent (backward compat). |
+| `SessionStarted` | `sessionId`, `path`, `model`, `effort`, `systemPrompt`, `omegaCommit`, `agentTimeZone` | First event in every session.  `omegaCommit` defaults to `"unknown"` on deserialise when absent (backward compat).  `agentTimeZone` is the IANA name of the agent host's local time zone at session start (e.g. `"Europe/Berlin"`, `"UTC"`); used by the UI to render every event's UTC `time` as agent-host-local wall-clock time via `Intl.DateTimeFormat`.  Defaults to `"UTC"` on deserialise when absent (backward compat with sessions recorded before the field existed). |
 | `ServerStarted` | `time` | Server process started. |
 | `ServerStopped` | `time`, `outcome` (`"clean"` \| `"error"`), `reason?` | Server process stopped. |
 | `ResumingSession` | `resumedFrom`, `name?`, `basis` | Emitted before the first `LlmCall` in a resumed session. |

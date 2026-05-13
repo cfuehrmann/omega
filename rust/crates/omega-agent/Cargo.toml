@@ -15,6 +15,12 @@ omega-tools    = { path = "../omega-tools" }
 async-stream = "0.3"
 mutants       = "0.0.4" # #[mutants::skip] attribute for equivalent-mutation suppression
 chrono       = { version = "0.4", default-features = false, features = ["clock"] }
+# IANA time-zone name of the agent host, captured on session start and stored
+# in `SessionStartedEvent.agent_time_zone` so the UI can render every event's
+# UTC `time` in the agent host's local wall-clock time via `Intl.DateTimeFormat`.
+# Already a transitive dependency of `chrono`'s `clock` feature; declaring it
+# directly here is free at the build-graph level.
+iana-time-zone = "0.1"
 futures      = "0.3"
 serde_json   = "1"
 tokio        = { version = "1", features = ["sync", "time", "macros", "rt", "fs"] }

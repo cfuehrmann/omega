@@ -11,7 +11,8 @@ expression: events
     "model": "claude-sonnet-4-6",
     "effort": "medium",
     "systemPrompt": "You are Omega, a coding agent.",
-    "omegaCommit": "abc1234"
+    "omegaCommit": "abc1234",
+    "agentTimeZone": "Europe/Berlin"
   },
   {
     "type": "server_started",

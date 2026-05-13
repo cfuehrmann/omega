@@ -87,6 +87,13 @@ pub struct SessionState {
     /// Mirrors [`SessionStore::pending_changes_warning`].  See the
     /// signal docstring for semantics.
     pub pending_changes_warning: Option<crate::protocol::PendingChangesIntent>,
+    /// IANA time-zone name of the agent host at session start (e.g.
+    /// `"Europe/Berlin"`).  Mirrors [`SessionStore::agent_time_zone`];
+    /// read by the feed when rendering each event's UTC `time` as a
+    /// local wall-clock string via `Intl.DateTimeFormat`.  Defaults to
+    /// `"UTC"` until a `SessionStarted` event lands; renders unchanged
+    /// from pre-migration behaviour in that case.
+    pub agent_time_zone: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +126,20 @@ pub struct SessionStore {
     /// re-issues the original frame with `allow_dirty: true` (then
     /// sets to `None`).
     pub pending_changes_warning: RwSignal<Option<crate::protocol::PendingChangesIntent>>,
+    /// IANA time-zone name (e.g. `"Europe/Berlin"`) of the agent host
+    /// at the moment the active session was started.  Populated from
+    /// the `agentTimeZone` field of the session's `SessionStarted`
+    /// event, sourced either via a `History` payload on connect or via
+    /// the live forwarded event when a fresh session begins.  The
+    /// conversation feed reads this signal and passes it to
+    /// `format_time` so every event renders in agent-host-local time,
+    /// independently of whatever zone the *browser* happens to be in
+    /// or the current DST state.
+    ///
+    /// Default `"UTC"`; reset to `"UTC"` on `ResetDone` so a freshly
+    /// started session doesn't render its first few events in the
+    /// previous session's zone before its own `SessionStarted` arrives.
+    pub agent_time_zone: RwSignal<String>,
 }
 
 impl Default for SessionStore {
@@ -146,6 +167,7 @@ impl SessionStore {
             transport_errors: RwSignal::new(Vec::new()),
             pre_committed: RwSignal::new(false),
             pending_changes_warning: RwSignal::new(None),
+            agent_time_zone: RwSignal::new("UTC".to_owned()),
         }
     }
 
@@ -182,6 +204,22 @@ impl SessionStore {
             }
 
             WsMessage::History(payload) => {
+                // Pick up the session's IANA TZ from the first
+                // `SessionStarted` in the history batch, falling back
+                // to `"UTC"` if (a) the batch is empty / lacks one or
+                // (b) the session was recorded before the field
+                // existed (serde default).  Done before `events.set`
+                // so any feed render triggered by the events update
+                // already sees the correct zone.
+                let tz = payload
+                    .events
+                    .iter()
+                    .find_map(|ev| match ev {
+                        OmegaEvent::SessionStarted(s) => Some(s.agent_time_zone.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "UTC".to_owned());
+                self.agent_time_zone.set(tz);
                 self.events.set(payload.events);
                 self.streaming.set(payload.streaming);
                 self.streaming_text.set(BTreeMap::new());
@@ -199,6 +237,11 @@ impl SessionStore {
                 self.transport_errors.set(Vec::new());
                 // pre_committed is a client-local promise; reset invalidates it.
                 self.pre_committed.set(false);
+                // The next session's `SessionStarted` will set this
+                // again; meanwhile fall back to UTC so the brief
+                // window of "no events yet" doesn't carry over stale
+                // zone metadata.
+                self.agent_time_zone.set("UTC".to_owned());
             }
 
             WsMessage::AgentError(AgentErrorPayload::Envelope { message }) => {
@@ -302,6 +345,7 @@ impl SessionStore {
             transport_errors: self.transport_errors.get_untracked(),
             pre_committed: self.pre_committed.get_untracked(),
             pending_changes_warning: self.pending_changes_warning.get_untracked(),
+            agent_time_zone: self.agent_time_zone.get_untracked(),
         }
     }
 }
@@ -319,6 +363,14 @@ impl SessionStore {
 /// in the Rust server. `events.push(ev)` itself is the caller's job.
 fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
     match ev {
+        OmegaEvent::SessionStarted(s) => {
+            // Live path: a fresh session emits `SessionStarted` as its
+            // first event.  Mirror its `agentTimeZone` into the store
+            // signal so subsequent events render in the agent host's
+            // local time.  History-replay handles the same job for
+            // already-recorded sessions in the `History` arm above.
+            store.agent_time_zone.set(s.agent_time_zone.clone());
+        }
         OmegaEvent::UserMessage(_) => {
             store.turn_state.set(TurnState::Running);
             store.streaming.set(true);

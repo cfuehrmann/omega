@@ -167,6 +167,8 @@ async fn run(
         effort: effort.clone(),
         system_prompt,
         omega_commit: omega_agent::OMEGA_GIT_COMMIT.to_owned(),
+        // See agent.rs for rationale.
+        agent_time_zone: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
     });
     if let Err(e) = event_store.append(&session_started).await {
         eprintln!("omega: failed to write session_started: {e}");

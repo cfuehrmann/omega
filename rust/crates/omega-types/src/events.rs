@@ -127,6 +127,15 @@ fn default_omega_commit() -> String {
     "unknown".to_owned()
 }
 
+/// Default value for the `agent_time_zone` field on `SessionStartedEvent` when
+/// deserialising a session recorded before the field existed.  `"UTC"` is a
+/// valid IANA zone name; the UI's `Intl.DateTimeFormat` consumes it directly
+/// and renders times with a UTC offset, matching the pre-migration display
+/// behaviour without any conditional path.
+fn default_agent_tz() -> String {
+    "UTC".to_owned()
+}
+
 /// The session started (first event in every session).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +154,18 @@ pub struct SessionStartedEvent {
     /// added still parse successfully (backward compat).
     #[serde(default = "default_omega_commit")]
     pub omega_commit: String,
+    /// IANA time-zone name of the agent host at the moment the session was
+    /// started (e.g. `"Europe/Berlin"`, `"America/New_York"`, `"UTC"`).
+    /// Captured via `iana_time_zone::get_timezone()`; falls back to `"UTC"`
+    /// when the host TZ cannot be determined.  The UI uses this string with
+    /// `Intl.DateTimeFormat` to render every event's `time` (UTC) in the
+    /// agent host's local wall-clock time.
+    ///
+    /// Defaulted on deserialise so that sessions written before this field
+    /// was added still parse successfully — they render in UTC, which is
+    /// what the UI did pre-migration anyway.
+    #[serde(default = "default_agent_tz")]
+    pub agent_time_zone: String,
 }
 
 /// The server process started.
@@ -524,11 +545,13 @@ mod tests {
             effort: "medium".into(),
             system_prompt: "You are Omega.".into(),
             omega_commit: "abc1234".into(),
+            agent_time_zone: "Europe/Berlin".into(),
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "session_started");
         assert_eq!(json["sessionId"], "abc123");
         assert_eq!(json["systemPrompt"], "You are Omega.");
+        assert_eq!(json["agentTimeZone"], "Europe/Berlin");
     }
 
     /// Backward-compat: sessions written before the `omegaCommit` field
@@ -553,6 +576,31 @@ mod tests {
         match parsed {
             OmegaEvent::SessionStarted(ev) => {
                 assert_eq!(ev.omega_commit, "unknown");
+            }
+            other => panic!("expected SessionStarted, got {other:?}"),
+        }
+    }
+
+    /// Backward-compat: sessions written before the `agentTimeZone` field
+    /// existed must still deserialise cleanly — they default to `"UTC"`,
+    /// which renders unchanged from the pre-migration UI behaviour.
+    #[test]
+    fn session_started_uses_default_agent_time_zone_when_field_missing() {
+        let json = serde_json::json!({
+            "type": "session_started",
+            "time": "2024-01-15T12:00:00.000Z",
+            "sessionId": "abc123",
+            "path": "",
+            "model": "claude-sonnet-4-6",
+            "effort": "medium",
+            "systemPrompt": "You are Omega.",
+            "omegaCommit": "abc1234",
+            // agentTimeZone deliberately omitted
+        });
+        let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
+        match parsed {
+            OmegaEvent::SessionStarted(ev) => {
+                assert_eq!(ev.agent_time_zone, "UTC");
             }
             other => panic!("expected SessionStarted, got {other:?}"),
         }

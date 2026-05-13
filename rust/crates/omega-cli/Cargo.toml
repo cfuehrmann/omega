@@ -24,6 +24,9 @@ clap         = { version = "4", features = ["derive"] }
 tokio        = { version = "1", features = ["full"] }
 futures      = "0.3"
 chrono       = { version = "0.4", features = ["clock"] }
+# See omega-agent's Cargo.toml for the rationale — same field, same call site
+# pattern in the standalone `omega exec` entrypoint.
+iana-time-zone = "0.1"
 omega-core   = { path = "../omega-core" }
 omega-store  = { path = "../omega-store" }
 omega-agent  = { path = "../omega-agent" }

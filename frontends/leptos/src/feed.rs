@@ -76,6 +76,22 @@ use crate::markdown;
 use crate::store::SessionStore;
 use crate::text_modal::TextModalState;
 
+/// Resolve the active session's IANA time-zone name from the store
+/// context.  Returns `"UTC"` when no [`SessionStore`] is provided
+/// (e.g. the host-target snapshot harness in `tests/snapshots.rs`),
+/// which is the same zone the slice fallback in `format_time` would
+/// have used on host targets anyway — so snapshots stay byte-stable.
+///
+/// Reads the signal *untracked*: the store reducer always updates
+/// `agent_time_zone` before the `events` signal that drives feed
+/// re-renders, so a tracked subscription would only ever fire from
+/// in-place TZ changes that never happen in practice.
+fn current_agent_tz() -> String {
+    use_context::<SessionStore>()
+        .map(|s| s.agent_time_zone.get_untracked())
+        .unwrap_or_else(|| "UTC".to_owned())
+}
+
 // ---------------------------------------------------------------------------
 // Mermaid + copy-button JS interop (Phase 3.6)
 // ---------------------------------------------------------------------------
@@ -457,7 +473,7 @@ pub fn EventBlock(
     let class = css_class_for(kind);
     let kind_str = kind_tag(kind);
     let event_type = event_type_tag(&event);
-    let time = format_time(event.time()).to_owned();
+    let time = format_time(event.time(), &current_agent_tz());
     // Leptos omits an attribute when its value is `None`, so the
     // snapshot harness (which doesn't pass `idx`) emits the wrapper
     // unchanged.  Live renders from `<ConversationFeed/>` always
@@ -531,6 +547,12 @@ fn render_event_body(
     corr: Option<usize>,
     partial_count: Option<usize>,
 ) -> AnyView {
+    // Cache the session's IANA TZ once per body render rather than re-
+    // resolving it inside each match arm.  Read untracked because the
+    // store reducer always sets `agent_time_zone` *before* the events
+    // signal that drives this re-render, so a stale subscription would
+    // be wasted reactivity.
+    let tz = current_agent_tz();
     match event {
         OmegaEvent::UserMessage(e) => view! {
             <span class="block-label">{LABEL_USER_MESSAGE}</span>
@@ -784,7 +806,7 @@ fn render_event_body(
             // serves as an indicator of the current collapsed/expanded state.
             let needs_toggle = virtual_line_count(&e.thinking, 80) > 4;
             let expanded = RwSignal::new(false);
-            let time_pill = format_time(&e.time).to_owned();
+            let time_pill = format_time(&e.time, &tz);
             view! {
                 <div class="block-label-row">
                     {if partial {
@@ -861,7 +883,7 @@ fn render_event_body(
             let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
             let input = e.input.clone();
             let expanded = RwSignal::new(false);
-            let time_pill = format_time(&e.time).to_owned();
+            let time_pill = format_time(&e.time, &tz);
             view! {
                 <div
                     class="block-label-row"
@@ -974,7 +996,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
     );
 
     let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
-    let time_pill = format_time(&event.time).to_owned();
+    let time_pill = format_time(&event.time, &current_agent_tz());
 
     view! {
         <div class="block-label-row">
@@ -1039,7 +1061,7 @@ fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
-    let time_pill = format_time(&event.time).to_owned();
+    let time_pill = format_time(&event.time, &current_agent_tz());
 
     view! {
         <div class="block-label-row" data-testid="leptos-tool-call">
@@ -1092,7 +1114,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
     );
 
     // Clone the event for the context modal; the payload text is moved.
-    let time_pill = format_time(&event.time).to_owned();
+    let time_pill = format_time(&event.time, &current_agent_tz());
     let event_for_ctx = event;
 
     view! {
@@ -1144,7 +1166,7 @@ fn ToolResultBlock(
     let preview = truncate_preview(&full, 2, 300).unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
-    let time_pill = format_time(&event.time).to_owned();
+    let time_pill = format_time(&event.time, &current_agent_tz());
 
     view! {
         <div data-testid="leptos-tool-result-payload">

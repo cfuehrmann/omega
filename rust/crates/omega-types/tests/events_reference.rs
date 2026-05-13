@@ -67,6 +67,7 @@ fn all_26_events() -> Vec<OmegaEvent> {
             effort: "medium".into(),
             system_prompt: "You are Omega, a coding agent.".into(),
             omega_commit: "abc1234".into(),
+            agent_time_zone: "Europe/Berlin".into(),
         }),
         // 2. ServerStarted
         OmegaEvent::ServerStarted(ServerStartedEvent { time: T.into() }),

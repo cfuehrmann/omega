@@ -269,6 +269,7 @@ fn ev_session_started() -> OmegaEvent {
         effort: "medium".into(),
         system_prompt: "system: test".into(),
         omega_commit: "abc1234".into(),
+        agent_time_zone: "Europe/Berlin".into(),
     })
 }
 

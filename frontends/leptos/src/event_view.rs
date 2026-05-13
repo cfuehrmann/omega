@@ -718,15 +718,76 @@ pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
 // Time formatting
 // ---------------------------------------------------------------------------
 
-/// Extract the `HH:MM:SS.mmm` portion of an ISO-8601 timestamp for
-/// compact inline display.
+/// Format an ISO-8601 timestamp (always UTC, ending in `Z`) as a
+/// compact `HH:MM:SS.mmm` wall-clock string in the agent host's local
+/// time zone.
 ///
-/// `"2025-01-15T12:34:56.789Z"` → `"12:34:56.789"`.  Falls back to
-/// the full raw string when the input is shorter than expected (should
-/// never happen in practice — all `ISOTimestamp` values are RFC-3339).
+/// `tz` must be an IANA zone name (e.g. `"Europe/Berlin"`, `"UTC"`),
+/// typically sourced from `SessionStore::agent_time_zone`, which in
+/// turn was captured from the session's `SessionStarted.agentTimeZone`
+/// field at recording time.  Passing `"UTC"` reproduces the
+/// pre-migration UI behaviour (the `Z`-suffix slice of the input).
+///
+/// On `wasm32` this delegates to `Intl.DateTimeFormat`, which has the
+/// IANA database baked into every browser — so winter sessions viewed
+/// in summer still render with the correct (winter) offset.  On host
+/// targets (SSR snapshot tests) we don't have Intl available and just
+/// slice the UTC string; this is safe because snapshot fixtures pin a
+/// fixed-string `time` and don't exercise the TZ conversion path.
+///
+/// Falls back to the raw input string when:
+/// - the input is shorter than 12 chars (malformed timestamp), or
+/// - `Intl.DateTimeFormat` fails (e.g. an unknown zone name); a hand-
+///   edited or otherwise corrupt session shouldn't crash the feed.
 #[must_use]
-pub fn format_time(iso: &str) -> &str {
-    iso.get(11..23).unwrap_or(iso)
+pub fn format_time(iso: &str, tz: &str) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(out) = format_time_intl(iso, tz) {
+            return out;
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = tz;
+    }
+    iso.get(11..23).unwrap_or(iso).to_owned()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn format_time_intl(iso: &str, tz: &str) -> Option<String> {
+    use js_sys::{Array, Date, Intl, Object, Reflect};
+    use wasm_bindgen::JsValue;
+
+    let date = Date::new(&JsValue::from_str(iso));
+    // `new Date(invalid)` yields a Date whose `getTime()` is NaN; Intl
+    // would then format `"Invalid Date"`.  Guard explicitly so the
+    // caller's fallback path runs instead.
+    if date.get_time().is_nan() {
+        return None;
+    }
+
+    let opts = Object::new();
+    Reflect::set(&opts, &"timeZone".into(), &JsValue::from_str(tz)).ok()?;
+    Reflect::set(&opts, &"hour12".into(), &JsValue::FALSE).ok()?;
+    Reflect::set(&opts, &"hour".into(), &JsValue::from_str("2-digit")).ok()?;
+    Reflect::set(&opts, &"minute".into(), &JsValue::from_str("2-digit")).ok()?;
+    Reflect::set(&opts, &"second".into(), &JsValue::from_str("2-digit")).ok()?;
+    Reflect::set(&opts, &"fractionalSecondDigits".into(), &JsValue::from(3_u32)).ok()?;
+
+    // `en-GB` gives a 24-hour clock with `:` separators and a `.` for
+    // the fractional-second separator, matching the `HH:MM:SS.mmm`
+    // shape the slice fallback produces.
+    let locales = Array::new();
+    locales.push(&JsValue::from_str("en-GB"));
+
+    // `Intl.DateTimeFormat(locales, options)` throws on an invalid
+    // zone name (e.g. someone hand-edited `agentTimeZone: "Mars"`);
+    // catch and surface the fallback rather than panicking the feed.
+    let dtf = Intl::DateTimeFormat::new(&locales, &opts);
+    let formatter = dtf.format();
+    let result = formatter.call1(&JsValue::NULL, &date.into()).ok()?;
+    result.as_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -884,6 +945,7 @@ mod tests {
             effort: "e".into(),
             system_prompt: "p".into(),
             omega_commit: "u".into(),
+            agent_time_zone: "UTC".into(),
         });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }
@@ -2229,19 +2291,44 @@ mod tests {
     #[wasm_bindgen_test]
     #[test]
     fn format_time_extracts_hms() {
-        assert_eq!(format_time("2025-01-15T12:34:56.789Z"), "12:34:56.789");
+        // With tz="UTC" the Intl path renders the input verbatim as
+        // `HH:MM:SS.mmm`, matching the host-target slice fallback.
+        assert_eq!(format_time("2025-01-15T12:34:56.789Z", "UTC"), "12:34:56.789");
     }
 
     #[wasm_bindgen_test]
     #[test]
     fn format_time_midnight() {
-        assert_eq!(format_time("2025-01-15T00:00:00.000Z"), "00:00:00.000");
+        assert_eq!(format_time("2025-01-15T00:00:00.000Z", "UTC"), "00:00:00.000");
     }
 
     #[wasm_bindgen_test]
     #[test]
     fn format_time_fallback_on_short_input() {
         // Malformed input must not panic; returns the raw string.
-        assert_eq!(format_time("short"), "short");
+        assert_eq!(format_time("short", "UTC"), "short");
+    }
+
+    /// The TZ conversion only fires on wasm (browser-backed Intl).
+    /// `2024-01-15T12:00:00.000Z` is winter time, so `Europe/Berlin`
+    /// observes CET (+01:00) and the local wall-clock is `13:00:00.000`.
+    #[wasm_bindgen_test]
+    fn format_time_renders_in_agent_tz_winter() {
+        assert_eq!(
+            format_time("2024-01-15T12:00:00.000Z", "Europe/Berlin"),
+            "13:00:00.000"
+        );
+    }
+
+    /// Same instant in summer (`2024-07-15`) renders one hour later
+    /// in `Europe/Berlin` (CEST, +02:00).  Demonstrates the DST
+    /// correctness that motivated capturing the IANA name (rather
+    /// than a fixed offset) at session-start time.
+    #[wasm_bindgen_test]
+    fn format_time_renders_in_agent_tz_summer() {
+        assert_eq!(
+            format_time("2024-07-15T12:00:00.000Z", "Europe/Berlin"),
+            "14:00:00.000"
+        );
     }
 }

@@ -485,6 +485,12 @@ impl Agent {
             effort: self.active_effort.clone(),
             system_prompt,
             omega_commit: crate::OMEGA_GIT_COMMIT.to_owned(),
+            // IANA name of the agent host's current TZ (e.g. "Europe/Berlin").
+            // The UI uses this to convert every event's UTC `time` into local
+            // wall-clock time via `Intl.DateTimeFormat`.  Falling back to `UTC`
+            // when detection fails keeps the rendered output well-defined
+            // (Intl accepts `UTC` as a valid zone name).
+            agent_time_zone: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
         });
         self.event_store.append(&session_started).await?;
         Ok(())
