@@ -217,6 +217,42 @@ main > h1 {
   font-size: 13px;
 }
 
+/* Search bar below the picker header. */
+.picker-search-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.picker-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--ctp-surface2);
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.picker-search:focus {
+  border-color: var(--ctp-blue);
+}
+.picker-search::placeholder {
+  color: var(--ctp-overlay0, #6c7086);
+}
+
+/* Empty-state message when a search yields no results. */
+.picker-no-results {
+  list-style: none;
+  padding: 12px 14px;
+  color: var(--ctp-subtext0);
+  font-size: 13px;
+  font-style: italic;
+}
+
 [data-testid="leptos-session-list"] {
   list-style: none;
   overflow-y: auto;

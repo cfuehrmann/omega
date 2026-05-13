@@ -56,7 +56,7 @@ use leptos::web_sys;
 use crate::http::get_sessions;
 use crate::composer::ComposerInsert;
 use crate::protocol::ClientFrame;
-use crate::sessions::{SessionListItem, SessionListStore, is_active};
+use crate::sessions::{SessionListItem, SessionListStore, filter_sessions, is_active};
 use crate::store::SessionStore;
 use crate::ws::WsClient;
 
@@ -201,6 +201,23 @@ pub fn SessionPicker() -> impl IntoView {
     // when no session exists (the operator must pick or create one).
     let has_session = Memo::new(move |_| conv.session_info.with(Option::is_some));
 
+    // Search query — cleared each time the picker opens so operators
+    // always start with the full list on a fresh open.
+    let query: RwSignal<String> = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        if picker_open.open.get() {
+            query.set(String::new());
+        }
+    });
+
+    // Filtered + ranked session list derived from the current query and
+    // the live session list. Recomputes reactively on either change.
+    let filtered_sessions = Memo::new(move |_| {
+        let q = query.get();
+        let items = list.sessions.get();
+        filter_sessions(&items, &q)
+    });
+
     // Which row is currently being renamed (None = none). Shared across all
     // rows so at most one can be in edit mode at a time.
     let editing_dir: RwSignal<Option<String>> = RwSignal::new(None);
@@ -336,9 +353,19 @@ pub fn SessionPicker() -> impl IntoView {
                             {move || list.last_error.with(|e| e.clone().unwrap_or_default())}
                         </p>
                     </Show>
+                    <div class="picker-search-row">
+                        <input
+                            type="text"
+                            class="picker-search"
+                            data-testid="leptos-session-search"
+                            placeholder="Search sessions\u{2026}"
+                            prop:value=move || query.get()
+                            on:input=move |evt| query.set(event_target_value(&evt))
+                        />
+                    </div>
                     <ul data-testid="leptos-session-list">
                         <For
-                            each=move || list.sessions.get()
+                            each=move || filtered_sessions.get()
                             key=|item: &SessionListItem| item.dir.clone()
                             children=move |item: SessionListItem| {
                                 view! {
@@ -351,6 +378,17 @@ pub fn SessionPicker() -> impl IntoView {
                                 }
                             }
                         />
+                        <Show
+                            when=move || {
+                                !query.with(|q| q.trim().is_empty())
+                                    && filtered_sessions.with(Vec::is_empty)
+                            }
+                            fallback=|| ()
+                        >
+                            <li class="picker-no-results">
+                                "No sessions match your search."
+                            </li>
+                        </Show>
                     </ul>
                 </section>
             </div>

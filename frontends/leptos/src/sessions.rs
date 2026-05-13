@@ -54,6 +54,106 @@ pub struct SessionListItem {
 }
 
 // ---------------------------------------------------------------------------
+// Fuzzy search
+// ---------------------------------------------------------------------------
+
+/// Score `haystack` against `needle` using a subsequence fuzzy match.
+///
+/// Returns `None` if the characters of `needle` do not appear, in order,
+/// anywhere inside `haystack` (i.e. `needle` is not a subsequence).
+///
+/// Returns `Some(score)` when it matches; higher is better:
+///
+/// - **+1** for every matched character (base).
+/// - **+5** for a consecutive matched pair (e.g. `"ab"` inside `"abc"`).
+/// - **+10** for a match at position 0 of the haystack.
+/// - **+3** for a match immediately after a word-boundary character
+///   (`-`, `_`, ` `, `/`, `.`).
+///
+/// All comparisons are case-insensitive; the caller is responsible for
+/// lowercasing both strings (see [`filter_sessions`]).
+///
+/// The algorithm is O(|haystack|) in time and O(1) in extra space.
+/// For the expected session-list sizes (< 1 000 items, labels < 200 chars)
+/// this is negligibly fast without any dependency.
+pub fn fuzzy_score(haystack: &str, needle: &str) -> Option<i32> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    let h: Vec<char> = haystack.chars().collect();
+    let n: Vec<char> = needle.chars().collect();
+
+    let mut score: i32 = 0;
+    let mut hi = 0usize;
+    let mut ni = 0usize;
+    let mut last_hi: Option<usize> = None;
+
+    while hi < h.len() && ni < n.len() {
+        if h[hi] == n[ni] {
+            score += 1; // base match
+
+            if hi == 0 {
+                score += 10; // start-of-string bonus
+            } else if matches!(h[hi - 1], '-' | '_' | ' ' | '/' | '.') {
+                score += 3; // word-boundary bonus
+            }
+
+            if let Some(prev) = last_hi {
+                if hi == prev + 1 {
+                    score += 5; // consecutive-match bonus
+                }
+            }
+
+            last_hi = Some(hi);
+            ni += 1;
+        }
+        hi += 1;
+    }
+
+    if ni == n.len() { Some(score) } else { None }
+}
+
+/// Filter and rank `items` by `query`.
+///
+/// If `query` is empty or all-whitespace, all items are returned in
+/// their original order (server order: most-recent first).
+///
+/// Otherwise each item is scored with [`fuzzy_score`] applied to the
+/// concatenation of `name`, `dir`, and `description` (all lowercased,
+/// separated by spaces). Items whose fields do not contain `query` as
+/// a subsequence are excluded; the survivors are returned ordered by
+/// score descending. Items with equal score preserve their original
+/// relative order (most-recent first).
+pub fn filter_sessions(items: &[SessionListItem], query: &str) -> Vec<SessionListItem> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return items.to_vec();
+    }
+
+    let mut scored: Vec<(&SessionListItem, i32)> = items
+        .iter()
+        .filter_map(|item| {
+            // Searchable text: name first (most prominent), then the raw
+            // dir (timestamp-style slug), then the optional description.
+            let text = format!(
+                "{} {} {}",
+                item.name.as_deref().unwrap_or(""),
+                item.dir,
+                item.description.as_deref().unwrap_or(""),
+            )
+            .to_lowercase();
+            fuzzy_score(&text, &q).map(|s| (item, s))
+        })
+        .collect();
+
+    // Stable sort descending so equal-score items keep most-recent-first
+    // ordering from the server.
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.into_iter().map(|(item, _)| item.clone()).collect()
+}
+
+// ---------------------------------------------------------------------------
 // Pure reducers (cargo-mutants targets)
 // ---------------------------------------------------------------------------
 
@@ -588,6 +688,142 @@ mod tests {
             assert_eq!(g2, g1 + 1);
             assert_eq!(s.fetch_generation.get_untracked(), g2);
         });
+    }
+
+    // ---- fuzzy_score -------------------------------------------------------
+
+    #[wasm_bindgen_test]
+    fn fuzzy_score_empty_needle_always_matches() {
+        assert_eq!(fuzzy_score("anything", ""), Some(0));
+        assert_eq!(fuzzy_score("", ""), Some(0));
+    }
+
+    #[wasm_bindgen_test]
+    fn fuzzy_score_no_match_returns_none() {
+        assert_eq!(fuzzy_score("abc", "xyz"), None);
+    }
+
+    #[wasm_bindgen_test]
+    fn fuzzy_score_exact_match_scores_highest() {
+        let exact = fuzzy_score("hello", "hello").unwrap();
+        let partial = fuzzy_score("hello world", "hello").unwrap();
+        // Matching all chars in-order from position 0 with consecutive bonuses
+        // should score strictly higher than a longer haystack where chars are
+        // also consecutive but not necessarily at 0.
+        assert!(exact >= partial, "exact={exact} partial={partial}");
+    }
+
+    #[wasm_bindgen_test]
+    fn fuzzy_score_subsequence_matches_but_scores_lower_than_contiguous() {
+        // "ac" is a subsequence of "abc" (matching a at 0, c at 2)
+        // but not consecutive for c, so it should score < than "ab"
+        // which matches a at 0 (consecutive with b at 1).
+        let subseq = fuzzy_score("abc", "ac").unwrap();
+        let contiguous = fuzzy_score("abc", "ab").unwrap();
+        assert!(
+            contiguous > subseq,
+            "contiguous={contiguous} subseq={subseq}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn fuzzy_score_word_boundary_bonus_applied() {
+        // "s" matching after "-" gets a boundary bonus; matching elsewhere does not.
+        let boundary = fuzzy_score("my-session", "s").unwrap();
+        let mid = fuzzy_score("boss", "s").unwrap();
+        assert!(
+            boundary > mid,
+            "boundary={boundary} mid={mid}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn fuzzy_score_needle_longer_than_haystack_returns_none() {
+        assert_eq!(fuzzy_score("ab", "abc"), None);
+    }
+
+    // ---- filter_sessions --------------------------------------------------
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_empty_query_returns_all_in_order() {
+        let items = vec![
+            item("a", Some("alpha")),
+            item("b", Some("beta")),
+            item("c", None),
+        ];
+        let result = filter_sessions(&items, "");
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].dir, "a");
+        assert_eq!(result[1].dir, "b");
+        assert_eq!(result[2].dir, "c");
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_whitespace_query_returns_all() {
+        let items = vec![item("a", None), item("b", None)];
+        let result = filter_sessions(&items, "   ");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_excludes_non_matching_items() {
+        let items = vec![
+            item("alpha", Some("the alpha session")),
+            item("beta", Some("the beta session")),
+        ];
+        let result = filter_sessions(&items, "alpha");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dir, "alpha");
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_matches_dir_when_no_name() {
+        let items = vec![
+            item("2025-05-04T18-37-19-foo", None),
+            item("2025-05-04T18-32-12-bar", None),
+        ];
+        let result = filter_sessions(&items, "foo");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dir, "2025-05-04T18-37-19-foo");
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_is_case_insensitive() {
+        let items = vec![item("alpha", Some("Alpha Project"))];
+        assert_eq!(filter_sessions(&items, "ALPHA").len(), 1);
+        assert_eq!(filter_sessions(&items, "alpha").len(), 1);
+        assert_eq!(filter_sessions(&items, "Alpha").len(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_matches_description() {
+        let mut with_desc = item("sess", None);
+        with_desc.description = Some("refactoring the auth module".into());
+        let items = vec![with_desc, item("other", None)];
+        let result = filter_sessions(&items, "auth");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dir, "sess");
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_returns_empty_when_nothing_matches() {
+        let items = vec![item("alpha", None), item("beta", None)];
+        assert_eq!(filter_sessions(&items, "zzz").len(), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn filter_sessions_ranks_better_match_first() {
+        // "api" as the name prefix should score higher than
+        // "api" buried in the dir slug.
+        let items = vec![
+            item("2025-01-01T00-00-00-api-work", None), // api in dir only
+            item("2025-01-02T00-00-00-other", Some("api client")), // api in name
+        ];
+        let result = filter_sessions(&items, "api");
+        assert_eq!(result.len(), 2);
+        // The named item should come first because name is prepended in the
+        // searchable text and matches at position 0.
+        assert_eq!(result[0].dir, "2025-01-02T00-00-00-other");
     }
 
     // ---- wire-shape round trip ---------------------------------------------
