@@ -1232,7 +1232,8 @@ main > h1 {
   color: var(--llm);
 }
 .block.block-assistant[data-event-type="tool_use_block"] .block-body {
-  font-family: var(--font); /* match thinking_block body; override UA pre { font-family: monospace } */
+  font-family: var(--font); /* match thinking_block body */
+  font-size: 12px;          /* match thinking_block body; 15px inherited from body is too large */
 }
 
 /* Streaming text placeholder — sapphire (matches text_block / llm-response
