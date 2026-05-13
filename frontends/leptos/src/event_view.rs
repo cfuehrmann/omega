@@ -167,6 +167,123 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// Event label (single source of truth)
+// ---------------------------------------------------------------------------
+//
+// One canonical label per event variant.  Both the big-block
+// `<span class="block-label">` and the lower-left status chip read from
+// here so the two displays cannot diverge.  Most labels are static
+// `&'static str`; `ToolUseBlock` borrows the dynamic tool name.
+//
+// Companion to `event_type_tag` (machine tag for CSS selectors) and
+// `kind_for` (visual-family projection).  Keep the three in sync when
+// adding a new variant.
+
+pub const LABEL_USER_MESSAGE: &str = "user_message";
+pub const LABEL_LLM_CALL: &str = "LLM call";
+pub const LABEL_TOOL_CALL: &str = "tool call";
+pub const LABEL_TOOL_RESULT: &str = "tool result";
+pub const LABEL_TURN_END: &str = "turn_end";
+pub const LABEL_LLM_ERROR: &str = "llm_error";
+pub const LABEL_AGENT_ERROR: &str = "agent_error";
+pub const LABEL_TRANSPORT_ERROR: &str = "transport_error";
+pub const LABEL_TURN_INTERRUPTED: &str = "turn_interrupted";
+pub const LABEL_SESSION_STARTED: &str = "session_started";
+pub const LABEL_SERVER_STARTED: &str = "server_started";
+pub const LABEL_SERVER_STOPPED: &str = "server_stopped";
+pub const LABEL_LLM_RETRY: &str = "llm_retry";
+pub const LABEL_MODEL_CHANGED: &str = "model_changed";
+pub const LABEL_EFFORT_CHANGED: &str = "effort_changed";
+pub const LABEL_RESUMING_SESSION: &str = "resuming_session";
+pub const LABEL_SESSION_RESUMED: &str = "session_resumed";
+pub const LABEL_PAUSE_REQUESTED: &str = "pause_requested";
+pub const LABEL_TURN_PAUSED: &str = "turn_paused";
+pub const LABEL_TURN_CONTINUED: &str = "turn_continued";
+pub const LABEL_LLM_RESPONSE_STARTED: &str = "LLM response start";
+pub const LABEL_LLM_RESPONSE_ENDED: &str = "LLM response end";
+pub const LABEL_ASSISTANT: &str = "assistant";
+pub const LABEL_THINKING: &str = "thinking";
+
+/// Canonical human label for an event.  Used by the big-block
+/// `<span class="block-label">` and the status chip alike.
+///
+/// Returns `&e.name` for `ToolUseBlock` (dynamic — the actual tool
+/// name); every other arm returns a static string constant defined
+/// in this module.
+#[must_use]
+pub fn event_label(event: &OmegaEvent) -> &str {
+    match event {
+        OmegaEvent::UserMessage(_) => LABEL_USER_MESSAGE,
+        OmegaEvent::LlmCall(_) => LABEL_LLM_CALL,
+        OmegaEvent::ToolCall(_) => LABEL_TOOL_CALL,
+        OmegaEvent::ToolResult(_) => LABEL_TOOL_RESULT,
+        OmegaEvent::TurnEnd(_) => LABEL_TURN_END,
+        OmegaEvent::LlmError(_) => LABEL_LLM_ERROR,
+        OmegaEvent::AgentError(_) => LABEL_AGENT_ERROR,
+        OmegaEvent::TransportError(_) => LABEL_TRANSPORT_ERROR,
+        OmegaEvent::TurnInterrupted(_) => LABEL_TURN_INTERRUPTED,
+        OmegaEvent::SessionStarted(_) => LABEL_SESSION_STARTED,
+        OmegaEvent::ServerStarted(_) => LABEL_SERVER_STARTED,
+        OmegaEvent::ServerStopped(_) => LABEL_SERVER_STOPPED,
+        OmegaEvent::LlmRetry(_) => LABEL_LLM_RETRY,
+        OmegaEvent::ModelChanged(_) => LABEL_MODEL_CHANGED,
+        OmegaEvent::EffortChanged(_) => LABEL_EFFORT_CHANGED,
+        OmegaEvent::ResumingSession(_) => LABEL_RESUMING_SESSION,
+        OmegaEvent::SessionResumed(_) => LABEL_SESSION_RESUMED,
+        OmegaEvent::PauseRequested(_) => LABEL_PAUSE_REQUESTED,
+        OmegaEvent::TurnPaused(_) => LABEL_TURN_PAUSED,
+        OmegaEvent::TurnContinued(_) => LABEL_TURN_CONTINUED,
+        OmegaEvent::LlmResponseStarted(_) => LABEL_LLM_RESPONSE_STARTED,
+        OmegaEvent::LlmResponseEnded(_) => LABEL_LLM_RESPONSE_ENDED,
+        OmegaEvent::LlmResponseDiscarded(_) => LABEL_ASSISTANT,
+        OmegaEvent::TextBlock(_) => LABEL_ASSISTANT,
+        OmegaEvent::ThinkingBlock(_) => LABEL_THINKING,
+        OmegaEvent::ToolUseBlock(e) => &e.name,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Current-status projection (status chip)
+// ---------------------------------------------------------------------------
+
+/// Project the running-session state to a `(label, event_type_tag)`
+/// pair for the status chip.
+///
+/// Highest-priority match wins:
+///
+/// 1. A live thinking buffer  → (`"thinking"`, `"thinking_block"`)
+/// 2. A live tool-use buffer  → (`<tool name>`, `"tool_use_block"`)
+/// 3. A live text buffer      → (`"assistant"`, `"text_block"`)
+/// 4. Otherwise               → label/tag of `events.last()`
+///
+/// Returns `None` only when `events` is empty and no streaming buffer
+/// is live — i.e. nothing has happened yet.  Callers (the status
+/// chip) fall back to a generic label in that case.
+///
+/// The pair is returned by value (`String` + `&'static str`) so the
+/// chip's `data-event-type` attribute and label string can be set
+/// from one snapshot of the reactive inputs without re-borrowing.
+#[must_use]
+pub fn current_status_label(
+    events: &[OmegaEvent],
+    streaming_text_active: bool,
+    streaming_thinking_active: bool,
+    streaming_tool_use_last_name: Option<&str>,
+) -> Option<(String, &'static str)> {
+    if streaming_thinking_active {
+        Some((LABEL_THINKING.to_owned(), "thinking_block"))
+    } else if let Some(name) = streaming_tool_use_last_name {
+        Some((name.to_owned(), "tool_use_block"))
+    } else if streaming_text_active {
+        Some((LABEL_ASSISTANT.to_owned(), "text_block"))
+    } else {
+        events
+            .last()
+            .map(|ev| (event_label(ev).to_owned(), event_type_tag(ev)))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Auto-scroll predicate
 // ---------------------------------------------------------------------------
 
@@ -998,6 +1115,105 @@ mod tests {
         for (ev, tag) in cases {
             assert_eq!(event_type_tag(ev), *tag, "mismatch for {tag}");
         }
+    }
+
+    // ---- event_label --------------------------------------------------------
+
+    #[wasm_bindgen_test]
+    fn event_label_user_message_is_snake_case_literal() {
+        assert_eq!(event_label(&user()), "user_message");
+    }
+
+    #[wasm_bindgen_test]
+    fn event_label_tool_call_is_human_form() {
+        assert_eq!(event_label(&tool_call()), "tool call");
+    }
+
+    #[wasm_bindgen_test]
+    fn event_label_tool_result_is_human_form() {
+        assert_eq!(event_label(&tool_result(false)), "tool result");
+    }
+
+    #[wasm_bindgen_test]
+    fn event_label_tool_use_block_returns_dynamic_name() {
+        // The chip should show the actual tool name during a tool_use_block,
+        // not a static label — distinguishes "run_command" from "read_file".
+        let ev = OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
+            time: t(),
+            id: "id".into(),
+            name: "read_file".into(),
+            input: json!({}),
+            partial: false,
+        });
+        assert_eq!(event_label(&ev), "read_file");
+    }
+
+    #[wasm_bindgen_test]
+    fn event_label_thinking_block_is_short_form() {
+        let ev = OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
+            time: t(),
+            thinking: "".into(),
+            signature: Some("sig".into()),
+            partial: false,
+        });
+        assert_eq!(event_label(&ev), "thinking");
+    }
+
+    #[wasm_bindgen_test]
+    fn event_label_text_block_is_assistant() {
+        let ev = OmegaEvent::TextBlock(TextBlockEvent {
+            time: t(),
+            text: "hello".into(),
+            partial: false,
+        });
+        assert_eq!(event_label(&ev), "assistant");
+    }
+
+    // ---- current_status_label -----------------------------------------------
+
+    #[wasm_bindgen_test]
+    fn current_status_thinking_buffer_wins_over_last_event() {
+        // Even though `events.last()` is a tool_call, an active thinking
+        // buffer means we are mid-thinking-stream — chip shows that.
+        let evs = [tool_call()];
+        let got = current_status_label(&evs, false, true, None);
+        assert_eq!(got, Some(("thinking".into(), "thinking_block")));
+    }
+
+    #[wasm_bindgen_test]
+    fn current_status_tool_use_buffer_shows_tool_name() {
+        let evs = [user()];
+        let got = current_status_label(&evs, false, false, Some("grep_files"));
+        assert_eq!(got, Some(("grep_files".into(), "tool_use_block")));
+    }
+
+    #[wasm_bindgen_test]
+    fn current_status_text_buffer_is_assistant() {
+        let evs = [user()];
+        let got = current_status_label(&evs, true, false, None);
+        assert_eq!(got, Some(("assistant".into(), "text_block")));
+    }
+
+    #[wasm_bindgen_test]
+    fn current_status_falls_back_to_last_event() {
+        let evs = [user(), tool_call()];
+        let got = current_status_label(&evs, false, false, None);
+        assert_eq!(got, Some(("tool call".into(), "tool_call")));
+    }
+
+    #[wasm_bindgen_test]
+    fn current_status_thinking_priority_over_tool_use() {
+        // Both buffers active (shouldn't happen but is well-defined):
+        // thinking wins per the documented priority order.
+        let evs: [OmegaEvent; 0] = [];
+        let got = current_status_label(&evs, true, true, Some("x"));
+        assert_eq!(got, Some(("thinking".into(), "thinking_block")));
+    }
+
+    #[wasm_bindgen_test]
+    fn current_status_empty_inputs_is_none() {
+        let evs: [OmegaEvent; 0] = [];
+        assert_eq!(current_status_label(&evs, false, false, None), None);
     }
 
     // ---- should_autoscroll: boundary semantics for cargo-mutants ----------

@@ -66,6 +66,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
 
 use crate::completion::{accept_completion, at_token_at_cursor, insert_item_text, next_highlight, selected_item};
+use crate::event_view::current_status_label;
 use crate::http::get_files;
 use crate::picker::PickerOpen;
 use crate::protocol::{ClientFrame, TurnState};
@@ -852,6 +853,13 @@ pub(crate) fn status_str(
 }
 
 /// Maps a `data-status` string to its human-readable chip label.
+///
+/// This is the **fallback** label for the streaming case — used only
+/// when `current_status_label` returns `None` (no events yet, no live
+/// streaming buffer).  In practice the chip prefers the running
+/// event's own label so the operator can see exactly which phase the
+/// turn is in (LLM call / thinking / tool call / …) rather than a
+/// generic "Streaming…".
 pub(crate) fn status_label(status: &str) -> &'static str {
     match status {
         "offline" => "Offline",
@@ -865,17 +873,26 @@ pub(crate) fn status_label(status: &str) -> &'static str {
 
 /// Inline status badge rendered at the right end of the composer row.
 ///
-/// Six states driven by `store.connected`, `store.turn_state`, and
+/// Six base states driven by `store.connected`, `store.turn_state`, and
 /// `store.pre_committed`:
 ///
 /// | `data-status`           | colour | text                    |
 /// |-------------------------|--------|-------------------------|
 /// | `ready`                 | teal   | `Ready`                 |
-/// | `streaming`             | llm    | `Streaming…`            |
+/// | `streaming`             | llm†  | event label (dynamic)    |
 /// | `pausing`               | yellow | `Pausing…`              |
 /// | `pausing-will-continue` | green  | `Pausing, will continue`|
 /// | `paused`                | yellow | `Paused`                |
 /// | `offline`               | red    | `Offline`               |
+///
+/// † During `streaming`, the chip additionally carries a
+/// `data-event-type` attribute echoing the current in-flight event's
+/// wire tag (`llm_call`, `tool_call`, `thinking_block`, …). CSS rules
+/// in `style.css` colour the chip to match the corresponding big-block
+/// border colour: `--yellow` for `tool_call` / `tool_result`,
+/// `--peach` for `llm_retry`, `--red` for error variants, `--llm`
+/// (sapphire) for the LLM-side variants (the default). One source of
+/// truth shared with the big-block renderer in `feed.rs`.
 ///
 /// `pointer-events: none` in CSS — never intercepts clicks on the composer.
 #[component]
@@ -889,13 +906,42 @@ fn StatusChip() -> impl IntoView {
             store.pre_committed.get(),
         )
     };
-    let text = move || status_label(status());
+
+    // `(label, event_type_tag)` reactive memo. `None` outside the
+    // streaming state (where the static `status_label` text wins) and
+    // when nothing is in flight yet.
+    let current = move || -> Option<(String, &'static str)> {
+        if status() != "streaming" {
+            return None;
+        }
+        let last_tool_name = store
+            .streaming_tool_use
+            .with(|m| m.iter().next_back().map(|(_, slot)| slot.name.clone()));
+        let text_active = store.streaming_text.with(|m| !m.is_empty());
+        let thinking_active = store.streaming_thinking.with(|m| !m.is_empty());
+        store.events.with(|evs| {
+            current_status_label(
+                evs,
+                text_active,
+                thinking_active,
+                last_tool_name.as_deref(),
+            )
+        })
+    };
+
+    let text = move || {
+        current()
+            .map(|(label, _)| label)
+            .unwrap_or_else(|| status_label(status()).to_owned())
+    };
+    let event_type = move || current().map(|(_, tag)| tag);
 
     view! {
         <div
             class="status-chip"
             data-testid="leptos-status-chip"
             data-status=status
+            data-event-type=event_type
         >
             {text}
         </div>

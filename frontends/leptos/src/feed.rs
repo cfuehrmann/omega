@@ -63,8 +63,14 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time,
-    kind_for, kind_tag, should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
+    EventKind, LABEL_AGENT_ERROR, LABEL_ASSISTANT, LABEL_EFFORT_CHANGED, LABEL_LLM_CALL,
+    LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED, LABEL_LLM_RESPONSE_STARTED, LABEL_LLM_RETRY,
+    LABEL_MODEL_CHANGED, LABEL_PAUSE_REQUESTED, LABEL_RESUMING_SESSION, LABEL_SERVER_STARTED,
+    LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED, LABEL_SESSION_STARTED, LABEL_THINKING,
+    LABEL_TOOL_CALL, LABEL_TOOL_RESULT, LABEL_TRANSPORT_ERROR, LABEL_TURN_CONTINUED,
+    LABEL_TURN_END, LABEL_TURN_INTERRUPTED, LABEL_TURN_PAUSED, LABEL_USER_MESSAGE,
+    assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time, kind_for,
+    kind_tag, should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -527,7 +533,7 @@ fn render_event_body(
 ) -> AnyView {
     match event {
         OmegaEvent::UserMessage(e) => view! {
-            <span class="block-label">"user_message"</span>
+            <span class="block-label">{LABEL_USER_MESSAGE}</span>
             <pre class="block-body" data-testid="leptos-user-content">{e.content}</pre>
         }
         .into_any(),
@@ -543,7 +549,7 @@ fn render_event_body(
                 m.input_tokens, m.output_tokens,
             );
             view! {
-                <span class="block-label">"turn_end"</span>
+                <span class="block-label">{LABEL_TURN_END}</span>
                 <span class="block-body">{line}</span>
             }
             .into_any()
@@ -556,14 +562,14 @@ fn render_event_body(
                 .http_status
                 .map_or_else(String::new, |s| format!("HTTP {s} · "));
             view! {
-                <span class="block-label">"llm_error"</span>
+                <span class="block-label">{LABEL_LLM_ERROR}</span>
                 <pre class="block-body">{format!("{status}{}", e.error)}</pre>
             }
             .into_any()
         }
 
         OmegaEvent::AgentError(e) => view! {
-            <span class="block-label">"agent_error"</span>
+            <span class="block-label">{LABEL_AGENT_ERROR}</span>
             <pre class="block-body">{e.error}</pre>
         }
         .into_any(),
@@ -571,7 +577,7 @@ fn render_event_body(
         OmegaEvent::TransportError(e) => {
             let ctx = e.context.unwrap_or_default();
             view! {
-                <span class="block-label">"transport_error"</span>
+                <span class="block-label">{LABEL_TRANSPORT_ERROR}</span>
                 <pre class="block-body">{format!("{} · {ctx}", e.error)}</pre>
             }
             .into_any()
@@ -583,25 +589,25 @@ fn render_event_body(
                 .map(|r| format!("{r:?}"))
                 .unwrap_or_else(|| "unknown".into());
             view! {
-                <span class="block-label">"turn_interrupted"</span>
+                <span class="block-label">{LABEL_TURN_INTERRUPTED}</span>
                 <span class="block-body">{format!("reason: {reason}")}</span>
             }
             .into_any()
         }
 
         OmegaEvent::SessionStarted(e) => view! {
-            <span class="block-label">"session_started"</span>
+            <span class="block-label">{LABEL_SESSION_STARTED}</span>
             <span class="block-body">{format!("model: {} · effort: {}", e.model, e.effort)}</span>
         }
         .into_any(),
 
         OmegaEvent::ServerStarted(_) => view! {
-            <span class="block-label">"server_started"</span>
+            <span class="block-label">{LABEL_SERVER_STARTED}</span>
         }
         .into_any(),
 
         OmegaEvent::ServerStopped(e) => view! {
-            <span class="block-label">"server_stopped"</span>
+            <span class="block-label">{LABEL_SERVER_STOPPED}</span>
             <span class="block-body">{format!("{:?}", e.outcome)}</span>
         }
         .into_any(),
@@ -609,47 +615,47 @@ fn render_event_body(
 
 
         OmegaEvent::LlmRetry(e) => view! {
-            <span class="block-label">"llm_retry"</span>
+            <span class="block-label">{LABEL_LLM_RETRY}</span>
             <span class="block-body">{format!("attempt {} · wait {}ms · {}", e.attempt, e.wait_ms, e.error)}</span>
         }
         .into_any(),
 
         OmegaEvent::ModelChanged(e) => view! {
-            <span class="block-label">"model_changed"</span>
+            <span class="block-label">{LABEL_MODEL_CHANGED}</span>
             <span class="block-body">{format!("model: {}", e.model)}</span>
         }
         .into_any(),
 
         OmegaEvent::EffortChanged(e) => view! {
-            <span class="block-label">"effort_changed"</span>
+            <span class="block-label">{LABEL_EFFORT_CHANGED}</span>
             <span class="block-body">{format!("effort: {}", e.effort)}</span>
         }
         .into_any(),
 
         OmegaEvent::ResumingSession(e) => view! {
-            <span class="block-label">"resuming_session"</span>
+            <span class="block-label">{LABEL_RESUMING_SESSION}</span>
             <span class="block-body">{format!("from: {} · basis: {}", e.resumed_from, e.basis)}</span>
         }
         .into_any(),
 
         OmegaEvent::SessionResumed(e) => view! {
-            <span class="block-label">"session_resumed"</span>
+            <span class="block-label">{LABEL_SESSION_RESUMED}</span>
             <MarkdownBody text=e.summary />
         }
         .into_any(),
 
         OmegaEvent::PauseRequested(_) => view! {
-            <span class="block-label">"pause_requested"</span>
+            <span class="block-label">{LABEL_PAUSE_REQUESTED}</span>
         }
         .into_any(),
 
         OmegaEvent::TurnPaused(_) => view! {
-            <span class="block-label">"turn_paused"</span>
+            <span class="block-label">{LABEL_TURN_PAUSED}</span>
         }
         .into_any(),
 
         OmegaEvent::TurnContinued(e) => view! {
-            <span class="block-label">"turn_continued"</span>
+            <span class="block-label">{LABEL_TURN_CONTINUED}</span>
             <span class="block-body">{format!("mode: {:?}", e.mode)}</span>
         }
         .into_any(),
@@ -661,7 +667,7 @@ fn render_event_body(
         // are lifecycle markers; `LlmResponseEnded` has its own renderer
         // below (context hash badge, compacted badge, usage summary).
         OmegaEvent::LlmResponseStarted(_) => view! {
-            <span class="block-label">"LLM response start"</span>
+            <span class="block-label">{LABEL_LLM_RESPONSE_STARTED}</span>
         }
         .into_any(),
 
@@ -688,7 +694,7 @@ fn render_event_body(
         // content" (`0`) from "discarded after N partials" (`>0`).
         // Snapshot fixtures that omit the prop emit no meta line.
         OmegaEvent::LlmResponseDiscarded(_) => view! {
-            <span class="block-label">"assistant"</span>
+            <span class="block-label">{LABEL_ASSISTANT}</span>
             <span class="block-body block-discarded">"[response discarded]"</span>
             {partial_count.map(|n| view! {
                 <span
@@ -744,6 +750,7 @@ fn render_event_body(
                 .into_any()
             } else {
                 view! {
+                    <span class="block-label">{LABEL_ASSISTANT}</span>
                     <div data-testid="leptos-assistant-text">
                         <MarkdownBody text=e.text />
                     </div>
@@ -790,7 +797,7 @@ fn render_event_body(
                             </span>
                         }.into_any()
                     } else {
-                        view! { <span class="block-label">"thinking"</span> }.into_any()
+                        view! { <span class="block-label">{LABEL_THINKING}</span> }.into_any()
                     }}
                     {needs_toggle.then(|| view! {
                         <button
@@ -971,7 +978,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
 
     view! {
         <div class="block-label-row">
-            <span class="block-label">"LLM response end"</span>
+            <span class="block-label">{LABEL_LLM_RESPONSE_ENDED}</span>
             {compacted.then(|| view! {
                 <span
                     class="block-badge block-badge-compacted"
@@ -1037,7 +1044,7 @@ fn ToolCallBlock(
     view! {
         <div class="block-label-row" data-testid="leptos-tool-call">
             {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
-            <span class="block-label">"tool call"</span>
+            <span class="block-label">{LABEL_TOOL_CALL}</span>
             <span class="block-timestamp-pill">{time_pill}</span>
         </div>
     }
@@ -1090,7 +1097,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
 
     view! {
         <div class="block-label-row">
-            <span class="block-label">"LLM call"</span>
+            <span class="block-label">{LABEL_LLM_CALL}</span>
             <span class="block-meta" data-testid="leptos-llm-call-summary">{inline_meta}</span>
             <button
                 class="block-label-row-btn"
@@ -1144,7 +1151,7 @@ fn ToolResultBlock(
             <div class="block-label-row">
                 {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
                 <span class="block-label" data-testid="leptos-tool-result-name">
-                    "tool result"
+                    {LABEL_TOOL_RESULT}
                 </span>
                 <button
                     class="block-label-row-btn"

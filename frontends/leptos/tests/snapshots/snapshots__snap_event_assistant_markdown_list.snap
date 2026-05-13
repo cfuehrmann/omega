@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="text_block" data-event-kind="assistant" class="block block-assistant"><div data-testid="leptos-assistant-text"><div data-testid="md-body" class="block-body md-body"><p>Steps:</p>
+<div data-testid="leptos-event-block" data-event-type="text_block" data-event-kind="assistant" class="block block-assistant"><span class="block-label">assistant</span><div data-testid="leptos-assistant-text"><div data-testid="md-body" class="block-body md-body"><p>Steps:</p>
 <ul>
 <li>first</li>
 <li>second</li>

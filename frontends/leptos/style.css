@@ -1721,6 +1721,35 @@ main > h1 {
 .status-chip[data-status="paused"]                { color: var(--ctp-yellow); }
 .status-chip[data-status="offline"]               { color: var(--red); }
 
+/* During `streaming`, the chip echoes the current in-flight event's
+ * `data-event-type` and these rules colour the chip to match the
+ * corresponding big-block border colour in `feed.rs`. The base
+ * `[data-status="streaming"]` rule above sets the default
+ * (`--llm` = sapphire, used by all LLM-side variants including
+ * `llm_call` / `text_block` / `thinking_block` / `tool_use_block` /
+ * `llm_response_*`); the overrides below apply for the other
+ * families. Single source of truth shared with the
+ * `.block[data-event-type=…]` rules elsewhere in this file. */
+.status-chip[data-status="streaming"][data-event-type="tool_call"],
+.status-chip[data-status="streaming"][data-event-type="tool_result"]    { color: var(--yellow); }
+.status-chip[data-status="streaming"][data-event-type="user_message"]   { color: var(--user); }
+.status-chip[data-status="streaming"][data-event-type="llm_retry"]      { color: var(--peach); }
+.status-chip[data-status="streaming"][data-event-type="llm_error"],
+.status-chip[data-status="streaming"][data-event-type="agent_error"],
+.status-chip[data-status="streaming"][data-event-type="transport_error"],
+.status-chip[data-status="streaming"][data-event-type="turn_interrupted"] { color: var(--red); }
+.status-chip[data-status="streaming"][data-event-type="pause_requested"],
+.status-chip[data-status="streaming"][data-event-type="turn_paused"],
+.status-chip[data-status="streaming"][data-event-type="turn_continued"] { color: var(--ctp-teal); }
+.status-chip[data-status="streaming"][data-event-type="turn_end"],
+.status-chip[data-status="streaming"][data-event-type="session_started"],
+.status-chip[data-status="streaming"][data-event-type="server_started"],
+.status-chip[data-status="streaming"][data-event-type="server_stopped"],
+.status-chip[data-status="streaming"][data-event-type="model_changed"],
+.status-chip[data-status="streaming"][data-event-type="effort_changed"],
+.status-chip[data-status="streaming"][data-event-type="resuming_session"],
+.status-chip[data-status="streaming"][data-event-type="session_resumed"] { color: var(--mauve); }
+
 /* ── Usage panel (sticky, above Composer) ───────────────────────────────── */
 
 /* "▼ Usage" / "▲ Usage" toggle button — styled like .leptos-composer-sessions */
