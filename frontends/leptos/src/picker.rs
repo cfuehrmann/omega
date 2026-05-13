@@ -237,6 +237,20 @@ pub fn SessionPicker() -> impl IntoView {
         }
     });
 
+    // Focus the search input when the picker opens so the operator can
+    // start typing immediately. Declared after the backdrop Effect so its
+    // spawn_local runs last and wins the focus race.
+    let search_ref = NodeRef::<html::Input>::new();
+    Effect::new(move |_| {
+        if search_ref.get().is_some() {
+            spawn_local(async move {
+                if let Some(el) = search_ref.get_untracked() {
+                    let _ = el.focus();
+                }
+            });
+        }
+    });
+
     // When a rename finishes (editing_dir transitions Some → None), return
     // focus to the backdrop so Esc-to-close keeps working. Without this the
     // focus stays on the now-unmounted <input> and keydown never reaches the
@@ -359,6 +373,7 @@ pub fn SessionPicker() -> impl IntoView {
                             class="picker-search"
                             data-testid="leptos-session-search"
                             placeholder="Search sessions\u{2026}"
+                            node_ref=search_ref
                             prop:value=move || query.get()
                             on:input=move |evt| query.set(event_target_value(&evt))
                             on:keydown=move |evt: leptos::ev::KeyboardEvent| {
