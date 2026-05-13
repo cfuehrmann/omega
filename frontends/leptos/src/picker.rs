@@ -361,6 +361,19 @@ pub fn SessionPicker() -> impl IntoView {
                             placeholder="Search sessions\u{2026}"
                             prop:value=move || query.get()
                             on:input=move |evt| query.set(event_target_value(&evt))
+                            on:keydown=move |evt: leptos::ev::KeyboardEvent| {
+                                // Esc with a non-empty query: clear the search
+                                // and consume the event so it doesn't bubble
+                                // to the backdrop and close the whole picker.
+                                // Esc with an empty query: let it propagate
+                                // so the backdrop's Esc-to-close still fires.
+                                if evt.key() == "Escape"
+                                    && !query.with_untracked(|q| q.is_empty())
+                                {
+                                    evt.stop_propagation();
+                                    query.set(String::new());
+                                }
+                            }
                         />
                     </div>
                     <ul data-testid="leptos-session-list">
