@@ -1234,6 +1234,7 @@ main > h1 {
 .block.block-assistant[data-event-type="tool_use_block"] .block-body {
   font-family: var(--font); /* match thinking_block body */
   font-size: 12px;          /* match thinking_block body; 15px inherited from body is too large */
+  color: var(--dim);        /* match thinking_block body; --text is too bright for secondary content */
 }
 
 /* Streaming text placeholder — sapphire (matches text_block / llm-response
