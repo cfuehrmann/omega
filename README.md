@@ -16,6 +16,24 @@ more.
   adapter (`bench/omega_agent.py`) embeds Omega into containerised benchmark
   runs (Terminal-Bench 2.0, SWE-Bench Verified, etc.).
 
+## Configuration
+
+Omega reads API keys from environment variables. The recommended place to
+store them is `~/.config/omega/.env` — this file is loaded automatically at
+startup regardless of which directory you point Omega at:
+
+```bash
+mkdir -p ~/.config/omega
+cat > ~/.config/omega/.env <<'EOF'
+ANTHROPIC_API_KEY=sk-ant-...
+BRAVE_SEARCH_API_KEY=BSA...
+EOF
+```
+
+A project-level `.env` in the working directory is also supported and takes
+precedence over the user config (useful for pointing at a local mock API, for
+example). Real environment variables always win over both files.
+
 ## Quick start
 
 **Requirements:** Rust stable toolchain (`rustup`), `trunk` for the web UI.
@@ -45,6 +63,17 @@ just server          # builds everything and serves on :3000
 Then open `http://localhost:3000` in a browser. The server serves the web UI
 and a WebSocket API on the same port. To access over SSH, forward port 3000
 with `ssh -L 3000:localhost:3000 yourhost`.
+
+To point the server at a different project directory, use `--working-dir`
+(no `cd` required):
+
+```bash
+omega-server --working-dir /path/to/project
+omega-server --working-dir /path/to/project --port 3033
+```
+
+The `--leptos-dir` flag is no longer needed in normal use — the server
+resolves the frontend bundle automatically from the binary's own location.
 
 Run `just --list` to see all available recipes.
 

@@ -295,11 +295,10 @@ fn args_defaults_match_documented_constants() {
         omega_store::SESSIONS_ROOT,
         "DEFAULT_SESSIONS_ROOT must not duplicate the omega_store constant"
     );
-    assert_eq!(
-        args.leptos_dir,
-        PathBuf::from(omega_server::cli::DEFAULT_LEPTOS_DIR),
-    );
-    assert_eq!(args.leptos_dir, PathBuf::from("frontends/leptos/dist"));
+    // leptos_dir is None when not supplied; the real default is resolved
+    // at runtime in main.rs from the binary path.
+    assert!(args.leptos_dir.is_none());
+    assert!(args.working_dir.is_none());
 }
 
 #[test]
@@ -316,7 +315,18 @@ fn args_accept_all_three_overrides() {
     ]);
     assert_eq!(args.port, 4242);
     assert_eq!(args.sessions_root, PathBuf::from("/tmp/custom-sessions"));
-    assert_eq!(args.leptos_dir, PathBuf::from("/var/www/omega-leptos"));
+    assert_eq!(
+        args.leptos_dir,
+        Some(PathBuf::from("/var/www/omega-leptos"))
+    );
+}
+
+#[test]
+fn args_working_dir_is_accepted() {
+    use clap::Parser as _;
+    let args = Args::parse_from(["omega-server", "--working-dir", "/srv/myproject"]);
+    assert_eq!(args.working_dir, Some(PathBuf::from("/srv/myproject")));
+    assert!(args.leptos_dir.is_none());
 }
 
 #[test]

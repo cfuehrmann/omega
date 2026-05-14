@@ -2,8 +2,11 @@
 //!
 //! Defaults:
 //! - `--port`          — `3000`.
-//! - `--sessions-root` — `.omega/sessions` (matches `omega_store::SESSIONS_ROOT`).
-//! - `--leptos-dir`    — `frontends/leptos/dist` (Trunk's output directory).
+//! - `--sessions-root` — `.omega/sessions` relative to the working directory.
+//! - `--leptos-dir`    — `frontends/leptos/dist` relative to the binary location.
+//!   Resolved at runtime via `current_exe()`; falls back to CWD-relative if
+//!   resolution fails.
+//! - `--working-dir`   — not set (defaults to the process CWD).
 
 use std::path::PathBuf;
 
@@ -18,10 +21,10 @@ pub const DEFAULT_PORT: u16 = 3000;
 /// canonical constant and tests can assert they are identical.
 pub const DEFAULT_SESSIONS_ROOT: &str = omega_store::SESSIONS_ROOT;
 
-/// Default Leptos `dist/` directory, relative to the process cwd.
-/// Populated by `just web-leptos-build`. Served by [`crate::build_router`]
-/// as the fallback `ServeDir`. If the directory does not exist at runtime
-/// the route simply 404s — non-fatal.
+/// Fallback Leptos `dist/` directory used when binary-relative resolution
+/// fails.  The real default is computed at runtime in `main.rs` from
+/// `current_exe()` (four parent directories up, then `frontends/leptos/dist`).
+/// This constant is only reached if the binary cannot determine its own path.
 pub const DEFAULT_LEPTOS_DIR: &str = "frontends/leptos/dist";
 
 /// Parsed `omega-server` command-line arguments.
@@ -40,7 +43,15 @@ pub struct Args {
     pub sessions_root: PathBuf,
 
     /// Directory containing the built Leptos client bundle.
-    /// Served as the fallback `ServeDir` at `/`.
-    #[arg(long, default_value = DEFAULT_LEPTOS_DIR)]
-    pub leptos_dir: PathBuf,
+    /// Defaults to `frontends/leptos/dist` relative to the omega-server binary
+    /// (resolved at runtime). Only needed if the binary is moved away from the
+    /// omega repo tree.
+    #[arg(long)]
+    pub leptos_dir: Option<PathBuf>,
+
+    /// Working directory for the agent. The server changes its CWD to this
+    /// path at startup, so sessions are stored there and the agent operates
+    /// on that folder. Defaults to the current directory.
+    #[arg(long)]
+    pub working_dir: Option<PathBuf>,
 }

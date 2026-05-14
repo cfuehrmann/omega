@@ -62,9 +62,14 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    // Load `.env` from CWD (and parent dirs) before reading any env vars.
-    // Silently ignored if no `.env` file is present.
+    // Load .env files in priority order (first writer wins for each key):
+    //   1. CWD .env  — project-level overrides
+    //   2. ~/.config/omega/.env — user-level secrets (API keys, etc.)
+    //   3. Real environment variables — highest priority, never overridden
     dotenvy::dotenv().ok();
+    if let Ok(home) = std::env::var("HOME") {
+        dotenvy::from_path(std::path::Path::new(&home).join(".config/omega/.env")).ok();
+    }
 
     let cli = Cli::parse();
     let exit_code = match cli.command {
