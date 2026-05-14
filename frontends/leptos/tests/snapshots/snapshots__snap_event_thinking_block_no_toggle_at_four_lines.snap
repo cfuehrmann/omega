@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="thinking_block" data-event-kind="assistant" class="block block-assistant"><div class="block-label-row"><span class="block-label">thinking</span><!><span class="block-timestamp-pill">00:00:01.250</span></div><pre data-testid="leptos-thinking-block-body" class="block-body">line one
+<div data-testid="leptos-event-block" data-event-type="thinking_block" data-event-kind="assistant" class="block block-assistant"><div class="block-label-row"><span class="block-label">thinking</span><!><button title="Click to copy: 2025-01-01T00:00:01.250Z" class="block-timestamp-pill">00:00:01.250</button></div><pre data-testid="leptos-thinking-block-body" class="block-body">line one
 line two
 line three
 line four</pre><!></div>

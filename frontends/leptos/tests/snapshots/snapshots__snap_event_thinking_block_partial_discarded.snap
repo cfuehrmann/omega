@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="thinking_block" data-event-kind="assistant" data-partial="true" class="block block-assistant"><div class="block-label-row"><span data-testid="leptos-block-partial" class="block-discarded-header">Discarded thinking — 31 chars</span><!><span class="block-timestamp-pill">00:00:01.250</span></div><pre data-testid="leptos-thinking-block-body" class="block-body block-discarded-body">thinking interrupted mid-stream</pre><!></div>
+<div data-testid="leptos-event-block" data-event-type="thinking_block" data-event-kind="assistant" data-partial="true" class="block block-assistant"><div class="block-label-row"><span data-testid="leptos-block-partial" class="block-discarded-header">Discarded thinking — 31 chars</span><!><button title="Click to copy: 2025-01-01T00:00:01.250Z" class="block-timestamp-pill">00:00:01.250</button></div><pre data-testid="leptos-thinking-block-body" class="block-body block-discarded-body">thinking interrupted mid-stream</pre><!></div>

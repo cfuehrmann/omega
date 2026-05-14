@@ -2,5 +2,5 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="tool_result" data-event-kind="error" class="block block-error"><div data-testid="leptos-tool-result-payload"><div class="block-label-row"><!><span data-testid="leptos-tool-result-name" class="block-label">tool result</span><button data-testid="leptos-tool-result-payload-btn" class="block-label-row-btn">output</button><span class="block-timestamp-pill">00:00:03.000</span></div><pre data-testid="leptos-tool-result-body" class="block-body">boom
+<div data-testid="leptos-event-block" data-event-type="tool_result" data-event-kind="error" class="block block-error"><div data-testid="leptos-tool-result-payload"><div class="block-label-row"><!><span data-testid="leptos-tool-result-name" class="block-label">tool result</span><button data-testid="leptos-tool-result-payload-btn" class="block-label-row-btn">output</button><button title="Click to copy: 2025-01-01T00:00:03.000Z" class="block-timestamp-pill">00:00:03.000</button></div><pre data-testid="leptos-tool-result-body" class="block-body">boom
 </pre></div><!></div>

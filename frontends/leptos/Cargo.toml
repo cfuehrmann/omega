@@ -72,6 +72,9 @@ web-sys                  = { version = "=0.3.98", features = [
     "DomTokenList",
     # Phase 3.11 — dirty-modal sessionStorage persistence (dirty_modal.rs).
     "Storage",
+    # TimestampChip — navigator.clipboard() for copy-to-clipboard.
+    "Clipboard",
+    "Navigator",
 ] }
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }

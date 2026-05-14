@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="user_message" data-event-kind="user" class="block block-user"><span class="block-label">user_message</span><pre data-testid="leptos-user-content" class="block-body">hello world</pre><span class="block-timestamp">00:00:00.000</span></div>
+<div data-testid="leptos-event-block" data-event-type="user_message" data-event-kind="user" class="block block-user"><span class="block-label">user_message</span><pre data-testid="leptos-user-content" class="block-body">hello world</pre><button title="Click to copy: 2025-01-01T00:00:00.000Z" class="block-timestamp">00:00:00.000</button></div>

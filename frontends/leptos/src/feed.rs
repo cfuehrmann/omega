@@ -437,6 +437,81 @@ pub fn ConversationFeed() -> impl IntoView {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Timestamp chip
+// ---------------------------------------------------------------------------
+
+/// Clickable timestamp chip — copies the raw UTC ISO-8601 timestamp to the
+/// clipboard on click and shows a transient `✓` checkmark for 1.5 s.
+///
+/// Two layout variants share the same interaction logic:
+/// - `pill=false` → `<button class="block-timestamp">` — absolute overlay at
+///   top-right of the block.
+/// - `pill=true`  → `<button class="block-timestamp-pill">` — in-flow at the
+///   right end of a `.block-label-row`.
+///
+/// The copied payload (`iso`) is always the raw `YYYY-MM-DDTHH:MM:SS.mmmZ`
+/// string from the event — the `Z` suffix makes it unambiguously UTC to
+/// both human readers and LLMs.
+#[mutants::skip]
+#[component]
+fn TimestampChip(
+    /// Raw ISO-8601 UTC timestamp — the copy payload.
+    iso: String,
+    /// Human-readable local time to display.
+    display: String,
+    /// `true` → in-flow pill; `false` → absolute overlay.
+    pill: bool,
+) -> impl IntoView {
+    let copied = RwSignal::new(false);
+    let title = format!("Click to copy: {iso}");
+    let iso_click = iso;
+
+    let on_click = move |_: ev::MouseEvent| {
+        // Copy the raw UTC ISO string to the clipboard.
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::closure::Closure;
+            use wasm_bindgen::JsCast as _;
+            if let Some(win) = web_sys::window() {
+                let _ = win.navigator().clipboard().write_text(&iso_click);
+                // Schedule checkmark removal after 1500 ms.
+                let cb = Closure::once(move || copied.set(false));
+                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.as_ref().unchecked_ref(),
+                    1500,
+                );
+                cb.forget();
+            }
+        }
+        // On the host (SSR / snapshot) target the closure captures
+        // `iso_click` to keep ownership; the clipboard + timer code
+        // above compiles away.
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = &iso_click;
+        copied.set(true);
+    };
+
+    let class = if pill {
+        "block-timestamp-pill"
+    } else {
+        "block-timestamp"
+    };
+
+    view! {
+        <button class=class title=title on:click=on_click>
+            {move || {
+                if copied.get() {
+                    format!("{display} ✓")
+                } else {
+                    display.clone()
+                }
+            }}
+        </button>
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Event block
 // ---------------------------------------------------------------------------
 
@@ -473,7 +548,8 @@ pub fn EventBlock(
     let class = css_class_for(kind);
     let kind_str = kind_tag(kind);
     let event_type = event_type_tag(&event);
-    let time = format_time(event.time(), &current_agent_tz());
+    let time_iso = event.time().to_owned();
+    let time = format_time(&time_iso, &current_agent_tz());
     // Leptos omits an attribute when its value is `None`, so the
     // snapshot harness (which doesn't pass `idx`) emits the wrapper
     // unchanged.  Live renders from `<ConversationFeed/>` always
@@ -500,7 +576,7 @@ pub fn EventBlock(
             data-partial=partial_attr
         >
             {render_event_body(event, corr, partial_count)}
-            {(!has_lr).then(|| view! { <span class="block-timestamp">{time}</span> })}
+            {(!has_lr).then(|| view! { <TimestampChip iso=time_iso display=time pill=false /> })}
         </div>
     }
 }
@@ -806,7 +882,8 @@ fn render_event_body(
             // serves as an indicator of the current collapsed/expanded state.
             let needs_toggle = virtual_line_count(&e.thinking, 80) > 4;
             let expanded = RwSignal::new(false);
-            let time_pill = format_time(&e.time, &tz);
+            let time_iso = e.time.clone();
+            let time_pill = format_time(&time_iso, &tz);
             view! {
                 <div class="block-label-row">
                     {if partial {
@@ -830,7 +907,7 @@ fn render_event_body(
                             {move || if expanded.get() { "less" } else { "more" }}
                         </button>
                     })}
-                    <span class="block-timestamp-pill">{time_pill}</span>
+                    <TimestampChip iso=time_iso display=time_pill pill=true />
                 </div>
                 <pre
                     class=move || {
@@ -883,7 +960,8 @@ fn render_event_body(
             let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
             let input = e.input.clone();
             let expanded = RwSignal::new(false);
-            let time_pill = format_time(&e.time, &tz);
+            let time_iso = e.time.clone();
+            let time_pill = format_time(&time_iso, &tz);
             view! {
                 <div
                     class="block-label-row"
@@ -923,7 +1001,7 @@ fn render_event_body(
                     >
                         {move || if expanded.get() { "less" } else { "more" }}
                     </button>
-                    <span class="block-timestamp-pill">{time_pill}</span>
+                    <TimestampChip iso=time_iso display=time_pill pill=true />
                 </div>
                 {move || expanded.get().then(|| {
                     let pretty = serde_json::to_string_pretty(&input)
@@ -996,7 +1074,8 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
     );
 
     let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
-    let time_pill = format_time(&event.time, &current_agent_tz());
+    let time_iso = event.time.clone();
+    let time_pill = format_time(&time_iso, &current_agent_tz());
 
     view! {
         <div class="block-label-row">
@@ -1035,7 +1114,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
                     "payload"
                 </button>
             </div>
-            <span class="block-timestamp-pill">{time_pill}</span>
+            <TimestampChip iso=time_iso display=time_pill pill=true />
         </div>
     }
 }
@@ -1061,13 +1140,14 @@ fn ToolCallBlock(
     event: omega_types::events::ToolCallEvent,
     #[prop(optional_no_strip)] corr: Option<usize>,
 ) -> impl IntoView {
-    let time_pill = format_time(&event.time, &current_agent_tz());
+    let time_iso = event.time.clone();
+    let time_pill = format_time(&time_iso, &current_agent_tz());
 
     view! {
         <div class="block-label-row" data-testid="leptos-tool-call">
             {corr.map(|n| view! { <span class="corr-badge">{n}</span> })}
             <span class="block-label">{LABEL_TOOL_CALL}</span>
-            <span class="block-timestamp-pill">{time_pill}</span>
+            <TimestampChip iso=time_iso display=time_pill pill=true />
         </div>
     }
 }
@@ -1114,7 +1194,8 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
     );
 
     // Clone the event for the context modal; the payload text is moved.
-    let time_pill = format_time(&event.time, &current_agent_tz());
+    let time_iso = event.time.clone();
+    let time_pill = format_time(&time_iso, &current_agent_tz());
     let event_for_ctx = event;
 
     view! {
@@ -1135,7 +1216,7 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
             >
                 "payload"
             </button>
-            <span class="block-timestamp-pill">{time_pill}</span>
+            <TimestampChip iso=time_iso display=time_pill pill=true />
         </div>
     }
 }
@@ -1166,7 +1247,8 @@ fn ToolResultBlock(
     let preview = truncate_preview(&full, 2, 300).unwrap_or_else(|| full.clone());
     let modal_title = format!("{name}  ·  {}ms", event.duration_ms);
     let full_for_modal = full;
-    let time_pill = format_time(&event.time, &current_agent_tz());
+    let time_iso = event.time.clone();
+    let time_pill = format_time(&time_iso, &current_agent_tz());
 
     view! {
         <div data-testid="leptos-tool-result-payload">
@@ -1182,7 +1264,7 @@ fn ToolResultBlock(
                 >
                     "output"
                 </button>
-                <span class="block-timestamp-pill">{time_pill}</span>
+                <TimestampChip iso=time_iso display=time_pill pill=true />
             </div>
             <pre class="block-body" data-testid="leptos-tool-result-body">{preview}</pre>
         </div>

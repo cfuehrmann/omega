@@ -3,4 +3,4 @@ source: tests/snapshots.rs
 expression: html
 ---
 <div data-testid="leptos-event-block" data-event-type="text_block" data-event-kind="assistant" class="block block-assistant"><span class="block-label">assistant</span><div data-testid="leptos-assistant-text"><div data-testid="md-body" class="block-body md-body"><p>hello &lt;script&gt;alert(1)&lt;/script&gt;</p>
-</div></div><span class="block-timestamp">00:00:01.000</span></div>
+</div></div><button title="Click to copy: 2025-01-01T00:00:01.000Z" class="block-timestamp">00:00:01.000</button></div>

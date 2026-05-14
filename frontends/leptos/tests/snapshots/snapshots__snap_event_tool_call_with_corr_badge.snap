@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="tool_call" data-event-kind="tool_call" class="block block-tool-call"><div data-testid="leptos-tool-call" class="block-label-row"><span class="corr-badge">2</span><span class="block-label">tool call</span><span class="block-timestamp-pill">00:00:02.000</span></div><!></div>
+<div data-testid="leptos-event-block" data-event-type="tool_call" data-event-kind="tool_call" class="block block-tool-call"><div data-testid="leptos-tool-call" class="block-label-row"><span class="corr-badge">2</span><span class="block-label">tool call</span><button title="Click to copy: 2025-01-01T00:00:02.000Z" class="block-timestamp-pill">00:00:02.000</button></div><!></div>

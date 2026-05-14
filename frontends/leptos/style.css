@@ -1525,8 +1525,8 @@ main > h1 {
  *                            llm_response_ended, tool_call, tool_result,
  *                            thinking_block, tool_use_block).
  *
- * Both are non-interactive (cursor: default, pointer-events: none) and
- * fade in on .block:hover. */
+ * Both become interactive (cursor: pointer, button-style hover) when the
+ * parent block is hovered, and fade in from opacity 0 on .block:hover. */
 .block-timestamp,
 .block-timestamp-pill {
   border: 1px solid var(--ctp-surface2);
@@ -1541,11 +1541,20 @@ main > h1 {
   cursor: default;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, border-color 0.1s, color 0.1s;
 }
 .block:hover .block-timestamp,
 .block:hover .block-timestamp-pill {
   opacity: 0.8;
+  cursor: pointer;
+  pointer-events: auto;
+}
+/* Chip-level hover — same activation style as .block-label-row-btn. */
+.block:hover .block-timestamp:hover,
+.block:hover .block-timestamp-pill:hover {
+  opacity: 1;
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
 }
 .block-timestamp {
   position: absolute;
