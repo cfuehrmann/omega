@@ -53,7 +53,6 @@ use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
 use leptos::web_sys;
 
-use crate::composer::ComposerInsert;
 use crate::http::get_sessions;
 use crate::protocol::ClientFrame;
 use crate::sessions::{SessionListItem, SessionListStore, filter_sessions, is_active};
@@ -465,8 +464,6 @@ fn SessionRow(
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
-    let composer_insert = use_context::<ComposerInsert>().expect("ComposerInsert must be provided");
-
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
 
     // Draft text for the rename input.
@@ -606,20 +603,28 @@ fn SessionRow(
         picker_open.mark_swap_pending();
     };
 
-    let on_insert_at = move |_| {
+    let copied = RwSignal::new(false);
+    let on_insert_at = move |_: leptos::ev::MouseEvent| {
         let dir = dir_sv.get_value();
-        // Build the full relative path so the agent can locate the
-        // session on disk: `.omega/sessions/<dir>/`.
-        let path = format!(".omega/sessions/{}/", dir);
-        composer_insert.insert(path);
-        picker_open.close();
+        let path = format!("@.omega/sessions/{}/", dir);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast as _;
+            use wasm_bindgen::closure::Closure;
+            if let Some(win) = web_sys::window() {
+                let _ = win.navigator().clipboard().write_text(&path);
+                copied.set(true);
+                let cb = Closure::once(move || copied.set(false));
+                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.as_ref().unchecked_ref(),
+                    1500,
+                );
+                cb.forget();
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = &path;
     };
-
-    // True when *any* session is active — used to hide the @ path button
-    // when the picker is acting as a mandatory session-selection dialog (no
-    // active session means the composer/prompt is not usable, so inserting
-    // a path reference there makes no sense).
-    let has_any_session = move || active_dir.with(Option::is_some);
 
     let active = Memo::new(move |_| {
         let dir = dir_sv.get_value();
@@ -690,15 +695,13 @@ fn SessionRow(
                             "delete"
                         </button>
                     </Show>
-                    <Show when=has_any_session fallback=|| ()>
-                        <button
-                            data-testid="leptos-session-insert-at"
-                            title="Insert session path as @ reference in prompt"
-                            on:click=on_insert_at
-                        >
-                            "@ path"
-                        </button>
-                    </Show>
+                    <button
+                        data-testid="leptos-session-insert-at"
+                        title="Copy session @path to clipboard"
+                        on:click=on_insert_at
+                    >
+                        {move || if copied.get() { "✓" } else { "copy @path" }}
+                    </button>
                 </div>
             </Show>
         </li>

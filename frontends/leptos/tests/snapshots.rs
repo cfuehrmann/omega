@@ -738,7 +738,7 @@ fn snap_modal_open_loading() {
 
 mod composer_states {
     use super::*;
-    use omega_web::composer::{Composer, ComposerInsert};
+    use omega_web::composer::Composer;
     use omega_web::sessions::SessionListStore;
     use omega_web::store::SessionStore;
     use omega_web::ws::WsClient;
@@ -765,9 +765,6 @@ mod composer_states {
         provide_context(PickerOpen::new());
         // UsagePanelOpen is required by <Composer /> (Usage button).
         provide_context(UsagePanelOpen::new());
-        // ComposerInsert is now provided by App (not Composer itself) so
-        // that SessionRow can access it even when Composer is not rendered.
-        provide_context(ComposerInsert::new());
     }
 
     #[test]

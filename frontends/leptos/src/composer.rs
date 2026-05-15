@@ -65,9 +65,7 @@ use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
 
-use crate::completion::{
-    accept_completion, at_token_at_cursor, insert_item_text, next_highlight, selected_item,
-};
+use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
 use crate::event_view::current_status_label;
 use crate::http::get_files;
 use crate::picker::PickerOpen;
@@ -217,42 +215,6 @@ pub fn show_secondary_abort(turn_state: TurnState) -> bool {
 // Component
 // ---------------------------------------------------------------------------
 
-/// Shared signal for injecting text into the composer textarea from
-/// outside (e.g. the session picker's "@ path" button).
-///
-/// When set to `Some(item)` the Composer's Effect inserts `@item` at
-/// the current cursor position — using `accept_completion` if the
-/// cursor is already inside an `@`-token, otherwise inserting at the
-/// cursor with a leading space if needed. The signal is immediately
-/// reset to `None` after consumption.
-///
-/// Provided by the `Composer` component at mount; consumed by any
-/// component that holds a reference to the textarea (currently the
-/// session picker's `SessionRow`).
-#[derive(Debug, Clone, Copy)]
-pub struct ComposerInsert(pub RwSignal<Option<String>>);
-
-impl ComposerInsert {
-    /// Construct with no pending insert. Must run inside a leptos
-    /// reactive `Owner` scope.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(RwSignal::new(None))
-    }
-
-    /// Queue `item` for insertion as `@item` at the composer cursor.
-    #[mutants::skip]
-    pub fn insert(self, item: String) {
-        self.0.set(Some(item));
-    }
-}
-
-impl Default for ComposerInsert {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Top-level composer surface. Reads from `SessionStore` (turn_state,
 /// session_info) and `WsClient` (send) via context.
 /// Skipped from mutation testing: all mutations are in reactive signal
@@ -264,13 +226,6 @@ pub fn Composer() -> impl IntoView {
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
 
     let textarea_ref = NodeRef::<html::Textarea>::new();
-
-    // The inject-text context is now provided by `App` so that
-    // `SessionRow` (rendered inside `SessionPicker`, a sibling of
-    // `Composer`) can always access it — even when `Composer` itself
-    // is not rendered (no active session).
-    let composer_insert =
-        use_context::<ComposerInsert>().expect("ComposerInsert must be provided by App");
 
     // Draft text. The textarea is the canonical source of truth for
     // visible text via `prop:value`; we mirror it into `draft` for
@@ -615,39 +570,6 @@ pub fn Composer() -> impl IntoView {
             }
         }
     };
-
-    // ---- composer-insert Effect (from session picker "@ path" button) ------
-    // When `composer_insert` is set to `Some(item)`, insert `@item` at
-    // the current textarea cursor. If the cursor is inside an existing
-    // `@`-token, `accept_completion` replaces the token; otherwise the
-    // text is inserted raw at the cursor (with a leading space when
-    // the preceding character is not whitespace). The signal is cleared
-    // immediately so the Effect doesn't re-trigger.
-    Effect::new(move |_| {
-        let Some(item) = composer_insert.0.get() else {
-            return;
-        };
-        // Consume immediately to avoid re-triggering.
-        composer_insert.0.set(None);
-
-        let Some((text, _)) = read_textarea() else {
-            return;
-        };
-
-        // `insert_item_text` always appends at the end of the existing
-        // text, avoiding the stale / zero cursor that browsers report
-        // after the textarea loses focus when the picker button is clicked.
-        let (new_text, new_cursor) = insert_item_text(&text, &item);
-
-        set_textarea_state(new_text, new_cursor);
-
-        // Refocus the textarea so the user can continue typing.
-        spawn_local(async move {
-            if let Some(el) = textarea_ref.get_untracked() {
-                let _ = el.focus();
-            }
-        });
-    });
 
     // ---- view --------------------------------------------------------------
 

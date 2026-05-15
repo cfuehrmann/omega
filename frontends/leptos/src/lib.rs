@@ -10,9 +10,6 @@
 //!    ├── provide_context::<ContextModalState> (modal open/close)
 //!    ├── provide_context::<TextModalState>    (generic text overlay — 3.10)
 //!    ├── provide_context::<PickerOpen>        (picker open/close — 3.9)
-//!    ├── provide_context::<ComposerInsert>    (@ path inject — provided here so
-//!    │                                        SessionRow can use it even when
-//!    │                                        Composer is hidden)
 //!    ├── Effect: WsClient::new(url, conv, list).connect()
 //!    ├── SessionPicker     (3.2 + 3.5 resume button per row + 3.9 modal)
 //!    ├── ConversationFeed  (3.3 + 3.5 LlmCallBlock + 3.6 MarkdownBody)
@@ -51,7 +48,7 @@ pub mod ws;
 
 use leptos::prelude::*;
 
-use crate::composer::{Composer, ComposerInsert};
+use crate::composer::Composer;
 use crate::context_modal::{ContextModal, ContextModalState};
 use crate::dirty_modal::DirtyModal;
 use crate::feed::ConversationFeed;
@@ -80,14 +77,12 @@ pub fn App() -> impl IntoView {
     let text_modal_state = TextModalState::new();
     let picker_open = PickerOpen::new();
     let usage_panel_open = UsagePanelOpen::new();
-    let composer_insert = ComposerInsert::new();
     provide_context(store);
     provide_context(list_store);
     provide_context(modal_state);
     provide_context(text_modal_state);
     provide_context(picker_open);
     provide_context(usage_panel_open);
-    provide_context(composer_insert);
 
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {

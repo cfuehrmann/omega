@@ -797,7 +797,7 @@ main > h1 {
   position: absolute;
   top: 6px;
   right: 8px;
-  background: var(--ctp-surface1);
+  background: none;
   border: 1px solid var(--ctp-surface2);
   border-radius: 3px;
   color: var(--ctp-subtext0);
@@ -811,8 +811,8 @@ main > h1 {
 }
 .md-body pre:hover .code-copy-btn { opacity: 1; }
 .code-copy-btn:hover {
-  border-color: var(--ctp-subtext1);
-  color: var(--ctp-text);
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
 }
 
 /* ─────────────────────────────────────────────────────────────────
