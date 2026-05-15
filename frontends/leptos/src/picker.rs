@@ -700,7 +700,7 @@ fn SessionRow(
                         title="Copy session @path to clipboard"
                         on:click=on_insert_at
                     >
-                        {move || if copied.get() { "✓" } else { "copy @path" }}
+                        {move || if copied.get() { "copy @path ✓" } else { "copy @path" }}
                     </button>
                 </div>
             </Show>

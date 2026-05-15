@@ -46,7 +46,7 @@ function addCopyButton(parent, textToCopy) {
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     navigator.clipboard.writeText(textToCopy).then(() => {
-      btn.textContent = "✓";
+      btn.textContent = "copy ✓";
       setTimeout(() => { btn.textContent = "copy"; }, 1500);
     }).catch(() => {
       btn.textContent = "err";
