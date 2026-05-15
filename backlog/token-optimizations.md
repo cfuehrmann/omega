@@ -1,13 +1,17 @@
 # Token optimizations (non-tee follow-ups)
 
-*Status: backlog. Not blocked, not started. Tee-on-truncate
-(`backlog/tee-on-truncate.md`) is the first and largest win;
-these are the smaller follow-ups identified by the same audit
-(`backlog/tee-on-truncate-audit.md`).*
+*Status: **tee-on-truncate has shipped** (footer-always, all tools). Items
+below are now unblocked.*
+
+**Audit timing note (2026-05-16).** The re-audit has been deliberately
+deferred until more sessions accumulate — including upcoming Harbor/bench
+trials — so the measurement is representative. In the meantime **item 2
+(`\r`-progress stripping) has been promoted to the active work item**:
+it is self-evidently high-value regardless of the re-audit outcome
+(~3.2 M tokens / ~95 K bench) and does not require audit data to scope.
 
 Ordered by recommended priority. Each item is independent —
-they can be picked up one at a time, in any order, once
-tee-on-truncate has landed (or in parallel if someone wants).
+they can be picked up one at a time, in any order.
 
 ---
 
@@ -38,41 +42,35 @@ Pure local-development win.
 
 ---
 
-## 2. Strip `\r`-progress in `run_command` output
+## 2. Strip `\r`-progress in `run_command` output ✅ DONE
 
-**Symptom.** Progress bars and carriage-return-redrawn status
-lines (e.g. `\rRead 1M words\rRead 2M words\rRead 3M words…`)
-leak through verbatim, hugely inflating the byte count for
-zero information value — only the last frame matters.
+**Status.** Implemented in `output_cleaner.rs` (19 unit tests).
+Wired into `run_command` and `wait_for_output` before `cap_and_tee`.
+Gate green 2026-05-15.
 
-**Bytes affected.** ~3.2 M tokens local (ansi/progress class),
-~95 K bench. Tee-on-truncate alone won't fix this; the bytes
-that reach the LLM are still bloated.
+**Pipeline (three sequential byte-level passes):**
+1. CRLF normalise: `\r\n` → `\n` *(must run first — without this,
+   `apt-get`/`curl --verbose` content lines, which end with `\r\n`,
+   would be silently erased by step 2)*
+2. CR-collapse: per `\n`-line, keep only bytes after the last `\r`
+3. ANSI strip: remove CSI colour/cursor codes and OSC sequences
 
-**Fix.** In the `run_command` output path, post-process:
-collapse runs of `\r`-separated lines down to the last one
-before each `\n`. Strip bare ANSI escape sequences too
-(SGR colour codes, cursor moves).
-
-**Risk.** Some commands use `\r` semantically. Mitigate by
-making this a default-on flag with an opt-out, or scope it
-to known-noisy commands.
-
-**Effort.** Small — one regex pass on the output buffer.
+**Effect (from pre-implementation session analysis):**
+- Local: 160 / 9 581 results affected, modest savings (most `\r`
+  in local sessions comes from pre-commit hook output that is
+  large regardless)
+- Bench: 82 / 5 088 results affected, **55.9% byte reduction**
+  for `\r`-heavy outputs (fastText training, `apt-get` etc.)
+- OSC hyperlink sequences: **zero** occurrences found across all
+  14 000+ results — no risk there
 
 ---
 
-## 3. Cap `wait_for_output` output
+## 3. ~~Cap `wait_for_output` output~~ — **DONE**
 
-**Symptom.** `wait_for_output` is uncapped. Single calls
-returned 1.1 MB locally and ~97.8 KB repeatedly in benchmark
-(`cargo mutants`, `fasttext` training, `CompCert` proof builds).
-
-**Fix.** Apply the same `cap_and_tee` helper from
-tee-on-truncate to `wait_for_output`. **This is already
-listed in the tee-on-truncate implementation order**, so it
-will be handled there — listed here only so the audit
-backlog is complete.
+`wait_for_output` now uses `cap_and_tee` with the same 100 KB cap and
+footer-always behaviour as `run_command`. Delivered as part of the
+tee-on-truncate implementation.
 
 ---
 

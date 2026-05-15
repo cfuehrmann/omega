@@ -14,6 +14,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::cap_and_tee::{TruncationBias, cap_and_tee};
+use crate::output_cleaner::clean_output;
 use crate::state::processes;
 use crate::tool_ctx::ToolCtx;
 
@@ -152,14 +153,10 @@ async fn done(
 ) -> Result<String, String> {
     let log_path = make_wait_log_path(ctx, pid);
 
-    let capped = cap_and_tee(
-        output.as_bytes(),
-        OUTPUT_CAP,
-        TruncationBias::Tail,
-        &log_path,
-    )
-    .await
-    .map_err(|e| format!("wait_for_output: failed to write snapshot: {e}"))?;
+    let cleaned = clean_output(output.as_bytes());
+    let capped = cap_and_tee(&cleaned, OUTPUT_CAP, TruncationBias::Tail, &log_path)
+        .await
+        .map_err(|e| format!("wait_for_output: failed to write snapshot: {e}"))?;
 
     let mut v = serde_json::json!({
         "output":          capped.body,

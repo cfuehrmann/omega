@@ -21,6 +21,7 @@ use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::cap_and_tee::{TruncationBias, cap_and_tee};
+use crate::output_cleaner::clean_output;
 use crate::tool_ctx::ToolCtx;
 
 /// LLM-facing cap: maximum bytes returned in the tool result.
@@ -218,6 +219,10 @@ pub async fn execute(
     if combined.trim_ascii().is_empty() {
         return Ok("(no output)".to_string());
     }
+
+    // Clean terminal noise (CR-overwrite progress bars, ANSI escapes) before
+    // the buffer is shown to the LLM or written to the tee log.
+    let combined = clean_output(&combined);
 
     // Resolve the tee log path.
     let log_path = make_run_log_path(ctx, command);

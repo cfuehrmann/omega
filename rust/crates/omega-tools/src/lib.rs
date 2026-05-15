@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 mod cap_and_tee;
 mod format;
+mod output_cleaner;
 mod schemas;
 mod state;
 mod tool_ctx;

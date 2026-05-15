@@ -54,6 +54,24 @@ safety. **Depends on HASH-1.**
 
 ---
 
+### TOKEN — Token-efficiency follow-ups
+
+**[backlog/token-optimizations.md](backlog/token-optimizations.md)**
+
+Tee-on-truncate (footer-always) has shipped across all tools.
+Audit deferred until more sessions (incl. Harbor) accumulate.
+**Active work item: item 2 — strip `\r`-progress / ANSI escapes in
+`run_command` output** (~3.2 M tokens local, ~95 K bench).
+
+Remaining backlog (post-audit):
+1. Investigate `git add` 8.6 MB anomaly (pre-commit hook chatter)
+4. Prompt nudge against full reads of large planning docs
+5. Reduce shell-util usage in favour of native tools
+
+(Item 3 — cap `wait_for_output` — is already done.)
+
+---
+
 ## P3 — Low priority / deferred
 
 ### Advisor tool — blocked on `clear_tool_uses` compatibility
