@@ -1,3 +1,10 @@
+#![allow(
+    clippy::match_wildcard_for_single_variants, // defensive wildcards in test matches
+    clippy::filter_next, // .filter().next() reads as the intent in tests
+    clippy::cast_possible_wrap, // usize→i64 is safe in test sizes
+    clippy::collapsible_if, // nested if-let reads more clearly than let-chains here
+)]
+
 //! Carve-out tests for genuinely agent-internal behaviour that is
 //! awkward to provoke through a real LLM HTTP/SSE script.
 //!

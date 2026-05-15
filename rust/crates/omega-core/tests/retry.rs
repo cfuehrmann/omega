@@ -487,9 +487,8 @@ async fn flaky_listener(success_response: Vec<u8>) -> SocketAddr {
     let resp = Arc::new(success_response);
     tokio::spawn(async move {
         loop {
-            let (mut stream, _) = match listener.accept().await {
-                Ok(c) => c,
-                Err(_) => return,
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
             };
             let n = count.fetch_add(1, Ordering::SeqCst);
             let resp = resp.clone();

@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)] // test-only docs reference project types liberally
+
 //! Integration tests for `OllamaProvider`.
 //!
 //! Stands up a `wiremock` server that emits NDJSON chunks shaped like

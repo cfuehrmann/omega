@@ -1,3 +1,7 @@
+// Test-doc identifiers (TextModal, ContextModal, DirtyModal, tool_result, etc.)
+// describe UI components and JSON fields; backticking every one is noise here.
+#![allow(clippy::doc_markdown)]
+
 //! Esc-key dismissal tests for every closable modal in the UI.
 //!
 //! ## Session picker (GREEN — already implemented)

@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::clone_on_copy,
+    clippy::single_char_add_str,
+    clippy::doc_markdown
+)]
+
 //! Integration tests for `ContextStore` and `ContextHash` — real file I/O
 //! via temp directories.
 

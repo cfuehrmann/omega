@@ -211,6 +211,12 @@ fn is_utf8_continuation(b: u8) -> bool {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::single_char_pattern
+)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -242,7 +248,7 @@ mod tests {
             "body: {}",
             out.body
         );
-        assert!(out.body.ends_with("]"), "body: {}", out.body);
+        assert!(out.body.ends_with(']'), "body: {}", out.body);
         assert_eq!(out.total_bytes, 11);
     }
 

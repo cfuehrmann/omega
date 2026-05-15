@@ -1,3 +1,13 @@
+// Test-idiomatic lints we opt out of in this file:
+//   items_after_statements: helper `fn`s declared mid-test for locality
+//   too_many_lines: long fixture tables (event variants, SSE traces)
+//   match_wildcard_for_single_variants: defensive wildcards in `match`
+#![allow(
+    clippy::items_after_statements,
+    clippy::too_many_lines,
+    clippy::match_wildcard_for_single_variants
+)]
+
 //! Integration tests for `AnthropicProvider`.
 //!
 //! These tests stand up a `wiremock` server that speaks the Anthropic

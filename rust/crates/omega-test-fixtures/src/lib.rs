@@ -572,7 +572,7 @@ mod tests {
     /// This default IS production behaviour: it's the serde default for
     /// `MockResponse::Text` deserialisation. JS-side test fixtures (and
     /// any humans hand-writing scripts) rely on `{kind:"text",text:"x"}`
-    /// roundtripping with input_tokens=10 / output_tokens=5 \u2014 the
+    /// roundtripping with `input_tokens=10` / `output_tokens=5` \u2014 the
     /// CLI's stderr snapshots assert on those exact numbers.
     #[test]
     fn mock_response_text_uses_token_defaults_on_deserialize() {
@@ -615,10 +615,10 @@ mod tests {
     /// whether a single-block content array gets unwrapped to a plain
     /// string (when block.type == "text") or JSON-stringified (otherwise).
     /// Mutating `==` to `!=` flips the rule: text blocks would get
-    /// JSON-stringified, and tool_use blocks would attempt the text-block
+    /// JSON-stringified, and `tool_use` blocks would attempt the text-block
     /// shortcut and fall through to the JSON branch anyway. The
     /// observable difference is exactly what the test below asserts:
-    /// a tool_use single-block array must JSON-stringify, and a text
+    /// a `tool_use` single-block array must JSON-stringify, and a text
     /// single-block array must unwrap to its raw text.
     #[test]
     fn project_message_distinguishes_text_block_from_tool_use_block() {

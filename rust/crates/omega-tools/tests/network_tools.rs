@@ -1,3 +1,8 @@
+#![allow(
+    clippy::doc_markdown, // test-only docs reference tool names
+    clippy::map_unwrap_or, // .map().unwrap_or() reads more clearly than .map_or() in tests
+)]
+
 //! Integration tests for the network tools: web_search, fetch_url.
 //!
 //! `web_search` is skipped unless `BRAVE_SEARCH_API_KEY` is set.

@@ -1,3 +1,8 @@
+#![allow(
+    clippy::doc_markdown, // test-only docs reference tool names
+    clippy::format_collect, // (0..N).map(|i| format!("...{i}\n")).collect::<String>() is clearer in tests
+)]
+
 //! Integration tests for the file-system tools:
 //! read_file, write_file, edit_file, list_files, grep_files, find_files.
 //!

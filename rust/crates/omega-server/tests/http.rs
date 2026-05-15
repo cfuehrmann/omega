@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 //! Integration tests for the omega-server HTTP API.
 //!
 //! Phase 1e.1: tests cover the `/api/sessions` GET and POST endpoints,

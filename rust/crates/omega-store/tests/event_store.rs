@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 //! Integration tests for `EventStore` — real file I/O via temp directories.
 
 use omega_store::EventStore;

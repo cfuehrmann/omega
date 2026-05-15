@@ -217,6 +217,7 @@ against the spec.",
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)] // unwrap/expect are idiomatic in tests
 mod tests {
     use super::*;
 

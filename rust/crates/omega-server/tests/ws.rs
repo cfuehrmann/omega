@@ -1,3 +1,9 @@
+#![allow(
+    clippy::similar_names,
+    clippy::uninlined_format_args,
+    clippy::redundant_closure_for_method_calls
+)]
+
 //! Integration tests for the `/ws` WebSocket route (Phase 1e.2 + 1e.3).
 //!
 //! Each test:

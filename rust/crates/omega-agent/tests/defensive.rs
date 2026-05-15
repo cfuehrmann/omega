@@ -1,3 +1,8 @@
+#![allow(
+    clippy::unnecessary_wraps, // test fixture fns return Result for uniform `?` use in tests
+    clippy::double_ended_iterator_last, // .last() is fine in tests
+)]
+
 //! SCHEMA-8 Phase 6 defensive tests (T1–T3, item 53).
 //!
 //! Each test exercises a specific slot-assembly / persistence contract

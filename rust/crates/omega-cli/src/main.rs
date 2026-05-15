@@ -325,6 +325,7 @@ fn git_has_pending_changes(cwd: &std::path::Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     use super::git_has_pending_changes;
     use std::process::Command;
 

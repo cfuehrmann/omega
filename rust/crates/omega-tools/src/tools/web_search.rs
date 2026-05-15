@@ -105,6 +105,7 @@ fn render_results(data: &Value) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::{MAX_OUTPUT_CHARS, check_status, render_results};
     use serde_json::json;

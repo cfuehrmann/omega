@@ -45,7 +45,7 @@ const T: &str = "2024-01-15T12:00:00.000Z";
 /// An example context hash (12 hex chars = 6 bytes of random).
 const HASH: &str = "deadbeefcafe1234";
 
-/// The shared id for the correlated ToolCall / ToolResult triple.
+/// The shared id for the correlated `ToolCall` / `ToolResult` triple.
 const CORR_ID: &str = "toolu_ref_01";
 
 // ---------------------------------------------------------------------------
@@ -56,6 +56,7 @@ const CORR_ID: &str = "toolu_ref_01";
 ///
 /// The correlated pair (positions 6–7) uses the same `id` to demonstrate
 /// id propagation.  Every other value is illustrative but realistic.
+#[allow(clippy::too_many_lines)] // test fixture: 26 event variants, one per arm
 fn all_26_events() -> Vec<OmegaEvent> {
     vec![
         // 1. SessionStarted

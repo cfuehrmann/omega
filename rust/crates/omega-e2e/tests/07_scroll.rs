@@ -1,3 +1,6 @@
+#![allow(clippy::format_collect)]
+// (0..N).map(|i| format!("...{i}\n")).collect::<String>() is clearer in tests
+
 // Phase WEB-1 — scroll-tailing + jump-to-bottom button e2e test.
 //
 // State-machine covered:
@@ -16,7 +19,6 @@
 // without updating `prog_state`.  Chromium 148+ deferred that scroll event
 // as a macrotask; new streaming content arrived before the event fired,
 // making `should_autoscroll` return false and silently killing tailing.
-
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -476,9 +478,10 @@ async fn tailing_survives_rapid_streaming_after_button_click() {
             grace_start = None;
         }
 
-        if poll_start.elapsed() > Duration::from_secs(10) {
-            panic!("second turn_end never landed within 10 s");
-        }
+        assert!(
+            poll_start.elapsed() <= Duration::from_secs(10),
+            "second turn_end never landed within 10 s",
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }

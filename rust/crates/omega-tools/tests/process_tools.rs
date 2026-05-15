@@ -1,3 +1,11 @@
+#![allow(
+    clippy::doc_markdown, // test-only docs reference tool names
+    clippy::redundant_closure_for_method_calls, // .filter_map(|e| e.ok()) reads more clearly than .filter_map(Result::ok) for readers unfamiliar with iterator UFCS
+    clippy::collapsible_if, // nested if-let chains read more clearly than let-chains here
+    clippy::cast_possible_truncation, // PID values fit in u32 by construction on Linux
+    clippy::map_unwrap_or, // .map().unwrap_or(false) reads more clearly than .is_some_and() for one-shot test checks
+)]
+
 //! Integration tests for the process tools:
 //! run_command, run_background, wait_for_output, write_stdin.
 
