@@ -567,8 +567,14 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn tool_use_block_start_round_trips() {
-        match parse(r#"{"type":"tool_use_block_start","index":3,"tool_use_id":"tu_1","name":"bash"}"#) {
-            WsMessage::ToolUseBlockStart { index, tool_use_id, name } => {
+        match parse(
+            r#"{"type":"tool_use_block_start","index":3,"tool_use_id":"tu_1","name":"bash"}"#,
+        ) {
+            WsMessage::ToolUseBlockStart {
+                index,
+                tool_use_id,
+                name,
+            } => {
                 assert_eq!(index, 3);
                 assert_eq!(tool_use_id, "tu_1");
                 assert_eq!(name, "bash");

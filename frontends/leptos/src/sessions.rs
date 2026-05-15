@@ -512,7 +512,10 @@ mod tests {
             s.set_sessions(before.clone());
             s.apply(&WsMessage::Ready);
             s.apply(&WsMessage::ResetDone);
-            s.apply(&WsMessage::Text { index: 0, text: "x".into() });
+            s.apply(&WsMessage::Text {
+                index: 0,
+                text: "x".into(),
+            });
             assert_eq!(s.snapshot().sessions, before);
         });
     }
@@ -646,7 +649,10 @@ mod tests {
                 name: "alpha".into(),
             });
             let after = s.fetch_generation.get_untracked();
-            assert!(after > before, "rename must bump generation: {before} -> {after}");
+            assert!(
+                after > before,
+                "rename must bump generation: {before} -> {after}"
+            );
         });
     }
 
@@ -660,7 +666,10 @@ mod tests {
                 session_dir: "a".into(),
             });
             let after = s.fetch_generation.get_untracked();
-            assert!(after > before, "delete must bump generation: {before} -> {after}");
+            assert!(
+                after > before,
+                "delete must bump generation: {before} -> {after}"
+            );
         });
     }
 
@@ -731,10 +740,7 @@ mod tests {
         // "s" matching after "-" gets a boundary bonus; matching elsewhere does not.
         let boundary = fuzzy_score("my-session", "s").unwrap();
         let mid = fuzzy_score("boss", "s").unwrap();
-        assert!(
-            boundary > mid,
-            "boundary={boundary} mid={mid}"
-        );
+        assert!(boundary > mid, "boundary={boundary} mid={mid}");
     }
 
     #[wasm_bindgen_test]

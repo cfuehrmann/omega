@@ -471,8 +471,8 @@ fn TimestampChip(
         // Copy the raw UTC ISO string to the clipboard.
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::closure::Closure;
             use wasm_bindgen::JsCast as _;
+            use wasm_bindgen::closure::Closure;
             if let Some(win) = web_sys::window() {
                 let _ = win.navigator().clipboard().write_text(&iso_click);
                 // Schedule checkmark removal after 1500 ms.
@@ -1067,10 +1067,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
     // label and added visual clutter.
     let usage_line = format!(
         "in: {}  out: {}  cache_read: {}  cache_write: {}",
-        event.usage.input_tokens,
-        event.usage.output_tokens,
-        cache_read,
-        cache_write,
+        event.usage.input_tokens, event.usage.output_tokens, cache_read, cache_write,
     );
 
     let event_json = serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_owned());
@@ -1552,9 +1549,15 @@ mod tests {
         owner.with(|| {
             let expanded = RwSignal::new(false);
             expanded.update(|v| *v = !*v);
-            assert!(expanded.get_untracked(), "toggle must be true after one flip");
+            assert!(
+                expanded.get_untracked(),
+                "toggle must be true after one flip"
+            );
             expanded.update(|v| *v = !*v);
-            assert!(!expanded.get_untracked(), "toggle must be false after two flips");
+            assert!(
+                !expanded.get_untracked(),
+                "toggle must be false after two flips"
+            );
         });
     }
 

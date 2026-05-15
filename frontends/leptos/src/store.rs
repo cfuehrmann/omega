@@ -286,7 +286,11 @@ impl SessionStore {
                 });
             }
 
-            WsMessage::ToolUseBlockStart { index, tool_use_id, name } => {
+            WsMessage::ToolUseBlockStart {
+                index,
+                tool_use_id,
+                name,
+            } => {
                 // Insert a fresh slot.  If a slot already exists at this
                 // index (shouldn't happen on a well-behaved server) we
                 // overwrite it so the UI stays consistent.

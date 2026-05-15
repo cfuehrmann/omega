@@ -41,6 +41,7 @@ wasm-setup:
 [private]
 _rust-checks:
     cd rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+    cd frontends/leptos && cargo fmt --check
     cargo machete
 
 # Build mock server + run browser tests. Assumes dist/ is already built.

@@ -121,11 +121,7 @@ pub fn render_content(content: &serde_json::Value) -> String {
         return s.to_owned();
     }
     if let Some(arr) = content.as_array() {
-        return arr
-            .iter()
-            .map(render_block)
-            .collect::<Vec<_>>()
-            .join("\n");
+        return arr.iter().map(render_block).collect::<Vec<_>>().join("\n");
     }
     serde_json::to_string_pretty(content).unwrap_or_else(|_| "<unrenderable content>".into())
 }
@@ -177,10 +173,7 @@ pub fn render_block(block: &serde_json::Value) -> String {
                             el.get("text")
                                 .and_then(serde_json::Value::as_str)
                                 .map_or_else(
-                                    || {
-                                        serde_json::to_string(el)
-                                            .unwrap_or_else(|_| String::new())
-                                    },
+                                    || serde_json::to_string(el).unwrap_or_else(|_| String::new()),
                                     str::to_owned,
                                 )
                         })
@@ -869,7 +862,9 @@ mod tests {
         with_owner(|| {
             let s = ContextModalState::new();
             s.open_hash("deadbeef12340000".into());
-            let ev = s.0.get_untracked().expect("modal should be open after open_hash");
+            let ev =
+                s.0.get_untracked()
+                    .expect("modal should be open after open_hash");
             assert_eq!(ev.context_hashes, vec!["deadbeef12340000".to_string()]);
         });
     }

@@ -120,11 +120,13 @@ pub fn App() -> impl IntoView {
     // feed; only the first-time / post-server-restart case opens
     // the picker automatically.
     Effect::new(move |_| {
-        if should_auto_open_picker(store.connected.get(), store.session_info.with(Option::is_none)) {
+        if should_auto_open_picker(
+            store.connected.get(),
+            store.session_info.with(Option::is_none),
+        ) {
             picker_open.open();
         }
     });
-
 
     view! {
         // `data-connected` — WS connected flag (Playwright: wait for WS ready).
@@ -222,7 +224,6 @@ mod tests {
         assert!(!should_auto_open_picker(true, false));
         assert!(!should_auto_open_picker(false, false));
     }
-
 }
 
 #[component]
@@ -239,8 +240,7 @@ fn DebugView() -> impl IntoView {
         store.streaming_thinking.track();
         store.transport_errors.track();
         let snap = store.snapshot();
-        serde_json::to_string_pretty(&snap)
-            .unwrap_or_else(|e| format!("<serialise error: {e}>"))
+        serde_json::to_string_pretty(&snap).unwrap_or_else(|e| format!("<serialise error: {e}>"))
     };
 
     view! {

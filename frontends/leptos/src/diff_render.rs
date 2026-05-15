@@ -317,9 +317,6 @@ mod tests {
     fn render_diff_html_just_newline() {
         // Single `\n` \u2014 `split` gives `["", ""]`; trailing empty
         // dropped \u2014 leaves one empty ctx span.
-        assert_eq!(
-            render_diff_html("\n"),
-            "<span class=\"diff-ctx\"></span>"
-        );
+        assert_eq!(render_diff_html("\n"), "<span class=\"diff-ctx\"></span>");
     }
 }

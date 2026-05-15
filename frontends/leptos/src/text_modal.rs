@@ -57,8 +57,7 @@ impl Default for TextModalState {
 /// `provide_context`).
 #[component]
 pub fn TextModal() -> impl IntoView {
-    let state =
-        use_context::<TextModalState>().expect("TextModalState must be provided");
+    let state = use_context::<TextModalState>().expect("TextModalState must be provided");
     let on_close = move |_: leptos::ev::MouseEvent| state.close();
 
     // Focusable backdrop: auto-focused on mount so Esc reaches the

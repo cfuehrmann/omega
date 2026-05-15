@@ -65,7 +65,9 @@ use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
 
-use crate::completion::{accept_completion, at_token_at_cursor, insert_item_text, next_highlight, selected_item};
+use crate::completion::{
+    accept_completion, at_token_at_cursor, insert_item_text, next_highlight, selected_item,
+};
 use crate::event_view::current_status_label;
 use crate::http::get_files;
 use crate::picker::PickerOpen;
@@ -267,8 +269,8 @@ pub fn Composer() -> impl IntoView {
     // `SessionRow` (rendered inside `SessionPicker`, a sibling of
     // `Composer`) can always access it — even when `Composer` itself
     // is not rendered (no active session).
-    let composer_insert = use_context::<ComposerInsert>()
-        .expect("ComposerInsert must be provided by App");
+    let composer_insert =
+        use_context::<ComposerInsert>().expect("ComposerInsert must be provided by App");
 
     // Draft text. The textarea is the canonical source of truth for
     // visible text via `prop:value`; we mirror it into `draft` for
@@ -297,7 +299,8 @@ pub fn Composer() -> impl IntoView {
 
     // Primary action derived from turn state + pre_committed — mutation-testable
     // projections live in `composer_action`.
-    let action = Memo::new(move |_| composer_action(store.turn_state.get(), store.pre_committed.get()));
+    let action =
+        Memo::new(move |_| composer_action(store.turn_state.get(), store.pre_committed.get()));
 
     #[allow(unused_variables)]
     let close_completion = move || {
@@ -476,7 +479,11 @@ pub fn Composer() -> impl IntoView {
             let pc = store.pre_committed.get_untracked();
             if prev == TurnState::PauseRequested && current == TurnState::Paused && pc {
                 let typed = draft.get_untracked();
-                let content = if typed.trim().is_empty() { None } else { Some(typed) };
+                let content = if typed.trim().is_empty() {
+                    None
+                } else {
+                    Some(typed)
+                };
                 let had_content = content.is_some();
                 if ws.send(&ClientFrame::Continue { content }).is_ok() && had_content {
                     draft.set(String::new());
@@ -780,11 +787,7 @@ where
 }
 
 #[component]
-fn EffortSelect<F>(
-    active: Memo<String>,
-    active_model: Memo<String>,
-    on_change: F,
-) -> impl IntoView
+fn EffortSelect<F>(active: Memo<String>, active_model: Memo<String>, on_change: F) -> impl IntoView
 where
     F: Fn(String) + Copy + 'static,
 {
@@ -920,12 +923,7 @@ fn StatusChip() -> impl IntoView {
         let text_active = store.streaming_text.with(|m| !m.is_empty());
         let thinking_active = store.streaming_thinking.with(|m| !m.is_empty());
         store.events.with(|evs| {
-            current_status_label(
-                evs,
-                text_active,
-                thinking_active,
-                last_tool_name.as_deref(),
-            )
+            current_status_label(evs, text_active, thinking_active, last_tool_name.as_deref())
         })
     };
 
@@ -1015,12 +1013,18 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn composer_action_idle_is_send() {
-        assert_eq!(composer_action(TurnState::Idle, false), ComposerAction::Send);
+        assert_eq!(
+            composer_action(TurnState::Idle, false),
+            ComposerAction::Send
+        );
     }
 
     #[wasm_bindgen_test]
     fn composer_action_running_is_pause() {
-        assert_eq!(composer_action(TurnState::Running, false), ComposerAction::Pause);
+        assert_eq!(
+            composer_action(TurnState::Running, false),
+            ComposerAction::Pause
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1041,7 +1045,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn composer_action_paused_is_continue() {
-        assert_eq!(composer_action(TurnState::Paused, false), ComposerAction::Continue);
+        assert_eq!(
+            composer_action(TurnState::Paused, false),
+            ComposerAction::Continue
+        );
     }
 
     // ---- action_label / action_tag ----------------------------------------
@@ -1178,7 +1185,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn status_str_pausing_for_pause_requested_without_precommit() {
-        assert_eq!(status_str(true, TurnState::PauseRequested, false), "pausing");
+        assert_eq!(
+            status_str(true, TurnState::PauseRequested, false),
+            "pausing"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1218,7 +1228,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn status_label_pausing_will_continue() {
-        assert_eq!(status_label("pausing-will-continue"), "Pausing, will continue");
+        assert_eq!(
+            status_label("pausing-will-continue"),
+            "Pausing, will continue"
+        );
     }
 
     #[wasm_bindgen_test]

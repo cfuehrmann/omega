@@ -80,9 +80,9 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         // SCHEMA-8 additive variants. Block events surface as Assistant
         // content; lifecycle markers are Status. Phase 4 will give them
         // proper rendering / coalescing.
-        OmegaEvent::TextBlock(_)
-        | OmegaEvent::ThinkingBlock(_)
-        | OmegaEvent::ToolUseBlock(_) => EventKind::Assistant,
+        OmegaEvent::TextBlock(_) | OmegaEvent::ThinkingBlock(_) | OmegaEvent::ToolUseBlock(_) => {
+            EventKind::Assistant
+        }
         OmegaEvent::SessionStarted(_)
         | OmegaEvent::ServerStarted(_)
         | OmegaEvent::ServerStopped(_)
@@ -354,7 +354,11 @@ pub fn truncate_for_preview(s: &str, max_chars: usize) -> Option<String> {
 #[must_use]
 pub fn truncate_to_lines(s: &str, max_lines: usize) -> Option<String> {
     if max_lines == 0 {
-        return if s.is_empty() { None } else { Some(String::new()) };
+        return if s.is_empty() {
+            None
+        } else {
+            Some(String::new())
+        };
     }
     let mut count = 0usize;
     for (i, c) in s.char_indices() {
@@ -773,7 +777,12 @@ fn format_time_intl(iso: &str, tz: &str) -> Option<String> {
     Reflect::set(&opts, &"hour".into(), &JsValue::from_str("2-digit")).ok()?;
     Reflect::set(&opts, &"minute".into(), &JsValue::from_str("2-digit")).ok()?;
     Reflect::set(&opts, &"second".into(), &JsValue::from_str("2-digit")).ok()?;
-    Reflect::set(&opts, &"fractionalSecondDigits".into(), &JsValue::from(3_u32)).ok()?;
+    Reflect::set(
+        &opts,
+        &"fractionalSecondDigits".into(),
+        &JsValue::from(3_u32),
+    )
+    .ok()?;
 
     // `en-GB` gives a 24-hour clock with `:` separators and a `.` for
     // the fractional-second separator, matching the `HH:MM:SS.mmm`
@@ -800,13 +809,12 @@ mod tests {
 
     use omega_types::events::{
         AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
-        LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage,
-        LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
+        LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent,
+        LlmResponseUsage, LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
         ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
-        SessionResumedEvent, SessionStartedEvent, ToolCallEvent, ToolResultEvent,
-        ToolUseBlockEvent, TextBlockEvent, ThinkingBlockEvent, TransportErrorEvent,
-        TurnContinuedEvent, TurnEndEvent,
-        TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
+        SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent,
+        ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent,
+        TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
     use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
     use serde_json::json;
@@ -1530,7 +1538,10 @@ mod tests {
         // 4 short hard lines → virtual_line_count = 4 → NOT > 4 → no toggle.
         let s = "line one\nline two\nline three\nline four";
         assert_eq!(virtual_line_count(s, 80), 4);
-        assert!(!(virtual_line_count(s, 80) > 4), "4 lines should not show the toggle");
+        assert!(
+            !(virtual_line_count(s, 80) > 4),
+            "4 lines should not show the toggle"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1539,7 +1550,10 @@ mod tests {
         // 5 short hard lines → virtual_line_count = 5 → > 4 → toggle shown.
         let s = "line one\nline two\nline three\nline four\nline five";
         assert_eq!(virtual_line_count(s, 80), 5);
-        assert!(virtual_line_count(s, 80) > 4, "5 lines should show the toggle");
+        assert!(
+            virtual_line_count(s, 80) > 4,
+            "5 lines should show the toggle"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1548,7 +1562,10 @@ mod tests {
         // 320 chars → div_ceil(320, 80) = 4 virtual lines → NOT > 4 → no toggle.
         let s = "x".repeat(320);
         assert_eq!(virtual_line_count(&s, 80), 4);
-        assert!(!(virtual_line_count(&s, 80) > 4), "320-char line should not show the toggle");
+        assert!(
+            !(virtual_line_count(&s, 80) > 4),
+            "320-char line should not show the toggle"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1557,7 +1574,10 @@ mod tests {
         // 321 chars → div_ceil(321, 80) = 5 virtual lines → > 4 → toggle shown.
         let s = "x".repeat(321);
         assert_eq!(virtual_line_count(&s, 80), 5);
-        assert!(virtual_line_count(&s, 80) > 4, "321-char line should show the toggle");
+        assert!(
+            virtual_line_count(&s, 80) > 4,
+            "321-char line should show the toggle"
+        );
     }
 
     // ---- truncate_preview -------------------------------------------------
@@ -1603,7 +1623,12 @@ mod tests {
     fn truncate_preview_byte_limit_applied_after_line_limit() {
         // 3 long lines — line limit fires first (giving "xxx…\nyyy…"),
         // then byte limit fires on that result.
-        let s = format!("{0}\n{1}\n{2}", "x".repeat(50), "y".repeat(50), "z".repeat(50));
+        let s = format!(
+            "{0}\n{1}\n{2}",
+            "x".repeat(50),
+            "y".repeat(50),
+            "z".repeat(50)
+        );
         // max_lines=2 gives "xxx…\nyyy…" (101 bytes including \n).
         // max_bytes=20 then cuts that to the first 20 bytes.
         let r = truncate_preview(&s, 2, 20).expect("must truncate");
@@ -1702,10 +1727,7 @@ mod tests {
             make_tool_call("id2"),
             make_tool_result("id1"),
         ];
-        assert_eq!(
-            assign_tool_corr(&events),
-            vec![Some(1), Some(2), Some(1)],
-        );
+        assert_eq!(assign_tool_corr(&events), vec![Some(1), Some(2), Some(1)],);
     }
 
     #[wasm_bindgen_test]
@@ -1776,10 +1798,7 @@ mod tests {
             make_llm_call(),
             make_tool_result("id1"), // id1 was in the previous group
         ];
-        assert_eq!(
-            assign_tool_corr(&events),
-            vec![None, None, None],
-        );
+        assert_eq!(assign_tool_corr(&events), vec![None, None, None],);
     }
 
     // ---- ToolUseBlock correlation (SCHEMA-8 Phase 5e) -----------------
@@ -1825,10 +1844,7 @@ mod tests {
         // ToolUseBlock without a matching ToolCall (e.g. response was
         // discarded mid-flight before the agent dispatched the tool).
         // Counter stays at 0, suppression rule clears everything.
-        let events = vec![
-            make_tool_use_block("id1"),
-            make_tool_use_block("id2"),
-        ];
+        let events = vec![make_tool_use_block("id1"), make_tool_use_block("id2")];
         assert_eq!(assign_tool_corr(&events), vec![None, None]);
     }
 
@@ -1858,10 +1874,7 @@ mod tests {
             make_tool_call("id1"),
             make_tool_call("id2"),
         ];
-        assert_eq!(
-            assign_tool_corr(&events),
-            vec![Some(2), Some(1), Some(2)],
-        );
+        assert_eq!(assign_tool_corr(&events), vec![Some(2), Some(1), Some(2)],);
     }
 
     // ---- assign_partial_counts (SCHEMA-8 Phase 5g) --------------------
@@ -1952,24 +1965,22 @@ mod tests {
         let events = vec![
             make_llm_response_started(),
             make_text_block(true),
-            OmegaEvent::LlmResponseEnded(
-                omega_types::events::LlmResponseEndedEvent {
-                    time: "2024-01-01T00:00:00.000Z".into(),
-                    stop_reason: "end_turn".into(),
-                    cleared_tool_uses: None,
-                    cleared_input_tokens: None,
-                    usage: LlmResponseUsage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        cache_creation_input_tokens: None,
-                        cache_read_input_tokens: None,
-                        service_tier: None,
-                        iterations: None,
-                    },
-                    context_hash: "deadbeef".into(),
-                    response_summary: None,
+            OmegaEvent::LlmResponseEnded(omega_types::events::LlmResponseEndedEvent {
+                time: "2024-01-01T00:00:00.000Z".into(),
+                stop_reason: "end_turn".into(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                    iterations: None,
                 },
-            ),
+                context_hash: "deadbeef".into(),
+                response_summary: None,
+            }),
             make_llm_response_started(),
             make_text_block(true),
             make_thinking_block(true),
@@ -2007,10 +2018,7 @@ mod tests {
         // Discarded immediately after Started (no content streamed) → Some(0).
         // Operator can tell "network blip before any block" from
         // "discarded after N partials".
-        let events = vec![
-            make_llm_response_started(),
-            make_llm_response_discarded(),
-        ];
+        let events = vec![make_llm_response_started(), make_llm_response_discarded()];
         assert_eq!(assign_partial_counts(&events), vec![None, Some(0)]);
     }
 
@@ -2101,10 +2109,7 @@ mod tests {
     #[test]
     fn preview_write_stdin_basic() {
         let input = serde_json::json!({ "pid": 12, "text": "yes\n" });
-        assert_eq!(
-            tool_call_preview("write_stdin", &input),
-            "pid=12  yes\n",
-        );
+        assert_eq!(tool_call_preview("write_stdin", &input), "pid=12  yes\n",);
     }
 
     #[wasm_bindgen_test]
@@ -2159,10 +2164,7 @@ mod tests {
     #[test]
     fn preview_list_files_recursive() {
         let input = serde_json::json!({ "path": "src", "recursive": true });
-        assert_eq!(
-            tool_call_preview("list_files", &input),
-            "src  [recursive]",
-        );
+        assert_eq!(tool_call_preview("list_files", &input), "src  [recursive]",);
     }
 
     #[wasm_bindgen_test]
@@ -2231,10 +2233,7 @@ mod tests {
     #[test]
     fn preview_find_files_no_type() {
         let input = serde_json::json!({ "pattern": "*.toml", "path": "." });
-        assert_eq!(
-            tool_call_preview("find_files", &input),
-            "*.toml  in .",
-        );
+        assert_eq!(tool_call_preview("find_files", &input), "*.toml  in .",);
     }
 
     #[wasm_bindgen_test]
@@ -2283,8 +2282,14 @@ mod tests {
         let input = serde_json::json!({ "foo": "bar" });
         let result = tool_call_preview("my_custom_tool", &input);
         // Must contain the field name and value from the JSON.
-        assert!(result.contains("foo"), "fallback must include field name: {result}");
-        assert!(result.contains("bar"), "fallback must include field value: {result}");
+        assert!(
+            result.contains("foo"),
+            "fallback must include field name: {result}"
+        );
+        assert!(
+            result.contains("bar"),
+            "fallback must include field value: {result}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2296,13 +2301,19 @@ mod tests {
     fn format_time_extracts_hms() {
         // With tz="UTC" the Intl path renders the input verbatim as
         // `HH:MM:SS.mmm`, matching the host-target slice fallback.
-        assert_eq!(format_time("2025-01-15T12:34:56.789Z", "UTC"), "12:34:56.789");
+        assert_eq!(
+            format_time("2025-01-15T12:34:56.789Z", "UTC"),
+            "12:34:56.789"
+        );
     }
 
     #[wasm_bindgen_test]
     #[test]
     fn format_time_midnight() {
-        assert_eq!(format_time("2025-01-15T00:00:00.000Z", "UTC"), "00:00:00.000");
+        assert_eq!(
+            format_time("2025-01-15T00:00:00.000Z", "UTC"),
+            "00:00:00.000"
+        );
     }
 
     #[wasm_bindgen_test]

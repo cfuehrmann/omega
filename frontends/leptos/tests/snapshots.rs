@@ -481,7 +481,8 @@ fn snap_event_tool_use_block_with_toggle() {
 }
 
 #[test]
-fn snap_event_assistant_html_is_escaped() {    let html = render(|| {
+fn snap_event_assistant_html_is_escaped() {
+    let html = render(|| {
         let ev = ev_assistant("hello <script>alert(1)</script>");
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
@@ -581,10 +582,7 @@ fn snap_event_tool_use_block_with_corr_badge() {
     // via the same provider tool_use_id; the corr badge is rendered at
     // the start of the row alongside the modal-opening label.
     let html = render(|| {
-        let ev = ev_tool_use(
-            "run_command",
-            serde_json::json!({ "command": "ls -la" }),
-        );
+        let ev = ev_tool_use("run_command", serde_json::json!({ "command": "ls -la" }));
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
         view! { <EventBlock event=ev corr=Some(2) /> }

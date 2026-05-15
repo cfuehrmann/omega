@@ -18,8 +18,8 @@
 
 use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, MessageEvent, WebSocket, js_sys};
 
 use crate::protocol::{ClientFrame, WsMessage};

@@ -363,8 +363,7 @@ mod tests {
         // the token captured is `@tw` (start=18, prefix="tw"). The
         // replacement runs from start through cursor; everything from
         // cursor onward (` end`) is preserved.
-        let out =
-            accept_completion("first @one second @tw end", 21, "two.txt").expect("accept");
+        let out = accept_completion("first @one second @tw end", 21, "two.txt").expect("accept");
         assert_eq!(out.new_text, "first @one second @two.txt end");
         assert!(!out.drill_in);
     }

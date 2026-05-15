@@ -365,11 +365,12 @@ mod tests {
     #[wasm_bindgen_test]
     #[test]
     fn render_renders_table_and_strikethrough_together() {
-        let out = render_to_html(
-            "| col |\n|---|\n| ~~gone~~ |\n",
-        );
+        let out = render_to_html("| col |\n|---|\n| ~~gone~~ |\n");
         assert!(out.contains("<table>"), "missing <table> in output: {out}");
-        assert!(out.contains("<del>gone</del>"), "missing <del>gone</del> in output: {out}");
+        assert!(
+            out.contains("<del>gone</del>"),
+            "missing <del>gone</del> in output: {out}"
+        );
     }
 
     #[wasm_bindgen_test]

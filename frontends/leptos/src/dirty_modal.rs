@@ -63,8 +63,7 @@ pub fn retry_frame_for(intent: &PendingChangesIntent) -> ClientFrame {
 /// **Proceed** buttons.
 #[component]
 pub fn DirtyModal() -> impl IntoView {
-    let store =
-        use_context::<SessionStore>().expect("SessionStore must be provided");
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
 
     let on_cancel = move |_: leptos::ev::MouseEvent| {
@@ -182,7 +181,11 @@ mod tests {
         };
         let frame = retry_frame_for(&intent);
         match frame {
-            ClientFrame::Reset { model, effort, allow_dirty } => {
+            ClientFrame::Reset {
+                model,
+                effort,
+                allow_dirty,
+            } => {
                 assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
                 assert_eq!(effort.as_deref(), Some("high"));
                 assert!(allow_dirty);
@@ -193,10 +196,17 @@ mod tests {
 
     #[test]
     fn retry_frame_for_reset_with_no_model_or_effort_still_sets_allow_dirty() {
-        let intent = PendingChangesIntent::Reset { model: None, effort: None };
+        let intent = PendingChangesIntent::Reset {
+            model: None,
+            effort: None,
+        };
         let frame = retry_frame_for(&intent);
         match frame {
-            ClientFrame::Reset { model, effort, allow_dirty } => {
+            ClientFrame::Reset {
+                model,
+                effort,
+                allow_dirty,
+            } => {
                 assert!(model.is_none());
                 assert!(effort.is_none());
                 assert!(allow_dirty);
@@ -212,7 +222,10 @@ mod tests {
         };
         let frame = retry_frame_for(&intent);
         match frame {
-            ClientFrame::ResumeSession { session_dir, allow_dirty } => {
+            ClientFrame::ResumeSession {
+                session_dir,
+                allow_dirty,
+            } => {
                 assert_eq!(session_dir, "session-abc");
                 assert!(allow_dirty);
             }
@@ -222,7 +235,10 @@ mod tests {
 
     #[test]
     fn retry_frame_for_reset_serialises_with_allow_dirty_true_on_wire() {
-        let intent = PendingChangesIntent::Reset { model: None, effort: None };
+        let intent = PendingChangesIntent::Reset {
+            model: None,
+            effort: None,
+        };
         let frame = retry_frame_for(&intent);
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"reset","allowDirty":true}"#);

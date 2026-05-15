@@ -53,8 +53,8 @@ use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
 use leptos::web_sys;
 
-use crate::http::get_sessions;
 use crate::composer::ComposerInsert;
+use crate::http::get_sessions;
 use crate::protocol::ClientFrame;
 use crate::sessions::{SessionListItem, SessionListStore, filter_sessions, is_active};
 use crate::store::SessionStore;
@@ -316,8 +316,7 @@ pub fn SessionPicker() -> impl IntoView {
 
     // Stop propagation so clicking inside the panel doesn't bubble
     // up to the backdrop and close the picker.
-    let stop_propagation =
-        move |evt: leptos::ev::MouseEvent| evt.stop_propagation();
+    let stop_propagation = move |evt: leptos::ev::MouseEvent| evt.stop_propagation();
 
     view! {
         <Show when=move || picker_open.open.get() fallback=|| ()>
@@ -466,8 +465,7 @@ fn SessionRow(
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
-    let composer_insert =
-        use_context::<ComposerInsert>().expect("ComposerInsert must be provided");
+    let composer_insert = use_context::<ComposerInsert>().expect("ComposerInsert must be provided");
 
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
 
@@ -570,7 +568,10 @@ fn SessionRow(
     let on_delete = move |_| {
         let dir = dir_sv.get_value();
         let confirmed = web_sys::window()
-            .and_then(|w| w.confirm_with_message(&format!("Delete session {dir}?")).ok())
+            .and_then(|w| {
+                w.confirm_with_message(&format!("Delete session {dir}?"))
+                    .ok()
+            })
             .unwrap_or(false);
         if !confirmed {
             return;
@@ -594,7 +595,10 @@ fn SessionRow(
     // `on_new_click` for the rationale.
     let on_resume = move |_| {
         let dir = dir_sv.get_value();
-        let frame = ClientFrame::ResumeSession { session_dir: dir, allow_dirty: false };
+        let frame = ClientFrame::ResumeSession {
+            session_dir: dir,
+            allow_dirty: false,
+        };
         if let Err(err) = ws.send(&frame) {
             list.set_error(format!("send ResumeSession: {err:?}"));
             return;
@@ -622,7 +626,10 @@ fn SessionRow(
         active_dir.with(|d| {
             // The pure helper takes the full struct; only `dir` is
             // read. The default-padding makes the call clean.
-            let it = SessionListItem { dir, ..Default::default() };
+            let it = SessionListItem {
+                dir,
+                ..Default::default()
+            };
             is_active(&it, d.as_deref())
         })
     });

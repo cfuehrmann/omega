@@ -165,8 +165,7 @@ pub fn session_counts(events: &[OmegaEvent]) -> TokenCounts {
 #[component]
 pub fn UsagePanel() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
-    let panel_open =
-        use_context::<UsagePanelOpen>().expect("UsagePanelOpen must be provided");
+    let panel_open = use_context::<UsagePanelOpen>().expect("UsagePanelOpen must be provided");
 
     // Legend overlay — local to the panel; no context needed.
     let legend_open = RwSignal::new(false);
@@ -370,11 +369,7 @@ mod tests {
 
     #[test]
     fn last_turn_counts_returns_last_turn_end_metrics() {
-        let evs = vec![
-            turn_end(10, 0, 0, 5),
-            user_msg("hi"),
-            turn_end(20, 3, 1, 8),
-        ];
+        let evs = vec![turn_end(10, 0, 0, 5), user_msg("hi"), turn_end(20, 3, 1, 8)];
         let c = last_turn_counts(&evs).unwrap();
         assert_eq!(c.fresh_in, 20);
         assert_eq!(c.cache_write_in, 3);
@@ -467,10 +462,7 @@ mod tests {
 
     #[test]
     fn session_counts_ignores_non_turn_end_events() {
-        let evs = vec![
-            user_msg("hi"),
-            llm_response(100, 50, 20, 40),
-        ];
+        let evs = vec![user_msg("hi"), llm_response(100, 50, 20, 40)];
         assert_eq!(session_counts(&evs), TokenCounts::default());
     }
 
@@ -478,15 +470,38 @@ mod tests {
 
     #[test]
     fn token_counts_add_sums_all_fields() {
-        let a = TokenCounts { fresh_in: 1, cache_write_in: 2, cache_read_in: 3, out: 4 };
-        let b = TokenCounts { fresh_in: 10, cache_write_in: 20, cache_read_in: 30, out: 40 };
+        let a = TokenCounts {
+            fresh_in: 1,
+            cache_write_in: 2,
+            cache_read_in: 3,
+            out: 4,
+        };
+        let b = TokenCounts {
+            fresh_in: 10,
+            cache_write_in: 20,
+            cache_read_in: 30,
+            out: 40,
+        };
         let sum = a.add(b);
-        assert_eq!(sum, TokenCounts { fresh_in: 11, cache_write_in: 22, cache_read_in: 33, out: 44 });
+        assert_eq!(
+            sum,
+            TokenCounts {
+                fresh_in: 11,
+                cache_write_in: 22,
+                cache_read_in: 33,
+                out: 44
+            }
+        );
     }
 
     #[test]
     fn token_counts_add_with_zero_is_identity() {
-        let a = TokenCounts { fresh_in: 5, cache_write_in: 3, cache_read_in: 1, out: 7 };
+        let a = TokenCounts {
+            fresh_in: 5,
+            cache_write_in: 3,
+            cache_read_in: 1,
+            out: 7,
+        };
         assert_eq!(a.add(TokenCounts::default()), a);
         assert_eq!(TokenCounts::default().add(a), a);
     }
