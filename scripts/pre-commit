@@ -38,20 +38,22 @@ if [ -z "$NON_DOCS" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-format Rust: if any staged files touch rust/ or frontends/leptos/,
-# run `cargo fmt` on those workspaces and re-stage the reformatted files
-# so the gate's `cargo fmt --check` always passes.
+# Auto-format Rust: always run cargo fmt on all workspaces and re-stage
+# any .rs files the formatter changed, wherever they live in the tree.
+# This means rustfmt is an action, not a check — formatting is never a
+# reason for the gate to fail.
 # ---------------------------------------------------------------------------
-RUST_STAGED=$(printf '%s\n' $NON_DOCS | grep -E '^(rust/|frontends/leptos/)' || true)
-if [ -n "$RUST_STAGED" ]; then
-  echo "Auto-formatting Rust code..."
-  (cd rust && cargo fmt)
-  (cd frontends/leptos && cargo fmt)
-  # Re-stage any files that the formatter changed. Use -u (update) so we
-  # only touch files that were already tracked — no accidental new files.
-  git add -u rust/ frontends/leptos/
-  echo "✅  Rust code formatted and re-staged."
+echo "Auto-formatting Rust code..."
+(cd rust && cargo fmt)
+(cd frontends/leptos && cargo fmt)
+# Re-stage every .rs file that cargo fmt changed (modified or newly added).
+# `git diff --name-only` lists files whose working-tree content now differs
+# from the index — exactly what the formatter touched, at any depth.
+FMT_CHANGED=$(git diff --name-only | grep '\.rs$' || true)
+if [ -n "$FMT_CHANGED" ]; then
+  echo "$FMT_CHANGED" | xargs git add
 fi
+echo "✅  Rust code formatted and re-staged."
 
 # ---------------------------------------------------------------------------
 # Rust-only fast path: if every non-doc staged file lives under rust/, run
