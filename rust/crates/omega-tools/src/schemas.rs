@@ -78,10 +78,12 @@ fn run_command() -> ToolDefinition {
         description: "Execute a shell command and return its stdout, stderr, and exit code. \
                       The command runs in the current working directory. \
                       The default timeout is 120\u{00a0}s \u{2014} pass a higher value for very slow commands. \
-                      Output is always tee\u{2019}d to a session-cache log file. \
-                      When the result is truncated a footer appears: \
-                      `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` \
-                      \u{2014} use read_file on the path for the complete trace. \
+                      Output is always tee\u{2019}d to a session-cache log file and the path is \
+                      surfaced in a footer on every result: \
+                      `[full output: <path>]` when the result fits, or \
+                      `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped. \
+                      For follow-up queries on the same output, use `read_file` or `grep_files` \
+                      on the cache path instead of re-running the command. \
                       Pass `truncation_bias` to control which portion is returned \
                       (default: tail on non-zero exit, head on exit 0)."
             .into(),
@@ -277,7 +279,10 @@ fn wait_for_output() -> ToolDefinition {
                       Pass the pid returned by run_background so that an early process exit is detected immediately \
                       instead of waiting for the full timeout. \
                       Use this after run_background instead of sleep + tail to wait for a server or process to become ready. \
-                      The pattern is interpreted as a JavaScript regex (e.g. 'ready|started|Error' for alternation)."
+                      The pattern is interpreted as a JavaScript regex (e.g. 'ready|started|Error' for alternation). \
+                      The polled output is also tee\u{2019}d to a session-cache snapshot; the cache path is surfaced \
+                      in the `output` field\u{2019}s footer (`[full output: <path>]` or `[truncated; \u{2026}]`) and can be re-read \
+                      with `read_file` / `grep_files` for follow-up queries."
             .into(),
         input_schema: json!({
             "type": "object",

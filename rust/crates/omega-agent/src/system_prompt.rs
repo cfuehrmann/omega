@@ -88,13 +88,19 @@ Use `run_command` for builds, test suites, commits, and any finite command.
 The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands
 you expect to take longer. Reserve `run_background` for processes that must
 stay alive indefinitely (dev servers, file watchers).
-All `run_command` output is tee’d to a session-cache log. When output is
-truncated the tool appends a footer:
-`[truncated; showed last 100 KB of 487 KB. Full output: <path>]`
-Use `read_file` on `<path>` for the complete trace (with `offset`/`limit`
-for large files). Pass `truncation_bias: \"tail\"` (default on failure),
-`\"head\"` (default on success), or `\"middle\"` to control which portion is
-returned in the tool result.
+All `run_command` and `wait_for_output` results are tee’d to a session-cache
+log and the path is surfaced in a footer on **every** result, not only on
+truncation:
+- `[full output: <path>]` when the output fits within the cap.
+- `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.
+For any follow-up on a tool output — grepping for a pattern, re-reading a
+section, or looking back at an output that has aged out of immediate context
+— use `read_file` or `grep_files` on the cache path instead of re-running
+the command. Re-running is slow, may produce different output, and burns
+tokens you already paid for.
+Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on
+success), or `\"middle\"` to control which portion is returned when the
+output is truncated.
 To wait for a background process to become ready (e.g. a dev server), use
 `wait_for_output(logFile, pid, timeoutMs, pattern?)` instead of `sleep` + `tail`.
 Always pass the `pid` from `run_background` — if the process exits before the pattern matches,

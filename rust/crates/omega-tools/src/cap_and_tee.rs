@@ -1,4 +1,13 @@
 //! `cap_and_tee` — tee all bytes to a log file and return a capped view
+//!
+//! Every result carries a footer pointing at the on-disk log so the LLM
+//! can `read_file` / `grep_files` the cache for follow-up queries instead
+//! of re-running the command:
+//!   - non-truncated: `\n[full output: <path>]`
+//!   - truncated:     `\n[truncated; showed first 100 KB of 487 KB. Full output: <path>]`
+//!
+//! The only exception is empty data: we still write the (empty) file, but
+//! return an empty body — pointing the LLM at zero bytes is just noise.
 //! for the LLM.
 //!
 //! Every tool that can produce large output calls this helper so that:
@@ -130,8 +139,12 @@ pub async fn cap_and_tee(
                 )
             }
         }
+    } else if data.is_empty() {
+        String::new()
     } else {
-        String::from_utf8_lossy(data).into_owned()
+        let log_display = log_path.display();
+        let body = String::from_utf8_lossy(data);
+        format!("{body}\n[full output: {log_display}]")
     };
 
     Ok(CappedOutput {
@@ -219,13 +232,30 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn no_truncation_returns_full_data_as_string() {
+    async fn no_truncation_returns_full_data_with_footer() {
         let dir = tmp();
         let data = b"hello world";
         let out = tee(data, 1_000, TruncationBias::Head, &dir).await;
         assert!(!out.truncated);
-        assert_eq!(out.body, "hello world");
+        assert!(
+            out.body.starts_with("hello world\n[full output: "),
+            "body: {}",
+            out.body
+        );
+        assert!(out.body.ends_with("]"), "body: {}", out.body);
         assert_eq!(out.total_bytes, 11);
+    }
+
+    #[tokio::test]
+    async fn no_truncation_footer_contains_log_path() {
+        let dir = tmp();
+        let out = tee(b"x", 1_000, TruncationBias::Head, &dir).await;
+        let path_str = out.log_path.display().to_string();
+        assert!(
+            out.body.contains(&path_str),
+            "footer must contain log path '{path_str}': {}",
+            out.body
+        );
     }
 
     #[tokio::test]
@@ -238,21 +268,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_data_not_truncated() {
-        let dir = tmp();
-        let out = tee(b"", 100, TruncationBias::Head, &dir).await;
-        assert!(!out.truncated);
-        assert_eq!(out.total_bytes, 0);
-        assert_eq!(out.body, "");
-    }
-
-    #[tokio::test]
     async fn exactly_cap_bytes_is_not_truncated() {
         let dir = tmp();
         let data = vec![b'x'; 100];
         let out = tee(&data, 100, TruncationBias::Head, &dir).await;
         assert!(!out.truncated);
-        assert_eq!(out.body.len(), 100);
+        // Body = 100 x's + "\n[full output: <path>]"
+        assert!(out.body.starts_with(&"x".repeat(100)));
+        assert!(out.body.contains("[full output: "));
+    }
+
+    #[tokio::test]
+    async fn empty_data_has_no_footer() {
+        // Pointing the LLM at an empty file is just noise; skip the footer.
+        let dir = tmp();
+        let out = tee(b"", 100, TruncationBias::Head, &dir).await;
+        assert!(!out.truncated);
+        assert_eq!(out.body, "");
     }
 
     // -----------------------------------------------------------------------

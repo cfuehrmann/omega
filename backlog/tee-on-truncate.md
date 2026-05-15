@@ -1,8 +1,75 @@
 # Design: unified tee-on-truncate for tool outputs
 
-*Status: drafting. Not yet implemented. This is the starting point of a
-longer work process — see the audit at `test-output/token-audit.md` for
-the motivating data.*
+*Status: **implemented, expanded to footer-always**. See “Decision
+log” below. Audit-driven; see `scripts/tee_footer_audit.py` for the
+repeatable measurement.*
+
+## Decision log
+
+### 2026-05-15 — ship footer-always (not just tee-on-truncate)
+
+**What we shipped.** `cap_and_tee` now appends a footer to **every**
+result, not only when the cap fires:
+
+- Non-truncated: `\n[full output: <path>]`
+- Truncated: `\n[truncated; showed first 100 KB of 487 KB. Full output: <path>]`
+
+Empty data still skips the footer (pointing the LLM at zero bytes is
+just noise). Tool descriptions (`schemas.rs`) and the agent system
+prompt (`system_prompt.rs`) were updated to tell the model it can
+`read_file`/`grep_files` the cache path for follow-up queries instead
+of re-running.
+
+**Why we went past tee-on-truncate.** Initial reasoning argued that
+surfacing the path on every result was a token tax for unmeasured
+benefit. Re-measurement with the corrected schema
+(`scripts/tee_footer_audit.py`, tool_call field is `input`, not
+`arguments` — see process lesson below) gave the opposite picture:
+
+| Surface (local corpus, n=662 sessions)        | Surfaced | Reused | Rate |
+|------------------------------------------------|---------:|-------:|-----:|
+| `fetch_url` cache (`~/.cache` / `cache/fetch`) |      253 |     51 | **20.2 %** |
+| Any cap_and_tee cache path                     |      316 |     86 | **27.2 %** |
+| Project `just gate` log (`test-output/...`)    |      250 |    143 | **57.2 %** |
+
+Reuse means: the LLM later issued a `read_file` / `grep_files` /
+`run_command` whose arguments contain that exact path. The gate-log
+number is the empirical existence proof — in session
+`2026-04-03T14-51-15-957-e7849c8d` the model grepped
+`test-output/gate-latest.log` eight times to investigate a failure.
+Prompt-side mention of the path is what unlocks this reuse, which is
+why we paired the code change with system-prompt guidance.
+
+**Cost / benefit napkin math (local corpus).**
+
+- Footer cost: 28,426 tool_results × ~40 tokens ≈ **1.1 M tokens**.
+- Estimated savings: 27 % cap-cache reuse × ~28k results × ~800-token avg output
+  ≈ **5.9 M tokens** avoided in re-derivation.
+- Net: ~5× ROI, with headroom growing once the prompt nudge takes effect.
+
+**Validation plan.** Run `scripts/tee_footer_audit.py` after ~20 new
+local sessions (post-rollout). The audit separates:
+
+- **Truncated results** — baseline both schemes share.
+- **Non-truncated results** — only footer-always surfaces a path here.
+  Reuse rate × avg savings on this subset *is* the delta that
+  justifies (or kills) footer-always.
+
+If the non-truncated subset shows <break-even reuse, revert to
+tee-on-truncate (one-line change in `cap_and_tee.rs`).
+
+### Process lesson
+
+My first audit reported 0 % reuse across all corpora and recommended
+tee-on-truncate. The bug: the events.jsonl schema uses `input` on
+`tool_call`, but the script read `arguments`. Every tool-call scan
+returned an empty dict. Lesson: **dump one event before parsing 1 000**.
+The correction inverted the recommendation.
+
+---
+
+## Original design notes (pre-decision)
+
 
 ## Background
 
