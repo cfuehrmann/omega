@@ -3,15 +3,30 @@
 //!
 //! Returns a JSON object: `{ output, matched, minBytesReached, timedOut,
 //! processExited?, exitCode? }`.
+//!
+//! The `output` field is capped at 200 KB with tail bias (most-recent output
+//! is the relevant part).  The full log content is tee'd to a snapshot in the
+//! session cache (`cache_dir/wait/<ts>-pid<N>.log`).
+
+use std::path::PathBuf;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::cap_and_tee::{TruncationBias, cap_and_tee};
 use crate::state::processes;
+use crate::tool_ctx::ToolCtx;
 
 const POLL_INTERVAL_MS: u64 = 200;
 
-pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result<String, String> {
+/// LLM-facing cap on the `output` field.
+const OUTPUT_CAP: usize = 200_000;
+
+pub async fn execute(
+    input: Value,
+    cancel: Option<&CancellationToken>,
+    ctx: Option<&ToolCtx>,
+) -> Result<String, String> {
     let log_file = input["logFile"]
         .as_str()
         .ok_or("wait_for_output: logFile is required")?
@@ -54,7 +69,7 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
     loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             let output = read_log(&log_file).await;
-            return Ok(done(output, false, false, false, None));
+            return done(output, false, false, false, None, pid, ctx).await;
         }
 
         let content = read_log(&log_file).await;
@@ -62,31 +77,32 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
             evaluate(&content, pattern_re.as_ref(), effective_min_bytes);
 
         if matched {
-            return Ok(done(content, true, false, false, None));
+            return done(content, true, false, false, None, pid, ctx).await;
         }
 
         if min_bytes_reached {
-            return Ok(done(content, false, true, false, None));
+            return done(content, false, true, false, None, pid, ctx).await;
         }
 
         if let Some(exit_code) = check_exit(pid).await {
             let final_content = read_log(&log_file).await;
             let (matched, min_bytes_reached) =
                 evaluate(&final_content, pattern_re.as_ref(), effective_min_bytes);
-            return Ok(serde_json::json!({
-                "output":          final_content,
-                "matched":         matched,
-                "minBytesReached": min_bytes_reached,
-                "timedOut":        false,
-                "processExited":   true,
-                "exitCode":        exit_code,
-            })
-            .to_string());
+            return done(
+                final_content,
+                matched,
+                min_bytes_reached,
+                false,
+                Some(exit_code),
+                pid,
+                ctx,
+            )
+            .await;
         }
 
         let now = std::time::Instant::now();
         if now >= deadline {
-            return Ok(done(content, false, false, true, None));
+            return done(content, false, false, true, None, pid, ctx).await;
         }
 
         let remaining = deadline.saturating_duration_since(now);
@@ -103,16 +119,42 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
-fn done(
+/// Build the tee-log path for a `wait_for_output` snapshot.
+fn make_wait_log_path(ctx: Option<&ToolCtx>, pid: u32) -> PathBuf {
+    let ts = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S");
+    let filename = format!("{ts}-pid{pid}.log");
+
+    let base = ctx.map_or_else(
+        || std::env::temp_dir().join(format!("omega-wait-{}", std::process::id())),
+        |c| c.cache_dir.join("wait"),
+    );
+    base.join(filename)
+}
+
+/// Cap the output string, tee it to a snapshot file, and build the JSON result.
+#[allow(clippy::too_many_arguments)]
+async fn done(
     output: String,
     matched: bool,
     min_bytes_reached: bool,
     timed_out: bool,
     exit_code: Option<i32>,
-) -> String {
+    pid: u32,
+    ctx: Option<&ToolCtx>,
+) -> Result<String, String> {
+    let log_path = make_wait_log_path(ctx, pid);
+
+    let capped = cap_and_tee(
+        output.as_bytes(),
+        OUTPUT_CAP,
+        TruncationBias::Tail,
+        &log_path,
+    )
+    .await
+    .map_err(|e| format!("wait_for_output: failed to write snapshot: {e}"))?;
+
     let mut v = serde_json::json!({
-        "output":          output,
+        "output":          capped.body,
         "matched":         matched,
         "minBytesReached": min_bytes_reached,
         "timedOut":        timed_out,
@@ -121,7 +163,7 @@ fn done(
         v["processExited"] = true.into();
         v["exitCode"] = code.into();
     }
-    v.to_string()
+    Ok(v.to_string())
 }
 
 async fn read_log(path: &str) -> String {

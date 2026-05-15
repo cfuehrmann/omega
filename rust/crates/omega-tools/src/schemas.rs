@@ -77,13 +77,26 @@ fn run_command() -> ToolDefinition {
         name: "run_command".into(),
         description: "Execute a shell command and return its stdout, stderr, and exit code. \
                       The command runs in the current working directory. \
-                      The default timeout is 120\u{00a0}s \u{2014} pass a higher value for very slow commands."
+                      The default timeout is 120\u{00a0}s \u{2014} pass a higher value for very slow commands. \
+                      Output is always tee\u{2019}d to a session-cache log file. \
+                      When the result is truncated a footer appears: \
+                      `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` \
+                      \u{2014} use read_file on the path for the complete trace. \
+                      Pass `truncation_bias` to control which portion is returned \
+                      (default: tail on non-zero exit, head on exit 0)."
             .into(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "command": { "type": "string", "description": "The shell command to execute" },
                 "timeout": { "type": "number", "description": "Timeout in seconds (optional, default 120)" },
+                "truncation_bias": {
+                    "type": "string",
+                    "enum": ["head", "tail", "middle"],
+                    "description": "Which part of the output to show when the result is truncated (optional). \
+                                    Default: \"tail\" on non-zero exit (errors at end), \"head\" on exit 0. \
+                                    Use \"middle\" to see both start and end."
+                },
             },
             "required": ["command"],
         }),

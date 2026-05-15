@@ -1,0 +1,41 @@
+//! [`ToolCtx`] — session-scoped context threaded from the agent loop into
+//! each tool execution.
+//!
+//! The sole purpose of `ToolCtx` today is to carry the session's
+//! `cache_dir` so that every tee log and download cache lands inside the
+//! session directory tree rather than in `$TMPDIR` or the current working
+//! directory.
+//!
+//! ## Invariant
+//! All paths constructed by tools via `ToolCtx::cache_dir` must resolve
+//! within `sessions_root/<session-id>/cache/`.  Benchmarks run with
+//! `cwd=/app` (the verifier's territory); any stray writes there would
+//! corrupt the harness.  The test suite enforces this with
+//! `no_tee_output_escapes_sessions_root` in `process_tools.rs`.
+
+use std::path::{Path, PathBuf};
+
+/// Session-scoped execution context passed to every tool invocation.
+#[derive(Debug, Clone)]
+pub struct ToolCtx {
+    /// Base directory for all tee logs and caches produced during this
+    /// session.  Always equals `<sessions_root>/<session-id>/cache/`.
+    ///
+    /// Tools join sub-directories off this path:
+    /// * `cache_dir/run/`   — `run_command` tee logs
+    /// * `cache_dir/wait/`  — `wait_for_output` snapshots
+    /// * `cache_dir/fetch/` — `fetch_url` downloaded files
+    pub cache_dir: PathBuf,
+}
+
+impl ToolCtx {
+    /// Build a `ToolCtx` whose cache root is `session_dir.join("cache")`.
+    ///
+    /// `session_dir` is typically the value stored in `AgentConfig::session_dir`.
+    #[must_use]
+    pub fn new(session_dir: &Path) -> Self {
+        Self {
+            cache_dir: session_dir.join("cache"),
+        }
+    }
+}

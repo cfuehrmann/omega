@@ -1,11 +1,17 @@
-//! `run_command` — run a shell command with timeout, output cap, and abort.
+//! `run_command` — run a shell command with timeout, tee-on-truncate, and abort.
 //!
 //! Matches TypeScript `executeRunCommand`:
 //! * Spawns `bash -c <command>` in a new process group so orphaned children
 //!   are killed along with bash on timeout/abort.
-//! * Captures stdout and stderr independently, each capped at 100 KB.
+//! * Captures stdout and stderr independently, each guarded by a 50 MB
+//!   per-stream safety limit.  The combined output is tee'd to a session-cache
+//!   log file and capped at 100 KB for the LLM.
+//! * Default truncation bias: **tail** on non-zero exit (errors surface at the
+//!   end), **head** on exit 0 (normal output starts at the top).  Override
+//!   per-call with `truncation_bias: "head" | "tail" | "middle"`.
 //! * Returns non-zero exit codes in a trailing `[exit code: N]` notice.
 
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use serde_json::Value;
@@ -14,7 +20,16 @@ use tokio::process::Command;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-const OUTPUT_CAP: usize = 100_000;
+use crate::cap_and_tee::{TruncationBias, cap_and_tee};
+use crate::tool_ctx::ToolCtx;
+
+/// LLM-facing cap: maximum bytes returned in the tool result.
+const LLM_CAP: usize = 100_000;
+
+/// Per-stream safety limit: abort reading if a single stream exceeds this.
+/// Prevents OOM for runaway processes; the log file is still written first.
+const STREAM_SAFETY_LIMIT: usize = 50_000_000;
+
 const DEFAULT_TIMEOUT_S: u64 = 120;
 
 // Outcome must be defined before any statements in `execute` to satisfy
@@ -27,11 +42,18 @@ enum Outcome {
 }
 
 #[allow(clippy::too_many_lines)] // inherent complexity of a subprocess tool
-pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result<String, String> {
+pub async fn execute(
+    input: Value,
+    cancel: Option<&CancellationToken>,
+    ctx: Option<&ToolCtx>,
+) -> Result<String, String> {
     let command = input["command"]
         .as_str()
         .ok_or("run_command: command is required")?;
     let timeout_s = input["timeout"].as_u64().unwrap_or(DEFAULT_TIMEOUT_S);
+    let bias_override = input["truncation_bias"]
+        .as_str()
+        .map(TruncationBias::parse_bias);
 
     let mut cmd = Command::new("bash");
     cmd.args(["-c", command])
@@ -66,7 +88,7 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
     let read_stdout = tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::new();
         let mut tmp = [0u8; 8_192];
-        let mut capped = false;
+        let mut safety_capped = false;
         loop {
             tokio::select! {
                 biased;
@@ -76,9 +98,9 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             buf.extend_from_slice(&tmp[..n]);
-                            if buf.len() >= OUTPUT_CAP {
-                                buf.truncate(OUTPUT_CAP);
-                                capped = true;
+                            if buf.len() >= STREAM_SAFETY_LIMIT {
+                                buf.truncate(STREAM_SAFETY_LIMIT);
+                                safety_capped = true;
                                 break;
                             }
                         }
@@ -86,13 +108,13 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
                 }
             }
         }
-        (buf, capped)
+        (buf, safety_capped)
     });
 
     let read_stderr = tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::new();
         let mut tmp = [0u8; 8_192];
-        let mut capped = false;
+        let mut safety_capped = false;
         loop {
             tokio::select! {
                 biased;
@@ -102,9 +124,9 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             buf.extend_from_slice(&tmp[..n]);
-                            if buf.len() >= OUTPUT_CAP {
-                                buf.truncate(OUTPUT_CAP);
-                                capped = true;
+                            if buf.len() >= STREAM_SAFETY_LIMIT {
+                                buf.truncate(STREAM_SAFETY_LIMIT);
+                                safety_capped = true;
                                 break;
                             }
                         }
@@ -112,7 +134,7 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
                 }
             }
         }
-        (buf, capped)
+        (buf, safety_capped)
     });
 
     let timeout_dur = Duration::from_secs(timeout_s);
@@ -142,7 +164,7 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
         Outcome::Finished(_) => {}
     }
 
-    let (stdout_bytes, stdout_capped, stderr_bytes, stderr_capped) = tokio::select! {
+    let (stdout_bytes, _stdout_safety_capped, stderr_bytes, _stderr_safety_capped) = tokio::select! {
         res = async { (read_stdout.await, read_stderr.await) } => {
             let (rs, re) = res;
             let (sb, sc) = rs.unwrap_or_default();
@@ -157,9 +179,16 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
         }
     };
 
-    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
-    let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
+    // Determine truncation bias.  Override takes precedence; otherwise:
+    // non-zero exit / timeout / abort → Tail (errors at end),
+    // success → Head (interesting output starts at top).
+    let bias = bias_override.unwrap_or_else(|| match &outcome {
+        Outcome::Finished(Some(s)) if s.success() => TruncationBias::Head,
+        _ => TruncationBias::Tail,
+    });
 
+    // Append a status suffix to the combined bytes so it appears in the log
+    // and (with Tail bias) is always within the capped window.
     let suffix = match &outcome {
         Outcome::Aborted => "\n[killed by abort signal]".to_string(),
         Outcome::TimedOut => format!("\n[killed: timeout after {timeout_s}s]"),
@@ -167,33 +196,69 @@ pub async fn execute(input: Value, cancel: Option<&CancellationToken>) -> Result
             || "\n[process killed by signal]".to_string(),
             |code| format!("\n[exit code: {code}]"),
         ),
-        Outcome::Finished(_) => {
-            if stdout_capped || stderr_capped {
-                "\n[Output truncated at 100KB]".to_string()
-            } else {
-                String::new()
-            }
-        }
+        Outcome::Finished(_) => String::new(),
     };
 
-    let mut result = String::new();
-    if !stdout.is_empty() {
-        result.push_str(&stdout);
-    }
-    if !stderr.is_empty() {
-        if !result.is_empty() {
-            result.push('\n');
+    // Build the combined byte buffer: stdout, then "[stderr]\n" header + stderr,
+    // then the status suffix.
+    let mut combined: Vec<u8> =
+        Vec::with_capacity(stdout_bytes.len() + stderr_bytes.len() + suffix.len() + 16);
+    combined.extend_from_slice(&stdout_bytes);
+    if !stderr_bytes.is_empty() {
+        if !stdout_bytes.is_empty() {
+            combined.push(b'\n');
         }
-        result.push_str("[stderr]\n");
-        result.push_str(&stderr);
+        combined.extend_from_slice(b"[stderr]\n");
+        combined.extend_from_slice(&stderr_bytes);
     }
-    result.push_str(&suffix);
-
-    if result.trim().is_empty() {
-        result = "(no output)".to_string();
+    if !suffix.is_empty() {
+        combined.extend_from_slice(suffix.as_bytes());
     }
 
-    Ok(result)
+    if combined.trim_ascii().is_empty() {
+        return Ok("(no output)".to_string());
+    }
+
+    // Resolve the tee log path.
+    let log_path = make_run_log_path(ctx, command);
+
+    // Tee to disk and cap for the LLM.
+    let capped = cap_and_tee(&combined, LLM_CAP, bias, &log_path)
+        .await
+        .map_err(|e| format!("run_command: failed to write tee log: {e}"))?;
+
+    Ok(capped.body)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Build the tee-log path for a `run_command` invocation.
+///
+/// Resolves to `<ctx.cache_dir>/run/<ts>-<argv0>.log` when a session context
+/// is available, falling back to the system temp directory otherwise.
+fn make_run_log_path(ctx: Option<&ToolCtx>, command: &str) -> PathBuf {
+    let ts = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S");
+    let tag = sanitize_tag(command.split_whitespace().next().unwrap_or("cmd"));
+    let filename = format!("{ts}-{tag}.log");
+
+    let base = ctx.map_or_else(
+        || std::env::temp_dir().join(format!("omega-run-{}", std::process::id())),
+        |c| c.cache_dir.join("run"),
+    );
+    base.join(filename)
+}
+
+/// Truncate and sanitize `s` for use as a filename tag.
+/// Keeps only ASCII alphanumeric characters and replaces others with `-`.
+fn sanitize_tag(s: &str) -> String {
+    let clean: String = s
+        .chars()
+        .take(20)
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    clean.trim_matches('-').to_string()
 }
 
 /// Send SIGKILL to the entire process group identified by `pgid`.

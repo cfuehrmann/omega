@@ -9,7 +9,7 @@
 use serde_json::json;
 
 async fn exec(name: &str, input: serde_json::Value) -> Result<String, String> {
-    let result = omega_tools::execute_tool(name, input, None).await;
+    let result = omega_tools::execute_tool(name, input, None, None).await;
     if result.is_error {
         Err(result.content)
     } else {

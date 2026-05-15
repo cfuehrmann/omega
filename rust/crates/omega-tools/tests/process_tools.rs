@@ -6,7 +6,23 @@
 use serde_json::json;
 
 async fn exec(name: &str, input: serde_json::Value) -> Result<String, String> {
-    let result = omega_tools::execute_tool(name, input, None).await;
+    let result = omega_tools::execute_tool(name, input, None, None).await;
+    if result.is_error {
+        Err(result.content)
+    } else {
+        Ok(result.content)
+    }
+}
+
+/// Like `exec` but wires a real session `ToolCtx` so tee logs land inside
+/// the provided tempdir.  Used by tee-related integration tests.
+async fn exec_with_ctx(
+    name: &str,
+    input: serde_json::Value,
+    session_dir: &std::path::Path,
+) -> Result<String, String> {
+    let ctx = omega_tools::ToolCtx::new(session_dir);
+    let result = omega_tools::execute_tool(name, input, None, Some(&ctx)).await;
     if result.is_error {
         Err(result.content)
     } else {
@@ -565,4 +581,187 @@ async fn write_stdin_unknown_pid_returns_error() {
         err.contains("999999999") || err.contains("No tracked"),
         "got: {err}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tee-on-truncate — run_command
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn run_command_tee_log_created_in_session_cache() {
+    // When a ToolCtx is provided the tee log must land inside session_dir/cache/run/.
+    let session_dir = tempfile::tempdir().expect("tempdir");
+    let out = exec_with_ctx(
+        "run_command",
+        json!({ "command": "echo tee_test" }),
+        session_dir.path(),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("tee_test"), "output: {out}");
+
+    // A log file must exist inside the cache/run/ subdirectory.
+    let run_dir = session_dir.path().join("cache").join("run");
+    let entries: Vec<_> = std::fs::read_dir(&run_dir)
+        .expect("cache/run must exist")
+        .collect();
+    assert!(
+        !entries.is_empty(),
+        "at least one log file must be created in {}",
+        run_dir.display()
+    );
+}
+
+#[tokio::test]
+async fn run_command_tee_log_contains_full_output() {
+    // The tee log must contain the complete output even when the LLM result
+    // is truncated.
+    let session_dir = tempfile::tempdir().expect("tempdir");
+    // 200 001 bytes — double the LLM cap so we know it will be truncated.
+    let out = exec_with_ctx(
+        "run_command",
+        json!({ "command": "head -c 200001 /dev/zero | tr '\\0' 'A'" }),
+        session_dir.path(),
+    )
+    .await
+    .unwrap();
+
+    // LLM result must contain the truncation footer.
+    assert!(
+        out.contains("truncated"),
+        "truncation footer must be present: {}",
+        &out[out.len().saturating_sub(200)..]
+    );
+    assert!(
+        out.contains("Full output:"),
+        "footer must reference log path: {}",
+        &out[out.len().saturating_sub(200)..]
+    );
+
+    // Log file must be > LLM cap.
+    let run_dir = session_dir.path().join("cache").join("run");
+    let log_size: u64 = std::fs::read_dir(&run_dir)
+        .expect("cache/run must exist")
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum();
+    assert!(
+        log_size >= 200_001,
+        "log file must contain at least 200 001 bytes, got {log_size}"
+    );
+}
+
+#[tokio::test]
+async fn run_command_tail_bias_on_failure_shows_exit_code() {
+    // Non-zero exit → tail bias → the exit-code notice (appended at the end
+    // of the byte stream) must appear in the LLM result.
+    let session_dir = tempfile::tempdir().expect("tempdir");
+    let out = exec_with_ctx(
+        "run_command",
+        json!({ "command": "echo error_output; exit 99" }),
+        session_dir.path(),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("99"), "exit code must appear: {out}");
+}
+
+#[tokio::test]
+async fn run_command_truncation_bias_head_override() {
+    // Explicit head bias on a failing command: start of output must appear.
+    let session_dir = tempfile::tempdir().expect("tempdir");
+    // Write enough output to guarantee truncation, then fail.
+    let out = exec_with_ctx(
+        "run_command",
+        json!({
+            "command": "head -c 200001 /dev/zero | tr '\\0' 'H'; exit 1",
+            "truncation_bias": "head"
+        }),
+        session_dir.path(),
+    )
+    .await
+    .unwrap();
+    // With head bias the footer says "first".
+    assert!(
+        out.contains("first"),
+        "head-bias footer must say 'first': {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tee invariant: no output escapes sessions_root
+// ---------------------------------------------------------------------------
+
+/// Verify that tee logs land INSIDE the provided session dir and nowhere
+/// else.  This protects benchmark harnesses where `cwd=/app` is the
+/// verifier's territory and any stray writes there would corrupt the trial.
+#[tokio::test]
+async fn no_tee_output_escapes_sessions_root() {
+    let session_dir = tempfile::tempdir().expect("tempdir");
+    let session_path = session_dir.path();
+
+    // Snapshot the cwd directory listing before the tool call.
+    let cwd = std::env::current_dir().expect("cwd");
+    let cwd_before: std::collections::HashSet<_> = std::fs::read_dir(&cwd)
+        .expect("read cwd")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+
+    // Run a command that produces output (with ctx pointing to our tempdir).
+    let ctx = omega_tools::ToolCtx::new(session_path);
+    omega_tools::execute_tool(
+        "run_command",
+        json!({ "command": "echo invariant_test" }),
+        None,
+        Some(&ctx),
+    )
+    .await;
+
+    // Snapshot cwd after.
+    let cwd_after: std::collections::HashSet<_> = std::fs::read_dir(&cwd)
+        .expect("read cwd")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+
+    let new_in_cwd: Vec<_> = cwd_after.difference(&cwd_before).collect();
+    assert!(
+        new_in_cwd.is_empty(),
+        "tee output leaked into cwd: {new_in_cwd:?}"
+    );
+
+    // All produced files must be inside session_path.
+    let cache_dir = session_path.join("cache");
+    if cache_dir.exists() {
+        let all_cache: Vec<_> = walkdir_flat(&cache_dir);
+        for p in &all_cache {
+            assert!(
+                p.starts_with(session_path),
+                "tee file escaped session_dir: {}",
+                p.display()
+            );
+        }
+        assert!(
+            !all_cache.is_empty(),
+            "at least one log file must be created"
+        );
+    }
+}
+
+fn walkdir_flat(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walkdir_flat(&path));
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
 }

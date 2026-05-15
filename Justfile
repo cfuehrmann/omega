@@ -61,8 +61,12 @@ _rust-e2e-run:
 gate:
     #!/usr/bin/env bash
     set -eo pipefail
-    mkdir -p test-output
-    LOG="test-output/gate-latest.log"
+    mkdir -p test-output .omega/gate-logs
+    TS=$(date -u +"%Y-%m-%dT%H-%M-%S")
+    LOG_FILE=".omega/gate-logs/${TS}.log"
+    # Keep test-output/gate-latest.log as a backwards-compat symlink so that
+    # the pre-commit hook, README references, and CI tooling still find it.
+    ln -sf "../.omega/gate-logs/${TS}.log" test-output/gate-latest.log
     BEFORE=$(ls -1 .omega/sessions/ 2>/dev/null | wc -l)
     {
         echo "=== web-leptos-build ==="
@@ -85,7 +89,7 @@ gate:
         fi
         echo "✅  No production session pollution ($BEFORE sessions before and after)."
         echo "=== done ==="
-    } 2>&1 | tee "$LOG"
+    } 2>&1 | tee "$LOG_FILE"
 
 # Run the chromiumoxide-driven Rust e2e suite. Builds the Leptos bundle
 # and the mock-omega-server fixture binary first, then runs the

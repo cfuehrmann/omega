@@ -1,5 +1,10 @@
 //! `fetch_url` — download a URL to a content-addressed cache file, then run
 //! a postprocess shell command on it.
+//!
+//! When a session context is provided the cache is placed under
+//! `<ctx.cache_dir>/fetch/<url-hash>.txt`; otherwise a per-process temp
+//! directory is used for test compatibility.  Cross-session deduplication
+//! is intentionally dropped (see `backlog/tee-on-truncate.md`).
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -8,6 +13,8 @@ use std::sync::OnceLock;
 use serde_json::Value;
 use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
+
+use crate::tool_ctx::ToolCtx;
 
 // ---------------------------------------------------------------------------
 // Subprocess helper (used only by this module for the postprocess call)
@@ -60,7 +67,11 @@ fn cache_dir() -> &'static PathBuf {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
+pub async fn execute(
+    input: Value,
+    _cancel: Option<&CancellationToken>,
+    ctx: Option<&ToolCtx>,
+) -> Result<String, String> {
     let url_str = input["url"]
         .as_str()
         .ok_or("fetch_url: url is required")?
@@ -94,8 +105,8 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
         hex::encode(h.finalize())
     };
 
-    let dir = cache_dir();
-    tokio::fs::create_dir_all(dir)
+    let dir: PathBuf = ctx.map_or_else(|| cache_dir().clone(), |c| c.cache_dir.join("fetch"));
+    tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("fetch_url: failed to create cache dir: {e}"))?;
     let cache_file = dir.join(format!("{url_hash}.txt"));

@@ -42,7 +42,7 @@ use omega_types::events::{
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
-use omega_tools::{execute_tool, tool_definitions};
+use omega_tools::{ToolCtx, execute_tool, tool_definitions};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -1268,8 +1268,9 @@ impl Agent {
                         yield AgentItem::event(tc);
                     }
 
-                    // Concurrent dispatch — clone (id, name, input, cancel)
+                    // Concurrent dispatch — clone (id, name, input, cancel, ctx)
                     // into each future so they don't borrow self.
+                    let session_cache_dir = self.config.session_dir.join("cache");
                     let mut futures: FuturesUnordered<_> = combined_tool_uses
                         .iter()
                         .enumerate()
@@ -1278,10 +1279,12 @@ impl Agent {
                             let name = name.clone();
                             let input = input.clone();
                             let cancel_clone = cancel.clone();
+                            let cache_dir = session_cache_dir.clone();
                             async move {
                                 let start = Instant::now();
+                                let ctx = ToolCtx { cache_dir };
                                 let res =
-                                    execute_tool(&name, input, Some(&cancel_clone)).await;
+                                    execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;
                                 let elapsed = start.elapsed();
                                 (i, id, name, res, elapsed)
                             }
