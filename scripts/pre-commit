@@ -38,6 +38,22 @@ if [ -z "$NON_DOCS" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Auto-format Rust: if any staged files touch rust/ or frontends/leptos/,
+# run `cargo fmt` on those workspaces and re-stage the reformatted files
+# so the gate's `cargo fmt --check` always passes.
+# ---------------------------------------------------------------------------
+RUST_STAGED=$(printf '%s\n' $NON_DOCS | grep -E '^(rust/|frontends/leptos/)' || true)
+if [ -n "$RUST_STAGED" ]; then
+  echo "Auto-formatting Rust code..."
+  (cd rust && cargo fmt)
+  (cd frontends/leptos && cargo fmt)
+  # Re-stage any files that the formatter changed. Use -u (update) so we
+  # only touch files that were already tracked — no accidental new files.
+  git add -u rust/ frontends/leptos/
+  echo "✅  Rust code formatted and re-staged."
+fi
+
+# ---------------------------------------------------------------------------
 # Rust-only fast path: if every non-doc staged file lives under rust/, run
 # the Rust gate (cargo fmt + clippy + test) instead of the full TS gate.
 # The TS codebase is considered frozen during the Rust migration; no need to
@@ -51,7 +67,7 @@ if [ -z "$RUST_ONLY" ]; then
   if [ $status -ne 0 ]; then
     echo ""
     echo "❌  Rust gate failed — commit aborted."
-    echo "    Run: cd rust && cargo fmt --check && cargo clippy && cargo test"
+    echo "    Run: just fmt && cargo clippy && cargo test"
     exit 1
   fi
   echo "✅  Rust gate passed."

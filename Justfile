@@ -144,6 +144,13 @@ ports:
 # Rust quality gate
 # -----------------------------------------------------------------------
 
+# Auto-format all Rust workspaces (rust/ and frontends/leptos/).
+# Run this manually any time; the pre-commit hook calls it automatically.
+fmt:
+    cd rust && cargo fmt
+    cd frontends/leptos && cargo fmt
+    @echo "✅  All Rust code formatted."
+
 # Rust-only gate: format check + Clippy + cargo test + cargo machete
 # + Leptos wasm-bindgen-test suite + Leptos snapshot suite. Runs via
 # the pre-commit hook when only rust/ files are staged.
