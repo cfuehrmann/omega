@@ -37,11 +37,12 @@ wasm-setup:
     cargo install --locked --version =0.2.121 wasm-bindgen-cli
     cargo install         --version =0.21.14 trunk
 
-# Format check + Clippy + cargo test + machete. Assumes dist/ is already built.
+# Clippy + cargo test + machete. Assumes dist/ is already built.
+# Note: no `cargo fmt --check` here — the pre-commit hook runs `cargo fmt`
+# (auto-fix) before the gate, so a check would always be redundant.
 [private]
 _rust-checks:
-    cd rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-    cd frontends/leptos && cargo fmt --check
+    cd rust && cargo clippy --all-targets -- -D warnings && cargo test
     cargo machete
 
 # Build mock server + run browser tests. Assumes dist/ is already built.
