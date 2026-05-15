@@ -87,7 +87,7 @@ fn sig_tool_use_complete(
 ) -> Result<AgentItem, LlmError> {
     Ok(AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
         index,
-        id: id.to_owned(),
+        tool_use_id: id.to_owned(),
         name: name.to_owned(),
         input,
     }))
@@ -374,7 +374,11 @@ async fn t3_events_and_context_carry_same_blocks() {
                     evt_type, "tool_use_block",
                     "T3[{i}]: context type is 'tool_use' but event type is '{evt_type}'"
                 );
-                assert_eq!(evt["id"], ctx["id"], "T3[{i}]: tool_use id mismatch");
+                // The event uses `tool_use_id` (LLM-issued, faithfully
+                // recorded); the conversation block uses `id` (Anthropic
+                // wire-format field name).  Same value, different field
+                // names by layer.
+                assert_eq!(evt["toolUseId"], ctx["id"], "T3[{i}]: tool_use id mismatch");
                 assert_eq!(evt["name"], ctx["name"], "T3[{i}]: tool_use name mismatch");
                 assert_eq!(
                     evt["input"], ctx["input"],

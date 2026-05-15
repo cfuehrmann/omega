@@ -156,7 +156,8 @@ fn ev_thinking(thinking: &str) -> OmegaEvent {
 fn ev_tool_use_partial(name: &str, input: serde_json::Value) -> OmegaEvent {
     OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
         time: "2025-01-01T00:00:01.500Z".into(),
-        id: "toolu_partial".into(),
+        tool_call_id: "tc_partial".into(),
+        tool_use_id: "toolu_partial".into(),
         name: name.into(),
         input,
         partial: true,
@@ -166,7 +167,8 @@ fn ev_tool_use_partial(name: &str, input: serde_json::Value) -> OmegaEvent {
 fn ev_tool_use(name: &str, input: serde_json::Value) -> OmegaEvent {
     OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
         time: "2025-01-01T00:00:01.500Z".into(),
-        id: "toolu_complete".into(),
+        tool_call_id: "tc_test".into(),
+        tool_use_id: "toolu_complete".into(),
         name: name.into(),
         input,
         partial: false,
@@ -230,18 +232,17 @@ fn ev_llm_response_ended_compacted() -> OmegaEvent {
 fn ev_tool_call() -> OmegaEvent {
     OmegaEvent::ToolCall(ToolCallEvent {
         time: "2025-01-01T00:00:02.000Z".into(),
-        id: "toolu_test".into(),
+        tool_call_id: "tc_test".into(),
         name: "run_command".into(),
         input: serde_json::json!({ "command": "echo hi" }),
         context_hash: "abcd1234ef560000".into(),
-        call_id: None,
     })
 }
 
 fn ev_tool_result(out: &str, is_error: bool) -> OmegaEvent {
     OmegaEvent::ToolResult(ToolResultEvent {
         time: "2025-01-01T00:00:03.000Z".into(),
-        id: "toolu_test".into(),
+        tool_call_id: "tc_test".into(),
         name: "run_command".into(),
         output: out.into(),
         is_error,

@@ -121,7 +121,7 @@ pub async fn execute(
 
 /// Build the tee-log path for a `wait_for_output` snapshot.
 ///
-/// With a session context: `<ctx.cache_dir>/wait/<ts-ms>-<call_id>-pid<N>.log`.
+/// With a session context: `<ctx.cache_dir>/wait/<ts-ms>-<tool_call_id>-pid<N>.log`.
 /// Without context (test fallback): a per-process temp directory.
 fn make_wait_log_path(ctx: Option<&ToolCtx>, pid: u32) -> PathBuf {
     let now = chrono::Utc::now();
@@ -129,7 +129,7 @@ fn make_wait_log_path(ctx: Option<&ToolCtx>, pid: u32) -> PathBuf {
     let ms = now.timestamp_subsec_millis();
 
     if let Some(c) = ctx {
-        let filename = format!("{ts}-{ms:03}-{}-pid{pid}.log", c.call_id);
+        let filename = format!("{ts}-{ms:03}-{}-pid{pid}.log", c.tool_call_id);
         c.cache_dir.join("wait").join(filename)
     } else {
         let filename = format!("{ts}-{ms:03}-pid{pid}.log");

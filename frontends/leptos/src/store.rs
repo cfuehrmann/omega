@@ -47,7 +47,7 @@ use crate::protocol::{AgentErrorPayload, SessionInfoPayload, TurnState, WsMessag
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamingToolUseSlot {
-    pub id: String,
+    pub tool_use_id: String,
     pub name: String,
     pub partial_json: String,
 }
@@ -189,7 +189,7 @@ impl SessionStore {
     ///   thinking buffer (block finished, signature recorded
     ///   server-side).
     /// - `ToolUseBlockStart` → insert a [`StreamingToolUseSlot`] at
-    ///   `index` with `id`/`name` pre-filled and empty `partial_json`.
+    ///   `index` with `tool_use_id`/`name` pre-filled and empty `partial_json`.
     /// - `ToolInput` → append `partial_json` to the slot at `index`.
     /// - Forwarded `OmegaEvent` (incl. `agent_error` event payload) →
     ///   `events.push(ev)` plus turn-state and streaming-accumulator
@@ -286,7 +286,7 @@ impl SessionStore {
                 });
             }
 
-            WsMessage::ToolUseBlockStart { index, id, name } => {
+            WsMessage::ToolUseBlockStart { index, tool_use_id, name } => {
                 // Insert a fresh slot.  If a slot already exists at this
                 // index (shouldn't happen on a well-behaved server) we
                 // overwrite it so the UI stays consistent.
@@ -294,7 +294,7 @@ impl SessionStore {
                     m.insert(
                         index,
                         StreamingToolUseSlot {
-                            id,
+                            tool_use_id,
                             name,
                             partial_json: String::new(),
                         },
@@ -1009,12 +1009,12 @@ mod tests {
             let s = SessionStore::new();
             s.apply(WsMessage::ToolUseBlockStart {
                 index: 1,
-                id: "tu_abc".into(),
+                tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
             });
             let snap = s.snapshot();
             let slot = snap.streaming_tool_use.get(&1).expect("slot must exist");
-            assert_eq!(slot.id, "tu_abc");
+            assert_eq!(slot.tool_use_id, "tu_abc");
             assert_eq!(slot.name, "bash");
             assert!(slot.partial_json.is_empty());
         });
@@ -1026,7 +1026,7 @@ mod tests {
             let s = SessionStore::new();
             s.apply(WsMessage::ToolUseBlockStart {
                 index: 1,
-                id: "tu_abc".into(),
+                tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
             });
             s.apply(WsMessage::ToolInput {
@@ -1050,7 +1050,7 @@ mod tests {
             let s = SessionStore::new();
             s.apply(WsMessage::ToolUseBlockStart {
                 index: 1,
-                id: "tu_abc".into(),
+                tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
             });
             s.apply(WsMessage::ToolInput {
@@ -1060,7 +1060,8 @@ mod tests {
             assert!(!s.snapshot().streaming_tool_use.is_empty());
             s.apply(WsMessage::ToolUseBlock(ToolUseBlockEvent {
                 time: "t".into(),
-                id: "tu_abc".into(),
+                tool_call_id: "tc_abc".into(),
+                tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
                 input: serde_json::json!({"cmd": "echo"}),
                 partial: false,
@@ -1082,7 +1083,7 @@ mod tests {
             let s = SessionStore::new();
             s.apply(WsMessage::ToolUseBlockStart {
                 index: 0,
-                id: "tu_1".into(),
+                tool_use_id: "tu_1".into(),
                 name: "bash".into(),
             });
             assert!(!s.snapshot().streaming_tool_use.is_empty());
@@ -1109,7 +1110,8 @@ mod tests {
             // suppress unused import lint
             let _ = ToolUseBlockEvent {
                 time: "t".into(),
-                id: "".into(),
+                tool_call_id: "".into(),
+                tool_use_id: "".into(),
                 name: "".into(),
                 input: serde_json::Value::Null,
                 partial: false,

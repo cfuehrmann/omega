@@ -281,9 +281,19 @@ pub struct ThinkingBlockEvent {
 /// true`, `input` may be malformed JSON; the agent does not dispatch
 /// partial blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolUseBlockEvent {
     pub time: ISOTimestamp,
-    pub id: String,
+    /// Omega-issued, provider-agnostic identifier for this tool invocation.
+    /// Minted by the agent on `StreamSignal::ToolUseBlockStart` and shared
+    /// across the corresponding `ToolCallEvent` and `ToolResultEvent` for
+    /// correlation across the three events.
+    pub tool_call_id: String,
+    /// LLM-issued identifier from the `tool_use` content block.  Faithfully
+    /// recorded here as the LLM transcript field; the protocol layer
+    /// (`ContentBlock::ToolResult.tool_use_id`) carries the same value as the
+    /// FK back to this tool use.
+    pub tool_use_id: String,
     pub name: String,
     pub input: Value,
     pub partial: bool,
@@ -298,21 +308,17 @@ pub struct ToolUseBlockEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallEvent {
     pub time: ISOTimestamp,
-    pub id: String,
+    /// Omega-issued, provider-agnostic identifier for this tool invocation.
+    /// Shared with the originating `ToolUseBlockEvent` and the resulting
+    /// `ToolResultEvent`; also used as the stem of the tee-log filename
+    /// (`cache/<tool>/<tool_call_id>-<tag>.log`) so `events.jsonl` and
+    /// the cache directory are bidirectionally cross-referenceable.
+    pub tool_call_id: String,
     pub name: String,
     /// Tool input parameters (arbitrary JSON from the LLM).
     pub input: Value,
     /// Hash of the assistant context.jsonl record containing this `tool_use` block.
     pub context_hash: ContextHash,
-    /// Agent-assigned identifier for this tool invocation, independent of the
-    /// LLM provider.  Used as the stem of the tee-log filename so that
-    /// `events.jsonl` and `cache/<tool>/<call_id>-<tag>.log` are
-    /// bidirectionally cross-referenceable without knowing the provider format.
-    ///
-    /// Absent on events written before this field was introduced (serde
-    /// deserializes those as `None`).
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub call_id: Option<String>,
 }
 
 /// The result of a tool invocation.
@@ -320,7 +326,10 @@ pub struct ToolCallEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ToolResultEvent {
     pub time: ISOTimestamp,
-    pub id: String,
+    /// Omega-issued identifier of the tool call this result is for.  Matches
+    /// the `tool_call_id` of the originating `ToolCallEvent` (and the
+    /// `ToolUseBlockEvent` before it).
+    pub tool_call_id: String,
     pub name: String,
     pub is_error: bool,
     pub duration_ms: i64,
@@ -634,14 +643,14 @@ mod tests {
     fn tool_call_camel_case_fields() {
         let ev = OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-15T12:00:02.000Z".into(),
-            id: "tool_abc".into(),
+            tool_call_id: "a1b2c3d4".into(),
             name: "read_file".into(),
             input: serde_json::json!({"path": "foo.txt"}),
             context_hash: "aabbccddeeff0011".into(),
-            call_id: Some("a1b2c3d4".into()),
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "tool_call");
+        assert_eq!(v["toolCallId"], "a1b2c3d4");
         assert_eq!(v["contextHash"], "aabbccddeeff0011");
         // input should be inlined as-is
         assert_eq!(v["input"]["path"], "foo.txt");
@@ -651,7 +660,7 @@ mod tests {
     fn tool_result_camel_case_fields() {
         let ev = OmegaEvent::ToolResult(ToolResultEvent {
             time: "2024-01-15T12:00:03.000Z".into(),
-            id: "tool_abc".into(),
+            tool_call_id: "a1b2c3d4".into(),
             name: "read_file".into(),
             is_error: false,
             duration_ms: 42,
@@ -659,6 +668,7 @@ mod tests {
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "tool_result");
+        assert_eq!(v["toolCallId"], "a1b2c3d4");
         assert_eq!(v["isError"], false);
         assert_eq!(v["durationMs"], 42);
     }
@@ -801,7 +811,7 @@ mod tests {
 
     #[test]
     fn deserialize_ts_tool_result() {
-        let line = r#"{"type":"tool_result","time":"2024-01-15T12:00:03.000Z","id":"tool_1","name":"read_file","isError":false,"durationMs":12,"output":"contents"}"#;
+        let line = r#"{"type":"tool_result","time":"2024-01-15T12:00:03.000Z","toolCallId":"tool_1","name":"read_file","isError":false,"durationMs":12,"output":"contents"}"#;
         let ev: OmegaEvent = serde_json::from_str(line).unwrap();
         match ev {
             OmegaEvent::ToolResult(r) => {
@@ -950,14 +960,16 @@ mod tests {
     fn tool_use_block_round_trip() {
         let ev = OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
             time: "2024-01-15T12:00:05.000Z".into(),
-            id: "toolu_xyz".into(),
+            tool_call_id: "a1b2c3d4".into(),
+            tool_use_id: "toolu_xyz".into(),
             name: "read_file".into(),
             input: serde_json::json!({"path": "foo.txt"}),
             partial: false,
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "tool_use_block");
-        assert_eq!(v["id"], "toolu_xyz");
+        assert_eq!(v["toolCallId"], "a1b2c3d4");
+        assert_eq!(v["toolUseId"], "toolu_xyz");
         assert_eq!(v["name"], "read_file");
         assert_eq!(v["input"]["path"], "foo.txt");
         assert_eq!(v["partial"], false);

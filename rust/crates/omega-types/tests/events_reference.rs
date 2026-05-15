@@ -45,8 +45,12 @@ const T: &str = "2024-01-15T12:00:00.000Z";
 /// An example context hash (12 hex chars = 6 bytes of random).
 const HASH: &str = "deadbeefcafe1234";
 
-/// The shared id for the correlated `ToolCall` / `ToolResult` triple.
-const CORR_ID: &str = "toolu_ref_01";
+/// The shared Omega-issued correlation id for the
+/// `ToolUseBlock` / `ToolCall` / `ToolResult` triple.
+const CORR_ID: &str = "tc_ref_01";
+
+/// LLM-issued `tool_use` id — only on `ToolUseBlockEvent`.
+const TOOL_USE_ID: &str = "toolu_ref_01";
 
 // ---------------------------------------------------------------------------
 // Event factory
@@ -96,16 +100,15 @@ fn all_26_events() -> Vec<OmegaEvent> {
         // 6. ToolCall — correlated triple, part 1
         OmegaEvent::ToolCall(ToolCallEvent {
             time: T.into(),
-            id: CORR_ID.into(),
+            tool_call_id: CORR_ID.into(),
             name: "list_dir".into(),
             input: json!({"path": "."}),
             context_hash: HASH.into(),
-            call_id: None,
         }),
-        // 7. ToolResult — correlated triple, part 2 (same id → same [id_1])
+        // 7. ToolResult — correlated triple, part 2 (same tool_call_id)
         OmegaEvent::ToolResult(ToolResultEvent {
             time: T.into(),
-            id: CORR_ID.into(),
+            tool_call_id: CORR_ID.into(),
             name: "list_dir".into(),
             is_error: false,
             duration_ms: 8,
@@ -247,7 +250,8 @@ fn all_26_events() -> Vec<OmegaEvent> {
         // 26. ToolUseBlock — one complete tool_use content block.
         OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
             time: T.into(),
-            id: CORR_ID.into(),
+            tool_call_id: CORR_ID.into(),
+            tool_use_id: TOOL_USE_ID.into(),
             name: "list_dir".into(),
             input: json!({"path": "."}),
             partial: false,
@@ -261,10 +265,14 @@ fn all_26_events() -> Vec<OmegaEvent> {
 
 /// Snapshot every `OmegaEvent` variant in a single JSON array.
 ///
-/// `[].id` is the only field name `"id"` that appears in the serialised
-/// output — on `ToolCallEvent`, `ToolResultEvent`, and `ToolUseBlockEvent`.
-/// All instances of `CORR_ID` are replaced with `[id_1]`, proving they
-/// carry the same value.
+/// Two id fields appear on tool-related events:
+///
+///   * `tool_call_id` (Omega-issued) on `ToolUseBlockEvent`,
+///     `ToolCallEvent`, and `ToolResultEvent` — the correlation key,
+///     same value across the triple, redacted to `[id_1]`.
+///   * `tool_use_id` (LLM-issued) on `ToolUseBlockEvent` only — the
+///     transcript field from the provider's `tool_use` block,
+///     redacted to `[id_2]`.
 #[test]
 fn all_26_variants_reference() {
     let events = all_26_events();
@@ -272,6 +280,7 @@ fn all_26_variants_reference() {
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {
-        "[].id" => r.redaction(),
+        "[].toolCallId" => r.redaction(),
+        "[].toolUseId"  => r.redaction(),
     });
 }

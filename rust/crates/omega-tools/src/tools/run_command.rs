@@ -236,7 +236,7 @@ pub async fn execute(
 
 /// Build the tee-log path for a `run_command` invocation.
 ///
-/// With a session context: `<ctx.cache_dir>/run/<ts-ms>-<call_id>-<argv0>.log`.
+/// With a session context: `<ctx.cache_dir>/run/<ts-ms>-<tool_call_id>-<argv0>.log`.
 /// Without context (test fallback): a per-process temp directory with a
 /// timestamp-only name (no collision risk since tests run sequentially).
 fn make_run_log_path(ctx: Option<&ToolCtx>, command: &str) -> PathBuf {
@@ -246,7 +246,7 @@ fn make_run_log_path(ctx: Option<&ToolCtx>, command: &str) -> PathBuf {
     let tag = sanitize_tag(command.split_whitespace().next().unwrap_or("cmd"));
 
     if let Some(c) = ctx {
-        let filename = format!("{ts}-{ms:03}-{}-{tag}.log", c.call_id);
+        let filename = format!("{ts}-{ms:03}-{}-{tag}.log", c.tool_call_id);
         c.cache_dir.join("run").join(filename)
     } else {
         let filename = format!("{ts}-{ms:03}-{tag}.log");

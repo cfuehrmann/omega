@@ -204,12 +204,12 @@ pub enum WsMessage {
         index: usize,
         signature: String,
     },
-    /// Streaming tool-use block opener.  Carries `id` and `name` so
-    /// the UI can render the label immediately, before any
-    /// `ToolInput` deltas arrive.
+    /// Streaming tool-use block opener.  Carries the LLM-issued
+    /// `tool_use_id` and `name` so the UI can render the label
+    /// immediately, before any `ToolInput` deltas arrive.
     ToolUseBlockStart {
         index: usize,
-        id: String,
+        tool_use_id: String,
         name: String,
     },
     /// Streaming partial-JSON fragment for the tool-use block at
@@ -567,10 +567,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn tool_use_block_start_round_trips() {
-        match parse(r#"{"type":"tool_use_block_start","index":3,"id":"tu_1","name":"bash"}"#) {
-            WsMessage::ToolUseBlockStart { index, id, name } => {
+        match parse(r#"{"type":"tool_use_block_start","index":3,"tool_use_id":"tu_1","name":"bash"}"#) {
+            WsMessage::ToolUseBlockStart { index, tool_use_id, name } => {
                 assert_eq!(index, 3);
-                assert_eq!(id, "tu_1");
+                assert_eq!(tool_use_id, "tu_1");
                 assert_eq!(name, "bash");
             }
             other => panic!("wrong variant: {other:?}"),
@@ -598,7 +598,7 @@ mod tests {
         assert!(
             WsMessage::ToolUseBlockStart {
                 index: 0,
-                id: "tu".into(),
+                tool_use_id: "tu".into(),
                 name: "bash".into(),
             }
             .into_omega_event()

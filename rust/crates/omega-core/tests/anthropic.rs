@@ -1546,9 +1546,13 @@ async fn tool_use_block_yields_start_deltas_and_complete_signals() {
 
     // 1. ToolUseBlockStart
     match signals[0] {
-        StreamSignal::ToolUseBlockStart { index, id, name } => {
+        StreamSignal::ToolUseBlockStart {
+            index,
+            tool_use_id,
+            name,
+        } => {
             assert_eq!(*index, 0);
-            assert_eq!(id, "tu_abc");
+            assert_eq!(tool_use_id, "tu_abc");
             assert_eq!(name, "read_file");
         }
         s => panic!("expected ToolUseBlockStart, got {s:?}"),
@@ -1582,12 +1586,12 @@ async fn tool_use_block_yields_start_deltas_and_complete_signals() {
     match signals[3] {
         StreamSignal::ToolUseBlockComplete {
             index,
-            id,
+            tool_use_id,
             name,
             input,
         } => {
             assert_eq!(*index, 0);
-            assert_eq!(id, "tu_abc");
+            assert_eq!(tool_use_id, "tu_abc");
             assert_eq!(name, "read_file");
             assert_eq!(input, &serde_json::json!({"path": "f.txt"}));
         }

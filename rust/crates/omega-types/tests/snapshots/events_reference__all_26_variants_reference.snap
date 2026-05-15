@@ -42,7 +42,7 @@ expression: events
   {
     "type": "tool_call",
     "time": "2024-01-15T12:00:00.000Z",
-    "id": "[id_1]",
+    "toolCallId": "[id_1]",
     "name": "list_dir",
     "input": {
       "path": "."
@@ -52,7 +52,7 @@ expression: events
   {
     "type": "tool_result",
     "time": "2024-01-15T12:00:00.000Z",
-    "id": "[id_1]",
+    "toolCallId": "[id_1]",
     "name": "list_dir",
     "isError": false,
     "durationMs": 8,
@@ -191,7 +191,8 @@ expression: events
   {
     "type": "tool_use_block",
     "time": "2024-01-15T12:00:00.000Z",
-    "id": "[id_1]",
+    "toolCallId": "[id_1]",
+    "toolUseId": "[id_2]",
     "name": "list_dir",
     "input": {
       "path": "."

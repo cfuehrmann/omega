@@ -148,11 +148,10 @@ pub fn make_tool_use_items(
     vec![
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-01T00:00:00.000Z".to_owned(),
-            id: tool_id.to_owned(),
+            tool_call_id: tool_id.to_owned(),
             name: tool_name.to_owned(),
             input,
             context_hash: String::new(),
-            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", 10, 5)),
     ]

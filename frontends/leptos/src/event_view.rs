@@ -437,10 +437,10 @@ pub fn truncate_preview(s: &str, max_lines: usize, max_bytes: usize) -> Option<S
 ///   Groups with only a single call get `None` — there is nothing to pair,
 ///   so the number would add visual noise without helping the user.
 /// * `ToolResult` events get `Some(n)` matching the `ToolCall` with the
-///   same `id`, subject to the same single-call suppression.
-/// * `ToolUseBlock` events (SCHEMA-8 Phase 5e) get `Some(n)` matching the
-///   `ToolCall` with the same `id` (the provider's `tool_use_id` flows
-///   through both events), subject to the same single-call suppression.
+///   same `tool_call_id`, subject to the same single-call suppression.
+/// * `ToolUseBlock` events get `Some(n)` matching the `ToolCall` with the
+///   same `tool_call_id` (Omega-issued, shared across the triple),
+///   subject to the same single-call suppression.
 ///   This lets the operator visually pair the tool_use block emitted on
 ///   the response side with the tool_call dispatch and its result.
 /// * All other events get `None`.
@@ -449,8 +449,8 @@ pub fn truncate_preview(s: &str, max_lines: usize, max_bytes: usize) -> Option<S
 /// event stream (tool_use blocks land during streaming; the dispatch is
 /// emitted after `LlmResponseEnded`). The algorithm processes each
 /// `LlmCall`-delimited group in two phases:
-///   1. Walk the group forward to number `ToolCall` events and build an
-///      id→corr map.
+///   1. Walk the group forward to number `ToolCall` events and build a
+///      tool_call_id→corr map.
 ///   2. Walk the group again to fill `ToolUseBlock` and `ToolResult`
 ///      corrs from the map.
 ///
@@ -466,24 +466,24 @@ pub fn assign_tool_corr(events: &[OmegaEvent]) -> Vec<Option<usize>> {
     while i <= n {
         let at_boundary = i == n || matches!(events[i], OmegaEvent::LlmCall(_));
         if at_boundary {
-            // Phase A — number ToolCall events in this group, build id→corr map.
+            // Phase A — number ToolCall events in this group, build tool_call_id→corr map.
             let mut counter = 0usize;
             let mut id_map: HashMap<String, usize> = HashMap::new();
             for j in group_start..i {
                 if let OmegaEvent::ToolCall(e) = &events[j] {
                     counter += 1;
-                    id_map.insert(e.id.clone(), counter);
+                    id_map.insert(e.tool_call_id.clone(), counter);
                     result[j] = Some(counter);
                 }
             }
-            // Phase B — lookup ToolUseBlock + ToolResult corrs by id.
+            // Phase B — lookup ToolUseBlock + ToolResult corrs by tool_call_id.
             for j in group_start..i {
                 match &events[j] {
                     OmegaEvent::ToolUseBlock(e) => {
-                        result[j] = id_map.get(&e.id).copied();
+                        result[j] = id_map.get(&e.tool_call_id).copied();
                     }
                     OmegaEvent::ToolResult(e) => {
-                        result[j] = id_map.get(&e.id).copied();
+                        result[j] = id_map.get(&e.tool_call_id).copied();
                     }
                     _ => {}
                 }
@@ -847,18 +847,17 @@ mod tests {
     fn tool_call() -> OmegaEvent {
         OmegaEvent::ToolCall(ToolCallEvent {
             time: t(),
-            id: "id".into(),
+            tool_call_id: "id".into(),
             name: "run_command".into(),
             input: json!({ "command": "echo hi" }),
             context_hash: "deadbeef".into(),
-            call_id: None,
         })
     }
 
     fn tool_result(is_error: bool) -> OmegaEvent {
         OmegaEvent::ToolResult(ToolResultEvent {
             time: t(),
-            id: "id".into(),
+            tool_call_id: "id".into(),
             name: "run_command".into(),
             is_error,
             duration_ms: 1,
@@ -1203,7 +1202,8 @@ mod tests {
         // not a static label — distinguishes "run_command" from "read_file".
         let ev = OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
             time: t(),
-            id: "id".into(),
+            tool_call_id: "id".into(),
+            tool_use_id: "toolu_id".into(),
             name: "read_file".into(),
             input: json!({}),
             partial: false,
@@ -1636,18 +1636,17 @@ mod tests {
     fn make_tool_call(id: &str) -> OmegaEvent {
         OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
-            id: id.into(),
+            tool_call_id: id.into(),
             name: "run_command".into(),
             input: serde_json::json!({}),
             context_hash: "deadbeef".into(),
-            call_id: None,
         })
     }
 
     fn make_tool_result(id: &str) -> OmegaEvent {
         OmegaEvent::ToolResult(ToolResultEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
-            id: id.into(),
+            tool_call_id: id.into(),
             name: "run_command".into(),
             is_error: false,
             duration_ms: 1,
@@ -1658,7 +1657,8 @@ mod tests {
     fn make_tool_use_block(id: &str) -> OmegaEvent {
         OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
-            id: id.into(),
+            tool_call_id: id.into(),
+            tool_use_id: format!("toolu_{id}"),
             name: "run_command".into(),
             input: serde_json::json!({}),
             partial: false,
@@ -1898,7 +1898,8 @@ mod tests {
     fn make_partial_tool_use_block(id: &str) -> OmegaEvent {
         OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
-            id: id.into(),
+            tool_call_id: id.into(),
+            tool_use_id: format!("toolu_{id}"),
             name: "run_command".into(),
             input: serde_json::json!({}),
             partial: true,

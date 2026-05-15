@@ -32,11 +32,13 @@ pub enum StreamSignal {
     /// is echoed back in the next API call.  Never forwarded to the UI.
     ThinkingBlockComplete { index: usize, signature: String },
     /// Emitted at `content_block_start` for a `tool_use` content block.
-    /// Carries `id` and `name` so the UI can render the label immediately,
-    /// before any `ToolInput` deltas arrive.
+    /// Carries the LLM-issued `tool_use_id` and `name` so the UI can render
+    /// the label immediately, before any `ToolInput` deltas arrive.  The
+    /// Omega-issued `tool_call_id` is minted by the agent (not the provider)
+    /// when this signal is observed, and lives only at the event layer.
     ToolUseBlockStart {
         index: usize,
-        id: String,
+        tool_use_id: String,
         name: String,
     },
     /// A partial JSON fragment for the tool-use block at `index`.
@@ -50,7 +52,7 @@ pub enum StreamSignal {
     /// forwarded to the UI.
     ToolUseBlockComplete {
         index: usize,
-        id: String,
+        tool_use_id: String,
         name: String,
         input: Value,
     },
@@ -123,13 +125,13 @@ mod tests {
     fn tool_use_block_start_round_trips() {
         let s = StreamSignal::ToolUseBlockStart {
             index: 5,
-            id: "tu_99".into(),
+            tool_use_id: "tu_99".into(),
             name: "bash".into(),
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(
             json,
-            r#"{"type":"tool_use_block_start","index":5,"id":"tu_99","name":"bash"}"#
+            r#"{"type":"tool_use_block_start","index":5,"tool_use_id":"tu_99","name":"bash"}"#
         );
         let back: StreamSignal = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
@@ -153,7 +155,7 @@ mod tests {
     fn tool_use_block_complete_round_trips() {
         let s = StreamSignal::ToolUseBlockComplete {
             index: 4,
-            id: "tu_1".into(),
+            tool_use_id: "tu_1".into(),
             name: "read_file".into(),
             input: serde_json::json!({"path": "foo.txt"}),
         };
@@ -163,7 +165,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "tool_use_block_complete");
         assert_eq!(v["index"], 4);
-        assert_eq!(v["id"], "tu_1");
+        assert_eq!(v["tool_use_id"], "tu_1");
         assert_eq!(v["name"], "read_file");
         assert_eq!(v["input"]["path"], "foo.txt");
     }

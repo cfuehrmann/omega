@@ -230,11 +230,10 @@ fn tool_use_items(
     vec![
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-01T00:00:00.000Z".to_owned(),
-            id: id.to_owned(),
+            tool_call_id: id.to_owned(),
             name: name.to_owned(),
             input,
             context_hash: String::new(),
-            call_id: None,
         }))),
         Ok(llm_response_event("tool_use")),
     ]
@@ -1047,7 +1046,7 @@ async fn tool_input_streaming_frames_arrive_in_order() {
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::ToolUseBlockStart {
             index: 2,
-            id: "tu_abc".to_owned(),
+            tool_use_id: "tu_abc".to_owned(),
             name: "bash".to_owned(),
         })),
         Ok(AgentItem::Signal(StreamSignal::ToolInput {
@@ -1060,7 +1059,7 @@ async fn tool_input_streaming_frames_arrive_in_order() {
         })),
         Ok(AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
             index: 2,
-            id: "tu_abc".to_owned(),
+            tool_use_id: "tu_abc".to_owned(),
             name: "bash".to_owned(),
             input: serde_json::json!({"cmd": "echo hi"}),
         })),
@@ -1116,7 +1115,7 @@ async fn tool_input_streaming_frames_arrive_in_order() {
         .find(|v| v["type"] == "tool_use_block_start")
         .unwrap();
     assert_eq!(start_frame["index"], 2);
-    assert_eq!(start_frame["id"], "tu_abc");
+    assert_eq!(start_frame["tool_use_id"], "tu_abc");
     assert_eq!(start_frame["name"], "bash");
 
     // Spot-check one of the input frames.
@@ -1135,13 +1134,13 @@ async fn tool_input_streaming_empty_input_drains_cleanly() {
     provider.push(vec![
         Ok(AgentItem::Signal(StreamSignal::ToolUseBlockStart {
             index: 0,
-            id: "tu_empty".to_owned(),
+            tool_use_id: "tu_empty".to_owned(),
             name: "no_args_tool".to_owned(),
         })),
         // No ToolInput frames — tool was called with `input: {}`.
         Ok(AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
             index: 0,
-            id: "tu_empty".to_owned(),
+            tool_use_id: "tu_empty".to_owned(),
             name: "no_args_tool".to_owned(),
             input: serde_json::json!({}),
         })),

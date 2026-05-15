@@ -224,7 +224,7 @@ pub async fn execute(
 
 /// Path for the postprocess-output tee log.
 ///
-/// With a session context: `<ctx.cache_dir>/fetch/<ts-ms>-<call_id>-pp.log`.
+/// With a session context: `<ctx.cache_dir>/fetch/<ts-ms>-<tool_call_id>-pp.log`.
 /// Without context (test fallback): a per-process temp directory.
 fn make_fetch_pp_log_path(ctx: Option<&ToolCtx>) -> PathBuf {
     let now = chrono::Utc::now();
@@ -232,7 +232,7 @@ fn make_fetch_pp_log_path(ctx: Option<&ToolCtx>) -> PathBuf {
     let ms = now.timestamp_subsec_millis();
 
     if let Some(c) = ctx {
-        let filename = format!("{ts}-{ms:03}-{}-pp.log", c.call_id);
+        let filename = format!("{ts}-{ms:03}-{}-pp.log", c.tool_call_id);
         c.cache_dir.join("fetch").join(filename)
     } else {
         let filename = format!("{ts}-{ms:03}-pp.log");

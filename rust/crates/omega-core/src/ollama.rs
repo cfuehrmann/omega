@@ -148,7 +148,7 @@ fn stream_impl(
                         // the agent dispatches it after `LlmResponse`.
                         yield AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
                             index: next_tool_use_index,
-                            id,
+                            tool_use_id: id,
                             name: tc.function.name,
                             input: tc.function.arguments,
                         });

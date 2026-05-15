@@ -191,7 +191,7 @@ fn stream_impl(
                     if let ContentBlockStart::ToolUse { ref id, ref name, .. } = parsed.content_block {
                         yield AgentItem::Signal(StreamSignal::ToolUseBlockStart {
                             index: parsed.index,
-                            id: id.clone(),
+                            tool_use_id: id.clone(),
                             name: name.clone(),
                         });
                     }
@@ -257,7 +257,7 @@ fn stream_impl(
                             };
                             yield AgentItem::Signal(StreamSignal::ToolUseBlockComplete {
                                 index: parsed.index,
-                                id,
+                                tool_use_id: id,
                                 name,
                                 input,
                             });

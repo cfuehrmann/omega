@@ -125,8 +125,13 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
         "dangling-repair sequence diverged"
     );
 
-    // The synthetic tool_result must reference the orphan id and be
-    // marked as an error so the model knows it didn't actually run.
+    // The synthetic tool_result event carries a freshly minted Omega
+    // `tool_call_id` (no upstream ToolCall to correlate with), so the
+    // event itself doesn't reference "tu_orphan" — only the
+    // `ContentBlock::ToolResult.tool_use_id` written to the
+    // conversation history does (asserted further below).  Here we
+    // verify the event-level shape: right tool name, error flag set,
+    // and a non-empty Omega correlation id present.
     let synthetic = items
         .iter()
         .find_map(|i| match i {
@@ -137,7 +142,10 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
             AgentItem::Signal(_) => None,
         })
         .expect("synthetic ToolResult event");
-    assert_eq!(synthetic.id, "tu_orphan");
+    assert!(
+        !synthetic.tool_call_id.is_empty(),
+        "synthetic ToolResult must carry an Omega tool_call_id",
+    );
     assert_eq!(synthetic.name, "read_file");
     assert!(synthetic.is_error);
     assert!(
@@ -384,11 +392,10 @@ fn echo_tool_response(id: &str, turn_num: usize) -> Vec<Result<AgentItem, LlmErr
     vec![
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-01T00:00:00.000Z".to_owned(),
-            id: id.to_owned(),
+            tool_call_id: id.to_owned(),
             name: "run_command".to_owned(),
             input: serde_json::json!({ "command": format!("echo turn{turn_num}") }),
             context_hash: String::new(),
-            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", (turn_num * 100) as i64, 5)),
     ]

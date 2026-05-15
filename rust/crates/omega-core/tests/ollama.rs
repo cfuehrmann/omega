@@ -298,9 +298,9 @@ async fn synthesises_tool_call_id_when_missing() {
             // `ToolUseBlockComplete` signal instead of a mid-stream
             // `OmegaEvent::ToolCall`.
             omega_core::AgentItem::Signal(omega_types::StreamSignal::ToolUseBlockComplete {
-                id,
+                tool_use_id,
                 ..
-            }) => Some(id.clone()),
+            }) => Some(tool_use_id.clone()),
             _ => None,
         })
         .expect("expected a tool-use-block-complete signal");

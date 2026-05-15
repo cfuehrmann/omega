@@ -31,7 +31,7 @@ expression: project(&items)
   {
     "type": "tool_use_block_start",
     "index": 2,
-    "id": "toolu_42",
+    "tool_use_id": "toolu_42",
     "name": "calc"
   },
   {
@@ -47,7 +47,7 @@ expression: project(&items)
   {
     "type": "tool_use_block_complete",
     "index": 2,
-    "id": "toolu_42",
+    "tool_use_id": "toolu_42",
     "name": "calc",
     "input": {
       "a": 1,

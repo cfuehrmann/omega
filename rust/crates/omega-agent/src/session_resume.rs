@@ -232,11 +232,11 @@ fn project_turn(turn: &Turn, index: usize) -> String {
                 pending_text.clear();
             }
             OmegaEvent::ToolCall(e) => {
-                tool_calls.insert(e.id.clone(), (e.name.clone(), e.input.clone()));
+                tool_calls.insert(e.tool_call_id.clone(), (e.name.clone(), e.input.clone()));
             }
             OmegaEvent::ToolResult(e) => {
                 let arg = tool_calls
-                    .get(&e.id)
+                    .get(&e.tool_call_id)
                     .map(|(name, input)| primary_tool_arg(name, input))
                     .unwrap_or_default();
                 let arg_part = if arg.is_empty() {
@@ -503,18 +503,17 @@ mod tests {
     fn tool_call(id: &str, name: &str, input: serde_json::Value) -> OmegaEvent {
         OmegaEvent::ToolCall(ToolCallEvent {
             time: t(),
-            id: id.to_owned(),
+            tool_call_id: id.to_owned(),
             name: name.to_owned(),
             input,
             context_hash: "aabbcc".to_owned(),
-            call_id: None,
         })
     }
 
     fn tool_result(id: &str, name: &str, is_error: bool, output: &str) -> OmegaEvent {
         OmegaEvent::ToolResult(ToolResultEvent {
             time: t(),
-            id: id.to_owned(),
+            tool_call_id: id.to_owned(),
             name: name.to_owned(),
             is_error,
             duration_ms: 10,

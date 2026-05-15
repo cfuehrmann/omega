@@ -21,7 +21,7 @@ expression: project(&items)
   {
     "type": "tool_use_block_complete",
     "index": 0,
-    "id": "tc_1",
+    "tool_use_id": "tc_1",
     "name": "calc",
     "input": {
       "a": 1,

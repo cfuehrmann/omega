@@ -95,7 +95,15 @@ enum BlockSlot {
         sealed: bool,
     },
     ToolUse {
-        id: String,
+        /// Omega-layer identifier (provider-agnostic), minted on
+        /// `ToolUseBlockStart` so the same id flows through the
+        /// streaming partial-event path, the sealed `ToolUseBlock`
+        /// event, and the downstream `ToolCall` / `ToolResult` events.
+        tool_call_id: String,
+        /// LLM-issued identifier from the provider's `tool_use` block.
+        /// Echoed back verbatim in `ContentBlock::ToolResult.tool_use_id`
+        /// (protocol layer).
+        tool_use_id: String,
         name: String,
         input: Value,
         sealed: bool,
@@ -166,26 +174,65 @@ fn seal_thinking_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, sig: S
     // See `append_text_slot` for the type-mismatch rationale.
 }
 
-/// Insert (or overwrite) a sealed `ToolUse` slot at `idx`.
-/// `ToolUseBlockStart` + N×`ToolInput` signals are forwarded to the UI
-/// as they arrive; this helper is called once on `ToolUseBlockComplete`
-/// to seal the slot with the fully-assembled `input` value.
-fn insert_tool_use_slot(
+/// Open an unsealed `ToolUse` slot at `idx` on `ToolUseBlockStart`,
+/// minting a fresh `tool_call_id` so it's available before any input
+/// deltas arrive.  Idempotent on retry: a re-`Start` for the same index
+/// gets a fresh `tool_call_id` (correct — different attempt).
+fn open_tool_use_slot(
     slots: &mut BTreeMap<usize, BlockSlot>,
     idx: usize,
-    id: String,
+    tool_use_id: String,
     name: String,
-    input: Value,
-) {
+) -> String {
+    let tool_call_id = gen_call_id();
     slots.insert(
         idx,
         BlockSlot::ToolUse {
-            id,
+            tool_call_id: tool_call_id.clone(),
+            tool_use_id,
+            name,
+            input: Value::Null,
+            sealed: false,
+        },
+    );
+    tool_call_id
+}
+
+/// Seal a `ToolUse` slot on `ToolUseBlockComplete`, populating `input`.
+/// Returns the `tool_call_id` that was minted at open time so the caller
+/// can include it in the emitted `ToolUseBlockEvent`.  If the slot is
+/// missing (provider bug: Complete without Start), synthesize a fresh
+/// `tool_call_id` and insert the slot sealed.
+fn seal_tool_use_slot(
+    slots: &mut BTreeMap<usize, BlockSlot>,
+    idx: usize,
+    tool_use_id: String,
+    name: String,
+    input: Value,
+) -> String {
+    if let Some(BlockSlot::ToolUse {
+        tool_call_id,
+        input: i,
+        sealed,
+        ..
+    }) = slots.get_mut(&idx)
+    {
+        *i = input;
+        *sealed = true;
+        return tool_call_id.clone();
+    }
+    let tool_call_id = gen_call_id();
+    slots.insert(
+        idx,
+        BlockSlot::ToolUse {
+            tool_call_id: tool_call_id.clone(),
+            tool_use_id,
             name,
             input,
             sealed: true,
         },
     );
+    tool_call_id
 }
 
 /// SCHEMA-8 Phase 3 commit 3d: build the abandonment-closer event
@@ -228,13 +275,15 @@ fn make_abandonment_closers(slots: BTreeMap<usize, BlockSlot>) -> Vec<OmegaEvent
                 partial: true,
             })),
             BlockSlot::ToolUse {
-                id,
+                tool_call_id,
+                tool_use_id,
                 name,
                 input,
                 sealed: false,
             } => Some(OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
                 time: now_iso(),
-                id,
+                tool_call_id,
+                tool_use_id,
                 name,
                 input,
                 partial: true,
@@ -735,10 +784,15 @@ impl Agent {
                         return;
                     }
                 }
-                for (id, name) in dangling {
+                for (_id, name) in dangling {
+                    // Synthetic ToolResult for a tool_use the previous
+                    // (interrupted) turn never executed.  No surviving
+                    // ToolCallEvent exists to correlate against, so mint
+                    // a fresh tool_call_id; consumers will see this
+                    // result as unmatched, which is accurate.
                     let ev = OmegaEvent::ToolResult(ToolResultEvent {
                         time: now_iso(),
-                        id,
+                        tool_call_id: gen_call_id(),
                         name,
                         is_error: true,
                         duration_ms: 0,
@@ -914,8 +968,22 @@ impl Agent {
                                 // Forward tool-use start and delta signals to
                                 // the UI.  No slot effect here — the slot is
                                 // sealed by `ToolUseBlockComplete` below.
-                                StreamSignal::ToolUseBlockStart { .. }
-                                | StreamSignal::ToolInput { .. } => true,
+                                StreamSignal::ToolUseBlockStart {
+                                    index, tool_use_id, name,
+                                } => {
+                                    // Mint the Omega tool_call_id NOW so
+                                    // it's available for any partial
+                                    // abandonment event before the
+                                    // matching Complete arrives.
+                                    open_tool_use_slot(
+                                        &mut slots,
+                                        *index,
+                                        tool_use_id.clone(),
+                                        name.clone(),
+                                    );
+                                    true
+                                }
+                                StreamSignal::ToolInput { .. } => true,
                                 StreamSignal::ThinkingBlockComplete { index, signature } => {
                                     // SCHEMA-8 Phase 3e: read the
                                     // assembled thinking text back from
@@ -951,7 +1019,7 @@ impl Agent {
                                     false
                                 }
                                 StreamSignal::ToolUseBlockComplete {
-                                    index, id, name, input,
+                                    index, tool_use_id, name, input,
                                 } => {
                                     // SCHEMA-8 Phase 3e: signals only
                                     // populate `slots`.  The legacy
@@ -961,17 +1029,18 @@ impl Agent {
                                     // both feeds merge into
                                     // `combined_tool_uses` at assembly
                                     // time.
-                                    insert_tool_use_slot(
+                                    let tool_call_id = seal_tool_use_slot(
                                         &mut slots,
                                         *index,
-                                        id.clone(),
+                                        tool_use_id.clone(),
                                         name.clone(),
                                         input.clone(),
                                     );
                                     block_event = Some(OmegaEvent::ToolUseBlock(
                                         ToolUseBlockEvent {
                                             time: now_iso(),
-                                            id: id.clone(),
+                                            tool_call_id,
+                                            tool_use_id: tool_use_id.clone(),
                                             name: name.clone(),
                                             input: input.clone(),
                                             partial: false,
@@ -992,7 +1061,16 @@ impl Agent {
                             let event = *boxed;
                             match event {
                                 OmegaEvent::ToolCall(tc) => {
-                                    tool_uses.push((tc.id, tc.name, tc.input));
+                                    // MockProvider scripts emit ToolCall
+                                    // directly without going through
+                                    // streaming signals, so there is no
+                                    // LLM-issued tool_use_id available.
+                                    // The Omega tool_call_id is reused
+                                    // as the tool_use_id for these
+                                    // mock-only paths so the protocol
+                                    // FK in ContentBlock::ToolResult
+                                    // still resolves.
+                                    tool_uses.push((tc.tool_call_id, tc.name, tc.input));
                                     // Re-emitted later with assistant_hash filled.
                                 }
                                 OmegaEvent::LlmResponseEnded(lr) => {
@@ -1185,7 +1263,11 @@ impl Agent {
                 // emitted.  Legacy `OmegaEvent::ToolCall` entries (still
                 // emitted by MockProvider scripts — removed Phase 6
                 // fixture refresh) are appended after the slot blocks.
-                let mut combined_tool_uses: Vec<(String, String, Value)> = Vec::new();
+                // (tool_call_id, tool_use_id, name, input) — the two ids
+                // travel together: tool_call_id flows through events,
+                // tool_use_id flows into ContentBlock::ToolResult
+                // tool_use_id (Anthropic protocol FK).
+                let mut combined_tool_uses: Vec<(String, String, String, Value)> = Vec::new();
                 let mut assistant_blocks: Vec<ContentBlock> = Vec::new();
                 for (_, slot) in std::mem::take(&mut slots) {
                     match slot {
@@ -1201,18 +1283,34 @@ impl Agent {
                             });
                         }
                         BlockSlot::ToolUse {
-                            id, name, input, ..
+                            tool_call_id, tool_use_id, name, input, ..
                         } => {
-                            combined_tool_uses.push((id.clone(), name.clone(), input.clone()));
-                            assistant_blocks.push(ContentBlock::ToolUse { id, name, input });
+                            combined_tool_uses.push((
+                                tool_call_id,
+                                tool_use_id.clone(),
+                                name.clone(),
+                                input.clone(),
+                            ));
+                            assistant_blocks.push(ContentBlock::ToolUse {
+                                id: tool_use_id,
+                                name,
+                                input,
+                            });
                         }
                         // Skip empty Text slots (rare — sealed without
                         // any deltas) so they don't bloat the record.
                         BlockSlot::Text { .. } => {}
                     }
                 }
+                // Legacy MockProvider path: no LLM tool_use_id available;
+                // reuse the Omega tool_call_id as the protocol-layer id.
                 for (id, name, input) in &tool_uses {
-                    combined_tool_uses.push((id.clone(), name.clone(), input.clone()));
+                    combined_tool_uses.push((
+                        id.clone(),
+                        id.clone(),
+                        name.clone(),
+                        input.clone(),
+                    ));
                     assistant_blocks.push(ContentBlock::ToolUse {
                         id: id.clone(),
                         name: name.clone(),
@@ -1255,61 +1353,58 @@ impl Agent {
 
                 // --- Tool dispatch ----------------------------------------
                 if stop_reason == "tool_use" && !combined_tool_uses.is_empty() {
-                    // Generate a provider-agnostic call_id for each tool use.
-                    // This is the stable identity used in both events.jsonl and
-                    // the tee-log filename, enabling bidirectional lookup.
-                    let call_ids: Vec<String> = (0..combined_tool_uses.len())
-                        .map(|_| gen_call_id())
-                        .collect();
-
                     // Emit ToolCall events with assistant_hash filled in.
-                    for (i, (id, name, input)) in combined_tool_uses.iter().enumerate() {
+                    // tool_call_id was minted at ToolUseBlockStart and
+                    // already lives in `combined_tool_uses`.
+                    for (tool_call_id, _tool_use_id, name, input) in &combined_tool_uses {
                         let tc = OmegaEvent::ToolCall(ToolCallEvent {
                             time: now_iso(),
-                            id: id.clone(),
+                            tool_call_id: tool_call_id.clone(),
                             name: name.clone(),
                             input: input.clone(),
                             context_hash: assistant_hash.as_ref().to_owned(),
-                            call_id: Some(call_ids[i].clone()),
                         });
                         let _ = self.event_store.append(&tc).await;
                         yield AgentItem::event(tc);
                     }
 
-                    // Concurrent dispatch — clone (id, name, input, cancel, ctx)
+                    // Concurrent dispatch — clone the call descriptor
                     // into each future so they don't borrow self.
                     let session_cache_dir = self.config.session_dir.join("cache");
                     let mut futures: FuturesUnordered<_> = combined_tool_uses
                         .iter()
                         .enumerate()
-                        .map(|(i, (id, name, input))| {
-                            let id = id.clone();
+                        .map(|(i, (tool_call_id, _tool_use_id, name, input))| {
+                            let tool_call_id = tool_call_id.clone();
                             let name = name.clone();
                             let input = input.clone();
                             let cancel_clone = cancel.clone();
                             let cache_dir = session_cache_dir.clone();
-                            let call_id = call_ids[i].clone();
                             async move {
                                 let start = Instant::now();
-                                let ctx = ToolCtx { cache_dir, call_id };
+                                let ctx = ToolCtx {
+                                    cache_dir,
+                                    tool_call_id: tool_call_id.clone(),
+                                };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;
                                 let elapsed = start.elapsed();
-                                (i, id, name, res, elapsed)
+                                (i, tool_call_id, name, res, elapsed)
                             }
                         })
                         .collect();
 
                     // Tool dispatches complete in non-deterministic order;
-                    // collect by id, then re-order by the original tool_use
-                    // sequence when assembling the user message so the
-                    // tool_results land in the same shape the model emitted.
-                    let mut by_id: HashMap<String, (String, bool)> = HashMap::new();
-                    while let Some((_idx, id, name, res, elapsed)) = futures.next().await {
+                    // collect keyed by tool_call_id (Omega layer), then
+                    // re-order by the original tool_use sequence when
+                    // assembling the user message so the tool_results
+                    // land in the same shape the model emitted.
+                    let mut by_call_id: HashMap<String, (String, bool)> = HashMap::new();
+                    while let Some((_idx, tool_call_id, name, res, elapsed)) = futures.next().await {
                         let duration_ms = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
                         let tr = OmegaEvent::ToolResult(ToolResultEvent {
                             time: now_iso(),
-                            id: id.clone(),
+                            tool_call_id: tool_call_id.clone(),
                             name,
                             is_error: res.is_error,
                             duration_ms,
@@ -1317,21 +1412,24 @@ impl Agent {
                         });
                         let _ = self.event_store.append(&tr).await;
                         yield AgentItem::event(tr);
-                        by_id.insert(id, (res.content, res.is_error));
+                        by_call_id.insert(tool_call_id, (res.content, res.is_error));
                     }
 
                     let result_blocks: Vec<ContentBlock> = combined_tool_uses
                         .iter()
-                        .map(|(id, _, _)| {
+                        .map(|(tool_call_id, tool_use_id, _, _)| {
                             // FuturesUnordered always produces one entry per
                             // pushed future, so the lookup cannot miss.
                             // If it ever does, fall back to a synthetic
                             // error result rather than panicking the agent.
-                            let (content, is_error) = by_id.remove(id).unwrap_or_else(|| {
+                            let (content, is_error) = by_call_id.remove(tool_call_id).unwrap_or_else(|| {
                                 ("tool dispatch produced no result".to_owned(), true)
                             });
+                            // tool_use_id (LLM-issued) is what Anthropic
+                            // expects on the wire to pair the result
+                            // back to the originating tool_use block.
                             ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
+                                tool_use_id: tool_use_id.clone(),
                                 content,
                                 is_error,
                             }
@@ -1674,10 +1772,20 @@ impl Agent {
                                 true
                             }
                             // Forward tool-use start and delta signals to
-                            // the UI.  No slot effect here — the slot is
-                            // sealed by `ToolUseBlockComplete` below.
-                            StreamSignal::ToolUseBlockStart { .. }
-                            | StreamSignal::ToolInput { .. } => true,
+                            // the UI.  ToolUseBlockStart mints the
+                            // tool_call_id; ToolInput has no slot effect.
+                            StreamSignal::ToolUseBlockStart {
+                                index, tool_use_id, name,
+                            } => {
+                                open_tool_use_slot(
+                                    &mut slots,
+                                    *index,
+                                    tool_use_id.clone(),
+                                    name.clone(),
+                                );
+                                true
+                            }
+                            StreamSignal::ToolInput { .. } => true,
                             StreamSignal::ThinkingBlockComplete { index, signature } => {
                                 seal_thinking_slot(&mut slots, *index, signature.clone());
                                 let thinking_text = match slots.get(index) {
@@ -1705,22 +1813,23 @@ impl Agent {
                                 ));
                                 false
                             }
-                            StreamSignal::ToolUseBlockComplete { index, id, name, input } => {
+                            StreamSignal::ToolUseBlockComplete { index, tool_use_id, name, input } => {
                                 // Resumption-summary call must not
                                 // request tools, but mirror the seal so
                                 // any provider misbehaviour is caught by
                                 // commit 3d's abandonment closers.
-                                insert_tool_use_slot(
+                                let tool_call_id = seal_tool_use_slot(
                                     &mut slots,
                                     *index,
-                                    id.clone(),
+                                    tool_use_id.clone(),
                                     name.clone(),
                                     input.clone(),
                                 );
                                 block_event = Some(OmegaEvent::ToolUseBlock(
                                     ToolUseBlockEvent {
                                         time: now_iso(),
-                                        id: id.clone(),
+                                        tool_call_id,
+                                        tool_use_id: tool_use_id.clone(),
                                         name: name.clone(),
                                         input: input.clone(),
                                         partial: false,
@@ -1871,9 +1980,15 @@ impl Agent {
                         });
                     }
                     BlockSlot::ToolUse {
-                        id, name, input, ..
+                        tool_use_id, name, input, ..
                     } => {
-                        assistant_blocks.push(ContentBlock::ToolUse { id, name, input });
+                        // Wire-format `ContentBlock::ToolUse.id` is the
+                        // LLM-issued identifier (Anthropic protocol).
+                        assistant_blocks.push(ContentBlock::ToolUse {
+                            id: tool_use_id,
+                            name,
+                            input,
+                        });
                     }
                     BlockSlot::Text { .. } => {}
                 }
@@ -2432,7 +2547,8 @@ mod abandonment_closer_tests {
         slots.insert(
             0,
             BlockSlot::ToolUse {
-                id: "tool-id-1".to_owned(),
+                tool_call_id: "tc-1".to_owned(),
+                tool_use_id: "tool-id-1".to_owned(),
                 name: "calc".to_owned(),
                 input: json!({"x": 1}),
                 sealed: false,
@@ -2442,7 +2558,8 @@ mod abandonment_closer_tests {
         assert_eq!(events.len(), 2);
         match &events[0] {
             OmegaEvent::ToolUseBlock(t) => {
-                assert_eq!(t.id, "tool-id-1");
+                assert_eq!(t.tool_call_id, "tc-1");
+                assert_eq!(t.tool_use_id, "tool-id-1");
                 assert_eq!(t.name, "calc");
                 assert_eq!(t.input, json!({"x": 1}));
                 assert!(t.partial, "abandonment ToolUseBlock must be partial");
@@ -2461,7 +2578,8 @@ mod abandonment_closer_tests {
         slots.insert(
             0,
             BlockSlot::ToolUse {
-                id: "tool-id-1".to_owned(),
+                tool_call_id: "tc-1".to_owned(),
+                tool_use_id: "tool-id-1".to_owned(),
                 name: "calc".to_owned(),
                 input: json!({}),
                 sealed: true,
@@ -2481,7 +2599,8 @@ mod abandonment_closer_tests {
         slots.insert(
             2,
             BlockSlot::ToolUse {
-                id: "tu".to_owned(),
+                tool_call_id: "tc-1".to_owned(),
+                tool_use_id: "tu".to_owned(),
                 name: "n".to_owned(),
                 input: json!({}),
                 sealed: false,
