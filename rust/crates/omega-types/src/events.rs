@@ -304,6 +304,15 @@ pub struct ToolCallEvent {
     pub input: Value,
     /// Hash of the assistant context.jsonl record containing this `tool_use` block.
     pub context_hash: ContextHash,
+    /// Agent-assigned identifier for this tool invocation, independent of the
+    /// LLM provider.  Used as the stem of the tee-log filename so that
+    /// `events.jsonl` and `cache/<tool>/<call_id>-<tag>.log` are
+    /// bidirectionally cross-referenceable without knowing the provider format.
+    ///
+    /// Absent on events written before this field was introduced (serde
+    /// deserializes those as `None`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub call_id: Option<String>,
 }
 
 /// The result of a tool invocation.
@@ -629,6 +638,7 @@ mod tests {
             name: "read_file".into(),
             input: serde_json::json!({"path": "foo.txt"}),
             context_hash: "aabbccddeeff0011".into(),
+            call_id: Some("a1b2c3d4".into()),
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v["type"], "tool_call");

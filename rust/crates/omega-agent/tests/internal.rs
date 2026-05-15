@@ -381,6 +381,7 @@ fn echo_tool_response(id: &str, turn_num: usize) -> Vec<Result<AgentItem, LlmErr
             name: "run_command".to_owned(),
             input: serde_json::json!({ "command": format!("echo turn{turn_num}") }),
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", (turn_num * 100) as i64, 5)),
     ]

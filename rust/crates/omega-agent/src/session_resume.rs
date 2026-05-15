@@ -507,6 +507,7 @@ mod tests {
             name: name.to_owned(),
             input,
             context_hash: "aabbcc".to_owned(),
+            call_id: None,
         })
     }
 

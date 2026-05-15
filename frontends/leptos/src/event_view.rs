@@ -851,6 +851,7 @@ mod tests {
             name: "run_command".into(),
             input: json!({ "command": "echo hi" }),
             context_hash: "deadbeef".into(),
+            call_id: None,
         })
     }
 
@@ -1639,6 +1640,7 @@ mod tests {
             name: "run_command".into(),
             input: serde_json::json!({}),
             context_hash: "deadbeef".into(),
+            call_id: None,
         })
     }
 

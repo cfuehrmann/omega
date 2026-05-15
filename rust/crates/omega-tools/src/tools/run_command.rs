@@ -236,18 +236,24 @@ pub async fn execute(
 
 /// Build the tee-log path for a `run_command` invocation.
 ///
-/// Resolves to `<ctx.cache_dir>/run/<ts>-<argv0>.log` when a session context
-/// is available, falling back to the system temp directory otherwise.
+/// With a session context: `<ctx.cache_dir>/run/<ts-ms>-<call_id>-<argv0>.log`.
+/// Without context (test fallback): a per-process temp directory with a
+/// timestamp-only name (no collision risk since tests run sequentially).
 fn make_run_log_path(ctx: Option<&ToolCtx>, command: &str) -> PathBuf {
-    let ts = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S");
+    let now = chrono::Utc::now();
+    let ts = now.format("%Y-%m-%dT%H-%M-%S");
+    let ms = now.timestamp_subsec_millis();
     let tag = sanitize_tag(command.split_whitespace().next().unwrap_or("cmd"));
-    let filename = format!("{ts}-{tag}.log");
 
-    let base = ctx.map_or_else(
-        || std::env::temp_dir().join(format!("omega-run-{}", std::process::id())),
-        |c| c.cache_dir.join("run"),
-    );
-    base.join(filename)
+    if let Some(c) = ctx {
+        let filename = format!("{ts}-{ms:03}-{}-{tag}.log", c.call_id);
+        c.cache_dir.join("run").join(filename)
+    } else {
+        let filename = format!("{ts}-{ms:03}-{tag}.log");
+        std::env::temp_dir()
+            .join(format!("omega-run-{}", std::process::id()))
+            .join(filename)
+    }
 }
 
 /// Truncate and sanitize `s` for use as a filename tag.

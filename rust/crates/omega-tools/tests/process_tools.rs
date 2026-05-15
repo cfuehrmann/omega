@@ -21,7 +21,7 @@ async fn exec_with_ctx(
     input: serde_json::Value,
     session_dir: &std::path::Path,
 ) -> Result<String, String> {
-    let ctx = omega_tools::ToolCtx::new(session_dir);
+    let ctx = omega_tools::ToolCtx::new(session_dir, "test-call");
     let result = omega_tools::execute_tool(name, input, None, Some(&ctx)).await;
     if result.is_error {
         Err(result.content)
@@ -711,7 +711,7 @@ async fn no_tee_output_escapes_sessions_root() {
         .collect();
 
     // Run a command that produces output (with ctx pointing to our tempdir).
-    let ctx = omega_tools::ToolCtx::new(session_path);
+    let ctx = omega_tools::ToolCtx::new(session_path, "test-invariant");
     omega_tools::execute_tool(
         "run_command",
         json!({ "command": "echo invariant_test" }),

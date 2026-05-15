@@ -234,6 +234,7 @@ fn tool_use_items(
             name: name.to_owned(),
             input,
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(llm_response_event("tool_use")),
     ]

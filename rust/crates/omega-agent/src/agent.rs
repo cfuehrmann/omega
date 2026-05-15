@@ -1255,14 +1255,22 @@ impl Agent {
 
                 // --- Tool dispatch ----------------------------------------
                 if stop_reason == "tool_use" && !combined_tool_uses.is_empty() {
+                    // Generate a provider-agnostic call_id for each tool use.
+                    // This is the stable identity used in both events.jsonl and
+                    // the tee-log filename, enabling bidirectional lookup.
+                    let call_ids: Vec<String> = (0..combined_tool_uses.len())
+                        .map(|_| gen_call_id())
+                        .collect();
+
                     // Emit ToolCall events with assistant_hash filled in.
-                    for (id, name, input) in &combined_tool_uses {
+                    for (i, (id, name, input)) in combined_tool_uses.iter().enumerate() {
                         let tc = OmegaEvent::ToolCall(ToolCallEvent {
                             time: now_iso(),
                             id: id.clone(),
                             name: name.clone(),
                             input: input.clone(),
                             context_hash: assistant_hash.as_ref().to_owned(),
+                            call_id: Some(call_ids[i].clone()),
                         });
                         let _ = self.event_store.append(&tc).await;
                         yield AgentItem::event(tc);
@@ -1280,9 +1288,10 @@ impl Agent {
                             let input = input.clone();
                             let cancel_clone = cancel.clone();
                             let cache_dir = session_cache_dir.clone();
+                            let call_id = call_ids[i].clone();
                             async move {
                                 let start = Instant::now();
-                                let ctx = ToolCtx { cache_dir };
+                                let ctx = ToolCtx { cache_dir, call_id };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;
                                 let elapsed = start.elapsed();
@@ -1923,6 +1932,20 @@ impl Agent {
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Generate an 8-character lowercase hex string from 4 random bytes.
+///
+/// Used as the per-tool-call identifier recorded in `events.jsonl` and
+/// embedded in tee-log filenames so that the two are bidirectionally
+/// cross-referenceable without knowing the LLM provider's ID format.
+fn gen_call_id() -> String {
+    let bytes: [u8; 4] = rand::random();
+    bytes.iter().fold(String::with_capacity(8), |mut s, b| {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Build an elided (non-wall-of-text) summary of an [`LlmRequest`] for

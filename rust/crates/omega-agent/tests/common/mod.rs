@@ -152,6 +152,7 @@ pub fn make_tool_use_items(
             name: tool_name.to_owned(),
             input,
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", 10, 5)),
     ]

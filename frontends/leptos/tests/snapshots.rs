@@ -234,6 +234,7 @@ fn ev_tool_call() -> OmegaEvent {
         name: "run_command".into(),
         input: serde_json::json!({ "command": "echo hi" }),
         context_hash: "abcd1234ef560000".into(),
+        call_id: None,
     })
 }
 

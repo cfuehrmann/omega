@@ -310,6 +310,7 @@ fn script_parallel_tool_calls_call1() -> Vec<Result<AgentItem, LlmError>> {
             name: "list_files".to_owned(),
             input: json!({ "path": "." }),
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(AgentItem::event(OmegaEvent::ToolCall(ToolCallEvent {
             time: "2024-01-01T00:00:00.000Z".to_owned(),
@@ -317,6 +318,7 @@ fn script_parallel_tool_calls_call1() -> Vec<Result<AgentItem, LlmError>> {
             name: "list_files".to_owned(),
             input: json!({ "path": "src" }),
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", 15, 6)),
     ]
@@ -375,6 +377,7 @@ fn script_multi_thinking_tools_call1() -> Vec<Result<AgentItem, LlmError>> {
             name: "list_files".to_owned(),
             input: json!({ "path": "." }),
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", 9, 5)),
     ]
@@ -396,6 +399,7 @@ fn script_multi_thinking_tools_call2() -> Vec<Result<AgentItem, LlmError>> {
             name: "read_file".to_owned(),
             input: json!({ "path": "README.md" }),
             context_hash: String::new(),
+            call_id: None,
         }))),
         Ok(make_llm_response("tool_use", 11, 4)),
     ]

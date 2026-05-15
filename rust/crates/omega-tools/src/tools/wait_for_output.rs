@@ -120,15 +120,23 @@ pub async fn execute(
 }
 
 /// Build the tee-log path for a `wait_for_output` snapshot.
+///
+/// With a session context: `<ctx.cache_dir>/wait/<ts-ms>-<call_id>-pid<N>.log`.
+/// Without context (test fallback): a per-process temp directory.
 fn make_wait_log_path(ctx: Option<&ToolCtx>, pid: u32) -> PathBuf {
-    let ts = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%S");
-    let filename = format!("{ts}-pid{pid}.log");
+    let now = chrono::Utc::now();
+    let ts = now.format("%Y-%m-%dT%H-%M-%S");
+    let ms = now.timestamp_subsec_millis();
 
-    let base = ctx.map_or_else(
-        || std::env::temp_dir().join(format!("omega-wait-{}", std::process::id())),
-        |c| c.cache_dir.join("wait"),
-    );
-    base.join(filename)
+    if let Some(c) = ctx {
+        let filename = format!("{ts}-{ms:03}-{}-pid{pid}.log", c.call_id);
+        c.cache_dir.join("wait").join(filename)
+    } else {
+        let filename = format!("{ts}-{ms:03}-pid{pid}.log");
+        std::env::temp_dir()
+            .join(format!("omega-wait-{}", std::process::id()))
+            .join(filename)
+    }
 }
 
 /// Cap the output string, tee it to a snapshot file, and build the JSON result.

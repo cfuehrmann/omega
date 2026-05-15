@@ -99,6 +99,7 @@ fn all_26_events() -> Vec<OmegaEvent> {
             name: "list_dir".into(),
             input: json!({"path": "."}),
             context_hash: HASH.into(),
+            call_id: None,
         }),
         // 7. ToolResult — correlated triple, part 2 (same id → same [id_1])
         OmegaEvent::ToolResult(ToolResultEvent {
