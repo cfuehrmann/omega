@@ -40,7 +40,7 @@ wasm-setup:
 # Format check + Clippy + cargo test + machete. Assumes dist/ is already built.
 [private]
 _rust-checks:
-    cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+    cd rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
     cargo machete
 
 # Build mock server + run browser tests. Assumes dist/ is already built.
