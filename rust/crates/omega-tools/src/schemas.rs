@@ -178,8 +178,11 @@ fn fetch_url() -> ToolDefinition {
         description: "Download a URL to a session-local cache file (content-addressed by URL hash) and \
                       immediately run a shell postprocessing command on the full downloaded text. \
                       HTML is converted to readable text before caching. \
-                      The tool result contains the cache file path and postprocess output (\u{2264}\u{00a0}8\u{00a0}000 chars). \
-                      For any further queries on the same content, use read_file or grep_files on the cache path. \
+                      The tool result contains the cache file path and the postprocess output. \
+                      The postprocess output is always tee\u{2019}d to a log file; a footer \
+                      (`[full output: <path>]` or `[truncated; showed first N\u{00a0}KB of M\u{00a0}KB. Full output: <path>]`) \
+                      appears on every result. For further queries on the same content, \
+                      use read_file or grep_files on the cache path. \
                       postprocess is required and receives the full content on stdin. \
                       Prefer grep or awk when you know what to look for, head -N as the catch-all. \
                       Never use cat \u{2014} head -N gives the same result on short pages and stays bounded on long ones."

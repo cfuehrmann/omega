@@ -184,7 +184,7 @@ Omega is Anthropic-only. The supported models are:
 To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
 to get an indexed list of all docs pages (each entry links to a `.md` URL), find the
 relevant page, then fetch that specific `.md` URL with `fetch_url`. Individual pages fit
-comfortably within the 20 000-char `fetch_url` limit.
+comfortably within a single `fetch_url` call.
 
 ## Bug fixes
 

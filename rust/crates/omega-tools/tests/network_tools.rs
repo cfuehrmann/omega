@@ -315,47 +315,56 @@ async fn fetch_url_postprocess_exit_1_not_marked_as_error() {
 
 #[tokio::test]
 async fn fetch_url_exactly_max_chars_postprocess_not_truncated() {
-    // Exactly POSTPROCESS_MAX_CHARS (8 000) output must NOT be truncated.
-    // Kills the `> → >=` mutation (8000 >= 8000 = true would wrongly truncate).
-    // python3 "print('x' * 7999)" outputs 7999 'x' + newline = 8 000 chars.
+    // Exactly PP_CAP (16 000) bytes must NOT be truncated.
+    // Kills the `> → >=` mutation (16_000 >= 16_000 = true would wrongly truncate).
+    // python3 "print('x' * 15999)" outputs 15 999 'x' + newline = 16 000 bytes.
     let out = exec(
         "fetch_url",
         json!({
             "url":         "https://example.com",
-            "postprocess": "python3 -c \"print('x' * 7999)\""
+            "postprocess": "python3 -c \"print('x' * 15999)\""
         }),
     )
     .await
     .unwrap();
     assert!(
         !out.contains("truncated"),
-        "exactly 8 000 chars must not be truncated: {out}"
+        "exactly 16 000 bytes must not be truncated: {out}"
+    );
+    assert!(
+        out.contains("[full output:"),
+        "exactly-at-cap output must still carry a tee footer: {out}"
     );
 }
 
 #[tokio::test]
 async fn fetch_url_large_postprocess_output_is_truncated() {
-    // Postprocess output > POSTPROCESS_MAX_CHARS (8 000) must be truncated.
+    // Postprocess output > PP_CAP (16 000 bytes) must be truncated.
     // Kills the `> → ==`, `> → <`, `> → >=` mutations on the truncation guard.
+    // python3 "print('Z' * 20000)" outputs 20 000 'Z' + newline = 20 001 bytes.
     let out = exec(
         "fetch_url",
         json!({
             "url":         "https://example.com",
-            "postprocess": "python3 -c \"print('Z' * 9000)\""
+            "postprocess": "python3 -c \"print('Z' * 20000)\""
         }),
     )
     .await
     .unwrap();
     assert!(
         out.contains("truncated"),
-        "9 000-char postprocess output must be truncated: {out}"
+        "20 001-byte postprocess output must be truncated: {out}"
+    );
+    assert!(
+        out.contains("Full output:"),
+        "truncated output must carry a log-path footer: {out}"
     );
 }
 
 #[tokio::test]
 async fn fetch_url_small_postprocess_output_not_truncated() {
-    // Small output must NOT show a truncation notice.
-    // Kills the `> → >=` mutation (which would truncate even at exactly 0 chars).
+    // Small output must NOT show a truncation notice, but MUST carry a
+    // [full output: ...] footer — the "tee always" property.
     let out = exec(
         "fetch_url",
         json!({
@@ -368,5 +377,9 @@ async fn fetch_url_small_postprocess_output_not_truncated() {
     assert!(
         !out.contains("truncated"),
         "tiny postprocess output must not show truncation notice: {out}"
+    );
+    assert!(
+        out.contains("[full output:"),
+        "tiny postprocess output must still carry a tee footer: {out}"
     );
 }

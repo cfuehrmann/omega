@@ -7,6 +7,8 @@
 //! is intentionally dropped (see `backlog/tee-on-truncate.md`).
 
 use std::fmt::Write as _;
+
+use crate::cap_and_tee::{TruncationBias, cap_and_tee};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -49,7 +51,10 @@ async fn run_subprocess(cmd: &str, args: &[String]) -> Result<SubprocOutput, Str
     })
 }
 
-const POSTPROCESS_MAX_CHARS: usize = 8_000;
+/// LLM-facing cap on the postprocess output; the full output is always tee'd to disk.
+/// Deliberately smaller than `run_command`'s cap: postprocess is a targeted extraction
+/// step (`grep`, `head -N`, `jq`) and should produce compact output by design.
+const PP_CAP: usize = 16_000;
 const FETCH_TIMEOUT_S: u64 = 15;
 
 // ---------------------------------------------------------------------------
@@ -178,50 +183,63 @@ pub async fn execute(
     // signal kill (`code = None`), is surfaced as a postprocess error.
     let pp_is_error = !matches!(out.code, Some(0 | 1));
 
-    let mut pp_text = if pp_is_error {
-        if out.stderr.trim().is_empty() {
+    // Build result string using `write!` (infallible for String) to avoid
+    // the `format_push_string` lint.
+    let mut result = format!("Cached: {cache_str} ({char_count} chars)\n");
+    let _ = write!(result, "\n--- postprocess: {postprocess} ---\n");
+
+    if pp_is_error {
+        let err_text = if out.stderr.trim().is_empty() {
             match out.code {
                 Some(c) => format!("[exit code {c}]"),
                 None => "[killed by signal]".to_owned(),
             }
         } else {
             out.stderr.trim().to_owned()
-        }
-    } else {
-        out.stdout.clone()
-    };
-
-    let mut truncated = false;
-    if pp_text.chars().count() > POSTPROCESS_MAX_CHARS {
-        let end = pp_text
-            .char_indices()
-            .nth(POSTPROCESS_MAX_CHARS)
-            .map_or(pp_text.len(), |(i, _)| i);
-        pp_text.truncate(end);
-        truncated = true;
-    }
-
-    // Build result string using `write!` (infallible for String) to avoid
-    // the `format_push_string` lint.
-    let mut result = format!("Cached: {cache_str} ({char_count} chars)\n");
-    let _ = write!(result, "\n--- postprocess: {postprocess} ---\n");
-    if pp_is_error {
-        let _ = write!(result, "[error] {pp_text}");
-    } else if pp_text.trim().is_empty() {
+        };
+        let _ = write!(result, "[error] {err_text}");
+    } else if out.stdout.trim().is_empty() {
         result.push_str("(no output)");
     } else {
-        result.push_str(pp_text.trim_end());
-        if truncated {
-            let _ = write!(
-                result,
-                "\n[postprocess output truncated at {POSTPROCESS_MAX_CHARS} chars \
-                 — use read_file or grep_files on the cached file for more]"
-            );
-        }
+        let pp_log_path = make_fetch_pp_log_path(ctx);
+        let capped = cap_and_tee(
+            out.stdout.as_bytes(),
+            PP_CAP,
+            TruncationBias::Head,
+            &pp_log_path,
+        )
+        .await
+        .map_err(|e| format!("fetch_url: failed to write postprocess tee log: {e}"))?;
+        result.push_str(&capped.body);
     }
+
     result.push_str("\n--- end ---");
 
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Log-path helpers
+// ---------------------------------------------------------------------------
+
+/// Path for the postprocess-output tee log.
+///
+/// With a session context: `<ctx.cache_dir>/fetch/<ts-ms>-<call_id>-pp.log`.
+/// Without context (test fallback): a per-process temp directory.
+fn make_fetch_pp_log_path(ctx: Option<&ToolCtx>) -> PathBuf {
+    let now = chrono::Utc::now();
+    let ts = now.format("%Y-%m-%dT%H-%M-%S");
+    let ms = now.timestamp_subsec_millis();
+
+    if let Some(c) = ctx {
+        let filename = format!("{ts}-{ms:03}-{}-pp.log", c.call_id);
+        c.cache_dir.join("fetch").join(filename)
+    } else {
+        let filename = format!("{ts}-{ms:03}-pp.log");
+        std::env::temp_dir()
+            .join(format!("omega-fetch-{}", std::process::id()))
+            .join(filename)
+    }
 }
 
 // ---------------------------------------------------------------------------
