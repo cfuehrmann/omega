@@ -1,25 +1,8 @@
 #!/bin/sh
-# Pre-commit hook: run the full quality gate before every commit.
+# Pre-commit hook: run the quality gate before every commit.
 # Install via: just install-hooks
 #
 # Aborts the commit if anything fails.
-
-# ---------------------------------------------------------------------------
-# Guard: catch bare `new Agent()` with no arguments in test files.
-# A no-arg Agent() in a test could write to production paths.
-# Use makeTestAgent() from src/test-utils.ts instead.
-# ---------------------------------------------------------------------------
-echo "Checking for unsafe Agent construction in tests..."
-if grep -rn --include="*.test.ts" "new Agent()" src/ 2>/dev/null | grep -qv "makeTestAgent"; then
-  echo ""
-  echo "❌  Unsafe Agent construction found in test files:"
-  grep -rn --include="*.test.ts" "new Agent()" src/ | grep -v "makeTestAgent"
-  echo ""
-  echo "    Use makeTestAgent() from src/test-utils.ts instead of new Agent()."
-  echo "    To skip this check (emergency only): git commit --no-verify"
-  exit 1
-fi
-echo "✅  No unsafe Agent construction."
 
 # ---------------------------------------------------------------------------
 # Docs-only fast path: skip the gate when every staged file is a doc or
@@ -38,10 +21,10 @@ if [ -z "$NON_DOCS" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-format Rust: always run cargo fmt on all workspaces and re-stage
+# Auto-format Rust: always run cargo fmt on both workspaces and re-stage
 # any .rs files the formatter changed, wherever they live in the tree.
-# This means rustfmt is an action, not a check — formatting is never a
-# reason for the gate to fail.
+# Formatting is an action, not a check — it is never a reason for the gate
+# to fail.
 # ---------------------------------------------------------------------------
 echo "Auto-formatting Rust code..."
 (cd rust && cargo fmt)
@@ -57,9 +40,8 @@ echo "✅  Rust code formatted and re-staged."
 
 # ---------------------------------------------------------------------------
 # Rust-only fast path: if every non-doc staged file lives under rust/, run
-# the Rust gate (cargo fmt + clippy + test) instead of the full TS gate.
-# The TS codebase is considered frozen during the Rust migration; no need to
-# rebuild Playwright or run bun test on Rust-only commits.
+# `just rust-gate` (faster subset, skips the e2e browser run) instead of
+# the full gate.
 # ---------------------------------------------------------------------------
 RUST_ONLY=$(printf '%s\n' $NON_DOCS | grep -v '^rust/')
 if [ -z "$RUST_ONLY" ]; then
@@ -77,7 +59,7 @@ if [ -z "$RUST_ONLY" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Run the full gate: typecheck + all tests (unit + browser) + knip.
+# Run the full gate (Leptos build/test/snapshots + Rust checks + e2e).
 # ---------------------------------------------------------------------------
 # Clear git plumbing variables that git sets when running hooks with -a.
 # Without this, GIT_INDEX_FILE points to the parent commit's index lock,
