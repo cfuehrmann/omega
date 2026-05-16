@@ -99,7 +99,7 @@ runtime.
 | `rust/crates/omega-core/` | LLM provider abstraction (Anthropic, Ollama) |
 | `rust/crates/omega-tools/` | Tool implementations |
 | `rust/crates/omega-store/` | Session persistence |
-| `rust/crates/omega-protocol/` | Shared event/message types |
+| `rust/crates/omega-types/` | Shared event/message types |
 | `frontends/leptos/` | Web UI (Rust → WASM via Trunk) |
 | `bench/` | Terminal-Bench harness and results |
 | `docs/` | Architecture, policies, internals |
