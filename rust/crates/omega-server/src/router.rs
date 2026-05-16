@@ -214,10 +214,9 @@ async fn create_active_session(
         model: model.unwrap_or_else(|| "claude-sonnet-4-6".to_owned()),
         effort,
         cwd,
-        system_prompt_append: None,
         session_dir: paths.dir.clone(),
     };
-    let agent = Agent::new(
+    let mut agent = Agent::new(
         Arc::clone(&state.provider),
         context_store,
         event_store,

@@ -450,8 +450,9 @@ enum CacheControl {
 
 /// A single system-prompt block in the `system` array.
 /// The first block is an uncached billing-attribution header (no
-/// `cache_control`); the second is the full system prompt with
-/// `cache_control: ephemeral` so it is cached after the first call.
+/// `cache_control`); the remaining blocks carry the caller-supplied
+/// system content, with `cache_control: ephemeral` stamped on the
+/// **last** of them so the whole prefix is cached after the first call.
 #[derive(Serialize)]
 struct SystemBlock<'a> {
     #[serde(rename = "type")]
@@ -556,19 +557,36 @@ struct WireTool<'a> {
 const BILLING_HEADER: &str =
     "x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=omega; cch=00000;";
 
-fn build_system_blocks(system: &str) -> Vec<SystemBlock<'_>> {
-    vec![
-        SystemBlock {
+/// Build the wire `system` array.
+///
+/// Layout: `[billing_header(uncached), block_1, block_2, ..., block_N(cached)]`.
+/// Empty blocks are skipped so we never push an empty `text` to the
+/// wire.  Returns `None` when no non-empty blocks remain — the caller
+/// uses this to drop the `system` field entirely.
+fn build_system_blocks(blocks: &[String]) -> Option<Vec<SystemBlock<'_>>> {
+    let mut out: Vec<SystemBlock<'_>> = Vec::with_capacity(blocks.len() + 1);
+    out.push(SystemBlock {
+        ty: "text",
+        text: BILLING_HEADER,
+        cache_control: None, // intentionally uncached
+    });
+    let mut pushed_any = false;
+    for block in blocks.iter().filter(|b| !b.is_empty()) {
+        out.push(SystemBlock {
             ty: "text",
-            text: BILLING_HEADER,
-            cache_control: None, // intentionally uncached
-        },
-        SystemBlock {
-            ty: "text",
-            text: system,
-            cache_control: Some(CacheControl::Ephemeral),
-        },
-    ]
+            text: block,
+            cache_control: None,
+        });
+        pushed_any = true;
+    }
+    if !pushed_any {
+        return None;
+    }
+    // Stamp cache_control on the last (= last user block) entry.
+    if let Some(last) = out.last_mut() {
+        last.cache_control = Some(CacheControl::Ephemeral);
+    }
+    Some(out)
 }
 
 /// Build the wire-format messages with `cache_control: ephemeral` stamped on
@@ -634,7 +652,10 @@ struct AnthropicRequestBody<'a> {
     max_tokens: u32,
     stream: bool,
     /// System-prompt blocks.  `None` when the request has no system prompt.
-    /// When present: `[billing_header (uncached), system_prompt (cached)]`.
+    /// When present:
+    /// `[billing_header (uncached), block_1, ..., block_N (cached)]`.
+    /// The `cache_control` marker lives only on the final block, so all
+    /// caller-supplied content forms a single cached prefix.
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<Vec<SystemBlock<'a>>>,
     /// Conversation history with `cache_control` on the last block of the
@@ -691,7 +712,7 @@ fn build_request_body(req: &LlmRequest) -> AnthropicRequestBody<'_> {
         model: &req.model,
         max_tokens: req.config.max_tokens,
         stream: true,
-        system: req.system.as_deref().map(build_system_blocks),
+        system: req.system.as_deref().and_then(build_system_blocks),
         messages: build_wire_messages(&req.messages),
         tools: build_wire_tools(&req.tools),
         temperature: req.config.temperature,

@@ -138,7 +138,7 @@ async fn request_body_kitchen_sink() {
     let tool_id = "toolu_ks_01";
     let req = LlmRequest {
         model: "claude-opus-4-6".to_owned(),
-        system: Some("You are a helpful assistant.".to_owned()),
+        system: Some(vec!["You are a helpful assistant.".to_owned()]),
         messages: vec![
             Message {
                 role: Role::User,
@@ -1259,7 +1259,7 @@ async fn request_body_has_three_cache_control_markers() {
 
     let req = LlmRequest {
         model: "claude-opus-4-6".to_owned(),
-        system: Some("You are helpful.".to_owned()),
+        system: Some(vec!["You are helpful.".to_owned()]),
         messages: vec![
             Message {
                 role: Role::User,

@@ -104,7 +104,7 @@ async fn request_body_kitchen_sink() {
     let tool_id = "toolu_ks_01";
     let req = LlmRequest {
         model: "llama3.2".to_owned(),
-        system: Some("You are a helpful assistant.".to_owned()),
+        system: Some(vec!["You are a helpful assistant.".to_owned()]),
         messages: vec![
             Message {
                 role: Role::User,

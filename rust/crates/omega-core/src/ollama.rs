@@ -263,13 +263,23 @@ struct OllamaFunctionCallOut {
 
 fn build_request_body(req: &LlmRequest) -> OllamaRequestBody<'_> {
     let mut messages: Vec<OllamaMessage> = Vec::new();
-    if let Some(system) = req.system.as_deref() {
-        messages.push(OllamaMessage {
-            role: "system",
-            content: system.to_owned(),
-            thinking: None,
-            tool_calls: None,
-        });
+    if let Some(blocks) = req.system.as_deref()
+        && !blocks.is_empty()
+    {
+        let joined = blocks
+            .iter()
+            .filter(|b| !b.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if !joined.is_empty() {
+            messages.push(OllamaMessage {
+                role: "system",
+                content: joined,
+                thinking: None,
+                tool_calls: None,
+            });
+        }
     }
     for msg in &req.messages {
         flatten_message(msg, &mut messages);

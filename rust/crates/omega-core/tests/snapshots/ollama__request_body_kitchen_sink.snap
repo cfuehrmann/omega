@@ -1,5 +1,6 @@
 ---
 source: crates/omega-core/tests/ollama.rs
+assertion_line: 179
 expression: "json!({\"input\": input, \"wire_body\": wire_body})"
 ---
 {
@@ -40,7 +41,9 @@ expression: "json!({\"input\": input, \"wire_body\": wire_body})"
         ]
       }
     ],
-    "system": "You are a helpful assistant.",
+    "system": [
+      "You are a helpful assistant."
+    ],
     "tools": [
       {
         "name": "calculator",

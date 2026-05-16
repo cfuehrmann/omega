@@ -94,9 +94,20 @@ pub struct LlmRequest {
     pub model: String,
     /// Conversation history.
     pub messages: Vec<Message>,
-    /// Optional system prompt.
+    /// Optional system prompt, expressed as an ordered list of
+    /// cacheable text blocks.
+    ///
+    /// The Anthropic provider serialises each entry as one element of
+    /// the wire-level `system` array (preceded by an uncached billing
+    /// header) and stamps `cache_control: ephemeral` on the **last**
+    /// block so the whole sequence becomes a single cached prefix.
+    /// The Ollama provider concatenates the blocks with blank lines
+    /// before submitting as a single `system` message.
+    ///
+    /// `None` means no system prompt; `Some(vec![])` is normalised the
+    /// same way on the wire.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
+    pub system: Option<Vec<String>>,
     /// Tool definitions visible to the model on this call.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,

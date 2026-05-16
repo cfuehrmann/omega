@@ -1,67 +1,272 @@
 //! System-prompt assembly.
 //!
-//! Mirrors `src/system-prompt/{core,append,index}.ts`. The core prompt is
-//! a static template with two interpolated fields (`cwd` and
-//! `max_output_tokens`); the optional append section comes from
-//! `<cwd>/.omega/system-prompt-append.md` if it exists.
+//! Two responsibilities, kept in this single module:
+//!
+//! 1. **Discovery.** Locate `AGENTS.md` files from the standard tiers
+//!    (global config + repo root).
+//! 2. **Assembly.** Build the ordered list of cacheable
+//!    [`SystemBlock`]s the agent sends on every API call:
+//!
+//!    | # | Block             | Source                                  |
+//!    |---|-------------------|-----------------------------------------|
+//!    | 1 | Core prompt       | static template (this file)             |
+//!    | 2 | Runtime context   | `cwd`, `max_output_tokens`              |
+//!    | 3 | Global AGENTS.md  | `$XDG_CONFIG_HOME/omega/AGENTS.md`      |
+//!    | 4 | Repo AGENTS.md    | `<repo-root>/AGENTS.md`                 |
+//!
+//! Blocks 3 and 4 are only present when the corresponding file exists.
+//! The Anthropic provider stamps `cache_control: ephemeral` on the
+//! **last** present block, so blocks 1..=N are all part of the cached
+//! prefix.
 
 use std::path::{Path, PathBuf};
 
-/// Build the full system-prompt string for one API call.
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/// One cacheable section of the assembled system prompt.
 ///
-/// `cwd` and `max_output_tokens` are interpolated into the core template;
-/// `append_content` (typically loaded once via [`read_system_prompt_append`])
-/// is appended after a blank line if present.
+/// The order of [`SystemBlock`]s in the `Vec` returned by
+/// [`build_system_blocks`] is the order the provider sees on the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemBlock {
+    /// Stable label identifying the block's role.  One of:
+    /// `"core"`, `"runtime"`, `"global-agents-md"`, `"repo-agents-md"`.
+    pub label: &'static str,
+    /// Fully rendered text of the block.  For instruction-file blocks
+    /// the `"Instructions from: <path>\n\n"` prefix is already
+    /// included.
+    pub content: String,
+    /// Path the content was loaded from, when applicable.  `None` for
+    /// the core and runtime blocks (which have no on-disk source).
+    pub source_path: Option<PathBuf>,
+}
+
+/// An `AGENTS.md` file that was located by [`discover_instruction_files`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstructionFile {
+    /// The tier this file came from — `"global-agents-md"` or
+    /// `"repo-agents-md"`.  Surfaces directly as the label of the
+    /// resulting [`SystemBlock`].
+    pub label: &'static str,
+    /// Absolute path on disk.
+    pub path: PathBuf,
+    /// File contents, read verbatim.
+    pub content: String,
+}
+
+// ---------------------------------------------------------------------------
+// Discovery
+// ---------------------------------------------------------------------------
+
+/// File name used at every tier.  Single canonical spelling — no
+/// `CLAUDE.md` / `AGENT.md` aliases.
+pub const AGENTS_FILE: &str = "AGENTS.md";
+
+/// Locate `AGENTS.md` files from the supported tiers, in the order the
+/// agent should append them to the system prompt:
+///
+/// 1. **Global**: `$XDG_CONFIG_HOME/omega/AGENTS.md`
+///    (default `~/.config/omega/AGENTS.md`).
+/// 2. **Repo**: walk up from `cwd` to the git repository root (the
+///    nearest ancestor containing a `.git` entry); use its
+///    `AGENTS.md` if present.
+///
+/// Files that don't exist are silently skipped.  Read errors (e.g.
+/// permission denied) are also skipped — the agent should never fail
+/// to start because of an unreadable instruction file.
+///
+/// Tier C (subdirectory `AGENTS.md`, on-demand attachment) is **not**
+/// implemented here.
 #[must_use]
-pub fn build_system_prompt(
-    cwd: &str,
-    max_output_tokens: u32,
-    append_content: Option<&str>,
-) -> String {
-    let mut out = core_prompt(cwd, max_output_tokens);
-    if let Some(extra) = append_content
-        && !extra.is_empty()
+pub fn discover_instruction_files(cwd: &Path) -> Vec<InstructionFile> {
+    discover_instruction_files_with_env(
+        cwd,
+        std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}
+
+/// Env-injected variant of [`discover_instruction_files`], used by
+/// the unit tests so they don't have to mutate the process
+/// environment (which is `unsafe` under edition 2024 and forbidden by
+/// this crate's lints).
+#[must_use]
+pub fn discover_instruction_files_with_env(
+    cwd: &Path,
+    xdg_config_home: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+) -> Vec<InstructionFile> {
+    let mut out = Vec::new();
+
+    if let Some(path) = global_agents_md_path_from_env(xdg_config_home, home)
+        && let Some(content) = read_existing(&path)
     {
-        out.push_str("\n\n");
-        out.push_str(extra);
+        out.push(InstructionFile {
+            label: "global-agents-md",
+            path,
+            content,
+        });
     }
+
+    if let Some(path) = repo_agents_md_path(cwd)
+        && let Some(content) = read_existing(&path)
+    {
+        out.push(InstructionFile {
+            label: "repo-agents-md",
+            path,
+            content,
+        });
+    }
+
     out
 }
 
-/// Path of the optional system-prompt append file inside `cwd`.
+/// Resolve the global `AGENTS.md` path.
 ///
-/// `<cwd>/.omega/system-prompt-append.md`. The file is project-owned and
-/// source-controlled — never written automatically.
+/// Honours `$XDG_CONFIG_HOME`; falls back to `$HOME/.config/omega/AGENTS.md`
+/// when unset.  Returns `None` only when neither variable is available
+/// (very unusual — e.g. an unsandboxed CI worker with no `HOME`).
 #[must_use]
-pub fn system_prompt_append_path(cwd: &Path) -> PathBuf {
-    cwd.join(".omega").join("system-prompt-append.md")
+pub fn global_agents_md_path() -> Option<PathBuf> {
+    global_agents_md_path_from_env(
+        std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
 }
 
-/// Read the append file from disk, or `Ok(None)` if it is absent.
-///
-/// # Errors
-///
-/// Propagates I/O errors other than `NotFound`.
-pub async fn read_system_prompt_append(path: &Path) -> std::io::Result<Option<String>> {
-    match tokio::fs::read_to_string(path).await {
-        Ok(s) => Ok(Some(s)),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err),
+/// Env-injected variant of [`global_agents_md_path`].
+#[must_use]
+pub fn global_agents_md_path_from_env(
+    xdg_config_home: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    let base = xdg_config_home
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| home.map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("omega").join(AGENTS_FILE))
+}
+
+/// Resolve `<repo-root>/AGENTS.md` by walking up from `cwd` to the
+/// nearest ancestor that contains a `.git` entry.  Returns `None` when
+/// `cwd` is not inside a git checkout.
+#[must_use]
+pub fn repo_agents_md_path(cwd: &Path) -> Option<PathBuf> {
+    find_git_root(cwd).map(|root| root.join(AGENTS_FILE))
+}
+
+/// Walk up from `start`, returning the first ancestor that contains a
+/// `.git` entry (file or directory — git worktrees use a `.git` file).
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut current: Option<&Path> = Some(start);
+    while let Some(dir) = current {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
     }
+    None
+}
+
+/// Read `path` to a string, returning `None` for any error (most
+/// commonly `NotFound`).  We deliberately swallow non-`NotFound`
+/// errors: a permission-denied AGENTS.md must not block session start.
+fn read_existing(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
 }
 
 // ---------------------------------------------------------------------------
-// Core prompt (verbatim port of src/system-prompt/core.ts)
+// Assembly
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_lines)]
-fn core_prompt(cwd: &str, max_output_tokens: u32) -> String {
-    format!(
-        "\
-You are Omega, a coding agent. Use tools when needed.
+/// Build the ordered list of system-prompt blocks for one session.
+///
+/// `files` is typically the output of [`discover_instruction_files`].
+/// Empty `content` files are skipped so we never push a stray header
+/// onto the wire.
+#[must_use]
+pub fn build_system_blocks(
+    cwd: &str,
+    max_output_tokens: u32,
+    files: &[InstructionFile],
+) -> Vec<SystemBlock> {
+    let mut out = Vec::with_capacity(2 + files.len());
 
-Your working directory is {cwd}. Treat it as the root of your work —
-use relative paths from there unless the user directs otherwise.
+    out.push(SystemBlock {
+        label: "core",
+        content: core_prompt(),
+        source_path: None,
+    });
+
+    out.push(SystemBlock {
+        label: "runtime",
+        content: runtime_context(cwd, max_output_tokens),
+        source_path: None,
+    });
+
+    for file in files {
+        if file.content.trim().is_empty() {
+            continue;
+        }
+        out.push(SystemBlock {
+            label: file.label,
+            content: format!(
+                "Instructions from: {}\n\n{}",
+                file.path.display(),
+                file.content
+            ),
+            source_path: Some(file.path.clone()),
+        });
+    }
+
+    out
+}
+
+/// Concatenate every block's `content` with `\n\n` between them.
+///
+/// Used as the `system_prompt` field on `SessionStartedEvent`, so the
+/// archived session faithfully shows everything the model saw.
+#[must_use]
+pub fn join_blocks(blocks: &[SystemBlock]) -> String {
+    blocks
+        .iter()
+        .map(|b| b.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+// ---------------------------------------------------------------------------
+// Static text
+// ---------------------------------------------------------------------------
+
+/// Runtime-context block (block #2).
+///
+/// Contains the two pieces of state that change between sessions:
+/// `cwd` and `max_output_tokens`.  Kept separate from the core prompt
+/// so the core text is byte-for-byte identical across sessions and
+/// benefits from Anthropic's prefix cache the first time it appears.
+fn runtime_context(cwd: &str, max_output_tokens: u32) -> String {
+    format!(
+        "## Runtime context\n\
+\n\
+Your working directory is {cwd}. Treat it as the root of your work — use\n\
+relative paths from there unless the user directs otherwise.\n\
+\n\
+The output token budget is {max_output_tokens} tokens per response. Tool call\n\
+arguments count against this budget. Very large `write_file` calls risk\n\
+hitting the limit mid-generation, leaving a broken turn. For large new\n\
+files: write a skeleton first, then extend with `edit_file`. For large\n\
+existing files: always prefer `edit_file` over a full rewrite."
+    )
+}
+
+/// Core prompt (block #1) — static text, identical across sessions.
+#[allow(clippy::too_many_lines)]
+fn core_prompt() -> String {
+    "\
+You are Omega, a coding agent. Use tools when needed.
 
 ## Project orientation
 
@@ -88,8 +293,8 @@ Use `run_command` for builds, test suites, commits, and any finite command.
 The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands
 you expect to take longer. Reserve `run_background` for processes that must
 stay alive indefinitely (dev servers, file watchers).
-All `run_command` and `wait_for_output` results are tee’d to a session-cache
-log and the path is surfaced in a footer on **every** result, not only on
+All `run_command` and `wait_for_output` results are tee'd to a session-cache
+log and the path is surfaced in a footer on every result, not only on
 truncation:
 - `[full output: <path>]` when the output fits within the cap.
 - `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.
@@ -136,14 +341,6 @@ see more output. Never re-run any command without making a code change in
 between.
 
 If a tool fails in a noteworthy way, mention it in your response.
-
-## Output token budget
-
-The output token budget is {max_output_tokens} tokens per response. Tool call
-arguments count against this budget. Very large `write_file` calls risk
-hitting the limit mid-generation, leaving a broken turn. For large new
-files: write a skeleton first, then extend with `edit_file`. For large
-existing files: always prefer `edit_file` over a full rewrite.
 
 ## Output format
 
@@ -212,65 +409,213 @@ final state matches the spec before declaring done. Be careful with
 relative-path assumptions — a path that resolves correctly from your current
 working directory may not be the location the task requires. If the task
 specifies which files should be present, list the directory and compare
-against the spec.",
-    )
+against the spec."
+        .to_owned()
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
-#[allow(clippy::expect_used)] // unwrap/expect are idiomatic in tests
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    fn git_init(dir: &Path) {
+        let s = Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(dir)
+            .status()
+            .expect("git init");
+        assert!(s.success());
+    }
+
+    // ---- Assembly ----------------------------------------------------
 
     #[test]
-    fn core_prompt_substitutes_cwd_and_tokens() {
-        let p = build_system_prompt("/tmp/proj", 12_345, None);
-        assert!(p.contains("Your working directory is /tmp/proj."));
-        assert!(p.contains("output token budget is 12345 tokens"));
+    fn core_block_is_first_and_unheadered() {
+        let blocks = build_system_blocks("/tmp/proj", 64_000, &[]);
+        assert_eq!(blocks[0].label, "core");
+        assert!(blocks[0].source_path.is_none());
+        assert!(blocks[0].content.starts_with("You are Omega"));
+        // The core block must NOT contain the runtime values.
+        assert!(!blocks[0].content.contains("64000"));
+        assert!(!blocks[0].content.contains("/tmp/proj"));
     }
 
     #[test]
-    fn core_prompt_contains_llm_provider_docs_url() {
-        let p = build_system_prompt("/tmp/proj", 64_000, None);
+    fn runtime_block_contains_cwd_and_token_budget() {
+        let blocks = build_system_blocks("/tmp/proj", 12_345, &[]);
+        let rt = blocks.iter().find(|b| b.label == "runtime").expect("rt");
+        assert!(rt.content.starts_with("## Runtime context"));
+        assert!(rt.content.contains("/tmp/proj"));
+        assert!(rt.content.contains("12345 tokens"));
+    }
+
+    #[test]
+    fn no_instruction_files_yields_exactly_two_blocks() {
+        let blocks = build_system_blocks("/x", 1000, &[]);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].label, "core");
+        assert_eq!(blocks[1].label, "runtime");
+    }
+
+    #[test]
+    fn instruction_files_become_trailing_blocks_with_prefix() {
+        let files = vec![
+            InstructionFile {
+                label: "global-agents-md",
+                path: PathBuf::from("/etc/omega/AGENTS.md"),
+                content: "GLOBAL".to_owned(),
+            },
+            InstructionFile {
+                label: "repo-agents-md",
+                path: PathBuf::from("/repo/AGENTS.md"),
+                content: "REPO".to_owned(),
+            },
+        ];
+        let blocks = build_system_blocks("/repo", 1000, &files);
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[2].label, "global-agents-md");
         assert!(
-            p.contains("platform.claude.com/llms.txt"),
-            "system prompt must contain the Anthropic docs URL so the agent uses fetch_url \
-             instead of guessing docs.anthropic.com (which is JS-rendered and unreachable)"
+            blocks[2]
+                .content
+                .starts_with("Instructions from: /etc/omega/AGENTS.md\n\nGLOBAL")
+        );
+        assert_eq!(blocks[3].label, "repo-agents-md");
+        assert!(
+            blocks[3]
+                .content
+                .starts_with("Instructions from: /repo/AGENTS.md\n\nREPO")
         );
     }
 
     #[test]
-    fn append_content_added_with_separator() {
-        let with = build_system_prompt("/x", 1000, Some("EXTRA"));
-        let without = build_system_prompt("/x", 1000, None);
-        assert!(with.ends_with("\n\nEXTRA"));
-        assert!(!without.ends_with("EXTRA"));
+    fn empty_instruction_file_is_skipped() {
+        let files = vec![InstructionFile {
+            label: "repo-agents-md",
+            path: PathBuf::from("/repo/AGENTS.md"),
+            content: "   \n  ".to_owned(),
+        }];
+        let blocks = build_system_blocks("/repo", 1000, &files);
+        assert_eq!(blocks.len(), 2, "whitespace-only file should be ignored");
     }
 
     #[test]
-    fn empty_append_does_not_add_separator() {
-        let p = build_system_prompt("/x", 1000, Some(""));
-        assert!(!p.ends_with("\n\n"));
+    fn join_blocks_separates_with_blank_line() {
+        let blocks = build_system_blocks("/x", 1000, &[]);
+        let joined = join_blocks(&blocks);
+        assert!(joined.contains("\n\n## Runtime context"));
     }
 
-    #[tokio::test]
-    async fn read_append_returns_none_when_missing() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = system_prompt_append_path(dir.path());
-        let r = read_system_prompt_append(&path).await.expect("io");
-        assert_eq!(r, None);
+    // ---- Discovery: repo tier ----------------------------------------
+
+    #[test]
+    fn discovers_repo_agents_md_at_git_root() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        std::fs::write(dir.path().join("AGENTS.md"), "REPO INSTRUCTIONS").unwrap();
+
+        // Use an empty XDG dir to block the global tier so the test
+        // is independent of the host's ~/.config/omega.  No env
+        // mutation needed — we go through the env-injected helper.
+        let empty_home = tempfile::tempdir().unwrap();
+        let files = discover_instruction_files_with_env(
+            dir.path(),
+            Some(empty_home.path().as_os_str()),
+            Some(empty_home.path().as_os_str()),
+        );
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].label, "repo-agents-md");
+        assert_eq!(files[0].content, "REPO INSTRUCTIONS");
+        assert_eq!(files[0].path, dir.path().join("AGENTS.md"));
     }
 
-    #[tokio::test]
-    async fn read_append_returns_content_when_present() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = system_prompt_append_path(dir.path());
-        tokio::fs::create_dir_all(path.parent().expect("parent"))
-            .await
-            .expect("mkdir");
-        tokio::fs::write(&path, "PROJECT NOTES")
-            .await
-            .expect("write");
-        let r = read_system_prompt_append(&path).await.expect("io");
-        assert_eq!(r.as_deref(), Some("PROJECT NOTES"));
+    #[test]
+    fn walks_up_from_subdir_to_repo_root() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        std::fs::write(dir.path().join("AGENTS.md"), "TOP").unwrap();
+        let sub = dir.path().join("a").join("b");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let path = repo_agents_md_path(&sub).expect("found");
+        assert_eq!(path, dir.path().join("AGENTS.md"));
+    }
+
+    #[test]
+    fn no_repo_agents_md_when_no_git() {
+        let dir = tempfile::tempdir().unwrap();
+        // No `git init` here, no `.git` anywhere up the chain (tempdir
+        // is typically `/tmp/...` — no `.git` ancestor).
+        assert!(repo_agents_md_path(dir.path()).is_none());
+    }
+
+    // ---- Discovery: global tier --------------------------------------
+
+    #[test]
+    fn global_path_honours_xdg_config_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = global_agents_md_path_from_env(Some(dir.path().as_os_str()), None).expect("path");
+        assert_eq!(p, dir.path().join("omega").join("AGENTS.md"));
+    }
+
+    #[test]
+    fn global_path_falls_back_to_home_dot_config_when_xdg_unset() {
+        let p = global_agents_md_path_from_env(None, Some(std::ffi::OsStr::new("/home/test")))
+            .expect("path");
+        assert_eq!(p, PathBuf::from("/home/test/.config/omega/AGENTS.md"));
+    }
+
+    #[test]
+    fn global_path_is_none_when_both_env_vars_missing() {
+        assert!(global_agents_md_path_from_env(None, None).is_none());
+    }
+
+    #[test]
+    fn global_path_treats_empty_xdg_as_unset() {
+        let p = global_agents_md_path_from_env(
+            Some(std::ffi::OsStr::new("")),
+            Some(std::ffi::OsStr::new("/h")),
+        )
+        .expect("path");
+        assert_eq!(p, PathBuf::from("/h/.config/omega/AGENTS.md"));
+    }
+
+    // ---- Discovery: both tiers ---------------------------------------
+
+    #[test]
+    fn discovers_both_tiers_with_global_first() {
+        let global_dir = tempfile::tempdir().unwrap();
+        let xdg = global_dir.path();
+        let omega_dir = xdg.join("omega");
+        std::fs::create_dir_all(&omega_dir).unwrap();
+        std::fs::write(omega_dir.join("AGENTS.md"), "GLOBAL").unwrap();
+
+        let repo = tempfile::tempdir().unwrap();
+        git_init(repo.path());
+        std::fs::write(repo.path().join("AGENTS.md"), "REPO").unwrap();
+
+        let files = discover_instruction_files_with_env(repo.path(), Some(xdg.as_os_str()), None);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].label, "global-agents-md");
+        assert_eq!(files[0].content, "GLOBAL");
+        assert_eq!(files[1].label, "repo-agents-md");
+        assert_eq!(files[1].content, "REPO");
+    }
+
+    #[test]
+    fn missing_global_file_is_silently_skipped() {
+        // XDG points to a real dir but with no `omega/AGENTS.md` in it.
+        let xdg = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        // No git init, no repo AGENTS.md either.
+        let files =
+            discover_instruction_files_with_env(repo.path(), Some(xdg.path().as_os_str()), None);
+        assert!(files.is_empty());
     }
 }

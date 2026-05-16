@@ -673,7 +673,6 @@ async fn replay_with_empty_events_file_yields_only_ready() {
             model: "claude-sonnet-4-6".to_owned(),
             effort: None,
             cwd: tmp.path().to_path_buf(),
-            system_prompt_append: None,
             session_dir,
         },
     );

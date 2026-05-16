@@ -13,13 +13,10 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use futures::StreamExt as _;
-use omega_agent::{
-    Agent, AgentConfig, max_output_tokens_for_model, system_prompt::read_system_prompt_append,
-    system_prompt::system_prompt_append_path,
-};
+use omega_agent::{Agent, AgentConfig};
 use omega_core::{AnthropicProvider, RetryConfig, RetryingProvider};
 use omega_store::{ContextStore, EventStore, SESSIONS_ROOT, make_session_dir};
-use omega_types::{OmegaEvent, events::SessionStartedEvent};
+use omega_types::OmegaEvent;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
@@ -141,45 +138,6 @@ async fn run(
     let event_store = EventStore::new(paths.events_file.clone());
     let context_store = ContextStore::new(paths.context_file.clone());
 
-    // ---- System prompt -------------------------------------------------
-    let spa_path = system_prompt_append_path(&cwd);
-    let system_prompt_append = read_system_prompt_append(&spa_path).await.unwrap_or(None);
-    let max_tokens = max_output_tokens_for_model(&model);
-    let system_prompt = omega_agent::build_system_prompt(
-        &cwd.to_string_lossy(),
-        max_tokens,
-        system_prompt_append.as_deref(),
-    );
-
-    // ---- session_started event -----------------------------------------
-    let session_id = paths.dir.file_name().map_or_else(
-        || "unknown".to_owned(),
-        |n| n.to_string_lossy().into_owned(),
-    );
-
-    let session_path = paths
-        .dir
-        .strip_prefix(&cwd)
-        .unwrap_or(&paths.dir)
-        .to_string_lossy()
-        .into_owned();
-
-    let session_started = OmegaEvent::SessionStarted(SessionStartedEvent {
-        time: now_iso(),
-        session_id,
-        path: session_path,
-        model: model.clone(),
-        effort: effort.clone(),
-        system_prompt,
-        omega_commit: omega_agent::OMEGA_GIT_COMMIT.to_owned(),
-        // See agent.rs for rationale.
-        agent_time_zone: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
-    });
-    if let Err(e) = event_store.append(&session_started).await {
-        eprintln!("omega: failed to write session_started: {e}");
-        return 1;
-    }
-
     // ---- Provider ------------------------------------------------------
     // ANTHROPIC_BASE_URL: documented Anthropic-SDK env var. Used by
     // tests to point at a local axum SSE fake, and by users to route
@@ -213,14 +171,22 @@ async fn run(
     ));
 
     // ---- Agent ---------------------------------------------------------
+    //
+    // `agent.init()` discovers `AGENTS.md` (global + repo tiers),
+    // assembles the system blocks, and writes the `server_started` +
+    // `session_started` events.  Single code path shared with the
+    // server — see `omega-server/src/router.rs`.
     let config = AgentConfig {
-        model,
-        effort: None,
+        model: model.clone(),
+        effort: Some(effort.clone()),
         cwd: cwd.clone(),
-        system_prompt_append,
         session_dir: paths.dir.clone(),
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
+    if let Err(e) = agent.init().await {
+        eprintln!("omega: failed to initialise session: {e}");
+        return 1;
+    }
 
     // ---- Ctrlc cancel --------------------------------------------------
     let cancel = CancellationToken::new();
@@ -300,10 +266,6 @@ async fn run(
     }
 
     exit_code
-}
-
-fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Returns `true` if `git status --porcelain` reports any uncommitted changes

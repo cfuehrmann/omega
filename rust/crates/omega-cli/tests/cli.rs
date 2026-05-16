@@ -147,14 +147,30 @@ async fn happy_path_single_text_turn() {
 
     // `now_iso` mutants: read events.jsonl and verify the
     // session_started time looks like an ISO-8601 timestamp.
+    //
+    // Event order after the AGENTS.md refactor is `server_started` then
+    // `session_started` (the CLI now goes through `Agent::init()`, the
+    // same code path as the server, instead of writing only
+    // `session_started` itself).
     let session = find_session_dir(&session_root);
     let events = read_events(&session);
-    assert!(!events.is_empty(), "no events written");
-    let first = &events[0];
-    let kind = first.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(events.len() >= 2, "no events written: {events:?}");
+    let kind0 = events[0].get("type").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(kind0, "server_started");
+    let session_started = &events[1];
+    let kind = session_started
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert_eq!(kind, "session_started");
-    let time = first.get("time").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(!time.is_empty(), "session_started.time is empty: {first:?}");
+    let time = session_started
+        .get("time")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        !time.is_empty(),
+        "session_started.time is empty: {session_started:?}"
+    );
     assert!(
         time.contains('T') && (time.ends_with('Z') || time.contains('+')),
         "session_started.time is not ISO-8601: {time:?}"

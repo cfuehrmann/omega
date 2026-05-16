@@ -53,7 +53,9 @@ use crate::session_resume::{
     RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
     extract_summary_from_response,
 };
-use crate::system_prompt::build_system_prompt;
+use crate::system_prompt::{
+    SystemBlock, build_system_blocks, discover_instruction_files, join_blocks,
+};
 
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -420,11 +422,10 @@ pub struct AgentConfig {
     /// [`DEFAULT_EFFORT`].  Phase 2a wires this through from the
     /// `POST /api/sessions` body and the `reset` client frame.
     pub effort: Option<String>,
-    /// Working directory interpolated into the system prompt.
+    /// Working directory.  Used as the discovery root for the repo
+    /// `AGENTS.md` (we walk up to the git root from here) and
+    /// interpolated into the runtime-context system block.
     pub cwd: PathBuf,
-    /// Pre-loaded contents of `<cwd>/.omega/system-prompt-append.md`,
-    /// if the file exists.  Pass `None` to skip the append section.
-    pub system_prompt_append: Option<String>,
     /// Path to the session directory (the parent of `events.jsonl`).
     /// Used by [`Agent::init`] to write the `session_started` event.
     pub session_dir: PathBuf,
@@ -453,6 +454,12 @@ pub struct Agent {
     /// Threaded onto every `LlmRequest` as `config.effort` via
     /// [`cap_effort_for_model`].
     active_effort: String,
+    /// Cached system-prompt blocks for the active session.  Populated
+    /// once in [`Agent::init`] (discovers + reads `AGENTS.md` files
+    /// from the global and repo tiers, then assembles core + runtime
+    /// + instruction blocks).  Re-used on every API call so disk I/O
+    ///   happens at most once per session.
+    system_blocks: Vec<SystemBlock>,
     /// In-memory mirror of `context.jsonl`; sent verbatim as the
     /// `messages` array on every API call.
     history: Vec<Message>,
@@ -490,6 +497,7 @@ impl Agent {
             config,
             active_model,
             active_effort,
+            system_blocks: Vec::new(),
             history: Vec::new(),
             context_hashes: Vec::new(),
         }
@@ -503,12 +511,29 @@ impl Agent {
     /// # Errors
     ///
     /// Returns an error if serialisation or the file write fails.
-    pub async fn init(&self) -> omega_store::Result<()> {
+    pub async fn init(&mut self) -> omega_store::Result<()> {
         // 1. server_started
         let server_started = OmegaEvent::ServerStarted(ServerStartedEvent { time: now_iso() });
         self.event_store.append(&server_started).await?;
 
-        // 2. session_started
+        // 2. Discover AGENTS.md files (global + repo tiers).  Log one
+        //    info line per discovered file so the session log records
+        //    exactly which instruction sources the agent saw.
+        let files = discover_instruction_files(&self.config.cwd);
+        if files.is_empty() {
+            eprintln!("AGENTS.md: not found in repo");
+        } else {
+            for f in &files {
+                eprintln!("AGENTS.md: loaded {}", f.path.display());
+            }
+        }
+
+        // 3. Assemble system blocks once for the whole session.
+        let max_tokens = max_output_tokens_for_model(&self.active_model);
+        self.system_blocks =
+            build_system_blocks(&self.config.cwd.to_string_lossy(), max_tokens, &files);
+
+        // 4. session_started
         let session_id = self.config.session_dir.file_name().map_or_else(
             || "unknown".to_owned(),
             |n| n.to_string_lossy().into_owned(),
@@ -520,12 +545,10 @@ impl Agent {
             .unwrap_or(&self.config.session_dir)
             .to_string_lossy()
             .into_owned();
-        let max_tokens = max_output_tokens_for_model(&self.active_model);
-        let system_prompt = build_system_prompt(
-            &self.config.cwd.to_string_lossy(),
-            max_tokens,
-            self.config.system_prompt_append.as_deref(),
-        );
+        // SessionStarted carries the full system prompt as a single
+        // string for archival purposes — every block concatenated with
+        // a blank line, preserving the order the model saw on the wire.
+        let system_prompt = join_blocks(&self.system_blocks);
         let session_started = OmegaEvent::SessionStarted(SessionStartedEvent {
             time: now_iso(),
             session_id,
@@ -859,15 +882,15 @@ impl Agent {
                 }
 
                 let max_tokens = max_output_tokens_for_model(&self.active_model);
-                let system = build_system_prompt(
-                    &self.config.cwd.to_string_lossy(),
-                    max_tokens,
-                    self.config.system_prompt_append.as_deref(),
-                );
+                let system_blocks: Vec<String> = self
+                    .system_blocks
+                    .iter()
+                    .map(|b| b.content.clone())
+                    .collect();
                 let request = LlmRequest {
                     model: self.active_model.clone(),
                     messages: self.history.clone(),
-                    system: Some(system),
+                    system: Some(system_blocks),
                     tools: tool_definitions(),
                     config: ModelConfig {
                         max_tokens,
@@ -1699,7 +1722,7 @@ impl Agent {
                     role: Role::User,
                     content: vec![ContentBlock::Text { text: basis.clone() }],
                 }],
-                system: Some(RESUMPTION_SUMMARY_INSTRUCTIONS.to_owned()),
+                system: Some(vec![RESUMPTION_SUMMARY_INSTRUCTIONS.to_owned()]),
                 tools: Vec::new(),
                 config: ModelConfig {
                     max_tokens: RESUMPTION_MAX_TOKENS,
@@ -2085,8 +2108,8 @@ fn elide_request(req: &LlmRequest) -> Value {
     // The last system block always receives `cache_control: ephemeral`
     // (see `build_system_blocks` in omega-core/src/anthropic.rs).
     let system_val = if let Some(sys) = &req.system {
-        let blocks = 1usize; // always a single string block in our agent
-        let chars = sys.chars().count();
+        let blocks = sys.len();
+        let chars: usize = sys.iter().map(|b| b.chars().count()).sum();
         let label = if blocks == 1 { "block" } else { "blocks" };
         Value::String(format!(
             "[{blocks} {label}, {chars} chars, cache_control: ephemeral]"
@@ -2209,7 +2232,7 @@ mod elide_request_tests {
         LlmRequest {
             model: "claude-sonnet-4-6".to_owned(),
             messages,
-            system: Some("hello".to_owned()),
+            system: Some(vec!["hello".to_owned()]),
             tools,
             config: ModelConfig::default(),
             context_management: None,

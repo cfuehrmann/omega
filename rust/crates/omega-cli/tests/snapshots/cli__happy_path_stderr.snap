@@ -1,7 +1,9 @@
 ---
 source: crates/omega-cli/tests/cli.rs
+assertion_line: 356
 expression: stderr
 ---
 Session: [SESSION_DIR]
+AGENTS.md: not found in repo
 .
 [turn complete | in=7 out=2 cache_hit=0 cache_write=0]
