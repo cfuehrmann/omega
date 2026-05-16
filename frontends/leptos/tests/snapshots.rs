@@ -623,6 +623,7 @@ fn snap_event_turn_end() {
 fn snap_event_session_started() {
     let html = render(|| {
         let ev = ev_session_started();
+        provide_context(TextModalState::new());
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);

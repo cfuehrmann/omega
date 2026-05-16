@@ -604,7 +604,8 @@ fn event_is_partial(event: &OmegaEvent) -> bool {
 fn event_has_label_row(event: &OmegaEvent) -> bool {
     matches!(
         event,
-        OmegaEvent::LlmCall(_)
+        OmegaEvent::SessionStarted(_)
+            | OmegaEvent::LlmCall(_)
             | OmegaEvent::LlmResponseEnded(_)
             | OmegaEvent::ToolCall(_)
             | OmegaEvent::ToolResult(_)
@@ -693,11 +694,7 @@ fn render_event_body(
             .into_any()
         }
 
-        OmegaEvent::SessionStarted(e) => view! {
-            <span class="block-label">{LABEL_SESSION_STARTED}</span>
-            <span class="block-body">{format!("model: {} · effort: {}", e.model, e.effort)}</span>
-        }
-        .into_any(),
+        OmegaEvent::SessionStarted(e) => view! { <SessionStartedBlock event=e /> }.into_any(),
 
         OmegaEvent::ServerStarted(_) => view! {
             <span class="block-label">{LABEL_SERVER_STARTED}</span>
@@ -1152,6 +1149,39 @@ fn ToolCallBlock(
 // ---------------------------------------------------------------------------
 // LLM-call block (TODO-B: label-row layout, context + payload buttons)
 // ---------------------------------------------------------------------------
+
+/// One `session_started` row.
+///
+/// Label row (flex `.block-label-row`) contains:
+///   `session_started` label · `model · effort` meta · `[system prompt]` button · timestamp pill
+///
+/// The `[system prompt]` button opens a [`TextModal`] with the full
+/// system prompt text (all AGENTS.md blocks joined, as persisted in
+/// the `session_started` event).
+#[component]
+fn SessionStartedBlock(event: omega_types::events::SessionStartedEvent) -> impl IntoView {
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
+
+    let meta = format!("model: {} · effort: {}", event.model, event.effort);
+    let system_prompt = event.system_prompt.clone();
+    let time_iso = event.time.clone();
+    let time_pill = format_time(&time_iso, &current_agent_tz());
+
+    view! {
+        <div class="block-label-row">
+            <span class="block-label">{LABEL_SESSION_STARTED}</span>
+            <span class="block-meta">{meta}</span>
+            <button
+                data-testid="leptos-session-started-system-prompt"
+                class="block-label-row-btn"
+                on:click=move |_| text_modal.open("system prompt", system_prompt.clone())
+            >
+                "system prompt"
+            </button>
+            <TimestampChip iso=time_iso display=time_pill pill=true />
+        </div>
+    }
+}
 
 /// One `llm_call` row — Phase 3.10 TODO-B.
 ///
