@@ -47,6 +47,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # production session persistence (runtime artifact, lives alongside the project being worked on)
 .omega/sessions/
 
+# archived TypeScript-era sessions (kept locally, not committed)
+.omega/sessions-archive-ts/
+
 # e2e test session persistence (runtime artifact, lives in the Omega source tree)
 .omega/test-sessions/
 
