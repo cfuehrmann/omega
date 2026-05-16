@@ -178,7 +178,7 @@ Latent fragility: `2>/dev/null` silently suppresses the `cd` error for any task 
 
 3. **The prompt-type classification approach is premature.** Variance within classes is too high — top prefixes account for ≤ 7 % of any class. Universal pre-loading of the project manifest (README + any AGENTS.md) is a better lever than selective per-type loading.
 
-4. **Keep operator control.** pi-mono's `--no-context-files` flag is the right model: auto-load by default, operator opts out. This fits Carsten's constraint of per-project context control.
+4. **Operator control via the file itself, not a flag.** Auto-load by default; the operator's lever is editing or removing `AGENTS.md`, which is per-project by construction. pi-mono's `--no-context-files` opt-out flag was considered and dismissed as premature — easy to add later if a real use-case appears.
 
 5. **No Anthropic lock-in required.** The "memory slot" (array form of `system`) is handled per-provider in the adapter layer; forgecode and pi-mono prove the logic is provider-agnostic — only the wire format differs per provider.
 
@@ -193,23 +193,33 @@ Latent fragility: `2>/dev/null` silently suppresses the `cd` error for any task 
 - **System prompt vs. context framing** — resolved. Context is append-only in practice; subagents are the right tool for isolated subtask work; forking requires shortening and is not worth implementing. See §Context caching, forking, and subagents.
 - **Workspace summary (git ls-files)** — dismissed. Models don't reach for this information; AGENTS.md covers the semantic equivalent. See §Initial directory listing and workspace summary.
 - **Harbor `/` listing** — was a normalisation artefact, not a real problem. Latent fragility noted; low-priority fix below.
+- **Step 2 — Standardised AGENTS.md loading** — done (commit `a726e77`, 2026-05-16). See §Step 2 outcome below.
 
-### Next step 2 — Standardised AGENTS.md loading (plan + implement, next session)
+### Step 2 outcome — Standardised AGENTS.md loading
 
-Plan and implement automatic pre-loading of project instruction files, matching what opencode, forgecode, and pi-mono all do. Key decisions to resolve:
+Implemented automatic pre-loading of project instruction files. Resolved decisions:
 
-- File name convention: keep `.omega/system-prompt-append.md`, align with `AGENTS.md`, or support both?
-- Injection point: separate system content block (opencode model, independently cacheable) or appended to main system prompt string (simpler)?
-- Scope: root only at session start, or also nested files on-demand when agent enters a subtree?
-- Harbor behaviour: no auto-load for Harbor (task environment unknown at dispatch time) — confirm this remains correct after implementation.
+- **File name:** `AGENTS.md`. No `CLAUDE.md` awareness. `.omega/system-prompt-append.md` was renamed in place; content moved verbatim (trimming obsolete TS-stack lines is a separate step).
+- **Discovery:**
+  - Repo file: walk up from `cwd` to the git root, load `<root>/AGENTS.md` if present.
+  - Global file: `$XDG_CONFIG_HOME/omega/AGENTS.md` (default `~/.config/omega/AGENTS.md` when XDG is unset).
+  - No opt-out flag — always on. The pi-mono `--no-context-files` precedent was considered and rejected for now; can be added later if a use-case appears.
+- **Injection point:** separate Anthropic system content blocks (opencode model), four in fixed order: `[1]` core prompt (unheadered, static), `[2]` runtime context (cwd + max_output_tokens, moved out of the core prompt under a `## Runtime context` header), `[3]` global AGENTS.md, `[4]` repo AGENTS.md. Each non-empty AGENTS.md block is prefixed `Instructions from: <path>` so the source is legible to the model. A single `cache_control` marker sits at the tail of block `[4]`, leaving three breakpoints free for the messages array. Ollama receives the same blocks joined with `\n\n` — it has no cache_control concept.
+- **Scope:** root only. Tier C (nested AGENTS.md, on-demand attachment when the agent enters a subtree) is designed but not implemented — deferred to a follow-up step alongside subagents.
+- **Harbor behaviour:** unchanged in spirit. Harbor containers don't ship an `AGENTS.md` in `/app` and have no global config dir, so discovery yields zero files and the prompt is core + runtime only. No special-casing needed.
+
+Architecture bundled in the same PR: discovery now lives inside `omega-agent::system_prompt`. The caller (CLI or server router) hands the agent only a `cwd`; the agent discovers and loads. `AgentConfig.system_prompt_append` is gone, which makes the previous server-passes-`None` bug — the root cause of the "Omega forgot to commit" symptom — structurally inexpressible. CLI and server now traverse one code path through `Agent::init()`. Side-effect: the CLI's `--effort` flag now actually controls the agent (it previously only labelled the SessionStarted event).
+
+`SessionStarted.system_prompt` remains a single `String` on the wire; the four blocks are joined with `\n\n` for the archive so existing frontend code is untouched while AGENTS.md content is now visible in archived sessions. One `eprintln!` line per discovered AGENTS.md (`AGENTS.md: loaded <path>`) appears at session start, or `AGENTS.md: not found in repo` when neither tier yields a file.
 
 ### Next step 3 — Subagents (future session)
 
-Design and implement subagent support. Architecture is understood: separate context window, task as first human turn, result as tool-output string in parent. opencode's `task_id` resumability is an interesting optional extension. Deferred until AGENTS.md loading is complete.
+Design and implement subagent support. Architecture is understood: separate context window, task as first human turn, result as tool-output string in parent. opencode's `task_id` resumability is an interesting optional extension. Tier C nested-AGENTS.md attachment should be folded into this design — the natural fit is "subagent for subtree X is launched with `<subtree>/AGENTS.md` pre-loaded."
 
 ---
 
 ## Changelog
 
+- **2026-05-16 (Step 2 landed):** Standardised AGENTS.md loading shipped (commit `a726e77`). Repo-root and `$XDG_CONFIG_HOME/omega` `AGENTS.md` files are discovered and attached as separate cacheable system blocks. `AgentConfig.system_prompt_append` removed; CLI and server now share one code path through `Agent::init()`, eliminating the server-passes-`None` bug. Tier C (nested AGENTS.md) deferred to the subagents work. Details in §Step 2 outcome.
 - **2026-05-16 (revised):** Corpus reduced from 765 → 174 Omega sessions after archiving 678 TypeScript-era and mock-polluted sessions to `.omega/sessions-archive-ts/`. The `sleep 10` finding (formerly §1) is removed — it was an artifact of TS-era mock fixtures, not a real Omega behaviour. Added methodology note documenting the t=0 cutoff (2026-05-02 23:38) and the Rust-clean filter now applied by `analyze_orientation.py`. All other findings, conclusions, and open questions are unchanged or only had their counts refreshed against the clean corpus; the orientation-pattern picture is the same shape as before, just sharper.
 - **2026-05-16 (discussion session):** Added §Context caching, forking, and subagents covering: append-only context economics, why forking requires shortening (they are the same operation), subagent architecture as the practical alternative to forking, AGENTS.md placement decision, workspace-summary dismissal, and the Harbor normalisation-artefact finding. Corrected `/` → `/app` in the Harbor listing description throughout. Open questions section replaced with three concrete next steps.
