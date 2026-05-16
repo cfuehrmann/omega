@@ -194,22 +194,6 @@ Latent fragility: `2>/dev/null` silently suppresses the `cd` error for any task 
 - **Workspace summary (git ls-files)** — dismissed. Models don't reach for this information; AGENTS.md covers the semantic equivalent. See §Initial directory listing and workspace summary.
 - **Harbor `/` listing** — was a normalisation artefact, not a real problem. Latent fragility noted; low-priority fix below.
 
-### Next step 1 — Fix Harbor `cd` error visibility (minor, low priority)
-
-In `bench/omega_agent.py`, both invocations of `cd /app 2>/dev/null || true` should have `2>/dev/null` removed:
-
-```python
-# Before
-f"cd /app 2>/dev/null || true"
-
-# After
-f"cd /app || true"
-```
-
-Keep `|| true` so omega still starts when `/app` is absent. Remove `2>/dev/null` so the failure is visible in job logs. Zero behaviour change for normal Harbor runs.
-
-Verifier-safety: the error message goes to bash's stderr before Omega's process starts, ends up in Harbor's `job.log`, and is never seen by the verifier (which checks task-specific artifacts in its own execution context, not agent logs). No pollution risk.
-
 ### Next step 2 — Standardised AGENTS.md loading (plan + implement, next session)
 
 Plan and implement automatic pre-loading of project instruction files, matching what opencode, forgecode, and pi-mono all do. Key decisions to resolve:
