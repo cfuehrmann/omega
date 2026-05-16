@@ -160,7 +160,7 @@ keep both, document the split, stop discussing it.
 
 | Surface | Status quo | Target |
 |---|---|---|
-| `omega-protocol` types | unit tests | unchanged |
+| `omega-types` types | unit tests | unchanged |
 | `omega-core::AnthropicProvider` parser | unit tests | unchanged (leaf carve-out) |
 | `omega-store` I/O | unit tests | unchanged |
 | `omega-tools` per-tool | integration tests with `tempdir` | unchanged (leaf carve-out) |

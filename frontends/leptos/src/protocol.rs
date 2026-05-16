@@ -3,16 +3,16 @@
 //!
 //! ## Why a parallel enum (Phase 3.1 decision)
 //!
-//! The server-side `WsMessage` lives in `omega-server` (not `omega-protocol`)
+//! The server-side `WsMessage` lives in `omega-server` (not `omega-types`)
 //! because two of its variants are server-only wire shapes
 //! (`SessionDeleted`, `SessionRenamed`, `ResetDone`) and `Item` carries a
 //! `Box<AgentItem>` that is `#[serde(untagged)]` and `Serialize`-only by
-//! design. Lifting the type into `omega-protocol` would either force a
-//! redesign of `AgentItem` or pollute the protocol crate with a
+//! design. Lifting the type into `omega-types` would either force a
+//! redesign of `AgentItem` or pollute the shared-types crate with a
 //! transport-level concern.
 //!
 //! Instead, we mirror the wire format with a single flat tagged enum
-//! that re-uses every typed event/signal struct from `omega-protocol`.
+//! that re-uses every typed event/signal struct from `omega-types`.
 //! The duplication is purely at the variant-listing layer; field types
 //! remain the single source of truth.
 //!
