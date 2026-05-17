@@ -82,29 +82,37 @@ for CRATE in "${CRATES[@]}"; do
     # Run cargo-mutants; capture all output to the per-crate log.
     # We do NOT use `set -e` here because a non-zero exit from cargo-mutants
     # just means some mutants survived — that is expected and not a script error.
-    if TMPDIR="$TMPDIR_MUTANTS" cargo mutants \
+    # Temporarily disable errexit so a non-zero cargo-mutants result
+    # (exit 2 = missed mutants, exit 3 = timeouts) does not abort the script.
+    # cargo-mutants exit codes (as of 26.x):
+    #   0 = all viable mutants caught      -> success
+    #   1 = usage / configuration error   -> fatal (abort sweep)
+    #   2 = some mutants not caught       -> expected; sweep continues
+    #   3 = some tests timed out          -> expected; sweep continues
+    set +e
+    TMPDIR="$TMPDIR_MUTANTS" cargo mutants \
         --package "$CRATE" \
         --output "$CRATE_OUT" \
         --baseline "$BASELINE" \
         -j1 \
         --no-shuffle \
         --colors never \
-        2>&1 | tee "$CRATE_LOG"; then
-        echo "  ✅ $CRATE — completed"
+        2>&1 | tee "$CRATE_LOG"
+    EXIT=${PIPESTATUS[0]}
+    set -e
+    if [[ $EXIT -eq 0 ]]; then
+        echo "  ✅ $CRATE — all mutants caught"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    elif [[ $EXIT -eq 2 ]]; then
+        echo "  ⚠️  $CRATE — completed with missed mutants (exit $EXIT)"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    elif [[ $EXIT -eq 3 ]]; then
+        echo "  ⚠️  $CRATE — completed with timeout mutants (exit $EXIT)"
         PASS_COUNT=$((PASS_COUNT + 1))
     else
-        EXIT=$?
-        # cargo-mutants exits non-zero when mutants survive.
-        # Exit code 1 = missed mutants (expected).
-        # Exit code 2 = other error (unexpected).
-        if [[ $EXIT -eq 1 ]]; then
-            echo "  ⚠️  $CRATE — completed with missed mutants (exit $EXIT)"
-            PASS_COUNT=$((PASS_COUNT + 1))
-        else
-            echo "  ❌ $CRATE — FAILED (exit $EXIT)"
-            FAIL_COUNT=$((FAIL_COUNT + 1))
-            FAILED_CRATES+=("$CRATE")
-        fi
+        echo "  ❌ $CRATE — FAILED (exit $EXIT — usage/config error)"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAILED_CRATES+=("$CRATE")
     fi
     echo ""
 done
