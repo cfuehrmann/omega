@@ -266,10 +266,11 @@ impl LlmError {
                 matches!(*status, 429 | 500 | 503 | 529)
             }
             Self::Stream { message } | Self::Other { message } => {
-                // Anthropic's SDK delivers `overloaded_error` as a
-                // payload-only event without a status code.  Surface it
-                // as Stream/Other and retry.
-                message.contains("overloaded_error")
+                // Anthropic delivers several error types as payload-only
+                // SSE events on an HTTP-200 stream (no status code).
+                // Both `overloaded_error` and `api_error` (generic
+                // internal server error) are transient and worth retrying.
+                message.contains("overloaded_error") || message.contains("api_error")
             }
             Self::Transport { .. } => true,
         }

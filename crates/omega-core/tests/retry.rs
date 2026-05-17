@@ -470,6 +470,48 @@ async fn retries_overloaded_error_payload_without_status() {
 }
 
 // ---------------------------------------------------------------------------
+// SSE `api_error` (Internal server error) event without HTTP status → retried
+// ---------------------------------------------------------------------------
+// Regression test: the session at
+// `.omega/sessions/2026-05-16T13-07-08-798-667c1c1f/events.jsonl`
+// shows two consecutive `api_error: Internal server error` SSE errors that
+// were NOT retried because `is_retryable()` only checked for
+// `"overloaded_error"`. This test captures that failure case.
+#[tokio::test]
+async fn retries_api_error_internal_server_error_payload() {
+    let server = MockServer::start().await;
+    // First response is HTTP 200 but its only SSE event is an
+    // `api_error` — which the provider surfaces as
+    // `LlmError::Stream` whose message starts with "api_error:".
+    let body = sse_body(&[(
+        "error",
+        json!({
+            "type": "error",
+            "error": { "type": "api_error", "message": "Internal server error" }
+        }),
+    )]);
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    mount_anthropic_success(&server, u64::MAX).await;
+
+    let provider = anthropic_with_retry(&server, 3);
+    let items = collect_all(&provider, anthropic_request()).await;
+
+    let retries = retry_events(&items);
+    assert_eq!(retries.len(), 1, "api_error must trigger retry");
+    // No HTTP status because the failure was inside the SSE body.
+    assert!(retries[0].http_status.is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Transport error (TCP close before HTTP response) → retried
 // ---------------------------------------------------------------------------
 
