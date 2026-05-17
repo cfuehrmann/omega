@@ -370,22 +370,17 @@ For C4 diagrams specifically:
         );
     }
 
-    s.push_str(if headless {
-        "
-
-## Design discipline
-
-Before implementing a non-trivial change, state your chosen approach and the
-alternatives you considered, then proceed."
-    } else {
-        "
+    if !headless {
+        s.push_str(
+            "
 
 ## Design discipline
 
 Before implementing a non-trivial change, state your chosen approach and the
 alternatives you considered, then proceed. If the user raises a design
-question — before, during, or after — stop and discuss before continuing."
-    });
+question — before, during, or after — stop and discuss before continuing.",
+        );
+    }
     s.push_str(
         "
 
