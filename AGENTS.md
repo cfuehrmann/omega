@@ -33,10 +33,6 @@ one is authoritative and all others conform to it:
 
 Rule: update the UI to match the log — never the log to match the UI.
 
-## Flaky tests
-
-Flaky tests must be fixed immediately — never dismissed as pre-existing or attributed to environment, timing, or infrastructure without strong evidence. Assume the flakiness was introduced by a recent change until proven otherwise.
-
 ## Tricky bugs — ask for session logs
 
 If you have tried two or more approaches on the same bug and are still stuck,

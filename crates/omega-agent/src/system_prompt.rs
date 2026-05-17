@@ -391,12 +391,17 @@ question — before, during, or after — stop and discuss before continuing."
 
 ## Bug fixes
 
-When fixing a bug, write a failing test that reproduces it first (red), then
-fix the code so the test passes (green), wherever this is practical. Practical
-means: the bug is deterministic, the failure mode is directly observable in a
-test, and writing the test doesn't cost more than the fix itself. Skip red-green
-when the bug is a one-liner typo or the reproduction requires complex
-infrastructure that already exists only in production.
+When fixing a bug, first write a failing test that reproduces it (red), then
+fix the code so the test passes (green). Skip this only when the reproduction
+requires complex test infrastructure that doesn't already exist — in that case,
+raise the trade-off with the user rather than silently skipping. If a test's
+reliability is in doubt, run it several times before trusting a green result.
+
+## Flaky tests
+
+Flaky tests must be fixed immediately — never dismissed as pre-existing or
+attributed to environment, timing, or infrastructure without strong evidence.
+Assume the flakiness was introduced by a recent change until proven otherwise.
 
 ## Task completion
 
