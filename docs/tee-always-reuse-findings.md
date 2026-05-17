@@ -208,6 +208,50 @@ Net:
 
 The cost-benefit ratio for tee-always is overwhelming.
 
+## Caveat — the counterfactual is unobservable
+
+The "144.7 s saved" number assumes that without the cache, the LLM
+would have re-run the origin command. In all three observed reuse
+cases for `run_command`, the cache file contains *exactly* the bytes
+already present in the model's context (post-pipeline output, just
+without the footer). So the model wasn't reaching for missing bytes
+— it was running a focused query over bytes it already had.
+
+The true counterfactual is three-way, not binary:
+
+| option | latency | quality |
+|---|---|---|
+| re-run the command (e.g. gate ~40 s) | high | high |
+| reason over in-context bytes         | ~zero | degraded — miscounts, omissions, fading salience over distance |
+| grep the cache                       | ~zero | high — focused extract, verifiable |
+
+The cache enables option 3. Option 3 is strictly better than option 2
+on quality, even when bytes were never lost: LLM attention over long
+context is not uniform, and a fresh tool result containing exactly the
+relevant lines is a higher-quality input for the next response than
+asking the model to project precisely over a blob from several turns
+ago. This is the same reason a human with the wall of text on screen
+still reaches for grep — focus, working-memory limits, verification.
+
+Implications:
+
+- **The 144.7 s figure is an upper bound, not a measurement.** True
+  time-savings sit somewhere between 0 (if the model would have
+  reasoned in-context) and 144.7 s (if it would have re-run). We
+  cannot distinguish these from the data.
+- **But the cache's value is not only "seconds saved".** It is also
+  *output quality* on tasks that need precise extraction from
+  moderately-sized blobs. This is unmeasured in our data but is
+  consistent with both the human analogy and what we know about LLM
+  attention degradation.
+- **The disk-cost-is-trivial argument is unaffected** — ~32 KB / session
+  marginal cost stands regardless of which counterfactual is true.
+- **The verdict still stands, for a slightly different reason than
+  originally framed:** not "tee-always demonstrably saves 145 s" but
+  "tee-always costs near-zero, enables a strictly-higher-quality
+  reasoning path, and *may* additionally save substantial time when
+  the alternative would have been a re-run."
+
 ## Decisions (2026-05-17)
 
 1. **`run_command`: keep tee-always.** Strong evidence. ~145 s of
@@ -241,6 +285,13 @@ The cost-benefit ratio for tee-always is overwhelming.
   The current 0.7 % reuse rate on `run_command` might be partly an
   under-prompting artefact; a sharper hint ("prefer grep_files on
   the cache over re-running grep-able commands") could move it.
+  — *Note:* an earlier draft of this TODO proposed prompting the model
+  *away* from cache-grep when the result was not truncated, on the
+  theory that bytes already in context shouldn't need re-fetching.
+  That proposal was withdrawn: see the counterfactual caveat above.
+  Pushing the model toward in-context reasoning over cache-grep
+  trades higher quality for lower quality at near-zero latency
+  difference — strictly worse.
 
 ## Reproducing
 
