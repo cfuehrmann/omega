@@ -401,8 +401,8 @@ async fn composer_completion_accept() {
     h.load_script(pong_script()).await.expect("load_script");
     h.new_session().await.expect("new_session");
 
-    // Type @rust/ — popup should appear.
-    h.fill(INPUT, "@rust/").await.expect("fill");
+    // Type @crates/ — popup should appear.
+    h.fill(INPUT, "@crates/").await.expect("fill");
     h.wait_for_selector(
         "[data-testid=\"leptos-composer-completion\"]",
         Duration::from_secs(5),
@@ -413,16 +413,16 @@ async fn composer_completion_accept() {
     // Wait for the completion items to settle to the children of rust/.
     //
     // Timing race: `fill` types each character individually, so `on_input`
-    // fires (and `query_completion` is called) for every prefix: "", "r",
-    // "ru", "rus", "rust", "rust/".  The fetch for prefix "rust" may return
-    // first and open the popup with ["rust/"], before the fetch for prefix
-    // "rust/" arrives and replaces it with the actual children
-    // ("rust/.cargo/", "rust/Cargo.lock", …).  Reading `first` while the
-    // popup still shows the stale ["rust/"] entry causes the subsequent
-    // `format!("@{first}")` assertion to disagree with what Enter actually
-    // accepted (which by that point is the settled item).
+    // fires (and `query_completion` is called) for every prefix: "", "c",
+    // "cr", "cra", "crat", "crate", "crates", "crates/".  The fetch for
+    // prefix "crates" may return first and open the popup with ["crates/"],
+    // before the fetch for prefix "crates/" arrives and replaces it with
+    // the actual children ("crates/omega-agent/", …).  Reading `first`
+    // while the popup still shows the stale ["crates/"] entry causes the
+    // subsequent `format!("@{first}")` assertion to disagree with what
+    // Enter actually accepted (which by that point is the settled item).
     //
-    // Solution: poll until no item is exactly "rust/" — which is the
+    // Solution: poll until no item is exactly "crates/" — which is the
     // intermediate sentinel — and at least one item is present.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let first = loop {
@@ -435,12 +435,12 @@ async fn composer_completion_accept() {
             .expect("first data-completion poll");
         // Intermediate state: popup shows ["rust/"] from the "rust" prefix
         // query.  Settled state: children such as "rust/.cargo/".
-        if !candidate.is_empty() && candidate != "rust/" {
+        if !candidate.is_empty() && candidate != "crates/" {
             break candidate;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "completion items never settled to children of rust/ (last = {candidate:?})"
+            "completion items never settled to children of crates/ (last = {candidate:?})"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
