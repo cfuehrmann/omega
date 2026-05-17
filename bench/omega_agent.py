@@ -4,13 +4,12 @@ Harbor agent adapter for Omega.
 Usage
 -----
 harbor run -d terminal-bench@2.0 \\
-  --agent-import-path omega_agent:OmegaAgent \\
+  --agent-import-path omega_agent:OmegaRustAgent \\
   -m anthropic/claude-sonnet-4-6 \\
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 
 Optional kwargs (via --agent-kwargs or subclass override):
-  max_turns  int    LLM-call budget per task (default 100)
-  effort     str    Thinking effort: low|medium|high|max|xhigh (default medium)
+  effort  str  Thinking effort: low|medium|high (default medium)
 """
 
 from __future__ import annotations
@@ -28,10 +27,7 @@ if TYPE_CHECKING:
     from harbor.models.agent.context import AgentContext
 
 OMEGA_VERSION = "v0.1.6"
-OMEGA_RUST_VERSION = "v0.1.6"  # kept in sync with OMEGA_VERSION during the migration
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
-OMEGA_SESSION_DIR = "/tmp/omega-session"
-OMEGA_INSTALL_DIR = "/home/agent/omega"
 OMEGA_RUST_INSTALL_DIR = "/home/agent/omega-rust"
 OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/target/release/omega"
 # Sessions are written into Harbor's bind-mounted agent logs directory
@@ -48,23 +44,40 @@ OMEGA_RUST_SESSION_ROOT = "/logs/agent/omega-session"
 # and raise RuntimeError instead of AgentTimeoutError, corrupting results.
 
 
-class OmegaAgent(BaseInstalledAgent):
-    """Omega installed into the task container and invoked via src/cli.ts."""
+class OmegaRustAgent(BaseInstalledAgent):
+    """Omega Rust binary, built from source inside the task container.
+
+    The install step downloads the Rust toolchain, clones the Omega repo at
+    the pinned tag, and compiles the ``omega-cli`` crate.  The run step
+    invokes the native binary directly with ``--headless`` and writes session
+    files into Harbor's bind-mounted ``/logs/agent`` tree, so
+    ``events.jsonl`` / ``context.jsonl`` appear on the host filesystem live
+    (no download step required) and survive abrupt termination.
+
+    ``populate_context_post_run`` picks up token counts from the timestamped
+    subdirectory that the Rust CLI creates under ``--session-root``.
+
+    Usage
+    -----
+    harbor run -d terminal-bench@2.0 \\
+      --agent-import-path omega_agent:OmegaRustAgent \\
+      -m anthropic/claude-sonnet-4-6 \\
+      --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+    """
 
     CLI_FLAGS = [
-        CliFlag(kwarg="max_turns", cli="--max-turns", type="int", default=100),
         CliFlag(
             kwarg="effort",
             cli="--effort",
             type="enum",
-            choices=["low", "medium", "high", "max", "xhigh"],
+            choices=["low", "medium", "high"],
             default="medium",
         ),
     ]
 
     @staticmethod
     def name() -> str:
-        return "omega"
+        return "omega-rust"
 
     def version(self) -> str | None:
         return OMEGA_VERSION.lstrip("v")
@@ -74,24 +87,33 @@ class OmegaAgent(BaseInstalledAgent):
     # ------------------------------------------------------------------
 
     async def install(self, environment: "BaseEnvironment") -> None:
+        # 1. System build dependencies (libssl-dev needed for reqwest/openssl-sys).
         await self.exec_as_root(
             environment,
             command=(
                 "apt-get update -qq"
-                " && apt-get install -y --no-install-recommends curl git ca-certificates unzip"
+                " && apt-get install -y --no-install-recommends"
+                " curl git ca-certificates build-essential pkg-config"
+                " libssl-dev"
             ),
         )
+        # 2. Rust toolchain (minimal profile — no docs, no clippy etc.).
         await self.exec_as_agent(
             environment,
-            command="mkdir -p \"$HOME\" && touch \"$HOME/.bashrc\" && curl -fsSL https://bun.sh/install | bash",
+            command=(
+                "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs"
+                " | sh -s -- -y --profile minimal"
+            ),
         )
+        # 3. Clone the repo at the pinned tag and compile the CLI binary.
+        #    The release profile produces a single self-contained binary.
         await self.exec_as_agent(
             environment,
             command=(
                 f"git clone --branch {OMEGA_VERSION} --depth 1"
-                f" {OMEGA_REPO} {OMEGA_INSTALL_DIR}"
-                f" && cd {OMEGA_INSTALL_DIR}"
-                f" && ~/.bun/bin/bun install --frozen-lockfile"
+                f" {OMEGA_REPO} {OMEGA_RUST_INSTALL_DIR}"
+                f" && cd {OMEGA_RUST_INSTALL_DIR}/rust"
+                f" && ~/.cargo/bin/cargo build -p omega-cli --release"
             ),
         )
 
@@ -137,166 +159,6 @@ class OmegaAgent(BaseInstalledAgent):
         )
         cap = (config.get("agent") or {}).get("max_timeout_sec") or float("inf")
         return min(float(base_timeout) * float(multiplier), cap)
-
-    # ------------------------------------------------------------------
-    # Run
-    # ------------------------------------------------------------------
-
-    @with_prompt_template
-    async def run(
-        self,
-        instruction: str,
-        environment: "BaseEnvironment",
-        context: "AgentContext",
-    ) -> None:
-        if self._parsed_model_provider != "anthropic":
-            raise ValueError(
-                f"Omega is Anthropic-only; got provider "
-                f"'{self._parsed_model_provider}'. "
-                f"Pass e.g. -m anthropic/claude-sonnet-4-6."
-            )
-
-        # Prepend the per-task deadline so the agent can honour the
-        # half-budget rule in its core prompt ("commit a working solution
-        # before refining").  Fails gracefully if timeout is unavailable.
-        timeout_sec = self._get_agent_timeout_sec()
-        if timeout_sec is not None:
-            minutes = int(timeout_sec) // 60
-            instruction = (
-                f"Time budget: {int(timeout_sec)} seconds ({minutes} minutes).\n\n"
-                + instruction
-            )
-
-        flags = self.build_cli_flags()
-        cmd = (
-            f"cd /app || true"
-            f" && ~/.bun/bin/bun run {OMEGA_INSTALL_DIR}/src/cli.ts run"
-            f" --instruction {shlex.quote(instruction)}"
-            f" --model {shlex.quote(self._parsed_model_name)}"
-            f" --session-dir {OMEGA_SESSION_DIR}"
-            f" {flags}"
-        )
-
-        try:
-            await self.exec_as_agent(environment, command=cmd)
-        finally:
-            for src, dest in (
-                ("/tmp/omega-session/events.jsonl", "events.jsonl"),
-                ("/tmp/omega-session/context.jsonl", "context.jsonl"),
-            ):
-                try:
-                    await environment.download_file(src, self.logs_dir / dest)
-                except Exception:
-                    pass
-
-    # ------------------------------------------------------------------
-    # Context / trajectory
-    # ------------------------------------------------------------------
-
-    def populate_context_post_run(self, context: "AgentContext") -> None:
-        """Read aggregate token counts from the downloaded events.jsonl."""
-        events_file = self.logs_dir / "events.jsonl"
-        if not events_file.exists():
-            return
-
-        with events_file.open() as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                if event.get("type") == "turn_end":
-                    metrics = event.get("metrics", {})
-                    context.n_input_tokens = metrics.get("inputTokens")
-                    context.n_output_tokens = metrics.get("outputTokens")
-                    cache_read = metrics.get("cacheReadTokens", 0) or 0
-                    cache_write = metrics.get("cacheCreationTokens", 0) or 0
-                    context.n_cache_tokens = cache_read + cache_write
-                    break  # only one turn_end per session
-
-
-
-class OmegaRustAgent(OmegaAgent):
-    """Omega Rust binary, built from source in the task container.
-
-    This class supplements `OmegaAgent` (TypeScript / Bun).  The install step
-    compiles the ``omega-cli`` crate instead of running ``bun install``.  The
-    run step invokes the native binary directly and writes session files into
-    Harbor's bind-mounted /logs/agent tree, so events.jsonl / context.jsonl
-    appear on the host filesystem live (no download step required).
-
-    ``populate_context_post_run`` is overridden because the Rust CLI creates
-    a timestamped subdirectory under --session-root, so events.jsonl lives at
-    ``<logs_dir>/omega-session/<timestamp>/events.jsonl`` rather than at the
-    flat path used by the TS adapter.
-
-    Usage
-    -----
-    harbor run -d terminal-bench@2.0 \\
-      --agent-import-path omega_agent:OmegaRustAgent \\
-      -m anthropic/claude-sonnet-4-6 \\
-      --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
-
-    This is the only supported agent class — the legacy OmegaAgent (TypeScript/Bun)
-    has been removed along with the TypeScript stack.
-    """
-
-    CLI_FLAGS = [
-        # --max-turns not yet implemented in Rust CLI; omit for now
-        CliFlag(
-            kwarg="effort",
-            cli="--effort",
-            type="enum",
-            choices=["low", "medium", "high"],
-            default="medium",
-        ),
-    ]
-
-    @staticmethod
-    def name() -> str:
-        return "omega-rust"
-
-    def version(self) -> str | None:
-        return OMEGA_RUST_VERSION.lstrip("v")
-
-    # ------------------------------------------------------------------
-    # Install
-    # ------------------------------------------------------------------
-
-    async def install(self, environment: "BaseEnvironment") -> None:
-        # 1. System build dependencies (libssl-dev needed for reqwest/openssl-sys).
-        await self.exec_as_root(
-            environment,
-            command=(
-                "apt-get update -qq"
-                " && apt-get install -y --no-install-recommends"
-                " curl git ca-certificates build-essential pkg-config"
-                " libssl-dev"
-            ),
-        )
-        # 2. Rust toolchain (minimal profile — no docs, no clippy etc.).
-        await self.exec_as_agent(
-            environment,
-            command=(
-                "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs"
-                " | sh -s -- -y --profile minimal"
-            ),
-        )
-        # 3. Clone the repo at the pinned tag and compile the CLI binary.
-        #    The release profile produces a single self-contained binary.
-        await self.exec_as_agent(
-            environment,
-            command=(
-                f"git clone --branch {OMEGA_RUST_VERSION} --depth 1"
-                f" {OMEGA_REPO} {OMEGA_RUST_INSTALL_DIR}"
-                f" && cd {OMEGA_RUST_INSTALL_DIR}/rust"
-                f" && ~/.cargo/bin/cargo build -p omega-cli --release"
-            ),
-        )
 
     # ------------------------------------------------------------------
     # Run
