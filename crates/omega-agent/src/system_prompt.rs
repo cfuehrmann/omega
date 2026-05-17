@@ -292,15 +292,16 @@ The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands
 you expect to take longer. Reserve `run_background` for processes that must
 stay alive indefinitely (dev servers, file watchers).
 All `run_command` and `wait_for_output` results are tee'd to a session-cache
-log and the path is surfaced in a footer on every result, not only on
-truncation:
-- `[full output: <path>]` when the output fits within the cap.
+log and the path is surfaced in a footer:
+- `[full output: <path>]` when the output fit within the cap.
 - `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.
-For any follow-up on a tool output — grepping for a pattern, re-reading a
-section, or looking back at an output that has aged out of immediate context
-— use `read_file` or `grep_files` on the cache path instead of re-running
-the command. Re-running is slow, may produce different output, and burns
-tokens you already paid for.
+When a result is **truncated**, use `read_file` or `grep_files` on the cache
+path to recover the bytes that didn't fit inline. The cache is also useful
+when an earlier (full) output has aged out of immediate context and you need
+to revisit it without re-running the command — re-running is slow and may
+produce different output. When the bytes you need are already inline and
+recent, read them directly rather than calling another tool over the same
+bytes.
 Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on
 success), or `\"middle\"` to control which portion is returned when the
 output is truncated.

@@ -379,18 +379,24 @@ starting point.
   question — the observed reuses are on files of 520 B / 671 B /
   3 KB, so no realistic cap would have made tee-on-truncate catch
   them.
-- [ ] **Re-measure after any prompt change that affects cache-reuse
-  advertising** (system_prompt.rs lines ~294–303 and ~327–329).
-  The current 0.7 % reuse rate on `run_command` might be partly an
-  under-prompting artefact; a sharper hint ("prefer grep_files on
-  the cache over re-running grep-able commands") could move it.
-  — *Note:* an earlier draft of this TODO proposed prompting the model
-  *away* from cache-grep when the result was not truncated, on the
-  theory that bytes already in context shouldn't need re-fetching.
-  That proposal was withdrawn: see the counterfactual caveat above.
-  Pushing the model toward in-context reasoning over cache-grep
-  trades higher quality for lower quality at near-zero latency
-  difference — strictly worse.
+- [x] **Scope cache-advertising language to the truncation case**
+  (`system_prompt.rs` + `schemas.rs` tool descriptions for
+  `run_command` and `wait_for_output`). Done 2026-05-17. The previous
+  text pushed cache-grep "for any follow-up on a tool output"
+  unconditionally; rewritten to nudge toward cache only when the
+  result is **truncated** or when an earlier full output has aged out
+  of immediate context. Explicit counter-instruction added: "when the
+  bytes you need are already inline and recent, read them directly."
+  `fetch_url` advertising left unchanged — the data shows non-trivial
+  reuse on its postprocess log (0.36 followups/call) and the
+  "different postprocess query on same content" workflow is genuinely
+  what that cache is for.
+- [ ] **Re-measure reflexive-grep rate after the prompt change.** With
+  the scoped advertising in place, the expectation is that
+  full-output `run_command` reuse rate (currently 0.9 %, all on small
+  recent bytes) drops toward 0, while truncated-result reuse stays
+  or rises. If the full-output rate stays, the behaviour is more
+  model-intrinsic than prompt-driven — worth knowing.
 
 ## Reproducing
 

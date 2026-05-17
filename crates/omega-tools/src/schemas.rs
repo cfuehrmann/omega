@@ -79,11 +79,14 @@ fn run_command() -> ToolDefinition {
                       The command runs in the current working directory. \
                       The default timeout is 120\u{00a0}s \u{2014} pass a higher value for very slow commands. \
                       Output is always tee\u{2019}d to a session-cache log file and the path is \
-                      surfaced in a footer on every result: \
+                      surfaced in a footer: \
                       `[full output: <path>]` when the result fits, or \
                       `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped. \
-                      For follow-up queries on the same output, use `read_file` or `grep_files` \
-                      on the cache path instead of re-running the command. \
+                      When the result is **truncated**, use `read_file` or `grep_files` on the \
+                      cache path to recover the bytes that didn\u{2019}t fit inline. The cache is also \
+                      useful when an earlier (full) output has aged out of immediate context and \
+                      you need to revisit it without re-running. When the bytes you need are \
+                      already inline and recent, read them directly. \
                       Pass `truncation_bias` to control which portion is returned \
                       (default: tail on non-zero exit, head on exit 0)."
             .into(),
@@ -284,8 +287,10 @@ fn wait_for_output() -> ToolDefinition {
                       Use this after run_background instead of sleep + tail to wait for a server or process to become ready. \
                       The pattern is interpreted as a JavaScript regex (e.g. 'ready|started|Error' for alternation). \
                       The polled output is also tee\u{2019}d to a session-cache snapshot; the cache path is surfaced \
-                      in the `output` field\u{2019}s footer (`[full output: <path>]` or `[truncated; \u{2026}]`) and can be re-read \
-                      with `read_file` / `grep_files` for follow-up queries."
+                      in the `output` field\u{2019}s footer (`[full output: <path>]` or `[truncated; \u{2026}]`). \
+                      When the output is **truncated**, use `read_file` / `grep_files` on the cache path \
+                      to recover what didn\u{2019}t fit inline; when bytes are already inline and recent, \
+                      read them directly."
             .into(),
         input_schema: json!({
             "type": "object",
