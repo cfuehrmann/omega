@@ -49,6 +49,7 @@ _rust-checks:
 [private]
 _rust-e2e-run:
     cargo build --release -p omega-mock-server
+    cargo build --release -p omega-server
     cargo test -p omega-e2e --tests -- --ignored --test-threads=1
 
 # -----------------------------------------------------------------------
