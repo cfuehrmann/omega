@@ -233,13 +233,13 @@ async fn llm_call_payload_modal_shows_metadata() {
         .await
         .expect("text modal never appeared");
 
-    // Title contains "llm_call payload".
+    // Title contains "LLM call payload" (sentence-cased owned label).
     let title = h
         .text_content("[data-testid=\"leptos-text-modal-title\"]")
         .await
         .expect("read title");
     assert!(
-        title.contains("llm_call payload"),
+        title.contains("LLM call payload"),
         "unexpected title: {title:?}"
     );
 
