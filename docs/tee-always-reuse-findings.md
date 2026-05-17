@@ -340,6 +340,50 @@ models may close the gap without prompt changes. If we ever rewrite
 the cache-advertising language, the three-axis framing is the right
 starting point.
 
+## Anthropic's published guidance on tool-output size
+
+Researched 2026-05-17 to inform the cap-size question. Summary: the
+only direct, numeric recommendation Anthropic has published is for
+Claude Code generally, not for Sonnet 4.6 / Opus 4.6 or 4.7
+specifically.
+
+**Source**: *Writing effective tools for agents* (Anthropic
+Engineering blog, Sep 11 2025).
+`https://www.anthropic.com/engineering/writing-tools-for-agents`
+
+**Key quote** (section: "Optimizing tool responses for token
+efficiency"):
+
+> For Claude Code, we restrict tool responses to 25,000 tokens by
+> default. We expect the effective context length of agents to grow
+> over time, but the need for context-efficient tools to remain.
+
+25,000 tokens ≈ 100 KB at ~4 chars/token. Omega's current 100 KB cap
+is approximately in line with this. The guidance also recommends:
+
+- A combination of *pagination, range selection, filtering, and/or
+  truncation* with sensible defaults for any tool that could produce
+  large output.
+- When truncating, *steer agents with helpful instructions* (the
+  truncation footer itself is a steering surface).
+- Encourage *many small targeted searches over single broad ones* in
+  the prompt.
+
+**What this doesn't tell us**: whether the cap should differ for the
+larger / smarter Opus 4.7 vs Sonnet 4.6 (no model-specific guidance
+published); whether the cap should be lower for tools the model uses
+repetitively; or whether the 25K-token figure is empirically tuned
+or a round-number default. Our own data (p99 of `run_command` output
+is 83 KB, only 0.7 % exceeds 100 KB cap) suggests the current cap is
+in a reasonable regime: low enough that truncation is rare, high
+enough that most outputs survive intact.
+
+**Related pages checked, no additional cap guidance**:
+- `platform.claude.com/docs/en/agents-and-tools/tool-use/overview.md`
+- `platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools.md`
+- `platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls.md`
+- `platform.claude.com/docs/en/agents-and-tools/tool-use/manage-tool-context.md` (covers tool-search, programmatic tool calling, prompt caching, context editing — overall context bloat, not per-result cap)
+
 ## Decisions (2026-05-17)
 
 1. **`run_command`: keep tee-always.** Strong evidence. ~145 s of
