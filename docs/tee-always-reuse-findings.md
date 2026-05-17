@@ -252,6 +252,43 @@ Implications:
   reasoning path, and *may* additionally save substantial time when
   the alternative would have been a re-run."
 
+## Alternative considered: lower the cap, use tee-on-truncate
+
+Conjecture: if the 100 KB cap is too generous, the LLM may often have
+bytes in context that it could reason over directly. A lower cap would
+trigger truncation more often, tee-on-truncate would then catch the
+cases that truly need cache, and tee-always becomes redundant.
+
+**Refuted by the file sizes of the actually-reused caches.** The three
+`run_command` cache files that received follow-ups were:
+
+| size  | command                                              |
+|---:|---|
+|  520 B | `cd rust && cargo test … \| tail -8`                |
+|  671 B | `just rust-gate … \| tail -25`                       |
+| 3.0 KB | `just rust-gate … \| grep … \| head -40`            |
+
+All three are far below *any* realistic cap. Even a 5 KB cap would
+send all three to the model in full. Therefore tee-on-truncate would
+not have written any of them, regardless of how low the cap is set.
+
+What this says about LLM behaviour: the model reaches for `grep_files`
+on the cache *even at 520 B of output*. At that size, in-context
+reasoning is trivially reliable for any reader — so the grep-on-cache
+reflex is not driven by "output is too big to read". It is driven by
+prompt compliance, verification-via-tool, or the focus/quality
+preference covered in the caveat above. Cap-lowering does not reach
+any of those mechanisms.
+
+The two design dimensions are independent:
+
+1. **Cap size** — probably worth lowering on token-cost grounds (a
+   100 KB inline result can consume ~25 K tokens that the model may
+   not read). This is a separate optimisation deserving its own
+   analysis.
+2. **Tee policy** — tee-always still wins, because the observed reuse
+   happens on files no realistic cap would have truncated.
+
 ## Decisions (2026-05-17)
 
 1. **`run_command`: keep tee-always.** Strong evidence. ~145 s of
@@ -280,6 +317,17 @@ Implications:
   full-vs-truncated asymmetry holds (it would be surprising if
   truncated outputs *never* see reuse — selection effect should run
   the other way).
+- [ ] **Optimal cap study.** Independent of the tee policy: the
+  current 100 KB cap may be too generous on token-cost grounds. A
+  single 100 KB inline result can consume ~25 K context tokens that
+  the model may not read (because it grep'd the cache instead). Pick
+  a candidate cap (e.g. 20 KB — currently truncates ~1 % of
+  `run_command` results, would rise to ~5 %), run a week of sessions
+  on a branch, and compare reuse patterns + output-quality
+  qualitatively. *Note:* this does **not** subsume the tee-policy
+  question — the observed reuses are on files of 520 B / 671 B /
+  3 KB, so no realistic cap would have made tee-on-truncate catch
+  them.
 - [ ] **Re-measure after any prompt change that affects cache-reuse
   advertising** (system_prompt.rs lines ~294–303 and ~327–329).
   The current 0.7 % reuse rate on `run_command` might be partly an
