@@ -289,6 +289,57 @@ The two design dimensions are independent:
 2. **Tee policy** — tee-always still wins, because the observed reuse
    happens on files no realistic cap would have truncated.
 
+## Observed model behaviour: reflexive tool-grep on small in-context bytes
+
+The three `run_command` cache files that received follow-ups were 520 B,
+671 B, and 3.0 KB — all small, all recent (within a few turns of the
+originating call), and all the target of simple text-matching
+operations (find "FAILED", tail the last N lines). At those sizes,
+for those operations, in-context reasoning is *trivially reliable*.
+The model grep'd the cache anyway.
+
+The right decision rule for tool-vs-in-context is three-axis, not
+size-only:
+
+> Reach for a tool over in-context bytes when **at least one** of:
+> - the input is large enough that attention degrades over it,
+> - the input is distant enough in the conversation that salience has
+>   faded, **or**
+> - the operation itself is one the model is unreliable at
+>   (arithmetic, exact counts over long lists, structured parsing).
+>
+> Otherwise, reason in-context.
+
+The calculator framing makes the third axis vivid: two 20-digit
+numbers fit in 50 bytes of context, but multiplying them is precisely
+what LLMs are unreliable at. Tool-use is correct there even at
+trivial input size. Conversely, finding "FAILED" lines in 520 B of
+test output is something the model can do perfectly in context — small
+input *and* an operation it's reliable at.
+
+The observed three reuses sit in the "small × recent × simple
+operation" cell — the exact cell where in-context reasoning dominates
+and tool-grep is overhead (an extra inference round-trip and tokens
+for no quality gain). The behaviour appears to be reflexive
+tool-grep whenever a cache path is visible, without the meta-cognitive
+step of asking "can I do this in my head?".
+
+**This is a mild meta-cognitive limitation of the current model**, not
+only a prompt artefact. The prompt does over-broadly advertise the
+cache ("use grep_files on the cache instead of re-running"), but a
+model with sharper self-modelling of its own reliability would
+modulate — just as a human does when choosing between mental arithmetic
+and a calculator.
+
+**Practical response: document, don't fix.** Threading the three-axis
+rule into the prompt would be fragile, risks over-correction (model
+stops using cache when it should), and re-creates in instructions a
+judgement the model should ideally make implicitly. Absolute cost is
+small (3 reflex-greps across 35 sessions, ~17 ms each). Future
+models may close the gap without prompt changes. If we ever rewrite
+the cache-advertising language, the three-axis framing is the right
+starting point.
+
 ## Decisions (2026-05-17)
 
 1. **`run_command`: keep tee-always.** Strong evidence. ~145 s of
