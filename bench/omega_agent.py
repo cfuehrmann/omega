@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
 
-OMEGA_VERSION = "v0.1.5"
-OMEGA_RUST_VERSION = "v0.1.5"  # kept in sync with OMEGA_VERSION during the migration
+OMEGA_VERSION = "v0.1.6"
+OMEGA_RUST_VERSION = "v0.1.6"  # kept in sync with OMEGA_VERSION during the migration
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
@@ -240,6 +240,9 @@ class OmegaRustAgent(OmegaAgent):
       --agent-import-path omega_agent:OmegaRustAgent \\
       -m anthropic/claude-sonnet-4-6 \\
       --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+
+    This is the only supported agent class — the legacy OmegaAgent (TypeScript/Bun)
+    has been removed along with the TypeScript stack.
     """
 
     CLI_FLAGS = [

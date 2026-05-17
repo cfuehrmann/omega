@@ -23,14 +23,14 @@ cd bench
 
 # one specific task
 harbor run -d terminal-bench@2.0 \
-  --agent-import-path omega_agent:OmegaAgent \
+  --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -t terminal-bench/fix-git -n 1
 
 # explicit list of tasks (recommended for targeted re-runs)
 harbor run -d terminal-bench@2.0 \
-  --agent-import-path omega_agent:OmegaAgent \
+  --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -i taskA -i taskB \
