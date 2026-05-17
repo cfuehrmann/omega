@@ -359,7 +359,7 @@ pub fn SessionPicker() -> impl IntoView {
                                 data-testid="leptos-session-new"
                                 on:click=on_new_click
                             >
-                                "+ new session"
+                                "+ New session"
                             </button>
                             <Show when=move || has_session.get() fallback=|| ()>
                                 <button
@@ -704,13 +704,13 @@ fn SessionRow(
                             data-testid="leptos-session-resume"
                             on:click=on_resume
                         >
-                            "resume"
+                            "Resume"
                         </button>
                         <button
                             data-testid="leptos-session-delete"
                             on:click=on_delete
                         >
-                            "delete"
+                            "Delete"
                         </button>
                     </Show>
                     <button
@@ -718,7 +718,7 @@ fn SessionRow(
                         title="Copy session @path to clipboard"
                         on:click=on_insert_at
                     >
-                        {move || if copied.get() { "copy @path ✓" } else { "copy @path" }}
+                        {move || if copied.get() { "Copy @path ✓" } else { "Copy @path" }}
                     </button>
                 </div>
             </Show>

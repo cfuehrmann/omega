@@ -179,30 +179,30 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
 // `kind_for` (visual-family projection).  Keep the three in sync when
 // adding a new variant.
 
-pub const LABEL_USER_MESSAGE: &str = "user_message";
+pub const LABEL_USER_MESSAGE: &str = "User message";
 pub const LABEL_LLM_CALL: &str = "LLM call";
-pub const LABEL_TOOL_CALL: &str = "tool call";
-pub const LABEL_TOOL_RESULT: &str = "tool result";
-pub const LABEL_TURN_END: &str = "turn_end";
-pub const LABEL_LLM_ERROR: &str = "llm_error";
-pub const LABEL_AGENT_ERROR: &str = "agent_error";
-pub const LABEL_TRANSPORT_ERROR: &str = "transport_error";
-pub const LABEL_TURN_INTERRUPTED: &str = "turn_interrupted";
-pub const LABEL_SESSION_STARTED: &str = "session_started";
-pub const LABEL_SERVER_STARTED: &str = "server_started";
-pub const LABEL_SERVER_STOPPED: &str = "server_stopped";
-pub const LABEL_LLM_RETRY: &str = "llm_retry";
-pub const LABEL_MODEL_CHANGED: &str = "model_changed";
-pub const LABEL_EFFORT_CHANGED: &str = "effort_changed";
-pub const LABEL_RESUMING_SESSION: &str = "resuming_session";
-pub const LABEL_SESSION_RESUMED: &str = "session_resumed";
-pub const LABEL_PAUSE_REQUESTED: &str = "pause_requested";
-pub const LABEL_TURN_PAUSED: &str = "turn_paused";
-pub const LABEL_TURN_CONTINUED: &str = "turn_continued";
+pub const LABEL_TOOL_CALL: &str = "Tool call";
+pub const LABEL_TOOL_RESULT: &str = "Tool result";
+pub const LABEL_TURN_END: &str = "Turn end";
+pub const LABEL_LLM_ERROR: &str = "LLM error";
+pub const LABEL_AGENT_ERROR: &str = "Agent error";
+pub const LABEL_TRANSPORT_ERROR: &str = "Transport error";
+pub const LABEL_TURN_INTERRUPTED: &str = "Turn interrupted";
+pub const LABEL_SESSION_STARTED: &str = "Session started";
+pub const LABEL_SERVER_STARTED: &str = "Server started";
+pub const LABEL_SERVER_STOPPED: &str = "Server stopped";
+pub const LABEL_LLM_RETRY: &str = "LLM retry";
+pub const LABEL_MODEL_CHANGED: &str = "Model changed";
+pub const LABEL_EFFORT_CHANGED: &str = "Effort changed";
+pub const LABEL_RESUMING_SESSION: &str = "Resuming session";
+pub const LABEL_SESSION_RESUMED: &str = "Session resumed";
+pub const LABEL_PAUSE_REQUESTED: &str = "Pause requested";
+pub const LABEL_TURN_PAUSED: &str = "Turn paused";
+pub const LABEL_TURN_CONTINUED: &str = "Turn continued";
 pub const LABEL_LLM_RESPONSE_STARTED: &str = "LLM response start";
 pub const LABEL_LLM_RESPONSE_ENDED: &str = "LLM response end";
-pub const LABEL_ASSISTANT: &str = "assistant";
-pub const LABEL_THINKING: &str = "thinking";
+pub const LABEL_ASSISTANT: &str = "Assistant";
+pub const LABEL_THINKING: &str = "Thinking";
 
 /// Canonical human label for an event.  Used by the big-block
 /// `<span class="block-label">` and the status chip alike.
@@ -1190,18 +1190,18 @@ mod tests {
     // ---- event_label --------------------------------------------------------
 
     #[wasm_bindgen_test]
-    fn event_label_user_message_is_snake_case_literal() {
-        assert_eq!(event_label(&user()), "user_message");
+    fn event_label_user_message_is_sentence_case() {
+        assert_eq!(event_label(&user()), "User message");
     }
 
     #[wasm_bindgen_test]
-    fn event_label_tool_call_is_human_form() {
-        assert_eq!(event_label(&tool_call()), "tool call");
+    fn event_label_tool_call_is_sentence_case() {
+        assert_eq!(event_label(&tool_call()), "Tool call");
     }
 
     #[wasm_bindgen_test]
-    fn event_label_tool_result_is_human_form() {
-        assert_eq!(event_label(&tool_result(false)), "tool result");
+    fn event_label_tool_result_is_sentence_case() {
+        assert_eq!(event_label(&tool_result(false)), "Tool result");
     }
 
     #[wasm_bindgen_test]
@@ -1227,7 +1227,7 @@ mod tests {
             signature: Some("sig".into()),
             partial: false,
         });
-        assert_eq!(event_label(&ev), "thinking");
+        assert_eq!(event_label(&ev), "Thinking");
     }
 
     #[wasm_bindgen_test]
@@ -1237,7 +1237,7 @@ mod tests {
             text: "hello".into(),
             partial: false,
         });
-        assert_eq!(event_label(&ev), "assistant");
+        assert_eq!(event_label(&ev), "Assistant");
     }
 
     // ---- current_status_label -----------------------------------------------
@@ -1248,7 +1248,7 @@ mod tests {
         // buffer means we are mid-thinking-stream — chip shows that.
         let evs = [tool_call()];
         let got = current_status_label(&evs, false, true, None);
-        assert_eq!(got, Some(("thinking".into(), "thinking_block")));
+        assert_eq!(got, Some(("Thinking".into(), "thinking_block")));
     }
 
     #[wasm_bindgen_test]
@@ -1262,14 +1262,14 @@ mod tests {
     fn current_status_text_buffer_is_assistant() {
         let evs = [user()];
         let got = current_status_label(&evs, true, false, None);
-        assert_eq!(got, Some(("assistant".into(), "text_block")));
+        assert_eq!(got, Some(("Assistant".into(), "text_block")));
     }
 
     #[wasm_bindgen_test]
     fn current_status_falls_back_to_last_event() {
         let evs = [user(), tool_call()];
         let got = current_status_label(&evs, false, false, None);
-        assert_eq!(got, Some(("tool call".into(), "tool_call")));
+        assert_eq!(got, Some(("Tool call".into(), "tool_call")));
     }
 
     #[wasm_bindgen_test]
@@ -1278,7 +1278,7 @@ mod tests {
         // thinking wins per the documented priority order.
         let evs: [OmegaEvent; 0] = [];
         let got = current_status_label(&evs, true, true, Some("x"));
-        assert_eq!(got, Some(("thinking".into(), "thinking_block")));
+        assert_eq!(got, Some(("Thinking".into(), "thinking_block")));
     }
 
     #[wasm_bindgen_test]

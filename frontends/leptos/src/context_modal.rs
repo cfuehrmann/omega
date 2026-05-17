@@ -206,8 +206,8 @@ pub fn render_block(block: &serde_json::Value) -> String {
 #[must_use]
 pub fn role_label(role: &str) -> &str {
     match role {
-        "user" => "user",
-        "assistant" => "assistant",
+        "user" => "User",
+        "assistant" => "Assistant",
         other => other,
     }
 }
@@ -505,7 +505,7 @@ pub fn ContextModal() -> impl IntoView {
                         class="leptos-context-modal-header"
                     >
                         <span class="leptos-context-modal-title">
-                            "context records"
+                            "Context records"
                         </span>
                         <button
                             class="leptos-context-modal-close"
@@ -816,9 +816,9 @@ mod tests {
     // ---- role_label --------------------------------------------------------
 
     #[wasm_bindgen_test]
-    fn role_label_known_roles_pass_through() {
-        assert_eq!(role_label("user"), "user");
-        assert_eq!(role_label("assistant"), "assistant");
+    fn role_label_known_roles_are_capitalised() {
+        assert_eq!(role_label("user"), "User");
+        assert_eq!(role_label("assistant"), "Assistant");
     }
 
     #[wasm_bindgen_test]

@@ -220,7 +220,7 @@ pub fn UsagePanel() -> impl IntoView {
                         // Turn row — absent until the first turn completes or starts.
                         {move || turn_row.get().map(|c| view! {
                             <tr data-testid="usage-turn-row">
-                                <td class="ut-row-label">"turn"</td>
+                                <td class="ut-row-label">"Turn"</td>
                                 <td class="ut-val">{c.fresh_in}</td>
                                 <td class="ut-val">{c.cache_write_in}</td>
                                 <td class="ut-val">{c.cache_read_in}</td>
@@ -233,7 +233,7 @@ pub fn UsagePanel() -> impl IntoView {
                             let c = sess_row.get();
                             view! {
                                 <tr data-testid="usage-session-row">
-                                    <td class="ut-row-label">"session"</td>
+                                    <td class="ut-row-label">"Session"</td>
                                     <td class="ut-val">{c.fresh_in}</td>
                                     <td class="ut-val">{c.cache_write_in}</td>
                                     <td class="ut-val">{c.cache_read_in}</td>

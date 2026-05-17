@@ -901,7 +901,7 @@ fn render_event_body(
                             data-testid="leptos-thinking-block-expand"
                             on:click=move |_| expanded.update(|v| *v = !*v)
                         >
-                            {move || if expanded.get() { "less" } else { "more" }}
+                            {move || if expanded.get() { "Less" } else { "More" }}
                         </button>
                     })}
                     <TimestampChip iso=time_iso display=time_pill pill=true />
@@ -996,7 +996,7 @@ fn render_event_body(
                         data-testid="leptos-tool-use-block-expand"
                         on:click=move |_| expanded.update(|v| *v = !*v)
                     >
-                        {move || if expanded.get() { "less" } else { "more" }}
+                        {move || if expanded.get() { "Less" } else { "More" }}
                     </button>
                     <TimestampChip iso=time_iso display=time_pill pill=true />
                 </div>
@@ -1080,7 +1080,7 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
                     data-testid="leptos-compacted-badge"
                     title="server-side context compaction fired on this response"
                 >
-                    "compacted"
+                    "Compacted"
                 </span>
             })}
             // Usage info + modal buttons grouped as a single hover-revealed unit.
@@ -1098,14 +1098,14 @@ fn LlmResponseEndedBlock(event: omega_types::events::LlmResponseEndedEvent) -> i
                     data-testid="leptos-llm-response-context"
                     on:click=move |_| context_modal.open_hash(context_hash.clone())
                 >
-                    "context"
+                    "Context"
                 </button>
                 <button
                     class="block-label-row-btn"
                     data-testid="leptos-llm-response-payload"
-                    on:click=move |_| text_modal.open("llm_response_ended payload", event_json.clone())
+                    on:click=move |_| text_modal.open("LLM response payload", event_json.clone())
                 >
-                    "payload"
+                    "Payload"
                 </button>
             </div>
             <TimestampChip iso=time_iso display=time_pill pill=true />
@@ -1174,9 +1174,9 @@ fn SessionStartedBlock(event: omega_types::events::SessionStartedEvent) -> impl 
             <button
                 data-testid="leptos-session-started-system-prompt"
                 class="block-label-row-btn"
-                on:click=move |_| text_modal.open("system prompt", system_prompt.clone())
+                on:click=move |_| text_modal.open("System prompt", system_prompt.clone())
             >
-                "system prompt"
+                "System prompt"
             </button>
             <TimestampChip iso=time_iso display=time_pill pill=true />
         </div>
@@ -1234,14 +1234,14 @@ fn LlmCallBlock(event: omega_types::events::LlmCallEvent) -> impl IntoView {
                 data-testid="leptos-llm-call-open-modal"
                 on:click=move |_| context_modal.open(event_for_ctx.clone())
             >
-                "context"
+                "Context"
             </button>
             <button
                 class="block-label-row-btn"
                 data-testid="leptos-llm-call-payload"
-                on:click=move |_| text_modal.open("llm_call payload", payload_text.clone())
+                on:click=move |_| text_modal.open("LLM call payload", payload_text.clone())
             >
-                "payload"
+                "Payload"
             </button>
             <TimestampChip iso=time_iso display=time_pill pill=true />
         </div>
@@ -1289,7 +1289,7 @@ fn ToolResultBlock(
                     data-testid="leptos-tool-result-payload-btn"
                     on:click=move |_| text_modal.open(modal_title.clone(), full_for_modal.clone())
                 >
-                    "output"
+                    "Output"
                 </button>
                 <TimestampChip iso=time_iso display=time_pill pill=true />
             </div>

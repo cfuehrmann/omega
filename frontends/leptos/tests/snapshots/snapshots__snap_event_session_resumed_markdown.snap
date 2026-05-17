@@ -2,5 +2,5 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="leptos-event-block" data-event-type="session_resumed" data-event-kind="status" class="block block-status"><span class="block-label">session_resumed</span><div data-testid="md-body" class="block-body md-body"><p><strong>Resumed</strong> with progress.</p>
+<div data-testid="leptos-event-block" data-event-type="session_resumed" data-event-kind="status" class="block block-status"><span class="block-label">Session resumed</span><div data-testid="md-body" class="block-body md-body"><p><strong>Resumed</strong> with progress.</p>
 </div><button title="Click to copy: 2025-01-01T00:00:06.000Z" class="block-timestamp">00:00:06.000</button></div>
