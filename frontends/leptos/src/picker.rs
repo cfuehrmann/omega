@@ -159,6 +159,24 @@ pub fn SessionPicker() -> impl IntoView {
         });
     });
 
+    // Refetch the session list each time the picker opens so that
+    // sessions created (or otherwise changed) by other instances are
+    // visible without a browser refresh.  The server does not broadcast
+    // a "session_created" frame, so the only way to learn about new
+    // sessions from instance B is to re-query the REST endpoint.
+    // `prev == Some(false)` guards against firing on the close
+    // transition (open → false) and on the very first Effect run when
+    // the picker starts closed (prev = None).
+    Effect::new(move |prev: Option<bool>| {
+        let is_open = picker_open.open.get();
+        if is_open && prev == Some(false) {
+            spawn_local(async move {
+                refresh_sessions(list).await;
+            });
+        }
+        is_open
+    });
+
     // Refetch whenever the active session's dir changes (covers the
     // post-Reset session_info broadcast). Tracking returns the prior
     // value so a no-op transition (same dir) skips the fetch.
