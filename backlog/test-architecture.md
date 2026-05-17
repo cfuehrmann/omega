@@ -299,7 +299,7 @@ sweep.
 
 - `rust-migration.md` — BUG-C was the same work as TEST-ARCH-1; the Phase-3
   Leptos rewrite gates TEST-ARCH-5 and TEST-ARCH-6.
-- `rust/PHASE-1d.0-NOTES.md` — Phase 1d.0a's MockProvider tests were the
+- `PHASE-1d.0-NOTES.md` (deleted) — Phase 1d.0a's MockProvider tests were the
   suite retired in TEST-ARCH-4.
 - `nutriterm/tests/cli.rs`, `nutriterm/tests/common.rs` — reference pattern
   for TEST-ARCH-1's `assert_cmd` + `insta` + path-normalisation shape.

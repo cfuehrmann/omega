@@ -25,34 +25,6 @@ When every retry is consumed, the final fallback yields a bare `agent_error`
 with no `llm_error` event. The worst crash path has the least diagnostic
 coverage. Fix: emit `llm_error` before `agent_error` on exhaustion.
 
-### HASH-1 — Deterministic content-derived `ContextHash`
-
-**[backlog/hash-1.md](backlog/hash-1.md)**
-
-Replace the current 6-byte random `ContextHash` with a deterministic
-16-hex-char content hash (sha256 prefix of canonical-JSON of
-`(role, content)`). Restores replay determinism, enables byte-equal
-goldens for `context.jsonl`, and removes a long-standing misnomer.
-No old-session compatibility — hard cutover. Includes lockdown tests
-that freeze the canonical hash for a small set of fixtures and
-mutation testing on `omega-store`. **SCHEMA-8 depends on this.**
-
-### SCHEMA-8 — Append-only event grammar
-
-**[backlog/schema-8.md](backlog/schema-8.md)**
-
-Major refactor of the event schema to make `events.jsonl` strictly
-append-only at the UI level. Replaces `LlmResponse` (interval-summary) with
-an `LlmResponseStarted` / `LlmResponseEnded` pair plus per-content-block
-events (`TextBlock`, `ThinkingBlock`, `ToolUseBlock`). Drops `Compacted`
-(folded into `LlmResponseEnded.usage.iterations`). Re-purposes `ToolCall` to
-agent-dispatch time. Folds in CTX-ORDER: replaces flat per-kind streaming
-accumulators with an order-preserving block-index-keyed accumulator so
-context.jsonl is correct under interleaved thinking. Hard cutover; no
-backward compatibility. Gated on Phase 0 golden context.jsonl tests for
-safety. **Depends on HASH-1.**
-
----
 
 ### TOKEN — Token-efficiency follow-ups
 

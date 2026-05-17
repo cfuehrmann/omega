@@ -123,9 +123,7 @@ absorbs most of the damage already.
 
 **Recap.** RTK (Rust Token Killer) is a CLI proxy that
 applies per-command filters to known-noisy programs
-(`cargo test`, `pytest`, `jest`, `git`, …). See the earlier
-RTK discussion summarised at the top of
-`backlog/tee-on-truncate-audit.md`.
+(`cargo test`, `pytest`, `jest`, `git`, …).
 
 **Bench data verdict.** RTK's supported-command set
 (test runners, package managers) is **barely used in
@@ -137,30 +135,17 @@ test` / `just gate` mass (~5 MB local), but tee-on-truncate
 + `\r`-stripping + the gate fix above target the same mass
 more directly and stay in-tree.
 
-**Conclusion.** Skip unless post-implementation re-audit
-shows residual `cargo test`-style noise that the in-tree
-fixes didn't catch. Even then, integrate as a runtime
-shell-out wrapper (detect `rtk` on PATH, prepend it for
-argv[0] ∈ {known commands}, config-gated), **not** as a
-crate dependency.
+**Conclusion.** Skip unless a future audit shows residual
+`cargo test`-style noise that the in-tree fixes didn't catch.
+Even then, integrate as a runtime shell-out wrapper (detect
+`rtk` on PATH, prepend it for argv[0] ∈ {known commands},
+config-gated), **not** as a crate dependency.
 
 ---
 
 ## How to revisit
 
-After tee-on-truncate ships, **re-run the audit**:
-
-```
-python3 scripts/token_audit.py
-```
-
-Then compare against `backlog/tee-on-truncate-audit.md`. The
-delta tells us:
-
-- Whether tee-on-truncate moved the needle as expected.
-- Which of items 1-5 above are still material.
-- Whether item 6 is needed at all.
-
-This is the single most important follow-up step. The audit
-script is the measurement instrument; everything else is
-hypothesis.
+Re-run a token audit against `.omega/sessions/` once more
+sessions (including Harbor runs) have accumulated. Compare
+bytes-per-tool-call across categories to see which of items
+1-5 above remain material and whether item 6 is needed at all.

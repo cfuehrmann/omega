@@ -106,7 +106,7 @@ This follows the system prompt instruction ("look for README, AGENT.md, CLAUDE.m
 | `/frontends/leptos` | 15 | 3.1 % | Leptos rewrite |
 | `/rust` | 14 | 2.9 % | |
 | `/.omega/sessions/…` | 13 | 2.7 % | Session-inspection tasks |
-| `/backlog/schema-8.md` | 12 | 2.5 % | Active workstream |
+| `/backlog/schema-8.md` | 12 | 2.5 % | *(deleted — schema refactor shipped)* |
 | `/backlog.md` | 11 | 2.3 % | Backlog index |
 | `/Justfile` | 7 | 1.4 % | Task runner |
 
