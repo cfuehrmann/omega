@@ -77,13 +77,23 @@ for CRATE in "${CRATES[@]}"; do
     echo "  Start:   $(date -u +"%H:%M:%SZ")"
     echo "----------------------------------------"
 
-    # If this crate was already swept (outcomes.json exists), skip it so that
-    # the script can be re-run safely without re-testing completed crates.
-    if [[ -f "$CRATE_OUT/mutants.out/outcomes.json" ]]; then
-        echo "  ⏭️  $CRATE — outcomes.json already exists, skipping"
+    # If this crate was already swept, skip it so the script can be re-run
+    # safely.  cargo-mutants writes outcomes.json incrementally, so its mere
+    # presence cannot signal completion.  We instead write a sentinel file
+    # (.done) after a successful exit, and check for it here.
+    DONE_MARKER="$CRATE_OUT/.done"
+    if [[ -f "$DONE_MARKER" ]]; then
+        echo "  ⏭️  $CRATE — run already complete (.done marker present), skipping"
         PASS_COUNT=$((PASS_COUNT + 1))
         echo ""
         continue
+    fi
+    # Stale partial run: outcomes.json exists but no .done marker means a
+    # previous run was killed mid-flight.  Wipe the output so cargo-mutants
+    # starts from scratch.
+    if [[ -f "$CRATE_OUT/mutants.out/outcomes.json" ]]; then
+        echo "  🗑️  $CRATE — removing stale partial output (no .done marker)"
+        rm -rf "$CRATE_OUT"
     fi
 
     mkdir -p "$CRATE_OUT"
@@ -108,12 +118,15 @@ for CRATE in "${CRATES[@]}"; do
     set -e
     if [[ $EXIT -eq 0 ]]; then
         echo "  ✅ $CRATE — all mutants caught"
+        touch "$DONE_MARKER"
         PASS_COUNT=$((PASS_COUNT + 1))
     elif [[ $EXIT -eq 2 ]]; then
         echo "  ⚠️  $CRATE — completed with missed mutants (exit $EXIT)"
+        touch "$DONE_MARKER"
         PASS_COUNT=$((PASS_COUNT + 1))
     elif [[ $EXIT -eq 3 ]]; then
         echo "  ⚠️  $CRATE — completed with timeout mutants (exit $EXIT)"
+        touch "$DONE_MARKER"
         PASS_COUNT=$((PASS_COUNT + 1))
     else
         echo "  ❌ $CRATE — FAILED (exit $EXIT — usage/config error)"
