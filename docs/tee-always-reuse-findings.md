@@ -208,22 +208,39 @@ Net:
 
 The cost-benefit ratio for tee-always is overwhelming.
 
-## Where this leaves us
+## Decisions (2026-05-17)
 
-The data does not justify a blanket revert. It does suggest:
+1. **`run_command`: keep tee-always.** Strong evidence. ~145 s of
+   LLM-perceived latency avoided across 35 sessions for a marginal
+   disk cost of ~32 KB / session over tee-on-truncate. All observed
+   reuse hit sub-cap files — tee-on-truncate would have caught none
+   of it.
+2. **`fetch_url`: keep tee-always.** Postprocess log has the highest
+   reuse rate of the three tools (0.36 followups/call combined).
+   Per-session disk cost ~16 KB. Note: the content-addressed
+   raw-download cache is a *separate* mechanism and not under this
+   decision; it has 0.77 followups/call and stays regardless.
+3. **`wait_for_output`: keep tee-always provisionally.** n=4 calls
+   is too thin to commit to removal. Decision deferred — see TODO.
 
-1. **Keep tee-always for `fetch_url`** unambiguously.
-2. **Keep tee-always for `run_command`** with strong justification:
-   ~145 s of LLM-perceived latency avoided across 35 sessions for a
-   marginal disk cost of ~32 KB / session. All observed reuse hit
-   sub-cap files — tee-on-truncate would have caught none of it.
-3. **`wait_for_output`** is undecidable on n=4. Default-keep alongside
-   `run_command` for consistency.
-4. Re-run this analysis after another ~100 sessions, especially with an
-   eye on truncated-bucket `run_command` (currently n=5 — too small to
-   draw conclusions). If a larger sample still shows the full-vs-
-   truncated asymmetry inverted for `run_command`, we have a robust
-   finding; if not, revisit.
+## TODO — revisit when n grows
+
+- [ ] **`wait_for_output` tee policy.** Re-run
+  `scripts/analyze_tee_reuse.py` once the sample reaches **n ≥ 30**
+  `wait_for_output` calls. If reuse is still 0 and per-session disk
+  cost is still trivial (current ~21 KB), drop tee for this tool.
+  If any reuse appears, keep tee-always and update this doc.
+- [ ] **`run_command` truncated bucket.** Currently n=5 truncated
+  origins with 0 follow-ups; all observed savings are on full-output
+  origins. Re-check after another ~100 sessions to confirm the
+  full-vs-truncated asymmetry holds (it would be surprising if
+  truncated outputs *never* see reuse — selection effect should run
+  the other way).
+- [ ] **Re-measure after any prompt change that affects cache-reuse
+  advertising** (system_prompt.rs lines ~294–303 and ~327–329).
+  The current 0.7 % reuse rate on `run_command` might be partly an
+  under-prompting artefact; a sharper hint ("prefer grep_files on
+  the cache over re-running grep-able commands") could move it.
 
 ## Reproducing
 
