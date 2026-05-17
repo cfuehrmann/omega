@@ -46,6 +46,16 @@ def classify(output: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _ids(e: dict) -> list[str]:
+    """Return all identifier-like fields on an event.
+
+    Older sessions used `id` (LLM tool_use_id) or `callId` (Omega).
+    Current schema uses `toolCallId`. Returning all of them lets us link
+    a `tool_call` to its `tool_result` regardless of schema vintage.
+    """
+    return [v for v in (e.get("toolCallId"), e.get("callId"), e.get("id")) if v]
+
+
 def iter_events(jsonl: Path):
     with jsonl.open() as f:
         for line in f:
@@ -59,16 +69,31 @@ def iter_events(jsonl: Path):
 
 
 def analyse_session(events_path: Path) -> list[dict]:
-    """Return one record per tee tool_result with a surfaced cache path."""
-    # First pass: collect tool_results in order, and all subsequent inputs.
+    """Return one record per tee tool_result with a surfaced cache path.
+
+    Each record carries the originating tool's duration and the durations
+    of any cache-referencing follow-ups, so the caller can estimate time
+    saved under the model \"without the cache, each follow-up would have
+    re-run the origin command\".
+    """
     events = list(iter_events(events_path))
 
-    # Build list of (idx, name, input_text) for every tool_call.
-    tool_calls: list[tuple[int, str, str]] = []
+    call_by_id: dict[str, dict] = {}
+    result_by_id: dict[str, dict] = {}
+    for ev in events:
+        for cid in _ids(ev):
+            if ev.get("type") == "tool_call":
+                call_by_id[cid] = ev
+            elif ev.get("type") == "tool_result":
+                result_by_id[cid] = ev
+
+    # Ordered tool_calls with their id list for follow-up lookup.
+    tool_calls: list[tuple[int, list[str], str, str]] = []
     for i, ev in enumerate(events):
         if ev.get("type") == "tool_call":
-            inp = ev.get("input", {})
-            tool_calls.append((i, ev.get("name", ""), json.dumps(inp)))
+            tool_calls.append(
+                (i, _ids(ev), ev.get("name", ""), json.dumps(ev.get("input", {})))
+            )
 
     records: list[dict] = []
     for i, ev in enumerate(events):
@@ -80,18 +105,20 @@ def analyse_session(events_path: Path) -> list[dict]:
         out = ev.get("output", "") or ""
         status, path = classify(out)
         if path is None:
-            # Some tools (esp. wait_for_output, fetch_url) may surface the
-            # path differently. Skip those for now — we only credit reuse
-            # when the path was actually visible to the LLM.
             continue
 
-        # Count subsequent tool_calls referencing this path.
-        followups: list[tuple[str, int]] = []
-        for j, nm, inp_text in tool_calls:
-            if j <= i:
+        orig_dur_ms = ev.get("durationMs", 0)
+        orig_call = next((call_by_id[c] for c in _ids(ev) if c in call_by_id), None)
+
+        followups: list[dict] = []
+        for j, fids, nm, inp_text in tool_calls:
+            if j <= i or path not in inp_text:
                 continue
-            if path in inp_text:
-                followups.append((nm, j))
+            fu_res = next((result_by_id[c] for c in fids if c in result_by_id), None)
+            followups.append({
+                "tool": nm,
+                "duration_ms": fu_res.get("durationMs", 0) if fu_res else 0,
+            })
 
         records.append(
             {
@@ -99,8 +126,12 @@ def analyse_session(events_path: Path) -> list[dict]:
                 "tool": name,
                 "status": status,
                 "path": path,
+                "orig_dur_ms": orig_dur_ms,
+                "orig_cmd": (orig_call or {}).get("input", {}).get("command", "")
+                if name == "run_command" else "",
                 "followup_count": len(followups),
-                "followup_tools": [t for t, _ in followups],
+                "followup_tools": [f["tool"] for f in followups],
+                "followups": followups,
             }
         )
     return records
@@ -243,6 +274,39 @@ def main() -> int:
         print(
             "  Note: this cache predates tee-always — it is fetch_url's URL-keyed\n"
             "        dedupe layer, not the cap_and_tee postprocess log."
+        )
+
+    # Time-savings estimate for run_command (the only tool with both
+    # non-trivial origin durations and observable follow-up reuse).
+    rc = [r for r in all_records if r["tool"] == "run_command" and r["followup_count"]]
+    if rc:
+        total_saved = sum(r["followup_count"] * r["orig_dur_ms"] for r in rc)
+        total_fu_cost = sum(f["duration_ms"] for r in rc for f in r["followups"])
+        all_rc_writes = sum(
+            1 for r in all_records if r["tool"] == "run_command"
+        )
+        print()
+        print("run_command time-savings estimate")
+        print("  Model: without the cache, each follow-up would have re-run the origin.")
+        for r in rc:
+            n = r["followup_count"]
+            saved = n * r["orig_dur_ms"]
+            print(
+                f"  [{r['session']}] orig={r['orig_dur_ms']} ms  followups={n}  "
+                f"saved={saved} ms  cmd={r['orig_cmd'][:90]!r}"
+            )
+        print(
+            f"  Total naive saved:  {total_saved} ms ({total_saved/1000:.2f} s)"
+        )
+        print(f"  Follow-up cost:     {total_fu_cost} ms")
+        print(
+            f"  Net saved:          {total_saved - total_fu_cost} ms "
+            f"({(total_saved - total_fu_cost)/1000:.2f} s)"
+        )
+        print(
+            f"  Amortised per cached run_command write: "
+            f"{total_saved / all_rc_writes:.1f} ms"
+            f"  ({total_saved} ms / {all_rc_writes} writes)"
         )
 
     if args.verbose:

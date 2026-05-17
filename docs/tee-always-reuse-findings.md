@@ -119,14 +119,54 @@ bucket has all of it. So the "truncated is where the cache earns its
 keep" framing does not generalise to the high-volume tool. **Revert
 recommendation withdrawn.**
 
+## Time-savings estimate — `run_command`
+
+For the 3 `run_command` origins that received follow-ups, the script
+estimates time saved under the model: **without the cache, each
+follow-up would have re-run the originating command.**
+
+| session | origin (truncated) | orig duration | follow-ups | saved |
+|---|---|---:|---:|---:|
+| 2026-05-15T16-00-46 | `cd rust && cargo test --workspace` …                       | 10 901 ms | 1 (`grep_files`)    | **10.9 s** |
+| 2026-05-16T20-24-19 | `just rust-gate 2>&1 \| grep -iE 'failed\|error\|...' \| head` | 39 653 ms | 1 (`tail` via `run_command`) | **39.7 s** |
+| 2026-05-16T20-24-19 | `just rust-gate 2>&1 \| tail -25`                            | 47 066 ms | 2 (`grep` ×2)       | **94.1 s** |
+| **Totals** | | | **4 follow-ups** | **≈ 144.7 s** |
+
+Follow-up cost: 17 ms total. Net saved ≈ 144.67 s.
+
+**Selection effect.** Two of three cases are `just rust-gate`. The
+commands whose output invites a follow-up grep are the ones whose
+output is long enough to need one — i.e. long-running commands.
+Conditional on reuse, the avoided cost is large precisely because
+long-running commands self-select into the reuse population.
+
+**Amortised across all cached `run_command` writes:** ~306 ms saved
+per write (144 686 ms / 473 cached writes). Each write itself is one
+async `write_all` of typically <100 KB — sub-millisecond. The
+cost/benefit ratio is heavily in favour of tee-always even with the
+tiny 0.7% reuse probability, because the *conditional* saving when
+reuse fires is dominated by long-running commands.
+
+**Caveats.**
+- n=3 origins is small; one extra long gate re-use, or one fewer,
+  swings the per-write amortised number by 30–60 ms.
+- The model assumes the follow-up grep/tail would have been *part of*
+  the re-run command (cheap), so the avoided cost is ~one full origin
+  run per follow-up. A model where the LLM would have read the log
+  via a different cheap path gives different numbers.
+- This is *only* `run_command`. `wait_for_output` had zero reuse.
+  `fetch_url` postprocess saw 4 follow-ups but the originating
+  durations are dominated by network I/O — separate analysis.
+
 ## Where this leaves us
 
 The data does not justify a blanket revert. It does suggest:
 
 1. **Keep tee-always for `fetch_url`** unambiguously.
-2. **Keep tee-always for `run_command`** by default — what little reuse
-   exists is on full outputs, and the cost of tee'ing text we already
-   sent inline is one short `write_all`.
+2. **Keep tee-always for `run_command`** with strong justification:
+   ~145 s of LLM-perceived latency avoided across the sample for a
+   per-write cost of <1 ms. All observed reuse is on full outputs,
+   and the savings are dominated by avoided gate re-runs.
 3. **`wait_for_output`** is undecidable on n=4. Default-keep alongside
    `run_command` for consistency.
 4. Re-run this analysis after another ~100 sessions, especially with an
