@@ -71,7 +71,7 @@ fn all_26_events() -> Vec<OmegaEvent> {
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
             system_prompt:
-                "You are a software engineering assistant operating inside Omega, an agent harness."
+                "You are an expert assistant operating inside Omega, a software engineering agent harness."
                     .into(),
             omega_commit: "abc1234".into(),
             agent_time_zone: "Europe/Berlin".into(),
