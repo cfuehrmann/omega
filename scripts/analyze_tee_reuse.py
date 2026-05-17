@@ -151,11 +151,13 @@ def main() -> int:
 
     def fmt(b: dict) -> str:
         n = b["calls"]
-        reused = b["reused_calls"]
         total = b["followup_total"]
-        pct = (100 * reused / n) if n else 0
-        avg = (total / n) if n else 0
-        return f"calls={n:5d}  reused={reused:4d} ({pct:5.1f}%)  followups_total={total:4d}  avg_per_call={avg:.2f}"
+        reused = b["reused_calls"]
+        ratio = (total / n) if n else 0
+        return (
+            f"calls={n:5d}  followups={total:4d}  "
+            f"followups/call={ratio:.3f}  (reused_calls={reused})"
+        )
 
     print(f"Sessions scanned (>= {args.since}): {len(sessions)}")
     print(f"Tee tool_results with cache path: {len(all_records)}")
