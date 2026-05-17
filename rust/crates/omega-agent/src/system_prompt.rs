@@ -190,13 +190,14 @@ fn read_existing(path: &Path) -> Option<String> {
 pub fn build_system_blocks(
     cwd: &str,
     max_output_tokens: u32,
+    headless: bool,
     files: &[InstructionFile],
 ) -> Vec<SystemBlock> {
     let mut out = Vec::with_capacity(2 + files.len());
 
     out.push(SystemBlock {
         label: "core",
-        content: core_prompt(),
+        content: core_prompt(headless),
         source_path: None,
     });
 
@@ -262,10 +263,12 @@ existing files: always prefer `edit_file` over a full rewrite."
     )
 }
 
-/// Core prompt (block #1) — static text, identical across sessions.
+/// Core prompt (block #1).
+/// `headless` drops the two sections that require an interactive human UI:
+/// output-format rendering guidance and the discussion-before-acting policy.
 #[allow(clippy::too_many_lines)]
-fn core_prompt() -> String {
-    "\
+fn core_prompt(headless: bool) -> String {
+    let mut s = "\
 You are an expert assistant operating inside Omega, a software engineering agent harness. Use tools when needed.
 
 ## Project orientation
@@ -335,7 +338,13 @@ When a command produces verbose output — whether from `run_background`'s
 see more output. Never re-run any command without making a code change in
 between.
 
-If a tool fails in a noteworthy way, mention it in your response.
+If a tool fails in a noteworthy way, mention it in your response."
+        .to_owned();
+
+    // Both sections below require an interactive human UI; omit in headless mode.
+    if !headless {
+        s.push_str(
+            "
 
 ## Output format
 
@@ -357,13 +366,28 @@ For C4 diagrams specifically:
 - Always add `UpdateLayoutConfig($c4ShapeInRow=\"3\", $c4BoundaryInRow=\"1\")` on
   diagrams that contain boundaries. This prevents dagre from spreading shapes
   so wide that arrows route across boxes.
-- Do not add `UpdateRelStyle` calls — CSS handles relationship colours globally.
+- Do not add `UpdateRelStyle` calls — CSS handles relationship colours globally.",
+        );
+    }
+
+    s.push_str(if headless {
+        "
+
+## Design discipline
+
+Before implementing a non-trivial change, state your chosen approach and the
+alternatives you considered, then proceed."
+    } else {
+        "
 
 ## Design discipline
 
 Before implementing a non-trivial change, state your chosen approach and the
 alternatives you considered, then proceed. If the user raises a design
-question — before, during, or after — stop and discuss before continuing.
+question — before, during, or after — stop and discuss before continuing."
+    });
+    s.push_str(
+        "
 
 ## Bug fixes
 
@@ -391,8 +415,10 @@ final state matches the spec before declaring done. Be careful with
 relative-path assumptions — a path that resolves correctly from your current
 working directory may not be the location the task requires. If the task
 specifies which files should be present, list the directory and compare
-against the spec."
-        .to_owned()
+against the spec.",
+    );
+
+    s
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +444,7 @@ mod tests {
 
     #[test]
     fn core_block_is_first_and_unheadered() {
-        let blocks = build_system_blocks("/tmp/proj", 64_000, &[]);
+        let blocks = build_system_blocks("/tmp/proj", 64_000, false, &[]);
         assert_eq!(blocks[0].label, "core");
         assert!(blocks[0].source_path.is_none());
         assert!(blocks[0].content.starts_with("You are an expert assistant"));
@@ -429,7 +455,7 @@ mod tests {
 
     #[test]
     fn runtime_block_contains_cwd_and_token_budget() {
-        let blocks = build_system_blocks("/tmp/proj", 12_345, &[]);
+        let blocks = build_system_blocks("/tmp/proj", 12_345, false, &[]);
         let rt = blocks.iter().find(|b| b.label == "runtime").expect("rt");
         assert!(rt.content.starts_with("## Runtime context"));
         assert!(rt.content.contains("/tmp/proj"));
@@ -438,7 +464,7 @@ mod tests {
 
     #[test]
     fn no_instruction_files_yields_exactly_two_blocks() {
-        let blocks = build_system_blocks("/x", 1000, &[]);
+        let blocks = build_system_blocks("/x", 1000, false, &[]);
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].label, "core");
         assert_eq!(blocks[1].label, "runtime");
@@ -458,7 +484,7 @@ mod tests {
                 content: "REPO".to_owned(),
             },
         ];
-        let blocks = build_system_blocks("/repo", 1000, &files);
+        let blocks = build_system_blocks("/repo", 1000, false, &files);
         assert_eq!(blocks.len(), 4);
         assert_eq!(blocks[2].label, "global-agents-md");
         assert!(
@@ -481,15 +507,45 @@ mod tests {
             path: PathBuf::from("/repo/AGENTS.md"),
             content: "   \n  ".to_owned(),
         }];
-        let blocks = build_system_blocks("/repo", 1000, &files);
+        let blocks = build_system_blocks("/repo", 1000, false, &files);
         assert_eq!(blocks.len(), 2, "whitespace-only file should be ignored");
     }
 
     #[test]
     fn join_blocks_separates_with_blank_line() {
-        let blocks = build_system_blocks("/x", 1000, &[]);
+        let blocks = build_system_blocks("/x", 1000, false, &[]);
         let joined = join_blocks(&blocks);
         assert!(joined.contains("\n\n## Runtime context"));
+    }
+
+    // ---- Headless mode ---------------------------------------------------
+
+    #[test]
+    fn headless_omits_output_format_and_discuss() {
+        let blocks = build_system_blocks("/tmp", 1000, true, &[]);
+        let core = &blocks[0].content;
+        assert!(
+            !core.contains("## Output format"),
+            "headless must omit output-format"
+        );
+        assert!(
+            !core.contains("stop and discuss"),
+            "headless must omit discussion policy"
+        );
+    }
+
+    #[test]
+    fn interactive_includes_output_format_and_discuss() {
+        let blocks = build_system_blocks("/tmp", 1000, false, &[]);
+        let core = &blocks[0].content;
+        assert!(
+            core.contains("## Output format"),
+            "interactive must include output-format"
+        );
+        assert!(
+            core.contains("stop and discuss"),
+            "interactive must include discussion policy"
+        );
     }
 
     // ---- Discovery: repo tier ----------------------------------------

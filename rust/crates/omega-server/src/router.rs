@@ -215,6 +215,7 @@ async fn create_active_session(
         effort,
         cwd,
         session_dir: paths.dir.clone(),
+        headless: false, // web UI sessions are always interactive
     };
     let mut agent = Agent::new(
         Arc::clone(&state.provider),

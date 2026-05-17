@@ -54,6 +54,10 @@ enum Command {
         /// error if `git status --porcelain` reports any pending changes.
         #[arg(long)]
         allow_dirty: bool,
+        /// Omit output-format rendering guidance and the interactive-discussion
+        /// policy from the core prompt.  Use for headless / benchmark runs.
+        #[arg(long)]
+        headless: bool,
     },
 }
 
@@ -76,7 +80,18 @@ async fn main() {
             effort,
             session_root,
             allow_dirty,
-        } => run(instruction, model, effort, session_root, allow_dirty).await,
+            headless,
+        } => {
+            run(
+                instruction,
+                model,
+                effort,
+                session_root,
+                allow_dirty,
+                headless,
+            )
+            .await
+        }
     };
     std::process::exit(exit_code);
 }
@@ -88,6 +103,7 @@ async fn run(
     effort: String,
     session_root: Option<String>,
     allow_dirty: bool,
+    headless: bool,
 ) -> i32 {
     // ---- API key -------------------------------------------------------
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
@@ -181,6 +197,7 @@ async fn run(
         effort: Some(effort.clone()),
         cwd: cwd.clone(),
         session_dir: paths.dir.clone(),
+        headless,
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
     if let Err(e) = agent.init().await {

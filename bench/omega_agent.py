@@ -335,6 +335,7 @@ class OmegaRustAgent(OmegaAgent):
             f" --instruction {shlex.quote(instruction)}"
             f" --model {shlex.quote(self._parsed_model_name)}"
             f" --session-root {OMEGA_RUST_SESSION_ROOT}"
+            f" --headless"
             f" {flags}"
         )
         await self.exec_as_agent(environment, command=cmd)

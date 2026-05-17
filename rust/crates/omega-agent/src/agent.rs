@@ -429,6 +429,10 @@ pub struct AgentConfig {
     /// Path to the session directory (the parent of `events.jsonl`).
     /// Used by [`Agent::init`] to write the `session_started` event.
     pub session_dir: PathBuf,
+    /// When `true`, output-format rendering guidance and the
+    /// interactive-discussion policy are omitted from the core prompt.
+    /// Set for headless / benchmark sessions where no human UI is attached.
+    pub headless: bool,
 }
 
 /// The agentic loop.
@@ -530,8 +534,12 @@ impl Agent {
 
         // 3. Assemble system blocks once for the whole session.
         let max_tokens = max_output_tokens_for_model(&self.active_model);
-        self.system_blocks =
-            build_system_blocks(&self.config.cwd.to_string_lossy(), max_tokens, &files);
+        self.system_blocks = build_system_blocks(
+            &self.config.cwd.to_string_lossy(),
+            max_tokens,
+            self.config.headless,
+            &files,
+        );
 
         // 4. session_started
         let session_id = self.config.session_dir.file_name().map_or_else(
