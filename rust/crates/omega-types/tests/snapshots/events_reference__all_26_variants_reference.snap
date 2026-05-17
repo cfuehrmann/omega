@@ -10,7 +10,7 @@ expression: events
     "path": ".omega/sessions/20240115_120000",
     "model": "claude-sonnet-4-6",
     "effort": "medium",
-    "systemPrompt": "You are Omega, a software engineering agent.",
+    "systemPrompt": "You are a software engineering assistant operating inside Omega, an agent harness.",
     "omegaCommit": "abc1234",
     "agentTimeZone": "Europe/Berlin"
   },

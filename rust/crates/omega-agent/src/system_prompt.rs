@@ -266,7 +266,7 @@ existing files: always prefer `edit_file` over a full rewrite."
 #[allow(clippy::too_many_lines)]
 fn core_prompt() -> String {
     "\
-You are Omega, a software engineering agent. Use tools when needed.
+You are a software engineering assistant operating inside Omega, an agent harness. Use tools when needed.
 
 ## Project orientation
 
@@ -421,7 +421,11 @@ mod tests {
         let blocks = build_system_blocks("/tmp/proj", 64_000, &[]);
         assert_eq!(blocks[0].label, "core");
         assert!(blocks[0].source_path.is_none());
-        assert!(blocks[0].content.starts_with("You are Omega"));
+        assert!(
+            blocks[0]
+                .content
+                .starts_with("You are a software engineering assistant")
+        );
         // The core block must NOT contain the runtime values.
         assert!(!blocks[0].content.contains("64000"));
         assert!(!blocks[0].content.contains("/tmp/proj"));
