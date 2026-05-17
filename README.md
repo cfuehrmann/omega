@@ -1,9 +1,6 @@
 # Omega — AI Coding Agent
 
-Omega is a general-purpose AI coding agent. It supports multiple LLM backends (Anthropic, Ollama) and is primarily developed and benchmarked against Sonnet and Opus. It orients itself
-by reading a project's documentation and files, then acts through a rich tool
-set: reading and writing files, running shell commands, searching the web, and
-more.
+Omega is a general-purpose AI coding agent backed by Anthropic's Claude models (Sonnet and Opus). It orients itself by reading a project's documentation and files, then acts through a rich tool set: reading and writing files, running shell commands, searching the web, and more.
 
 ## Modes
 
@@ -14,7 +11,7 @@ more.
   messages, and gives you context inspection and session history.
 - **Benchmark harness** — a [Harbor](https://github.com/the-harbor-project/harbor)
   adapter (`bench/omega_agent.py`) embeds Omega into containerised benchmark
-  runs (Terminal-Bench 2.0, SWE-Bench Verified, etc.).
+  runs (Terminal-Bench 2.0).
 
 ## Configuration
 
@@ -51,7 +48,7 @@ Run the agent in a project directory:
 
 ```bash
 cd /path/to/your/project
-/path/to/omega --max-turns 50 --effort medium
+/path/to/omega run --instruction "Your task here" --effort medium
 ```
 
 ### Web UI
@@ -88,22 +85,6 @@ runtime.
 
 > Introspectability of any software system — at runtime and after the fact —
 > is a first-class design goal in the age of agentic AI.
-
-## Project layout
-
-| Path | Contents |
-|---|---|
-| `crates/omega-cli/` | CLI binary |
-| `crates/omega-server/` | HTTP + WebSocket server |
-| `crates/omega-agent/` | Core agent loop |
-| `crates/omega-core/` | LLM provider abstraction (Anthropic, Ollama) |
-| `crates/omega-tools/` | Tool implementations |
-| `crates/omega-store/` | Session persistence |
-| `crates/omega-types/` | Shared event/message types |
-| `frontends/leptos/` | Web UI (Rust → WASM via Trunk) |
-| `bench/` | Terminal-Bench harness and results |
-| `docs/` | Architecture, policies, internals |
-| `backlog/` | Work items and planning docs |
 
 ## Git discipline
 
