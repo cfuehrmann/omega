@@ -23,7 +23,7 @@ pub const DEFAULT_SESSIONS_ROOT: &str = omega_store::SESSIONS_ROOT;
 
 /// Fallback Leptos `dist/` directory used when binary-relative resolution
 /// fails.  The real default is computed at runtime in `main.rs` from
-/// `current_exe()` (four parent directories up, then `frontends/leptos/dist`).
+/// `current_exe()` (three parent directories up, then `frontends/leptos/dist`).
 /// This constant is only reached if the binary cannot determine its own path.
 pub const DEFAULT_LEPTOS_DIR: &str = "frontends/leptos/dist";
 

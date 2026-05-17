@@ -44,9 +44,9 @@ async fn main() -> std::io::Result<()> {
         std::env::current_exe()
             .ok()
             .and_then(|p| {
-                // Binary is at <repo>/rust/target/release/omega-server.
-                // Four parent() calls reach the repo root.
-                let root = p.parent()?.parent()?.parent()?.parent()?;
+                // Binary is at <repo>/target/release/omega-server.
+                // Three parent() calls reach the repo root.
+                let root = p.parent()?.parent()?.parent()?;
                 Some(root.join("frontends/leptos/dist"))
             })
             .unwrap_or_else(|| PathBuf::from(cli::DEFAULT_LEPTOS_DIR))
