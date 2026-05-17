@@ -366,13 +366,7 @@ For C4 diagrams specifically:
 - Always add `UpdateLayoutConfig($c4ShapeInRow=\"3\", $c4BoundaryInRow=\"1\")` on
   diagrams that contain boundaries. This prevents dagre from spreading shapes
   so wide that arrows route across boxes.
-- Do not add `UpdateRelStyle` calls — CSS handles relationship colours globally.",
-        );
-    }
-
-    if !headless {
-        s.push_str(
-            "
+- Do not add `UpdateRelStyle` calls — CSS handles relationship colours globally.
 
 ## Design discipline
 
