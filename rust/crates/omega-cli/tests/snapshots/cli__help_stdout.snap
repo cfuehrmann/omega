@@ -2,7 +2,7 @@
 source: crates/omega-cli/tests/cli.rs
 expression: stdout
 ---
-Omega coding agent (Rust)
+Omega software engineering agent (Rust)
 
 Usage: omega <COMMAND>
 

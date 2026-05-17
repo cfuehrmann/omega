@@ -70,7 +70,7 @@ fn all_26_events() -> Vec<OmegaEvent> {
             path: ".omega/sessions/20240115_120000".into(),
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
-            system_prompt: "You are Omega, a coding agent.".into(),
+            system_prompt: "You are Omega, a software engineering agent.".into(),
             omega_commit: "abc1234".into(),
             agent_time_zone: "Europe/Berlin".into(),
         }),

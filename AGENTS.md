@@ -39,3 +39,16 @@ If you have tried two or more approaches on the same bug and are still stuck,
 or if you suspect you may be going in circles, **stop and ask the user
 whether a prior session log is relevant** before trying another approach.
 Only the user can make the connection between a symptom and the right log.
+
+## LLM Provider
+
+Omega is Anthropic-only. The supported models are:
+
+- `claude-sonnet-4-6` — default, fast
+- `claude-opus-4-6` — slower, more capable
+- `claude-opus-4-7` — most capable; step-change improvement in agentic coding over 4.6
+
+To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
+to get an indexed list of all docs pages (each entry links to a `.md` URL), find the
+relevant page, then fetch that specific `.md` URL with `fetch_url`. Individual pages fit
+comfortably within a single `fetch_url` call.
