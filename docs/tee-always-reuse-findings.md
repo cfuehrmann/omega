@@ -158,15 +158,65 @@ reuse fires is dominated by long-running commands.
   `fetch_url` postprocess saw 4 follow-ups but the originating
   durations are dominated by network I/O — separate analysis.
 
+## Disk-usage cost
+
+Total cache across the 35 sessions:
+
+| tool   | files | total   | avg / file |
+|---|---:|---:|---:|
+| `run`   | 558 | 5.6 MB | 10.2 KB |
+| `fetch` |  20 | 567 KB | 28.3 KB |
+| `wait`  |   6 | 748 KB | 124.6 KB |
+| **all** | **583** | **6.9 MB** | **12.0 KB** |
+
+Per-session: median 37 KB, p90 342 KB, max 3.1 MB.
+
+### `run_command` file-size distribution
+
+| percentile | size |
+|---|---:|
+| min  | 3 B |
+| p50  | 533 B |
+| p90  | 5.3 KB |
+| p99  | 83.3 KB |
+| max  | 2.1 MB |
+
+- **62 %** of cached `run_command` outputs are ≤ 1 KB.
+- **0.7 %** (4 files) exceed the 100 KB LLM cap.
+
+### Tee-always marginal cost over tee-on-truncate
+
+Of the 5.6 MB written for `run_command`:
+
+- **4.4 MB** in the 4 over-cap files — would be written under tee-on-truncate too.
+- **1.1 MB** in the other 554 files — the *marginal* cost of tee-always.
+
+Per-session marginal cost: **~32 KB**.
+
+### Cost vs benefit — settled
+
+**All three originating cache files in the reuse cases are under the
+100 KB cap** (520 B, plus two files well under 100 KB in the gate session).
+Tee-on-truncate would have written *zero* of them, and would have
+caught *zero* of the 144.7 s of observed savings.
+
+Net:
+
+- **~32 KB extra disk per session** → **~4 s less LLM latency per session**
+  (144.7 s / 35).
+- **~7 KB extra disk per second of LLM latency saved.**
+
+The cost-benefit ratio for tee-always is overwhelming.
+
 ## Where this leaves us
 
 The data does not justify a blanket revert. It does suggest:
 
 1. **Keep tee-always for `fetch_url`** unambiguously.
 2. **Keep tee-always for `run_command`** with strong justification:
-   ~145 s of LLM-perceived latency avoided across the sample for a
-   per-write cost of <1 ms. All observed reuse is on full outputs,
-   and the savings are dominated by avoided gate re-runs.
+   ~145 s of LLM-perceived latency avoided across 35 sessions for a
+   marginal disk cost of ~32 KB / session. All observed reuse hit
+   sub-cap files — tee-on-truncate would have caught none of it.
 3. **`wait_for_output`** is undecidable on n=4. Default-keep alongside
    `run_command` for consistency.
 4. Re-run this analysis after another ~100 sessions, especially with an

@@ -276,6 +276,81 @@ def main() -> int:
             "        dedupe layer, not the cap_and_tee postprocess log."
         )
 
+    # Disk-usage summary across all session cache directories.
+    def _hum(b: float) -> str:
+        for u in ["B", "KB", "MB", "GB"]:
+            if b < 1024:
+                return f"{b:.1f} {u}"
+            b /= 1024
+        return f"{b:.1f} TB"
+
+    tool_bytes: dict[str, int] = defaultdict(int)
+    tool_files: dict[str, int] = defaultdict(int)
+    run_sizes: list[int] = []
+    per_session_bytes: list[int] = []
+    for s in sessions:
+        cache = s / "cache"
+        if not cache.exists():
+            continue
+        sess_bytes = 0
+        for sub in cache.iterdir():
+            if not sub.is_dir():
+                continue
+            for f in sub.rglob("*"):
+                if not f.is_file():
+                    continue
+                sz = f.stat().st_size
+                tool_bytes[sub.name] += sz
+                tool_files[sub.name] += 1
+                sess_bytes += sz
+                if sub.name == "run":
+                    run_sizes.append(sz)
+        per_session_bytes.append(sess_bytes)
+
+    if tool_bytes:
+        print()
+        print("Cache disk usage (bytes on disk):")
+        total_b = sum(tool_bytes.values())
+        total_f = sum(tool_files.values())
+        for tool in sorted(tool_bytes):
+            b, f = tool_bytes[tool], tool_files[tool]
+            print(
+                f"  {tool:8s} files={f:5d}  total={_hum(b):>10s}  avg/file={_hum(b/f):>10s}"
+            )
+        print(
+            f"  {'all':8s} files={total_f:5d}  total={_hum(total_b):>10s}  avg/file={_hum(total_b/total_f):>10s}"
+        )
+        if per_session_bytes:
+            ps = sorted(per_session_bytes)
+            n = len(ps)
+            print(
+                f"  per-session: median={_hum(ps[n//2])}  p90={_hum(ps[int(n*0.9)])}  max={_hum(ps[-1])}"
+            )
+
+    # Marginal cost of tee-always over tee-on-truncate for run_command:
+    # bytes in files <= 100 KB cap.
+    if run_sizes:
+        run_total = sum(run_sizes)
+        over_cap = sum(s for s in run_sizes if s > 100 * 1024)
+        under_cap = run_total - over_cap
+        n_over = sum(1 for s in run_sizes if s > 100 * 1024)
+        print()
+        print("run_command file-size distribution:")
+        rs = sorted(run_sizes)
+        n = len(rs)
+        print(
+            f"  p50={_hum(rs[n//2])}  p90={_hum(rs[int(n*0.9)])}  "
+            f"p99={_hum(rs[int(n*0.99)])}  max={_hum(rs[-1])}"
+        )
+        tiny = sum(1 for s in rs if s <= 1024)
+        print(f"  <= 1 KB: {tiny} ({100*tiny/n:.1f}%)")
+        print(f"  >  100 KB (LLM cap): {n_over} ({100*n_over/n:.1f}%)")
+        print(
+            f"  Tee-always marginal cost vs tee-on-truncate: "
+            f"{_hum(under_cap)} in {n-n_over} files "
+            f"({_hum(under_cap/len(sessions))} per session)"
+        )
+
     # Time-savings estimate for run_command (the only tool with both
     # non-trivial origin durations and observable follow-up reuse).
     rc = [r for r in all_records if r["tool"] == "run_command" and r["followup_count"]]
