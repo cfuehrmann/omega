@@ -153,7 +153,7 @@ Recommendation: Option A — move the whole section. The URL is stable enough to
 AGENTS.md, and the overall savings and pattern consistency outweigh the marginal risk of losing
 the hint in non-Omega sessions.
 
-**File:** `rust/crates/omega-agent/src/system_prompt.rs` — remove the `## LLM Provider` block
+**File:** `crates/omega-agent/src/system_prompt.rs` — remove the `## LLM Provider` block
 from `core_prompt()`.
 
 **File:** `AGENTS.md` — append a `## LLM Provider` section with the same text.

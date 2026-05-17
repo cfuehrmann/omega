@@ -274,7 +274,7 @@ new code at the end of Phase 3 and frozen there — see Phase 3.
 
 ### Phase 1 — Schema (Rust types)
 
-**File: `rust/crates/omega-types/src/events.rs`**
+**File: `crates/omega-types/src/events.rs`**
 
 1. Define `LlmResponseStartedEvent { time }`.
 2. Rename `LlmResponseEvent` → `LlmResponseEndedEvent`. Drop `text`,
@@ -293,7 +293,7 @@ new code at the end of Phase 3 and frozen there — see Phase 3.
 12. Update unit tests; add round-trip tests for each new variant; drop
     obsolete tests.
 
-**File: `rust/crates/omega-types/src/stream_signal.rs`**
+**File: `crates/omega-types/src/stream_signal.rs`**
 
 13. Extend `StreamSignal::Text { index, text }` and
     `StreamSignal::Thinking { index, text }` with the API block index.
@@ -304,7 +304,7 @@ new code at the end of Phase 3 and frozen there — see Phase 3.
 
 ### Phase 2 — Providers
 
-**File: `rust/crates/omega-core/src/anthropic.rs`**
+**File: `crates/omega-core/src/anthropic.rs`**
 
 17. Stop emitting `OmegaEvent::ToolCall` from the streaming loop.
     On `content_block_stop` for a `tool_use` block, yield
@@ -320,20 +320,20 @@ new code at the end of Phase 3 and frozen there — see Phase 3.
     Anthropic usage object into `LlmResponseUsage.iterations`.
 23. Drop `all_text` and `all_thinking` accumulators.
 
-**File: `rust/crates/omega-core/src/ollama.rs`**
+**File: `crates/omega-core/src/ollama.rs`**
 
 24. Mirror the changes. Emit `LlmResponseEnded` without text/thinking/
     streaming_start. Emit per-block-complete signals. Iterations stays
     `None` (Ollama has no server-side compaction).
 
-**File: `rust/crates/omega-core/src/retry.rs`**
+**File: `crates/omega-core/src/retry.rs`**
 
 25. Update `track_fragment` and the retry wrapper: no longer write
     fragments onto `LlmRetry`. The agent owns abandonment closers now.
 
 ### Phase 3 — Agent (the big one)
 
-**File: `rust/crates/omega-agent/src/agent.rs`**
+**File: `crates/omega-agent/src/agent.rs`**
 
 This phase replaces the streaming accumulator structure and adds the new
 event emissions.
@@ -374,7 +374,7 @@ event emissions.
     - Reset `response_started` to false; clear slots.
 34. Remove fragment passing on `LlmRetry`.
 
-**File: `rust/crates/omega-agent/src/session_resume.rs`**
+**File: `crates/omega-agent/src/session_resume.rs`**
 
 35. Update event-pattern matching to use the new variant names. Helpers
     `make_llm_response`, `tool_result`, etc. need parameter updates.
@@ -468,7 +468,7 @@ this point on, all golden tests run on every commit.
     no longer exist.
 51. Update mock-server fixtures (`omega-mock-server`) to emit the new
     event shapes where they assert on the wire.
-52. Update e2e tests in `rust/crates/omega-e2e/tests/`:
+52. Update e2e tests in `crates/omega-e2e/tests/`:
     - Tests that asserted on `[thinking]` button → assert on a sibling
       `ThinkingBlock` instead.
     - Tests that asserted on `Compacted` block → assert on the
@@ -668,7 +668,7 @@ small test in a future tidy pass. See `rust/SCHEMA-8-MUTANTS.md` §
 
 ### FU-2 — Mid-turn browser-refresh replay variant
 
-`rust/crates/omega-e2e/tests/09_refresh.rs` implements the
+`crates/omega-e2e/tests/09_refresh.rs` implements the
 post-TurnEnd variant of the T6 browser-refresh replay test. The
 acceptance-criteria text in this doc lists a mid-turn variant as well
 ("after some streamed content blocks but before `LlmResponseEnded`").

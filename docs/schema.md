@@ -5,8 +5,8 @@ variant, the ephemeral `StreamSignal` grammar, the slot-assembly algorithm
 that maps provider stream indices to `context.jsonl` content blocks, and
 the HASH-1 contract that makes byte-equal context comparison feasible.
 
-**Authoritative source:** `rust/crates/omega-types/src/events.rs` for event
-types; `rust/crates/omega-types/src/stream_signal.rs` for `StreamSignal`.
+**Authoritative source:** `crates/omega-types/src/events.rs` for event
+types; `crates/omega-types/src/stream_signal.rs` for `StreamSignal`.
 This document is a reading guide; the Rust source always wins on ambiguity.
 
 ---
@@ -143,7 +143,7 @@ Opener emitted on the first signal from a freshly-started provider
 stream within a turn iteration.  Always followed by exactly one of
 `LlmResponseEnded` or `LlmResponseDiscarded`.
 
-Source: `rust/crates/omega-types/src/events.rs` → `LlmResponseStartedEvent`.
+Source: `crates/omega-types/src/events.rs` → `LlmResponseStartedEvent`.
 
 #### `LlmResponseEndedEvent`
 
@@ -185,7 +185,7 @@ responses.  **Compaction detection**: check whether any entry in
 `clearedToolUses` and `clearedInputTokens` record context-window
 housekeeping (tool-result clearing); they are unrelated to compaction.
 
-Source: `rust/crates/omega-types/src/events.rs` → `LlmResponseEndedEvent`,
+Source: `crates/omega-types/src/events.rs` → `LlmResponseEndedEvent`,
 `LlmResponseUsage`, `UsageIteration`.
 
 #### `LlmResponseDiscardedEvent`
@@ -200,7 +200,7 @@ abandoned mid-stream.  Always immediately precedes `LlmRetry`,
 events always appear between `LlmResponseStarted` and
 `LlmResponseDiscarded`.
 
-Source: `rust/crates/omega-types/src/events.rs` → `LlmResponseDiscardedEvent`.
+Source: `crates/omega-types/src/events.rs` → `LlmResponseDiscardedEvent`.
 
 #### `TextBlockEvent`
 
@@ -216,7 +216,7 @@ only emits partial text blocks when the accumulated text is non-empty
 (empty text slots are silently skipped at flush — see §Slot-assembly
 invariants).
 
-Source: `rust/crates/omega-types/src/events.rs` → `TextBlockEvent`.
+Source: `crates/omega-types/src/events.rs` → `TextBlockEvent`.
 
 #### `ThinkingBlockEvent`
 
@@ -243,7 +243,7 @@ than testing `signature.is_some()`.
 The `signature` field is `#[serde(skip_serializing_if = "Option::is_none")]`;
 it is absent in the JSON for partial blocks.
 
-Source: `rust/crates/omega-types/src/events.rs` → `ThinkingBlockEvent`.
+Source: `crates/omega-types/src/events.rs` → `ThinkingBlockEvent`.
 
 #### `ToolUseBlockEvent`
 
@@ -263,7 +263,7 @@ at `content_block_stop` for a tool_use block.  When `partial: true`,
 `input` may be malformed JSON (the stream was cut off before the input
 accumulator was complete); the agent does not dispatch partial blocks.
 
-Source: `rust/crates/omega-types/src/events.rs` → `ToolUseBlockEvent`.
+Source: `crates/omega-types/src/events.rs` → `ToolUseBlockEvent`.
 
 ### Tool dispatch
 
@@ -299,7 +299,7 @@ captured in `partial: true` block events that precede the
 `reason` is `"retry-after"` when the provider sent a `Retry-After` header;
 absent for ordinary policy-driven retries.
 
-Source: `rust/crates/omega-types/src/events.rs` → `LlmRetryEvent`.
+Source: `crates/omega-types/src/events.rs` → `LlmRetryEvent`.
 
 | Variant | Key fields | Notes |
 |---|---|---|
@@ -338,7 +338,7 @@ The `*BlockComplete` signals are consumed by the agent and absorbed into
 `OmegaEvent::TextBlock` / `ThinkingBlock` / `ToolUseBlock` events.  They
 are not forwarded to the WebSocket.
 
-Source: `rust/crates/omega-types/src/stream_signal.rs`.
+Source: `crates/omega-types/src/stream_signal.rs`.
 
 ---
 
@@ -378,7 +378,7 @@ are always included.
 **Abandonment flush:** when a mid-stream abandonment fires
 (`LlmRetry`/`LlmError`/`TurnInterrupted` while `response_started` is
 true), the agent calls `make_abandonment_closers` (see
-`rust/crates/omega-agent/src/agent.rs`) which:
+`crates/omega-agent/src/agent.rs`) which:
 
 1. Iterates slots in index order.
 2. Emits `partial: true` block events for every *unsealed* slot that has
@@ -394,8 +394,8 @@ every `LlmResponseStarted` is closed by exactly one of `LlmResponseEnded`
 or `LlmResponseDiscarded` — not that every block in an abandoned response
 must be partial.
 
-Source: `rust/crates/omega-agent/src/agent.rs` (module doc + `make_abandonment_closers`).
-Executable spec: `rust/crates/omega-e2e/tests/10_append_only.rs` (T5).
+Source: `crates/omega-agent/src/agent.rs` (module doc + `make_abandonment_closers`).
+Executable spec: `crates/omega-e2e/tests/10_append_only.rs` (T5).
 
 ---
 
@@ -424,8 +424,8 @@ affects their `serde` output (field order, variant order, `#[serde(rename)]`,
 every previously-saved session's hashes.  SCHEMA-8 does not touch these
 types.
 
-Source: `rust/crates/omega-store/src/context_hash.rs` (module doc + lockdown
-tests).  Golden harness: `rust/crates/omega-agent/tests/goldens.rs`.
+Source: `crates/omega-store/src/context_hash.rs` (module doc + lockdown
+tests).  Golden harness: `crates/omega-agent/tests/goldens.rs`.
 
 ---
 
@@ -456,9 +456,9 @@ blipped.
 from *rewind*.  It also means that replaying `events.jsonl` from disk always
 reproduces the same feed layout as the live-streamed session — guaranteed by
 construction, verified by the T6 browser-refresh e2e test
-(`rust/crates/omega-e2e/tests/09_refresh.rs`).
+(`crates/omega-e2e/tests/09_refresh.rs`).
 
-Executable spec for the invariant: `rust/crates/omega-e2e/tests/10_append_only.rs`
+Executable spec for the invariant: `crates/omega-e2e/tests/10_append_only.rs`
 (T5 — records `data-block-id` sets after every injected WS frame and asserts
 monotonically non-decreasing).
 

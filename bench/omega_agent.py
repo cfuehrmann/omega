@@ -33,7 +33,7 @@ OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_SESSION_DIR = "/tmp/omega-session"
 OMEGA_INSTALL_DIR = "/home/agent/omega"
 OMEGA_RUST_INSTALL_DIR = "/home/agent/omega-rust"
-OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/rust/target/release/omega"
+OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/target/release/omega"
 # Sessions are written into Harbor's bind-mounted agent logs directory
 # (/logs/agent inside the container <-> trial_dir/agent on the host).  This
 # means events.jsonl and context.jsonl appear on the host filesystem live

@@ -225,7 +225,7 @@ What shipped:
   ~530-line crate consumed by all three call-sites.
 
 **Success criterion (met):**
-`grep -r "MockProvider" rust/crates/omega-mock-server/` returns no results;
+`grep -r "MockProvider" crates/omega-mock-server/` returns no results;
 all 116 Playwright browser tests (`just test-browser`) pass; `just rust-gate`
 passes.
 

@@ -94,7 +94,7 @@ warning if used elsewhere (audit Phase 1).
 
 ### Phase 1 — Hash function and tests (no behavioural change yet)
 
-**File: `rust/crates/omega-store/src/context_hash.rs`**
+**File: `crates/omega-store/src/context_hash.rs`**
 
 1. Add `pub fn content_hash(role: &Role, content: &[ContentBlock]) -> ContextHash`.
 2. Internal helper `from_validated(s: String) -> ContextHash` — assumes
@@ -106,13 +106,13 @@ Tests in the same module — see Testing Concept below.
 
 ### Phase 2 — Switch `ContextStore::append`, narrow validation
 
-**File: `rust/crates/omega-store/src/context_store.rs`**
+**File: `crates/omega-store/src/context_store.rs`**
 
 5. `ContextStore::append`: replace `random_hash()` with
    `content_hash(&role, &content)`.
 6. `ContextStore::build_record`: same change.
 
-**File: `rust/crates/omega-store/src/context_hash.rs`**
+**File: `crates/omega-store/src/context_hash.rs`**
 
 7. `is_valid`: require length 16 only.
 8. `hash_from_str`: error on length 12 input (now invalid).

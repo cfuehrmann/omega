@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# Standalone Cargo workspace — intentionally NOT a member of `rust/Cargo.toml`.
+# Standalone Cargo workspace — intentionally NOT a member of the root `Cargo.toml`.
 # The reason: `cargo test --workspace` (run by `just rust-gate`) defaults to
 # the host target, but `leptos` with the `csr` feature only builds for
 # `wasm32-unknown-unknown`. Detaching keeps the rust-side gate green and
@@ -79,7 +79,7 @@ web-sys                  = { version = "=0.3.98", features = [
 console_error_panic_hook = "=0.1.7"
 serde                    = { version = "1", features = ["derive"] }
 serde_json               = { version = "1", features = ["preserve_order"] }
-omega-types              = { path = "../../rust/crates/omega-types" }
+omega-types              = { path = "../../crates/omega-types" }
 
 # HTTP client for `GET /api/sessions` (Phase 3.2). Already a transitive dep
 # via leptos's `server_fn`; pinning 0.6.0 keeps the resolution single-version.

@@ -18,15 +18,15 @@ Tracking state for the SCHEMA-8 multi-phase refactor execution.
 
 | Path | LOC | Notes |
 |---|---|---|
-| `rust/crates/omega-types/src/events.rs` | 674 | `OmegaEvent`, sub-events |
-| `rust/crates/omega-types/src/stream_signal.rs` | 49 | `StreamSignal` |
-| `rust/crates/omega-core/src/anthropic.rs` | 831 | provider streaming loop |
-| `rust/crates/omega-core/src/ollama.rs` | 390 | Ollama provider |
-| `rust/crates/omega-core/src/retry.rs` | 252 | retry wrapper |
-| `rust/crates/omega-agent/src/agent.rs` | 1711 | agentic loop |
-| `rust/crates/omega-agent/src/session_resume.rs` | 1365 | resumption |
-| `rust/crates/omega-agent/tests/internal.rs` | 553 | agent tests |
-| `rust/crates/omega-agent/tests/common/mod.rs` | 243 | shared MockProvider |
+| `crates/omega-types/src/events.rs` | 674 | `OmegaEvent`, sub-events |
+| `crates/omega-types/src/stream_signal.rs` | 49 | `StreamSignal` |
+| `crates/omega-core/src/anthropic.rs` | 831 | provider streaming loop |
+| `crates/omega-core/src/ollama.rs` | 390 | Ollama provider |
+| `crates/omega-core/src/retry.rs` | 252 | retry wrapper |
+| `crates/omega-agent/src/agent.rs` | 1711 | agentic loop |
+| `crates/omega-agent/src/session_resume.rs` | 1365 | resumption |
+| `crates/omega-agent/tests/internal.rs` | 553 | agent tests |
+| `crates/omega-agent/tests/common/mod.rs` | 243 | shared MockProvider |
 | `frontends/leptos/src/protocol.rs` | 580 | WS protocol |
 | `frontends/leptos/src/store.rs` | 708 | UI store |
 | `frontends/leptos/src/feed.rs` | 1110 | UI feed |
@@ -76,7 +76,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 ## Phase-by-phase progress
 
 ### Phase 0 — Defensive harness — **DONE** (commit pending)
-- 6 fixtures captured under `rust/crates/omega-agent/tests/goldens/`:
+- 6 fixtures captured under `crates/omega-agent/tests/goldens/`:
   `simple_turn`, `thinking_blocks`, `parallel_tool_calls`,
   `multi_thinking_tools`, `mid_stream_retry`, `compaction`.
 - Each fixture has a `context.jsonl` golden plus a `notes.md` plausibility
@@ -187,7 +187,7 @@ The agent intercepts these mid-stream into `tool_uses` Vec — re-emitted later.
 
 - `schema-8(phase-8a): mutation-catching tests for make_abandonment_closers`
   Adds an inline `#[cfg(test)] mod abandonment_closer_tests` block at the
-  end of `rust/crates/omega-agent/src/agent.rs` (11 unit tests mirroring
+  end of `crates/omega-agent/src/agent.rs` (11 unit tests mirroring
   the existing `elide_request_tests` pattern). The tests pin the
   per-slot emission contract of `make_abandonment_closers`:
   * non-empty Text/Thinking slots emit `partial:true` block events with
@@ -330,7 +330,7 @@ total mutants per crate, caught, unviable, missed, per-miss justification.
 **Phase 6 complete.** Three commits on `develop`, all gates green:
 
 - `370d66a` schema-8(phase-6a): T1-T4 defensive tests for the slot-assembly
-  contract.  New file `rust/crates/omega-agent/tests/defensive.rs` with
+  contract.  New file `crates/omega-agent/tests/defensive.rs` with
   three host-level tests (T1 signature preservation, T2 block order in
   context.jsonl, T3 events.jsonl ↔ context.jsonl cross-check).  T4 added
   as a module-doc annotation in `tests/goldens.rs` making the byte-level
@@ -382,15 +382,15 @@ Gate counts post-Phase-6:
 All edits are comment-only; no code paths or selectors changed.  Files
 touched:
 
-- `rust/crates/omega-core/tests/anthropic.rs` — ~10 doc-comments and
+- `crates/omega-core/tests/anthropic.rs` — ~10 doc-comments and
   `.expect(...)` messages re-pointed from `LlmResponse` to
   `LlmResponseEnded`, one Phase-6.5a comment de-mangled for readability.
   Historical `// Phase 6.5: OmegaEvent::Compacted removed...` notes kept.
-- `rust/crates/omega-core/tests/ollama.rs` — same treatment, 3 sites.
-- `rust/crates/omega-core/tests/retry.rs` — 1 comment.
-- `rust/crates/omega-e2e/tests/03_markdown.rs` — file-header doc + test
+- `crates/omega-core/tests/ollama.rs` — same treatment, 3 sites.
+- `crates/omega-core/tests/retry.rs` — 1 comment.
+- `crates/omega-e2e/tests/03_markdown.rs` — file-header doc + test
   doc-comment re-pointed from `llm_response` to `text_block`.
-- `rust/crates/omega-e2e/tests/06_feed.rs` — same treatment, 3 sites.
+- `crates/omega-e2e/tests/06_feed.rs` — same treatment, 3 sites.
 
 ### Phase 7 plan (Snapshots & docs — 2 items from `backlog/schema-8.md`)
 
@@ -634,7 +634,7 @@ All of the following were removed in Phase 6.5:
   store::apply_event_side_effects (legacy event is inert in the store;
   renderer arm returns ().into_any() to keep the empty wrapper)
 - `a3484a4` schema-8(phase-4e): T6 browser-refresh replay test
-  (`rust/crates/omega-e2e/tests/09_refresh.rs` —
+  (`crates/omega-e2e/tests/09_refresh.rs` —
   data_block_ids_stable_across_reload_post_turn_end) + harness gains
   `TestHarness::reload()`
 
@@ -701,7 +701,7 @@ What the frontend looks like now:
     still works since TextBlock owns the markdown surface now.
   - 09_refresh.rs: new (T6).
 
-- **Test harness** (`rust/crates/omega-e2e/src/lib.rs`):
+- **Test harness** (`crates/omega-e2e/src/lib.rs`):
   - `TestHarness::reload()` wraps `page.reload()` and re-waits for
     `<main data-connected="true">`.
 
@@ -993,7 +993,7 @@ In `frontends/leptos/src/store.rs`:
    `lr.text`/`.thinking`; visually identical.
 4. Drop the legacy `LlmResponse` consumer in the store (still
    on the wire — band-aid stays until 6.5).
-5. T6 browser-refresh replay test (rust/crates/omega-e2e/tests/
+5. T6 browser-refresh replay test (crates/omega-e2e/tests/
    08_refresh.rs or similar): reload mid-turn + post-TurnEnd,
    assert DOM `data-block-id` equality. (Per the 2025 user
    addition to the acceptance criteria.)
@@ -1081,7 +1081,7 @@ closing logic that Phase 2 stripped from the providers.
 
 ### Required changes (per plan)
 
-In `rust/crates/omega-agent/src/agent.rs`:
+In `crates/omega-agent/src/agent.rs`:
 
 - Replace flat accumulators (`text_buf`, `current_thinking`,
   `completed_thinking_blocks`, `tool_uses`) with a
@@ -1153,7 +1153,7 @@ Full plan: `backlog/schema-8.md`.
 ## CURRENT STATE (Phase 1b DONE — next: Phase 2) [historical]
 
 **Phase 1b complete.** All new SCHEMA-8 event-side types added to
-`rust/crates/omega-types/src/events.rs` purely additively:
+`crates/omega-types/src/events.rs` purely additively:
 
 - New structs: `LlmResponseStartedEvent`, `LlmResponseEndedEvent`,
   `LlmResponseDiscardedEvent`, `TextBlockEvent`, `ThinkingBlockEvent`,
@@ -1219,8 +1219,8 @@ File sketch:
 
 The full plan source: `backlog/schema-8.md`.
 The progress/state file: `backlog/schema-8-progress.md` (this file).
-Goldens: `rust/crates/omega-agent/tests/goldens/<fixture>/{context.jsonl,notes.md}`.
-Goldens harness: `rust/crates/omega-agent/tests/goldens.rs`.
+Goldens: `crates/omega-agent/tests/goldens/<fixture>/{context.jsonl,notes.md}`.
+Goldens harness: `crates/omega-agent/tests/goldens.rs`.
 
 Recent commits (verify with `git log --oneline | head`):
 - `30ef152` schema-8: add T6 browser-refresh replay acceptance criterion
@@ -1266,19 +1266,19 @@ green on the full workspace gate.
 
 ## StreamSignal callers needing `index: 0` updates (Phase 1 mechanical)
 
-- `rust/crates/omega-types/src/stream_signal.rs` (the type itself + 2 tests)
-- `rust/crates/omega-server/src/ws_message.rs` (lines 261, 271)
-- `rust/crates/omega-server/tests/ws_router.rs` (lines 573, 852)
-- `rust/crates/omega-server/tests/ws.rs` (lines 209, 526)
-- `rust/crates/omega-cli/src/main.rs` (lines 233, 236-237 — patterns)
-- `rust/crates/omega-core/src/retry.rs` (lines 167-169 — patterns)
-- `rust/crates/omega-core/src/ollama.rs` (lines 133, 139)
-- `rust/crates/omega-core/src/anthropic.rs` (lines 199, 204, 220-221)
-- `rust/crates/omega-core/tests/anthropic.rs` (line 968 — pattern)
-- `rust/crates/omega-agent/src/agent.rs` (lines 680, 684, 688, 1289, 1293, 1297 — patterns)
-- `rust/crates/omega-agent/tests/goldens.rs` (lines 211, 235-238, 242-245, 249, 279, 303, 330-333, 336, 352-355, 371, 403, 406, 423, 453, 467 — constructions; will need re-capture of goldens since `index` field will now appear in StreamSignal serialization, BUT goldens compare context.jsonl which doesn't contain signals, so they should stay byte-equal)
-- `rust/crates/omega-agent/tests/common/mod.rs` (lines 214-217 — patterns)
-- `rust/crates/omega-agent/tests/internal.rs` (lines 209, 218, 239 — constructions)
+- `crates/omega-types/src/stream_signal.rs` (the type itself + 2 tests)
+- `crates/omega-server/src/ws_message.rs` (lines 261, 271)
+- `crates/omega-server/tests/ws_router.rs` (lines 573, 852)
+- `crates/omega-server/tests/ws.rs` (lines 209, 526)
+- `crates/omega-cli/src/main.rs` (lines 233, 236-237 — patterns)
+- `crates/omega-core/src/retry.rs` (lines 167-169 — patterns)
+- `crates/omega-core/src/ollama.rs` (lines 133, 139)
+- `crates/omega-core/src/anthropic.rs` (lines 199, 204, 220-221)
+- `crates/omega-core/tests/anthropic.rs` (line 968 — pattern)
+- `crates/omega-agent/src/agent.rs` (lines 680, 684, 688, 1289, 1293, 1297 — patterns)
+- `crates/omega-agent/tests/goldens.rs` (lines 211, 235-238, 242-245, 249, 279, 303, 330-333, 336, 352-355, 371, 403, 406, 423, 453, 467 — constructions; will need re-capture of goldens since `index` field will now appear in StreamSignal serialization, BUT goldens compare context.jsonl which doesn't contain signals, so they should stay byte-equal)
+- `crates/omega-agent/tests/common/mod.rs` (lines 214-217 — patterns)
+- `crates/omega-agent/tests/internal.rs` (lines 209, 218, 239 — constructions)
 
 For delta signals, providers should compute the actual block index;
 for Phase 1 (additive only, no semantics change), every call site
@@ -1312,8 +1312,8 @@ uses `index: 0` since the agent doesn't yet route by index.
   every `"time":"..."` value with `"time":"<scrubbed>"`, then byte-compares.
   Goldens are checked in with `"time":"<scrubbed>"` already substituted.
   Apply this uniformly across ALL fixtures.
-- **Replay harness location**: `rust/crates/omega-agent/tests/goldens.rs`.
-- **Goldens directory**: `rust/crates/omega-agent/tests/goldens/<fixture>/`
+- **Replay harness location**: `crates/omega-agent/tests/goldens.rs`.
+- **Goldens directory**: `crates/omega-agent/tests/goldens/<fixture>/`
   with `context.jsonl` + `notes.md` + `script.rs` (Rust-coded mock script,
   not JSON — we already have `MockProvider` in tests/common/mod.rs that takes
   `Vec<Result<AgentItem, LlmError>>`, no need to invent a new format).
@@ -1344,7 +1344,7 @@ uses `index: 0` since the agent doesn't yet route by index.
 - `ollama.rs` likely too.
 - For SCRUB strategy we leave these alone; the harness scrubs after writing.
 
-### `MockProvider` API (rust/crates/omega-agent/tests/common/mod.rs)
+### `MockProvider` API (crates/omega-agent/tests/common/mod.rs)
 ```rust
 pub struct MockProvider {
     pub responses: Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>,
@@ -1381,7 +1381,7 @@ fresh `ContextStore` and `EventStore` wired to the tempdir.
 
 ### Browser-refresh replay (T6) — path to investigate
 - Need to find: omega-server WS handshake / replay route. Likely in
-  `rust/crates/omega-server/src/`. The frontend (`frontends/leptos/src/`)
+  `crates/omega-server/src/`. The frontend (`frontends/leptos/src/`)
   presumably opens a WS, the server tails `events.jsonl` from start, sends
   every line, then live-tails new appends.
 - T6 design (sketch):
@@ -1395,7 +1395,7 @@ fresh `ContextStore` and `EventStore` wired to the tempdir.
 - Requires the new schema's append-only property to be true: every
   rendered block traces to one persisted event — nothing reconstructed
   from ephemeral stream signals alone. After SCHEMA-8 this is guaranteed.
-- Goes in `rust/crates/omega-e2e/tests/` next to the existing 06_feed.rs.
+- Goes in `crates/omega-e2e/tests/` next to the existing 06_feed.rs.
 
 ### omega-test-fixtures MockResponse kinds (for SSE-driven tests)
 Text, SlowText, ToolUse, ToolUseMulti, HttpError. Used by

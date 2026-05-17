@@ -755,13 +755,12 @@ fn pick_free_port() -> Result<u16> {
 }
 
 fn workspace_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR for omega-e2e is rust/crates/omega-e2e — go
-    // up two levels for the rust/ root, then up once more for the
-    // repo root (where frontends/leptos/dist lives).
+    // CARGO_MANIFEST_DIR for omega-e2e is crates/omega-e2e — go
+    // up two levels for the repo root (where frontends/leptos/dist lives).
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest
         .ancestors()
-        .nth(3)
+        .nth(2)
         .unwrap_or(manifest)
         .to_path_buf()
 }

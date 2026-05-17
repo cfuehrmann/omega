@@ -58,7 +58,7 @@ a reply summary) covering:
 
 | Project | Core prompt | Self-dev `AGENTS.md` |
 |---|---|---|
-| Omega | `/home/carsten/omega/dev/rust/crates/omega-agent/src/system_prompt.rs` (Rust string constant; entry point `build_system_blocks()` / `join_blocks()`) | `/home/carsten/omega/dev/AGENTS.md` |
+| Omega | `/home/carsten/omega/dev/crates/omega-agent/src/system_prompt.rs` (Rust string constant; entry point `build_system_blocks()` / `join_blocks()`) | `/home/carsten/omega/dev/AGENTS.md` |
 | Forge | `/home/carsten/forgecode/crates/forge_repo/src/agents/{forge,muse,sage}.md` (each a full markdown file with YAML frontmatter; `forge.md` is the default coding agent) | `/home/carsten/forgecode/AGENTS.md` if present (check) |
 | Pi | `/home/carsten/pi-mono/packages/coding-agent/src/core/system-prompt.ts` (function `buildSystemPrompt()`; the literal default starts at line 131: *"You are an expert coding assistant…"*) | `/home/carsten/pi-mono/AGENTS.md` if present (check) |
 | OpenCode | `/home/carsten/opencode/packages/opencode/src/session/prompt/{default,anthropic,gpt,kimi,gemini,codex,…}.txt` (per-model). Dispatched in `src/session/instruction.ts`. | `/home/carsten/opencode/AGENTS.md` if present (check) |

@@ -44,7 +44,7 @@ example). Real environment variables always win over both files.
 git clone https://github.com/cfuehrmann/omega
 cd omega
 cargo build --release -p omega-cli
-./rust/target/release/omega --help
+./target/release/omega --help
 ```
 
 Run the agent in a project directory:
@@ -93,13 +93,13 @@ runtime.
 
 | Path | Contents |
 |---|---|
-| `rust/crates/omega-cli/` | CLI binary |
-| `rust/crates/omega-server/` | HTTP + WebSocket server |
-| `rust/crates/omega-agent/` | Core agent loop |
-| `rust/crates/omega-core/` | LLM provider abstraction (Anthropic, Ollama) |
-| `rust/crates/omega-tools/` | Tool implementations |
-| `rust/crates/omega-store/` | Session persistence |
-| `rust/crates/omega-types/` | Shared event/message types |
+| `crates/omega-cli/` | CLI binary |
+| `crates/omega-server/` | HTTP + WebSocket server |
+| `crates/omega-agent/` | Core agent loop |
+| `crates/omega-core/` | LLM provider abstraction (Anthropic, Ollama) |
+| `crates/omega-tools/` | Tool implementations |
+| `crates/omega-store/` | Session persistence |
+| `crates/omega-types/` | Shared event/message types |
 | `frontends/leptos/` | Web UI (Rust → WASM via Trunk) |
 | `bench/` | Terminal-Bench harness and results |
 | `docs/` | Architecture, policies, internals |

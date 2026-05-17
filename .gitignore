@@ -2,7 +2,7 @@
 node_modules
 
 # Rust build artifacts
-rust/target/
+target/
 
 # Leptos frontend build artifacts (Phase 3.0+)
 # `frontends/leptos/` is a standalone Cargo workspace; trunk writes its
@@ -12,8 +12,8 @@ frontends/leptos/dist/
 frontends/leptos/target/
 
 # cargo-mutants output
-rust/mutants.out/
-rust/mutants.out.old/
+mutants.out/
+mutants.out.old/
 frontends/leptos/mutants.out/
 frontends/leptos/mutants.out.old/
 

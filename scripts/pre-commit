@@ -27,7 +27,7 @@ fi
 # to fail.
 # ---------------------------------------------------------------------------
 echo "Auto-formatting Rust code..."
-(cd rust && cargo fmt)
+cargo fmt --all
 (cd frontends/leptos && cargo fmt)
 # Re-stage every .rs file that cargo fmt changed (modified or newly added).
 # `git diff --name-only` lists files whose working-tree content now differs
@@ -39,11 +39,11 @@ fi
 echo "✅  Rust code formatted and re-staged."
 
 # ---------------------------------------------------------------------------
-# Rust-only fast path: if every non-doc staged file lives under rust/, run
-# `just rust-gate` (faster subset, skips the e2e browser run) instead of
-# the full gate.
+# Rust-only fast path: if every non-doc staged file lives under crates/ or
+# frontends/, run `just rust-gate` (faster subset, skips the e2e browser
+# run) instead of the full gate.
 # ---------------------------------------------------------------------------
-RUST_ONLY=$(printf '%s\n' $NON_DOCS | grep -v '^rust/')
+RUST_ONLY=$(printf '%s\n' $NON_DOCS | grep -vE '^(crates/|frontends/)' )
 if [ -z "$RUST_ONLY" ]; then
   echo "Running just rust-gate..."
   just rust-gate > /dev/null

@@ -23,11 +23,11 @@ one is authoritative and all others conform to it:
    on-disk format is the serde projection of `OmegaEvent` (see 2).
    Breaking changes require explicit migration.
 2. **In-memory event type** (`OmegaEvent` in
-   `rust/crates/omega-types/src/events.rs`) — must match persistence.
+   `crates/omega-types/src/events.rs`) — must match persistence.
    Use `#[serde(rename)]` / `#[serde(default)]` to evolve the type without
    breaking the file format.
 3. **WebSocket protocol** (`WsMessage` in
-   `rust/crates/omega-server/src/ws_message.rs`) — transport projection of
+   `crates/omega-server/src/ws_message.rs`) — transport projection of
    `OmegaEvent`; may carry extra ephemeral fields.
 4. **Rendered UI** — least public; can change freely.
 

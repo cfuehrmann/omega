@@ -297,6 +297,6 @@ and the audit has been re-run to measure the delta.
   (copy of `test-output/token-audit.md`, durable across `just clean`)
 - Audit script: `scripts/token_audit.py` (re-runnable, two-scope:
   local sessions + benchmark trials)
-- Current `run_command` cap: `rust/crates/omega-tools/src/tools/run_command.rs` (`OUTPUT_CAP = 100_000`)
-- Current `fetch_url` tee (the model to emulate): `rust/crates/omega-tools/src/tools/fetch_url.rs` (`cache_file`)
+- Current `run_command` cap: `crates/omega-tools/src/tools/run_command.rs` (`OUTPUT_CAP = 100_000`)
+- Current `fetch_url` tee (the model to emulate): `crates/omega-tools/src/tools/fetch_url.rs` (`cache_file`)
 - Gate tee: `scripts/pre-commit` + `just gate` writing to `test-output/gate-latest.log`

@@ -6,7 +6,7 @@
 # removed the entire TS toolchain (bun, vite, knip, tsconfigs,
 # package.json, node_modules, Playwright) — the surviving e2e harness
 # is `omega-e2e` (chromiumoxide-driven) and lives at
-# rust/crates/omega-e2e.
+# crates/omega-e2e.
 #
 # Production:
 #   just server         — builds and starts omega-server on :3000 (Leptos at /)
@@ -42,14 +42,14 @@ wasm-setup:
 # (auto-fix) before the gate, so a check would always be redundant.
 [private]
 _rust-checks:
-    cd rust && cargo clippy --all-targets -- -D warnings && cargo test
+    cargo clippy --all-targets -- -D warnings && cargo test
     cargo machete
 
 # Build mock server + run browser tests. Assumes dist/ is already built.
 [private]
 _rust-e2e-run:
-    cd rust && cargo build --release -p omega-mock-server
-    cd rust && cargo test -p omega-e2e --tests -- --ignored --test-threads=1
+    cargo build --release -p omega-mock-server
+    cargo test -p omega-e2e --tests -- --ignored --test-threads=1
 
 # -----------------------------------------------------------------------
 # Top-level test pipeline
@@ -128,15 +128,15 @@ web-leptos-snapshots:
 # Rust binaries
 # -----------------------------------------------------------------------
 
-# Build the production omega-server (release) — rust/target/release/omega-server
+# Build the production omega-server (release) — target/release/omega-server
 rust-build-server:
-    cd rust && cargo build --release -p omega-server
+    cargo build --release -p omega-server
 
 # Build and start the web server (serves the Leptos bundle + WebSocket on :3000).
 # Rebuilds the server binary and the Leptos bundle on every invocation.
 # Pass any omega-server CLI args, e.g. just server --port 3001
 server *args: rust-build-server web-leptos-build
-    rust/target/release/omega-server {{args}}
+    target/release/omega-server {{args}}
 
 # Show what's listening on :3000.
 ports:
@@ -149,7 +149,7 @@ ports:
 # Auto-format all Rust workspaces (rust/ and frontends/leptos/).
 # Run this manually any time; the pre-commit hook calls it automatically.
 fmt:
-    cd rust && cargo fmt
+    cargo fmt --all
     cd frontends/leptos && cargo fmt
     @echo "✅  All Rust code formatted."
 
@@ -159,8 +159,8 @@ fmt:
 # Run manually: just rust-gate
 #
 # cargo machete is run from the repo root so it scans *both* the
-# rust/ workspace and frontends/leptos/ in one pass. Running it from
-# inside rust/ would silently skip the leptos workspace.
+# root workspace and frontends/leptos/ in one pass. Running it from
+# inside a subdirectory would silently skip the other workspace.
 rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots _rust-checks
 
 # -----------------------------------------------------------------------
@@ -172,10 +172,10 @@ rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots _rust-checks
 # redirect to `~/.cache/cargo-mutants-tmp` (real disk). Run sweeps with
 # `-j2` to keep peak disk footprint reasonable.
 
-# Run cargo-mutants on the rust workspace.
+# Run cargo-mutants on the root workspace.
 mutants:
     mkdir -p {{mutants-tmp}}
-    cd rust && TMPDIR={{mutants-tmp}} cargo mutants -j2
+    TMPDIR={{mutants-tmp}} cargo mutants -j2
 
 # Run cargo-mutants on the leptos crate (wasm32 target).
 web-mutants: wasm-setup

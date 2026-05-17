@@ -125,7 +125,7 @@ truncated thinking.
   Sonnet at `medium` has `max_tokens=64000`; even at slow streaming rates
   this fits comfortably under 5 min.
 - Don't add this on top of the existing per-stream-chunk timeout if there
-  already is one — verify in `rust/crates/omega-core/` first.
+  already is one — verify in `crates/omega-core/` first.
 
 ---
 
