@@ -39,15 +39,15 @@ mkdir -p "$OUT_DIR"
 # Ordered from smallest to largest (by mutant count) so we get early results
 # quickly and can inspect the report while heavier crates are still running.
 CRATES=(
-    omega-types        #   5 mutants
-    omega-mock-server  #  15 mutants
-    omega-cli          #  20 mutants
-    omega-test-fixtures#  31 mutants
-    omega-store        #  91 mutants
-    omega-core         # 108 mutants
-    omega-server       # 110 mutants
-    omega-agent        # 175 mutants
-    omega-tools        # 275 mutants
+    omega-types         #   5 mutants
+    omega-mock-server   #  15 mutants
+    omega-cli           #  20 mutants
+    omega-test-fixtures #  31 mutants
+    omega-store         #  91 mutants
+    omega-core          # 108 mutants
+    omega-server        # 110 mutants
+    omega-agent         # 175 mutants
+    omega-tools         # 275 mutants
 )
 
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -77,11 +77,17 @@ for CRATE in "${CRATES[@]}"; do
     echo "  Start:   $(date -u +"%H:%M:%SZ")"
     echo "----------------------------------------"
 
+    # If this crate was already swept (outcomes.json exists), skip it so that
+    # the script can be re-run safely without re-testing completed crates.
+    if [[ -f "$CRATE_OUT/mutants.out/outcomes.json" ]]; then
+        echo "  ⏭️  $CRATE — outcomes.json already exists, skipping"
+        PASS_COUNT=$((PASS_COUNT + 1))
+        echo ""
+        continue
+    fi
+
     mkdir -p "$CRATE_OUT"
 
-    # Run cargo-mutants; capture all output to the per-crate log.
-    # We do NOT use `set -e` here because a non-zero exit from cargo-mutants
-    # just means some mutants survived — that is expected and not a script error.
     # Temporarily disable errexit so a non-zero cargo-mutants result
     # (exit 2 = missed mutants, exit 3 = timeouts) does not abort the script.
     # cargo-mutants exit codes (as of 26.x):

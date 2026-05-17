@@ -135,9 +135,14 @@ async fn connect(addr: SocketAddr) -> WsClient {
     ws
 }
 
-/// Receive next Text frame with a 5 s timeout; decode as JSON.
+/// Receive next Text frame with a 30 s timeout; decode as JSON.
+///
+/// 30 s (increased from 5 s) makes the helper robust when the host is under
+/// CPU load from parallel Rust compilation (e.g. during mutation sweeps).
+/// Normal test execution sees frames in < 500 ms; the generous ceiling only
+/// matters when the tokio scheduler is starved.
 async fn recv_json(ws: &mut WsClient) -> serde_json::Value {
-    let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
+    let frame = tokio::time::timeout(Duration::from_secs(30), ws.next())
         .await
         .expect("recv timed out")
         .expect("ws stream ended")
