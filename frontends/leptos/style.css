@@ -1176,19 +1176,39 @@ main > h1 {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
 }
 
+/* Header row: role label (left) + timestamp chip (right) */
+.leptos-context-modal-record-header {
+  display: flex;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+
 .leptos-context-modal-record-role {
   font-size: 12px;
   font-weight: normal;
   color: var(--dim);
-  margin-bottom: 2px;
 }
 .leptos-context-modal-record[data-role="user"]      .leptos-context-modal-record-role { color: var(--green); }
 .leptos-context-modal-record[data-role="assistant"] .leptos-context-modal-record-role { color: var(--llm); }
 
-.leptos-context-modal-record-time {
-  margin-left: 0.5rem;
-  font-size: 11px;  /* --fs-micro */
+/* Copyable timestamp chip — always visible, right-aligned */
+.leptos-context-modal-record-timestamp {
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+  font-family: var(--font);
+  background: none;
   color: var(--dim);
+  line-height: normal;
+  flex-shrink: 0;
+  margin-left: auto;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+.leptos-context-modal-record-timestamp:hover {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
 }
 
 .leptos-context-modal-record-body {

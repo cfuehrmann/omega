@@ -64,7 +64,9 @@ use leptos::task::spawn_local;
 use omega_types::events::LlmCallEvent;
 use serde::{Deserialize, Serialize};
 
+use crate::event_view::format_time;
 use crate::http::get_context;
+use crate::store::SessionStore;
 
 // ---------------------------------------------------------------------------
 // Wire shape
@@ -207,6 +209,64 @@ pub fn role_label(role: &str) -> &str {
         "user" => "user",
         "assistant" => "assistant",
         other => other,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp chip (context-modal variant)
+// ---------------------------------------------------------------------------
+
+/// Copyable timestamp chip for the context-modal record header.
+///
+/// Always visible (not hover-gated like the main feed chips).  Clicking
+/// copies the raw UTC ISO-8601 string to the clipboard and shows a
+/// transient `✓` checkmark for 1.5 s — same UX as [`crate::feed::TimestampChip`].
+#[mutants::skip]
+#[component]
+fn ContextTimestampChip(
+    /// Raw ISO-8601 UTC timestamp — the copy payload.
+    iso: String,
+    /// Human-readable local time to display.
+    display: String,
+) -> impl IntoView {
+    let copied = RwSignal::new(false);
+    let title = format!("Click to copy: {iso}");
+    let iso_click = iso;
+
+    let on_click = move |_: leptos::ev::MouseEvent| {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast as _;
+            use wasm_bindgen::closure::Closure;
+            if let Some(win) = web_sys::window() {
+                let _ = win.navigator().clipboard().write_text(&iso_click);
+                let cb = Closure::once(move || copied.set(false));
+                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.as_ref().unchecked_ref(),
+                    1500,
+                );
+                cb.forget();
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = &iso_click;
+        copied.set(true);
+    };
+
+    view! {
+        <button
+            class="leptos-context-modal-record-timestamp"
+            title=title
+            on:click=on_click
+        >
+            {move || {
+                if copied.get() {
+                    format!("{display} ✓")
+                } else {
+                    display.clone()
+                }
+            }}
+        </button>
     }
 }
 
@@ -508,6 +568,16 @@ pub fn ContextModal() -> impl IntoView {
                             }
                             key=|(idx, rec): &(usize, ContextRecord)| (*idx, rec.hash.clone())
                             children=|(_, rec): (usize, ContextRecord)| {
+                                let tz = use_context::<SessionStore>()
+                                    .map(|s| s.agent_time_zone.get_untracked())
+                                    .unwrap_or_else(|| "UTC".to_owned());
+                                let has_time = rec.time.is_some();
+                                let time_iso = rec.time.clone().unwrap_or_default();
+                                let time_display = if has_time {
+                                    format_time(&time_iso, &tz)
+                                } else {
+                                    String::new()
+                                };
                                 view! {
                                     <li
                                         class=format!(
@@ -518,25 +588,20 @@ pub fn ContextModal() -> impl IntoView {
                                         data-testid="leptos-context-modal-record"
                                         data-role=rec.role.clone()
                                     >
-                                        <span
-                                            class="leptos-context-modal-record-role"
-                                            data-testid="leptos-context-modal-record-role"
-                                        >
-                                            {role_label(&rec.role).to_owned()}
-                                        </span>
-                                        <Show
-                                            when={
-                                                let time = rec.time.clone();
-                                                move || time.is_some()
-                                            }
-                                            fallback=|| ().into_any()
-                                        >
+                                        <div class="leptos-context-modal-record-header">
                                             <span
-                                                class="leptos-context-modal-record-time"
+                                                class="leptos-context-modal-record-role"
+                                                data-testid="leptos-context-modal-record-role"
                                             >
-                                                {rec.time.clone().unwrap_or_default()}
+                                                {role_label(&rec.role).to_owned()}
                                             </span>
-                                        </Show>
+                                            {has_time.then(|| view! {
+                                                <ContextTimestampChip
+                                                    iso=time_iso
+                                                    display=time_display
+                                                />
+                                            })}
+                                        </div>
                                         <pre
                                             class="leptos-context-modal-record-body"
                                             data-testid="leptos-context-modal-record-body"
