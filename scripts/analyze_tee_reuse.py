@@ -189,9 +189,10 @@ def main() -> int:
         total = b["followup_total"]
         reused = b["reused_calls"]
         ratio = (total / n) if n else 0
+        pct = (100 * reused / n) if n else 0
         return (
             f"calls={n:5d}  followups={total:4d}  "
-            f"followups/call={ratio:.3f}  (reused_calls={reused})"
+            f"followups/call={ratio:.3f}  reuse={pct:5.1f}% ({reused}/{n})"
         )
 
     print(f"Sessions scanned (>= {args.since}): {len(sessions)}")
@@ -230,9 +231,10 @@ def main() -> int:
                 dist[ft] += 1
         print()
         print("fetch_url raw-download cache (`Cached: <hash>.txt`, content-addressed):")
+        pct = 100 * reused / n if n else 0
         print(
             f"  calls={n}  followups={total}  followups/call={ratio:.3f}  "
-            f"(reused_calls={reused})"
+            f"reuse={pct:.1f}% ({reused}/{n})"
         )
         print(
             "  follow-up tools: "

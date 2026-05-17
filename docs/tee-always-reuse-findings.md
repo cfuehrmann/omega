@@ -14,12 +14,20 @@ substring. A path is "real" if it contains `/` and ends in `.log` — this
 rejects the literal `<path>` placeholder that appears in the system
 prompt and tool descriptions as documentation.
 
-**Headline metric.** `followups / call` — the average number of
-cache-referencing follow-up tool calls per originating cache write. This
-is the right cost-benefit ratio: every cache write is paid once; every
-follow-up is a saved re-run or re-fetch. (We also record `reused_calls`
-— the count of originating calls that received *any* follow-up — but it
-caps at 1 per origin and so flattens chatty sessions.)
+**Two metrics, both useful.**
+
+- `followups / call` — expected number of cache-referencing follow-up
+  tool calls per originating cache write. Captures *intensity*: how
+  much value we get from a cached file when it is touched.
+- `reuse %` — fraction of cached files that were referenced at all
+  (`reused_calls / calls`). Captures *probability of being useful*:
+  pairs naturally with the per-write cost (every cached file is
+  paid once whether or not it is later read).
+
+For a cost-benefit decision both matter. A cache with 0.01
+followups/call but 1% reuse means writes mostly go to waste; one with
+2.0 followups/call but the same 1% reuse means *when* a cache is used,
+it's used hard — different design implications.
 
 **Data.** 35 sessions, 2026-05-15 → 2026-05-17, 468 cache-emitting tool
 results.
@@ -40,21 +48,21 @@ not what tee-always is paying for.
 
 ## Results — by tool × status
 
-| tool | status | calls | follow-ups | **follow-ups / call** | reused calls |
+| tool | status | calls | follow-ups | **follow-ups / call** | **reuse %** |
 |---|---|---:|---:|---:|---:|
-| `fetch_url`       | truncated |   2 | 2 | **1.000** | 1 |
-| `fetch_url`       | full      |   9 | 2 | **0.222** | 1 |
-| `run_command`     | full      | 448 | 4 | **0.009** | 3 |
-| `run_command`     | truncated |   5 | 0 | 0.000     | 0 |
-| `wait_for_output` | full      |   3 | 0 | 0.000     | 0 |
-| `wait_for_output` | truncated |   1 | 0 | 0.000     | 0 |
+| `fetch_url`       | truncated |   2 | 2 | **1.000** | **50.0%** (1/2) |
+| `fetch_url`       | full      |   9 | 2 | **0.222** | **11.1%** (1/9) |
+| `run_command`     | full      | 458 | 4 | **0.009** | **0.7%**  (3/458) |
+| `run_command`     | truncated |   5 | 0 | 0.000     | 0.0%  (0/5) |
+| `wait_for_output` | full      |   3 | 0 | 0.000     | 0.0%  (0/3) |
+| `wait_for_output` | truncated |   1 | 0 | 0.000     | 0.0%  (0/1) |
 
 Combined (kept for completeness, but misleading on its own):
 
-| status | calls | follow-ups | follow-ups / call |
-|---|---:|---:|---:|
-| full       | 460 | 6 | 0.013 |
-| truncated  |   8 | 2 | 0.250 |
+| status | calls | follow-ups | follow-ups / call | reuse % |
+|---|---:|---:|---:|---:|
+| full       | 470 | 6 | 0.013 | 0.9%  (4/470) |
+| truncated  |   8 | 2 | 0.250 | 12.5% (1/8) |
 
 Follow-up tools (which tool dipped into the cache):
 - After **full** result: `run_command` ×5, `grep_files` ×1.
@@ -67,6 +75,7 @@ Follow-up tools (which tool dipped into the cache):
 | calls (with `Cached:` path)  | 13 |
 | follow-up calls              | 10 |
 | **follow-ups / call**        | **0.769** |
+| **reuse %**                  | **53.8%** (7/13) |
 | follow-up tools              | `read_file` ×9, `run_command` ×1 |
 
 This is the strongest single reuse signal in the dataset — about
