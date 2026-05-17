@@ -69,13 +69,14 @@ Follow-up tools (which tool dipped into the cache):
 | **follow-ups / call**        | **0.769** |
 | follow-up tools              | `read_file` ×9, `run_command` ×1 |
 
-This is by far the biggest reuse signal in the dataset — 60× the
-postprocess-log rate. The pattern is consistent: the LLM runs a
-narrow `postprocess` to extract one thing, then returns to the
-full download with `read_file` to look at more. It justifies the
-content-addressed cache strongly, but **says nothing about
-tee-always**: that cache would exist either way as the URL-dedupe
-layer.
+This is the strongest single reuse signal in the dataset — about
+2× `fetch_url`'s own postprocess-log rate (0.36 combined), and orders
+of magnitude above `run_command`'s rate. The pattern is consistent:
+the LLM runs a narrow `postprocess` to extract one thing, then
+returns to the full download with `read_file` to look at more. It
+justifies the content-addressed cache strongly, but **says nothing
+about tee-always**: that cache would exist either way as the URL-
+dedupe layer.
 
 ## Interpretation — read it per tool, not in aggregate
 
