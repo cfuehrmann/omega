@@ -23,8 +23,11 @@ TEE_TOOLS = {"run_command", "wait_for_output", "fetch_url"}
 
 FOOTER_FULL = re.compile(r"\[full output: ([^\]]+)\]")
 FOOTER_TRUNC = re.compile(r"\[truncated; showed [^\]]*Full output: ([^\]]+)\]")
-# fetch_url also exposes the cache file path as "Cached: <path>" in its
-# pre-postprocess metadata.  We treat fetch_url specially.
+# fetch_url also exposes the *content-addressed full download* path via
+# `Cached: <path>`. This is NOT the cap_and_tee mechanism under evaluation
+# — it predates tee-always and is the URL-keyed dedupe layer for the
+# network request. We track it separately for context.
+FETCH_CACHED = re.compile(r"^Cached: (\S+)", re.M)
 
 
 def _is_real_path(p: str) -> bool:
@@ -103,6 +106,36 @@ def analyse_session(events_path: Path) -> list[dict]:
     return records
 
 
+def analyse_fetch_raw_cache(events_path: Path) -> list[dict]:
+    """Track reuse of `fetch_url`'s content-addressed full download path
+    (`Cached: <hash>.txt`) — separate from cap_and_tee."""
+    events = list(iter_events(events_path))
+    tool_calls: list[tuple[int, str, str]] = []
+    for i, ev in enumerate(events):
+        if ev.get("type") == "tool_call":
+            tool_calls.append((i, ev.get("name", ""), json.dumps(ev.get("input", {}))))
+
+    records: list[dict] = []
+    for i, ev in enumerate(events):
+        if ev.get("type") != "tool_result" or ev.get("name") != "fetch_url":
+            continue
+        out = ev.get("output", "") or ""
+        m = FETCH_CACHED.search(out)
+        if not m:
+            continue
+        path = m.group(1).strip()
+        followups = [(nm, j) for (j, nm, inp) in tool_calls if j > i and path in inp]
+        records.append(
+            {
+                "session": events_path.parent.name,
+                "path": path,
+                "followup_count": len(followups),
+                "followup_tools": [t for t, _ in followups],
+            }
+        )
+    return records
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("sessions_dir", nargs="?", default=".omega/sessions")
@@ -118,11 +151,13 @@ def main() -> int:
     sessions = sorted(d for d in root.iterdir() if d.is_dir() and d.name >= args.since)
 
     all_records: list[dict] = []
+    fetch_raw_records: list[dict] = []
     for s in sessions:
         ev = s / "events.jsonl"
         if not ev.exists():
             continue
         all_records.extend(analyse_session(ev))
+        fetch_raw_records.extend(analyse_fetch_raw_cache(ev))
 
     if not all_records:
         print("No tee tool_results with surfaced cache paths found.")
@@ -181,6 +216,32 @@ def main() -> int:
         print(f"  {status}:")
         for tool, n in sorted(dist.items(), key=lambda kv: -kv[1]):
             print(f"    {tool:18s} {n}")
+
+    # fetch_url raw-download cache (not the tee-always mechanism, but the
+    # URL-keyed content cache that surfaces a `Cached:` line).
+    if fetch_raw_records:
+        n = len(fetch_raw_records)
+        total = sum(r["followup_count"] for r in fetch_raw_records)
+        reused = sum(1 for r in fetch_raw_records if r["followup_count"])
+        ratio = total / n if n else 0
+        dist: dict[str, int] = defaultdict(int)
+        for r in fetch_raw_records:
+            for ft in r["followup_tools"]:
+                dist[ft] += 1
+        print()
+        print("fetch_url raw-download cache (`Cached: <hash>.txt`, content-addressed):")
+        print(
+            f"  calls={n}  followups={total}  followups/call={ratio:.3f}  "
+            f"(reused_calls={reused})"
+        )
+        print(
+            "  follow-up tools: "
+            + ", ".join(f"{t}={c}" for t, c in sorted(dist.items(), key=lambda kv: -kv[1]))
+        )
+        print(
+            "  Note: this cache predates tee-always — it is fetch_url's URL-keyed\n"
+            "        dedupe layer, not the cap_and_tee postprocess log."
+        )
 
     if args.verbose:
         print()

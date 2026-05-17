@@ -24,6 +24,20 @@ caps at 1 per origin and so flattens chatty sessions.)
 **Data.** 35 sessions, 2026-05-15 → 2026-05-17, 468 cache-emitting tool
 results.
 
+## Two caches in `fetch_url` — disambiguation
+
+`fetch_url` surfaces **two** paths to the LLM:
+
+1. `Cached: <hash>.txt` — the **content-addressed full download**.
+   URL-keyed, persists across sessions, predates the tee-always
+   rollout. This is the dedupe layer for the HTTP request itself.
+2. `[full output: …-pp.log]` — the **postprocess output**, written via
+   `cap_and_tee`. This *is* the tee-always mechanism under evaluation.
+
+The table below measures #2 — the cap_and_tee output across all three
+tee tools. Cache #1 is reported separately below as context; it is
+not what tee-always is paying for.
+
 ## Results — by tool × status
 
 | tool | status | calls | follow-ups | **follow-ups / call** | reused calls |
@@ -46,15 +60,35 @@ Follow-up tools (which tool dipped into the cache):
 - After **full** result: `run_command` ×5, `grep_files` ×1.
 - After **truncated** result: `run_command` ×2.
 
+### Aside: `fetch_url` raw-download cache (not tee-always)
+
+| metric | value |
+|---|---:|
+| calls (with `Cached:` path)  | 13 |
+| follow-up calls              | 10 |
+| **follow-ups / call**        | **0.769** |
+| follow-up tools              | `read_file` ×9, `run_command` ×1 |
+
+This is by far the biggest reuse signal in the dataset — 60× the
+postprocess-log rate. The pattern is consistent: the LLM runs a
+narrow `postprocess` to extract one thing, then returns to the
+full download with `read_file` to look at more. It justifies the
+content-addressed cache strongly, but **says nothing about
+tee-always**: that cache would exist either way as the URL-dedupe
+layer.
+
 ## Interpretation — read it per tool, not in aggregate
 
 The combined row makes "truncated > full" look like the story, but the
 entire effect is `fetch_url`. Per tool:
 
-- **`fetch_url`** — tee-always clearly earns its keep. Both buckets
-  show meaningful intensity (0.22 full, 1.0 truncated). Reverting to
-  tee-on-truncate would lose half of the observed reuse and degrade the
-  tool's already-low n=11 sample. **Keep tee-always.**
+- **`fetch_url`** — tee-always for the **postprocess log** shows
+  meaningful intensity in both buckets (0.22 full, 1.0 truncated,
+  n=11 total). Modest absolute volume but the rate is the highest of
+  the three tools. Note that most of `fetch_url`'s observed cache
+  reuse goes to the raw-download cache (0.77 followups/call), which
+  exists independently of tee-always. **Keep tee-always for the
+  postprocess log; it's cheap and the rate is non-trivial.**
 - **`run_command`** — very low intensity overall (~1 follow-up per 100
   calls), but every observed follow-up came from a **full**-output
   call. Tee-on-truncate would have captured **zero** of the actual
