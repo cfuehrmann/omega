@@ -1,7 +1,7 @@
 # Omega Mutation Testing Report
 
-**Run started:**   
-**Run ended:**   
+**Run started:** 2026-05-18T06:21:44Z  
+**Run ended:** 2026-05-18T06:41:28Z  
 **Tool:** cargo-mutants 26.0.0  
 **Flags:** `-j1 --no-shuffle` (serial, deterministic)  
 
@@ -19,8 +19,8 @@
 | `omega-core` | 108 | 65 | 0 | 2 | 41 | 97% |
 | `omega-server` | 110 | 36 | 3 | 0 | 71 | 92% |
 | `omega-agent` | 175 | 60 | 7 | 0 | 108 | 90% |
-| `omega-tools` | 77 | 33 | 15 | 0 | 29 | 69% |
-| **Total** | **606** | **261** | **26** | **3** | **316** | **90%** |
+| `omega-tools` | 275 | 136 | 16 | 4 | 119 | 87% |
+| **Total** | **804** | **364** | **27** | **7** | **406** | **91%** |
 
 ## 2. Surviving Mutants
 
@@ -252,7 +252,7 @@ _replacement from the original. A targeted test is needed._
 **produced by this function with inputs that would distinguish the_
 _replacement from the original. A targeted test is needed._
 
-### 2.9 `omega-tools` — 15 survivor(s)
+### 2.9 `omega-tools` — 16 survivor(s)
 
 #### `cap_and_tee` — crates/omega-tools/src/cap_and_tee.rs:127
 
@@ -337,26 +337,6 @@ _replacement from the original. A targeted test is needed._
 #### `utf8_boundary_forward` — crates/omega-tools/src/cap_and_tee.rs:184
 
 - **Mutant:** replace `utf8_boundary_forward -> usize` with `+=`
-- **Genre:** BinaryOperator
-- **Location:** `crates/omega-tools/src/cap_and_tee.rs:184:13`
-
-```rust
-   181 │     let mut end = max.min(data.len());
-   182 │     // Back up past UTF-8 continuation bytes (0x80..=0xBF).
-   183 │     while end > 0 && is_utf8_continuation(data[end - 1]) {
-→  184 │         end -= 1;
-   185 │     }
-   186 │     end
-   187 │ }
-```
-
-**Analysis:** _No test currently asserts the value returned / side-effect_
-**produced by this function with inputs that would distinguish the_
-_replacement from the original. A targeted test is needed._
-
-#### `utf8_boundary_forward` — crates/omega-tools/src/cap_and_tee.rs:184
-
-- **Mutant:** replace `utf8_boundary_forward -> usize` with `/=`
 - **Genre:** BinaryOperator
 - **Location:** `crates/omega-tools/src/cap_and_tee.rs:184:13`
 
@@ -554,6 +534,46 @@ _replacement from the original. A targeted test is needed._
 **produced by this function with inputs that would distinguish the_
 _replacement from the original. A targeted test is needed._
 
+#### `execute` — crates/omega-tools/src/tools/run_command.rs:187
+
+- **Mutant:** replace `execute -> Result<String, String>` with `true`
+- **Genre:** MatchArmGuard
+- **Location:** `crates/omega-tools/src/tools/run_command.rs:187:39`
+
+```rust
+   184 │     // non-zero exit / timeout / abort → Tail (errors at end),
+   185 │     // success → Head (interesting output starts at top).
+   186 │     let bias = bias_override.unwrap_or_else(|| match &outcome {
+→  187 │         Outcome::Finished(Some(s)) if s.success() => TruncationBias::Head,
+   188 │         _ => TruncationBias::Tail,
+   189 │     });
+   190 │ 
+```
+
+**Analysis:** _No test currently asserts the value returned / side-effect_
+**produced by this function with inputs that would distinguish the_
+_replacement from the original. A targeted test is needed._
+
+#### `execute` — crates/omega-tools/src/tools/run_command.rs:187
+
+- **Mutant:** replace `execute -> Result<String, String>` with `false`
+- **Genre:** MatchArmGuard
+- **Location:** `crates/omega-tools/src/tools/run_command.rs:187:39`
+
+```rust
+   184 │     // non-zero exit / timeout / abort → Tail (errors at end),
+   185 │     // success → Head (interesting output starts at top).
+   186 │     let bias = bias_override.unwrap_or_else(|| match &outcome {
+→  187 │         Outcome::Finished(Some(s)) if s.success() => TruncationBias::Head,
+   188 │         _ => TruncationBias::Tail,
+   189 │     });
+   190 │ 
+```
+
+**Analysis:** _No test currently asserts the value returned / side-effect_
+**produced by this function with inputs that would distinguish the_
+_replacement from the original. A targeted test is needed._
+
 ## 3. Timeout Mutants
 
 ### `omega-store` — 1 timeout(s)
@@ -564,6 +584,13 @@ _replacement from the original. A targeted test is needed._
 
 - `crates/omega-core/src/retry.rs:134:46`: `retry_loop -> impl Stream<Item = Result<AgentItem, LlmError>>+Send` → `*`
 - `crates/omega-core/src/retry.rs:135:40`: `retry_loop -> impl Stream<Item = Result<AgentItem, LlmError>>+Send` → `&&`
+
+### `omega-tools` — 4 timeout(s)
+
+- `crates/omega-tools/src/output_cleaner.rs:72:15`: `crlf_normalize -> Vec<u8>` → `-=`
+- `crates/omega-tools/src/output_cleaner.rs:75:15`: `crlf_normalize -> Vec<u8>` → `*=`
+- `crates/omega-tools/src/tools/edit_file.rs:113:15`: `count_occurrences -> usize` → `*=`
+- `crates/omega-tools/src/tools/read_file.rs:67:13`: `char_boundary_at_or_before -> usize` → `/=`
 
 ## 4. Unviable Mutants
 
@@ -877,7 +904,7 @@ Unviable mutants failed to compile. This is normal for type-system-constrained r
 - `crates/omega-agent/src/system_prompt.rs:271:5`: `core_prompt -> String` → `String::new()`
 - `crates/omega-agent/src/system_prompt.rs:271:5`: `core_prompt -> String` → `"xyzzy".into()`
 
-### `omega-tools` — 29 unviable
+### `omega-tools` — 119 unviable
 
 - `crates/omega-tools/src/lib.rs:45:9`: `ToolResult::ok -> Self` → `Default::default()`
 - `crates/omega-tools/src/lib.rs:53:9`: `ToolResult::err -> Self` → `Default::default()`
@@ -908,6 +935,96 @@ Unviable mutants failed to compile. This is normal for type-system-constrained r
 - `crates/omega-tools/src/output_cleaner.rs:67:5`: `crlf_normalize -> Vec<u8>` → `vec![]`
 - `crates/omega-tools/src/output_cleaner.rs:67:5`: `crlf_normalize -> Vec<u8>` → `vec![0]`
 - `crates/omega-tools/src/output_cleaner.rs:67:5`: `crlf_normalize -> Vec<u8>` → `vec![1]`
+- `crates/omega-tools/src/output_cleaner.rs:92:5`: `cr_collapse -> Vec<u8>` → `vec![]`
+- `crates/omega-tools/src/output_cleaner.rs:92:5`: `cr_collapse -> Vec<u8>` → `vec![0]`
+- `crates/omega-tools/src/output_cleaner.rs:92:5`: `cr_collapse -> Vec<u8>` → `vec![1]`
+- `crates/omega-tools/src/output_cleaner.rs:124:5`: `ansi_strip -> Vec<u8>` → `vec![]`
+- `crates/omega-tools/src/output_cleaner.rs:124:5`: `ansi_strip -> Vec<u8>` → `vec![0]`
+- `crates/omega-tools/src/output_cleaner.rs:124:5`: `ansi_strip -> Vec<u8>` → `vec![1]`
+- `crates/omega-tools/src/schemas.rs:16:5`: `tool_definitions -> Vec<ToolDefinition>` → `vec![]`
+- `crates/omega-tools/src/schemas.rs:16:5`: `tool_definitions -> Vec<ToolDefinition>` → `vec![Default::default()]`
+- `crates/omega-tools/src/schemas.rs:37:5`: `read_file -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:55:5`: `write_file -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:76:5`: `run_command -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:112:5`: `edit_file -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:146:5`: `list_files -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:163:5`: `web_search -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:179:5`: `fetch_url -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:208:5`: `grep_files -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:232:5`: `find_files -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:255:5`: `run_background -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:278:5`: `wait_for_output -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/schemas.rs:310:5`: `write_stdin -> ToolDefinition` → `Default::default()`
+- `crates/omega-tools/src/state.rs:39:5`: `processes -> &'static Registry` → `Box::leak(Box::new(Default::default()))`
+- `crates/omega-tools/src/state.rs:52:5`: `next_id -> u64` → `0`
+- `crates/omega-tools/src/state.rs:52:5`: `next_id -> u64` → `1`
+- `crates/omega-tools/src/tools/edit_file.rs:11:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/edit_file.rs:11:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/edit_file.rs:100:5`: `count_occurrences -> usize` → `0`
+- `crates/omega-tools/src/tools/edit_file.rs:100:5`: `count_occurrences -> usize` → `1`
+- `crates/omega-tools/src/tools/fetch_url.rs:35:5`: `run_subprocess -> Result<SubprocOutput, String>` → `Ok(Default::default())`
+- `crates/omega-tools/src/tools/fetch_url.rs:67:5`: `cache_dir -> &'static PathBuf` → `Box::leak(Box::new(Default::default()))`
+- `crates/omega-tools/src/tools/fetch_url.rs:80:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/fetch_url.rs:80:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/fetch_url.rs:230:5`: `make_fetch_pp_log_path -> PathBuf` → `Default::default()`
+- `crates/omega-tools/src/tools/fetch_url.rs:251:5`: `html_to_text -> String` → `String::new()`
+- `crates/omega-tools/src/tools/fetch_url.rs:251:5`: `html_to_text -> String` → `"xyzzy".into()`
+- `crates/omega-tools/src/tools/find_files.rs:16:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/find_files.rs:16:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/find_files.rs:60:5`: `walk -> Result<Vec<String>, String>` → `Ok(vec![])`
+- `crates/omega-tools/src/tools/find_files.rs:60:5`: `walk -> Result<Vec<String>, String>` → `Ok(vec![String::new()])`
+- `crates/omega-tools/src/tools/find_files.rs:60:5`: `walk -> Result<Vec<String>, String>` → `Ok(vec!["xyzzy".into()])`
+- `crates/omega-tools/src/tools/grep_files.rs:27:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/grep_files.rs:27:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/grep_files.rs:92:5`: `search -> Result<(Vec<String>, bool), String>` → `Ok((vec![], true))`
+- `crates/omega-tools/src/tools/grep_files.rs:92:5`: `search -> Result<(Vec<String>, bool), String>` → `Ok((vec![], false))`
+- `crates/omega-tools/src/tools/grep_files.rs:92:5`: `search -> Result<(Vec<String>, bool), String>` → `Ok((vec![String::new()], true))`
+- `crates/omega-tools/src/tools/grep_files.rs:92:5`: `search -> Result<(Vec<String>, bool), String>` → `Ok((vec![String::new()], false))`
+- `crates/omega-tools/src/tools/grep_files.rs:92:5`: `search -> Result<(Vec<String>, bool), String>` → `Ok((vec!["xyzzy".into()], true))`
+- `crates/omega-tools/src/tools/grep_files.rs:92:5`: `search -> Result<(Vec<String>, bool), String>` → `Ok((vec!["xyzzy".into()], false))`
+- `crates/omega-tools/src/tools/grep_files.rs:120:13`: `search -> Result<(Vec<String>, bool), String>` → `||`
+- `crates/omega-tools/src/tools/grep_files.rs:162:5`: `search_file -> bool` → `true`
+- `crates/omega-tools/src/tools/grep_files.rs:162:5`: `search_file -> bool` → `false`
+- `crates/omega-tools/src/tools/list_files.rs:12:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/list_files.rs:12:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/list_files.rs:47:5`: `walk_sync -> Result<(), String>` → `Ok(())`
+- `crates/omega-tools/src/tools/read_file.rs:10:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/read_file.rs:10:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/read_file.rs:65:5`: `char_boundary_at_or_before -> usize` → `0`
+- `crates/omega-tools/src/tools/read_file.rs:65:5`: `char_boundary_at_or_before -> usize` → `1`
+- `crates/omega-tools/src/tools/run_background.rs:12:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/run_background.rs:12:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/run_command.rs:51:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/run_command.rs:51:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/run_command.rs:248:5`: `make_run_log_path -> PathBuf` → `Default::default()`
+- `crates/omega-tools/src/tools/run_command.rs:267:5`: `sanitize_tag -> String` → `String::new()`
+- `crates/omega-tools/src/tools/run_command.rs:267:5`: `sanitize_tag -> String` → `"xyzzy".into()`
+- `crates/omega-tools/src/tools/run_command.rs:283:5`: `kill_group ` → `()`
+- `crates/omega-tools/src/tools/wait_for_output.rs:31:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/wait_for_output.rs:31:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/wait_for_output.rs:49:46`: `execute -> Result<String, String>` → `*`
+- `crates/omega-tools/src/tools/wait_for_output.rs:128:5`: `make_wait_log_path -> PathBuf` → `Default::default()`
+- `crates/omega-tools/src/tools/wait_for_output.rs:154:5`: `done -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/wait_for_output.rs:154:5`: `done -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/wait_for_output.rs:175:5`: `read_log -> String` → `String::new()`
+- `crates/omega-tools/src/tools/wait_for_output.rs:175:5`: `read_log -> String` → `"xyzzy".into()`
+- `crates/omega-tools/src/tools/wait_for_output.rs:179:5`: `check_exit -> Option<i32>` → `None`
+- `crates/omega-tools/src/tools/wait_for_output.rs:179:5`: `check_exit -> Option<i32>` → `Some(0)`
+- `crates/omega-tools/src/tools/wait_for_output.rs:179:5`: `check_exit -> Option<i32>` → `Some(1)`
+- `crates/omega-tools/src/tools/wait_for_output.rs:179:5`: `check_exit -> Option<i32>` → `Some(-1)`
+- `crates/omega-tools/src/tools/wait_for_output.rs:199:5`: `evaluate -> (bool, bool)` → `(true, true)`
+- `crates/omega-tools/src/tools/wait_for_output.rs:199:5`: `evaluate -> (bool, bool)` → `(true, false)`
+- `crates/omega-tools/src/tools/wait_for_output.rs:199:5`: `evaluate -> (bool, bool)` → `(false, true)`
+- `crates/omega-tools/src/tools/wait_for_output.rs:199:5`: `evaluate -> (bool, bool)` → `(false, false)`
+- `crates/omega-tools/src/tools/web_search.rs:12:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/web_search.rs:12:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/web_search.rs:64:5`: `check_status -> Result<(), String>` → `Ok(())`
+- `crates/omega-tools/src/tools/web_search.rs:73:5`: `render_results -> String` → `String::new()`
+- `crates/omega-tools/src/tools/web_search.rs:73:5`: `render_results -> String` → `"xyzzy".into()`
+- `crates/omega-tools/src/tools/write_file.rs:7:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/write_file.rs:7:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
+- `crates/omega-tools/src/tools/write_stdin.rs:10:5`: `execute -> Result<String, String>` → `Ok(String::new())`
+- `crates/omega-tools/src/tools/write_stdin.rs:10:5`: `execute -> Result<String, String>` → `Ok("xyzzy".into())`
 
 ## 5. Kills That May Not Reflect Real-Life Calls
 
@@ -1481,26 +1598,25 @@ Survivor functions: `gen_call_id`, `global_agents_md_path`, `project_turn`.
 
 ### `omega-tools`
 
-Generated 77 mutants: **33 caught** / **15 missed** / 0 timeout / 29 unviable.  
-Kill rate: **69%**.  
+Generated 275 mutants: **136 caught** / **16 missed** / 4 timeout / 119 unviable.  
+Kill rate: **87%**.  
 
-The kill rate is moderate (60–79%). Several code paths are not asserted by any test. This crate should be a priority for additional test coverage.
+The kill rate is good (80–94%). A small number of survivors remain — see Section 2 for details and suggested remediation.
   
-Survivor functions: `cap_and_tee`, `crlf_normalize`, `is_utf8_continuation`, `utf8_boundary_backward`, `utf8_boundary_forward`.
+Survivor functions: `cap_and_tee`, `crlf_normalize`, `execute`, `is_utf8_continuation`, `utf8_boundary_backward`, `utf8_boundary_forward`.
 
 ## 9. Recommendations
 
-### High priority — add tests to kill 26 surviving mutant(s)
+### High priority — add tests to kill 27 surviving mutant(s)
 
 For each survivor in Section 2, write a test that asserts the specific value / side-effect that distinguishes the original from the replacement. Use `cargo mutants -p <crate> --in-place` to confirm the new test kills the mutant before committing.
 
-- **`omega-tools`** — 15 survivor(s):
+- **`omega-tools`** — 16 survivor(s):
   - `cap_and_tee` at `crates/omega-tools/src/cap_and_tee.rs:127` → `*`
   - `cap_and_tee` at `crates/omega-tools/src/cap_and_tee.rs:130` → `/`
   - `utf8_boundary_forward` at `crates/omega-tools/src/cap_and_tee.rs:183` → `==`
   - `utf8_boundary_forward` at `crates/omega-tools/src/cap_and_tee.rs:183` → `/`
   - `utf8_boundary_forward` at `crates/omega-tools/src/cap_and_tee.rs:184` → `+=`
-  - `utf8_boundary_forward` at `crates/omega-tools/src/cap_and_tee.rs:184` → `/=`
   - `utf8_boundary_backward` at `crates/omega-tools/src/cap_and_tee.rs:197` → `==`
   - `utf8_boundary_backward` at `crates/omega-tools/src/cap_and_tee.rs:197` → `>`
   - `utf8_boundary_backward` at `crates/omega-tools/src/cap_and_tee.rs:197` → `<=`
@@ -1510,6 +1626,8 @@ For each survivor in Section 2, write a test that asserts the specific value / s
   - `is_utf8_continuation` at `crates/omega-tools/src/cap_and_tee.rs:206` → `^`
   - `crlf_normalize` at `crates/omega-tools/src/output_cleaner.rs:70` → `<=`
   - `crlf_normalize` at `crates/omega-tools/src/output_cleaner.rs:70` → `*`
+  - `execute` at `crates/omega-tools/src/tools/run_command.rs:187` → `true`
+  - `execute` at `crates/omega-tools/src/tools/run_command.rs:187` → `false`
 - **`omega-agent`** — 7 survivor(s):
   - `gen_call_id` at `crates/omega-agent/src/agent.rs:2089` → `"xyzzy".into()`
   - `project_turn` at `crates/omega-agent/src/session_resume.rs:226` → `true`
