@@ -1,116 +1,114 @@
 # omega-tools — 16 surviving mutants
 
-**Session 1 target.** All survivors are in `src/cap_and_tee.rs`,
-`src/output_cleaner.rs`, and `src/tools/run_command.rs`.
-Tests belong in the existing `#[cfg(test)]` blocks in each file
-(`cap_and_tee.rs:213`, `output_cleaner.rs:142`; `run_command.rs` needs a new block).
+**Session 1 target.**
+
+## Testing approach
+
+All survivors live in the output-processing pipeline of the `run_command` tool.
+The right test surface is `execute_tool("run_command", input, None, None)` from
+`crates/omega-tools/src/lib.rs` — the same entry point the agent uses.
+Tests go in `lib.rs`'s existing `#[cfg(test)]` block (or a new one there).
+
+Do **not** call the private helpers (`is_utf8_continuation`,
+`utf8_boundary_forward/backward`, `crlf_normalize`) directly — they are
+implementation details of the pipeline.
 
 Verify kills with: `cargo mutants -p omega-tools -j1`
 
 ---
 
-## `cap_and_tee.rs` — 12 survivors
+## Survivors and what test each needs
 
-### `is_utf8_continuation` (line 206) — 2 mutants
+### 1. `is_utf8_continuation` (cap_and_tee.rs:206) — 2 mutants
 
 ```rust
 fn is_utf8_continuation(b: u8) -> bool {
-    (b & 0xC0) == 0x80   // & → | and & → ^ both survive
+    (b & 0xC0) == 0x80   // & → |   and   & → ^
 }
 ```
 
-**What's missing:** no test calls this function with bytes that distinguish
-`&` from `|` or `^`.  
-**Fix:** test every byte class — ASCII (0x00–0x7F), continuation (0x80–0xBF),
-leading 2-byte (0xC0–0xDF), leading 3-byte (0xE0–0xEF), leading 4-byte (0xF0+).
+These survive because no test produces output where a multi-byte UTF-8
+character straddles the truncation boundary, so the loop calling this
+function never iterates.
+
+**Test:** Run a command that emits a large block of multi-byte text (e.g.
+`printf '%.0sé' {1..60000}` — `é` is 2 bytes, so 60 000 repetitions = 120 KB,
+over the 100 KB `LLM_CAP`). With default `Head` bias, assert the returned
+string is valid UTF-8 (no `\u{FFFD}` replacement characters) and contains the
+truncation footer.
 
 ---
 
-### `utf8_boundary_forward` (lines 183–184) — 3 mutants
+### 2. `utf8_boundary_forward` (cap_and_tee.rs:183–184) — 3 mutants
 
 ```rust
-fn utf8_boundary_forward(data: &[u8], max: usize) -> usize {
-    let mut end = max.min(data.len());
-    while end > 0 && is_utf8_continuation(data[end - 1]) {  // > → ==, - → /
-        end -= 1;                                            // -= → +=
-    }
-    end
+while end > 0 && is_utf8_continuation(data[end - 1]) {  // > → ==,  - → /
+    end -= 1;                                             // -= → +=
 }
 ```
 
-**What's missing:** no test passes a `max` that lands mid-multibyte-character,
-so the while-loop body never executes — all three operator mutations are invisible.  
-**Fix:** test with a 3-byte UTF-8 sequence (e.g. `"héllo"`) where `max` cuts
-into the second byte of `é`; assert the result backs up to the boundary.
-Also test `max = 0` (exercises the `end > 0` guard) and `max > data.len()`.
+Same root cause as above — the loop body never executes in existing tests.
+
+**Test:** Same test as §1 covers these automatically, because with `Head` bias
+`utf8_boundary_forward` is the function that snaps the head window to a valid
+boundary. If the result is valid UTF-8, the loop ran correctly.
 
 ---
 
-### `utf8_boundary_backward` (lines 197–198) — 5 mutants
+### 3. `utf8_boundary_backward` (cap_and_tee.rs:197–198) — 5 mutants
 
 ```rust
-fn utf8_boundary_backward(data: &[u8], max: usize) -> usize {
-    let len = data.len();
-    let raw_start = len.saturating_sub(max);
-    let mut start = raw_start;
-    while start < len && is_utf8_continuation(data[start]) {  // < → ==, >, <=
-        start += 1;                                            // += → -=, *=
-    }
-    len - start
+while start < len && is_utf8_continuation(data[start]) {  // < → ==, >, <=
+    start += 1;                                            // += → -=, *=
 }
 ```
 
-**What's missing:** same as `utf8_boundary_forward` — no test places `raw_start`
-mid-character, so the loop body never runs.  
-**Fix:** test with a trailing multi-byte character (e.g. `"hello€"`, where `€`
-is 3 bytes) where `max` cuts into the continuation bytes; assert the returned
-window length steps forward to the next valid start.
+Same root cause; `utf8_boundary_backward` is called for `Tail` bias.
+
+**Test:** Same command as §1 but with `"truncation_bias": "tail"` in the input
+JSON. Assert valid UTF-8 in the result. The `Middle` bias calls both forward
+and backward — add a third variant with `"truncation_bias": "middle"` to cover
+both directions in one shot.
 
 ---
 
-### `cap_and_tee` with `TruncationBias::Middle` (lines 127, 130) — 2 mutants
+### 4. `cap_and_tee` with `TruncationBias::Middle` (cap_and_tee.rs:127, 130) — 2 mutants
 
 ```rust
-TruncationBias::Middle => {
-    let half = cap / 2;                        // / → *
-    // ...
-    let tail_start = total_bytes - tail_len;   // - → /
+let half = cap / 2;                      // / → *
+let tail_start = total_bytes - tail_len; // - → /
 ```
 
-**What's missing:** `TruncationBias::Middle` is not tested with multi-byte
-characters in either the head or tail window.  Existing tests only cover
-`Head` and `Tail` bias.  
-**Fix:** add a `Middle` bias test with data long enough to truncate; assert
-the body contains both the first and last segments and the `"... N bytes omitted ..."` marker.
-A follow-up test with a multi-byte character straddling the midpoint exercises
-both arithmetic mutations.
+These are in the `Middle` branch, which splits the cap into head and tail
+halves. No existing test exercises Middle bias.
+
+**Test:** The `"truncation_bias": "middle"` variant from §3 covers these.
+Additionally assert the body contains both a fragment from the start of the
+output **and** a fragment from the end, with the `"... N bytes omitted ..."`
+marker in between. That assertion distinguishes `cap / 2` from `cap * 2`
+(which would yield an oversized window that may not truncate at all).
 
 ---
 
-## `output_cleaner.rs` — 2 survivors
-
-### `crlf_normalize` (line 70) — 2 mutants
+### 5. `crlf_normalize` (output_cleaner.rs:70) — 2 mutants
 
 ```rust
-while i < data.len() {
-    if data[i] == b'\r' && i + 1 < data.len() && data[i + 1] == b'\n' {
-        //                   ^^^^^^^^^^^^^^^^^ < → <=  and  + → *
+if data[i] == b'\r' && i + 1 < data.len() && data[i + 1] == b'\n' {
+//                      ^^^^^^^^^^^^^^^^^ < → <=       + → *
 ```
 
-**What's missing:** no test ends with a lone `\r` as the **last byte** of the
-buffer. When `\r` is at index `data.len() - 1`, the bounds check `i + 1 < data.len()`
-is the only thing preventing an out-of-bounds read; replacing `<` with `<=`
-would panic.  
-**Fix:** test `b"\r"` (lone carriage return at end of buffer) and `b"foo\r"`
-(lone CR after content); assert they pass through unchanged and no panic occurs.
-Also test `b"\r\n"` (CRLF as the entire input) to exercise the `+` → `*` mutation
-(which would compute index 0 instead of 2, causing wrong branch).
+The `< → <=` mutation would panic when `\r` is the last byte of the buffer
+(out-of-bounds read). The `+ → *` mutation would always check `data[0]`
+instead of `data[i+1]`, silently misidentifying lone `\r` bytes as CRLF.
+
+**Test:** Run a command that produces a `\r` as its final byte with no
+following `\n` — e.g. `printf 'foo\r'`. Assert no panic and the output
+contains the `\r` unchanged. Also run a command that produces `\r\n` sequences
+and assert they are collapsed to `\n` in the result.
 
 ---
 
-## `tools/run_command.rs` — 2 survivors
-
-### `execute` — truncation bias selection (line 187) — 2 mutants
+### 6. `execute` — truncation bias selection (run_command.rs:187) — 2 mutants
 
 ```rust
 let bias = bias_override.unwrap_or_else(|| match &outcome {
@@ -119,14 +117,14 @@ let bias = bias_override.unwrap_or_else(|| match &outcome {
 });
 ```
 
-**What's missing:** no test calls `execute` with `bias_override: None` and
-then checks *which* bias was actually applied based on exit code.  
-**Fix:** two tests without a `bias_override`:
-1. Command that exits 0 — assert the output footer says `"first"` (Head bias).
-2. Command that exits non-zero — assert the footer says `"last"` (Tail bias).
+With `guard → true` every command uses Head bias regardless of exit code.
+With `guard → false` every command uses Tail bias regardless of exit code.
+No test currently runs `execute_tool("run_command", ...)` without a
+`truncation_bias` override and then checks which bias was applied.
 
-Use `echo ok` / `false` (or `exit 1`) as the command. Both tests need output
-long enough to trigger truncation so the footer is visible.
-
-> **Note:** these two mutants are the only ones in this session requiring a
-> real subprocess. Write them last; if time runs short they can move to Session 2.
+**Test:** Two tests, both with output long enough to trigger truncation and
+no `truncation_bias` field in the input:
+1. Command exits 0 (e.g. `yes | head -n 20000`) — assert footer says
+   `"showed first"` (Head bias).
+2. Command exits non-zero (e.g. `yes | head -n 20000; exit 1`) — assert
+   footer says `"showed last"` (Tail bias).
