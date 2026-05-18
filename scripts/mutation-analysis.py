@@ -379,11 +379,13 @@ def source_snippet(repo_root: Path, file: str, line: int, context: int = 3) -> s
 # Report generation
 # ---------------------------------------------------------------------------
 
+# Test-infra crates are intentionally excluded from mutation analysis:
+#   omega-test-fixtures  — shared fake HTTP/SSE server; not a production crate.
+#   omega-mock-server    — Playwright test fixture binary; not shipped to users.
+# Mutation-testing them is circular (their only callers are tests) and noisy.
 CRATE_ORDER = [
     "omega-types",
-    "omega-mock-server",
     "omega-cli",
-    "omega-test-fixtures",
     "omega-store",
     "omega-core",
     "omega-server",
@@ -410,7 +412,16 @@ def generate_report(
     lines.append(f"**Flags:** `-j1 --no-shuffle` (serial, deterministic)  ")
     lines.append("")
     lines.append(
-        "> omega-e2e is excluded globally (browser tests require live Chromium)."
+        "> **Excluded crates (test infrastructure — mutation testing them is circular):**  "
+    )
+    lines.append(
+        "> `omega-test-fixtures` (shared fake HTTP/SSE server; no production callers),  "
+    )
+    lines.append(
+        "> `omega-mock-server` (Playwright fixture binary; not shipped to users),  "
+    )
+    lines.append(
+        "> `omega-e2e` (browser Playwright tests; requires live Chromium)."
     )
     lines.append("")
 

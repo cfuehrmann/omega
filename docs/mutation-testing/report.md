@@ -5,22 +5,23 @@
 **Tool:** cargo-mutants 26.0.0  
 **Flags:** `-j1 --no-shuffle` (serial, deterministic)  
 
-> omega-e2e is excluded globally (browser tests require live Chromium).
+> **Excluded crates (test infrastructure — mutation testing them is circular):**  
+> `omega-test-fixtures` (shared fake HTTP/SSE server; no production callers),  
+> `omega-mock-server` (Playwright fixture binary; not shipped to users),  
+> `omega-e2e` (browser Playwright tests; requires live Chromium).
 
 ## 1. Executive Summary
 
 | Crate | Mutants | Caught | Missed | Timeout | Unviable | Kill rate |
 |-------|---------|--------|--------|---------|----------|-----------|
 | `omega-types` | 5 | 4 | 1 | 0 | 0 | 80% |
-| `omega-mock-server` | 15 | 2 | 0 | 0 | 13 | 100% |
 | `omega-cli` | 20 | 13 | 0 | 0 | 7 | 100% |
-| `omega-test-fixtures` | 31 | 9 | 0 | 0 | 22 | 100% |
 | `omega-store` | 65 | 39 | 0 | 1 | 25 | 98% |
 | `omega-core` | 108 | 65 | 0 | 2 | 41 | 97% |
 | `omega-server` | 110 | 36 | 3 | 0 | 71 | 92% |
 | `omega-agent` | 175 | 60 | 7 | 0 | 108 | 90% |
 | `omega-tools` | 275 | 136 | 16 | 4 | 119 | 87% |
-| **Total** | **804** | **364** | **27** | **7** | **406** | **91%** |
+| **Total** | **758** | **353** | **27** | **7** | **371** | **91%** |
 
 ## 2. Surviving Mutants
 
@@ -48,7 +49,7 @@ Surviving mutants are the most actionable finding: they represent code paths tha
 **produced by this function with inputs that would distinguish the_
 _replacement from the original. A targeted test is needed._
 
-### 2.7 `omega-server` — 3 survivor(s)
+### 2.5 `omega-server` — 3 survivor(s)
 
 #### `handle_reset` — crates/omega-server/src/router.rs:862
 
@@ -110,7 +111,7 @@ _replacement from the original. A targeted test is needed._
 **produced by this function with inputs that would distinguish the_
 _replacement from the original. A targeted test is needed._
 
-### 2.8 `omega-agent` — 7 survivor(s)
+### 2.6 `omega-agent` — 7 survivor(s)
 
 #### `gen_call_id` — crates/omega-agent/src/agent.rs:2089
 
@@ -252,7 +253,7 @@ _replacement from the original. A targeted test is needed._
 **produced by this function with inputs that would distinguish the_
 _replacement from the original. A targeted test is needed._
 
-### 2.9 `omega-tools` — 16 survivor(s)
+### 2.7 `omega-tools` — 16 survivor(s)
 
 #### `cap_and_tee` — crates/omega-tools/src/cap_and_tee.rs:127
 
@@ -596,22 +597,6 @@ _replacement from the original. A targeted test is needed._
 
 Unviable mutants failed to compile. This is normal for type-system-constrained replacements. A high count can indicate missing feature flags or over-aggressive cargo-mutants genre coverage.
 
-### `omega-mock-server` — 13 unviable
-
-- `crates/omega-mock-server/src/main.rs:55:5`: `main -> std::io::Result<()>` → `Ok(())`
-- `crates/omega-mock-server/src/control.rs:31:5`: `router -> Router` → `Default::default()`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::new()`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::from_iter([vec![]])`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::new(vec![])`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::from(vec![])`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::from_iter([vec![Default::default()]])`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::new(vec![Default::default()])`
-- `crates/omega-mock-server/src/control.rs:44:5`: `llm_calls -> Json<Vec<CapturedCall>>` → `Json::from(vec![Default::default()])`
-- `crates/omega-mock-server/src/control.rs:48:5`: `reset_calls -> &'static str` → `""`
-- `crates/omega-mock-server/src/control.rs:48:5`: `reset_calls -> &'static str` → `"xyzzy"`
-- `crates/omega-mock-server/src/control.rs:56:5`: `set_script -> &'static str` → `""`
-- `crates/omega-mock-server/src/control.rs:56:5`: `set_script -> &'static str` → `"xyzzy"`
-
 ### `omega-cli` — 7 unviable
 
 - `crates/omega-cli/src/main.rs:70:5`: `main ` → `()`
@@ -621,31 +606,6 @@ Unviable mutants failed to compile. This is normal for type-system-constrained r
 - `crates/omega-cli/src/main.rs:184:13`: `run -> i32` → ``
 - `crates/omega-cli/src/main.rs:295:5`: `git_has_pending_changes -> bool` → `true`
 - `crates/omega-cli/src/main.rs:295:5`: `git_has_pending_changes -> bool` → `false`
-
-### `omega-test-fixtures` — 22 unviable
-
-- `crates/omega-test-fixtures/src/lib.rs:139:5`: `script_from -> Script` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:180:9`: `CallHistory::push ` → `()`
-- `crates/omega-test-fixtures/src/lib.rs:187:9`: `CallHistory::snapshot -> Vec<CapturedCall>` → `vec![Default::default()]`
-- `crates/omega-test-fixtures/src/lib.rs:213:5`: `router -> Router` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:223:5`: `handle_messages -> Response` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:299:5`: `project_call -> CapturedCall` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:337:5`: `project_message -> CapturedMessage` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:342:17`: `project_message -> CapturedMessage` → `||`
-- `crates/omega-test-fixtures/src/lib.rs:341:17`: `project_message -> CapturedMessage` → `||`
-- `crates/omega-test-fixtures/src/lib.rs:380:9`: `<impl Drop for MockServer>::drop ` → `()`
-- `crates/omega-test-fixtures/src/lib.rs:387:9`: `MockServer::start -> Self` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:393:9`: `MockServer::start_with_capture -> Self` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:397:9`: `MockServer::start_inner -> Self` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:419:5`: `sse_static_response -> Response` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:428:5`: `sse_slow_text_response -> Response` → `Default::default()`
-- `crates/omega-test-fixtures/src/lib.rs:475:5`: `build_text_sse -> String` → `String::new()`
-- `crates/omega-test-fixtures/src/lib.rs:475:5`: `build_text_sse -> String` → `"xyzzy".into()`
-- `crates/omega-test-fixtures/src/lib.rs:509:5`: `build_tool_use_sse -> String` → `String::new()`
-- `crates/omega-test-fixtures/src/lib.rs:509:5`: `build_tool_use_sse -> String` → `"xyzzy".into()`
-- `crates/omega-test-fixtures/src/lib.rs:547:5`: `push_event ` → `()`
-- `crates/omega-test-fixtures/src/lib.rs:556:5`: `format_event -> String` → `String::new()`
-- `crates/omega-test-fixtures/src/lib.rs:556:5`: `format_event -> String` → `"xyzzy".into()`
 
 ### `omega-store` — 25 unviable
 
@@ -1034,143 +994,6 @@ Heuristics applied:
 1. Mutant is in `omega-test-fixtures` (fixture-tests are circular).
 2. All call-sites of the mutated function within the same crate are in test files or `#[cfg(test)]` blocks.
 
-### `omega-test-fixtures` — 9 flagged kill(s)
-
-#### `default_input_tokens` — crates/omega-test-fixtures/src/lib.rs:109:5
-
-- **Mutant:** `0`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   106 │ }
-   107 │ 
-   108 │ const fn default_input_tokens() -> i64 {
-→  109 │     10
-   110 │ }
-   111 │ 
-   112 │ const fn default_output_tokens() -> i64 {
-```
-
-#### `default_input_tokens` — crates/omega-test-fixtures/src/lib.rs:109:5
-
-- **Mutant:** `1`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   106 │ }
-   107 │ 
-   108 │ const fn default_input_tokens() -> i64 {
-→  109 │     10
-   110 │ }
-   111 │ 
-   112 │ const fn default_output_tokens() -> i64 {
-```
-
-#### `default_input_tokens` — crates/omega-test-fixtures/src/lib.rs:109:5
-
-- **Mutant:** `-1`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   106 │ }
-   107 │ 
-   108 │ const fn default_input_tokens() -> i64 {
-→  109 │     10
-   110 │ }
-   111 │ 
-   112 │ const fn default_output_tokens() -> i64 {
-```
-
-#### `default_output_tokens` — crates/omega-test-fixtures/src/lib.rs:113:5
-
-- **Mutant:** `0`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   110 │ }
-   111 │ 
-   112 │ const fn default_output_tokens() -> i64 {
-→  113 │     5
-   114 │ }
-   115 │ 
-   116 │ // ---------------------------------------------------------------------------
-```
-
-#### `default_output_tokens` — crates/omega-test-fixtures/src/lib.rs:113:5
-
-- **Mutant:** `1`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   110 │ }
-   111 │ 
-   112 │ const fn default_output_tokens() -> i64 {
-→  113 │     5
-   114 │ }
-   115 │ 
-   116 │ // ---------------------------------------------------------------------------
-```
-
-#### `default_output_tokens` — crates/omega-test-fixtures/src/lib.rs:113:5
-
-- **Mutant:** `-1`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   110 │ }
-   111 │ 
-   112 │ const fn default_output_tokens() -> i64 {
-→  113 │     5
-   114 │ }
-   115 │ 
-   116 │ // ---------------------------------------------------------------------------
-```
-
-#### `CallHistory::snapshot` — crates/omega-test-fixtures/src/lib.rs:187:9
-
-- **Mutant:** `vec![]`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   184 │ 
-   185 │     #[must_use]
-   186 │     pub fn snapshot(&self) -> Vec<CapturedCall> {
-→  187 │         self.inner.lock().map(|g| g.clone()).unwrap_or_default()
-   188 │     }
-   189 │ 
-   190 │     pub fn reset(&self) {
-```
-
-#### `CallHistory::reset` — crates/omega-test-fixtures/src/lib.rs:191:9
-
-- **Mutant:** `()`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   188 │     }
-   189 │ 
-   190 │     pub fn reset(&self) {
-→  191 │         if let Ok(mut g) = self.inner.lock() {
-   192 │             g.clear();
-   193 │         }
-   194 │     }
-```
-
-#### `project_message` — crates/omega-test-fixtures/src/lib.rs:341:62
-
-- **Mutant:** `!=`
-- **Flag reason:** This mutant lives in **omega-test-fixtures**, which is test-only infrastructure. The only tests that exercise it are its own unit tests — those kills confirm the fixture behaves as written, not that production code is covered.
-
-```rust
-   338 │         Value::String(s) => s.clone(),
-   339 │         Value::Array(arr) => {
-   340 │             if let [block] = arr.as_slice()
-→  341 │                 && block.get("type").and_then(Value::as_str) == Some("text")
-   342 │                 && let Some(t) = block.get("text").and_then(Value::as_str)
-   343 │             {
-   344 │                 return CapturedMessage {
-```
-
 ### `omega-store` — 4 flagged kill(s)
 
 #### `ContextStore::read_all` — crates/omega-store/src/context_store.rs:121:9
@@ -1543,23 +1366,9 @@ The kill rate is good (80–94%). A small number of survivors remain — see Sec
   
 Survivor functions: `OmegaEvent::time`.
 
-### `omega-mock-server`
-
-Generated 15 mutants: **2 caught** / **0 missed** / 0 timeout / 13 unviable.  
-Kill rate: **100%**.  
-
-The kill rate is excellent (≥ 95%). Test coverage for this crate is strong at the mutation level.
-
 ### `omega-cli`
 
 Generated 20 mutants: **13 caught** / **0 missed** / 0 timeout / 7 unviable.  
-Kill rate: **100%**.  
-
-The kill rate is excellent (≥ 95%). Test coverage for this crate is strong at the mutation level.
-
-### `omega-test-fixtures`
-
-Generated 31 mutants: **9 caught** / **0 missed** / 0 timeout / 22 unviable.  
 Kill rate: **100%**.  
 
 The kill rate is excellent (≥ 95%). Test coverage for this crate is strong at the mutation level.

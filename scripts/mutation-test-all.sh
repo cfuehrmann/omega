@@ -38,16 +38,24 @@ mkdir -p "$OUT_DIR"
 
 # Ordered from smallest to largest (by mutant count) so we get early results
 # quickly and can inspect the report while heavier crates are still running.
+#
+# TEST-INFRA CRATES ARE INTENTIONALLY EXCLUDED:
+#   omega-test-fixtures  — shared fake HTTP/SSE server; not a production crate;
+#                          killing its mutants only confirms the fixture matches
+#                          its own unit tests (circular, not meaningful coverage).
+#   omega-mock-server    — exists solely as a Playwright test fixture binary;
+#                          not shipped to users; not depended on by any other
+#                          production crate.
+#   omega-e2e            — browser-level Playwright tests; excluded via
+#                          .cargo/mutants.toml (requires live Chromium).
 CRATES=(
-    omega-types         #   5 mutants
-    omega-mock-server   #  15 mutants
-    omega-cli           #  20 mutants
-    omega-test-fixtures #  31 mutants
-    omega-store         #  91 mutants
-    omega-core          # 108 mutants
-    omega-server        # 110 mutants
-    omega-agent         # 175 mutants
-    omega-tools         # 275 mutants
+    omega-types   #   5 mutants
+    omega-cli     #  20 mutants
+    omega-store   #  91 mutants
+    omega-core    # 108 mutants
+    omega-server  # 110 mutants
+    omega-agent   # 175 mutants
+    omega-tools   # 275 mutants
 )
 
 START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
