@@ -773,3 +773,479 @@ fn walkdir_flat(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// output_cleaner — migrated from inline unit tests in src/output_cleaner.rs
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn output_cleaner_crlf_converted_to_lf() {
+    // printf 'foo\r\nbar\r\n' → bytes: f,o,o,CR,LF,b,a,r,CR,LF.
+    // crlf_normalize converts each CR+LF pair to LF; no bare CR remains.
+    // Kills the `+ → *` mutation on `data[i + 1] == b'\n'` in crlf_normalize.
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf 'foo\\r\\nbar\\r\\n'" }),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("foo"), "must contain foo: {out}");
+    assert!(out.contains("bar"), "must contain bar: {out}");
+    assert!(
+        !out.contains("foo\r"),
+        "CR before LF must be removed: {out}"
+    );
+    assert!(
+        !out.contains("bar\r"),
+        "CR before LF must be removed: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_mixed_crlf_and_lf_normalised() {
+    // 'a\r\nb\nc\r\n' — mix of CRLF and plain LF lines; all must survive intact.
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf 'a\\r\\nb\\nc\\r\\n'" }),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains('a'), "must contain 'a': {out}");
+    assert!(out.contains('b'), "must contain 'b': {out}");
+    assert!(out.contains('c'), "must contain 'c': {out}");
+    assert!(
+        !out.contains("a\r"),
+        "CR before LF must be removed after 'a': {out}"
+    );
+    assert!(
+        !out.contains("c\r"),
+        "CR before LF must be removed after 'c': {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_apt_get_pattern_preserves_package_names() {
+    // apt-get mixes CRLF-terminated package lines with bare-CR progress lines.
+    // CRLF lines → preserved; bare-CR progress → collapsed to last frame.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf 'Installing pkg.\\r\\n(Reading database... \\r50%%\\r100%%\\nDone.\\r\\n'"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("Installing pkg."),
+        "package line must survive: {out}"
+    );
+    assert!(out.contains("Done."), "setup line must survive: {out}");
+    assert!(
+        out.contains("100%"),
+        "last progress frame must appear: {out}"
+    );
+    assert!(
+        !out.contains("50%"),
+        "intermediate frame must be collapsed: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_progress_bar_collapses_to_last_frame() {
+    // '\rStep 1\rStep 2\rStep 3\n' → only "Step 3" survives cr_collapse.
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf '\\rStep 1\\rStep 2\\rStep 3\\n'" }),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("Step 3"), "last frame must appear: {out}");
+    assert!(
+        !out.contains("Step 1"),
+        "first frame must be collapsed: {out}"
+    );
+    assert!(
+        !out.contains("Step 2"),
+        "intermediate frame must be collapsed: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_multiple_lines_cr_collapsed_independently() {
+    // Each \n-delimited line collapses independently.
+    // 'step1\rSTEP1\nstep2\rSTEP2\n' → 'STEP1\nSTEP2\n'
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf 'step1\\rSTEP1\\nstep2\\rSTEP2\\n'" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("STEP1"),
+        "final frame of first line must appear: {out}"
+    );
+    assert!(
+        out.contains("STEP2"),
+        "final frame of second line must appear: {out}"
+    );
+    assert!(
+        !out.contains("step1\rSTEP1"),
+        "raw CR must not appear in output: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_sgr_colour_codes_stripped() {
+    // \x1b[32m = green, \x1b[0m = reset → stripped; only 'ok' remains.
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf '\\x1b[32mok\\x1b[0m\\n'" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("ok"),
+        "text content must remain after stripping: {out}"
+    );
+    assert!(
+        !out.contains('\x1b'),
+        "ANSI escape sequences must be stripped: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_cursor_movement_stripped() {
+    // \x1b[1A = cursor up 1, \x1b[K = erase to EOL → both stripped.
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf 'line1\\x1b[1A\\x1b[Kline2\\n'" }),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("line1"), "line1 must remain: {out}");
+    assert!(out.contains("line2"), "line2 must remain: {out}");
+    assert!(
+        !out.contains('\x1b'),
+        "cursor-movement escapes must be stripped: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_osc_hyperlink_stripped() {
+    // OSC 8 hyperlink — \x1b]8;;url\x1b\\ text \x1b]8;;\x1b\\ — link text preserved.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf '\\x1b]8;;https://example.com\\x1b\\\\click here\\x1b]8;;\\x1b\\\\\\n'"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("click here"),
+        "hyperlink text must remain: {out}"
+    );
+    assert!(!out.contains("example.com"), "URL must be stripped: {out}");
+    assert!(
+        !out.contains('\x1b'),
+        "escape bytes must be stripped: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_ffmpeg_style_cr_with_ansi() {
+    // ANSI-coloured progress frames separated by CR; only last frame survives.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf '\\x1b[33mframe=\\x1b[0m 0\\r\\x1b[33mframe=\\x1b[0m 100\\n'"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(out.contains("frame= 100"), "last frame must appear: {out}");
+    assert!(
+        !out.contains("frame= 0"),
+        "first frame must be collapsed: {out}"
+    );
+    assert!(!out.contains('\x1b'), "ANSI codes must be stripped: {out}");
+}
+
+#[tokio::test]
+async fn output_cleaner_tqdm_progress_collapses_to_final_frame() {
+    // tqdm-style: CR-separated percentage frames; only 100%% survives.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf '  0%%|          |\\r 50%%|#####     |\\r100%%|##########|\\n'"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("100%"),
+        "final progress frame must appear: {out}"
+    );
+    assert!(
+        !out.contains("50%"),
+        "intermediate frame must be collapsed: {out}"
+    );
+}
+
+#[tokio::test]
+async fn output_cleaner_curl_verbose_headers_preserved() {
+    // curl --verbose: bare-CR progress lines collapse; LF-terminated headers survive.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf 'header info\\n\\rprogress_first\\rprogress_final\\n* Connected to host\\n> GET / HTTP/1.1\\n'"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("Connected to host"),
+        "connection header must be preserved: {out}"
+    );
+    assert!(
+        out.contains("GET / HTTP/1.1"),
+        "request line must be preserved: {out}"
+    );
+    assert!(
+        out.contains("progress_final"),
+        "last progress frame must appear: {out}"
+    );
+    assert!(
+        !out.contains("progress_first"),
+        "first progress frame must be collapsed: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// cap_and_tee — scenarios not already covered in integration tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cap_and_tee_exactly_100kb_not_truncated() {
+    // Exactly 100 000 bytes (== LLM_CAP): `total_bytes > cap` is false → no truncation.
+    // Kills the `> → >=` mutation on `let truncated = total_bytes > cap`.
+    let out = exec(
+        "run_command",
+        json!({ "command": "head -c 100000 /dev/zero | tr '\\0' 'x'" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains("truncated"),
+        "exactly 100 KB must not be truncated: {}",
+        &out[out.len().saturating_sub(200)..]
+    );
+    assert!(
+        out.contains("[full output: "),
+        "must have the full-output footer: {}",
+        &out[out.len().saturating_sub(200)..]
+    );
+}
+
+#[tokio::test]
+async fn cap_and_tee_tail_bias_footer_says_last() {
+    // Explicit tail bias on >100 KB output: footer must say "last", not "first".
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "head -c 200001 /dev/zero | tr '\\0' 'x'",
+            "truncation_bias": "tail"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("last"),
+        "tail-bias footer must say 'last': {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+    assert!(
+        !out.contains("first"),
+        "tail-bias footer must not say 'first': {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+}
+
+#[tokio::test]
+async fn cap_and_tee_middle_bias_shows_both_ends_and_omission_marker() {
+    // >250 KB output with distinctive start/end markers.
+    // Middle bias (cap/2 head + cap/2 tail) must show both and the gap marker.
+    // Kills the `cap / 2 → cap * 2` and related arithmetic mutations.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf 'START_UNIQUE_MARKER'; head -c 250000 /dev/zero | tr '\\0' 'x'; printf 'END_UNIQUE_MARKER'",
+            "truncation_bias": "middle"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("START_UNIQUE_MARKER"),
+        "head window must include start of output: {out}"
+    );
+    assert!(
+        out.contains("END_UNIQUE_MARKER"),
+        "tail window must include end of output: {out}"
+    );
+    assert!(
+        out.contains("omitted"),
+        "gap marker must appear between head and tail: {out}"
+    );
+    assert!(
+        out.contains("truncated"),
+        "truncation footer must appear: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase B — kill the 16 survivors
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn run_command_utf8_head_bias_at_truncation_boundary() {
+    // 'é' = 2 UTF-8 bytes → 60 000 × 2 = 120 000 bytes > 100 000-byte LLM_CAP.
+    // Exit 0 → default bias is Head.
+    // utf8_boundary_forward must snap the window to a valid UTF-8 boundary so no
+    // U+FFFD replacement character appears in the result.
+    // Kills utf8_boundary_forward / is_utf8_continuation mutation survivors.
+    let out = exec(
+        "run_command",
+        json!({ "command": "printf '%.0sé' {1..60000}" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains('\u{FFFD}'),
+        "head window must not split a multi-byte char (U+FFFD must not appear): {out}"
+    );
+    assert!(out.contains("truncated"), "output must be truncated: {out}");
+    assert!(
+        out.contains("first"),
+        "head-bias footer must say 'first': {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+}
+
+#[tokio::test]
+async fn run_command_utf8_tail_bias_at_truncation_boundary() {
+    // Same 120 KB of 'é' with explicit tail bias.
+    // utf8_boundary_backward must snap the tail window start to a valid boundary.
+    // Kills utf8_boundary_backward loop and is_utf8_continuation mutation survivors.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf '%.0sé' {1..60000}",
+            "truncation_bias": "tail"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains('\u{FFFD}'),
+        "tail window must not split a multi-byte char: {out}"
+    );
+    assert!(out.contains("truncated"), "output must be truncated: {out}");
+    assert!(
+        out.contains("last"),
+        "tail-bias footer must say 'last': {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+}
+
+#[tokio::test]
+async fn run_command_utf8_middle_bias_at_truncation_boundary() {
+    // Same 120 KB of 'é' with middle bias: both head/2 and tail/2 windows must
+    // land on valid UTF-8 boundaries.
+    // Kills remaining boundary-loop and is_utf8_continuation mutation survivors.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "printf '%.0sé' {1..60000}",
+            "truncation_bias": "middle"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains('\u{FFFD}'),
+        "middle windows must not split multi-byte chars: {out}"
+    );
+    assert!(
+        out.contains("omitted"),
+        "gap marker must appear between head and tail: {out}"
+    );
+    assert!(out.contains('é'), "must contain some content: {out}");
+}
+
+#[tokio::test]
+async fn run_command_lone_cr_as_last_byte_no_panic() {
+    // 'foo\r' — lone CR at the very end of the buffer.
+    // Exercises the `i + 1 < data.len()` bounds guard in crlf_normalize.
+    // With `< → <=`, `data[data.len()]` is accessed → panic.
+    // CR-collapse reduces the output to empty → result is "(no output)".
+    let result = exec("run_command", json!({ "command": "printf 'foo\\r'" })).await;
+    assert!(
+        result.is_ok(),
+        "lone CR at end of buffer must not panic or error: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_command_crlf_at_end_of_output_no_cr() {
+    // 'line\r\n' — CRLF sequence at end of output.
+    // Exercises `data[i + 1] == b'\n'` check in crlf_normalize.
+    // With `+ → *`, `data[i]` is checked: '\r' ≠ '\n', so CRLF is NOT normalised
+    // and the bare CR leaks through.
+    let out = exec("run_command", json!({ "command": "printf 'line\\r\\n'" }))
+        .await
+        .unwrap();
+    assert!(out.contains("line"), "output text must be present: {out}");
+    assert!(
+        !out.contains("line\r"),
+        "CRLF must be normalised to LF — no bare CR after 'line': {out}"
+    );
+}
+
+#[tokio::test]
+async fn run_command_exit_0_default_bias_is_head() {
+    // Large output (>100 KB), no `truncation_bias` specified, exit 0.
+    // Default for exit 0 is Head → footer must say "first".
+    // Kills `s.success() → true` (Head for all) and `s.success() → false` (Tail for exit 0).
+    let out = exec("run_command", json!({ "command": "yes | head -n 60000" }))
+        .await
+        .unwrap();
+    assert!(
+        out.contains("first"),
+        "exit-0 default bias must be Head ('first' in footer): {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+}
+
+#[tokio::test]
+async fn run_command_non_zero_exit_default_bias_is_tail() {
+    // Large output (>100 KB), no `truncation_bias`, exit 1.
+    // Default for non-zero exit is Tail → footer must say "last".
+    // The exit-code notice is appended at end of the byte stream and must
+    // appear in the tail window.
+    let out = exec(
+        "run_command",
+        json!({ "command": "yes | head -n 60000; exit 1" }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.contains("last"),
+        "non-zero exit default bias must be Tail ('last' in footer): {}",
+        &out[out.len().saturating_sub(300)..]
+    );
+    assert!(
+        out.contains("exit code"),
+        "exit-code notice must appear in tail window: {out}"
+    );
+}

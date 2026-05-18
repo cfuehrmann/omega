@@ -177,13 +177,16 @@ fn format_size(bytes: usize) -> String {
 /// Return the largest byte index ≤ `max` that is a valid UTF-8 code-point
 /// boundary in `data`.  Equivalent to snapping a head window to the last
 /// complete character.
+///
+/// Uses `str::from_utf8` to find the exact boundary: if `data[..end]` is
+/// already valid UTF-8 the full length is returned; otherwise
+/// `Utf8Error::valid_up_to` gives the precise cut point.
 fn utf8_boundary_forward(data: &[u8], max: usize) -> usize {
-    let mut end = max.min(data.len());
-    // Back up past UTF-8 continuation bytes (0x80..=0xBF).
-    while end > 0 && is_utf8_continuation(data[end - 1]) {
-        end -= 1;
+    let end = max.min(data.len());
+    match std::str::from_utf8(&data[..end]) {
+        Ok(_) => end,
+        Err(e) => e.valid_up_to(),
     }
-    end
 }
 
 /// Return the number of bytes to take from the *end* of `data` such that the
@@ -207,239 +210,13 @@ fn is_utf8_continuation(b: u8) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// ---------------------------------------------------------------------------
+// Tests — pure formatting helpers only; I/O scenarios live in process_tools.rs
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::single_char_pattern
-)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
-    fn tmp() -> TempDir {
-        tempfile::tempdir().expect("tmpdir")
-    }
-
-    // Helper: run cap_and_tee synchronously inside a tokio runtime.
-    async fn tee(data: &[u8], cap: usize, bias: TruncationBias, dir: &TempDir) -> CappedOutput {
-        let log = dir.path().join("sub").join("test.log");
-        cap_and_tee(data, cap, bias, &log)
-            .await
-            .expect("cap_and_tee")
-    }
-
-    // -----------------------------------------------------------------------
-    // No truncation
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn no_truncation_returns_full_data_with_footer() {
-        let dir = tmp();
-        let data = b"hello world";
-        let out = tee(data, 1_000, TruncationBias::Head, &dir).await;
-        assert!(!out.truncated);
-        assert!(
-            out.body.starts_with("hello world\n[full output: "),
-            "body: {}",
-            out.body
-        );
-        assert!(out.body.ends_with(']'), "body: {}", out.body);
-        assert_eq!(out.total_bytes, 11);
-    }
-
-    #[tokio::test]
-    async fn no_truncation_footer_contains_log_path() {
-        let dir = tmp();
-        let out = tee(b"x", 1_000, TruncationBias::Head, &dir).await;
-        let path_str = out.log_path.display().to_string();
-        assert!(
-            out.body.contains(&path_str),
-            "footer must contain log path '{path_str}': {}",
-            out.body
-        );
-    }
-
-    #[tokio::test]
-    async fn no_truncation_writes_log_file() {
-        let dir = tmp();
-        let data = b"log content";
-        let out = tee(data, 1_000, TruncationBias::Head, &dir).await;
-        let on_disk = std::fs::read(&out.log_path).expect("log file");
-        assert_eq!(on_disk, data);
-    }
-
-    #[tokio::test]
-    async fn exactly_cap_bytes_is_not_truncated() {
-        let dir = tmp();
-        let data = vec![b'x'; 100];
-        let out = tee(&data, 100, TruncationBias::Head, &dir).await;
-        assert!(!out.truncated);
-        // Body = 100 x's + "\n[full output: <path>]"
-        assert!(out.body.starts_with(&"x".repeat(100)));
-        assert!(out.body.contains("[full output: "));
-    }
-
-    #[tokio::test]
-    async fn empty_data_has_no_footer() {
-        // Pointing the LLM at an empty file is just noise; skip the footer.
-        let dir = tmp();
-        let out = tee(b"", 100, TruncationBias::Head, &dir).await;
-        assert!(!out.truncated);
-        assert_eq!(out.body, "");
-    }
-
-    // -----------------------------------------------------------------------
-    // Head bias
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn head_bias_returns_first_cap_bytes() {
-        let dir = tmp();
-        let data = b"AAABBB"; // 6 bytes
-        let out = tee(data, 3, TruncationBias::Head, &dir).await;
-        assert!(out.truncated);
-        assert!(out.body.starts_with("AAA"), "got: {}", out.body);
-        assert!(
-            !out.body.contains("BBB"),
-            "tail must not appear: {}",
-            out.body
-        );
-        assert!(
-            out.body.contains("truncated"),
-            "footer missing: {}",
-            out.body
-        );
-        assert!(
-            out.body.contains("first"),
-            "direction missing: {}",
-            out.body
-        );
-    }
-
-    #[tokio::test]
-    async fn head_bias_footer_has_correct_direction() {
-        let dir = tmp();
-        let data = vec![b'a'; 2_000];
-        let out = tee(&data, 1_000, TruncationBias::Head, &dir).await;
-        assert!(
-            out.body.contains("first"),
-            "expected 'first' in footer: {}",
-            out.body
-        );
-        assert!(
-            !out.body.contains("last"),
-            "unexpected 'last' in footer: {}",
-            out.body
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Tail bias
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn tail_bias_returns_last_cap_bytes() {
-        let dir = tmp();
-        let data = b"AAABBB"; // 6 bytes
-        let out = tee(data, 3, TruncationBias::Tail, &dir).await;
-        assert!(out.truncated);
-        assert!(out.body.starts_with("BBB"), "got: {}", out.body);
-        assert!(
-            out.body.contains("truncated"),
-            "footer missing: {}",
-            out.body
-        );
-        assert!(out.body.contains("last"), "direction missing: {}", out.body);
-    }
-
-    #[tokio::test]
-    async fn tail_bias_footer_has_correct_direction() {
-        let dir = tmp();
-        let data = vec![b'z'; 2_000];
-        let out = tee(&data, 1_000, TruncationBias::Tail, &dir).await;
-        assert!(
-            out.body.contains("last"),
-            "expected 'last' in footer: {}",
-            out.body
-        );
-        assert!(
-            !out.body.contains("first"),
-            "unexpected 'first' in footer: {}",
-            out.body
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Middle bias
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn middle_bias_returns_head_and_tail() {
-        let dir = tmp();
-        // 9 bytes: "AAABBBCCC" — cap=4 → head=2, tail=2
-        let data = b"AAABBBCCC";
-        let out = tee(data, 4, TruncationBias::Middle, &dir).await;
-        assert!(out.truncated);
-        // Should start with "AA" and contain "CC"
-        assert!(out.body.starts_with("AA"), "head missing: {}", out.body);
-        assert!(out.body.contains("CC"), "tail missing: {}", out.body);
-        assert!(
-            out.body.contains("omitted"),
-            "gap marker missing: {}",
-            out.body
-        );
-        assert!(
-            out.body.contains("truncated"),
-            "footer missing: {}",
-            out.body
-        );
-    }
-
-    #[tokio::test]
-    async fn middle_bias_footer_says_halves() {
-        let dir = tmp();
-        let data = vec![b'x'; 3_000];
-        let out = tee(&data, 1_000, TruncationBias::Middle, &dir).await;
-        assert!(
-            out.body.contains("first and last halves"),
-            "footer missing direction: {}",
-            out.body
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Log file always written
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn log_file_contains_full_data_even_when_truncated() {
-        let dir = tmp();
-        let data = vec![b'X'; 500];
-        let out = tee(&data, 100, TruncationBias::Head, &dir).await;
-        assert!(out.truncated);
-        let on_disk = std::fs::read(&out.log_path).expect("log file");
-        assert_eq!(on_disk.len(), 500, "log must contain all 500 bytes");
-        assert_eq!(on_disk, data);
-    }
-
-    // -----------------------------------------------------------------------
-    // Parent directory creation
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn creates_nested_parent_directories() {
-        let dir = tmp();
-        let nested = dir.path().join("a").join("b").join("c").join("out.log");
-        cap_and_tee(b"data", 1_000, TruncationBias::Head, &nested)
-            .await
-            .expect("should create nested dirs");
-        assert!(nested.exists());
-    }
 
     // -----------------------------------------------------------------------
     // format_size
