@@ -34,7 +34,7 @@ Survivor details live in each crate's `survivors.md`. Crates not listed above ha
 
 | Session | Crate(s) | Survivors | Character |
 |---------|----------|-----------|-----------|
-| 1 | `omega-tools` | 16 | Pure unit tests — byte arithmetic, bitwise, CRLF boundary, process exit bias |
+| 1 | `omega-tools` | 16 | Two-phase overhaul: (A) migrate existing inline unit tests of private helpers to integration tests through `execute_tool`; (B) add new integration tests to kill the 16 survivors. Full plan in `omega-tools/survivors.md`. |
 | 2 | `omega-agent` | 7 | Mix — trivial format check, event-sequence logic, env-var path resolution |
 | 3 | `omega-server` + `omega-types` | 3 + 1 | WS integration infrastructure; types survivor is a two-liner |
 
