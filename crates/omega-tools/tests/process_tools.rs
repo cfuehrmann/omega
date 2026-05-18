@@ -868,6 +868,13 @@ async fn output_cleaner_progress_bar_collapses_to_last_frame() {
         !out.contains("Step 2"),
         "intermediate frame must be collapsed: {out}"
     );
+    // Bare \r must not appear in the output — kills `pos + 1 → pos - 1` and
+    // `pos + 1 → pos * 1` mutations in cr_collapse which include the \r itself
+    // in the kept content instead of skipping past it.
+    assert!(
+        !out.contains('\r'),
+        "output must not contain bare CR after cr_collapse: {out}"
+    );
 }
 
 #[tokio::test]
@@ -891,6 +898,13 @@ async fn output_cleaner_multiple_lines_cr_collapsed_independently() {
     assert!(
         !out.contains("step1\rSTEP1"),
         "raw CR must not appear in output: {out}"
+    );
+    // STEP1 must appear on its own line (followed by '\n'), not merged with STEP2.
+    // Kills the `delete ! in if !first` mutation which removes newline separators
+    // between lines, merging them as STEP1STEP2 with no \n between.
+    assert!(
+        out.contains("STEP1\n"),
+        "STEP1 must be followed by a newline separator, not merged with STEP2: {out}"
     );
 }
 
@@ -1097,10 +1111,49 @@ async fn cap_and_tee_middle_bias_shows_both_ends_and_omission_marker() {
         out.contains("omitted"),
         "gap marker must appear between head and tail: {out}"
     );
+    // The omitted byte count must be non-zero; kills the `cap / 2 → cap * 2`
+    // mutation (half so large head+tail cover the whole file, omitted=0) and
+    // the `total - tail_len → total / tail_len` mutation (tail_start so small
+    // that head and tail overlap, again omitted=0).
+    assert!(
+        !out.contains("0 bytes omitted"),
+        "omitted gap must be non-zero bytes (head/tail must not overlap): {out}"
+    );
     assert!(
         out.contains("truncated"),
         "truncation footer must appear: {out}"
     );
+}
+
+#[tokio::test]
+async fn cap_and_tee_backward_boundary_skips_continuation_byte() {
+    // Produce 100 001 bytes of 0xA9 (a bare UTF-8 continuation byte).
+    // With tail bias: raw_start = 100001 − 100000 = 1, falling on 0xA9.
+    // utf8_boundary_backward must advance start all the way to 100001 (past every
+    // continuation byte), yielding tail_len = 0 (nothing safe to show).
+    //
+    // Mutations that break this:
+    //   • while-condition `< → ==|>|<=` → loop never runs (or panics at start==len)
+    //   • increment `+= → -=` → usize underflow panic
+    //   • increment `+= → *=` → infinite loop (start never advances)
+    //   • is_utf8_continuation `& → |` or `& → ^` → 0xA9 not recognised as
+    //     continuation → loop never runs
+    // In all cases the tail window starts at byte 1 (0xA9 → invalid UTF-8)
+    // and from_utf8_lossy inserts U+FFFD → the assertion below fails.
+    let out = exec(
+        "run_command",
+        json!({
+            "command": "python3 -c \"import sys; sys.stdout.buffer.write(bytes([0xa9]) * 100001)\"",
+            "truncation_bias": "tail"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !out.contains('\u{FFFD}'),
+        "tail window must exclude bare continuation bytes — no U+FFFD may appear: {out}"
+    );
+    assert!(out.contains("truncated"), "output must be truncated: {out}");
 }
 
 // ---------------------------------------------------------------------------
