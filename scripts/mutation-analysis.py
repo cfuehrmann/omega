@@ -115,9 +115,12 @@ def parse_outcomes(outcomes_json: Path) -> list[Mutant]:
     mutants: list[Mutant] = []
     for entry in data.get("outcomes", []):
         scenario = entry.get("scenario", {})
+        if not isinstance(scenario, dict):
+            # Baseline scenario is a plain string like "Baseline" — skip
+            continue
         m = scenario.get("Mutant")
         if m is None:
-            # Baseline scenario — skip
+            # Some other non-mutant scenario — skip
             continue
 
         summary = entry.get("summary", "Unknown")
