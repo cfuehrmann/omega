@@ -284,6 +284,10 @@ impl LlmError {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    // `body()` is a public logging/display accessor: the retry loop never calls
+    // it (it uses `is_retryable`, `status`, `retry_after`, and `format!("{err}")`)
+    // so its correctness is not observable through `RetryingProvider`.  These
+    // four variant-coverage tests are therefore a justified inline carve-out.
     use super::*;
 
     /// `body()` must return the raw HTTP response body for Http errors.
