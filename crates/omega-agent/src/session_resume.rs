@@ -1487,4 +1487,48 @@ mod tests {
             "empty sequence must not produce a blank Agent line: {result:?}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // project_turn: delete-entire-arm mutant
+    //
+    // When the `OmegaEvent::LlmResponseEnded` match arm is deleted entirely,
+    // `pending_text` is never cleared between rounds.  A turn with two
+    // separate LLM responses (text → LlmResponseEnded → text → LlmResponseEnded)
+    // then concatenates both chunks instead of emitting two separate "Agent:"
+    // lines.  This test catches that survivor.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn project_turn_two_llm_responses_produce_separate_agent_lines() {
+        // A multi-round turn: first LLM response produces "first", then a
+        // second LLM response (e.g. after a tool call) produces "second".
+        // The LlmResponseEnded arm must flush AND clear pending_text between
+        // rounds so the two texts appear on separate Agent lines.
+        //
+        // Kills the `delete match arm OmegaEvent::LlmResponseEnded(_)` mutant:
+        // without the arm, pending_text accumulates across both rounds and the
+        // post-loop flush produces a single "Agent: firstsecond" line instead of
+        // two separate lines.
+        let evs = vec![
+            user_msg("q"),
+            text_block("first"),
+            llm_response_ended(), // round 1 done — must flush and clear
+            text_block("second"),
+            llm_response_ended(), // round 2 done — flush and clear
+            turn_end(),
+        ];
+        let result = extract_resumption_basis(&evs);
+        assert!(
+            result.contains("Agent: first"),
+            "first Agent line must appear separately: {result:?}"
+        );
+        assert!(
+            result.contains("Agent: second"),
+            "second Agent line must appear separately: {result:?}"
+        );
+        assert!(
+            !result.contains("firstsecond"),
+            "two responses must not be concatenated: {result:?}"
+        );
+    }
 }
