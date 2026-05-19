@@ -23,20 +23,20 @@
 | `omega-core` | 108 | 65 | 0 | 2 | 41 | 97% ✅ |
 | `omega-server` | 110 | 36 | **3** | 0 | 71 | 92% |
 | `omega-agent` | 175 | 60 | **7** | 0 | 108 | 90% |
-| `omega-tools` | 275 | 136 | **16** | 4 | 119 | 87% |
-| **Total** | **758** | **353** | **27** | **7** | **371** | **91%** |
+| `omega-tools` | 267 | 145 | 0 | 5 | 117 | 100% ✅ |
+| **Total** | **750** | **362** | **11** | **8** | **369** | **97%** |
 
-Survivor details live in each crate's `survivors.md`. Crates not listed above have no survivors.
+Survivor details live in each crate's `survivors.md`. Crates marked ✅ have no survivors.
 
 ---
 
 ## Work plan
 
-| Session | Crate(s) | Survivors | Character |
-|---------|----------|-----------|-----------|
-| 1 | `omega-tools` | 16 | Two-phase overhaul: (A) migrate existing inline unit tests of private helpers to integration tests through `execute_tool`; (B) add new integration tests to kill the 16 survivors. Full plan in `omega-tools/survivors.md`. |
-| 2 | `omega-agent` | 7 | Mix — trivial format check, event-sequence logic, env-var path resolution |
-| 3 | `omega-server` + `omega-types` | 3 + 1 | WS integration infrastructure; types survivor is a two-liner |
+| Session | Crate(s) | Survivors | Status |
+|---------|----------|-----------|--------|
+| 1 | `omega-tools` | 16 | ✅ Done — 0 missed, 145 caught (267 total). Also fixed a latent `utf8_boundary_forward` bug discovered during migration. |
+| 2 | `omega-agent` | 7 | Pending — details in `omega-agent/survivors.md` |
+| 3 | `omega-server` + `omega-types` | 3 + 1 | Pending — details in `omega-server/survivors.md` |
 
 ---
 
@@ -51,6 +51,7 @@ These timed out rather than being caught cleanly. Worth noting in case they beco
 | `omega-core` | `retry.rs:135:40` | `retry_loop` — `&&` |
 | `omega-tools` | `output_cleaner.rs:72:15` | `crlf_normalize` — `-=` |
 | `omega-tools` | `output_cleaner.rs:75:15` | `crlf_normalize` — `*=` |
+| `omega-tools` | `cap_and_tee.rs:201:15` | `utf8_boundary_backward` — `*=` |
 | `omega-tools` | `tools/edit_file.rs:113:15` | `count_occurrences` — `*=` |
 | `omega-tools` | `tools/read_file.rs:67:13` | `char_boundary_at_or_before` — `/=` |
 
