@@ -1051,4 +1051,43 @@ mod tests {
         let v = serde_json::to_value(&usage).unwrap();
         assert!(v.get("iterations").is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // OmegaEvent::time() — pin the accessor so the mutant that replaces the
+    // entire body with `Box::leak(Box::new(Default::default()))` is caught.
+    // Two variants are sufficient: the exhaustive match enforces that all
+    // arms delegate to the real field, so covering any real variant kills
+    // the whole-body replacement.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn time_returns_embedded_timestamp_for_session_started() {
+        let ts = "2025-01-01T00:00:00.000Z";
+        let ev = OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: ts.into(),
+            session_id: "id".into(),
+            path: String::new(),
+            model: "claude-sonnet-4-6".into(),
+            effort: "medium".into(),
+            system_prompt: String::new(),
+            omega_commit: "abc".into(),
+            agent_time_zone: "UTC".into(),
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
+
+    #[test]
+    fn time_returns_embedded_timestamp_for_turn_end() {
+        let ts = "2025-06-15T12:34:56.789Z";
+        let ev = OmegaEvent::TurnEnd(TurnEndEvent {
+            time: ts.into(),
+            metrics: TurnMetrics {
+                input_tokens: 1,
+                output_tokens: 2,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            },
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
 }

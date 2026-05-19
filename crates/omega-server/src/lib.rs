@@ -55,6 +55,13 @@ pub struct AppState {
     /// LLM provider.  `Arc<dyn Provider>` lets tests inject a
     /// `MockProvider` while the binary uses the real Anthropic provider.
     pub provider: Arc<dyn omega_core::Provider>,
+    /// Server working directory, captured once at startup.
+    ///
+    /// Immutable property of the server process — captured in `main` via
+    /// `std::env::current_dir()` and stored here so handlers can use it
+    /// without repeating the syscall (and so tests can inject a custom
+    /// path, e.g. a temporary git repository for dirty-tree tests).
+    pub cwd: PathBuf,
 }
 
 impl AppState {
@@ -63,12 +70,17 @@ impl AppState {
     /// `leptos_dir` defaults to [`cli::DEFAULT_LEPTOS_DIR`]; override
     /// with [`AppState::with_leptos_dir`] before calling [`serve`] /
     /// [`build_router`].
-    pub fn new(provider: Arc<dyn omega_core::Provider>, sessions_root: PathBuf) -> Self {
+    pub fn new(
+        provider: Arc<dyn omega_core::Provider>,
+        sessions_root: PathBuf,
+        cwd: PathBuf,
+    ) -> Self {
         Self {
             active_session: Arc::new(Mutex::new(None)),
             sessions_root,
             leptos_dir: PathBuf::from(cli::DEFAULT_LEPTOS_DIR),
             provider,
+            cwd,
         }
     }
 
@@ -183,6 +195,13 @@ fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    // Justification for inline test block: `now_iso` is a private formatting
+    // helper that produces a timestamp for `server_stopped` events.  Its
+    // output format (ISO-8601, millisecond precision, trailing `Z`) is part
+    // of the persistence contract but cannot be asserted by WebSocket
+    // integration tests — those tests would need to observe the timestamp
+    // written into events.jsonl by the shutdown path, which requires
+    // orchestrating a real SIGTERM.  A direct unit test is the right level.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
     use super::now_iso;

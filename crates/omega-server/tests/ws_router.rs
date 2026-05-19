@@ -117,7 +117,7 @@ type WsClient =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 fn make_state(provider: Arc<MockProvider>, sessions_root: PathBuf) -> AppState {
-    AppState::new(provider, sessions_root)
+    AppState::new(provider, sessions_root, PathBuf::from("."))
 }
 
 async fn spawn_server(state: AppState) -> SocketAddr {

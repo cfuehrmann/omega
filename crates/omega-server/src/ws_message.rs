@@ -211,9 +211,18 @@ impl WsMessage {
 
 #[cfg(test)]
 mod tests {
+    // Justification for inline test block: these tests pin the WebSocket
+    // wire protocol — exact JSON field names, camelCase keys, and
+    // omit-when-None semantics.  Integration tests in tests/ws.rs connect
+    // real WebSocket clients and assert on message *types*, but they do not
+    // parse every field of every message shape.  Covering the full wire
+    // contract at the unit level is cheaper and more precise.
+    //
+    // `PendingChangesIntent::to_json` is a private function only reachable
+    // from this module, so tests must live here.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-    use super::WsMessage;
+    use super::{PendingChangesIntent, WsMessage};
     use omega_core::AgentItem;
     use omega_types::{StreamSignal, events::TurnEndEvent, events::TurnMetrics};
 
@@ -458,5 +467,54 @@ mod tests {
         };
         let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
         assert_eq!(parsed, m.to_json());
+    }
+
+    // -----------------------------------------------------------------------
+    // PendingChangesIntent::to_json — pin the wire shape so the mutant that
+    // replaces the whole body with Default::default() is caught.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pending_changes_intent_reset_with_model_and_effort() {
+        let intent = PendingChangesIntent::Reset {
+            model: Some("m".to_owned()),
+            effort: Some("e".to_owned()),
+        };
+        // Build a PendingChangesWarning so we can call the public to_json path.
+        let v = WsMessage::PendingChangesWarning { intent }.to_json();
+        let obj = &v["intent"];
+        assert_eq!(obj["kind"], "reset");
+        assert_eq!(obj["model"], "m");
+        assert_eq!(obj["effort"], "e");
+    }
+
+    #[test]
+    fn pending_changes_intent_reset_without_model_or_effort_omits_keys() {
+        let intent = PendingChangesIntent::Reset {
+            model: None,
+            effort: None,
+        };
+        let v = WsMessage::PendingChangesWarning { intent }.to_json();
+        let obj = &v["intent"];
+        assert_eq!(obj["kind"], "reset", "kind must be \"reset\"");
+        assert!(
+            obj.get("model").is_none() || obj["model"].is_null(),
+            "model must be absent when None"
+        );
+        assert!(
+            obj.get("effort").is_none() || obj["effort"].is_null(),
+            "effort must be absent when None"
+        );
+    }
+
+    #[test]
+    fn pending_changes_intent_resume_session_serialises_correctly() {
+        let intent = PendingChangesIntent::ResumeSession {
+            session_dir: "2025-01-01T00-00-00-000-abc".to_owned(),
+        };
+        let v = WsMessage::PendingChangesWarning { intent }.to_json();
+        let obj = &v["intent"];
+        assert_eq!(obj["kind"], "resume_session");
+        assert_eq!(obj["sessionDir"], "2025-01-01T00-00-00-000-abc");
     }
 }

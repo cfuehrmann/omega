@@ -44,7 +44,7 @@ impl Provider for MockProvider {
 
 /// Build an [`AppState`] backed by a [`MockProvider`] suitable for tests.
 fn make_test_state(sessions_root: PathBuf) -> AppState {
-    AppState::new(Arc::new(MockProvider), sessions_root)
+    AppState::new(Arc::new(MockProvider), sessions_root, PathBuf::from("."))
 }
 
 /// Spawn `build_router(state)` on a random local port and return its bound

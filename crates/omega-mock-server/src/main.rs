@@ -84,8 +84,12 @@ async fn main() -> std::io::Result<()> {
             .with_beta("compact-2026-01-12")
             .with_beta("context-management-2025-06-27"),
     );
-    let state =
-        omega_server::AppState::new(provider, args.sessions_root).with_leptos_dir(args.leptos_dir);
+    let state = omega_server::AppState::new(
+        provider,
+        args.sessions_root,
+        std::env::current_dir().unwrap_or_default(),
+    )
+    .with_leptos_dir(args.leptos_dir);
 
     let fake_app = fake_router(script.clone(), Some(history.clone()));
     let ctrl_app = control::router(history, script);

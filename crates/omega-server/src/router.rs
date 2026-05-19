@@ -859,14 +859,11 @@ async fn handle_reset(
     // session and ask the client for confirmation.  The previous active
     // session (if any) is left untouched so "Cancel" in the UI is a true
     // no-op.
-    if !allow_dirty {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        if git_has_pending_changes(&cwd) {
-            let _ = tx.send(WsMessage::PendingChangesWarning {
-                intent: PendingChangesIntent::Reset { model, effort },
-            });
-            return Ok(());
-        }
+    if !allow_dirty && git_has_pending_changes(&state.cwd) {
+        let _ = tx.send(WsMessage::PendingChangesWarning {
+            intent: PendingChangesIntent::Reset { model, effort },
+        });
+        return Ok(());
     }
 
     // Tell any in-flight turn to wind down so the orphan agent doesn't
@@ -921,14 +918,11 @@ async fn handle_resume_session(
     }
 
     // Pre-flight dirty-tree gate — see `handle_reset` for the rationale.
-    if !allow_dirty {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        if git_has_pending_changes(&cwd) {
-            let _ = tx.send(WsMessage::PendingChangesWarning {
-                intent: PendingChangesIntent::ResumeSession { session_dir },
-            });
-            return Ok(());
-        }
+    if !allow_dirty && git_has_pending_changes(&state.cwd) {
+        let _ = tx.send(WsMessage::PendingChangesWarning {
+            intent: PendingChangesIntent::ResumeSession { session_dir },
+        });
+        return Ok(());
     }
 
     // Tell any in-flight turn to wind down so the orphan agent doesn't
@@ -1217,6 +1211,14 @@ pub(crate) async fn list_files_for_completion(prefix: &str, cwd: &Path) -> Vec<S
 
 #[cfg(test)]
 mod tests {
+    // Justification for inline test block: these tests cover serde edge cases
+    // for `ClientFrame` deserialization (e.g. `allow_dirty` defaults to
+    // `false`, unknown discriminator is rejected) that are not exercised by
+    // the WebSocket integration tests in tests/ws.rs.  Pure-function helpers
+    // (`folder_name_to_timestamp`, `should_replay`, `list_files_for_completion`,
+    // `dir_first_then_alpha`) have no observable WS equivalent.  The
+    // `install_ws_tx` / `clear_ws_tx` helpers are internal plumbing without
+    // a direct WS observable.  All are appropriate carve-outs.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
     use super::{ClientFrame, folder_name_to_timestamp};
@@ -1405,7 +1407,11 @@ mod tests {
     }
 
     fn test_state(tmp: &TempDir) -> AppState {
-        AppState::new(Arc::new(EmptyProvider), tmp.path().join("sessions"))
+        AppState::new(
+            Arc::new(EmptyProvider),
+            tmp.path().join("sessions"),
+            tmp.path().to_path_buf(),
+        )
     }
 
     // -----------------------------------------------------------------
@@ -1676,6 +1682,13 @@ pub fn git_has_pending_changes(cwd: &std::path::Path) -> bool {
 
 #[cfg(test)]
 mod git_tests {
+    // Justification for inline test block: `git_has_pending_changes` spawns
+    // a real `git` subprocess against a real on-disk repository.  This is
+    // inherently a unit-level concern — constructing a dirty vs. clean git
+    // repo via WebSocket integration tests would require the integration test
+    // runner itself to be in a git repo whose cleanliness we can control,
+    // which is fragile in CI.  The real-git subprocess approach is the
+    // correct level for this function.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     use super::git_has_pending_changes;
     use std::process::Command;

@@ -82,7 +82,12 @@ async fn main() -> std::io::Result<()> {
         },
     ));
 
-    let state = AppState::new(provider, args.sessions_root).with_leptos_dir(leptos_dir);
+    let state = AppState::new(
+        provider,
+        args.sessions_root,
+        std::env::current_dir().unwrap_or_default(),
+    )
+    .with_leptos_dir(leptos_dir);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port)).await?;
     serve(listener, state).await
 }

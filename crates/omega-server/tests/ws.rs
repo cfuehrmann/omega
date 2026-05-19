@@ -100,7 +100,7 @@ impl Provider for MockProvider {
 // ---------------------------------------------------------------------------
 
 fn make_test_state(provider: Arc<MockProvider>, sessions_root: PathBuf) -> AppState {
-    AppState::new(provider, sessions_root)
+    AppState::new(provider, sessions_root, PathBuf::from("."))
 }
 
 async fn spawn_server(state: AppState) -> SocketAddr {
@@ -1102,5 +1102,117 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
         meta.resumed_from.as_deref(),
         Some(session_b_name),
         "resumed_from must point to B; got {meta:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Dirty-tree gate — reset and resume_session must refuse when the working
+// tree has uncommitted git changes and allow_dirty is not set.
+// ---------------------------------------------------------------------------
+
+/// Initialise a bare git repository in `dir` (init + empty commit) and write
+/// one untracked file to make the working tree dirty.
+fn make_dirty_git_repo(dir: &std::path::Path) {
+    fn git(args: &[&str], cwd: &std::path::Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "t@t.com")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "t@t.com")
+            .status()
+            .expect("git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+    git(&["init", "-b", "main"], dir);
+    git(&["commit", "--allow-empty", "-m", "init"], dir);
+    // Write an untracked file — makes `git status --porcelain` non-empty.
+    std::fs::write(dir.join("dirty.txt"), "dirty").unwrap();
+}
+
+#[tokio::test]
+async fn reset_with_dirty_tree_and_no_allow_dirty_sends_pending_changes_warning() {
+    let tmp = TempDir::new().unwrap();
+    let git_dir = tmp.path().join("repo");
+    std::fs::create_dir_all(&git_dir).unwrap();
+    make_dirty_git_repo(&git_dir);
+
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    // Use the dirty git repo as the server cwd.
+    let state = AppState::new(provider, sessions_root, git_dir.clone());
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    // Initial ready (no session).
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    // Send `reset` without `allowDirty`.
+    send_json(&mut ws, serde_json::json!({ "type": "reset" })).await;
+
+    // The server must reply with pending_changes_warning.
+    let msg = recv_json(&mut ws).await;
+    assert_eq!(
+        msg["type"], "pending_changes_warning",
+        "expected pending_changes_warning, got: {msg}"
+    );
+    assert_eq!(
+        msg["intent"]["kind"], "reset",
+        "intent.kind must be \"reset\"; got: {msg}"
+    );
+
+    // No reset_done or ready must follow (the server did nothing).
+    // We assert by checking that no further message arrives within a short
+    // window — use a short timeout because no message is the success case.
+    let extra = tokio::time::timeout(Duration::from_millis(300), recv_json(&mut ws)).await;
+    assert!(
+        extra.is_err(),
+        "no further message expected after pending_changes_warning, got: {extra:?}"
+    );
+}
+
+#[tokio::test]
+async fn resume_session_with_dirty_tree_and_no_allow_dirty_sends_pending_changes_warning() {
+    let tmp = TempDir::new().unwrap();
+    let git_dir = tmp.path().join("repo");
+    std::fs::create_dir_all(&git_dir).unwrap();
+    make_dirty_git_repo(&git_dir);
+
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    let state = AppState::new(provider, sessions_root, git_dir.clone());
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    let session_dir = "2025-01-01T00-00-00-000-abcdef12";
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "resume_session", "sessionDir": session_dir }),
+    )
+    .await;
+
+    // Must receive pending_changes_warning with resumeSession intent.
+    let msg = recv_json(&mut ws).await;
+    assert_eq!(
+        msg["type"], "pending_changes_warning",
+        "expected pending_changes_warning, got: {msg}"
+    );
+    assert_eq!(
+        msg["intent"]["kind"], "resume_session",
+        "intent.kind must be \"resume_session\"; got: {msg}"
+    );
+    assert_eq!(
+        msg["intent"]["sessionDir"], session_dir,
+        "intent.sessionDir must match what was sent; got: {msg}"
+    );
+
+    // No session_info replacement must follow.
+    let extra = tokio::time::timeout(Duration::from_millis(300), recv_json(&mut ws)).await;
+    assert!(
+        extra.is_err(),
+        "no further message expected after pending_changes_warning, got: {extra:?}"
     );
 }
