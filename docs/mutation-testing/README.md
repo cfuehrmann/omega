@@ -22,9 +22,9 @@
 | `omega-store` | 65 | 39 | 0 | 1 | 25 | 98% ✅ |
 | `omega-core` | 108 | 65 | 0 | 2 | 41 | 97% ✅ |
 | `omega-server` | 110 | 36 | **3** | 0 | 71 | 92% |
-| `omega-agent` | 175 | 60 | **7** | 0 | 108 | 90% |
+| `omega-agent` | 172 | 64 | 0 | 0 | 108 | 100% ✅ |
 | `omega-tools` | 267 | 145 | 0 | 5 | 117 | 100% ✅ |
-| **Total** | **750** | **362** | **11** | **8** | **369** | **97%** |
+| **Total** | **747** | **366** | **4** | **8** | **369** | **99%** |
 
 Survivor details live in each crate's `survivors.md`. Crates marked ✅ have no survivors.
 
@@ -35,7 +35,7 @@ Survivor details live in each crate's `survivors.md`. Crates marked ✅ have no 
 | Session | Crate(s) | Survivors | Status |
 |---------|----------|-----------|--------|
 | 1 | `omega-tools` | 16 | ✅ Done — 0 missed, 145 caught (267 total). Also fixed a latent `utf8_boundary_forward` bug discovered during migration. |
-| 2 | `omega-agent` | 7 | Pending — details in `omega-agent/survivors.md` |
+| 2 | `omega-agent` | 7 | ✅ Done — 0 missed, 64 caught (172 total). Inline test audit; 7 survivors killed; 4 `#[mutants::skip]` annotations confirmed equivalent. |
 | 3 | `omega-server` + `omega-types` | 3 + 1 | Pending — details in `omega-server/survivors.md` |
 
 ---
