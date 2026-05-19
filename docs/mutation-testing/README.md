@@ -2,6 +2,7 @@
 
 **Tool:** cargo-mutants 26.0.0 · **Flags:** `-j1 --no-shuffle`  
 **Last sweep:** 2026-05-19 · All crates at 100% kill rate · No survivors.
+`omega-store` re-run 2026-05-19 after e2e test migration (91 mutants, was 65).
 
 ## Excluded crates
 
@@ -19,14 +20,15 @@
 |-------|---------|--------|--------|---------|----------|-----------|
 | `omega-types` | 5 | 4 | 0 | 0 | 0 | 100% ✅ |
 | `omega-cli` | 20 | 13 | 0 | 0 | 7 | 100% ✅ |
-| `omega-store` | 65 | 39 | 0 | 1 | 25 | 100% ✅ |
+| `omega-store` | 91 | 61 | 0 | 5 | 25 | 100% ✅ |
 | `omega-core` | 108 | 65 | 0 | 2 | 41 | 100% ✅ |
 | `omega-server` | 112 | 25 | 0 | 17 | 71 | 100% ✅ |
 | `omega-agent` | 172 | 64 | 0 | 0 | 108 | 100% ✅ |
 | `omega-tools` | 267 | 145 | 0 | 5 | 117 | 100% ✅ |
-| **Total** | **749** | **355** | **0** | **25** | **369** | **100% ✅** |
+| **Total** | **775** | **377** | **0** | **29** | **369** | **100% ✅** |
 
-> `omega-server` and `omega-types` were re-run together on 2026-05-19 (117 combined); the per-crate split above is estimated from that combined result.
+> `omega-server` and `omega-types` were re-run together on 2026-05-19 (117 combined); the per-crate split above is estimated from that combined result.  
+> `omega-store` was re-run on 2026-05-19 after migrating `strip_jsonc_comments` inline tests to e2e integration tests.
 
 ---
 
@@ -36,7 +38,11 @@ These timed out rather than being caught cleanly. Worth noting in case they beco
 
 | Crate | Location | Mutation |
 |-------|----------|----------|
+| `omega-store` | `session_dir.rs:216:19` | `strip_jsonc_comments` — `-=` |
 | `omega-store` | `session_dir.rs:216:19` | `strip_jsonc_comments` — `*=` |
+| `omega-store` | `session_dir.rs:224:19` | `strip_jsonc_comments` — `*=` |
+| `omega-store` | `session_dir.rs:238:15` | `strip_jsonc_comments` — `-=` |
+| `omega-store` | `session_dir.rs:238:15` | `strip_jsonc_comments` — `*=` |
 | `omega-core` | `retry.rs:134:46` | `retry_loop` — `*` |
 | `omega-core` | `retry.rs:135:40` | `retry_loop` — `&&` |
 | `omega-tools` | `output_cleaner.rs:72:15` | `crlf_normalize` — `-=` |

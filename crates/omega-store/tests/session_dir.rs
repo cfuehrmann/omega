@@ -283,13 +283,20 @@ async fn block_comment_at_position_zero_is_stripped() {
 /// `/*` block comment starting past the midpoint of the file.
 ///
 /// Targets the `i += 2` for block comments.  A `+= to *=` mutation sets `i`
-/// far past `*/`, consuming part of the JSON body and leaving invalid JSON.
+/// to `2 * p` where `p` is the position of `/*`.  When `2 * p` overshoots
+/// the end of the string the inner scan loop never runs, `i += 2` pushes
+/// past `len`, and the outer loop exits early — truncating the closing `}`.
+///
+/// The comment `/* */` is deliberately short so that `2 * 13 = 26` exceeds
+/// the total length of 19, making the mutant lose the `}` and produce
+/// invalid JSON (returns default instead of name = "bpm").
 #[tokio::test]
 async fn block_comment_past_midpoint_is_stripped() {
     let root = temp_root();
-    // `/*` starts at position 14 (after `{"name":"bpm"`).
-    // After stripping: `{"name":"bpm"}` → name = "bpm".
-    let content = "{\"name\":\"bpm\"/* mid-comment */}";
+    // `/*` at position 13; total length 19; short comment so 2*13 > len.
+    // Correct: strips comment → `{"name":"bpm"}` → name = "bpm".
+    // `+= to *=` mutant: i jumps to 26 > 19, outer loop exits → truncated.
+    let content = "{\"name\":\"bpm\"/* */}";
     std::fs::write(root.path().join("session.jsonc"), content).unwrap();
     let meta = read_session_metadata(root.path()).await;
     assert_eq!(meta.name.as_deref(), Some("bpm"));
