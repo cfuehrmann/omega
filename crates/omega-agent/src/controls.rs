@@ -345,6 +345,15 @@ fn now_iso() -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    //! Inline carve-out tests for `controls.rs`.
+    //!
+    //! Justification for carve-out: `ControlHandle` tests require direct access
+    //! to `lock_state()` (a `pub(crate)` method) to inspect and manipulate the
+    //! internal `ControlState` mutex.  These state-machine transitions cannot be
+    //! provoked or observed through `Agent::send_message` / `MockProvider`
+    //! without races and heroic timing — the suspend/continue/cancel flags are
+    //! consumed inside the agent loop before any event is emitted.
+
     use super::*;
     use omega_store::EventStore;
     use tempfile::TempDir;

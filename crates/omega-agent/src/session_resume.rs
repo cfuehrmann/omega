@@ -223,13 +223,18 @@ fn project_turn(turn: &Turn, index: usize) -> String {
             OmegaEvent::TextBlock(e) => {
                 pending_text.push(e.text.clone());
             }
-            OmegaEvent::LlmResponseEnded(_) if !pending_text.is_empty() => {
+            OmegaEvent::LlmResponseEnded(_) => {
+                // Flush unconditionally: if pending_text is empty,
+                // join("").trim() is "" and the inner guard suppresses
+                // the push. Removing the outer is_empty() guard
+                // eliminates the equivalent-mutant problem for that guard
+                // (cargo-mutants § session_resume.rs survivors, guard line).
                 let joined = pending_text.join("");
+                pending_text.clear();
                 let text = joined.trim();
                 if !text.is_empty() {
                     lines.push(format!("\nAgent: {text}"));
                 }
-                pending_text.clear();
             }
             OmegaEvent::ToolCall(e) => {
                 tool_calls.insert(e.tool_call_id.clone(), (e.name.clone(), e.input.clone()));
@@ -264,7 +269,11 @@ fn project_turn(turn: &Turn, index: usize) -> String {
     }
 
     // Flush any text not followed by LlmResponseEnded (e.g. interrupted turns).
-    if !pending_text.is_empty() {
+    // Outer guard removed: join("").trim() on an empty vec is "", which the
+    // inner guard already suppresses. Removing the outer guard eliminates the
+    // equivalent-mutant problem (cargo-mutants § session_resume.rs survivors,
+    // flush guard line).
+    {
         let joined = pending_text.join("");
         let text = joined.trim();
         if !text.is_empty() {
@@ -1398,6 +1407,84 @@ mod tests {
         assert!(
             !result.contains("\nAgent: "),
             "whitespace-only TextBlock must not emit a stray Agent line: {result:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // project_turn: in-loop LlmResponseEnded guard (session_resume.rs guard
+    // line) — kills the `false` and `delete !` mutations.
+    //
+    // With the `false` or `delete !` mutation the in-loop arm is never taken,
+    // so `pending_text` is never cleared.  When a second TextBlock follows a
+    // first LlmResponseEnded in the same turn (tool-call round), the mutant
+    // concatenates both chunks instead of emitting two separate Agent lines.
+    // The outer guard has been removed in favour of relying on the inner
+    // `!text.is_empty()` guard; the tests below target that inner guard.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn project_turn_llm_response_ended_without_text_no_agent_line() {
+        // LlmResponseEnded arrives with no preceding TextBlock events.
+        // The inner `!text.is_empty()` guard must suppress the push.
+        // Kills the `replace !text.is_empty() with true` mutation in the
+        // in-loop flush block (would produce a spurious empty "Agent: " line).
+        let evs = vec![user_msg("q"), llm_response_ended(), turn_end()];
+        let result = extract_resumption_basis(&evs);
+        assert!(
+            !result.contains("Agent:"),
+            "LlmResponseEnded without text must not produce an Agent line: {result:?}"
+        );
+    }
+
+    #[test]
+    fn project_turn_llm_response_ended_with_text_emits_agent_line() {
+        // LlmResponseEnded arrives after TextBlock events.
+        // The inner `!text.is_empty()` guard must allow the push.
+        // Kills the `replace !text.is_empty() with false` / `delete !`
+        // mutations in the in-loop flush block.
+        let evs = vec![
+            user_msg("q"),
+            text_block("hello world"),
+            llm_response_ended(),
+            turn_end(),
+        ];
+        let result = extract_resumption_basis(&evs);
+        assert!(
+            result.contains("Agent: hello world"),
+            "TextBlock before LlmResponseEnded must produce an Agent line: {result:?}"
+        );
+    }
+
+    #[test]
+    fn project_turn_interrupted_text_appears_via_flush() {
+        // Turn ends with TextBlock events but no LlmResponseEnded.
+        // The post-loop flush must emit the accumulated text.
+        // Kills the `replace !text.is_empty() with false` / `delete !`
+        // mutations in the post-loop flush block.
+        let evs = vec![
+            user_msg("q"),
+            text_block("partial response"),
+            turn_interrupted(None),
+        ];
+        let result = extract_resumption_basis(&evs);
+        assert!(
+            result.contains("Agent: partial response"),
+            "interrupted turn with text must flush via post-loop path: {result:?}"
+        );
+    }
+
+    #[test]
+    fn project_turn_empty_sequence_no_blank_agent_line() {
+        // Empty event sequence (no TextBlock at all, no LlmResponseEnded).
+        // The post-loop flush fires with empty pending_text;
+        // join("").trim() == "" so no Agent line must appear.
+        // Kills the `replace !text.is_empty() with true` mutation in the
+        // post-loop flush block (would produce a spurious empty "Agent: " line).
+        let evs: Vec<OmegaEvent> = vec![user_msg("q"), turn_end()];
+        let result = extract_resumption_basis(&evs);
+        assert!(
+            !result.contains("Agent:"),
+            "empty sequence must not produce a blank Agent line: {result:?}"
         );
     }
 }

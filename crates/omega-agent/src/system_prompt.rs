@@ -423,6 +423,27 @@ against the spec.",
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
+    //! Inline carve-out tests for `system_prompt.rs`.
+    //!
+    //! Justification for carve-out:
+    //!
+    //! * `build_system_blocks`, `discover_instruction_files_with_env`,
+    //!   `repo_agents_md_path`, `global_agents_md_path_from_env` are all pure
+    //!   (or env-injected-pure) functions that would require boilerplate agent
+    //!   setup + captured `LlmRequest` inspection to test through
+    //!   `Agent::send_message` / `MockProvider`.  The inline tests are simpler
+    //!   and more targeted.
+    //!
+    //! * Discovery tests require `tempdir` + `git init` which is already done
+    //!   here.  Routing them through the `MockProvider` surface would require the
+    //!   same disk setup plus agent wiring, adding setup with no benefit.
+    //!
+    //! * `global_agents_md_path` is tested directly (not via `_from_env`)
+    //!   because it calls `std::env::var("HOME")` internally; a direct call in
+    //!   the real CI environment is the simplest way to pin the two mutations
+    //!   (return `None`, return `Some(Default::default())`) identified in
+    //!   docs/mutation-testing/omega-agent/survivors.md.
+
     use super::*;
     use std::process::Command;
 
@@ -650,5 +671,35 @@ mod tests {
         let files =
             discover_instruction_files_with_env(repo.path(), Some(xdg.path().as_os_str()), None);
         assert!(files.is_empty());
+    }
+
+    // ---- global_agents_md_path (real env) ----------------------------
+
+    #[test]
+    fn global_agents_md_path_is_some_in_real_env() {
+        // `global_agents_md_path` reads $XDG_CONFIG_HOME or $HOME from the
+        // real environment.  In CI, $HOME is always set, so the function must
+        // return `Some(_)`.
+        //
+        // Kills two mutants identified in
+        // docs/mutation-testing/omega-agent/survivors.md:
+        //   * "replace body with `None`" — obvious failure
+        //   * "replace body with `Some(Default::default())`" — would return
+        //     `Some(PathBuf::new())` (empty path), which does not end with
+        //     `omega/AGENTS.md`.
+        //
+        // We do NOT mutate $HOME or $XDG_CONFIG_HOME; we call
+        // `global_agents_md_path()` (not `_from_env`) so the function reads
+        // the live environment variables itself.
+        let path = global_agents_md_path();
+        assert!(
+            path.is_some(),
+            "global_agents_md_path() must return Some(_) when $HOME is set (CI always has $HOME)"
+        );
+        let p = path.unwrap();
+        assert!(
+            p.ends_with("omega/AGENTS.md"),
+            "path must end with omega/AGENTS.md, got {p:?}"
+        );
     }
 }

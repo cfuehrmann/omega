@@ -46,6 +46,17 @@ pub fn is_context_too_long(err: &LlmError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    //! Inline carve-out tests for `error_classify.rs`.
+    //!
+    //! Justification for carve-out: `is_invalid_tool_json` and
+    //! `is_context_too_long` both pattern-match on `LlmError` enum variants.
+    //! Testing these through `Agent::send_message` / `MockProvider` would
+    //! require the `MockProvider` to *return* a specific `LlmError` variant and
+    //! then asserting on a downstream side-effect (e.g. an `agent_error` event),
+    //! which is far more setup than simply calling the predicate directly.  The
+    //! matching strings are stable public surfaces of the Anthropic API; they
+    //! are documented in this file for exactly that reason.
+
     use super::*;
 
     #[test]

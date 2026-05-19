@@ -55,6 +55,15 @@ pub fn cap_effort_for_model<'a>(effort: &'a str, model: &str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
+    //! Inline carve-out tests for `config.rs`.
+    //!
+    //! Justification for carve-out: `max_output_tokens_for_model` and
+    //! `cap_effort_for_model` are pure functions that look up constants by
+    //! model-name string.  Testing them through `Agent::send_message` /
+    //! `MockProvider` would require capturing the `max_tokens` field of
+    //! `LlmRequest` for each model variant, which adds substantial agent
+    //! wiring.  The inline tests are simpler and pin the constants directly.
+
     use super::*;
 
     #[test]

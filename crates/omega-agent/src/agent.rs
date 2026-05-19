@@ -2213,14 +2213,53 @@ fn elide_request(req: &LlmRequest) -> Value {
 }
 
 #[cfg(test)]
+mod gen_call_id_tests {
+    //! Inline carve-out tests for [`gen_call_id`].
+    //!
+    //! Justification for carve-out: `gen_call_id` is a private helper whose
+    //! output is embedded in `LlmCallEvent.tool_call_id` and tee-log filenames.
+    //! Asserting the exact length/alphabet via the e2e surface (`MockProvider`)
+    //! would require parsing event payloads from a full agent run, adding
+    //! substantial setup for a property that is far simpler to pin inline.
+    //! The uniqueness property also relies on randomness, which the e2e surface
+    //! cannot control.
+
+    use super::gen_call_id;
+
+    #[test]
+    fn gen_call_id_returns_exactly_8_hex_chars() {
+        let id = gen_call_id();
+        assert_eq!(id.len(), 8, "expected 8 chars, got {id:?}");
+        assert!(
+            id.chars().all(|c| c.is_ascii_hexdigit()),
+            "non-hex character in {id:?}"
+        );
+        // lowercase only — `{b:02x}` produces lowercase
+        assert_eq!(id, id.to_ascii_lowercase(), "must be lowercase hex: {id:?}");
+    }
+
+    #[test]
+    fn gen_call_id_successive_calls_differ() {
+        // With 4 random bytes per call the probability of collision in two
+        // successive calls is 1 / 2^32, which is negligible in CI.
+        let a = gen_call_id();
+        let b = gen_call_id();
+        assert_ne!(
+            a, b,
+            "two successive gen_call_id() calls produced the same value: {a:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod elide_request_tests {
     //! Inline carve-out tests for [`elide_request`].
     //!
-    //! `elide_request` is a private pure function whose pluralisation
-    //! and empty-tools branches are not directly observable downstream
-    //! (CLI/server e2e tests don't snapshot `LlmCall.request_summary`).
-    //! These tests pin the four branches that survive `cargo mutants
-    //! -p omega-agent --test-workspace true` otherwise.
+    //! Justification for carve-out: `elide_request` is a private pure function
+    //! whose pluralisation and empty-tools branches are not directly observable
+    //! downstream (CLI/server e2e tests don't snapshot
+    //! `LlmCall.request_summary`).  These tests pin the branches that survive
+    //! `cargo mutants -p omega-agent` otherwise.
 
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
@@ -2366,6 +2405,14 @@ mod elide_request_tests {
 mod abandonment_closer_tests {
     //! Inline tests pinning [`make_abandonment_closers`]'s emission contract
     //! (SCHEMA-8 Phase 3 commit 3d).
+    //!
+    //! Justification for carve-out: `make_abandonment_closers` is a private
+    //! function exercised at mid-stream retry time.  The integration tests in
+    //! `tests/internal.rs` exercise only the streaming-loop wiring around this
+    //! helper; the per-slot emission decisions (text/thinking/tool-use empty vs.
+    //! non-empty, sealed vs. unsealed) are not observable through
+    //! `Agent::send_message` / `MockProvider` without constructing specific
+    //! slot maps that the real loop cannot easily produce.
     //!
     //! The integration tests in `tests/internal.rs` exercise only the
     //! streaming-loop wiring around this helper, not the per-slot emission
