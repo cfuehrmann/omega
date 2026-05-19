@@ -116,37 +116,9 @@ mod tests {
     use omega_types::{ContentBlock, Role};
     use serde_json::json;
 
-    // T-LEN — length-12 hashes are now unambiguously rejected.
-    #[test]
-    fn hash_from_str_rejects_12_char() {
-        assert!(hash_from_str("0123456789ab").is_err());
-    }
-
-    #[test]
-    fn hash_from_str_accepts_valid_16() {
-        let h = hash_from_str("0123456789abcdef").unwrap();
-        assert_eq!(h.as_ref(), "0123456789abcdef");
-    }
-
-    #[test]
-    fn hash_from_str_rejects_uppercase() {
-        assert!(hash_from_str("0123456789ABCDEF").is_err());
-    }
-
-    #[test]
-    fn hash_from_str_rejects_short() {
-        assert!(hash_from_str("0123456789abcde").is_err());
-    }
-
-    #[test]
-    fn hash_from_str_rejects_long() {
-        assert!(hash_from_str("0123456789abcdef0").is_err());
-    }
-
-    #[test]
-    fn hash_from_str_rejects_non_hex() {
-        assert!(hash_from_str("0123456789abcdez").is_err());
-    }
+    // hash_from_str validation tests live in tests/context_store.rs (the
+    // public-API integration test file).  Only tests that cannot be expressed
+    // through the store's file-I/O surface are kept here.
 
     #[test]
     fn into_string_works() {

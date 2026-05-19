@@ -186,6 +186,154 @@ async fn write_omits_none_fields() {
 // update_session_metadata
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// strip_jsonc boundary scenarios (via read_session_metadata)
+//
+// strip_jsonc_comments is private; every edge case is exercised by writing a
+// real session.jsonc and calling read_session_metadata.  Each test documents
+// which specific mutation it targets.
+// ---------------------------------------------------------------------------
+
+/// Lone `/` at the end of the file must pass through unchanged — it is NOT
+/// the start of a `//` or `/*` sequence.
+///
+/// Targets the outer `i + 1 < len` guards (lines ~210 and ~218).  A `< to
+/// <=` or `+ to *` mutation makes the guard evaluate `bytes[len]` (OOB panic)
+/// when `i` is the last character.
+#[tokio::test]
+async fn lone_slash_at_end_of_file_does_not_corrupt_output() {
+    let root = temp_root();
+    // The file ends with a bare `/`; strip_jsonc must copy it through.
+    // The result is not valid JSON, so read_session_metadata returns default —
+    // but the key assertion is that no OOB panic occurs.
+    std::fs::write(root.path().join("session.jsonc"), "{\"name\":\"ok\"}/").unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(
+        meta,
+        SessionMetadata::default(),
+        "trailing lone slash makes JSON invalid; default expected"
+    );
+}
+
+/// `//` at byte position 0 (very first character of the file).
+///
+/// Targets the `i += 2` instruction for single-line comments.  A `+= to -=`
+/// mutation underflows `usize` when `i == 0`.
+#[tokio::test]
+async fn single_line_comment_at_position_zero_is_stripped() {
+    let root = temp_root();
+    let content = "// leading comment\n{\"name\":\"at-zero\"}";
+    std::fs::write(root.path().join("session.jsonc"), content).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("at-zero"));
+}
+
+/// `//` comment at the very end of the file with no trailing newline.
+///
+/// Targets the inner `while i < len && bytes[i] != b'\n'` loop.  A `< to
+/// <=` mutation makes the loop body access `bytes[len]` (OOB panic) when
+/// the file ends without a newline.
+#[tokio::test]
+async fn single_line_comment_no_trailing_newline_is_stripped() {
+    let root = temp_root();
+    // No `\n` after the comment.
+    let content = "{\"name\":\"no-nl\"}// trailing comment, no newline";
+    std::fs::write(root.path().join("session.jsonc"), content.as_bytes()).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("no-nl"));
+}
+
+/// `//` comment starting past the midpoint of the file.
+///
+/// Targets the `i += 2` instruction.  A `+= to *=` mutation sets `i` to
+/// `6 * 2 = 12`, which is past the closing newline at position 11, so the
+/// inner skip loop consumes `}` instead of stopping at the newline — leaving
+/// invalid JSON (parse returns default).
+#[tokio::test]
+async fn single_line_comment_past_midpoint_is_stripped() {
+    let root = temp_root();
+    // `//` starts at byte 14 (after `{"name":"pm"`).
+    // After stripping: `{"name":"pm"\n}` → name = "pm".
+    let content = "{\"name\":\"pm\"}// xx\n}";
+    std::fs::write(root.path().join("session.jsonc"), content).unwrap();
+    // Wait — the `}` before `//` already closes the object; the second `}`
+    // after the newline is extra but tolerated by serde_json's default
+    // deserialiser.  We just need to confirm stripping succeeds and name
+    // is readable.
+    // Use a cleaner pattern instead:
+    let content2 = "{\"name\":\"pm-ok\"// side note\n}";
+    std::fs::write(root.path().join("session.jsonc"), content2).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("pm-ok"));
+}
+
+/// `/*` block comment at byte position 0.
+///
+/// Targets the `i += 2` for block comments.  A `+= to -=` mutation
+/// underflows `usize` when `i == 0`.
+#[tokio::test]
+async fn block_comment_at_position_zero_is_stripped() {
+    let root = temp_root();
+    let content = "/* leading block comment */ {\"name\":\"blk-zero\"}";
+    std::fs::write(root.path().join("session.jsonc"), content).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("blk-zero"));
+}
+
+/// `/*` block comment starting past the midpoint of the file.
+///
+/// Targets the `i += 2` for block comments.  A `+= to *=` mutation sets `i`
+/// far past `*/`, consuming part of the JSON body and leaving invalid JSON.
+#[tokio::test]
+async fn block_comment_past_midpoint_is_stripped() {
+    let root = temp_root();
+    // `/*` starts at position 14 (after `{"name":"bpm"`).
+    // After stripping: `{"name":"bpm"}` → name = "bpm".
+    let content = "{\"name\":\"bpm\"/* mid-comment */}";
+    std::fs::write(root.path().join("session.jsonc"), content).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("bpm"));
+}
+
+/// Block comment containing a `*` NOT followed by `/`.
+///
+/// Targets the inner loop's `&&` condition.  A `&&` to `||` mutation makes
+/// ANY `*` close the comment — leaking ` b */` into the JSON, which breaks
+/// parsing.
+#[tokio::test]
+async fn block_comment_star_not_followed_by_slash_is_stripped() {
+    let root = temp_root();
+    // The value is the text AFTER the block comment.  The comment contains
+    // a `*` that is NOT immediately followed by `/`, so the correct code
+    // keeps scanning.
+    let content = "{\"name\":/* a* b */\"star-ok\"}";
+    std::fs::write(root.path().join("session.jsonc"), content).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("star-ok"));
+}
+
+/// Unclosed block comment ending with `*` (no matching `*/`).
+///
+/// Targets ALL four block-comment inner-loop mutations (`< to <=`,
+/// `+ to -`, `+ to *`, `&& to ||`).  The comment ends with `*` so that the
+/// last iteration of the inner loop has `bytes[i] == b'*'`, making the second
+/// operand `bytes[i + 1]` non-trivially evaluated.  Each mutation widens the
+/// loop condition enough to attempt `bytes[len]` (OOB panic).
+#[tokio::test]
+async fn unclosed_block_comment_at_eof_does_not_panic() {
+    let root = temp_root();
+    // Everything before `/*` is a valid JSON object.
+    // The block comment is never closed; strip_jsonc discards it.
+    let content = "{\"name\":\"close-star\"}/* unclosed*";
+    std::fs::write(root.path().join("session.jsonc"), content).unwrap();
+    let meta = read_session_metadata(root.path()).await;
+    assert_eq!(meta.name.as_deref(), Some("close-star"));
+}
+
+// ---------------------------------------------------------------------------
+// update_session_metadata
+// ---------------------------------------------------------------------------
+
 #[tokio::test]
 async fn update_session_metadata_merges_patch() {
     let root = temp_root();
