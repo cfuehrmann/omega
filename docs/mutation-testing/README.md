@@ -1,8 +1,9 @@
 # Mutation Testing
 
 **Tool:** cargo-mutants 26.0.0 · **Flags:** `-j1 --no-shuffle`  
-**Last sweep:** 2026-05-20 · All crates at 100% kill rate · No survivors.
-`omega-store` re-run 2026-05-19 after e2e test migration (91 mutants, was 65).
+**Last sweep:** 2026-05-20 · All crates at 100% kill rate · No survivors.  
+`omega-store` re-run 2026-05-19 after e2e test migration (91 mutants, was 65).  
+`omega-cli` re-run 2026-05-20 after inline-test migration (20 mutants; count unchanged — private-fn tests don't affect production mutation surface).
 
 ## Excluded crates
 
