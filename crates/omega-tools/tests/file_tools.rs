@@ -13,6 +13,10 @@
 
 use serde_json::json;
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 async fn exec(name: &str, input: serde_json::Value) -> Result<String, String> {
     let result = omega_tools::execute_tool(name, input, None, None).await;
     if result.is_error {
@@ -79,6 +83,152 @@ async fn read_file_continuation_message() {
 async fn read_file_missing_returns_error() {
     let result = exec("read_file", json!({ "path": "/no/such/path.txt" })).await;
     assert!(result.is_err(), "expected error for missing file");
+}
+
+// ---------------------------------------------------------------------------
+// read_file — system-prompt guard
+//
+// These tests exercise the pre-dispatch hook in `execute_tool` that
+// short-circuits `read_file` when the requested file is already embedded in
+// the system prompt.  They use a real `ToolCtx` (with `system_prompt_paths`
+// populated) so they go through the full `execute_tool` dispatch path and
+// are suitable as the primary target for *targeted mutation testing*:
+//
+//   cargo mutants -p omega-tools --file "src/lib.rs"
+//
+// Only `src/lib.rs` is mutated; the fast omega-tools test suite (no network,
+// no subprocess) catches every surviving mutant quickly.
+// ---------------------------------------------------------------------------
+
+/// Build a `ToolCtx` whose `system_prompt_paths` contains the canonical form
+/// of `protected`.  `cache_dir` is set to `protected`'s parent so the ctx is
+/// structurally valid (guard tests don't tee output, so the exact dir is
+/// irrelevant).
+fn ctx_protecting(protected: &std::path::Path) -> omega_tools::ToolCtx {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    let mut paths = HashSet::new();
+    paths.insert(protected.canonicalize().expect("canonicalize"));
+    omega_tools::ToolCtx {
+        cache_dir: protected.parent().expect("parent").to_path_buf(),
+        tool_call_id: "guard-test".to_owned(),
+        system_prompt_paths: Arc::new(paths),
+    }
+}
+
+/// When a file's canonical path is in `system_prompt_paths`, `read_file`
+/// must be short-circuited: `is_error` is `false` and the content mentions
+/// "system prompt".
+#[tokio::test]
+async fn read_file_blocked_when_path_in_system_prompt_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("AGENTS.md");
+    std::fs::write(&file, "# secret content").unwrap();
+
+    let ctx = ctx_protecting(&file);
+    let result = omega_tools::execute_tool(
+        "read_file",
+        json!({ "path": file.to_str().unwrap() }),
+        None,
+        Some(&ctx),
+    )
+    .await;
+
+    assert!(
+        !result.is_error,
+        "block should not surface as an error; got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("system prompt"),
+        "expected \"system prompt\" in block message; got: {}",
+        result.content
+    );
+    // The file's actual content must NOT appear in the response.
+    assert!(
+        !result.content.contains("secret content"),
+        "file content must not leak through the guard; got: {}",
+        result.content
+    );
+}
+
+/// When `ctx` is `None` (e.g. a unit test calling `execute_tool` directly
+/// without a session), the guard is inactive and the file is read normally.
+#[tokio::test]
+async fn read_file_not_blocked_when_ctx_is_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("data.txt");
+    std::fs::write(&file, "hello from disk").unwrap();
+
+    let result = omega_tools::execute_tool(
+        "read_file",
+        json!({ "path": file.to_str().unwrap() }),
+        None,
+        None,
+    )
+    .await;
+
+    assert!(!result.is_error);
+    assert!(result.content.contains("hello from disk"));
+}
+
+/// When the protected set is non-empty but contains a *different* file, the
+/// requested file is read normally.
+#[tokio::test]
+async fn read_file_not_blocked_when_different_path_is_protected() {
+    let dir = tempfile::tempdir().unwrap();
+    let protected = dir.path().join("AGENTS.md");
+    let other = dir.path().join("other.txt");
+    std::fs::write(&protected, "protected").unwrap();
+    std::fs::write(&other, "other content").unwrap();
+
+    let ctx = ctx_protecting(&protected);
+    let result = omega_tools::execute_tool(
+        "read_file",
+        json!({ "path": other.to_str().unwrap() }),
+        None,
+        Some(&ctx),
+    )
+    .await;
+
+    assert!(!result.is_error);
+    assert!(
+        result.content.contains("other content"),
+        "unprotected file should be readable; got: {}",
+        result.content
+    );
+}
+
+/// The guard must match via `canonicalize`, so a path that resolves to the
+/// same inode as a protected path (e.g. through a symlink) is also blocked.
+#[tokio::test]
+async fn read_file_blocked_via_symlink_to_protected_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("AGENTS.md");
+    let link = dir.path().join("link_to_agents.md");
+    std::fs::write(&real, "real content").unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    // Protect via the *real* path; read via the *symlink*.
+    let ctx = ctx_protecting(&real);
+    let result = omega_tools::execute_tool(
+        "read_file",
+        json!({ "path": link.to_str().unwrap() }),
+        None,
+        Some(&ctx),
+    )
+    .await;
+
+    assert!(
+        !result.is_error,
+        "symlink to protected file should be blocked, not errored; got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("system prompt"),
+        "expected block message; got: {}",
+        result.content
+    );
 }
 
 // ---------------------------------------------------------------------------

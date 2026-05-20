@@ -33,7 +33,7 @@ pub use tool_ctx::ToolCtx;
 /// `content` is the string the agent feeds back to the LLM as the
 /// `tool_result` block content.  Stderr-style errors are NOT a separate
 /// channel: when `is_error` is true, `content` carries the error message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolResult {
     pub content: String,
     pub is_error: bool,
@@ -57,6 +57,20 @@ impl ToolResult {
     }
 }
 
+/// Returns `true` when `path_str` canonicalises to a path already embedded
+/// in the system prompt.
+///
+/// Extracted from [`execute_tool`] so cargo-mutants can generate the
+/// `→ true` / `→ false` body mutations.  Run targeted mutation testing with
+/// `just mutants-system-prompt-guard` (which passes `--cap-lints=true` so
+/// that the unused-parameter warning produced by those mutations does not
+/// prevent compilation).
+fn in_system_prompt(path_str: &str, paths: &std::collections::HashSet<std::path::PathBuf>) -> bool {
+    std::path::Path::new(path_str)
+        .canonicalize()
+        .is_ok_and(|p| paths.contains(&p))
+}
+
 /// Dispatch by tool name. Unknown names produce an error result so the
 /// agent never sees a panic on a misbehaving model.
 ///
@@ -66,6 +80,14 @@ impl ToolResult {
 /// `ctx` carries the session's cache directory so tools can tee their output
 /// to the session tree. Pass `None` only in unit tests; production code
 /// always provides a `ToolCtx` constructed from `AgentConfig::session_dir`.
+///
+/// ## System-prompt guard
+///
+/// Before dispatching `read_file`, `execute_tool` checks whether the
+/// requested path is already embedded in the system prompt (via
+/// [`ToolCtx::system_prompt_paths`]). If so it returns a short
+/// `ToolResult::ok` message immediately — the file content is already
+/// present and the round-trip is unnecessary.
 pub async fn execute_tool(
     name: &str,
     input: Value,
@@ -73,7 +95,17 @@ pub async fn execute_tool(
     ctx: Option<&ToolCtx>,
 ) -> ToolResult {
     let res: Result<String, String> = match name {
-        "read_file" => tools::read_file::execute(input, cancel).await,
+        "read_file" => {
+            if let (Some(ctx), Some(path_str)) = (ctx, input["path"].as_str())
+                && in_system_prompt(path_str, &ctx.system_prompt_paths)
+            {
+                return ToolResult::ok(
+                    "This file is already included in your system prompt \
+                     and is available there — no tool call needed.",
+                );
+            }
+            tools::read_file::execute(input, cancel).await
+        }
         "write_file" => tools::write_file::execute(input, cancel).await,
         "edit_file" => tools::edit_file::execute(input, cancel).await,
         "list_files" => tools::list_files::execute(input, cancel).await,

@@ -276,11 +276,9 @@ You are an expert assistant operating inside Omega, a software engineering agent
 When you have no prior context about the project structure, check manifest
 files (e.g. `Cargo.toml`, `package.json`, `*.csproj`, `pyproject.toml`) to
 learn the stack. Project-specific conventions are in the attached `AGENTS.md`
-blocks (if any) — do not search the filesystem for them.
-
-**`AGENTS.md` is already injected into this system prompt.** Reading it with
-a tool call (`read_file`, `find_files`, etc.) is always wrong — the content
-is already here.
+blocks (if any) — do not search the filesystem for them. Any file listed as
+`Instructions from: <path>` is already present here; a `read_file` call for
+it is unnecessary and will be blocked.
 
 ## Tools
 

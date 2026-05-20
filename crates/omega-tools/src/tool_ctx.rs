@@ -1,10 +1,14 @@
 //! [`ToolCtx`] — session-scoped context threaded from the agent loop into
 //! each tool execution.
 //!
-//! The sole purpose of `ToolCtx` today is to carry the session's
-//! `cache_dir` so that every tee log and download cache lands inside the
-//! session directory tree rather than in `$TMPDIR` or the current working
-//! directory.
+//! `ToolCtx` carries:
+//! * `cache_dir` — so every tee log / download cache lands inside the
+//!   session directory tree rather than in `$TMPDIR` or the current working
+//!   directory.
+//! * `system_prompt_paths` — canonical paths of files already embedded in
+//!   the system prompt; `execute_tool` checks this before dispatching
+//!   `read_file` and short-circuits with an informative message when the
+//!   requested file is already present.
 //!
 //! ## Invariant
 //! All paths constructed by tools via `ToolCtx::cache_dir` must resolve
@@ -13,7 +17,9 @@
 //! corrupt the harness.  The test suite enforces this with
 //! `no_tee_output_escapes_sessions_root` in `process_tools.rs`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Session-scoped execution context passed to every tool invocation.
 #[derive(Debug, Clone)]
@@ -38,19 +44,35 @@ pub struct ToolCtx {
     ///
     /// Format: 8 lowercase hex characters (4 random bytes).
     pub tool_call_id: String,
+
+    /// Canonical paths of every file already embedded in the system prompt
+    /// (i.e. every [`SystemBlock`](omega_agent::system_prompt::SystemBlock)
+    /// that has a `source_path`).  Populated by `Agent::init` and cloned
+    /// into every `ToolCtx` via `Arc`.
+    ///
+    /// `execute_tool` checks this before dispatching `read_file`: if the
+    /// resolved path is present the call is short-circuited with a message
+    /// telling the model the content is already available, saving a
+    /// potentially large token-consuming redundant read.
+    pub system_prompt_paths: Arc<HashSet<PathBuf>>,
 }
 
 impl ToolCtx {
-    /// Build a `ToolCtx` whose cache root is `session_dir.join("cache")`.
+    /// Build a `ToolCtx` whose cache root is `session_dir.join("cache")`
+    /// and an empty `system_prompt_paths` set.
     ///
     /// `session_dir` is typically the value stored in `AgentConfig::session_dir`.
     /// `tool_call_id` is the Omega-issued per-invocation identifier (8-char hex);
     /// it appears verbatim in `events.jsonl` and as the tee-log filename stem.
+    ///
+    /// Tests and callers that do not need the system-prompt guard can use
+    /// this constructor; the guard is simply inactive when the set is empty.
     #[must_use]
     pub fn new(session_dir: &Path, tool_call_id: impl Into<String>) -> Self {
         Self {
             cache_dir: session_dir.join("cache"),
             tool_call_id: tool_call_id.into(),
+            system_prompt_paths: Arc::new(HashSet::new()),
         }
     }
 }

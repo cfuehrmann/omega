@@ -1,6 +1,3 @@
-<!-- This file is injected into the system prompt automatically.
-     Do NOT read it via a tool call — the content is already present. -->
-
 ## Commit rule
 
 **Always finish with `git add -A && git commit -m "..."` before reporting back.**

@@ -19,7 +19,7 @@
 //! live in [`RetryingProvider`](omega_core::RetryingProvider) — context
 //! compaction, tool-result clearing, model-context-window recovery).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -464,6 +464,13 @@ pub struct Agent {
     /// + instruction blocks).  Re-used on every API call so disk I/O
     ///   happens at most once per session.
     system_blocks: Vec<SystemBlock>,
+    /// Canonical on-disk paths of every file embedded in the system prompt
+    /// (i.e. every [`SystemBlock`] whose `source_path` is `Some`).  Built
+    /// once in [`Agent::init`] from [`Agent::system_blocks`] immediately
+    /// after they are assembled; cloned by `Arc` into every [`ToolCtx`]
+    /// so `execute_tool` can block redundant `read_file` calls without
+    /// any per-call allocation.
+    system_prompt_paths: Arc<HashSet<PathBuf>>,
     /// In-memory mirror of `context.jsonl`; sent verbatim as the
     /// `messages` array on every API call.
     history: Vec<Message>,
@@ -502,6 +509,7 @@ impl Agent {
             active_model,
             active_effort,
             system_blocks: Vec::new(),
+            system_prompt_paths: Arc::new(HashSet::new()),
             history: Vec::new(),
             context_hashes: Vec::new(),
         }
@@ -539,6 +547,16 @@ impl Agent {
             max_tokens,
             self.config.headless,
             &files,
+        );
+        // Derive the set of canonical on-disk paths for the system-prompt
+        // guard in `execute_tool`.  Canonicalisation happens here once so
+        // the per-call check is a simple HashSet lookup.
+        self.system_prompt_paths = Arc::new(
+            self.system_blocks
+                .iter()
+                .filter_map(|b| b.source_path.as_ref())
+                .filter_map(|p| p.canonicalize().ok())
+                .collect(),
         );
 
         // 4. session_started
@@ -1402,6 +1420,7 @@ impl Agent {
                     // Concurrent dispatch — clone the call descriptor
                     // into each future so they don't borrow self.
                     let session_cache_dir = self.config.session_dir.join("cache");
+                    let system_prompt_paths = Arc::clone(&self.system_prompt_paths);
                     let mut futures: FuturesUnordered<_> = combined_tool_uses
                         .iter()
                         .enumerate()
@@ -1411,11 +1430,13 @@ impl Agent {
                             let input = input.clone();
                             let cancel_clone = cancel.clone();
                             let cache_dir = session_cache_dir.clone();
+                            let system_prompt_paths = Arc::clone(&system_prompt_paths);
                             async move {
                                 let start = Instant::now();
                                 let ctx = ToolCtx {
                                     cache_dir,
                                     tool_call_id: tool_call_id.clone(),
+                                    system_prompt_paths,
                                 };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;

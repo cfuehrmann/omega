@@ -183,6 +183,14 @@ web-mutants: wasm-setup
     mkdir -p {{mutants-tmp}}
     cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
 
+# Run cargo-mutants targeted at the system-prompt-path guard only.
+# Mutates only omega-tools/src/lib.rs (where the guard logic lives)
+# and runs the fast omega-tools test suite (no network, no subprocesses).
+# Fast: typically under 2 minutes on this host.
+mutants-system-prompt-guard:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

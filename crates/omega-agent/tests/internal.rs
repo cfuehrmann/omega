@@ -65,9 +65,10 @@
 
 mod common;
 
-use common::{collect_stream, make_llm_response, make_test_agent, tags};
+use common::{collect_stream, make_llm_response, make_test_agent, make_tool_use_items, tags};
 use omega_core::{AgentItem, ContentBlock, LlmError, Message, Role};
 use omega_store::content_hash;
+use omega_types::events::ToolResultEvent;
 use omega_types::events::{LlmResponseEndedEvent, LlmResponseUsage, UsageIteration};
 use omega_types::{OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
@@ -657,5 +658,101 @@ async fn turn_end_metrics_carry_cache_tokens() {
     assert_eq!(
         metrics["cacheReadTokens"], 200,
         "JSON cacheReadTokens must be 200, was: {metrics}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 5. System-prompt-path guard (e2e)
+//
+// Verifies the full stack:
+//   discover_instruction_files → build_system_blocks → system_prompt_paths
+//   → ToolCtx → execute_tool guard → ToolResult in the event stream.
+//
+// The unit-level tests in omega-tools/tests/file_tools.rs cover mutation
+// variants of the guard function itself; this test checks that the agent
+// wires everything together correctly end-to-end.
+// ---------------------------------------------------------------------------
+
+/// A simulated repo: a tempdir with a `.git` marker and an `AGENTS.md`.
+/// `Agent::init` calls `discover_instruction_files(cwd)` which walks
+/// upward looking for `.git`; having it in the same directory keeps the
+/// test self-contained regardless of where the test binary runs.
+fn setup_fake_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // A plain file (not directory) is enough to satisfy `find_git_root`
+    // because it only checks `.exists()`.
+    std::fs::write(tmp.path().join(".git"), "gitdir: fake").unwrap();
+    let agents_md = tmp.path().join("AGENTS.md");
+    std::fs::write(&agents_md, "# Test project\nDo the thing.").unwrap();
+    (tmp, agents_md)
+}
+
+#[tokio::test]
+async fn system_prompt_guard_blocks_read_of_instruction_file_end_to_end() {
+    use omega_agent::{Agent, AgentConfig};
+    use omega_store::{ContextStore, EventStore};
+    use std::sync::Arc;
+
+    // Arrange: agent whose CWD is a fake repo containing AGENTS.md.
+    let (tmp, agents_md) = setup_fake_repo();
+
+    // Reuse the make_test_agent factory but point it at our fake repo.
+    // We need a custom CWD, so we wire the agent directly here.
+    let provider = Arc::new(common::MockProvider::new());
+    let mut agent = Agent::new(
+        provider.clone(),
+        ContextStore::new(tmp.path().join("context.jsonl")),
+        EventStore::new(tmp.path().join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: tmp.path().to_path_buf(),
+            session_dir: tmp.path().to_path_buf(),
+            headless: true,
+        },
+    );
+    agent.init().await.expect("init");
+
+    // Act: the model tries to read AGENTS.md (absolute path).
+    provider.push_response(make_tool_use_items(
+        "call-guard-01",
+        "read_file",
+        json!({ "path": agents_md.to_str().unwrap() }),
+    ));
+    // After the (blocked) tool result the model ends the turn normally.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 20, 5))]);
+
+    let stream = agent.send_message("Hello".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+
+    // Assert: find the ToolResult event for our call.
+    let tool_result: &ToolResultEvent = items
+        .iter()
+        .find_map(|item| {
+            if let AgentItem::Event(ev) = item {
+                if let OmegaEvent::ToolResult(tr) = ev.as_ref() {
+                    if tr.tool_call_id == "call-guard-01" {
+                        return Some(tr);
+                    }
+                }
+            }
+            None
+        })
+        .expect("ToolResult event not found in stream");
+
+    assert!(
+        !tool_result.is_error,
+        "guard must not surface as an error; output: {}",
+        tool_result.output
+    );
+    assert!(
+        tool_result.output.contains("system prompt"),
+        "guard message must mention \"system prompt\"; output: {}",
+        tool_result.output
+    );
+    assert!(
+        !tool_result.output.contains("Do the thing"),
+        "AGENTS.md content must not leak through the guard; output: {}",
+        tool_result.output
     );
 }
