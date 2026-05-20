@@ -25,7 +25,7 @@ workspace = true
 [dependencies]
 axum                = { version = "0.8" }
 clap                = { version = "4", features = ["derive"] }
-tokio               = { version = "1", features = ["full"] }
+tokio               = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net"] }
 omega-core          = { path = "../omega-core" }
 omega-server        = { path = "../omega-server" }
 omega-test-fixtures = { path = "../omega-test-fixtures" }

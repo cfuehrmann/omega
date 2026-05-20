@@ -19,6 +19,6 @@ hex            = "0.4"
 thiserror      = "2"
 
 [dev-dependencies]
-tokio    = { version = "1", features = ["full"] }
+tokio    = { version = "1", features = ["macros", "rt"] }
 tempfile = "3"
 omega-types = { path = "../omega-types" }
