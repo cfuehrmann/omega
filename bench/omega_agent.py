@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
 
-OMEGA_VERSION = "v0.1.6"
+OMEGA_VERSION = "v0.1.7"
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_RUST_INSTALL_DIR = "/home/agent/omega-rust"
 OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/target/release/omega"
@@ -112,7 +112,7 @@ class OmegaRustAgent(BaseInstalledAgent):
             command=(
                 f"git clone --branch {OMEGA_VERSION} --depth 1"
                 f" {OMEGA_REPO} {OMEGA_RUST_INSTALL_DIR}"
-                f" && cd {OMEGA_RUST_INSTALL_DIR}/rust"
+                f" && cd {OMEGA_RUST_INSTALL_DIR}"
                 f" && ~/.cargo/bin/cargo build -p omega-cli --release"
             ),
         )
