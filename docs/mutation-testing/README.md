@@ -53,6 +53,24 @@ These timed out rather than being caught cleanly. Worth noting in case they beco
 
 ---
 
+## Inline-test e2e audit
+
+Tracks which crates have had their `#[cfg(test)]` blocks audited for e2e
+quality (private-function tests migrated to integration tests, duplicates
+removed).
+
+| Crate | Status | Session | Notes |
+|-------|--------|---------|-------|
+| `omega-store` | ✅ done | Session 3 — 2026-05-19 | `strip_jsonc_comments` tests migrated; 6 duplicate `hash_from_str` tests removed |
+| `omega-agent` | ✅ done | Session 2 — 2026-05-19 | All 7 inline blocks reviewed; justified carve-outs retained |
+| `omega-types` | ✅ done | Session 1 — 2026-05-16 | No inline tests exist |
+| `omega-cli` | ✅ done | Session 1 — 2026-05-16 | No inline tests exist |
+| `omega-server` | ✅ done | Session 3 — 2026-05-19 | No inline tests exist |
+| `omega-core` | ⬜ pending | — | Inline blocks not yet reviewed |
+| `omega-tools` | ⬜ pending | — | Inline blocks not yet reviewed |
+
+---
+
 ## `#[mutants::skip]` annotations
 
 8 annotations in the codebase. All reviewed; rationale is co-located with each annotation in source.
