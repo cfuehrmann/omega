@@ -1,7 +1,7 @@
 # Mutation Testing
 
 **Tool:** cargo-mutants 26.0.0 · **Flags:** `-j1 --no-shuffle`  
-**Last sweep:** 2026-05-19 · All crates at 100% kill rate · No survivors.
+**Last sweep:** 2026-05-20 · All crates at 100% kill rate · No survivors.
 `omega-store` re-run 2026-05-19 after e2e test migration (91 mutants, was 65).
 
 ## Excluded crates
@@ -64,7 +64,7 @@ removed).
 | `omega-store` | ✅ done | Session 3 — 2026-05-19 | `strip_jsonc_comments` tests migrated; 6 duplicate `hash_from_str` tests removed |
 | `omega-agent` | ✅ done | Session 2 — 2026-05-19 | All 7 inline blocks reviewed; justified carve-outs retained |
 | `omega-types` | ✅ done | Session 1 — 2026-05-16 | No inline tests exist |
-| `omega-cli` | ✅ done | Session 1 — 2026-05-16 | No inline tests exist |
+| `omega-cli` | ✅ done | Session 2 — 2026-05-20 | 3 private `git_has_pending_changes` tests migrated to integration tests; 3 new tests added (`clean_repo_not_dirty`, `allow_dirty` flag, `OMEGA_ALLOW_DIRTY` env) |
 | `omega-server` | ✅ done | Session 3 — 2026-05-19 | No inline tests exist |
 | `omega-core` | ⬜ pending | — | Inline blocks not yet reviewed |
 | `omega-tools` | ⬜ pending | — | Inline blocks not yet reviewed |
