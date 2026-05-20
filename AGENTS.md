@@ -14,6 +14,39 @@ Reporting back without committing defeats the gate entirely. Never use
   `cfuehrmann`.
 - Active branch: `develop`. Merge to `main` when stable.
 
+## Testing
+
+**Make tests as end-to-end as possible.** Test through real public APIs rather
+than reaching into internals:
+
+- In `omega-tools`: test via `execute_tool`, not by calling tool modules
+  directly.
+- In `omega-agent`: test via `Agent::send_message` + `MockProvider`, not by
+  calling internal helpers.
+- When a unit test is genuinely the right fit (e.g. a pure function where
+  the agent-level setup would be disproportionate), treat it as a carve-out:
+  add a comment explaining why (see existing examples in
+  `omega-agent/src/system_prompt.rs` and `omega-tools/src/lib.rs`).
+
+**Verify exhaustive coverage with targeted mutation testing.** After writing
+tests for any non-trivial logic, run:
+
+```
+cargo mutants -p <crate> --cap-lints=true --file "<path/to/changed/file.rs>"
+```
+
+`--cap-lints=true` is required because the workspace sets `-D warnings`;
+without it, body-replacement mutations produce unused-variable errors and
+appear as *unviable* rather than *caught* or *missed*.
+
+All mutations must end up **caught** or **unviable**. A **survivor**
+(mutation compiles and all tests pass) means a test gap — close it with a
+new test, or mark with `#[mutants::skip]` and a comment explaining why the
+mutation cannot be meaningfully tested.
+
+Add a named Justfile recipe for each targeted run so it can be repeated
+easily. See `mutants-system-prompt-guard` as a template.
+
 ## Contract Authority — the most public contract wins
 
 When multiple representations of the same information exist, the most public
