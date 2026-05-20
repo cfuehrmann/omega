@@ -373,6 +373,33 @@ async fn happy_path_stderr_snapshot() {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers for git-repo set-up (reused by pending-changes tests)
+// ---------------------------------------------------------------------------
+
+/// Initialise a clean git repo in `cwd` with a single empty commit.
+/// Returns a closure that can run further git commands in the same dir.
+fn init_git_repo(cwd: &Path) {
+    let run_git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git invocation");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    run_git(&["init", "--quiet"]);
+    std::fs::write(cwd.join("README.md"), "hi\n").expect("write README");
+    run_git(&["add", "README.md"]);
+    run_git(&["commit", "--quiet", "-m", "init"]);
+}
+
+// ---------------------------------------------------------------------------
 // 9. Pending-changes gate
 // ---------------------------------------------------------------------------
 
@@ -396,29 +423,8 @@ fn dirty_tree_without_allow_dirty_exits_with_error() {
     let temp = tempfile::tempdir().expect("tempdir");
     let cwd = temp.path();
 
-    // Initialise a real git repo so `git status --porcelain` works.
-    // (`omega` shells out to git rather than using libgit2.)
-    let run_git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .expect("git invocation");
-        assert!(status.success(), "git {args:?} failed");
-    };
-    run_git(&["init", "--quiet"]);
-    // Need at least one commit so the working-tree-vs-HEAD comparison
-    // is well-defined.
-    std::fs::write(cwd.join("README.md"), "hi\n").expect("write README");
-    run_git(&["add", "README.md"]);
-    run_git(&["commit", "--quiet", "-m", "init"]);
-    // Now make the tree dirty: an unstaged change.
+    // Initialise a real git repo with one commit, then make it dirty.
+    init_git_repo(cwd);
     std::fs::write(cwd.join("README.md"), "hi\nmore\n").expect("dirty write");
 
     let session_root = cwd.join("sessions");
@@ -445,5 +451,153 @@ fn dirty_tree_without_allow_dirty_exits_with_error() {
     assert!(
         stderr.contains("--allow-dirty"),
         "stderr did not mention --allow-dirty escape hatch: {stderr}"
+    );
+}
+
+/// Kills `replace git_has_pending_changes -> bool with true` (a constant-true
+/// mutation would fire even on a clean repo, causing exit 1 with the
+/// "uncommitted changes" message instead of exit 0).
+///
+/// Also kills `replace !o.stdout.is_empty() with false` inside
+/// `git_has_pending_changes` (stdout of `git status` on a clean tree is
+/// empty, so that inner bool is already false — but making it always-false
+/// collapses the function to never-dirty, which the untracked-file test
+/// above catches; this test acts as a second backstop).
+///
+/// The non-git-dir case is also implicitly covered here and in every other
+/// async test: `TempDir::new()` produces a directory in /tmp (or equivalent)
+/// which is not inside any git repository, so `git status --porcelain` exits
+/// non-zero and `is_ok_and` returns `false` (fail-open / not dirty).
+#[tokio::test(flavor = "multi_thread")]
+async fn clean_repo_not_dirty_proceeds_past_git_check() {
+    let mock = MockServer::start(vec![MockResponse::Text {
+        text: "ok".to_owned(),
+        input_tokens: 5,
+        output_tokens: 1,
+    }])
+    .await;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cwd = temp.path();
+
+    // A clean repo: init + one commit, no pending changes.
+    init_git_repo(cwd);
+
+    let session_root = cwd.join("sessions");
+    fs::create_dir_all(&session_root).unwrap();
+
+    let assert = cargo_bin_cmd!("omega")
+        .env("ANTHROPIC_API_KEY", "sk-test")
+        .env("ANTHROPIC_BASE_URL", &mock.base_url)
+        .env("OMEGA_RETRY_INITIAL_MS", "1")
+        .current_dir(cwd)
+        .args([
+            "run",
+            "--instruction",
+            "noop",
+            "--session-root",
+            session_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        !stderr.contains("uncommitted changes"),
+        "clean repo triggered the pending-changes gate: {stderr}"
+    );
+}
+
+/// Kills mutations of the `!allow_dirty` sub-expression inside
+/// `if !allow_dirty && git_has_pending_changes(&cwd)`.  A mutation that
+/// removes the `allow_dirty` short-circuit (e.g. replaces the whole
+/// condition with `git_has_pending_changes(&cwd)`) would ignore the flag,
+/// hit the gate on a dirty tree, and exit 1 — causing this test to fail.
+#[tokio::test(flavor = "multi_thread")]
+async fn allow_dirty_flag_bypasses_pending_changes_gate() {
+    let mock = MockServer::start(vec![MockResponse::Text {
+        text: "done".to_owned(),
+        input_tokens: 5,
+        output_tokens: 1,
+    }])
+    .await;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cwd = temp.path();
+
+    // Dirty repo: init + commit, then modify the tracked file.
+    init_git_repo(cwd);
+    std::fs::write(cwd.join("README.md"), "hi\nmore\n").expect("dirty write");
+
+    let session_root = cwd.join("sessions");
+    fs::create_dir_all(&session_root).unwrap();
+
+    let assert = cargo_bin_cmd!("omega")
+        .env("ANTHROPIC_API_KEY", "sk-test")
+        .env("ANTHROPIC_BASE_URL", &mock.base_url)
+        .env("OMEGA_RETRY_INITIAL_MS", "1")
+        .current_dir(cwd)
+        .args([
+            "run",
+            "--instruction",
+            "noop",
+            "--allow-dirty",
+            "--session-root",
+            session_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        !stderr.contains("uncommitted changes"),
+        "--allow-dirty did not bypass the pending-changes gate: {stderr}"
+    );
+}
+
+/// Kills `delete if std::env::var("OMEGA_ALLOW_DIRTY").is_ok() { return false; }`
+/// inside `git_has_pending_changes`.  Without that early-return branch the
+/// env-var bypass disappears; the function proceeds to run `git status`,
+/// finds a dirty tree, returns `true`, and the CLI exits 1 with the
+/// "uncommitted changes" message — causing this test to fail.
+#[tokio::test(flavor = "multi_thread")]
+async fn omega_allow_dirty_env_bypasses_pending_changes_gate() {
+    let mock = MockServer::start(vec![MockResponse::Text {
+        text: "done".to_owned(),
+        input_tokens: 5,
+        output_tokens: 1,
+    }])
+    .await;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cwd = temp.path();
+
+    // Dirty repo: init + commit, then modify the tracked file.
+    init_git_repo(cwd);
+    std::fs::write(cwd.join("README.md"), "hi\nmore\n").expect("dirty write");
+
+    let session_root = cwd.join("sessions");
+    fs::create_dir_all(&session_root).unwrap();
+
+    let assert = cargo_bin_cmd!("omega")
+        .env("ANTHROPIC_API_KEY", "sk-test")
+        .env("ANTHROPIC_BASE_URL", &mock.base_url)
+        .env("OMEGA_RETRY_INITIAL_MS", "1")
+        .env("OMEGA_ALLOW_DIRTY", "1")
+        .current_dir(cwd)
+        .args([
+            "run",
+            "--instruction",
+            "noop",
+            "--session-root",
+            session_root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        !stderr.contains("uncommitted changes"),
+        "OMEGA_ALLOW_DIRTY env var did not bypass the pending-changes gate: {stderr}"
     );
 }
