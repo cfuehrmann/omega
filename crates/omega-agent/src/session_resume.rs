@@ -3,7 +3,7 @@
 //! Mirrors `src/session-resume.ts` for the parts that don't touch the
 //! agent or the LLM. Phase 1d.1a ports [`extract_last_model_and_effort`];
 //! Phase 1d.1b adds [`extract_resumption_basis`],
-//! [`extract_summary_from_response`], and [`extract_description_from_response`].
+//! [`extract_summary_from_response`].
 //! Phase 1d.1c adds the [`RESUMPTION_SUMMARY_INSTRUCTIONS`] system prompt
 //! and the [`RESUMPTION_MODEL`] / [`RESUMPTION_EFFORT`] defaults consumed
 //! by [`Agent::perform_resumption`](crate::Agent::perform_resumption).
@@ -35,9 +35,7 @@ Produce a concise summary (1000\u{2013}2000 words) covering exactly what a devel
 
 5. **Technical anchors**: specific file paths, function/type/constant names, commit hashes, and test names relevant to continuing the work.
 
-You must wrap your summary in a <summary></summary> block.
-
-Additionally, produce a one-line description (max 80 chars) of what the session accomplished, wrapped in a <description></description> block. This is used for display in the session picker \u{2014} be specific and concrete, not vague. Example: \"Added JWT auth middleware and login endpoint tests\".";
+You must wrap your summary in a <summary></summary> block.";
 
 /// Model used for the resumption summarisation call.
 ///
@@ -406,7 +404,7 @@ pub fn extract_resumption_basis(events: &[OmegaEvent]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Public: summary/description extraction from LLM response (Phase 1d.1b)
+// Public: summary extraction from LLM response (Phase 1d.1b)
 // ---------------------------------------------------------------------------
 
 /// Extract the summary from an LLM response.
@@ -418,19 +416,6 @@ pub fn extract_resumption_basis(events: &[OmegaEvent]) -> String {
 #[must_use]
 pub fn extract_summary_from_response(response_text: &str) -> String {
     extract_block(response_text, "summary").unwrap_or_else(|| response_text.trim().to_owned())
-}
-
-/// Extract the description from an LLM response.
-///
-/// Parses the `<description>…</description>` block if present, hard-capped
-/// at 120 characters. Returns `None` when the block is absent.
-///
-/// Mirrors `extractDescriptionFromResponse` in `src/session-resume.ts`.
-#[must_use]
-pub fn extract_description_from_response(response_text: &str) -> Option<String> {
-    let content = extract_block(response_text, "description")?;
-    let truncated: String = content.chars().take(120).collect();
-    Some(truncated)
 }
 
 // ---------------------------------------------------------------------------
@@ -849,59 +834,6 @@ mod tests {
             extract_summary_from_response("\n  plain response  \n"),
             "plain response"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // extract_description_from_response
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn description_extracts_block_when_present() {
-        let text = "<description>Added login endpoint</description>";
-        assert_eq!(
-            extract_description_from_response(text),
-            Some("Added login endpoint".to_owned())
-        );
-    }
-
-    #[test]
-    fn description_returns_none_when_absent() {
-        assert_eq!(extract_description_from_response("no tags"), None);
-    }
-
-    #[test]
-    fn description_trims_whitespace_inside_block() {
-        let text = "<description>  padded  </description>";
-        assert_eq!(
-            extract_description_from_response(text),
-            Some("padded".to_owned())
-        );
-    }
-
-    #[test]
-    fn description_truncates_at_120_chars() {
-        let long_desc: String = "a".repeat(150);
-        let text = format!("<description>{long_desc}</description>");
-        let result = extract_description_from_response(&text).unwrap();
-        assert_eq!(result.len(), 120);
-        assert_eq!(&result, &"a".repeat(120));
-    }
-
-    #[test]
-    fn description_exactly_120_chars_not_truncated() {
-        let exactly: String = "b".repeat(120);
-        let text = format!("<description>{exactly}</description>");
-        let result = extract_description_from_response(&text).unwrap();
-        assert_eq!(result.len(), 120);
-    }
-
-    #[test]
-    fn description_119_chars_not_truncated() {
-        // Boundary: one below 120 must survive intact.
-        let s: String = "c".repeat(119);
-        let text = format!("<description>{s}</description>");
-        let result = extract_description_from_response(&text).unwrap();
-        assert_eq!(result.len(), 119);
     }
 
     // -----------------------------------------------------------------------

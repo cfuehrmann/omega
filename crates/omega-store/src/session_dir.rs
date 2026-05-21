@@ -137,9 +137,6 @@ pub struct SessionMetadata {
     /// Short human-readable label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Free-text description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
     /// Relative folder name of the session this one resumes.
     /// `continuationOf` is accepted as a legacy alias.
     #[serde(alias = "continuationOf", skip_serializing_if = "Option::is_none")]
@@ -183,9 +180,6 @@ pub async fn update_session_metadata(dir: &Path, patch: SessionMetadata) -> Resu
     let mut existing = read_session_metadata(dir).await;
     if patch.name.is_some() {
         existing.name = patch.name;
-    }
-    if patch.description.is_some() {
-        existing.description = patch.description;
     }
     if patch.resumed_from.is_some() {
         existing.resumed_from = patch.resumed_from;

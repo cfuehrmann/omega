@@ -112,8 +112,6 @@ pub struct SessionListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<String>,
 }
 
@@ -170,7 +168,6 @@ pub async fn list_sessions(sessions_root: &Path) -> Vec<SessionListItem> {
             dir: name.clone(),
             last_activity: folder_name_to_timestamp(name),
             name: meta.name,
-            description: meta.description,
             resumed_from: meta.resumed_from,
         });
     }

@@ -85,12 +85,11 @@ async fn read_session_metadata_returns_default_when_file_absent() {
 #[tokio::test]
 async fn read_session_metadata_parses_present_fields() {
     let root = temp_root();
-    let jsonc = r#"{"name":"my-session","description":"test run"}"#;
+    let jsonc = r#"{"name":"my-session"}"#;
     std::fs::write(root.path().join("session.jsonc"), jsonc).unwrap();
 
     let meta = read_session_metadata(root.path()).await;
     assert_eq!(meta.name.as_deref(), Some("my-session"));
-    assert_eq!(meta.description.as_deref(), Some("test run"));
     assert!(meta.resumed_from.is_none());
 }
 
@@ -148,7 +147,6 @@ async fn write_then_read_round_trips() {
 
     let original = SessionMetadata {
         name: Some("round-trip".to_owned()),
-        description: Some("desc".to_owned()),
         resumed_from: None,
     };
 
@@ -165,17 +163,12 @@ async fn write_omits_none_fields() {
 
     let meta = SessionMetadata {
         name: Some("only-name".to_owned()),
-        description: None,
         resumed_from: None,
     };
 
     write_session_metadata(&paths.dir, &meta).await.unwrap();
 
     let raw = std::fs::read_to_string(paths.dir.join("session.jsonc")).unwrap();
-    assert!(
-        !raw.contains("description"),
-        "None fields must not be written"
-    );
     assert!(
         !raw.contains("resumedFrom"),
         "None fields must not be written"
@@ -352,19 +345,17 @@ async fn update_session_metadata_merges_patch() {
         &paths.dir,
         &SessionMetadata {
             name: Some("original".to_owned()),
-            description: Some("keep me".to_owned()),
             resumed_from: None,
         },
     )
     .await
     .unwrap();
 
-    // Patch: update name, leave description and resumed_from unchanged.
+    // Patch: update name, leave resumed_from unchanged.
     update_session_metadata(
         &paths.dir,
         SessionMetadata {
             name: Some("updated".to_owned()),
-            description: None,
             resumed_from: None,
         },
     )
@@ -373,6 +364,5 @@ async fn update_session_metadata_merges_patch() {
 
     let result = read_session_metadata(&paths.dir).await;
     assert_eq!(result.name.as_deref(), Some("updated"));
-    assert_eq!(result.description.as_deref(), Some("keep me"));
     assert!(result.resumed_from.is_none());
 }

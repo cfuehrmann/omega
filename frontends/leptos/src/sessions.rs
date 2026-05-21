@@ -39,7 +39,7 @@ use crate::protocol::WsMessage;
 /// Field-name projection mirrors `omega-server::router::SessionListItem`
 /// (camelCase). Unknown fields the server may add later are ignored
 /// (default `serde` behaviour) — preserving forward compatibility for
-/// fields like `description` that are already optional.
+/// any optional fields the server may add.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionListItem {
@@ -47,8 +47,6 @@ pub struct SessionListItem {
     pub last_activity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<String>,
 }
@@ -120,8 +118,8 @@ pub fn fuzzy_score(haystack: &str, needle: &str) -> Option<i32> {
 /// their original order (server order: most-recent first).
 ///
 /// Otherwise each item is scored with [`fuzzy_score`] applied to the
-/// concatenation of `name`, `dir`, and `description` (all lowercased,
-/// separated by spaces). Items whose fields do not contain `query` as
+/// concatenation of `name` and `dir` (both lowercased,
+/// separated by a space). Items whose fields do not contain `query` as
 /// a subsequence are excluded; the survivors are returned ordered by
 /// score descending. Items with equal score preserve their original
 /// relative order (most-recent first).
@@ -135,14 +133,9 @@ pub fn filter_sessions(items: &[SessionListItem], query: &str) -> Vec<SessionLis
         .iter()
         .filter_map(|item| {
             // Searchable text: name first (most prominent), then the raw
-            // dir (timestamp-style slug), then the optional description.
-            let text = format!(
-                "{} {} {}",
-                item.name.as_deref().unwrap_or(""),
-                item.dir,
-                item.description.as_deref().unwrap_or(""),
-            )
-            .to_lowercase();
+            // dir (timestamp-style slug).
+            let text =
+                format!("{} {}", item.name.as_deref().unwrap_or(""), item.dir,).to_lowercase();
             fuzzy_score(&text, &q).map(|s| (item, s))
         })
         .collect();
@@ -377,7 +370,6 @@ mod tests {
             dir: dir.into(),
             last_activity: "2024-01-01T00:00:00.000Z".into(),
             name: name.map(str::to_string),
-            description: None,
             resumed_from: None,
         }
     }
@@ -802,16 +794,6 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn filter_sessions_matches_description() {
-        let mut with_desc = item("sess", None);
-        with_desc.description = Some("refactoring the auth module".into());
-        let items = vec![with_desc, item("other", None)];
-        let result = filter_sessions(&items, "auth");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].dir, "sess");
-    }
-
-    #[wasm_bindgen_test]
     fn filter_sessions_returns_empty_when_nothing_matches() {
         let items = vec![item("alpha", None), item("beta", None)];
         assert_eq!(filter_sessions(&items, "zzz").len(), 0);
@@ -845,6 +827,5 @@ mod tests {
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].name.as_deref(), Some("alpha"));
         assert_eq!(v[1].resumed_from.as_deref(), Some("d1"));
-        assert!(v[0].description.is_none());
     }
 }
