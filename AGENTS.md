@@ -14,6 +14,10 @@ Reporting back without committing defeats the gate entirely. Never use
   `cfuehrmann`.
 - Active branch: `develop`. Merge to `main` when stable.
 
+## Cargo dependencies
+
+When adding or updating a dependency, declare only the features the crate's own source directly uses — never `features = ["full"]` in production or dev dependencies. Use `default-features = false` wherever a crate's default features pull in transitive deps that aren't needed (alternative TLS backends, executors, etc.).
+
 ## Testing
 
 **Make tests as end-to-end as possible.** Test through real public APIs rather
