@@ -1006,12 +1006,13 @@ tr:nth-child(even) td { background: #fafbfc; }
 </div>
 
 <div class="callout rec">
-  <div class="callout-title">✓ Per-spawn model and effort — supported</div>
+  <div class="callout-title">✓ Per-spawn model and effort — mandatory</div>
   <p>
-    The spawn tool accepts optional <code>model</code> and <code>effort</code>
-    arguments. Omitted values inherit from the parent's current model and
-    effort at spawn time. Resolved values are recorded in the child's first
-    <code>SessionStartedEvent</code> (which already carries
+    The spawn tool requires explicit <code>model</code> and <code>effort</code>
+    arguments. No inheritance from the parent, no silent defaults: spawning
+    a subagent is a deliberate delegation, and the parent's LLM must commit
+    to what cognitive resources the child gets. Values are recorded in the
+    child's first <code>SessionStartedEvent</code> (which already carries
     <code>model</code> and <code>effort</code> fields per
     <span class="badge badge-audit" title="F3 — SessionStartedEvent carries model, effort, system_prompt, omega_commit">F3</span>),
     so the child's lineage is self-describing without consulting the parent.
