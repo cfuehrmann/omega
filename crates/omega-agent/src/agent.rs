@@ -39,7 +39,7 @@ use omega_types::events::{
     ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent,
     TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
-use omega_types::ids::Origin;
+use omega_types::ids::{Origin, SessionId};
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
@@ -560,11 +560,12 @@ impl Agent {
                 .collect(),
         );
 
-        // 4. session_started
-        let session_id = self.config.session_dir.file_name().map_or_else(
-            || "unknown".to_owned(),
-            |n| n.to_string_lossy().into_owned(),
-        );
+        // 4. session_started — generate a stable UUID v7 identity for this
+        // session (distinct from the directory name, which is a filesystem
+        // timestamp slug).  The UUID is stored in the SessionStarted event
+        // so the UI and any downstream consumer can reference the session
+        // by a well-typed, globally unique id.
+        let session_id = SessionId(uuid::Uuid::now_v7());
         let path = self
             .config
             .session_dir

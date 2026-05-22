@@ -6,7 +6,7 @@ expression: events
   {
     "type": "session_started",
     "time": "2024-01-15T12:00:00.000Z",
-    "sessionId": "sess_abc123",
+    "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
     "path": ".omega/sessions/20240115_120000",
     "model": "claude-sonnet-4-6",
     "effort": "medium",

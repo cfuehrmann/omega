@@ -99,6 +99,32 @@ impl fmt::Display for SessionRef {
     }
 }
 
+/// Error type returned when [`SessionId`]'s [`FromStr`] impl rejects its input.
+#[derive(Debug, PartialEq)]
+pub struct SessionIdParseError;
+
+impl fmt::Display for SessionIdParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid SessionId: expected a UUID string")
+    }
+}
+
+impl std::error::Error for SessionIdParseError {}
+
+/// Parse a UUID string into a [`SessionId`].
+///
+/// Used at trust boundaries (HTTP path params, file-system names, env vars)
+/// to convert raw strings into the typed form passed internally.
+impl FromStr for SessionId {
+    type Err = SessionIdParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s)
+            .map(SessionId)
+            .map_err(|_| SessionIdParseError)
+    }
+}
+
 /// Error type returned when [`SessionRef`]'s [`FromStr`] impl rejects its input.
 #[derive(Debug, PartialEq)]
 pub struct SessionRefParseError;

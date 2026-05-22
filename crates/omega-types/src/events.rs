@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::ids::SessionId;
 use crate::{ContextHash, ISOTimestamp};
 
 // ---------------------------------------------------------------------------
@@ -151,7 +152,7 @@ fn default_origin() -> crate::ids::Origin {
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartedEvent {
     pub time: ISOTimestamp,
-    pub session_id: String,
+    pub session_id: SessionId,
     /// Session directory path relative to the Omega root (cwd).
     pub path: String,
     pub model: String,
@@ -564,7 +565,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
-    use crate::ids::Origin;
+    use crate::ids::{Origin, SessionId};
 
     // -----------------------------------------------------------------------
     // Discriminator / type-field round-trips
@@ -573,9 +574,10 @@ mod tests {
     /// Verify the `"type"` discriminator is `snake_case` and inlined correctly.
     #[test]
     fn session_started_type_field() {
+        let sid: SessionId = "018f4c2e-3a1b-7d00-8000-abcdef012345".parse().unwrap();
         let ev = OmegaEvent::SessionStarted(SessionStartedEvent {
             time: "2024-01-15T12:00:00.000Z".into(),
-            session_id: "abc123".into(),
+            session_id: sid,
             path: String::new(),
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
@@ -586,7 +588,7 @@ mod tests {
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "session_started");
-        assert_eq!(json["sessionId"], "abc123");
+        assert_eq!(json["sessionId"], "018f4c2e-3a1b-7d00-8000-abcdef012345");
         assert_eq!(json["systemPrompt"], "You are Omega.");
         assert_eq!(json["agentTimeZone"], "Europe/Berlin");
         assert_eq!(json["origin"]["type"], "root");
@@ -603,7 +605,7 @@ mod tests {
         let json = serde_json::json!({
             "type": "session_started",
             "time": "2024-01-15T12:00:00.000Z",
-            "sessionId": "abc123",
+            "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
             "path": "",
             "model": "claude-sonnet-4-6",
             "effort": "medium",
@@ -627,7 +629,7 @@ mod tests {
         let json = serde_json::json!({
             "type": "session_started",
             "time": "2024-01-15T12:00:00.000Z",
-            "sessionId": "abc123",
+            "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
             "path": "",
             "model": "claude-sonnet-4-6",
             "effort": "medium",
@@ -652,7 +654,7 @@ mod tests {
         let json = serde_json::json!({
             "type": "session_started",
             "time": "2024-01-15T12:00:00.000Z",
-            "sessionId": "abc123",
+            "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
             "path": "",
             "model": "claude-sonnet-4-6",
             "effort": "medium",
@@ -844,11 +846,12 @@ mod tests {
     #[test]
     fn deserialize_ts_session_started() {
         // Typical line from events.jsonl written by the TS agent
-        let line = r#"{"type":"session_started","time":"2024-01-15T12:00:00.000Z","sessionId":"abc","path":".omega/sessions/abc","model":"claude-sonnet-4-6","effort":"medium","systemPrompt":"You are Omega.","omegaCommit":"abc1234"}"#;
+        let line = r#"{"type":"session_started","time":"2024-01-15T12:00:00.000Z","sessionId":"018f4c2e-3a1b-7d00-8000-abcdef012345","path":".omega/sessions/abc","model":"claude-sonnet-4-6","effort":"medium","systemPrompt":"You are Omega.","omegaCommit":"abc1234"}"#;
         let ev: OmegaEvent = serde_json::from_str(line).unwrap();
         match ev {
             OmegaEvent::SessionStarted(s) => {
-                assert_eq!(s.session_id, "abc");
+                let expected: SessionId = "018f4c2e-3a1b-7d00-8000-abcdef012345".parse().unwrap();
+                assert_eq!(s.session_id, expected);
                 assert_eq!(s.model, "claude-sonnet-4-6");
             }
             other => panic!("unexpected variant: {other:?}"),
@@ -1111,7 +1114,9 @@ mod tests {
         let ts = "2025-01-01T00:00:00.000Z";
         let ev = OmegaEvent::SessionStarted(SessionStartedEvent {
             time: ts.into(),
-            session_id: "id".into(),
+            session_id: "018f4c2e-3a1b-7d00-8000-abcdef012345"
+                .parse::<SessionId>()
+                .unwrap(),
             path: String::new(),
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),

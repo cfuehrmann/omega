@@ -31,7 +31,7 @@ use omega_types::events::{
     ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
     TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UsageIteration, UserMessageEvent,
 };
-use omega_types::ids::Origin;
+use omega_types::ids::{Origin, SessionId};
 use serde_json::json;
 
 mod common;
@@ -67,7 +67,7 @@ fn all_26_events() -> Vec<OmegaEvent> {
         // 1. SessionStarted
         OmegaEvent::SessionStarted(SessionStartedEvent {
             time: T.into(),
-            session_id: "sess_abc123".into(),
+            session_id: "018f4c2e-3a1b-7d00-8000-abcdef012345".parse::<SessionId>().unwrap(),
             path: ".omega/sessions/20240115_120000".into(),
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),

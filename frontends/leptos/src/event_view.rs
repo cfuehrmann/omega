@@ -816,7 +816,7 @@ mod tests {
         ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent,
         TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
-    use omega_types::ids::Origin;
+    use omega_types::ids::{Origin, SessionId};
     use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
     use serde_json::json;
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -948,7 +948,9 @@ mod tests {
     fn kind_session_started_is_status() {
         let ev = OmegaEvent::SessionStarted(SessionStartedEvent {
             time: t(),
-            session_id: "s".into(),
+            session_id: "018f4c2e-3a1b-7d00-8000-abcdef012345"
+                .parse::<SessionId>()
+                .unwrap(),
             path: ".".into(),
             model: "m".into(),
             effort: "e".into(),

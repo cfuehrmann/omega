@@ -35,7 +35,7 @@ use omega_types::events::{
     TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
     TurnEndEvent, TurnMetrics, UsageIteration, UserMessageEvent,
 };
-use omega_types::ids::Origin;
+use omega_types::ids::{Origin, SessionId};
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
 use omega_web::picker::PickerOpen;
@@ -266,7 +266,9 @@ fn ev_turn_end() -> OmegaEvent {
 fn ev_session_started() -> OmegaEvent {
     OmegaEvent::SessionStarted(SessionStartedEvent {
         time: "2025-01-01T00:00:00.000Z".into(),
-        session_id: "sid-test".into(),
+        session_id: "018f4c2e-3a1b-7d00-8000-abcdef012345"
+            .parse::<SessionId>()
+            .unwrap(),
         path: ".omega/sessions/2025-01-01T00-00-00-000-aaaaaaaa".into(),
         model: "claude-sonnet-4-6".into(),
         effort: "medium".into(),
