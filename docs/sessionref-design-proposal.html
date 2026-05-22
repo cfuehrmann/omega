@@ -611,8 +611,11 @@ pub struct SessionRef {
     Use the flat struct representation with
     <code>#[serde(rename_all = "camelCase")]</code>, matching the existing
     <code>events.jsonl</code> field-naming convention.
-    The string encoding is reserved for <code>Display</code> / logs / UI chips
-    (see Q4).
+    The string encoding is reserved for human-facing contexts —
+    <code>Display</code> output, <code>tracing!</code> messages,
+    error strings, UI chips (see Q4). These are non-overlapping
+    channels: serde governs <code>events.jsonl</code> and the wire
+    format; <code>Display</code> governs human-readable strings.
   </p>
 </div>
 
@@ -675,8 +678,10 @@ pub struct SessionRef {
 <p class="question-title">
   <span class="question-num">4</span>
   What string format should <code>SessionRef::to_string()</code> produce,
-  and how should <code>FromStr</code> parse it? Used in logs, error
-  messages, and UI chips. Must round-trip.
+  and how should <code>FromStr</code> parse it? Used in
+  <code>tracing!</code> output, error messages, and UI chips —
+  channels distinct from <code>events.jsonl</code> (which uses the
+  struct serde shape from Q3). Must round-trip.
 </p>
 
 <div class="callout rec">
@@ -785,8 +790,8 @@ impl FromStr for SessionRef {
     <p>
       <strong>UI chips</strong> need not display the full UUID; a truncated
       prefix (<code>018f4c2e…</code>) is sufficient for human identification.
-      The full string is used in logs and error messages where full
-      traceability matters.
+      The full string is used in tracing output and error messages
+      where full traceability matters.
     </p>
   </div>
 </details>
@@ -1011,6 +1016,18 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
       already-logged event). The envelope cleanly separates "event payload"
       from "event identity in the log".
     </p>
+    <p>
+      <strong>UI visibility of <code>EventId</code> is straightforward
+      under the envelope.</strong> The WebSocket transport
+      (<code>WsMessage</code> in <code>omega-server</code>) is already a
+      projection of <code>OmegaEvent</code>; the projection adds an
+      <code>eventId</code> field read from the envelope and forwards it
+      to the UI on every event. Display in the UI is then a rendering
+      choice — hidden in normal view, shown in a "developer mode" /
+      expanded "more" panel, or always visible for cross-session-reference
+      events (per the transparency requirement). No additional data-flow
+      wiring is needed; the envelope concentrates the ID in one place.
+    </p>
   </div>
 </details>
 </div>
@@ -1021,13 +1038,37 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
 <div class="question-block">
 <p class="question-title">
   <span class="question-num">8</span>
-  When should a call site use the bare <code>SessionId</code> vs the full
-  <code>SessionRef</code>? The design doc mentions folder names take bare IDs
-  but event payloads take <code>SessionRef</code> — establish the rule.
+  Both <code>SessionId</code> and <code>SessionRef</code> are typed
+  (they are distinct types, not the same type sometimes weakened).
+  The question is one of <em>granularity</em>: for any given API, do we
+  want the identity-only shape or the can-point-at-a-moment shape?
 </p>
 
+<div class="callout">
+  <div class="callout-title">💡 Mental model — Primary key / foreign key</div>
+  <p>
+    Think of it as a database analogy:
+  </p>
+  <ul>
+    <li><strong><code>SessionId</code> = primary key.</strong> Identifies
+      a session as a row in the "sessions table." Used wherever a session
+      declares its own identity, or where another structure indexes
+      sessions by identity.</li>
+    <li><strong><code>SessionRef</code> = foreign key.</strong> Points
+      <em>from one session's event payload into another session</em>.
+      The optional <code>event_id</code> is the FK's extra precision —
+      pinning a specific moment, like a foreign key targeting a specific
+      version of a row.</li>
+  </ul>
+  <p>
+    With this lens the choice at every call site is mechanical: ask
+    "is this declaring identity, or pointing across a boundary?" PK
+    answers the first, FK the second.
+  </p>
+</div>
+
 <div class="callout rec">
-  <div class="callout-title">✓ Recommendation — Bare ID for identity/indexing; SessionRef for cross-session event payloads</div>
+  <div class="callout-title">✓ Recommendation — PK (SessionId) for identity/indexing; FK (SessionRef) for cross-session event payloads</div>
   <p>
     The rule is: use <code>SessionId</code> wherever you name a session
     <em>as a session</em>; use <code>SessionRef</code> wherever an event
@@ -1128,6 +1169,28 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <h2 id="q9">Q9 — <code>Origin</code> enum exact shape</h2>
 
+<div class="callout">
+  <div class="callout-title">💡 Why this exists in Phase 1</div>
+  <p>
+    <code>Origin</code> is not hypothetical infrastructure for future
+    forks — it is needed immediately for subagents (Phase 3). Every
+    subagent must record how it came to exist: which session spawned
+    it, and at which event in that session. The current-day analogue is
+    <code>SessionMetadata.resumed_from</code>
+    (<span class="badge badge-audit" title="F5 — Cross-session references today use folder-name strings, not UUIDs; layout-dependent and fragile">F5</span>),
+    a flat folder-name string. <code>Origin</code> is its typed
+    successor with two live variants from day one: <code>Root</code>
+    (no parent) and <code>SubagentOf { parent: SessionRef }</code>
+    (used by every subagent in Phase 3). <code>ForkOf</code> is the
+    deferred variant.
+  </p>
+  <p>
+    Defining <code>Origin</code> in Phase 1 (alongside
+    <code>SessionRef</code>) forces the "parent event ID required"
+    invariant to be settled at type-design time, when it is cheap.
+  </p>
+</div>
+
 <div class="question-block">
 <p class="question-title">
   <span class="question-num">9</span>
@@ -1147,10 +1210,33 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
   </p>
 </div>
 
+<div class="callout warn">
+  <div class="callout-title">⚠ Open question — storage location</div>
+  <p>
+    Where does <code>Origin</code> live on disk? Two candidates:
+  </p>
+  <ul>
+    <li><strong>(a) <code>session.jsonc</code> metadata</strong> — follows
+      the current <code>SessionMetadata.resumed_from</code> pattern.</li>
+    <li><strong>(b) A field on the subagent's first
+      <code>SessionStartedEvent</code></strong> — single source of truth
+      in <code>events.jsonl</code>; matches the event-sourcing framing
+      (state = fold(events)); suggests <code>session.jsonc</code> may
+      eventually become legacy.</li>
+  </ul>
+  <p>
+    The recommendation below assumes (a) for now, but (b) is the more
+    principled choice. This question is deferred to the main design doc
+    for resolution; the <code>Origin</code> enum shape itself is the
+    same under either storage location.
+  </p>
+</div>
+
 <pre><code class="language-rust">/// Records how this session came to exist.
 ///
-/// Stored in `SessionMetadata` (session.jsonc) and consulted by the
-/// UI to build the session tree.
+/// Storage location is an open question (see callout above) — either
+/// `SessionMetadata` (session.jsonc) or a field on the subagent's first
+/// `SessionStartedEvent`.
 ///
 /// Extensible: `ForkOf` is planned for Phase 4 but not added now.
 /// Unknown variants deserialise to `Unknown` so new variants in

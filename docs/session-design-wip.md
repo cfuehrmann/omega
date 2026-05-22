@@ -226,8 +226,13 @@ than by accident of implementation order.
   - **(b) Separate Omega process per subagent.** Matches the "subagent =
     child Omega instance" framing most literally; gives crash isolation;
     requires IPC for events to bubble to the parent's UI.
-  - **Default: (a)**, with the `SessionRef`-based design ensuring (b) is
-    not foreclosed if we want crash isolation later.
+  - **Default: (a)** for now, but the in-proc-vs-separate-proc
+    comparison is to be revisited at Phase 3 design time. The current
+    leaning is operational (in-proc is the path of least resistance);
+    the principled case (separate-proc gives crash isolation and
+    matches the "subagent = child Omega instance" framing literally)
+    deserves a real Phase 3 design discussion. Phase 1 types are
+    neutral; nothing is foreclosed.
 - **UI: session modal / picker.** Today there's a single-session UI;
   with subagents the user needs to navigate between sessions. The
   modal/picker needs (i) a tree view of related sessions (parent →
@@ -290,10 +295,12 @@ implementation lands as a separate step.
 4. **`Display` / `FromStr` format** — what does
    `SessionRef::to_string()` produce? Used in logs, error messages, UI
    chips. Must round-trip with `FromStr`.
-5. **`Hash` / `Eq` / `Ord` derives** — yes (Hash + Eq needed for the
-   in-process `HashMap<SessionId, ActiveSession>` in Phase 3.0). Ord:
-   only if we have a use; UUID v7 ordering is time-based which may be
-   misleading. Probably leave Ord off.
+5. **`Hash` / `Eq` / `Ord` derives** — yes `Hash + Eq` (not only for
+   the Phase 3 in-process registry: also for replay deduplication,
+   resolver caches, and test utilities; ID types are exactly the kind
+   of value you index by, and Hash on a UUID newtype is free). No Ord:
+   UUID v7 ordering is time-based which would be misleading as a
+   semantic comparison.
 6. **Crate home** — `omega-types`, alongside `OmegaEvent`. Confirm.
 7. **`EventId` placement on events** — on the outer envelope (a common
    header) or on each variant struct? The audit's F3 leans envelope.
@@ -320,4 +327,15 @@ implementation lands as a separate step.
 - Registry vs. scan for `SessionRef` resolution. Scan is fine for now
   if performance allows.
 - In-process multi-session server vs. one Omega process per subagent
-  (covered in Phase 3.0; default in-process).
+  (covered in Phase 3.0; default in-process for now, but the
+  comparison is to be revisited at Phase 3 design time — the
+  operational default and the principled choice point in different
+  directions).
+- **`Origin` storage location.** Either `session.jsonc` metadata
+  (current pattern, analogous to `SessionMetadata.resumed_from`) or a
+  field on the subagent's first `SessionStartedEvent` (single source of
+  truth in `events.jsonl`; matches event-sourcing framing). Current
+  leaning: the `SessionStartedEvent` option, which would suggest
+  `session.jsonc` becomes legacy over time. The `Origin` enum *shape*
+  is the same under either location; resolve before Phase 3 spawn
+  wiring.
