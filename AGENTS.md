@@ -51,28 +51,31 @@ mutation cannot be meaningfully tested.
 Add a named Justfile recipe for each targeted run so it can be repeated
 easily. See `mutants-system-prompt-guard` as a template.
 
-## Contract Authority — the most public contract wins
+## Contract Authority — the Rust types define the schema
 
-When multiple representations of the same information exist, the most public
-one is authoritative and all others conform to it:
+The **Rust event types** (`OmegaEvent` in `crates/omega-types/src/events.rs`)
+are the canonical schema definition. All other representations are derived
+from them and must conform:
 
-1. **Persistence** (`events.jsonl`, `context.jsonl`) — most public. The
-   on-disk format is the serde projection of `OmegaEvent` (see 2).
-   Breaking changes require explicit migration.
-2. **In-memory event type** (`OmegaEvent` in
-   `crates/omega-types/src/events.rs`) — must match persistence.
+1. **In-memory event type** (`OmegaEvent`) — the authoritative source.
+   Changes here are the change; everything else follows.
+2. **Persistence** (`events.jsonl`, `context.jsonl`) — the serde projection
+   of `OmegaEvent`. Once data is written to disk, those files are a
+   **compatibility obligation**: future type changes must preserve
+   deserialization of existing logs, or require explicit migration.
    Use `#[serde(rename)]` / `#[serde(default)]` to evolve the type without
-   breaking the file format — but **deliberately**, to honor a real
-   contract, never **defensively** to suppress a deserialization error.
-   The type system rejecting an event is a feature: it surfaces semantic
-   drift loudly. Defensive serde attributes silently mask exactly the
-   bugs we most want to see. When in doubt, let it fail.
+   breaking existing files — but **deliberately**, to honor a real
+   compatibility obligation, never **defensively** to suppress a
+   deserialization error. The type system rejecting an event is a feature:
+   it surfaces semantic drift loudly. Defensive serde attributes silently
+   mask exactly the bugs we most want to see. When in doubt, let it fail.
 3. **WebSocket protocol** (`WsMessage` in
    `crates/omega-server/src/ws_message.rs`) — transport projection of
    `OmegaEvent`; may carry extra ephemeral fields.
-4. **Rendered UI** — least public; can change freely.
+4. **Rendered UI** — least stable; can change freely.
 
-Rule: update the UI to match the log — never the log to match the UI.
+Rule: update the UI to match the types — never change the types (and thus
+the on-disk format) just to match the UI.
 
 ## Tricky bugs — ask for session logs
 

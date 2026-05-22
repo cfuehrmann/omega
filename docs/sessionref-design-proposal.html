@@ -388,11 +388,16 @@ tr:nth-child(even) td { background: #fafbfc; }
 <div class="callout warn">
   <div class="callout-title">⚠ Contract-authority reminder</div>
   <p>
-    Per the AGENTS.md Contract Authority rule, <strong>the on-disk
-    <code>events.jsonl</code> format is the most public contract</strong>.
-    Every type defined here must first satisfy the persistence contract.
-    The Rust types, wire protocol, and UI conform to the log — never the
-    reverse. Schema evolution must be deliberate and loud, not defensive.
+    Per the AGENTS.md Contract Authority rule, <strong>the Rust event types
+    (<code>OmegaEvent</code> and friends in <code>omega-types</code>) are the
+    canonical schema definition</strong> — the JSON files in
+    <code>events.jsonl</code> are their serde projection.
+    Once data is written to disk those files become a
+    <strong>compatibility obligation</strong>: type changes must preserve
+    deserialization of existing logs, or require explicit migration.
+    Use serde attributes deliberately to honour that obligation — never
+    defensively to suppress an error. The type system rejecting a malformed
+    event is a feature. When in doubt, let it fail.
   </p>
 </div>
 
