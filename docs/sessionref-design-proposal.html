@@ -1210,33 +1210,35 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
   </p>
 </div>
 
-<div class="callout warn">
-  <div class="callout-title">⚠ Open question — storage location</div>
+<div class="callout rec">
+  <div class="callout-title">✓ Storage location — first <code>SessionStartedEvent</code></div>
   <p>
-    Where does <code>Origin</code> live on disk? Two candidates:
+    <code>Origin</code> lives as a field on the subagent's first
+    <code>SessionStartedEvent</code> in <code>events.jsonl</code>,
+    <em>not</em> in <code>session.jsonc</code>. Single source of truth;
+    matches event-sourcing framing (state = fold(events)); UI rendering
+    is free since the event display path already exists.
+    <code>session.jsonc</code>'s remaining fields (<code>name</code>,
+    <code>resumed_from</code>) are candidates for eventual migration
+    into events; that cleanup is separate and not in scope here.
   </p>
-  <ul>
-    <li><strong>(a) <code>session.jsonc</code> metadata</strong> — follows
-      the current <code>SessionMetadata.resumed_from</code> pattern.</li>
-    <li><strong>(b) A field on the subagent's first
-      <code>SessionStartedEvent</code></strong> — single source of truth
-      in <code>events.jsonl</code>; matches the event-sourcing framing
-      (state = fold(events)); suggests <code>session.jsonc</code> may
-      eventually become legacy.</li>
-  </ul>
   <p>
-    The recommendation below assumes (a) for now, but (b) is the more
-    principled choice. This question is deferred to the main design doc
-    for resolution; the <code>Origin</code> enum shape itself is the
-    same under either storage location.
+    <strong>Old-log handling.</strong> Pre-Phase-1
+    <code>SessionStartedEvent</code> records lack the field; they
+    deserialise with <code>origin: Origin::Root</code> via a
+    documented serde default. This is the deliberate use of a default
+    — encoding the real semantic that every pre-Phase-1 session is by
+    construction a root, because subagents did not exist yet. Not a
+    defensive accommodation. Documented loudly in the field's
+    doc-comment.
   </p>
 </div>
 
 <pre><code class="language-rust">/// Records how this session came to exist.
 ///
-/// Storage location is an open question (see callout above) — either
-/// `SessionMetadata` (session.jsonc) or a field on the subagent's first
-/// `SessionStartedEvent`.
+/// Lives as a field on the subagent's first `SessionStartedEvent` in
+/// `events.jsonl`. Single source of truth; UI display is free via the
+/// existing event-rendering path.
 ///
 /// Extensible: `ForkOf` is planned for Phase 4 but not added now.
 /// Unknown variants deserialise to `Unknown` so new variants in

@@ -226,13 +226,11 @@ than by accident of implementation order.
   - **(b) Separate Omega process per subagent.** Matches the "subagent =
     child Omega instance" framing most literally; gives crash isolation;
     requires IPC for events to bubble to the parent's UI.
-  - **Default: (a)** for now, but the in-proc-vs-separate-proc
-    comparison is to be revisited at Phase 3 design time. The current
-    leaning is operational (in-proc is the path of least resistance);
-    the principled case (separate-proc gives crash isolation and
-    matches the "subagent = child Omega instance" framing literally)
-    deserves a real Phase 3 design discussion. Phase 1 types are
-    neutral; nothing is foreclosed.
+  - **Leaning: (b)** — separate process per subagent, matching the
+    "subagent = child Omega instance" framing literally and providing
+    crash isolation. Not locked in; revisit at Phase 3 design time.
+    Phase 1 types are neutral; nothing is foreclosed under either
+    choice.
 - **UI: session modal / picker.** Today there's a single-session UI;
   with subagents the user needs to navigate between sessions. The
   modal/picker needs (i) a tree view of related sessions (parent →
@@ -327,15 +325,18 @@ implementation lands as a separate step.
 - Registry vs. scan for `SessionRef` resolution. Scan is fine for now
   if performance allows.
 - In-process multi-session server vs. one Omega process per subagent
-  (covered in Phase 3.0; default in-process for now, but the
-  comparison is to be revisited at Phase 3 design time — the
-  operational default and the principled choice point in different
-  directions).
-- **`Origin` storage location.** Either `session.jsonc` metadata
-  (current pattern, analogous to `SessionMetadata.resumed_from`) or a
-  field on the subagent's first `SessionStartedEvent` (single source of
-  truth in `events.jsonl`; matches event-sourcing framing). Current
-  leaning: the `SessionStartedEvent` option, which would suggest
-  `session.jsonc` becomes legacy over time. The `Origin` enum *shape*
-  is the same under either location; resolve before Phase 3 spawn
-  wiring.
+  (covered in Phase 3.0; leaning separate-process for now, revisit at
+  Phase 3 design time).
+
+### Resolved during Phase 1 design
+
+- **`Origin` storage location** — resolved: field on the subagent's
+  first `SessionStartedEvent` (single source of truth in
+  `events.jsonl`; matches event-sourcing framing; UI rendering free
+  via existing event display path). Old `SessionStartedEvent` records
+  deserialise with `origin: Origin::Root` via a documented serde
+  default — the deliberate use case, encoding the real semantic that
+  pre-Phase-1 sessions are all roots by construction.
+  `SessionMetadata` (session.jsonc) is on its way out; its remaining
+  fields (`name`, `resumed_from`) are candidates for eventual migration
+  into events as a separate cleanup.
