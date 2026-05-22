@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Phase 1 SessionRef Design Proposal</title>
+
+<!-- Highlight.js from CDN (syntax highlighting) -->
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+      crossorigin="anonymous"
+      onerror="this.remove()" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+        crossorigin="anonymous"
+        onerror="window.__hljs_failed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+
+<style>
+/* ── Reset / base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #f9f9fb;
+  --surface:     #ffffff;
+  --border:      #e1e4e8;
+  --text:        #1a1a2e;
+  --muted:       #6a737d;
+  --accent:      #0550ae;
+  --accent-bg:   #dbeafe;
+  --warn-bg:     #fff8dc;
+  --warn-border: #e6c600;
+  --ok-bg:       #dcfce7;
+  --ok-border:   #16a34a;
+  --callout-bg:  #eff6ff;
+  --callout-border: #3b82f6;
+  --toc-width:   240px;
+  --content-max: 860px;
+  font-size: 16px;
+  color-scheme: light;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sticky sidebar TOC ────────────────────────────────────────────────── */
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  width: var(--toc-width);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 1.5rem 1rem;
+}
+
+#toc h2 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+#toc ol {
+  list-style: none;
+  padding: 0;
+}
+
+#toc li {
+  margin-bottom: 0.3rem;
+}
+
+#toc a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.82rem;
+  display: block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+#toc a:hover, #toc a.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+#toc .toc-h1 { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+#toc .toc-sub { padding-left: 0.9rem; }
+
+/* ── Main content ──────────────────────────────────────────────────────── */
+main {
+  flex: 1;
+  padding: 2.5rem 3rem;
+  max-width: calc(var(--toc-width) + var(--content-max));
+  overflow-x: hidden;
+}
+
+article {
+  max-width: var(--content-max);
+}
+
+/* ── Typography ────────────────────────────────────────────────────────── */
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 0.4rem;
+  color: var(--text);
+}
+
+.doc-meta {
+  font-size: 0.83rem;
+  color: var(--muted);
+  margin-bottom: 2.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-top: 3rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 1.5rem;
+}
+
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.4rem;
+  scroll-margin-top: 1.5rem;
+}
+
+p { margin-bottom: 0.85rem; }
+
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.85rem; }
+li { margin-bottom: 0.25rem; }
+
+code {
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", Menlo, monospace;
+  font-size: 0.87em;
+  background: #f3f4f6;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+pre {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  font-size: 0.87rem;
+  line-height: 1.55;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* ── Callouts ──────────────────────────────────────────────────────────── */
+.callout {
+  border-left: 4px solid var(--callout-border);
+  background: var(--callout-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.2rem 0;
+}
+
+.callout.rec {
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+
+.callout.warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.callout-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+}
+
+.callout.rec .callout-title  { color: #166534; }
+.callout.warn .callout-title { color: #92400e; }
+.callout .callout-title      { color: var(--accent); }
+
+/* ── Question blocks ───────────────────────────────────────────────────── */
+.question-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem 1.75rem;
+  margin: 2rem 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.question-num {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.78rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+.question-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  line-height: 1.3;
+}
+
+/* ── Collapsible <details> ─────────────────────────────────────────────── */
+details {
+  margin: 0.8rem 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+details > summary {
+  cursor: pointer;
+  padding: 0.6rem 1rem;
+  font-size: 0.87rem;
+  font-weight: 600;
+  background: #f6f8fa;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+details > summary::-webkit-details-marker { display: none; }
+
+details > summary::before {
+  content: "▶ ";
+  font-size: 0.7em;
+  vertical-align: middle;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+
+details[open] > summary {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details > .details-body {
+  padding: 1rem 1.2rem;
+}
+
+/* ── Audit-finding badges ──────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  font-size: 0.73rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.1em 0.6em;
+  margin-right: 0.3em;
+  vertical-align: middle;
+}
+
+.badge-audit { background: #e0e7ff; color: #3730a3; }
+.badge-wip   { background: #fce7f3; color: #9d174d; }
+.badge-ok    { background: var(--ok-bg); color: #166534; }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  margin-bottom: 1rem;
+}
+
+th {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+}
+
+td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.75rem;
+  vertical-align: top;
+}
+
+tr:nth-child(even) td { background: #fafbfc; }
+
+/* ── Responsive: hide TOC on narrow screens ────────────────────────────── */
+@media (max-width: 700px) {
+  #toc { display: none; }
+  main { padding: 1.5rem 1.2rem; }
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────── */
+@media print {
+  #toc { display: none; }
+  body { background: white; }
+  .question-block { box-shadow: none; border: 1px solid #ccc; }
+  details[open] > summary { background: #eee; }
+}
+
+/* Fallback: if hljs didn't load, plain code blocks still look decent */
+.hljs { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar TOC ──────────────────────────────────────────────────────── -->
+<nav id="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#overview" class="toc-h1">Overview</a></li>
+    <li><a href="#q1" class="toc-h1">Q1 — Newtypes</a></li>
+    <li><a href="#q2" class="toc-h1">Q2 — One vs Two types</a></li>
+    <li><a href="#q3" class="toc-h1">Q3 — Serde shape</a></li>
+    <li><a href="#q4" class="toc-h1">Q4 — Display / FromStr</a></li>
+    <li><a href="#q5" class="toc-h1">Q5 — Trait derives</a></li>
+    <li><a href="#q6" class="toc-h1">Q6 — Crate home</a></li>
+    <li><a href="#q7" class="toc-h1">Q7 — EventId placement</a></li>
+    <li><a href="#q8" class="toc-h1">Q8 — Bare ID vs Ref</a></li>
+    <li><a href="#q9" class="toc-h1">Q9 — Origin enum</a></li>
+    <li><a href="#type-summary" class="toc-h1">Type summary</a></li>
+    <li><a href="#json-summary" class="toc-h1">JSON examples</a></li>
+  </ol>
+</nav>
+
+<!-- ── Main content ─────────────────────────────────────────────────────── -->
+<main>
+<article>
+
+<h1>Phase 1 SessionRef — Design Proposal</h1>
+<p class="doc-meta">
+  Status: <strong>Proposal — awaiting main-session review</strong> ·
+  Covers the nine open questions listed in
+  <code>docs/session-design-wip.md §&nbsp;"Before Phase 1"</code> ·
+  No crate code is modified by this document.
+</p>
+
+<!-- ── Overview ─────────────────────────────────────────────────────────── -->
+<h2 id="overview">Overview</h2>
+
+<p>
+  Phase 1 introduces the identity primitives on which every subsequent
+  cross-session feature depends. The decisions made here will be baked into
+  <code>events.jsonl</code> forever; getting them right is more important than
+  getting them fast.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Contract-authority reminder</div>
+  <p>
+    Per the AGENTS.md Contract Authority rule, <strong>the on-disk
+    <code>events.jsonl</code> format is the most public contract</strong>.
+    Every type defined here must first satisfy the persistence contract.
+    The Rust types, wire protocol, and UI conform to the log — never the
+    reverse. Schema evolution must be deliberate and loud, not defensive.
+  </p>
+</div>
+
+<p>
+  Each question below presents a concrete <strong>Recommendation</strong>
+  callout followed by a collapsible <strong>Rationale</strong> section that
+  explains the tradeoffs considered. Rust type definitions and JSON examples
+  are included where relevant.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q1">Q1 — <code>SessionId</code> and <code>EventId</code> as newtypes</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">1</span>
+  Should <code>SessionId</code> and <code>EventId</code> be newtypes
+  (<code>pub struct SessionId(Uuid)</code>) rather than plain type aliases
+  (<code>type SessionId = Uuid</code>)?
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Yes, full newtypes</div>
+  <p>
+    Define both as tuple structs wrapping <code>uuid::Uuid</code> with
+    <code>#[serde(transparent)]</code>. Accept no alternative.
+  </p>
+</div>
+
+<pre><code class="language-rust">// crates/omega-types/src/ids.rs
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// Unique identifier for an Omega session.  Wraps a UUID v7.
+/// Newtype — prevents accidental mixing with `EventId` at compile time.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(pub Uuid);
+
+/// Unique identifier for a single event within any session.  Wraps a UUID v7.
+/// Newtype — prevents accidental mixing with `SessionId` at compile time.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventId(pub Uuid);</code></pre>
+
+<details>
+  <summary>Rationale (blast-radius, type safety, UUID v7)</summary>
+  <div class="details-body">
+    <p>
+      <span class="badge badge-audit">F2</span>
+      <span class="badge badge-audit">F13</span>
+      Today <code>SessionStartedEvent.session_id</code> is a plain
+      <code>String</code> equal to the folder name. Phase 1 replaces this
+      with a genuine UUID. The newtype wrapper gives the compiler a second
+      line of defence once that migration happens: passing a
+      <code>SessionId</code> where an <code>EventId</code> is expected is a
+      compile-time error, not a silent data corruption.
+    </p>
+    <p>
+      <strong>Why not a type alias?</strong> A type alias
+      (<code>type SessionId = Uuid</code>) provides zero protection —
+      the compiler treats it as the underlying type and allows interchanging
+      the two freely. Given that these IDs will appear in event payloads that
+      live on disk forever, the extra safety is mandatory for something with
+      this blast radius.
+    </p>
+    <p>
+      <strong>UUID v7</strong> is the right UUID variant here (time-ordered,
+      which gives natural insertion order in any future index), consistent
+      with the <code>uuid::Uuid</code> v7 dependency already planned in
+      Phase 0.6.
+    </p>
+    <p>
+      <strong><code>#[serde(transparent)]</code></strong> ensures the JSON
+      representation is just the UUID string (<code>"018f..."</code>), not a
+      wrapped object (<code>{"0": "018f..."}</code>). This keeps
+      <code>events.jsonl</code> readable and matches what readers expect.
+    </p>
+    <p>
+      The <code>pub</code> field inside the tuple struct is intentional:
+      pattern matching (<code>let SessionId(uuid) = id</code>) is the
+      idiomatic Rust way to unwrap without adding a dedicated accessor.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q2">Q2 — One <code>SessionRef</code> type vs two types</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">2</span>
+  Should there be a single <code>SessionRef { session_id, event_id:
+  Option&lt;EventId&gt; }</code>, or two separate types —
+  <code>SessionRef</code> (session-only) and <code>EventRef</code>
+  (session + event)?
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Single <code>SessionRef</code> type</div>
+  <p>
+    One type with <code>event_id: Option&lt;EventId&gt;</code>.
+    <code>None</code> means "the session as a whole";
+    <code>Some(eid)</code> means a specific moment within the session.
+  </p>
+</div>
+
+<pre><code class="language-rust">/// A reference to an Omega session, optionally pinned to a specific event.
+///
+/// - `event_id: None`    → refers to the session as a whole (e.g. a folder
+///                          path, a subagent spawn before it has terminated).
+/// - `event_id: Some(e)` → refers to a specific moment; `e` is the UUID of
+///                          an event in `session_id`'s `events.jsonl`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRef {
+    pub session_id: SessionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option&lt;EventId&gt;,
+}</code></pre>
+
+<details>
+  <summary>Rationale (simplicity, optionality, two-type tradeoffs)</summary>
+  <div class="details-body">
+    <p>
+      <strong>Against two types:</strong> the only distinction between a
+      "session reference" and an "event reference" is whether the event ID
+      is present. Encoding that as two separate Rust types would force every
+      call site that might hold either to use an enum or a trait object,
+      adding indirection for no real gain.
+    </p>
+    <p>
+      <strong>For optionality:</strong> the design already specifies concrete
+      cases for both states. A <code>SubagentSpawned</code> event carries
+      <code>event_id: None</code> (the child session exists but has no
+      terminal event yet). A <code>SubagentReturned</code> event carries
+      <code>event_id: Some(terminal_in_child)</code>. Both fit naturally in
+      one type.
+    </p>
+    <p>
+      <strong>Call-site clarity:</strong> code that requires an event-pinned
+      ref enforces this with a runtime check or by constructing the ref only
+      when an <code>EventId</code> is known. The Option is honest — it
+      communicates "this may or may not be pinned to a moment" rather than
+      hiding the distinction.
+    </p>
+    <p>
+      <strong>Future-proofing:</strong> if Phase 4 introduces forks that
+      need a ref to a branch point, that branch point is an event — the same
+      <code>SessionRef{session_id, event_id: Some(fork_point)}</code> shape
+      works without schema change.
+    </p>
+    <p>
+      <code>#[serde(skip_serializing_if = "Option::is_none")]</code>
+      means a session-only ref serialises as
+      <code>{"sessionId":"..."}</code> rather than
+      <code>{"sessionId":"...","eventId":null}</code>.
+      This is cleaner in <code>events.jsonl</code> and does not violate the
+      contract-authority rule because <em>absence</em> of the field is
+      semantically equivalent to <code>None</code> (Serde's
+      <code>deserialize</code> fills it in).
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q3">Q3 — Serde shape: struct vs encoded string</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">3</span>
+  Should <code>SessionRef</code> serialise as a JSON struct
+  (<code>{"sessionId":"…","eventId":"…"}</code>) or as a compact
+  string (<code>"&lt;sid&gt;:&lt;eid&gt;"</code> / <code>"&lt;sid&gt;"</code>)?
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Struct (camelCase fields)</div>
+  <p>
+    Use the flat struct representation with
+    <code>#[serde(rename_all = "camelCase")]</code>, matching the existing
+    <code>events.jsonl</code> field-naming convention.
+    The string encoding is reserved for <code>Display</code> / logs / UI chips
+    (see Q4).
+  </p>
+</div>
+
+<pre><code class="language-json">// Struct form — as it appears in events.jsonl
+
+// Session-only reference (eventId absent):
+{ "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345" }
+
+// Pinned-to-event reference:
+{
+  "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
+  "eventId":   "018f4c2f-1a2b-7e00-8000-fedcba987654"
+}</code></pre>
+
+<details>
+  <summary>Rationale (inspectability, grep-ability, contract authority)</summary>
+  <div class="details-body">
+    <p>
+      <strong>Contract-authority argument:</strong> the on-disk log is the
+      most public contract. Struct fields are self-describing and independently
+      grep-able. A future developer can run
+      <code>grep sessionId events.jsonl</code> and find every cross-session
+      reference without knowing the string-encoding grammar.
+    </p>
+    <p>
+      <strong>Consistency:</strong> every existing event in
+      <code>events.jsonl</code> uses camelCase struct fields (verified by the
+      existing serde tests in <code>omega-types/src/events.rs</code>). A
+      string-encoded <code>SessionRef</code> would be the only field that
+      embeds structured data inside a string — an inconsistency that makes
+      parsing harder for external tools.
+    </p>
+    <p>
+      <strong>String encoding has no advantages for persistence:</strong>
+      the compactness argument only matters if refs appear in many
+      positions where JSON verbosity is a real cost. In practice a
+      <code>SessionRef</code> appears at most a handful of times per session
+      (spawn + return). The extra ~50 bytes per field is irrelevant.
+    </p>
+    <p>
+      <strong>Embeddability:</strong> the struct form works equally well as
+      a nested field in larger event payloads. No escaping or double-encoding
+      is needed.
+    </p>
+    <p>
+      <code>skip_serializing_if = "Option::is_none"</code> on
+      <code>event_id</code> keeps the session-only form clean. The
+      deserialisation side uses Serde's implicit <code>None</code> default
+      for absent optional fields — this is the correct (non-defensive) use
+      of optionality: the field is genuinely optional in the domain.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q4">Q4 — <code>Display</code> / <code>FromStr</code> format</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">4</span>
+  What string format should <code>SessionRef::to_string()</code> produce,
+  and how should <code>FromStr</code> parse it? Used in logs, error
+  messages, and UI chips. Must round-trip.
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — <code>&lt;sid&gt;</code> or <code>&lt;sid&gt;#&lt;eid&gt;</code></div>
+  <p>
+    Use a hash separator (<code>#</code>) between the session UUID and event
+    UUID when the event ID is present. Session-only refs display as the bare
+    UUID. Both <code>SessionId</code> and <code>EventId</code> also implement
+    <code>Display</code> as their inner UUID string.
+  </p>
+</div>
+
+<pre><code class="language-rust">use std::fmt;
+use std::str::FromStr;
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for EventId {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for SessionRef {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        match &self.event_id {
+            None      =&gt; write!(f, "{}", self.session_id),
+            Some(eid) =&gt; write!(f, "{}#{}", self.session_id, eid),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SessionRefParseError;
+
+impl fmt::Display for SessionRefParseError {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        write!(f, "invalid SessionRef format; expected &lt;uuid&gt; or &lt;uuid&gt;#&lt;uuid&gt;")
+    }
+}
+
+impl FromStr for SessionRef {
+    type Err = SessionRefParseError;
+
+    fn from_str(s: &str) -&gt; Result&lt;Self, Self::Err&gt; {
+        let parse_uuid = |u: &str| -&gt; Result&lt;Uuid, SessionRefParseError&gt; {
+            Uuid::parse_str(u).map_err(|_| SessionRefParseError)
+        };
+        match s.split_once('#') {
+            None =&gt; {
+                let sid = SessionId(parse_uuid(s)?);
+                Ok(SessionRef { session_id: sid, event_id: None })
+            }
+            Some((sid_s, eid_s)) =&gt; {
+                let sid = SessionId(parse_uuid(sid_s)?);
+                let eid = EventId(parse_uuid(eid_s)?);
+                Ok(SessionRef { session_id: sid, event_id: Some(eid) })
+            }
+        }
+    }
+}</code></pre>
+
+<details>
+  <summary>Rationale (separator choice, round-trip, URL safety)</summary>
+  <div class="details-body">
+    <p>
+      <strong>Why <code>#</code> as the separator?</strong>
+    </p>
+    <ul>
+      <li>
+        UUID v7 strings contain only hex digits and hyphens — <code>#</code>
+        never appears in a UUID, so <code>split_once('#')</code> is
+        unambiguous.
+      </li>
+      <li>
+        The colon (<code>:</code>) was considered but is a reserved character
+        in URIs, which matters if refs ever appear in URLs or command-line
+        arguments without quoting.
+      </li>
+      <li>
+        The slash (<code>/</code>) was considered (matching
+        <code>session_id/event_id</code>) but clashes with path segments if
+        the ref is embedded in a URL route.
+      </li>
+      <li>
+        <code>#</code> reads naturally as "anchor" — the event is an anchor
+        point within the session, matching the web/HTML metaphor without
+        confusion.
+      </li>
+    </ul>
+    <p>
+      <strong>Round-trip guarantee:</strong> <code>FromStr</code> parses
+      exactly what <code>Display</code> emits, so
+      <code>ref.to_string().parse::&lt;SessionRef&gt;()</code> is always
+      <code>Ok(ref)</code>. This is verified by a trivial property test.
+    </p>
+    <p>
+      <strong>Session-only refs display as bare UUIDs.</strong> This means
+      folder names (which will be UUID-derived, see Q8) can be parsed as
+      <code>SessionRef</code> directly when needed, without special-casing.
+    </p>
+    <p>
+      <strong>UI chips</strong> need not display the full UUID; a truncated
+      prefix (<code>018f4c2e…</code>) is sufficient for human identification.
+      The full string is used in logs and error messages where full
+      traceability matters.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q5">Q5 — <code>Hash</code> / <code>Eq</code> / <code>Ord</code> derives</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">5</span>
+  Which comparison and hashing traits should <code>SessionId</code>,
+  <code>EventId</code>, and <code>SessionRef</code> derive?
+  Is <code>Ord</code> appropriate given UUID v7's time-ordered property?
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Derive Hash + Eq; do not derive Ord</div>
+  <p>
+    Derive <code>PartialEq + Eq + Hash</code> on all three types.
+    Do <strong>not</strong> derive <code>PartialOrd</code> or <code>Ord</code>
+    on any of them.
+  </p>
+</div>
+
+<pre><code class="language-rust">// SessionId and EventId:
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+
+// SessionRef:
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]</code></pre>
+
+<details>
+  <summary>Rationale (HashMap keying, Ord hazard, UUID v7 ordering)</summary>
+  <div class="details-body">
+    <p>
+      <strong><code>Hash + Eq</code> are required</strong> for the
+      Phase 3.0 <code>HashMap&lt;SessionId, ActiveSession&gt;</code> that
+      will replace the current <code>Option&lt;ActiveSession&gt;</code> in
+      <code>AppState</code>.
+    </p>
+    <p>
+      <strong>Why no <code>Ord</code>?</strong> UUID v7 encodes a timestamp
+      in the high bits, so UUID ordering is approximately time ordering.
+      "Approximately" is the hazard: two UUIDs generated within the same
+      millisecond may have an arbitrary sub-millisecond ordering, and two
+      UUIDs from different machines have no guaranteed relationship. Exposing
+      <code>Ord</code> on an ID type invites code that relies on comparison
+      semantics that are not contractually guaranteed. If a sorted container
+      is needed (e.g. a <code>BTreeMap</code> keyed by session), it should
+      explicitly sort by the <code>time</code> field from the
+      <code>SessionStartedEvent</code>, not by the ID itself.
+    </p>
+    <p>
+      <strong>Pragmatic consequence:</strong> omitting <code>Ord</code> makes
+      the crate slightly less convenient for ad-hoc sorting, but eliminates
+      an entire class of latent bugs. The contract-authority principle
+      ("loud, not defensive") applies here too: a compilation error when
+      someone tries to use <code>id1 &lt; id2</code> is preferable to silent
+      time-ordering that breaks on multi-machine deployments.
+    </p>
+    <p>
+      <strong><code>SessionRef</code> Hash / Eq</strong> delegate to the
+      component fields' implementations, which is the correct structural
+      equality: two refs are equal iff both their <code>session_id</code>
+      and <code>event_id</code> fields are equal.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q6">Q6 — Crate home</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">6</span>
+  Which crate should own <code>SessionId</code>, <code>EventId</code>,
+  and <code>SessionRef</code>?
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — <code>omega-types</code>, in a new <code>ids.rs</code> module</div>
+  <p>
+    All three types live in <code>crates/omega-types/src/ids.rs</code>,
+    re-exported from the crate root alongside <code>OmegaEvent</code>.
+  </p>
+</div>
+
+<pre><code class="language-rust">// crates/omega-types/src/lib.rs  (additions)
+pub mod ids;
+pub use ids::{EventId, SessionId, SessionRef};</code></pre>
+
+<details>
+  <summary>Rationale (dependency graph, single source of truth)</summary>
+  <div class="details-body">
+    <p>
+      <code>omega-types</code> is already the canonical home for
+      <code>OmegaEvent</code> and all event structs — the types that every
+      other crate (<code>omega-agent</code>, <code>omega-server</code>,
+      <code>omega-tools</code>) imports. Adding IDs and refs here avoids
+      creating a new dependency edge in the workspace graph.
+    </p>
+    <p>
+      <strong>Alternative considered: a separate <code>omega-ids</code>
+      micro-crate.</strong> Rejected because the only gain would be slightly
+      faster recompilation if IDs change without <code>OmegaEvent</code>
+      changing. In practice these two change together (adding an
+      <code>EventId</code> field to events), and a micro-crate adds workspace
+      maintenance overhead with no architectural benefit.
+    </p>
+    <p>
+      <strong>A dedicated <code>ids.rs</code> module</strong> (rather than
+      inlining into <code>events.rs</code>) keeps the types navigable as
+      they grow — <code>Origin</code>, future <code>RunId</code>, etc. will
+      all live there.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q7">Q7 — <code>EventId</code> placement: envelope vs per-variant</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">7</span>
+  Should <code>EventId</code> be placed on a common outer envelope
+  (a header struct wrapping <code>OmegaEvent</code>), or on each variant
+  struct individually?
+  <span class="badge badge-audit">F3</span>
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Outer envelope</div>
+  <p>
+    Introduce a thin <code>LoggedEvent</code> envelope that carries
+    <code>event_id: EventId</code> alongside the existing
+    <code>OmegaEvent</code>. The envelope is what gets written to and read
+    from <code>events.jsonl</code>.
+  </p>
+</div>
+
+<pre><code class="language-rust">/// The on-disk unit stored in `events.jsonl`.
+///
+/// Every persisted event is wrapped in this envelope.  The inner
+/// `OmegaEvent` is flattened into the same JSON object so that the
+/// `"type"` discriminator remains a top-level key.
+///
+/// Reading old log lines that predate the envelope (no `"eventId"` field):
+/// `event_id` defaults to `None`.  This is the ONLY correct use of a serde
+/// default here — old events genuinely have no ID.  Do not add more defaults.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggedEvent {
+    /// Stable identity for this event.  `None` only for pre-Phase-1 log lines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option&lt;EventId&gt;,
+
+    /// The event payload.  Flattened so `"type"` remains a top-level key.
+    #[serde(flatten)]
+    pub event: OmegaEvent,
+}</code></pre>
+
+<p>
+  At write time the event store always assigns a fresh UUID v7:
+</p>
+
+<pre><code class="language-rust">// In EventStore::append (sketch):
+let logged = LoggedEvent {
+    event_id: Some(EventId(Uuid::now_v7())),
+    event,
+};
+writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
+
+<details>
+  <summary>Rationale (F3, DRY, flat JSON, old-log compatibility)</summary>
+  <div class="details-body">
+    <p>
+      <span class="badge badge-audit">F3</span>
+      The audit notes that events have no stable IDs today — they're
+      identified by their position in the file. Adding an ID to every
+      variant struct individually would require touching ~20 structs in
+      <code>events.rs</code> with identical boilerplate, and every new
+      variant would silently omit the ID if the author forgets.
+    </p>
+    <p>
+      <strong>The envelope pattern solves this once</strong>: the ID is
+      added in one place, assigned by the writer (not the event constructor),
+      and the rest of the codebase continues constructing
+      <code>OmegaEvent</code> variants without caring about IDs.
+    </p>
+    <p>
+      <strong><code>#[serde(flatten)]</code></strong> keeps the JSON
+      representation flat — the <code>"type"</code> discriminator stays
+      at the top level and existing log readers continue to work:
+    </p>
+    <pre><code class="language-json">// A post-Phase-1 line in events.jsonl:
+{
+  "eventId": "018f4c2f-1a2b-7e00-8000-fedcba987654",
+  "type":    "user_message",
+  "time":    "2025-07-01T10:00:00.000Z",
+  "content": "Hello"
+}</code></pre>
+    <p>
+      <strong>Old-log compatibility:</strong> when deserialising a line
+      written before Phase 1 (no <code>"eventId"</code> field),
+      <code>event_id</code> defaults to <code>None</code>. This is the
+      explicitly correct, non-defensive use of
+      <code>skip_serializing_if</code> + implicit
+      <code>Option</code> default: old events <em>genuinely</em> have no
+      ID. The contract-authority rule's "loud, not defensive" principle is
+      honoured — any other absent field in the post-Phase-1 schema will
+      cause a deserialization error.
+    </p>
+    <p>
+      <strong>The per-variant alternative</strong> (adding
+      <code>event_id: EventId</code> to every struct) was considered. It
+      would make the ID visible in the type system at every event-construction
+      site, which is marginally safer. But it forces callers to generate an
+      ID even when constructing an event for an in-memory purpose that won't
+      be persisted (e.g. unit-test construction, WS broadcasting of an
+      already-logged event). The envelope cleanly separates "event payload"
+      from "event identity in the log".
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q8">Q8 — Bare <code>SessionId</code> vs <code>SessionRef</code></h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">8</span>
+  When should a call site use the bare <code>SessionId</code> vs the full
+  <code>SessionRef</code>? The design doc mentions folder names take bare IDs
+  but event payloads take <code>SessionRef</code> — establish the rule.
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Bare ID for identity/indexing; SessionRef for cross-session event payloads</div>
+  <p>
+    The rule is: use <code>SessionId</code> wherever you name a session
+    <em>as a session</em>; use <code>SessionRef</code> wherever an event
+    payload <em>points from one session into another</em>.
+  </p>
+</div>
+
+<table>
+  <thead>
+    <tr><th>Context</th><th>Type</th><th>Reason</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Session folder name / directory hint</td>
+      <td><code>SessionId</code></td>
+      <td>The folder <em>is</em> the session; no event pinning needed</td>
+    </tr>
+    <tr>
+      <td><code>HashMap&lt;SessionId, ActiveSession&gt;</code> key</td>
+      <td><code>SessionId</code></td>
+      <td>Index into a live session registry; moment is always "now"</td>
+    </tr>
+    <tr>
+      <td><code>SessionStartedEvent.session_id</code></td>
+      <td><code>SessionId</code></td>
+      <td>Declares this session's own identity; not a cross-session reference</td>
+    </tr>
+    <tr>
+      <td><code>SubagentSpawned.child</code></td>
+      <td><code>SessionRef</code> (<code>event_id: None</code>)</td>
+      <td>Parent's event stream points into a child session (whole session)</td>
+    </tr>
+    <tr>
+      <td><code>SubagentReturned.child</code></td>
+      <td><code>SessionRef</code> (<code>event_id: Some(_)</code>)</td>
+      <td>Points to the terminal event in the child</td>
+    </tr>
+    <tr>
+      <td><code>Origin::SubagentOf { parent }</code></td>
+      <td><code>SessionRef</code> (<code>event_id: Some(_)</code>)</td>
+      <td>Child session records the spawn event in the parent (see Q9)</td>
+    </tr>
+    <tr>
+      <td>
+        <code>SessionMetadata.resumed_from</code>
+        <span class="badge badge-audit">F5</span>
+      </td>
+      <td><code>SessionRef</code> (<code>event_id: None</code>)</td>
+      <td>Soft-resume points at the predecessor session as a whole</td>
+    </tr>
+    <tr>
+      <td>Resolving a ref to a folder on disk</td>
+      <td>Extracts <code>session_id</code> from <code>SessionRef</code></td>
+      <td>Resolution uses the bare ID to find the folder</td>
+    </tr>
+  </tbody>
+</table>
+
+<details>
+  <summary>Rationale (F5, soft-resume migration, identity vs pointer)</summary>
+  <div class="details-body">
+    <p>
+      The core intuition is:
+    </p>
+    <ul>
+      <li>
+        A <strong>bare <code>SessionId</code></strong> says
+        "I am talking about this session's identity." It is appropriate when
+        the session itself is the subject.
+      </li>
+      <li>
+        A <strong><code>SessionRef</code></strong> says "I am pointing from
+        here to something over there." It is appropriate in event payloads
+        that create a navigable link across session boundaries.
+      </li>
+    </ul>
+    <p>
+      <span class="badge badge-audit">F5</span>
+      Today <code>SessionMetadata.resumed_from</code> and the two resume
+      events use folder-name strings. Under Phase 1, these become
+      <code>SessionRef</code> with <code>event_id: None</code> (the whole
+      predecessor session is the reference, not a particular moment in it).
+      The migration is: when upgrading old sessions, resolve the folder name
+      to a <code>SessionId</code> and construct the ref from there.
+    </p>
+    <p>
+      <strong>Why not always <code>SessionRef</code>?</strong>
+      Using <code>SessionRef</code> as a HashMap key is awkward and
+      semantically wrong — a live session is keyed by identity, not by a
+      pointer into it. Keeping <code>SessionId</code> for identity use avoids
+      a class of bugs where a session-only ref and an event-pinned ref with
+      the same <code>session_id</code> would hash differently.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="q9">Q9 — <code>Origin</code> enum exact shape</h2>
+
+<div class="question-block">
+<p class="question-title">
+  <span class="question-num">9</span>
+  What is the exact shape of the <code>Origin</code> enum?
+  Specifically, in <code>SubagentOf { parent: SessionRef }</code>, should
+  <code>parent.event_id</code> be <code>Some(_)</code> (the spawn event in
+  the parent) or <code>None</code> (just the parent session)?
+</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Require <code>event_id: Some(_)</code>; enforce at construction</div>
+  <p>
+    <code>Origin::SubagentOf { parent: SessionRef }</code> must carry the
+    spawn event ID from the parent (<code>event_id: Some(spawn_event_id)</code>).
+    A session-only ref (<code>event_id: None</code>) is semantically wrong
+    here and should be rejected at construction time.
+  </p>
+</div>
+
+<pre><code class="language-rust">/// Records how this session came to exist.
+///
+/// Stored in `SessionMetadata` (session.jsonc) and consulted by the
+/// UI to build the session tree.
+///
+/// Extensible: `ForkOf` is planned for Phase 4 but not added now.
+/// Unknown variants deserialise to `Unknown` so new variants in
+/// newer Omega versions degrade gracefully rather than panicking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Origin {
+    /// Top-level session: started directly by the user.
+    Root,
+
+    /// This session was spawned as a subagent by the given parent session.
+    ///
+    /// `parent.event_id` is `Some(spawn_event)` — the UUID of the
+    /// `SubagentSpawned` event in the parent's `events.jsonl`.  This is
+    /// contractually required; a `None` event_id is a construction error.
+    SubagentOf { parent: SessionRef },
+}
+
+impl Origin {
+    /// Constructs a `SubagentOf` variant, enforcing that the parent ref
+    /// carries a concrete spawn-event ID.
+    ///
+    /// # Panics
+    /// Panics if `parent.event_id` is `None`.  Callers must supply the
+    /// spawn event ID from the parent session.
+    pub fn subagent_of(parent: SessionRef) -&gt; Self {
+        assert!(
+            parent.event_id.is_some(),
+            "SubagentOf requires a concrete spawn-event ID in parent.event_id"
+        );
+        Self::SubagentOf { parent }
+    }
+}</code></pre>
+
+<details>
+  <summary>Rationale (transparency requirement, navigability, F5 analogy)</summary>
+  <div class="details-body">
+    <p>
+      <strong>The transparency requirement.</strong> The design document
+      states: "Every event that references another session or event must,
+      from day one: render visibly in the feed; show the literal IDs; have
+      a 'more' button revealing full JSON; ideally be clickable to
+      navigate." For that navigation to work, the child's
+      <code>session.jsonc</code> must carry a direct link back to the exact
+      event in the parent that caused the spawn. A session-only ref
+      (<code>event_id: None</code>) gives you the parent session but not the
+      spawn moment, making the back-link less precise.
+    </p>
+    <p>
+      <strong>Audit analogy (F5).</strong> The audit notes that current
+      cross-session references use folder names (coarse). Phase 1 replaces
+      these with UUID refs precisely because coarse references lose
+      navigability. A <code>SubagentOf</code> with no event ID repeats the
+      same mistake at a finer level.
+    </p>
+    <p>
+      <strong>When is the spawn event ID known?</strong> At the moment the
+      parent writes the <code>SubagentSpawned</code> event, it receives the
+      <code>EventId</code> from the event store. This ID is then passed as
+      part of the seed to the subagent's session metadata. The timing is
+      clear: the child is created after the event is written, so the ID is
+      always available.
+    </p>
+    <p>
+      <strong>Enforcing <code>Some(_)</code>.</strong> Rather than encoding
+      the invariant in the type (which would require a second
+      <code>EventRef</code> type — the two-type approach rejected in Q2), we
+      use a constructor that panics on <code>None</code>. This is the
+      "loud" approach: a programming error is caught at construction time
+      during development, not silently at runtime or in production logs.
+      The serde deserialise path does not enforce this (old logs may
+      theoretically lack the ID), but write-time construction always goes
+      through <code>Origin::subagent_of</code>.
+    </p>
+    <p>
+      <strong><code>#[non_exhaustive]</code></strong> ensures that when
+      Phase 4 adds <code>ForkOf</code>, any <code>match</code> on
+      <code>Origin</code> in other crates will produce a compile error
+      rather than silently hitting a <code>_ =&gt; unreachable!()</code> arm.
+      This is the "loud, not defensive" principle applied to enum evolution.
+    </p>
+    <p>
+      <strong>Serde tag.</strong> <code>#[serde(tag = "type")]</code>
+      produces <code>{"type":"root"}</code> and
+      <code>{"type":"subagent_of","parent":{...}}</code>, consistent with
+      the existing tagged-enum convention in <code>OmegaEvent</code>.
+    </p>
+  </div>
+</details>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="type-summary">Full type summary</h2>
+
+<p>All types in one place for reference. These are the definitions to implement in Phase 1.1–1.3.</p>
+
+<pre><code class="language-rust">// crates/omega-types/src/ids.rs
+// ============================================================
+// Omega identity primitives — Phase 1.1–1.3
+// ============================================================
+//
+// Contract-authority: these types are the Rust projection of the
+// on-disk format.  Changes here are breaking changes to events.jsonl.
+
+use std::fmt;
+use std::str::FromStr;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+// ── Leaf ID types ───────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(pub Uuid);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventId(pub Uuid);
+
+// ── SessionRef ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRef {
+    pub session_id: SessionId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option&lt;EventId&gt;,
+}
+
+impl SessionRef {
+    pub fn session(session_id: SessionId) -&gt; Self {
+        Self { session_id, event_id: None }
+    }
+
+    pub fn event(session_id: SessionId, event_id: EventId) -&gt; Self {
+        Self { session_id, event_id: Some(event_id) }
+    }
+}
+
+// ── Display / FromStr ───────────────────────────────────────
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for EventId {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for SessionRef {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        match &self.event_id {
+            None      =&gt; write!(f, "{}", self.session_id),
+            Some(eid) =&gt; write!(f, "{}#{}", self.session_id, eid),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SessionRefParseError;
+
+impl fmt::Display for SessionRefParseError {
+    fn fmt(&self, f: &mut fmt::Formatter&lt;'_&gt;) -&gt; fmt::Result {
+        write!(f, "invalid SessionRef: expected &lt;uuid&gt; or &lt;uuid&gt;#&lt;uuid&gt;")
+    }
+}
+
+impl FromStr for SessionRef {
+    type Err = SessionRefParseError;
+
+    fn from_str(s: &str) -&gt; Result&lt;Self, Self::Err&gt; {
+        let pu = |u: &str| Uuid::parse_str(u).map_err(|_| SessionRefParseError);
+        match s.split_once('#') {
+            None              =&gt; Ok(Self::session(SessionId(pu(s)?))),
+            Some((sid, eid))  =&gt; Ok(Self::event(SessionId(pu(sid)?), EventId(pu(eid)?))),
+        }
+    }
+}
+
+// ── Origin ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Origin {
+    Root,
+    /// parent.event_id must be Some(_); use Origin::subagent_of() to construct.
+    SubagentOf { parent: SessionRef },
+}
+
+impl Origin {
+    pub fn subagent_of(parent: SessionRef) -&gt; Self {
+        assert!(parent.event_id.is_some(),
+            "SubagentOf requires a concrete spawn-event ID");
+        Self::SubagentOf { parent }
+    }
+}
+
+// ── LoggedEvent envelope ────────────────────────────────────
+
+/// On-disk unit stored in `events.jsonl`.
+///
+/// `event_id` is `None` only for pre-Phase-1 log lines.
+/// This is the only intentional serde default in this module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggedEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option&lt;EventId&gt;,
+    #[serde(flatten)]
+    pub event: crate::events::OmegaEvent,
+}</code></pre>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="json-summary">JSON examples</h2>
+
+<p>
+  What the new structures look like in <code>events.jsonl</code> and
+  <code>session.jsonc</code>:
+</p>
+
+<h3>events.jsonl — post-Phase-1 line with EventId</h3>
+<pre><code class="language-json">{"eventId":"018f4c2f-1a2b-7e00-8000-fedcba987654","type":"user_message","time":"2025-07-01T10:00:00.000Z","content":"Hello, Omega!"}</code></pre>
+
+<h3>events.jsonl — SubagentSpawned (session-only ref, no eventId yet)</h3>
+<pre><code class="language-json">{
+  "eventId": "018f4c30-0000-7a00-8000-aaaaaaaaaaaa",
+  "type":    "subagent_spawned",
+  "time":    "2025-07-01T10:05:00.000Z",
+  "child": {
+    "sessionId": "018f4c30-1111-7b00-8000-bbbbbbbbbbbb"
+  }
+}</code></pre>
+
+<h3>events.jsonl — SubagentReturned (event-pinned ref)</h3>
+<pre><code class="language-json">{
+  "eventId": "018f4c31-2222-7c00-8000-cccccccccccc",
+  "type":    "subagent_returned",
+  "time":    "2025-07-01T10:07:30.000Z",
+  "child": {
+    "sessionId": "018f4c30-1111-7b00-8000-bbbbbbbbbbbb",
+    "eventId":   "018f4c31-1234-7d00-8000-dddddddddddd"
+  },
+  "summary": "Created and tested the new feature branch."
+}</code></pre>
+
+<h3>session.jsonc — child session metadata (SubagentOf origin)</h3>
+<pre><code class="language-json">{
+  "name": "feature-branch-subagent",
+  "origin": {
+    "type": "subagent_of",
+    "parent": {
+      "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
+      "eventId":   "018f4c30-0000-7a00-8000-aaaaaaaaaaaa"
+    }
+  }
+}</code></pre>
+
+<h3>session.jsonc — root session metadata</h3>
+<pre><code class="language-json">{
+  "name": "my-root-session",
+  "origin": {
+    "type": "root"
+  }
+}</code></pre>
+
+<h3>Display format examples</h3>
+<pre><code class="language-rust">// Session-only ref:
+let r = SessionRef::session(SessionId(uuid_a));
+assert_eq!(r.to_string(), "018f4c2e-3a1b-7d00-8000-abcdef012345");
+
+// Event-pinned ref:
+let r = SessionRef::event(SessionId(uuid_a), EventId(uuid_b));
+assert_eq!(r.to_string(), "018f4c2e-3a1b-7d00-8000-abcdef012345#018f4c2f-1a2b-7e00-8000-fedcba987654");
+
+// Round-trip:
+let s = r.to_string();
+assert_eq!(s.parse::&lt;SessionRef&gt;().unwrap(), r);</code></pre>
+
+</article>
+</main>
+
+<script>
+// ── Syntax highlighting (graceful fallback) ──────────────────────────────
+(function () {
+  if (window.__hljs_failed || typeof hljs === 'undefined') return;
+  try {
+    document.querySelectorAll('pre code[class*="language-"]').forEach(function (block) {
+      hljs.highlightElement(block);
+    });
+  } catch (e) { /* swallow — plain code blocks still look fine */ }
+})();
+
+// ── Sticky TOC active-link tracking ─────────────────────────────────────
+(function () {
+  var tocLinks = document.querySelectorAll('#toc a[href^="#"]');
+  if (!tocLinks.length) return;
+
+  var headings = [];
+  tocLinks.forEach(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) headings.push({ el: el, link: a });
+  });
+
+  function onScroll() {
+    var scrollY = window.scrollY + 120; // offset for sticky header feel
+    var active = headings[0];
+    for (var i = 0; i < headings.length; i++) {
+      if (headings[i].el.getBoundingClientRect().top + window.scrollY <= scrollY) {
+        active = headings[i];
+      }
+    }
+    tocLinks.forEach(function (a) { a.classList.remove('active'); });
+    if (active) active.link.classList.add('active');
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+
+</body>
+</html>
