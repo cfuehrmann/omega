@@ -136,6 +136,16 @@ fn default_agent_tz() -> String {
     "UTC".to_owned()
 }
 
+/// Default value for the `origin` field on [`SessionStartedEvent`] when
+/// deserialising a session recorded before Phase 1.
+///
+/// Every pre-Phase-1 session is by construction a root session, because
+/// subagents did not exist yet.  This is a deliberate semantic default,
+/// not a defensive accommodation to suppress a parse error.
+fn default_origin() -> crate::ids::Origin {
+    crate::ids::Origin::Root
+}
+
 /// The session started (first event in every session).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,6 +176,13 @@ pub struct SessionStartedEvent {
     /// what the UI did pre-migration anyway.
     #[serde(default = "default_agent_tz")]
     pub agent_time_zone: String,
+    /// How this session came to exist.
+    ///
+    /// Defaults to [`Origin::Root`](crate::ids::Origin::Root) when absent —
+    /// every pre-Phase-1 session is by construction a root session, because
+    /// subagents did not exist yet.  Not a defensive accommodation.
+    #[serde(default = "default_origin")]
+    pub origin: crate::ids::Origin,
 }
 
 /// The server process started.
@@ -547,6 +564,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
+    use crate::ids::Origin;
 
     // -----------------------------------------------------------------------
     // Discriminator / type-field round-trips
@@ -564,12 +582,14 @@ mod tests {
             system_prompt: "You are Omega.".into(),
             omega_commit: "abc1234".into(),
             agent_time_zone: "Europe/Berlin".into(),
+            origin: Origin::Root,
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "session_started");
         assert_eq!(json["sessionId"], "abc123");
         assert_eq!(json["systemPrompt"], "You are Omega.");
         assert_eq!(json["agentTimeZone"], "Europe/Berlin");
+        assert_eq!(json["origin"]["type"], "root");
     }
 
     /// Backward-compat: sessions written before the `omegaCommit` field
@@ -619,6 +639,32 @@ mod tests {
         match parsed {
             OmegaEvent::SessionStarted(ev) => {
                 assert_eq!(ev.agent_time_zone, "UTC");
+            }
+            other => panic!("expected SessionStarted, got {other:?}"),
+        }
+    }
+
+    /// Backward-compat: sessions written before the `origin` field existed
+    /// must still deserialise cleanly — they default to `Origin::Root`,
+    /// which is the correct semantic for every pre-Phase-1 session.
+    #[test]
+    fn session_started_uses_default_origin_root_when_field_missing() {
+        let json = serde_json::json!({
+            "type": "session_started",
+            "time": "2024-01-15T12:00:00.000Z",
+            "sessionId": "abc123",
+            "path": "",
+            "model": "claude-sonnet-4-6",
+            "effort": "medium",
+            "systemPrompt": "You are Omega.",
+            "omegaCommit": "abc1234",
+            "agentTimeZone": "Europe/Berlin",
+            // origin deliberately omitted
+        });
+        let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
+        match parsed {
+            OmegaEvent::SessionStarted(ev) => {
+                assert_eq!(ev.origin, Origin::Root);
             }
             other => panic!("expected SessionStarted, got {other:?}"),
         }
@@ -1072,6 +1118,7 @@ mod tests {
             system_prompt: String::new(),
             omega_commit: "abc".into(),
             agent_time_zone: "UTC".into(),
+            origin: Origin::Root,
         });
         assert_eq!(ev.time().as_str(), ts);
     }

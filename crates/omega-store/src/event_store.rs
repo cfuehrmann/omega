@@ -9,6 +9,8 @@
 use std::path::PathBuf;
 
 use omega_types::OmegaEvent;
+use omega_types::ids::{EventId, LoggedEvent};
+use uuid::Uuid;
 
 use crate::{Result, StoreError};
 
@@ -58,6 +60,10 @@ impl EventStore {
 
     /// Serialise `event` as a JSON line and append it to `events.jsonl`.
     ///
+    /// The event is wrapped in a [`LoggedEvent`] envelope with a fresh UUID v7
+    /// assigned as the `eventId`.  This ID is the stable, durable identity
+    /// for the event within the session's `events.jsonl`.
+    ///
     /// Creates the file and any missing parent directories if they do not
     /// exist.
     ///
@@ -65,7 +71,11 @@ impl EventStore {
     ///
     /// Returns an error if serialisation or the file write fails.
     pub async fn append(&self, event: &OmegaEvent) -> Result<()> {
-        let mut line = serde_json::to_string(event)?;
+        let envelope = LoggedEvent {
+            event_id: Some(EventId(Uuid::now_v7())),
+            event: event.clone(),
+        };
+        let mut line = serde_json::to_string(&envelope)?;
         line.push('\n');
 
         // Create parent directories defensively — make_session_dir already

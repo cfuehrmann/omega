@@ -816,6 +816,7 @@ mod tests {
         ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent,
         TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
     };
+    use omega_types::ids::Origin;
     use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
     use serde_json::json;
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -954,6 +955,7 @@ mod tests {
             system_prompt: "p".into(),
             omega_commit: "u".into(),
             agent_time_zone: "UTC".into(),
+            origin: Origin::Root,
         });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }

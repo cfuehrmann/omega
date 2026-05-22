@@ -31,6 +31,7 @@ use omega_types::events::{
     ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
     TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UsageIteration, UserMessageEvent,
 };
+use omega_types::ids::Origin;
 use serde_json::json;
 
 mod common;
@@ -75,6 +76,7 @@ fn all_26_events() -> Vec<OmegaEvent> {
                     .into(),
             omega_commit: "abc1234".into(),
             agent_time_zone: "Europe/Berlin".into(),
+            origin: Origin::Root,
         }),
         // 2. ServerStarted
         OmegaEvent::ServerStarted(ServerStartedEvent { time: T.into() }),

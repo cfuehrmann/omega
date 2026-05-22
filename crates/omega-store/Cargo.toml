@@ -17,6 +17,7 @@ regex          = "1"
 sha2           = "0.10"
 hex            = "0.4"
 thiserror      = "2"
+uuid           = { version = "1", features = ["v7", "serde"] }
 
 [dev-dependencies]
 tokio    = { version = "1", features = ["macros", "rt"] }

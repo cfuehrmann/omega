@@ -12,7 +12,10 @@ expression: events
     "effort": "medium",
     "systemPrompt": "You are an expert assistant operating inside Omega, a software engineering agent harness.",
     "omegaCommit": "abc1234",
-    "agentTimeZone": "Europe/Berlin"
+    "agentTimeZone": "Europe/Berlin",
+    "origin": {
+      "type": "root"
+    }
   },
   {
     "type": "server_started",

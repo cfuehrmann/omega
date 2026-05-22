@@ -191,6 +191,13 @@ mutants-system-prompt-guard:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
 
+# Run cargo-mutants targeted at the identity primitives (Phase 1).
+# Mutates only omega-types/src/ids.rs and runs the omega-types test suite.
+# Fast: pure functions with no I/O.
+mutants-ids:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/ids.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

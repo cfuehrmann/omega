@@ -39,6 +39,7 @@ use omega_types::events::{
     ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent,
     TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
+use omega_types::ids::Origin;
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
@@ -589,6 +590,9 @@ impl Agent {
             // when detection fails keeps the rendered output well-defined
             // (Intl accepts `UTC` as a valid zone name).
             agent_time_zone: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
+            // Phase 1: all sessions started by the agent are root sessions
+            // (no subagent support yet).
+            origin: Origin::Root,
         });
         self.event_store.append(&session_started).await?;
         Ok(())

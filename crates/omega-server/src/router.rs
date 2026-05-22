@@ -42,6 +42,7 @@ use tower_http::services::ServeDir;
 use omega_core::AgentItem;
 use omega_types::OmegaEvent;
 use omega_types::events::PauseRequestedEvent;
+use omega_types::ids::LoggedEvent;
 
 use crate::AppState;
 use crate::session::{ActiveSession, SessionInfoCache};
@@ -409,7 +410,7 @@ fn next_turn_state_for(event: &OmegaEvent) -> Option<&'static str> {
 /// `events` vec for a [`WsMessage::History`] frame.
 ///
 /// Pure file I/O — does not touch the session slot.
-async fn read_history_events(events_file: &Path) -> Vec<OmegaEvent> {
+async fn read_history_events(events_file: &Path) -> Vec<LoggedEvent> {
     let store = EventStore::new(events_file.to_path_buf());
     let Ok(raw_events) = store.read_all().await else {
         return Vec::new();
@@ -420,8 +421,10 @@ async fn read_history_events(events_file: &Path) -> Vec<OmegaEvent> {
         if !should_replay(event_type) {
             continue;
         }
-        if let Ok(event) = serde_json::from_value::<OmegaEvent>(v) {
-            out.push(event);
+        // Deserialise as LoggedEvent to forward the eventId to the client.
+        // Pre-Phase-1 lines that lack eventId deserialise with event_id: None.
+        if let Ok(logged) = serde_json::from_value::<LoggedEvent>(v) {
+            out.push(logged);
         }
     }
     out

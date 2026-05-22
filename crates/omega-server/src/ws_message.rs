@@ -18,7 +18,7 @@
 //! helpers.
 
 use omega_core::AgentItem;
-use omega_types::OmegaEvent;
+use omega_types::ids::LoggedEvent;
 
 /// One WebSocket frame the server can emit.
 ///
@@ -57,7 +57,9 @@ pub enum WsMessage {
     /// server's `...(isStreaming ? { streaming: true } : {})` pattern.
     History {
         /// Filtered persisted events for the current session.
-        events: Vec<OmegaEvent>,
+        /// Each element is a [`LoggedEvent`] envelope carrying the stable
+        /// `eventId` assigned at write time alongside the event payload.
+        events: Vec<LoggedEvent>,
         /// True if a turn is in progress; the field is dropped when false.
         streaming: bool,
     },
@@ -224,6 +226,7 @@ mod tests {
 
     use super::{PendingChangesIntent, WsMessage};
     use omega_core::AgentItem;
+    use omega_types::ids::LoggedEvent;
     use omega_types::{StreamSignal, events::TurnEndEvent, events::TurnMetrics};
 
     #[test]
@@ -387,15 +390,19 @@ mod tests {
 
     #[test]
     fn history_serialises_each_event_in_order() {
-        let events = vec![omega_types::OmegaEvent::TurnEnd(TurnEndEvent {
-            time: "2024-01-01T00:00:00.000Z".to_owned(),
-            metrics: TurnMetrics {
-                input_tokens: 1,
-                output_tokens: 2,
-                cache_creation_tokens: None,
-                cache_read_tokens: None,
-            },
-        })];
+        // event_id: None represents a pre-Phase-1 log entry that has no ID.
+        let events = vec![LoggedEvent {
+            event_id: None,
+            event: omega_types::OmegaEvent::TurnEnd(TurnEndEvent {
+                time: "2024-01-01T00:00:00.000Z".to_owned(),
+                metrics: TurnMetrics {
+                    input_tokens: 1,
+                    output_tokens: 2,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                },
+            }),
+        }];
         let v = WsMessage::History {
             events,
             streaming: false,
@@ -404,6 +411,11 @@ mod tests {
         let arr = v["events"].as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["type"], "turn_end");
+        // No eventId when None (pre-Phase-1 log entry).
+        assert!(
+            arr[0].get("eventId").is_none(),
+            "eventId must be absent when None"
+        );
     }
 
     #[test]

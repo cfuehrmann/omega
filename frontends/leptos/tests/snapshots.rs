@@ -35,6 +35,7 @@ use omega_types::events::{
     TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
     TurnEndEvent, TurnMetrics, UsageIteration, UserMessageEvent,
 };
+use omega_types::ids::Origin;
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
 use omega_web::picker::PickerOpen;
@@ -272,6 +273,7 @@ fn ev_session_started() -> OmegaEvent {
         system_prompt: "system: test".into(),
         omega_commit: "abc1234".into(),
         agent_time_zone: "Europe/Berlin".into(),
+        origin: Origin::Root,
     })
 }
 
