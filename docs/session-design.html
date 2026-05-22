@@ -1005,6 +1005,37 @@ tr:nth-child(even) td { background: #fafbfc; }
   </p>
 </div>
 
+<div class="callout rec">
+  <div class="callout-title">✓ Per-spawn model and effort — supported</div>
+  <p>
+    The spawn tool accepts optional <code>model</code> and <code>effort</code>
+    arguments. Omitted values inherit from the parent's current model and
+    effort at spawn time. Resolved values are recorded in the child's first
+    <code>SessionStartedEvent</code> (which already carries
+    <code>model</code> and <code>effort</code> fields per
+    <span class="badge badge-audit" title="F3 — SessionStartedEvent carries model, effort, system_prompt, omega_commit">F3</span>),
+    so the child's lineage is self-describing without consulting the parent.
+  </p>
+  <p>
+    This is the core subagent use case: a parent on
+    <code>opus / high</code> delegates routine subtasks to
+    <code>sonnet / medium</code>, or a parent on <code>sonnet / medium</code>
+    escalates a hard subtask to <code>opus / high</code>. Per-spawn selection
+    is a hard requirement, not a future optimisation.
+  </p>
+  <details>
+    <summary>Other spawn parameters (deferred to Phase 3 design)</summary>
+    <p>
+      The spawn tool's full parameter set (system prompt override, tool
+      allowlist, working directory, resource budget) is deferred to Phase 3
+      design. <code>model</code> and <code>effort</code> are called out
+      explicitly because they are the first-order knobs for subagent value
+      and trivially supported by the existing <code>SessionStartedEvent</code>
+      shape.
+    </p>
+  </details>
+</div>
+
 <div class="callout warn">
   <div class="callout-title">⚠ Open — How does the session model need to change?</div>
   <p>
