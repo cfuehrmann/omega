@@ -71,6 +71,14 @@ from them and must conform:
    in the domain (e.g. a field that didn't exist in an earlier version
    and whose absence has a well-defined meaning). When in doubt, let it
    fail.
+
+   **Loud schema change rule:** when the *meaning* of a schema element
+   changes, the *syntax* must change with it — rename the field, add a
+   new variant, or introduce a new type. Do not absorb a semantic change
+   silently behind an alias or by reusing an existing name/variant for a
+   different purpose. Old readers must fail loudly on the new syntax, not
+   silently misinterpret it. A deserialization error on an old log is
+   diagnostic signal; a silent wrong interpretation is a latent bug.
 3. **WebSocket protocol** (`WsMessage` in
    `crates/omega-server/src/ws_message.rs`) — transport projection of
    `OmegaEvent`; may carry extra ephemeral fields.

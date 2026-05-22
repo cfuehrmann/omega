@@ -410,6 +410,29 @@ tr:nth-child(even) td { background: #fafbfc; }
   are included where relevant.
 </p>
 
+<div class="callout">
+  <div class="callout-title">🔔 Loud schema change rule</div>
+  <p>
+    When the <em>meaning</em> of a schema element changes, the
+    <em>syntax</em> must change with it — rename the field, add a new
+    variant, or introduce a new type. Do not absorb a semantic change
+    silently behind a <code>#[serde(alias)]</code> or by reusing an
+    existing name or variant for a different purpose.
+  </p>
+  <p>
+    Old readers must <strong>fail loudly</strong> on the new syntax, not
+    silently misinterpret it. A deserialization error on an old log file
+    is diagnostic signal — it tells you exactly where schema and data
+    diverged. A silent wrong interpretation is a latent bug that may not
+    surface until much later.
+  </p>
+  <p>
+    This is the positive counterpart to the no-defensive-serde rule:
+    “don’t suppress errors” says what not to do;
+    “change the syntax when the meaning changes” says what to do instead.
+  </p>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <h2 id="q1">Q1 — <code>SessionId</code> and <code>EventId</code> as newtypes</h2>
 
