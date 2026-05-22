@@ -116,29 +116,32 @@ absence is correct.
 
 # Implementation plan
 
-## Phase 0 — Audits and no-brainer prep (no SessionRef dependency)
+## Phase 0 — Audits and no-brainer prep ✅ DONE
 
-Safe to run in any order. Output is mostly written; small code changes
-where noted. Goal: have all the information we need before designing
-`SessionRef`, and clear the trivial code work.
+Full findings in [`docs/session-state-audit.md`](./session-state-audit.md).
+Headlines:
 
-- **0.1 State audit.** Enumerate Omega's long-lived in-process state.
-  Classify each as: event-sourced / ephemeral-and-OK-to-lose /
-  gap-to-close. Output: `docs/session-state-audit.md`.
-- **0.2 "Session" usage scan.** Every place in the codebase that uses
-  "session" and what it means there. Feed into a "current
-  vocabulary" section of the audit. Same doc.
-- **0.3 Parent-context-hash check.** Does `LlmResponseEnded` (or
-  equivalent) already carry the predecessor context hash? Code
-  investigation; result in audit.
-- **0.4 Defensive-serde scan.** List existing `#[serde(default)]` and
-  `#[serde(rename)]` attributes on event types. Classify each as
-  deliberate (honours a real contract) or defensive (suppresses a
-  mismatch). Result in audit. No removals yet — that's a follow-up.
-- **0.5 Session version field.** Record the build's git SHA in session
-  metadata at session creation. Pure additive; no resume-time check.
-- **0.6 UUID v7 dependency.** Enable the `v7` feature on the `uuid`
-  crate (or add the crate). Trivial; needed by everything in Phase 1.
+- **0.1 / 0.7 State audit (incl. Agent internals)** — every cross-turn
+  field in `Agent` is already event-sourced or safely ephemeral; the
+  scaffolding for reconstruction (`extract_last_model_and_effort`,
+  `seed_history`, `ContextStore::read_all`) exists. **One gap surfaced:**
+  server-side compaction silently clears in-memory history with no event
+  recording it (F11). Listed as Phase 2.0 below.
+- **0.2 "Session" usage scan** — eight distinct meanings catalogued.
+- **0.3 Parent-context-hash** — already in `LlmResponseEnded.context_hash`;
+  full chain reconstructible from `LlmCallEvent.context_hashes`.
+- **0.4 Defensive serde** — catalogued; kept for now, flagged for a
+  deliberate later sweep.
+- **0.5 Session version field** — already done as
+  `SessionStartedEvent.omega_commit`.
+- **0.6 UUID v7 dependency** — only Phase 0 item still outstanding;
+  small follow-up to fold into the start of Phase 1.
+- **F13:** today's `SessionStartedEvent.session_id` equals the folder
+  name; Phase 1 replaces this with a UUID.
+- **F14:** "awaiting user" = `TurnEnd` or `TurnInterrupted`. Already
+  unambiguous in the event stream.
+- **F15:** `system_blocks` may differ on resume if `AGENTS.md` changes
+  between runs; accepted per the no-cross-version-replay stance.
 
 ## Phase 1 — SessionRef & friends (design-first; careful)
 
@@ -161,20 +164,78 @@ use them forever. Design carefully before any code lands.
 
 ## Phase 2 — Strict resume + gate test (closes the framing's promise)
 
-- **2.1 Pin down "awaiting user" boundary in code.** Identify the
-  precise event(s) and runtime point that marks it.
+- **2.0 Close F11 compaction gap.** Add an event (e.g.
+  `ContextCompacted`) — or annotate `LlmResponseEnded` — that records
+  when a server-side `compact_20260112` edit fired and the
+  pre-compaction `context.jsonl` records are now stale. Without this,
+  the resume path would naïvely replay the full pre-compaction context.
+  **Prerequisite for 2.2.**
+- **2.1 Pin down "awaiting user" boundary in code.** Per F14 this is
+  `TurnEnd` or `TurnInterrupted`. Confirm and document the exact
+  read-side check.
 - **2.2 Resume entry point.** Given a session folder, fold events into
-  a fresh Omega instance state. No mid-flight recovery: discard any
-  events after the last "awaiting user" mark on the way in (or refuse
-  to load if the trailing events suggest a non-clean shutdown — pick
-  in Phase 2 design).
+  a fresh Omega instance state. Discard events after the last
+  "awaiting user" mark; honour compaction events from 2.0 by starting
+  history fresh at that point. Must handle the
+  `TurnInterrupted{Aborted}` case (dangling `ToolUse` blocks — existing
+  `send_message` Step 1 repair logic must fire or history must be
+  trimmed; see F14 note).
 - **2.3 Round-trip gate test.** Two-process test: run an Omega up to
   some point, kill it, restart from the events, assert state
   equivalence on non-ephemeral pieces. Add to the gate.
-- **2.4 Close gaps from 0.1.** Anything in the gap-to-close column gets
-  event-sourced.
+- **2.4 Close any remaining gaps from the audit.** F11 is the known
+  one; flag and close anything else surfaced by writing 2.3.
 
 ## Phase 3 — Subagents (the actual reason for all this)
+
+### 3.0 Subagent protocol — design discussion (do this first)
+
+The protocol questions below must be settled before code. Most have a
+clear default; flagged here so we make the decisions deliberately rather
+than by accident of implementation order.
+
+- **How are subagents *called*?** Tool-style invocation from the parent's
+  LLM (i.e. the parent emits a `tool_use` for a `spawn_subagent` tool),
+  or a dedicated event/control-plane mechanism? Tool-style is the
+  obvious default — it reuses existing machinery and matches how every
+  other agent we've inspected does it.
+- **How do they *return*?** A summary string back to the parent as a
+  tool result, plus a `SessionRef` to the child's terminal event for
+  navigation. The summary is what re-enters the parent's LLM context;
+  the SessionRef is for observability.
+- **Interaction model — continuous vs call-return.** Reference points
+  from prior survey: opencode = continuous (parent can interact with a
+  live subagent); forgecode and pi = call-return (parent waits, child
+  runs to completion); Claude Code = not yet explored. **Default: start
+  with call-return.** It's strictly simpler, matches the tool-call
+  return shape, and doesn't preclude adding continuous later as a
+  separate spawn variant.
+- **What triggers a handoff?** Manual to start — the parent's LLM
+  decides via the spawn tool. Automatic handoff (e.g. context-budget
+  triggered, or a planner deciding to delegate a subtask) is
+  follow-up work; design must not preclude it.
+- **Observability pointer.** Every subagent spawn surfaces a clickable
+  `SessionRef` to the child session at spawn time (not only at return).
+  The user can open the child's feed while it's still running.
+- **How does the *session model* need to change?** Today's
+  `AppState.active_session: Arc<Mutex<Option<ActiveSession>>>` hosts at
+  most one live agent (F8). Subagents force a decision:
+  - **(a) In-process, multi-session server.** Replace `Option<ActiveSession>`
+    with `HashMap<SessionId, ActiveSession>`. One process, many live
+    agents, one is "focused" for UI input. Simplest operationally.
+  - **(b) Separate Omega process per subagent.** Matches the "subagent =
+    child Omega instance" framing most literally; gives crash isolation;
+    requires IPC for events to bubble to the parent's UI.
+  - **Default: (a)**, with the `SessionRef`-based design ensuring (b) is
+    not foreclosed if we want crash isolation later.
+- **UI: session modal / picker.** Today there's a single-session UI;
+  with subagents the user needs to navigate between sessions. The
+  modal/picker needs (i) a tree view of related sessions (parent →
+  subagents → grandsubagents), (ii) an indicator of which is currently
+  focused, (iii) per-session live status (running / awaiting user /
+  finished).
+
+### 3.1+ Implementation steps (after 3.0 is settled)
 
 - **3.1 Spawn API.** Takes a seed (`Vec<OmegaEvent>` + session
   metadata including `Origin`). The fact that subagent seeds are short
@@ -183,11 +244,14 @@ use them forever. Design carefully before any code lands.
   `<parent>/subagents/<child_id>/`.
 - **3.3 Resolution.** Resolve a `SessionRef` to a session by ID,
   scanning known roots. Future-proof for a registry.
-- **3.4 `SubagentSpawned` event** in parent stream.
+- **3.4 `spawn_subagent` tool** that emits a `SubagentSpawned` event in
+  the parent stream when invoked.
 - **3.5 `SubagentReturned` event** in parent stream, with the child's
-  summary and a `SessionRef` to the child's terminal event.
+  summary and a `SessionRef` to the child's terminal event. Returned
+  to the LLM as the tool result.
 - **3.6 UI: render subagent invocation** in the parent's feed —
-  expandable block; clicking navigates into the child session.
+  expandable block with `SessionRef` link; clicking navigates into the
+  child session. Modal/picker shows the tree of related sessions.
 
 ## Phase 4 — Deferred (may never happen)
 

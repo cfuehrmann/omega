@@ -316,25 +316,11 @@ the initial model and effort before constructing `AgentConfig`. Priority
 order: last `ModelChanged` / `EffortChanged` event → `SessionStartedEvent`
 field → hard-coded default.
 
-## Open audit items still to do
+## Phase 0 status — DONE
 
-*(All original open items are resolved. One new gap was surfaced by
-Phase 0.7.)*
+All audit steps complete. Only outstanding item is **0.6 UUID v7
+dependency**, folded into the start of Phase 1.
 
-- **F11 gap — `ContextCompacted` event:** before Phase 2.2, add an event
-  (or annotate `LlmResponseEnded`) to record that a server-side compaction
-  fired and the pre-compaction context records in `context.jsonl` are now
-  stale. The resume path must be able to detect this and start from an
-  empty history at that point.
-
-## Verdict on Phase 0 progress
-
-| Step | Status |
-|---|---|
-| 0.1 State audit | **Done** — F9–F16 close the Agent-internals piece |
-| 0.2 "Session" usage scan | **Done** (see vocabulary table above) |
-| 0.3 Parent-context-hash check | **Done** — `LlmResponseEndedEvent.context_hash` already there |
-| 0.4 Defensive-serde scan | **Done** — see F6 |
-| 0.5 Session version field | **Already in place** — `SessionStartedEvent.omega_commit` |
-| 0.6 UUID v7 dependency | **Not yet** — small follow-up |
-| 0.7 Agent internals audit | **Done** — see F9–F16 |
+One gap surfaced (**F11 — compaction event**) is now tracked as
+**Phase 2.0** in `session-design-wip.md` and must be closed before the
+resume entry point can be built.
