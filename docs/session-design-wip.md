@@ -271,8 +271,11 @@ structural change.
 
 These decisions are persisted in events forever once made. They deserve
 explicit discussion before any code lands. **Slated for a dedicated
-fresh session**; output is a new "SessionRef design" section appended to
-this doc.
+fresh sub-session**; deliverable is a single self-contained HTML file
+at `docs/sessionref-design-proposal.html` (experiment in richer doc
+affordances — callouts, sticky TOC, syntax-highlighted code, collapsible
+rationale blocks). Main session reviews, accepts/refines, *then*
+implementation lands as a separate step.
 
 1. **`SessionId` and `EventId` as newtypes, not aliases.** Confirmation
    only; the blast-radius argument is decisive. `pub struct SessionId(Uuid)`
