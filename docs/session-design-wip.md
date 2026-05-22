@@ -267,12 +267,54 @@ structural change.
 
 ## Open questions to resolve before each phase
 
-- **Before Phase 1:** exact serde shape for `SessionRef` (struct vs.
-  string-encoded `<session_id>:<event_id>`?). Probably struct, but
-  worth a moment.
-- **Before Phase 2:** "ephemeral pieces" allowlist for the round-trip
-  test. Feeds in from 0.1.
-- **Before Phase 2:** crash-recovery UX policy — silent abandon vs.
-  "we were waiting for a reply; retry?" prompt on resume.
-- **Before Phase 3:** registry vs. scan for `SessionRef` resolution.
-  Scan is fine for now if performance allows.
+### Before Phase 1 — SessionRef design (next concrete decision point)
+
+These decisions are persisted in events forever once made. They deserve
+explicit discussion before any code lands. **Slated for a dedicated
+fresh session**; output is a new "SessionRef design" section appended to
+this doc.
+
+1. **`SessionId` and `EventId` as newtypes, not aliases.** Confirmation
+   only; the blast-radius argument is decisive. `pub struct SessionId(Uuid)`
+   with `#[serde(transparent)]` is the likely shape.
+2. **One `SessionRef` type with `event_id: Option<EventId>`, vs two
+   types (`SessionRef` + `EventRef`).** Single type is simpler; two
+   types are more explicit at call sites. Decide and justify.
+3. **Serde shape:** struct `{"sessionId": "...", "eventId": "..."}` vs
+   string-encoded `"<sid>:<eid>"` / `"<sid>"`. Tradeoff: struct is more
+   inspectable in `events.jsonl`; string is more compact and embeddable.
+   Lean struct.
+4. **`Display` / `FromStr` format** — what does
+   `SessionRef::to_string()` produce? Used in logs, error messages, UI
+   chips. Must round-trip with `FromStr`.
+5. **`Hash` / `Eq` / `Ord` derives** — yes (Hash + Eq needed for the
+   in-process `HashMap<SessionId, ActiveSession>` in Phase 3.0). Ord:
+   only if we have a use; UUID v7 ordering is time-based which may be
+   misleading. Probably leave Ord off.
+6. **Crate home** — `omega-types`, alongside `OmegaEvent`. Confirm.
+7. **`EventId` placement on events** — on the outer envelope (a common
+   header) or on each variant struct? The audit's F3 leans envelope.
+   Decide and document.
+8. **Bare `SessionId` vs `SessionRef`** — when does a call site take
+   the bare ID vs the full ref? E.g. folder names take bare `SessionId`;
+   event payloads referencing another session take `SessionRef`.
+   Establish the rule.
+9. **`Origin` enum exact shape** — `Root` and `SubagentOf { parent:
+   SessionRef }`. Confirm that the parent ref carries the *spawn event*
+   in the parent (`event_id: Some(_)`), not just the parent session
+   (`event_id: None`). The transparency requirement argues for `Some`.
+
+### Before Phase 2
+
+- "Ephemeral pieces" allowlist for the round-trip test. Per the audit,
+  most of `ActiveSession` is ephemeral-OK; the explicit list lives in
+  the test.
+- Crash-recovery UX policy — silent abandon vs. "we were waiting for a
+  reply; retry?" prompt on resume.
+
+### Before Phase 3
+
+- Registry vs. scan for `SessionRef` resolution. Scan is fine for now
+  if performance allows.
+- In-process multi-session server vs. one Omega process per subagent
+  (covered in Phase 3.0; default in-process).
