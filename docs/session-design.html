@@ -526,7 +526,6 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#phase4" class="toc-h1">Phase 4 — Deferred</a></li>
     <li class="toc-divider"></li>
     <li><a href="#open-questions" class="toc-h1">Open questions</a></li>
-    <li><a href="#oq-phase1" class="toc-sub">Before Phase 1</a></li>
     <li><a href="#oq-phase2" class="toc-sub">Before Phase 2</a></li>
     <li><a href="#oq-phase3" class="toc-sub">Before Phase 3</a></li>
     <li><a href="#oq-resolved" class="toc-sub">Resolved (Phase 1)</a></li>
@@ -543,7 +542,7 @@ tr:nth-child(even) td { background: #fafbfc; }
   Captures the adopted framing, the approaches we rejected, and the phased
   implementation plan · Replaces the earlier paranoia-save WIP note ·
   Will be promoted to a clean final design note once the plan is well
-  underway · Source: <code>docs/session-design-wip.md</code>
+  underway · Canonical source: this file (<code>docs/session-design.html</code>)
   (commit <code>574a84d</code>)
 </p>
 
@@ -863,7 +862,7 @@ tr:nth-child(even) td { background: #fafbfc; }
       discovered before any code lands is a conversation.
     </p>
     <p>
-      The nine open questions (see <a href="#oq-phase1">Before Phase 1</a>)
+      The nine open questions (see <a href="#oq-resolved">Resolved during Phase 1 design</a>)
       were slated for a dedicated design sub-session; their answers live in
       <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>.
     </p>
@@ -1105,83 +1104,6 @@ tr:nth-child(even) td { background: #fafbfc; }
 <hr class="section-divider" />
 <h2 id="open-questions" style="margin-top:1.5rem;">Open questions to resolve before each phase</h2>
 
-<!-- ── Before Phase 1 ───────────────────────────────────────────────────── -->
-<h3 id="oq-phase1">Before Phase 1 — SessionRef design <small style="font-weight:400">(next concrete decision point)</small></h3>
-
-<div class="callout">
-  <div class="callout-title">💡 These decisions are persisted in events forever once made</div>
-  <p>
-    They deserve explicit discussion before any code lands. Slated for a
-    dedicated fresh sub-session; deliverable is a single self-contained HTML
-    file at
-    <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>
-    (experiment in richer doc affordances — callouts, sticky TOC,
-    syntax-highlighted code, collapsible rationale blocks). Main session
-    reviews, accepts/refines, <em>then</em> implementation lands as a
-    separate step.
-  </p>
-</div>
-
-<ol>
-  <li>
-    <strong><code>SessionId</code> and <code>EventId</code> as newtypes, not
-    aliases.</strong> Confirmation only; the blast-radius argument is decisive.
-    <code>pub struct SessionId(Uuid)</code> with
-    <code>#[serde(transparent)]</code> is the likely shape.
-  </li>
-  <li>
-    <strong>One <code>SessionRef</code> type with
-    <code>event_id: Option&lt;EventId&gt;</code>, vs two types
-    (<code>SessionRef</code> + <code>EventRef</code>).</strong> Single type is
-    simpler; two types are more explicit at call sites. Decide and justify.
-  </li>
-  <li>
-    <strong>Serde shape:</strong> struct
-    <code>{"sessionId": "...", "eventId": "..."}</code> vs string-encoded
-    <code>"&lt;sid&gt;:&lt;eid&gt;"</code> / <code>"&lt;sid&gt;"</code>.
-    Tradeoff: struct is more inspectable in <code>events.jsonl</code>; string
-    is more compact and embeddable. <span class="leaning">Lean struct.</span>
-  </li>
-  <li>
-    <strong><code>Display</code> / <code>FromStr</code> format</strong> —
-    what does <code>SessionRef::to_string()</code> produce? Used in logs, error
-    messages, UI chips. Must round-trip with <code>FromStr</code>.
-  </li>
-  <li>
-    <strong><code>Hash</code> / <code>Eq</code> / <code>Ord</code> derives</strong>
-    — yes <code>Hash + Eq</code> (not only for the Phase 3 in-process
-    registry: also for replay deduplication, resolver caches, and test
-    utilities; ID types are exactly the kind of value you index by, and Hash
-    on a UUID newtype is free). No <code>Ord</code>: UUID v7 ordering is
-    time-based which would be misleading as a semantic comparison.
-  </li>
-  <li>
-    <strong>Crate home</strong> — <code>omega-types</code>, alongside
-    <code>OmegaEvent</code>. Confirm.
-  </li>
-  <li>
-    <strong><code>EventId</code> placement on events</strong> — on the outer
-    envelope (a common header) or on each variant struct? The audit's
-    <span class="badge badge-audit" title="F3 — Events have no stable IDs today; identified only by position in events.jsonl">F3</span>
-    leans envelope. Decide and document.
-  </li>
-  <li>
-    <strong>Bare <code>SessionId</code> vs <code>SessionRef</code></strong>
-    — when does a call site take the bare ID vs the full ref? E.g. folder
-    names take bare <code>SessionId</code>; event payloads referencing another
-    session take <code>SessionRef</code>. Establish the rule.
-  </li>
-  <li>
-    <strong><code>Origin</code> enum exact shape</strong> —
-    <code>Root</code> and
-    <code>SubagentOf { parent: SessionRef }</code>. Confirm that the parent
-    ref carries the <em>spawn event</em> in the parent
-    (<code>event_id: Some(_)</code>), not just the parent session
-    (<code>event_id: None</code>). The transparency requirement argues for
-    <code>Some</code>.
-  </li>
-</ol>
-
 <!-- ── Before Phase 2 ───────────────────────────────────────────────────── -->
 <h3 id="oq-phase2">Before Phase 2</h3>
 
@@ -1220,6 +1142,48 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 <!-- ── Resolved during Phase 1 design ───────────────────────────────────── -->
 <h3 id="oq-resolved">Resolved during Phase 1 design</h3>
+
+<div class="callout rec">
+  <div class="callout-title">✓ All 9 SessionRef-shape questions — resolved</div>
+  <p>
+    The nine questions originally listed as "Before Phase 1" were resolved in
+    the dedicated SessionRef design sub-session and main-session review. Full
+    rationale, type definitions, and sample JSON are in
+    <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>.
+    Summary:
+  </p>
+  <ol style="margin-top:0.5rem">
+    <li><strong>Q1 — Newtypes, not aliases.</strong>
+      <code>pub struct SessionId(Uuid)</code> and
+      <code>pub struct EventId(Uuid)</code> with
+      <code>#[serde(transparent)]</code>.</li>
+    <li><strong>Q2 — One <code>SessionRef</code> type</strong> carrying
+      <code>event_id: Option&lt;EventId&gt;</code>, not two separate types.</li>
+    <li><strong>Q3 — Struct serde shape</strong> for the wire format in
+      <code>events.jsonl</code>:
+      <code>{"sessionId": "...", "eventId": "..."}</code>.</li>
+    <li><strong>Q4 — <code>Display</code> / <code>FromStr</code> format</strong>
+      uses <code>&lt;session_id&gt;#&lt;event_id&gt;</code> for human-facing
+      strings (tracing output, error messages, UI chips). Round-trips with
+      <code>FromStr</code>.</li>
+    <li><strong>Q5 — Derives:</strong> <code>Hash + Eq + PartialEq</code>,
+      no <code>Ord</code>/<code>PartialOrd</code>.</li>
+    <li><strong>Q6 — Crate home:</strong> <code>omega-types</code>.</li>
+    <li><strong>Q7 — <code>EventId</code> on the envelope</strong>
+      (<code>LoggedEvent { event_id, event: OmegaEvent }</code>), not on each
+      variant. Forwarded to the WS projection so UI display is one conditional
+      render away.</li>
+    <li><strong>Q8 — PK/FK rule:</strong> <code>SessionId</code> at call sites
+      that declare or key by identity (HashMap keys, folder names, an event's
+      own session_id); <code>SessionRef</code> at call sites that point
+      cross-session (event payloads referencing another session).</li>
+    <li><strong>Q9 — <code>Origin</code> enum:</strong> <code>Root</code> and
+      <code>SubagentOf { parent: SessionRef }</code>. Parent ref carries the
+      spawn event in the parent (<code>event_id: Some(_)</code>), required by
+      construction. <code>#[non_exhaustive]</code> so <code>ForkOf</code> can
+      be added later without breaking matches.</li>
+  </ol>
+</div>
 
 <div class="callout rec">
   <div class="callout-title">✓ <code>Origin</code> storage location — resolved</div>

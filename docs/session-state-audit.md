@@ -322,5 +322,5 @@ All audit steps complete. Only outstanding item is **0.6 UUID v7
 dependency**, folded into the start of Phase 1.
 
 One gap surfaced (**F11 — compaction event**) is now tracked as
-**Phase 2.0** in `session-design-wip.md` and must be closed before the
+**Phase 2.0** in `session-design.html` and must be closed before the
 resume entry point can be built.
