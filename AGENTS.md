@@ -60,15 +60,17 @@ from them and must conform:
 1. **In-memory event type** (`OmegaEvent`) — the authoritative source.
    Changes here are the change; everything else follows.
 2. **Persistence** (`events.jsonl`, `context.jsonl`) — the serde projection
-   of `OmegaEvent`. Once data is written to disk, those files are a
-   **compatibility obligation**: future type changes must preserve
-   deserialization of existing logs, or require explicit migration.
-   Use `#[serde(rename)]` / `#[serde(default)]` to evolve the type without
-   breaking existing files — but **deliberately**, to honor a real
-   compatibility obligation, never **defensively** to suppress a
-   deserialization error. The type system rejecting an event is a feature:
-   it surfaces semantic drift loudly. Defensive serde attributes silently
-   mask exactly the bugs we most want to see. When in doubt, let it fail.
+   of `OmegaEvent`. Backward compatibility with old log files is **not**
+   required; agility in evolving the schema matters more. Best-effort
+   loading of old sessions is the goal: the Rust type system and fold
+   invariants reject incompatible events structurally, which is the
+   intended guard. Never use `#[serde(rename)]` / `#[serde(default)]`
+   **defensively** to suppress a deserialization error — that silently
+   masks exactly the structural drift we want to see loudly. Only add
+   such attributes **deliberately**, when a field is genuinely optional
+   in the domain (e.g. a field that didn't exist in an earlier version
+   and whose absence has a well-defined meaning). When in doubt, let it
+   fail.
 3. **WebSocket protocol** (`WsMessage` in
    `crates/omega-server/src/ws_message.rs`) — transport projection of
    `OmegaEvent`; may carry extra ephemeral fields.

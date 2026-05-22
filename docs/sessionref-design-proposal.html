@@ -392,12 +392,14 @@ tr:nth-child(even) td { background: #fafbfc; }
     (<code>OmegaEvent</code> and friends in <code>omega-types</code>) are the
     canonical schema definition</strong> — the JSON files in
     <code>events.jsonl</code> are their serde projection.
-    Once data is written to disk those files become a
-    <strong>compatibility obligation</strong>: type changes must preserve
-    deserialization of existing logs, or require explicit migration.
-    Use serde attributes deliberately to honour that obligation — never
-    defensively to suppress an error. The type system rejecting a malformed
-    event is a feature. When in doubt, let it fail.
+    Backward compatibility with old log files is <strong>not</strong>
+    required; schema agility matters more. Best-effort loading of old
+    sessions is the goal: the Rust type system and fold invariants reject
+    incompatible events structurally, which is the intended guard — not
+    a problem to paper over with defensive serde attributes. Only add
+    <code>#[serde(default)]</code> / <code>#[serde(rename)]</code>
+    deliberately, when a field is genuinely optional in the domain.
+    When in doubt, let it fail.
   </p>
 </div>
 
