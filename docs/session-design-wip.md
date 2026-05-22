@@ -1,300 +1,214 @@
-# Session Concept — Work-In-Progress Design Note
+# Session Concept — Design & Plan
 
-**Status:** Interim. Captured mid-discussion as a paranoia-save before
-finalising. A clean, final design note will replace this one.
+**Status:** Working document. Captures the adopted framing, the
+approaches we rejected, and the phased implementation plan. Replaces
+the earlier paranoia-save WIP note. Will be promoted to a clean final
+design note once the plan is well underway.
 
-## Why we're rethinking "session"
+## Adopted framing
 
-Today, "session" in Omega is implicitly tied to process startup. We have
-soft-resume (which creates a *new* session seeded from a summary) and
-fresh-empty-session, but no strict resume. The notion is operational
-rather than principled, and it doesn't have a clear story for:
+> **A session is the persisted state of one Omega instance. It is
+> resumable at "awaiting user" boundaries, against the same Omega
+> version that created it. Subagents are child sessions; everything else
+> is a derived view.**
 
-- Subagents
-- LLM context compaction (server-side or client-side)
-- Headless benchmark runs (Harbor) that span what would otherwise be
-  multiple "sessions"
-- Forensics / post-mortem of past runs
+### Consequences
 
-The goal of this discussion was to find a **single, simple, universal**
-definition of "session" that holds up across all of these.
-
-## Where we landed (most recent agreement)
-
-> **A session is the persisted state of one Omega instance. It is resumable
-> at "awaiting user" boundaries, against the same Omega version that
-> created it. Subagents are child sessions; everything else is a derived
-> view.**
-
-Key consequences:
-
-- **Process incarnation is irrelevant.** A session survives app restarts;
-  it ends when the agent's logical life ends, not when its process does.
+- **Process incarnation is irrelevant.** A session survives app
+  restarts; it ends when the agent's logical life ends, not when its
+  process does.
 - **The persisted event stream is canonical.** State at any moment is
-  `fold(events)`. The LLM context, the UI feed, and any context-hash tree
-  are all *derived projections* of the session, not the session itself.
+  `fold(events)`. The LLM context, the UI feed, and any context-hash
+  tree are *derived projections*, not the session itself.
 - **Subagent = child Omega instance = child session.** Structural, not
-  stipulated. Child sessions live in a subfolder of the parent's session
-  folder; the parent references the child by session ID in its events.
+  stipulated. Child sessions live in a subfolder of the parent's
+  session folder; the parent references the child by ID.
 - **Compaction (server-side or agent-side) is a within-session event.**
-  Neither kind ends a session. Both are recorded as ordinary events; the
-  derived LLM-context projection honours them.
-- **Atomic unit is a turn**, from one user message to the next "awaiting
-  user" state. Turns either complete or are discarded on resume. Nothing
-  intra-turn (streaming buffers, retries, in-flight tool calls, partial
-  responses) needs to round-trip across a restart — it's ephemeral and
-  matters only for forensics.
-- **Cross-Omega-version replay is explicitly not supported.** Sessions
-  record the Omega version at creation; resume requires exact match and
-  fails loud on mismatch. Migration would dominate development cost at
-  Omega's current pace.
-- **No mid-flight resumption.** If Omega dies mid-turn, on resume the
-  partial turn is abandoned; state is restored to "just after the last
-  user message."
+  Neither kind ends a session. The derived LLM-context projection
+  honours them.
+- **Atomic unit is a turn**, from one user message to the next
+  "awaiting user" state. Turns either complete or are discarded on
+  resume. Intra-turn state (streaming buffers, retries, in-flight tool
+  calls, partial responses) is ephemeral and matters only for
+  forensics.
+- **No cross-Omega-version replay.** Sessions record the build SHA at
+  creation. The version field is not gated at resume; the Rust type
+  system + fold invariants reject incompatible events structurally.
+  The field is recorded for forensics and as a future hook.
+- **No mid-flight resumption.** Crash mid-turn → partial turn is
+  abandoned on resume; state restored to "just after last user
+  message."
 
 ### Testable criterion
 
-The definition is operationalised as a property:
-
 > Stop Omega. Start a fresh process from the persisted events. The
-> resulting state (modulo declared-ephemeral pieces) must match what the
-> state would have been right after the last user message of the dead
-> process.
+> resulting state (modulo declared-ephemeral pieces) must match what
+> the state would have been right after the last user message of the
+> dead process.
 
-This is a gate-able test, not a philosophical claim.
+A gate-able test, not a philosophical claim.
 
-## Approaches considered and dismissed
+## Rejected approaches (one line each)
 
-Each was held seriously for at least one round of discussion. Recording
-*why* they were rejected so we don't relitigate.
+- **Session = process lifetime** — conflates incarnation with identity.
+- **Session = LLM-visible context** — boundaries leave our control;
+  retrospective; ignores non-LLM events; provider-dependent.
+- **Session = persisted-log lifetime** — right answer for wrong reason;
+  subsumed by the process-state framing with a testable criterion.
+- **Session = git-style tree of contexts** — useful internal index, not
+  identity; doesn't carry non-LLM events. Forking becomes a deliberate
+  later feature, not a primitive.
 
-### A. Session = lifetime of the running Omega process
+(Full dismissal rationales recorded in git history at `9d311ee`.)
 
-**Status quo.** Dismissed because process death is not a meaningful
-event from the user's or the agent's perspective. It conflates
-"incarnation" with "identity."
+## Subagent-vs-fork design choices (forking deferred indefinitely)
 
-### B. Session = lifetime of the LLM-visible context
+1. Session creation takes a **seed** (events + metadata). Subagent
+   seeds happen to be short (`[system_prompt, initial_user_message]`);
+   the API doesn't bake in the short case.
+2. Session metadata records `parent_session_id` and `origin` enum
+   (`Root`, `SubagentOf{...}`; extendable to `ForkOf{...}`).
+3. On-disk layout: subagent sessions in subfolders of the parent;
+   forks would be top-level. Relationship lives in metadata, not in
+   filesystem layout.
+4. Pointing events carry typed relationship metadata (the `origin`
+   variant), not raw IDs interpreted contextually.
+5. Session IDs are flat and opaque (UUID v7). Never encode parent
+   relationships into IDs.
 
-The LLM's effective context is ground truth; a session is a maximal run
-of calls in which each call's prompt is a strict append-extension of the
-previous one *as the model actually saw it*.
+## Session and event references
 
-Attractive because it names something the substrate would recognise, and
-exposes provider-side compaction honestly. Dismissed because:
+- Both sessions and events have **globally unique UUID v7 IDs**. Not
+  content-derived, not position-derived.
+- `SessionRef { session_id, event_id: Option<EventId> }`. `None` means
+  "the session as a whole"; `Some` means a specific moment.
+- References are by ID. Folder layout is a *hint* for resolution.
+  Moving the whole `.omega/sessions` tree in unison doesn't break
+  references; moving folders relative to each other may.
+- Every event that references another session or event must, from day
+  one: render visibly in the feed; show the literal IDs; have a "more"
+  button revealing full JSON; ideally be clickable to navigate.
+  Transparency floor, not polish.
 
-- Session boundaries leave our control (provider decides when to
-  compact).
-- Observability is partial and provider-specific.
-- Sessions become retrospective (you can only know a boundary happened
-  after the call returns).
-- It captures only LLM-related events; non-LLM events (connection
-  failures, model changes, local tool calls) have no home.
-- One persisted log can map to N "real" sessions depending on runtime
-  conditions, so session count isn't even well-defined.
+### Concrete event shapes (post-SessionRef)
 
-### C. Session = lifetime of the persisted append-only log
+- `SubagentSpawned { child: SessionRef { session_id, event_id: None } }`
+  in the parent.
+- Child's session metadata: `origin: SubagentOf { parent: SessionRef {
+  session_id, event_id: Some(spawn_event_in_parent) } }`.
+- `SubagentReturned { child: SessionRef { session_id, event_id:
+  Some(terminal_in_child) }, summary: ... }` in the parent.
 
-Almost right, but anchored on the storage artifact rather than on
-*why* the storage artifact defines identity. Subsumed by the
-process-state framing (D), which makes the same prediction in most
-cases for an articulable reason and adds a testable criterion.
+## Long autonomous runs — retracted as a concern
 
-### D. Session = git-style tree of content-addressed contexts
+Every realistic failure during a long run is either:
 
-Tempting because Omega already hashes contexts. Maps cleanly: commit =
-context, branch = conversation tip, checkout = strict resume, squash =
-compaction. Subagents become side branches. Crucially the resulting
-model is a *tree*, not a DAG (no true LLM-context merges exist), so
-it's strictly simpler than git.
+- Infrastructure flake → Omega backs off, doesn't crash.
+- Broken tool / timeout → surfaces to the agent loop, doesn't crash.
+- Omega bug (OOM, panic) → benchmark *should* fail; Omega gets fixed.
+- Host-level event → rare; restart acceptable.
 
-Dismissed as the *primary* framing because it mistakes a useful
-substructure for the identity concept. The tree of contexts is a real
-and useful internal index that can sit *inside* a session, but it
-doesn't carry the non-LLM events the user cares about (failures, model
-changes, tool calls) and doesn't give a recovery criterion for the
-agent process. Forking (the operation the git model made attractive)
-remains available as a deliberate later feature: "create a new session
-seeded with the first N events of session X." Deferred without
-commitment cost.
+Mid-turn resume would mask exactly the cases we want to see fail
+loudly. Tool-completion checkpoints are not deferred features; their
+absence is correct.
 
-### E. Session = persisted state of one Omega instance — **adopted**
+---
 
-See "Where we landed" above.
+# Implementation plan
 
-## Subagent design choices that keep forking deferrable
+## Phase 0 — Audits and no-brainer prep (no SessionRef dependency)
 
-We will build subagents next; forking is deferred. To avoid painting
-into a corner:
+Safe to run in any order. Output is mostly written; small code changes
+where noted. Goal: have all the information we need before designing
+`SessionRef`, and clear the trivial code work.
 
-1. Session creation takes a **seed**: a list of events plus metadata.
-   For subagents the seed happens to be
-   `[system_prompt_event, initial_user_message_event]`; a future fork
-   would pass a longer seed. The API doesn't bake in the short case.
-2. Session metadata records `parent_session_id` and an `origin` enum
-   (initially `Root`, `SubagentOf`; later extendable to `ForkOf` with an
-   index).
-3. On-disk layout: child sessions in a subfolder of the parent. Forks,
-   if added, would live at top level — the parent relationship lives in
-   metadata, not in filesystem layout.
-4. Events that reference a child session carry the child's session ID;
-   the same event shape would work for fork references.
-5. Session IDs are flat and opaque. Relationships live in metadata, never
-   encoded into IDs.
+- **0.1 State audit.** Enumerate Omega's long-lived in-process state.
+  Classify each as: event-sourced / ephemeral-and-OK-to-lose /
+  gap-to-close. Output: `docs/session-state-audit.md`.
+- **0.2 "Session" usage scan.** Every place in the codebase that uses
+  "session" and what it means there. Feed into a "current
+  vocabulary" section of the audit. Same doc.
+- **0.3 Parent-context-hash check.** Does `LlmResponseEnded` (or
+  equivalent) already carry the predecessor context hash? Code
+  investigation; result in audit.
+- **0.4 Defensive-serde scan.** List existing `#[serde(default)]` and
+  `#[serde(rename)]` attributes on event types. Classify each as
+  deliberate (honours a real contract) or defensive (suppresses a
+  mismatch). Result in audit. No removals yet — that's a follow-up.
+- **0.5 Session version field.** Record the build's git SHA in session
+  metadata at session creation. Pure additive; no resume-time check.
+- **0.6 UUID v7 dependency.** Enable the `v7` feature on the `uuid`
+  crate (or add the crate). Trivial; needed by everything in Phase 1.
 
-## Long autonomous runs — known limitation accepted
+## Phase 1 — SessionRef & friends (design-first; careful)
 
-In autonomous modes (Harbor benchmarks, future autonomous agents) there
-may be long gaps between user messages. A crash three hours in loses
-three hours of resumable progress (forensic events remain on disk).
+These types have outsized blast radius — every cross-session event will
+use them forever. Design carefully before any code lands.
 
-This is accepted for now. If it becomes a primary mode later, the
-extension is **tool-completion checkpoints** — resume at the last
-completed tool call within a turn. This is a strict extension of the
-current rule, not a redesign, so deferring it costs nothing.
+- **1.1 Define `EventId` and `SessionId` newtypes** (UUID v7 wrappers).
+  Serde shape, Display, parse, equality. Contract-authority territory.
+- **1.2 Define `SessionRef { session_id, event_id: Option<EventId> }`.**
+  Serde shape, Display, parse.
+- **1.3 Define `Origin` enum** (`Root`, `SubagentOf { parent:
+  SessionRef }`). Future-extend with `ForkOf` planned but not added.
+- **1.4 Wire `EventId` into every existing event** at write time. Read
+  path: tolerate absent IDs in old logs only if no cross-version replay
+  has been promised — which we haven't. Default: every event in a
+  current-version session has an ID.
+- **1.5 UI surfacing scaffold.** Render `SessionRef`-bearing fields in
+  the feed with: literal IDs, "more" button for full JSON, link to
+  referenced item (placeholder where target doesn't yet exist).
 
-## Work implied by the adopted framing
+## Phase 2 — Strict resume + gate test (closes the framing's promise)
 
-1. **State audit, scoped to "what must survive an awaiting-user
-   boundary."** Enumerate long-lived state and classify each piece as:
-   event-sourced / ephemeral-and-OK-to-lose / gap-to-close.
-2. **Round-trip test on the gate.** Stop, restart from events, diff
-   non-ephemeral state.
-3. **Session version field**, recorded at creation, checked exactly at
-   resume. Add now, before sessions-without-the-field accumulate.
-4. **Subagent implementation** following the five design choices above.
+- **2.1 Pin down "awaiting user" boundary in code.** Identify the
+  precise event(s) and runtime point that marks it.
+- **2.2 Resume entry point.** Given a session folder, fold events into
+  a fresh Omega instance state. No mid-flight recovery: discard any
+  events after the last "awaiting user" mark on the way in (or refuse
+  to load if the trailing events suggest a non-clean shutdown — pick
+  in Phase 2 design).
+- **2.3 Round-trip gate test.** Two-process test: run an Omega up to
+  some point, kill it, restart from the events, assert state
+  equivalence on non-ephemeral pieces. Add to the gate.
+- **2.4 Close gaps from 0.1.** Anything in the gap-to-close column gets
+  event-sourced.
 
-Deferred without commitment: forking, snapshots, tool-completion
-checkpoints, multi-version migration.
+## Phase 3 — Subagents (the actual reason for all this)
 
-## Refinements (second round)
+- **3.1 Spawn API.** Takes a seed (`Vec<OmegaEvent>` + session
+  metadata including `Origin`). The fact that subagent seeds are short
+  is a property of the caller, not the API.
+- **3.2 On-disk layout.** Child session folder under
+  `<parent>/subagents/<child_id>/`.
+- **3.3 Resolution.** Resolve a `SessionRef` to a session by ID,
+  scanning known roots. Future-proof for a registry.
+- **3.4 `SubagentSpawned` event** in parent stream.
+- **3.5 `SubagentReturned` event** in parent stream, with the child's
+  summary and a `SessionRef` to the child's terminal event.
+- **3.6 UI: render subagent invocation** in the parent's feed —
+  expandable block; clicking navigates into the child session.
 
-### Long autonomous runs — retracted as a concern
+## Phase 4 — Deferred (may never happen)
 
-The earlier worry that long Harbor-style runs could lose hours of work
-on a crash doesn't hold up. Every realistic failure during a long run is
-either:
+- Forks (independent agents seeded with a prefix of another session).
+- Snapshots (folded-state checkpoints to skip early replay).
+- Tool-completion checkpoints (within-turn resume granularity).
+- Multi-version migration.
 
-- An infrastructure flake (network, rate limits) — Omega should back off,
-  not crash.
-- A broken tool or tool timeout — Omega should surface to the agent loop,
-  not crash.
-- An Omega bug (OOM, panic) — the benchmark *should* fail and Omega
-  should be fixed.
-- A host-level event (VM eviction, power loss) — rare, restart acceptable.
+The Phase 1 design choices keep all of these reachable without
+structural change.
 
-Mid-turn resume would mask exactly the cases we want to see fail loudly.
-Tool-completion checkpoints are therefore not a deferred feature; their
-absence is correct. The "awaiting user" boundary stays the sole resume
-point.
+---
 
-Separately: "Omega is making no forward progress" (retry loops, wedged
-tools) is a different failure mode — the process is alive, so resume
-isn't the answer. Observability / watchdog territory, not session design.
+## Open questions to resolve before each phase
 
-### Version field — hygiene, not gate
-
-Rust's strong type system plus the fold's invariants already give us
-two lines of natural defense against loading incompatible events:
-
-1. **Deserialization** rejects malformed events.
-2. **Folding** rejects events that produce an invalid state.
-
-Either wall failing is equivalent to "these events aren't valid for this
-Omega" — the property we want, achieved structurally rather than by
-contract. The session version field is therefore:
-
-- **Recorded** at session creation (for forensics and future use).
-- **Not checked** at resume.
-- **Format:** exact build identifier (git SHA), not semver — no contract
-  implied.
-
-The one habit that protects this defense: **don't add `#[serde(rename)]`
-or `#[serde(default)]` attributes defensively** to suppress mismatch
-errors. Use them only to honor a real, deliberate compatibility
-contract. Defensive serde attributes silently mask exactly the bugs we
-most want to see. (Captured in `AGENTS.md` under Contract Authority.)
-
-### Session references and event IDs
-
-**Sessions and events both get globally unique IDs (UUID v7).** Not
-content-derived; identity is independent of content. v7's embedded
-timestamp gives natural sort order as a bonus, without making the ID
-load-bearing for ordering.
-
-**A session reference is a pair:**
-
-```
-SessionRef {
-    session_id: SessionId,
-    event_id:   Option<EventId>,  // None = the session as a whole
-}
-```
-
-Why globally unique IDs and not line positions / sequence numbers:
-
-- Robust to any future log rewrite, export, snapshot, or replay.
-- Decouples identity from physical layout (same principle as not using
-  folder paths as references).
-- Uniform shape with `session_id`.
-- Trivial cost (16 bytes).
-
-A per-session sequence number can still exist alongside, for ordering
-and display — but it's separate from identity.
-
-### Folder layout vs. references
-
-- Subagent sessions live in subfolders of the parent session folder.
-- Forks (if ever built) live as new top-level folders.
-- Folder layout reflects **ownership** (subagent owned by parent; fork
-  is independent).
-- References are always by ID, never by path.
-- Resolution scans known roots (or a future registry).
-- Moving the whole `.omega/sessions` tree in unison: doesn't break
-  references (one config value updates).
-- Moving folders *relative to each other*: may break resolution. That's
-  an explicit reorganization, not an incidental one. Acceptable.
-
-### Surfacing session/event references in the UI — from day one
-
-Not a polish item; a transparency floor. Every event that references
-another session or event must:
-
-- Render visibly in the feed (not buried in a tooltip).
-- Show the referenced `(session_id, event_id)` literally.
-- Have a "more" button revealing the full event JSON.
-- Ideally: be clickable to navigate to the referenced session/event.
-
-Reviewing what the agent did across session boundaries (especially
-subagent boundaries) is impossible without this.
-
-### Concrete event shapes for subagents
-
-- **Parent's spawn event:**
-  `SubagentSpawned { child: SessionRef { session_id, event_id: None } }`
-- **Child's session metadata** (not an event in the child stream):
-  `origin: SubagentOf { parent: SessionRef { session_id, event_id: Some(spawn_event_in_parent) } }`
-- **Parent's return event:**
-  `SubagentReturned { child: SessionRef { session_id, event_id: Some(terminal_in_child) }, summary: ... }`
-
-The relationship semantics live in the typed event/metadata shape
-(`origin` enum variant), not in IDs and not in folder paths. A future
-`ForkOf` variant of `origin` reuses the same `SessionRef` machinery
-with no other structural changes.
-
-## Tomorrow
-
-Finalise the discussion and replace this note with a clean design note.
-Open questions to revisit:
-
-- Exact shape of the "ephemeral pieces" allowlist used by the round-trip
-  test.
-- Resume UX for in-flight calls at the moment of crash: silent abandon
-  vs. "we were waiting for a reply, retry?" prompt.
-- Confirmation that `LlmResponseEnded` (or equivalent) already carries
-  enough to reconstruct the parent-context relationships we'd want for
-  the internal context-tree projection.
-- Whether per-session sequence numbers are needed alongside event IDs,
-  or whether v7 timestamps suffice for all ordering needs.
-- The `SessionRef` and `origin` types should be designed carefully
-  before any subagent code lands — they have outsized blast radius.
+- **Before Phase 1:** exact serde shape for `SessionRef` (struct vs.
+  string-encoded `<session_id>:<event_id>`?). Probably struct, but
+  worth a moment.
+- **Before Phase 2:** "ephemeral pieces" allowlist for the round-trip
+  test. Feeds in from 0.1.
+- **Before Phase 2:** crash-recovery UX policy — silent abandon vs.
+  "we were waiting for a reply; retry?" prompt on resume.
+- **Before Phase 3:** registry vs. scan for `SessionRef` resolution.
+  Scan is fine for now if performance allows.
