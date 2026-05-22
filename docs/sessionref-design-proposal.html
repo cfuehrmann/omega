@@ -1469,15 +1469,24 @@ pub struct LoggedEvent {
 <h3>events.jsonl — post-Phase-1 line with EventId</h3>
 <pre><code class="language-json">{"eventId":"018f4c2f-1a2b-7e00-8000-fedcba987654","type":"user_message","time":"2025-07-01T10:00:00.000Z","content":"Hello, Omega!"}</code></pre>
 
-<h3>events.jsonl — SubagentSpawned (session-only ref, no eventId yet)</h3>
+<h3>events.jsonl — SubagentSpawned (session-only ref + resolved spawn parameters)</h3>
 <pre><code class="language-json">{
   "eventId": "018f4c30-0000-7a00-8000-aaaaaaaaaaaa",
   "type":    "subagent_spawned",
   "time":    "2025-07-01T10:05:00.000Z",
   "child": {
     "sessionId": "018f4c30-1111-7b00-8000-bbbbbbbbbbbb"
-  }
+  },
+  "model":  "claude-sonnet-4-6",
+  "effort": "medium"
 }</code></pre>
+<p class="note">
+  <code>model</code> and <code>effort</code> are the <em>resolved</em> values
+  (per the Phase 3.0 mandatory-per-spawn rule in
+  <a href="./session-design.html#phase-3"><code>session-design.html § Phase 3</code></a>).
+  The LLM's requested values live in the preceding <code>tool_use</code>; the
+  child's own first <code>SessionStartedEvent</code> echoes them.
+</p>
 
 <h3>events.jsonl — SubagentReturned (event-pinned ref)</h3>
 <pre><code class="language-json">{

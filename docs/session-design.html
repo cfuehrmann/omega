@@ -725,8 +725,10 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 <ul>
   <li>
-    <code>SubagentSpawned { child: SessionRef { session_id, event_id: None } }</code>
-    in the parent.
+    <code>SubagentSpawned { child: SessionRef { session_id, event_id: None },
+    model, effort }</code> in the parent. <code>model</code> and
+    <code>effort</code> are the <em>resolved</em> values (LLM's requested
+    values live in the preceding <code>tool_use</code>).
   </li>
   <li>
     Child's session metadata: <code>origin: SubagentOf { parent: SessionRef {
@@ -738,8 +740,13 @@ tr:nth-child(even) td { background: #fafbfc; }
   </li>
 </ul>
 
-<pre><code class="language-json">// SubagentSpawned (session-only ref)
-{ "type": "subagent_spawned", "child": { "sessionId": "&lt;uuid&gt;" } }
+<pre><code class="language-json">// SubagentSpawned (session-only ref + resolved spawn parameters)
+{
+  "type":   "subagent_spawned",
+  "child":  { "sessionId": "&lt;uuid&gt;" },
+  "model":  "claude-sonnet-4-6",
+  "effort": "medium"
+}
 
 // SubagentReturned (event-pinned ref)
 {
