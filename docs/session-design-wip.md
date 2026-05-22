@@ -167,6 +167,121 @@ current rule, not a redesign, so deferring it costs nothing.
 Deferred without commitment: forking, snapshots, tool-completion
 checkpoints, multi-version migration.
 
+## Refinements (second round)
+
+### Long autonomous runs — retracted as a concern
+
+The earlier worry that long Harbor-style runs could lose hours of work
+on a crash doesn't hold up. Every realistic failure during a long run is
+either:
+
+- An infrastructure flake (network, rate limits) — Omega should back off,
+  not crash.
+- A broken tool or tool timeout — Omega should surface to the agent loop,
+  not crash.
+- An Omega bug (OOM, panic) — the benchmark *should* fail and Omega
+  should be fixed.
+- A host-level event (VM eviction, power loss) — rare, restart acceptable.
+
+Mid-turn resume would mask exactly the cases we want to see fail loudly.
+Tool-completion checkpoints are therefore not a deferred feature; their
+absence is correct. The "awaiting user" boundary stays the sole resume
+point.
+
+Separately: "Omega is making no forward progress" (retry loops, wedged
+tools) is a different failure mode — the process is alive, so resume
+isn't the answer. Observability / watchdog territory, not session design.
+
+### Version field — hygiene, not gate
+
+Rust's strong type system plus the fold's invariants already give us
+two lines of natural defense against loading incompatible events:
+
+1. **Deserialization** rejects malformed events.
+2. **Folding** rejects events that produce an invalid state.
+
+Either wall failing is equivalent to "these events aren't valid for this
+Omega" — the property we want, achieved structurally rather than by
+contract. The session version field is therefore:
+
+- **Recorded** at session creation (for forensics and future use).
+- **Not checked** at resume.
+- **Format:** exact build identifier (git SHA), not semver — no contract
+  implied.
+
+The one habit that protects this defense: **don't add `#[serde(rename)]`
+or `#[serde(default)]` attributes defensively** to suppress mismatch
+errors. Use them only to honor a real, deliberate compatibility
+contract. Defensive serde attributes silently mask exactly the bugs we
+most want to see. (Captured in `AGENTS.md` under Contract Authority.)
+
+### Session references and event IDs
+
+**Sessions and events both get globally unique IDs (UUID v7).** Not
+content-derived; identity is independent of content. v7's embedded
+timestamp gives natural sort order as a bonus, without making the ID
+load-bearing for ordering.
+
+**A session reference is a pair:**
+
+```
+SessionRef {
+    session_id: SessionId,
+    event_id:   Option<EventId>,  // None = the session as a whole
+}
+```
+
+Why globally unique IDs and not line positions / sequence numbers:
+
+- Robust to any future log rewrite, export, snapshot, or replay.
+- Decouples identity from physical layout (same principle as not using
+  folder paths as references).
+- Uniform shape with `session_id`.
+- Trivial cost (16 bytes).
+
+A per-session sequence number can still exist alongside, for ordering
+and display — but it's separate from identity.
+
+### Folder layout vs. references
+
+- Subagent sessions live in subfolders of the parent session folder.
+- Forks (if ever built) live as new top-level folders.
+- Folder layout reflects **ownership** (subagent owned by parent; fork
+  is independent).
+- References are always by ID, never by path.
+- Resolution scans known roots (or a future registry).
+- Moving the whole `.omega/sessions` tree in unison: doesn't break
+  references (one config value updates).
+- Moving folders *relative to each other*: may break resolution. That's
+  an explicit reorganization, not an incidental one. Acceptable.
+
+### Surfacing session/event references in the UI — from day one
+
+Not a polish item; a transparency floor. Every event that references
+another session or event must:
+
+- Render visibly in the feed (not buried in a tooltip).
+- Show the referenced `(session_id, event_id)` literally.
+- Have a "more" button revealing the full event JSON.
+- Ideally: be clickable to navigate to the referenced session/event.
+
+Reviewing what the agent did across session boundaries (especially
+subagent boundaries) is impossible without this.
+
+### Concrete event shapes for subagents
+
+- **Parent's spawn event:**
+  `SubagentSpawned { child: SessionRef { session_id, event_id: None } }`
+- **Child's session metadata** (not an event in the child stream):
+  `origin: SubagentOf { parent: SessionRef { session_id, event_id: Some(spawn_event_in_parent) } }`
+- **Parent's return event:**
+  `SubagentReturned { child: SessionRef { session_id, event_id: Some(terminal_in_child) }, summary: ... }`
+
+The relationship semantics live in the typed event/metadata shape
+(`origin` enum variant), not in IDs and not in folder paths. A future
+`ForkOf` variant of `origin` reuses the same `SessionRef` machinery
+with no other structural changes.
+
 ## Tomorrow
 
 Finalise the discussion and replace this note with a clean design note.
@@ -174,11 +289,12 @@ Open questions to revisit:
 
 - Exact shape of the "ephemeral pieces" allowlist used by the round-trip
   test.
-- Whether the session version field is a git SHA, a build hash, or a
-  manually bumped schema version. (Leaning: exact build identifier; no
-  semver implied.)
 - Resume UX for in-flight calls at the moment of crash: silent abandon
   vs. "we were waiting for a reply, retry?" prompt.
 - Confirmation that `LlmResponseEnded` (or equivalent) already carries
   enough to reconstruct the parent-context relationships we'd want for
   the internal context-tree projection.
+- Whether per-session sequence numbers are needed alongside event IDs,
+  or whether v7 timestamps suffice for all ordering needs.
+- The `SessionRef` and `origin` types should be designed carefully
+  before any subagent code lands — they have outsized blast radius.

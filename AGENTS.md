@@ -62,7 +62,11 @@ one is authoritative and all others conform to it:
 2. **In-memory event type** (`OmegaEvent` in
    `crates/omega-types/src/events.rs`) — must match persistence.
    Use `#[serde(rename)]` / `#[serde(default)]` to evolve the type without
-   breaking the file format.
+   breaking the file format — but **deliberately**, to honor a real
+   contract, never **defensively** to suppress a deserialization error.
+   The type system rejecting an event is a feature: it surfaces semantic
+   drift loudly. Defensive serde attributes silently mask exactly the
+   bugs we most want to see. When in doubt, let it fail.
 3. **WebSocket protocol** (`WsMessage` in
    `crates/omega-server/src/ws_message.rs`) — transport projection of
    `OmegaEvent`; may carry extra ephemeral fields.
