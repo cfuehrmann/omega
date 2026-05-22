@@ -408,6 +408,9 @@ tr:nth-child(even) td { background: #fafbfc; }
   callout followed by a collapsible <strong>Rationale</strong> section that
   explains the tradeoffs considered. Rust type definitions and JSON examples
   are included where relevant.
+  <span class="badge badge-audit">F<em>n</em></span> badges reference
+  numbered findings in <code>docs/session-state-audit.md</code>;
+  hover for a one-line summary.
 </p>
 
 <div class="callout">
@@ -473,8 +476,8 @@ pub struct EventId(pub Uuid);</code></pre>
   <summary>Rationale (blast-radius, type safety, UUID v7)</summary>
   <div class="details-body">
     <p>
-      <span class="badge badge-audit">F2</span>
-      <span class="badge badge-audit">F13</span>
+      <span class="badge badge-audit" title="F2 — SessionStartedEvent.session_id is a plain String equal to the folder name, not a UUID">F2</span>
+      <span class="badge badge-audit" title="F13 — Confirmed: session_id is derived from the folder's last path component, not an independent UUID">F13</span>
       Today <code>SessionStartedEvent.session_id</code> is a plain
       <code>String</code> equal to the folder name. Phase 1 replaces this
       with a genuine UUID. The newtype wrapper gives the compiler a second
@@ -913,7 +916,7 @@ pub use ids::{EventId, SessionId, SessionRef};</code></pre>
   Should <code>EventId</code> be placed on a common outer envelope
   (a header struct wrapping <code>OmegaEvent</code>), or on each variant
   struct individually?
-  <span class="badge badge-audit">F3</span>
+  <span class="badge badge-audit" title="F3 — Events have no stable IDs today; identified only by position in events.jsonl">F3</span>
 </p>
 
 <div class="callout rec">
@@ -962,7 +965,7 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
   <summary>Rationale (F3, DRY, flat JSON, old-log compatibility)</summary>
   <div class="details-body">
     <p>
-      <span class="badge badge-audit">F3</span>
+      <span class="badge badge-audit" title="F3 — Events have no stable IDs today; identified only by position in events.jsonl">F3</span>
       The audit notes that events have no stable IDs today — they're
       identified by their position in the file. Adding an ID to every
       variant struct individually would require touching ~20 structs in
@@ -1070,7 +1073,7 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
     <tr>
       <td>
         <code>SessionMetadata.resumed_from</code>
-        <span class="badge badge-audit">F5</span>
+        <span class="badge badge-audit" title="F5 — Cross-session references today use folder-name strings, not UUIDs; layout-dependent and fragile">F5</span>
       </td>
       <td><code>SessionRef</code> (<code>event_id: None</code>)</td>
       <td>Soft-resume points at the predecessor session as a whole</td>
@@ -1102,7 +1105,7 @@ writeln!(file, "{}", serde_json::to_string(&amp;logged)?)?;</code></pre>
       </li>
     </ul>
     <p>
-      <span class="badge badge-audit">F5</span>
+      <span class="badge badge-audit" title="F5 — Cross-session references today use folder-name strings, not UUIDs; layout-dependent and fragile">F5</span>
       Today <code>SessionMetadata.resumed_from</code> and the two resume
       events use folder-name strings. Under Phase 1, these become
       <code>SessionRef</code> with <code>event_id: None</code> (the whole
