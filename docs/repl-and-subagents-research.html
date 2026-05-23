@@ -393,6 +393,7 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#omega-brings"  class="toc-sub">What Omega brings</a></li>
     <li><a href="#human-orch"    class="toc-sub">[a3f7c2] Human-orchestrated angle</a></li>
     <li><a href="#seeded-handoff" class="toc-sub">[e91b54] Seeded-handoff method</a></li>
+    <li><a href="#path-to-benchmark" class="toc-sub">[f8a1e0] Path to first benchmark</a></li>
     <li class="toc-divider"></li>
     <li><a href="#evidence"      class="toc-h1">§2 Evidence base</a></li>
     <li><a href="#ev-kim"        class="toc-sub">Kim et al. (2025) — MAS scaling</a></li>
@@ -654,14 +655,164 @@ tr:nth-child(even) td { background: #fafbfc; }
       every seeded handoff is a data point, traceable via commit history.</li>
 </ul>
 
-<div class="callout warn">
-  <div class="callout-title">⚠ <code>[3c9a17]</code> Should handoff automation (RQ-D) be the first investment, before REPL or subagents?</div>
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[3c9a17]</code> Decided — benchmark data first; handoff automation sequenced after</div>
   <p>
-    The seeded-handoff method is already producing results in daily use. REPL
-    and vanilla subagents are not yet implemented and face real evidence
-    headwinds (§2). The case for automating a known-good pattern before
-    building unproven ones is strong. Not yet decided; see §6 and §8 for the
-    full research question.
+    Originally posed as "should handoff automation be the first investment,
+    before REPL or subagents?" Answered in §1.6: no. The
+    MVP-for-benchmark strategy makes data on REPL/subagent/RLM cheap to
+    obtain, and benchmarks inform what workflow is actually worth
+    automating. Handoff automation remains valuable (RQ-D, §6) but
+    sequenced after first benchmark data.
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h3 id="path-to-benchmark">§1.6 <span class="id-tag">[f8a1e0]</span> Path to first benchmark — build to measure, not to ship</h3>
+
+<p>
+  The strategic question for RQ-A, RQ-B, and RQ-C is not
+  <em>"how do we build the polished feature"</em> but
+  <strong>"how do we get reliable benchmark data fastest?"</strong>
+  The bar is: Harbor can sweep a feature flag and we can score the runs.
+  Everything beyond that is deferred until after data exists.
+</p>
+
+<h4>What MVP allows us to cut</h4>
+<p>
+  The benchmark MVP only needs enough machinery for Harbor to execute a
+  task and produce a pass/fail signal. That drops a lot of normally-required
+  production concerns:
+</p>
+
+<table class="survey-table">
+  <thead><tr><th>Production concern</th><th>Needed for benchmark MVP?</th></tr></thead>
+  <tbody>
+    <tr><td>Persistence / resumability</td><td>No — if the benchmark process dies, Harbor reruns the task</td></tr>
+    <tr><td>Event-sourcing every internal state</td><td>No — useful for forensics but not for pass/fail</td></tr>
+    <tr><td>Crash isolation, OOM handling</td><td>No — gross failures are themselves data points</td></tr>
+    <tr><td>Sandboxing</td><td>No — Harbor runs in containers; threat model is "our code", not adversarial</td></tr>
+    <tr><td>UI integration</td><td>No — Harbor reads programmatic results</td></tr>
+    <tr><td>Streaming progress</td><td>No — block until done</td></tr>
+    <tr><td>Nested recursion</td><td>No — depth=1 is enough for the headline benchmarks</td></tr>
+    <tr><td>Cancellation / kill semantics</td><td>No — Harbor's wall clock provides natural timeout</td></tr>
+  </tbody>
+</table>
+
+<p>
+  What remains is the <strong>core experimental variable</strong>: does
+  adding this primitive change the outcome distribution, holding everything
+  else fixed?
+</p>
+
+<h4>REPL MVP sketch</h4>
+<p>
+  A feature-flagged Python REPL exposed as a tool, backed by a long-lived
+  subprocess. Python state persists across turns within a session.
+</p>
+
+<table class="survey-table">
+  <thead><tr><th>Component</th><th>Approach</th><th>Effort</th></tr></thead>
+  <tbody>
+    <tr><td>Feature flag plumbing</td><td><code>OMEGA_FEATURE_REPL</code> env var, plumbed into <code>Agent</code> startup, recorded in <code>SessionStartedEvent</code></td><td>1–2 days (shared with subagent flag)</td></tr>
+    <tr><td>Python backend</td><td><code>Command::new("python3").arg("-iu").spawn()</code>, pipe stdin/stdout, read until prompt marker</td><td>1 day</td></tr>
+    <tr><td><code>PythonRepl</code> on <code>ActiveSession</code></td><td><code>Option&lt;PythonRepl&gt;</code>; initialised on first use; cleaned up on session drop</td><td>0.5 day</td></tr>
+    <tr><td>Tool wiring</td><td>New tool <code>python_repl(code) -&gt; String</code>; available iff flag on; output truncated (RLM-style)</td><td>1 day</td></tr>
+    <tr><td>System prompt</td><td>Conditional snippet describing the tool when flag is on</td><td>0.5 day</td></tr>
+    <tr><td>Harbor integration</td><td>Sweep over <code>OMEGA_FEATURE_REPL ∈ {0,1}</code></td><td>0.5 day</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Estimated: 4–5 focused days</strong>, plus shared flag plumbing.</p>
+
+<p>
+  What this MVP does <em>not</em> attempt: any RLM-style "the prompt lives
+  in the REPL" trick. The MVP is REPL-as-additional-tool, not
+  REPL-as-orchestration-surface. Deliberate cut — preserves the existing
+  tool-call loop, so the benchmark answers <em>"does adding a Python REPL
+  help?"</em> independently of <em>"should we rethink the orchestration
+  model entirely?"</em> Two questions, two experiments.
+</p>
+
+<h4>Subagent MVP sketch</h4>
+<p>
+  A feature-flagged <code>spawn_subagent</code> tool that creates an
+  in-process child <code>ActiveSession</code>, runs it to its first
+  <code>TurnEnd</code> or <code>TurnInterrupted</code>, and returns the
+  last assistant message as the tool result.
+</p>
+
+<table class="survey-table">
+  <thead><tr><th>Component</th><th>Approach</th><th>Effort</th></tr></thead>
+  <tbody>
+    <tr><td>Feature flag plumbing</td><td><code>OMEGA_FEATURE_SUBAGENTS</code> env var, same shape as REPL flag</td><td>(shared with REPL)</td></tr>
+    <tr><td>Child session spawn</td><td>Reuse existing session creation; seed <code>[SystemPromptEvent, UserMessageEvent]</code>; record <code>Origin::SubagentOf</code></td><td>1.5 days (foundations exist)</td></tr>
+    <tr><td>Run-to-completion</td><td>Drive the child's agent loop until <code>TurnEnd</code> or <code>TurnInterrupted</code>; in-proc, blocking</td><td>2 days (async coordination is the tricky part)</td></tr>
+    <tr><td>Result extraction</td><td>Read the child's final assistant message; return as tool result</td><td>0.5 day</td></tr>
+    <tr><td>Tool wiring</td><td><code>spawn_subagent(task, model, effort) -&gt; String</code></td><td>1 day</td></tr>
+    <tr><td>Event emission</td><td><code>SubagentSpawned</code> and <code>SubagentReturned</code> per the design doc</td><td>1 day</td></tr>
+    <tr><td>Harbor integration</td><td>Sweep over <code>OMEGA_FEATURE_SUBAGENTS ∈ {0,1}</code></td><td>0.5 day</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Estimated: 6–7 focused days</strong>, plus shared flag plumbing.</p>
+
+<p>This is genuinely more work than REPL because:</p>
+<ul>
+  <li>Async coordination (parent suspended while child runs) needs care.</li>
+  <li>Event shapes are designed but have to be wired through.</li>
+  <li>Spawning from inside an LLM call is non-trivial.</li>
+</ul>
+<p>
+  Silver lining: <code>SessionId</code>, <code>SessionRef</code>,
+  <code>Origin</code>, <code>LoggedEvent</code>, and strict resume already
+  exist. Not starting from zero on subagents — starting from
+  <em>"Phase 1 + 2 done, Phase 3 to scaffold."</em>
+</p>
+
+<h4>RLM MVP — essentially free given the prerequisites</h4>
+<p>
+  Cheap once REPL and subagent MVPs both exist. The REPL exposes
+  <code>llm_query(task, model, effort) -&gt; str</code> as a Python function
+  that calls into the subagent machinery. Result marshalling is just
+  string-in / string-out.
+</p>
+<p><strong>Estimated: ~2 days</strong>, contingent on REPL and subagent MVPs.</p>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommended order: REPL → Subagent → RLM</div>
+  <ol>
+    <li><strong>REPL is faster</strong> to ship in benchmarkable form. Earlier data.</li>
+    <li><strong>REPL is the substrate</strong> for RLM. Once REPL exists, RLM is cheap to add.</li>
+    <li><strong>Subagent alone is the case the evidence is most skeptical of</strong>
+        (Kim et al., Anthropic engineering post). Putting it second means
+        we can skip it if REPL + RLM data is already conclusive.</li>
+    <li><strong>REPL MVP doesn't depend on subagent</strong>, so we can
+        ship and measure cleanly without coordinating two new systems at once.</li>
+  </ol>
+  <p>
+    Total: roughly 2–3 weeks elapsed for the full sweep, depending on how
+    sequentially the work runs. Each stage produces benchmark data
+    independently.
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ What this means for RQ-D (handoff automation)</div>
+  <p>
+    Survives, but bumped down. The original framing of RQ-D as
+    <em>"highest-EV candidate"</em> was premised on the assumption that
+    benchmarking the unproven primitives would be costly. The
+    MVP-for-benchmark strategy makes that cost much lower than the
+    elegant-handoff investment would be. Net: benchmark data arrives
+    faster than handoff automation could ever be polished.
+  </p>
+  <p>
+    RQ-D remains documented (§6) and may rise in priority again if the
+    benchmark sweeps return null or weak results — at which point Omega's
+    most distinctive offering becomes the seeded-handoff workflow, and
+    automating it is the right next investment.
   </p>
 </div>
 
@@ -1249,12 +1400,19 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
-<h2 id="rq-d">§6 <span class="rq-label">RQ-D</span> Handoff automation — the highest-EV candidate</h2>
+<h2 id="rq-d">§6 <span class="rq-label">RQ-D</span> Handoff automation — sequenced after first benchmark data</h2>
 
 <p>
   Automate the seeded-handoff working method described in §1.5. Unlike
   RQ-A/B/C, this direction builds on a pattern that has already proved its
   value in daily use.
+</p>
+<p>
+  <strong>Status note (per §1.6):</strong> originally framed as the
+  highest-EV candidate. Deprioritised once the MVP-for-benchmark strategy
+  made REPL/subagent/RLM data cheap to obtain. Sequenced after first
+  benchmark data. May rise in priority again if benchmark sweeps return
+  null or weak results.
 </p>
 
 <h3>The value case</h3>
@@ -1487,15 +1645,16 @@ tr:nth-child(even) td { background: #fafbfc; }
 <!-- ── RQ-C questions ───────────────────────────────────────────────────── -->
 <h3 id="oq-rqc">RQ-C questions</h3>
 
-<div class="callout">
-  <div class="callout-title">💡 <code>[cf2db0]</code> REPL first or subagents first?</div>
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[cf2db0]</code> Decided — REPL first, subagent second, RLM third</div>
   <p>
-    <strong>Lean: subagents first</strong> (if RQ-B is pursued at all).
-    Research + survey consensus supports subagents without REPL for coding
-    tasks. REPL persistence is unsolved and adds two foreign runtimes if
-    Python is chosen. Subagents re-use existing Omega infrastructure
-    and are stepping stones toward RLM, not away from it.
-    <strong>Not yet decided.</strong>
+    Resolved by the MVP-for-benchmark strategy (§1.6). REPL ships faster as
+    a benchmark prototype (≈4–5 days vs. ≈6–7 for subagent), is the substrate
+    for RLM, and doesn't depend on subagent machinery. Subagent comes second
+    because (a) it's the case the evidence is most skeptical of, so we may
+    elect to skip it if REPL+RLM data already settles the question, and
+    (b) async parent-child coordination is harder. RLM is essentially free
+    once both prerequisites exist.
   </p>
 </div>
 
@@ -1543,15 +1702,17 @@ tr:nth-child(even) td { background: #fafbfc; }
 <!-- ── RQ-D questions ───────────────────────────────────────────────────── -->
 <h3 id="oq-rqd">RQ-D questions</h3>
 
-<div class="callout warn">
-  <div class="callout-title">⚠ <code>[3c9a17]</code> Should handoff automation (RQ-D) be the first investment, before REPL or subagents?</div>
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[3c9a17]</code> Decided — benchmark data first; handoff automation sequenced after</div>
   <p>
-    The seeded-handoff pattern is already validated in daily use. REPL and
-    vanilla subagents are not yet implemented and face real evidence
-    headwinds. The case for automating a known-good pattern before building
-    unproven ones is strong. The incrementally-automatable nature of RQ-D
-    means the first step (trigger detection) can deliver value without
-    committing to the full design. <strong>Not yet decided.</strong>
+    Resolved by the MVP-for-benchmark strategy (§1.6). The original argument
+    ("automate a known-good pattern before building unproven ones") was
+    premised on the assumption that benchmarking the unproven primitives
+    would be costly. The MVP cuts (no resumability, no UI, no sandboxing,
+    no cancellation semantics) bring that cost low enough that data on
+    REPL/subagent/RLM arrives faster than handoff automation could be
+    polished. RQ-D remains valuable and may rise in priority again if the
+    benchmark sweeps return null or weak results.
   </p>
 </div>
 
