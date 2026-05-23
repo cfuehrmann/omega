@@ -520,7 +520,8 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#phase0" class="toc-h1">Phase 0 — Done ✅</a></li>
     <li><a href="#phase1" class="toc-h1">Phase 1 — SessionRef</a></li>
     <li><a href="#phase2" class="toc-h1">Phase 2 — Strict resume</a></li>
-    <li><a href="#phase3" class="toc-h1">Phase 3 — Subagents</a></li>
+    <li><a href="#rlm-decision" class="toc-h1">⚠ Pending: RLM decision</a></li>
+    <li><a href="#phase3" class="toc-h1">Phase 3 — Subagents (paused)</a></li>
     <li><a href="#phase3-protocol" class="toc-sub">3.0 Protocol design</a></li>
     <li><a href="#phase3-impl" class="toc-sub">3.1+ Implementation</a></li>
     <li><a href="#phase4" class="toc-h1">Phase 4 — Deferred</a></li>
@@ -1072,7 +1073,259 @@ tr:nth-child(even) td { background: #fafbfc; }
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="phase3"><span class="phase-tag">Phase 3</span> Subagents <small style="font-weight:400;font-size:0.9rem">(the actual reason for all this)</small></h2>
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="rlm-decision"><span class="phase-tag" style="background:#fff3cd;color:#664d03;border-color:#ffe69c">⚠ Pending</span> Strategic decision: Recursive Language Models (RLM) <small style="font-weight:400;font-size:0.9rem">(blocks Phase 3.0)</small></h2>
+
+<p>
+  In late Phase 2 we became aware of
+  <a href="https://towardsdatascience.com/recursive-language-models-one-example-deep-dive-that-explains-everything/">Recursive
+  Language Models (RLMs)</a> and the corresponding
+  <a href="https://arxiv.org/abs/2512.24601">paper</a>. The framing differs
+  enough from our current Phase 3 subagent design that we must decide
+  direction before continuing.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>[cf2db0]</code> Headline question — REPL first or subagents first?</div>
+  <p>
+    Two competing first-deliverables:
+  </p>
+  <ul>
+    <li><strong>REPL first</strong> — implement a stateful sandboxed code-execution environment
+        (Python/Pyodide-in-Deno, à la the RLM article; or a Rust/embedded
+        alternative — see <code>[368041]</code>). Sets the substrate for RLM.
+        <code>llm_query</code> becomes a function inside the REPL later.</li>
+    <li><strong>Subagents first</strong> — finish current Phase 3 design
+        (process-per-subagent, <code>SubagentSpawned</code>/<code>SubagentReturned</code>
+        events, summary string lands in parent's LLM context). Vanilla subagent
+        shape — exactly what the RLM article critiques.</li>
+  </ul>
+  <p>
+    <strong>Current lean: REPL first.</strong> Rationale: REPL is the substrate
+    RLM is built on, REPL alone is already useful (CodeAct-style), and vanilla
+    subagents lock in the wrong parent–child data-flow (results pollute parent
+    LLM context vs. landing as REPL variables).
+    <strong>Not yet decided.</strong>
+  </p>
+</div>
+
+<h3>What the work so far still buys us</h3>
+
+<p>
+  None of Phase 0–2 is wasted under either direction. The following remain
+  load-bearing:
+</p>
+<ul>
+  <li><code>SessionId</code>, <code>EventId</code>, <code>SessionRef</code> — each
+      <code>llm_query</code> call (or whatever we end up calling the recursive
+      LLM invocation) is plausibly its own session in our event-sourced framing.</li>
+  <li><code>Origin</code> enum — <code>SubagentOf</code> may be renamed or generalised, but the shape (typed parent reference) stays.</li>
+  <li>Strict resume + round-trip gate test — becomes <em>more</em> important: REPL state is one more thing to reconstruct.</li>
+  <li>F11 compaction handling — unchanged.</li>
+  <li>Loud-schema-evolution discipline (<code>AGENTS.md</code>) — unchanged.</li>
+</ul>
+
+<h3>Where Phase 3 design needs to change if RLM wins</h3>
+
+<ul>
+  <li><code>SubagentSpawned</code> / <code>SubagentReturned</code> events as currently designed assume the spawn-tool-with-summary-string shape. RLM's <code>llm_query</code> is a <em>function call inside a REPL</em>, not a tool_use, and its return value lands in the REPL namespace, not the LLM context. Different events, different UI.</li>
+  <li>Per-spawn <code>model</code>/<code>effort</code> as <em>mandatory tool parameters</em> assumes the tool-use spawn shape. Under RLM, those become arguments to <code>llm_query</code>.</li>
+  <li>The transparency requirement (cross-session refs surfaced in the parent's feed) still holds, but the rendering target changes from "tool result" to "REPL output / variable".</li>
+</ul>
+
+<h3>Open questions to settle before deciding</h3>
+
+<p>
+  Each question has a stable 6-hex ID for cross-reference. Add answers inline
+  (as nested callouts) once we decide.
+</p>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[368041]</code> What language is the REPL?</div>
+  <p>
+    The RLM paper and article use <strong>Python in Pyodide-in-Deno</strong>
+    (sandboxed in a JS runtime). Omega is a Rust codebase; embedding a
+    Pyodide-in-Deno sandbox is doable but adds two foreign runtimes. Alternatives:
+  </p>
+  <ul>
+    <li>Python via PyO3 (process-local; fewer foreign runtimes but harder to sandbox).</li>
+    <li>A Rust-native scripting language (e.g. <code>rhai</code>, <code>rune</code>) — fits the codebase, but loses the Python ecosystem (pandas, numpy) that makes RLM ergonomic for data wrangling.</li>
+    <li>Shell as the REPL — simplest, but anaemic compared to Python for the data-manipulation use cases RLM excels at.</li>
+  </ul>
+  <p>
+    For a coding-agent like Omega, the case for a <em>shell-flavoured</em>
+    REPL is stronger than for a data-science-flavoured one. But this is its
+    own design discussion.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[c88a22]</code> How does REPL state persist across process restarts?</div>
+  <p>
+    Today, <code>ActiveSession</code> state is reconstructed by folding
+    <code>events.jsonl</code>. The REPL adds a live interpreter namespace
+    (variables, imports, function defs) that isn't naturally event-sourced.
+    Three candidate strategies:
+  </p>
+  <ul>
+    <li><strong>Replay</strong> — store every executed code block as an event;
+        rebuild the namespace by re-executing on resume. Determinism-sensitive
+        (system time, random, file I/O).</li>
+    <li><strong>Snapshot</strong> — periodically pickle the interpreter state
+        into an event payload. Faster resume, but binary blobs in
+        <code>events.jsonl</code> is a contract-authority concern.</li>
+    <li><strong>Hybrid</strong> — events record code blocks; snapshots are
+        cached out-of-band keyed by event id; resume uses the most recent
+        snapshot + replay forward.</li>
+  </ul>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[8e161a]</code> How does an <code>llm_query</code> call relate to <code>SessionId</code>?</div>
+  <p>
+    Strong lean: each <code>llm_query</code> invocation is its own session
+    (own <code>SessionId</code>, own <code>events.jsonl</code>, own folder).
+    Mirrors our current decision that subagents are child sessions; the only
+    thing that changes is what triggers the spawn (REPL code, not a tool_use).
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[053c4a]</code> What is &ldquo;the session&rdquo; in an RLM Omega?</div>
+  <p>
+    The user interacts with one outer Omega, whose REPL is the orchestrator.
+    Is &ldquo;the session&rdquo; the REPL-driving outer agent? The full tree
+    including all <code>llm_query</code>-spawned children? Both?
+    Today's framing (&ldquo;one Omega instance = one session&rdquo;) probably
+    survives intact, with the REPL being a property of that instance.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[fa3e44]</code> How do existing tools integrate with the REPL?</div>
+  <p>
+    Two extremes: (a) the REPL <em>replaces</em> tool_use entirely — every
+    capability is exposed as a function in the REPL namespace; (b) the REPL is
+    <em>another tool</em> alongside our current tool set. The article assumes
+    (a). For Omega, (b) is a softer transition that preserves existing tool
+    machinery and offers REPL as an additional capability the LLM can choose
+    when appropriate.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[549288]</code> Safety / sandboxing</div>
+  <p>
+    Today Omega's tools are bounded by their individual implementations
+    (<code>run_command</code> can do anything bash can, but it's still one
+    syscall path). A general-purpose REPL with file/network access is broader
+    blast radius. The RLM article's Pyodide-in-Deno approach is explicitly a
+    sandbox. We need a sandboxing story before exposing arbitrary code
+    execution; this may itself argue for the language choice in <code>[368041]</code>.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[bab784]</code> User interaction with an RLM Omega</div>
+  <p>
+    Does the user still send chat messages, with the REPL being purely
+    internal? Or does the user get a console where they can poke at the REPL
+    directly (à la Jupyter)? The article assumes a question-answering shape;
+    Omega is a multi-turn coding-agent shape. Likely answer: chat messages
+    stay; REPL is internal; UI optionally exposes REPL state for inspection.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[1f28f7]</code> Output format — autoregressive vs. variable</div>
+  <p>
+    RLM allows <code>FINAL(variable)</code> returns where the &ldquo;answer&rdquo;
+    is a Python object, not generated tokens. For Omega's chat-style UI this
+    is less natural — users expect prose answers. Likely answer: REPL exists
+    internally; the user-facing reply is still autoregressive prose, optionally
+    informed by REPL state. <code>FINAL(variable)</code>-style returns may
+    apply within subagent calls but not to the user.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[c86aa6]</code> Interaction with strict resume</div>
+  <p>
+    The round-trip gate test currently asserts equivalence of Agent state. If
+    the REPL becomes part of Agent state, the gate needs to verify REPL
+    reconstruction too. Depends on <code>[c88a22]</code>.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[b2e97e]</code> Comparative survey — what do existing agents do?</div>
+  <p>
+    Before deciding direction, survey the four agents we have on disk and
+    document, for each:
+  </p>
+  <ul>
+    <li>Do they expose any form of REPL (stateful sandboxed code execution)?</li>
+    <li>Do they implement subagents? If so, vanilla (result lands in parent LLM context) or RLM-style (result lands as a variable / by reference)?</li>
+    <li>What primitive does the parent use to invoke them — tool_use, code, both?</li>
+    <li>How is parent–child data flow shaped (string result, structured object, file handle, REPL variable)?</li>
+  </ul>
+  <p>
+    Targets: <code>~/opencode/</code>, <code>~/forgecode/</code>, <code>~/pi/</code>,
+    and Claude Code (which we haven't audited yet — web docs may be needed).
+    A short table per agent is sufficient; no deep code dive.
+  </p>
+  <p>
+    From our earlier conversational recall: opencode appears to do <em>continuous</em>
+    (streaming) subagent interaction; forgecode and pi appear to be <em>call-return</em>.
+    Claude Code unexplored. Verify and extend.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[835f01]</code> Cost / determinism / debuggability</div>
+  <p>
+    REPL execution introduces non-determinism (time, random, network), making
+    replay-based resume fragile. It also adds latency per turn (REPL warmup,
+    interpreter overhead). And debugging an LLM-driven REPL trajectory is
+    harder than debugging discrete tool calls. None of this kills RLM, but
+    these are real costs to weigh against the RLM benefits.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[d7699b]</code> Action item — produce an RLM exploration proposal</div>
+  <p>
+    Next sub-session should produce a written proposal
+    (<code>docs/rlm-exploration-proposal.html</code>, same style as the
+    SessionRef proposal) that:
+  </p>
+  <ol>
+    <li>Performs the comparative survey <code>[b2e97e]</code> as a grounding section — short table per agent (opencode, forgecode, pi, Claude Code).</li>
+    <li>Takes a position on <code>[cf2db0]</code> (REPL first vs. subagents first) with reasoning, informed by the survey.</li>
+    <li>Recommends a language for <code>[368041]</code> with tradeoffs.</li>
+    <li>Proposes an integration shape for <code>[fa3e44]</code> (tool vs. replacement).</li>
+    <li>Sketches REPL persistence per <code>[c88a22]</code>.</li>
+    <li>Defers the rest as follow-up but documents the lean.</li>
+  </ol>
+  <p>
+    The proposal is then reviewed in main session, accepted/refined, and a
+    new phase plan is folded in here — replacing this section.
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase3"><span class="phase-tag" style="background:#fde8e8;color:#9b2c2c;border-color:#fbb6b6">⏸ Paused</span> Phase 3 — Subagents <small style="font-weight:400;font-size:0.9rem">(pending <code>[cf2db0]</code> decision)</small></h2>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ This phase is paused</div>
+  <p>
+    The content below describes the pre-RLM-aware Phase 3 design. It is
+    preserved verbatim because parts will survive whichever direction we
+    take, but it should not be implemented until <code>[cf2db0]</code> is
+    decided. If RLM wins, this section will be reworked; if vanilla subagents
+    win, it stays and we proceed.
+  </p>
+</div>
 
 <!-- ── 3.0 Protocol design ───────────────────────────────────────────────── -->
 <h3 id="phase3-protocol">3.0 Subagent protocol — design discussion <em>(do this first)</em></h3>
