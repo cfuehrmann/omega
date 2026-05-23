@@ -98,7 +98,9 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::TurnContinued(_)
         | OmegaEvent::LlmResponseStarted(_)
         | OmegaEvent::LlmResponseEnded(_)
-        | OmegaEvent::LlmResponseDiscarded(_) => EventKind::Status,
+        | OmegaEvent::LlmResponseDiscarded(_)
+        // Phase 2.0 (F11): server-side compaction is a lifecycle marker.
+        | OmegaEvent::ContextCompacted(_) => EventKind::Status,
     }
 }
 
@@ -163,6 +165,8 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::TextBlock(_) => "text_block",
         OmegaEvent::ThinkingBlock(_) => "thinking_block",
         OmegaEvent::ToolUseBlock(_) => "tool_use_block",
+        // Phase 2.0 (F11).
+        OmegaEvent::ContextCompacted(_) => "context_compacted",
     }
 }
 
@@ -203,6 +207,7 @@ pub const LABEL_LLM_RESPONSE_STARTED: &str = "LLM response start";
 pub const LABEL_LLM_RESPONSE_ENDED: &str = "LLM response end";
 pub const LABEL_ASSISTANT: &str = "Assistant";
 pub const LABEL_THINKING: &str = "Thinking";
+pub const LABEL_CONTEXT_COMPACTED: &str = "Context compacted";
 
 /// Canonical human label for an event.  Used by the big-block
 /// `<span class="block-label">` and the status chip alike.
@@ -239,6 +244,8 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::TextBlock(_) => LABEL_ASSISTANT,
         OmegaEvent::ThinkingBlock(_) => LABEL_THINKING,
         OmegaEvent::ToolUseBlock(e) => &e.name,
+        // Phase 2.0 (F11).
+        OmegaEvent::ContextCompacted(_) => LABEL_CONTEXT_COMPACTED,
     }
 }
 

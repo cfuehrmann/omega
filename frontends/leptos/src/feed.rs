@@ -63,14 +63,15 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, LABEL_AGENT_ERROR, LABEL_ASSISTANT, LABEL_EFFORT_CHANGED, LABEL_LLM_CALL,
-    LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED, LABEL_LLM_RESPONSE_STARTED, LABEL_LLM_RETRY,
-    LABEL_MODEL_CHANGED, LABEL_PAUSE_REQUESTED, LABEL_RESUMING_SESSION, LABEL_SERVER_STARTED,
-    LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED, LABEL_SESSION_STARTED, LABEL_THINKING,
-    LABEL_TOOL_CALL, LABEL_TOOL_RESULT, LABEL_TRANSPORT_ERROR, LABEL_TURN_CONTINUED,
-    LABEL_TURN_END, LABEL_TURN_INTERRUPTED, LABEL_TURN_PAUSED, LABEL_USER_MESSAGE,
-    assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time, kind_for,
-    kind_tag, should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
+    EventKind, LABEL_AGENT_ERROR, LABEL_ASSISTANT, LABEL_CONTEXT_COMPACTED, LABEL_EFFORT_CHANGED,
+    LABEL_LLM_CALL, LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED, LABEL_LLM_RESPONSE_STARTED,
+    LABEL_LLM_RETRY, LABEL_MODEL_CHANGED, LABEL_PAUSE_REQUESTED, LABEL_RESUMING_SESSION,
+    LABEL_SERVER_STARTED, LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED, LABEL_SESSION_STARTED,
+    LABEL_THINKING, LABEL_TOOL_CALL, LABEL_TOOL_RESULT, LABEL_TRANSPORT_ERROR,
+    LABEL_TURN_CONTINUED, LABEL_TURN_END, LABEL_TURN_INTERRUPTED, LABEL_TURN_PAUSED,
+    LABEL_USER_MESSAGE, assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag,
+    format_time, kind_for, kind_tag, should_autoscroll, tool_call_preview, truncate_preview,
+    virtual_line_count,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -1015,6 +1016,18 @@ fn render_event_body(
             }
             .into_any()
         }
+
+        // Phase 2.0 (F11): server-side context compaction event.
+        // Renders a status label and the before/after token counts so
+        // the operator can see the compaction boundary at a glance.
+        OmegaEvent::ContextCompacted(e) => view! {
+            <span class="block-label">{LABEL_CONTEXT_COMPACTED}</span>
+            <span class="block-body">
+                {format!("before: {} tokens → after: {} tokens (summary: {} tokens)",
+                    e.tokens_before, e.tokens_after, e.summary_tokens)}
+            </span>
+        }
+        .into_any(),
     }
 }
 

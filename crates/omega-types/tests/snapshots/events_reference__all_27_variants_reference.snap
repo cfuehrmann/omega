@@ -1,6 +1,7 @@
 ---
 source: crates/omega-types/tests/events_reference.rs
 expression: events
+snapshot_kind: json
 ---
 [
   {
@@ -201,5 +202,12 @@ expression: events
       "path": "."
     },
     "partial": false
+  },
+  {
+    "type": "context_compacted",
+    "time": "2024-01-15T12:00:00.000Z",
+    "tokensBefore": 80000,
+    "tokensAfter": 500,
+    "summaryTokens": 300
   }
 ]

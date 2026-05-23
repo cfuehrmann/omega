@@ -30,10 +30,10 @@ use leptos::reactive::owner::Owner;
 use leptos::tachys::view::RenderHtml;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, LlmCallEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-    LlmResponseUsage, ResumingSessionEvent, SessionResumedEvent, SessionStartedEvent,
-    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
-    TurnEndEvent, TurnMetrics, UsageIteration, UserMessageEvent,
+    AgentErrorEvent, ContextCompactedEvent, LlmCallEvent, LlmResponseDiscardedEvent,
+    LlmResponseEndedEvent, LlmResponseUsage, ResumingSessionEvent, SessionResumedEvent,
+    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
+    ToolUseBlockEvent, TurnEndEvent, TurnMetrics, UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use omega_web::context_modal::{ContextModal, ContextModalState};
@@ -315,6 +315,16 @@ fn ev_session_resumed() -> OmegaEvent {
     })
 }
 
+/// Phase 2.0 (F11): server-side context compaction event.
+fn ev_context_compacted() -> OmegaEvent {
+    OmegaEvent::ContextCompacted(ContextCompactedEvent {
+        time: "2025-01-01T00:00:01.750Z".into(),
+        tokens_before: 80_000,
+        tokens_after: 500,
+        summary_tokens: 300,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // EventBlock — per-OmegaEvent family
 // ---------------------------------------------------------------------------
@@ -552,6 +562,15 @@ fn snap_event_llm_response_ended_compacted() {
         let ev = ev_llm_response_ended_compacted();
         provide_context(ContextModalState::new());
         provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_context_compacted() {
+    let html = render(|| {
+        let ev = ev_context_compacted();
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);

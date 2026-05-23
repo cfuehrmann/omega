@@ -355,6 +355,33 @@ pub struct ToolResultEvent {
     pub output: String,
 }
 
+/// Server-side context compaction fired during this turn.
+///
+/// Emitted immediately before the accompanying [`LlmResponseEndedEvent`].
+/// Anthropic's `compact_20260112` edit condensed the LLM-visible context
+/// into a summary; any fold that derives the LLM-visible context must
+/// reset history at this event and start fresh from the baseline in the
+/// adjacent `LlmResponseEnded.context_hash`.
+///
+/// # Token semantics
+/// - `tokens_before` — input tokens of the old context fed to the
+///   compaction summariser (the "before" figure).
+/// - `tokens_after`  — input tokens of the new, compacted context
+///   (the "after" figure; baseline cost of subsequent turns).
+/// - `summary_tokens` — output tokens produced by the summariser (the
+///   size of the generated summary block).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextCompactedEvent {
+    pub time: ISOTimestamp,
+    /// Input tokens consumed by the compaction summariser ("before").
+    pub tokens_before: i64,
+    /// Input tokens of the new compacted baseline ("after").
+    pub tokens_after: i64,
+    /// Output tokens produced by the compaction summariser.
+    pub summary_tokens: i64,
+}
+
 /// End of a user turn — aggregate metrics.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnEndEvent {
@@ -514,6 +541,11 @@ pub enum OmegaEvent {
     TextBlock(TextBlockEvent),
     ThinkingBlock(ThinkingBlockEvent),
     ToolUseBlock(ToolUseBlockEvent),
+
+    // --- Phase 2.0 — server-side compaction event (F11 gap close) ----------
+    /// Server-side context compaction fired; history was reset.
+    /// Always immediately precedes the corresponding `LlmResponseEnded`.
+    ContextCompacted(ContextCompactedEvent),
 }
 
 impl OmegaEvent {
@@ -552,6 +584,7 @@ impl OmegaEvent {
             Self::TextBlock(e) => &e.time,
             Self::ThinkingBlock(e) => &e.time,
             Self::ToolUseBlock(e) => &e.time,
+            Self::ContextCompacted(e) => &e.time,
         }
     }
 }
@@ -1081,6 +1114,68 @@ mod tests {
         assert_eq!(v["iterations"][1]["type"], "message");
         let back: LlmResponseUsage = serde_json::from_value(v).unwrap();
         assert_eq!(usage, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // ContextCompactedEvent
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn context_compacted_round_trip() {
+        let ev = OmegaEvent::ContextCompacted(ContextCompactedEvent {
+            time: "2024-01-15T12:00:10.000Z".into(),
+            tokens_before: 80_000,
+            tokens_after: 500,
+            summary_tokens: 300,
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "context_compacted");
+        assert_eq!(v["tokensBefore"], 80_000);
+        assert_eq!(v["tokensAfter"], 500);
+        assert_eq!(v["summaryTokens"], 300);
+        assert_eq!(v["time"], "2024-01-15T12:00:10.000Z");
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    /// The discriminator must be `context_compacted` (`snake_case` of the
+    /// variant name) and the fields must be `camelCase` as per the struct
+    /// annotation.
+    #[test]
+    fn context_compacted_field_names_are_camel_case() {
+        let ev = OmegaEvent::ContextCompacted(ContextCompactedEvent {
+            time: "2024-01-15T12:00:11.000Z".into(),
+            tokens_before: 1,
+            tokens_after: 2,
+            summary_tokens: 3,
+        });
+        let s = serde_json::to_string(&ev).unwrap();
+        assert!(
+            s.contains("\"tokensBefore\""),
+            "tokensBefore missing in: {s}"
+        );
+        assert!(s.contains("\"tokensAfter\""), "tokensAfter missing in: {s}");
+        assert!(
+            s.contains("\"summaryTokens\""),
+            "summaryTokens missing in: {s}"
+        );
+        assert!(
+            !s.contains("\"tokens_before\""),
+            "snake_case leaked in: {s}"
+        );
+    }
+
+    /// `time()` must return the embedded timestamp for `ContextCompacted`.
+    #[test]
+    fn time_returns_embedded_timestamp_for_context_compacted() {
+        let ts = "2025-07-01T10:00:00.000Z";
+        let ev = OmegaEvent::ContextCompacted(ContextCompactedEvent {
+            time: ts.into(),
+            tokens_before: 0,
+            tokens_after: 0,
+            summary_tokens: 0,
+        });
+        assert_eq!(ev.time().as_str(), ts);
     }
 
     /// Backward-compat: a usage object written before `iterations` was

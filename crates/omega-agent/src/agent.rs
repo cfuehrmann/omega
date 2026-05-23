@@ -33,11 +33,12 @@ use omega_core::{
 };
 use omega_types::StreamSignal;
 use omega_types::events::{
-    AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
-    LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent, ResumingSessionEvent,
-    ServerStartedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent,
-    TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
+    LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent,
+    ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UsageIteration,
+    UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
@@ -977,6 +978,8 @@ impl Agent {
                 let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
                 let mut llm_response: Option<LlmResponseEndedEvent> = None;
                 let mut stream_error: Option<LlmError> = None;
+                // Phase 2.0 (F11): token info extracted when compaction fires.
+                let mut compacted_info: Option<(i64, i64, i64)> = None;
                 // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
                 // each provider stream.  Cleared on `LlmRetry` mid-stream
                 // so the retried stream gets its own opener; cleared
@@ -1133,11 +1136,15 @@ impl Agent {
                                     // type=="compaction" iteration is present,
                                     // clear history so the next turn starts
                                     // from a fresh baseline.
+                                    // Phase 2.0 (F11): extract token info
+                                    // for the ContextCompacted event.
                                     if let Some(iters) = lr.usage.iterations.as_ref()
                                         && iters.iter().any(|it| it.iteration_type == "compaction")
                                     {
                                         self.history.clear();
                                         self.context_hashes.clear();
+                                        compacted_info =
+                                            Some(extract_compaction_tokens(iters));
                                     }
                                     llm_response = Some(lr);
                                 }
@@ -1401,6 +1408,20 @@ impl Agent {
                 tot_cache_creation += lr.usage.cache_creation_input_tokens.unwrap_or(0);
                 tot_cache_read += lr.usage.cache_read_input_tokens.unwrap_or(0);
                 let stop_reason = lr.stop_reason.clone();
+                // Phase 2.0 (F11): emit ContextCompacted immediately
+                // before LlmResponseEnded when compaction was detected.
+                if let Some((tokens_before, tokens_after, summary_tokens)) =
+                    compacted_info.take()
+                {
+                    let cc_ev = OmegaEvent::ContextCompacted(ContextCompactedEvent {
+                        time: now_iso(),
+                        tokens_before,
+                        tokens_after,
+                        summary_tokens,
+                    });
+                    let _ = self.event_store.append(&cc_ev).await;
+                    yield AgentItem::event(cc_ev);
+                }
                 let ended_ev = OmegaEvent::LlmResponseEnded(lr);
                 let _ = self.event_store.append(&ended_ev).await;
                 yield AgentItem::event(ended_ev);
@@ -1800,6 +1821,8 @@ impl Agent {
             let mut slots: BTreeMap<usize, BlockSlot> = BTreeMap::new();
             let mut llm_response: Option<LlmResponseEndedEvent> = None;
             let mut stream_error: Option<LlmError> = None;
+            // Phase 2.0 (F11): token info extracted when compaction fires.
+            let mut compacted_info: Option<(i64, i64, i64)> = None;
             // SCHEMA-8 Phase 3 commit 3b: opener/closer bracketing
             // each provider stream (same pattern as `send_message`).
             let mut response_started = false;
@@ -1909,11 +1932,15 @@ impl Agent {
                             OmegaEvent::LlmResponseEnded(lr) => {
                                 // Phase 6.5: detect compaction via
                                 // usage.iterations (same as send_message).
+                                // Phase 2.0 (F11): extract token info
+                                // for the ContextCompacted event.
                                 if let Some(iters) = lr.usage.iterations.as_ref()
                                     && iters.iter().any(|it| it.iteration_type == "compaction")
                                 {
                                     self.history.clear();
                                     self.context_hashes.clear();
+                                    compacted_info =
+                                        Some(extract_compaction_tokens(iters));
                                 }
                                 llm_response = Some(lr);
                             }
@@ -2070,8 +2097,22 @@ impl Agent {
 
             // -----------------------------------------------------------------
             // Step 10: emit LlmResponseEnded with context_hash filled.
+            //          Phase 2.0 (F11): precede with ContextCompacted if
+            //          compaction was detected.
             // -----------------------------------------------------------------
             lr.context_hash = assistant_hash.as_ref().to_owned();
+            if let Some((tokens_before, tokens_after, summary_tokens)) =
+                compacted_info.take()
+            {
+                let cc_ev = OmegaEvent::ContextCompacted(ContextCompactedEvent {
+                    time: now_iso(),
+                    tokens_before,
+                    tokens_after,
+                    summary_tokens,
+                });
+                let _ = self.event_store.append(&cc_ev).await;
+                yield AgentItem::event(cc_ev);
+            }
             let ended_ev = OmegaEvent::LlmResponseEnded(lr);
             let _ = self.event_store.append(&ended_ev).await;
             yield AgentItem::event(ended_ev);
@@ -2104,6 +2145,27 @@ impl Agent {
 
 fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Extract compaction token counts from a `usage.iterations` slice.
+///
+/// Returns `(tokens_before, tokens_after, summary_tokens)` where:
+/// - `tokens_before` — `input_tokens` of the `compaction` iteration
+///   (old context fed to the summariser; the "before" figure).
+/// - `tokens_after`  — `input_tokens` of the `message` iteration
+///   (new, compacted baseline; the "after" figure).
+/// - `summary_tokens` — `output_tokens` of the `compaction` iteration
+///   (tokens produced by the summariser).
+///
+/// Any missing iteration contributes `0` to the respective field.
+fn extract_compaction_tokens(iters: &[UsageIteration]) -> (i64, i64, i64) {
+    let compaction = iters.iter().find(|it| it.iteration_type == "compaction");
+    let message = iters.iter().find(|it| it.iteration_type == "message");
+    (
+        compaction.map_or(0, |it| it.input_tokens),
+        message.map_or(0, |it| it.input_tokens),
+        compaction.map_or(0, |it| it.output_tokens),
+    )
 }
 
 /// Generate an 8-character lowercase hex string from 4 random bytes.

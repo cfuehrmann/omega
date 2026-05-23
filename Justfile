@@ -198,6 +198,13 @@ mutants-ids:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/ids.rs"
 
+# Run cargo-mutants targeted at OmegaEvent (Phase 2.0 — F11).
+# Mutates only omega-types/src/events.rs and runs the omega-types test suite.
+# Verifies ContextCompacted serialisation, round-trips, and time() accessors.
+mutants-events:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

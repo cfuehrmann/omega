@@ -37,7 +37,10 @@
 //!    embeds compaction info in `LlmResponseEnded.usage.iterations` when
 //!    server-side context compaction fires.  The agent detects a
 //!    `type=="compaction"` iteration entry and clears history / context-hashes
-//!    so the next turn starts from a fresh baseline.  Injecting this via the
+//!    so the next turn starts from a fresh baseline.  Phase 2.0 (F11) adds a
+//!    `ContextCompacted` event immediately before the corresponding
+//!    `LlmResponseEnded`, recording token counts for before/after inspection
+//!    and closing the strict-resume gap.  Injecting this via the
 //!    `MockProvider` (emitting a `LlmResponseEndedEvent` with the right usage
 //!    payload) is the right shape; real Anthropic SSE is far harder to replicate.
 //!
@@ -69,7 +72,9 @@ use common::{collect_stream, make_llm_response, make_test_agent, make_tool_use_i
 use omega_core::{AgentItem, ContentBlock, LlmError, Message, Role};
 use omega_store::content_hash;
 use omega_types::events::ToolResultEvent;
-use omega_types::events::{LlmResponseEndedEvent, LlmResponseUsage, UsageIteration};
+use omega_types::events::{
+    ContextCompactedEvent, LlmResponseEndedEvent, LlmResponseUsage, UsageIteration,
+};
 use omega_types::{OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -307,6 +312,188 @@ async fn compacted_event_clears_history_and_persists_usage() {
         .expect("usage.iterations array");
     assert_eq!(iters.len(), 2);
     assert_eq!(iters[0]["type"], "compaction");
+}
+
+/// Phase 2.0 (F11): a turn with server-side compaction must emit a
+/// `ContextCompacted` event **immediately before** its `LlmResponseEnded`,
+/// with correct `tokensBefore`, `tokensAfter`, and `summaryTokens` matching
+/// the compaction and message iterations.
+///
+/// Fold invariant: folding `events.jsonl` and clearing accumulated
+/// context-hashes on every `context_compacted` event reproduces the same
+/// history size as `agent.history().len()` — proving strict resume can
+/// reconstruct the LLM-visible context from the event log alone.
+#[tokio::test]
+async fn context_compacted_event_emitted_before_response_with_correct_tokens() {
+    let (mut agent, provider, tmp) = make_test_agent();
+
+    // Two prior turns to build up history.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "ok1".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 100, 1)),
+    ]);
+    let _ = collect_stream(agent.send_message("first".to_owned(), CancellationToken::new())).await;
+
+    // Compaction turn: provider fires LlmResponseEnded with both a
+    // `compaction` iteration and a `message` iteration.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "summary".to_owned(),
+        })),
+        Ok(AgentItem::Event(Box::new(OmegaEvent::LlmResponseEnded(
+            LlmResponseEndedEvent {
+                time: "2024-06-01T00:00:00.000Z".to_owned(),
+                stop_reason: "end_turn".to_owned(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 80_500,
+                    output_tokens: 250,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                    iterations: Some(vec![
+                        UsageIteration {
+                            iteration_type: "compaction".to_owned(),
+                            input_tokens: 80_000,
+                            output_tokens: 300,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                        UsageIteration {
+                            iteration_type: "message".to_owned(),
+                            input_tokens: 500,
+                            output_tokens: 50,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                    ]),
+                },
+                context_hash: String::new(),
+                response_summary: None,
+            },
+        )))),
+    ]);
+    let items =
+        collect_stream(agent.send_message("compact me".to_owned(), CancellationToken::new())).await;
+
+    // -----------------------------------------------------------------------
+    // 1. Stream items: ContextCompacted must appear before LlmResponseEnded.
+    // -----------------------------------------------------------------------
+    let compact_pos = items.iter().position(|item| {
+        matches!(item, AgentItem::Event(ev) if matches!(ev.as_ref(), OmegaEvent::ContextCompacted(_)))
+    });
+    let ended_pos = items.iter().rposition(|item| {
+        matches!(item, AgentItem::Event(ev) if matches!(ev.as_ref(), OmegaEvent::LlmResponseEnded(_)))
+    });
+    let compact_pos = compact_pos.expect("ContextCompacted emitted in stream");
+    let ended_pos = ended_pos.expect("LlmResponseEnded emitted in stream");
+    assert!(
+        compact_pos < ended_pos,
+        "ContextCompacted (pos {compact_pos}) must precede LlmResponseEnded (pos {ended_pos})"
+    );
+
+    // -----------------------------------------------------------------------
+    // 2. Token counts in the ContextCompacted event match the iterations.
+    // -----------------------------------------------------------------------
+    let cc_event = items
+        .iter()
+        .find_map(|item| {
+            if let AgentItem::Event(ev) = item {
+                if let OmegaEvent::ContextCompacted(cc) = ev.as_ref() {
+                    return Some(cc.clone());
+                }
+            }
+            None
+        })
+        .expect("ContextCompacted found");
+    assert_eq!(
+        cc_event,
+        ContextCompactedEvent {
+            time: cc_event.time.clone(), // timestamp is non-deterministic
+            tokens_before: 80_000,
+            tokens_after: 500,
+            summary_tokens: 300,
+        }
+    );
+
+    // -----------------------------------------------------------------------
+    // 3. events.jsonl: context_compacted persisted with camelCase fields and
+    //    appears immediately before llm_response_ended in the event log.
+    // -----------------------------------------------------------------------
+    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
+    let positions: Vec<(usize, &str)> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| {
+            let t = v["type"].as_str()?;
+            if matches!(t, "context_compacted" | "llm_response_ended") {
+                Some((i, t))
+            } else {
+                None
+            }
+        })
+        .collect();
+    // Find the compaction-turn pair: context_compacted followed by
+    // llm_response_ended.
+    let cc_json_pos = positions
+        .iter()
+        .find(|(_, t)| *t == "context_compacted")
+        .map(|(i, _)| *i)
+        .expect("context_compacted in events.jsonl");
+    let ended_json_pos = positions
+        .iter()
+        .rfind(|(_, t)| *t == "llm_response_ended")
+        .map(|(i, _)| *i)
+        .expect("llm_response_ended in events.jsonl");
+    assert!(
+        cc_json_pos < ended_json_pos,
+        "context_compacted (line {cc_json_pos}) precedes llm_response_ended (line {ended_json_pos})"
+    );
+
+    // Verify camelCase fields and token values in the persisted event.
+    let cc_json = &events[cc_json_pos];
+    assert_eq!(cc_json["type"], "context_compacted");
+    assert_eq!(cc_json["tokensBefore"], 80_000_i64);
+    assert_eq!(cc_json["tokensAfter"], 500_i64);
+    assert_eq!(cc_json["summaryTokens"], 300_i64);
+
+    // -----------------------------------------------------------------------
+    // 4. Fold invariant: folding events.jsonl honours ContextCompacted by
+    //    clearing accumulated context-hashes, leaving exactly one assistant
+    //    hash — matching agent.history().len() == 1.
+    // -----------------------------------------------------------------------
+    let mut fold_hashes: Vec<String> = Vec::new();
+    for ev in &events {
+        match ev["type"].as_str().unwrap_or("") {
+            "context_compacted" => fold_hashes.clear(),
+            "llm_response_ended" => {
+                let h = ev["contextHash"].as_str().unwrap_or("").to_owned();
+                if !h.is_empty() {
+                    fold_hashes.push(h);
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        fold_hashes.len(),
+        agent.history().len(),
+        "fold produces {}, agent.history() has {}",
+        fold_hashes.len(),
+        agent.history().len()
+    );
+    assert_eq!(
+        fold_hashes.len(),
+        1,
+        "exactly one post-compaction hash in the fold"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -42,17 +42,18 @@
 //!   payload-disambiguation trick above, so 19 dedicated event variants
 //!   appear here.  SCHEMA-8 Phase 3 adds 6 block-grammar events;
 //!   Phase 6.5 removes `llm_response` and `compacted`, bringing the
-//!   total to 25 event variants.
+//!   total to 25 event variants.  Phase 2.0 (F11) adds `context_compacted`
+//!   bringing the total to 26 event variants.
 
 use omega_types::OmegaEvent;
 use omega_types::events::AgentErrorEvent;
 use omega_types::events::{
-    EffortChangedEvent, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
-    LlmResponseEndedEvent, LlmResponseStartedEvent, LlmRetryEvent, ModelChangedEvent,
-    PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStoppedEvent,
-    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
-    ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent,
-    TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
+    LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmRetryEvent,
+    ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
+    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
+    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
 };
 use serde::{Deserialize, Serialize};
 
@@ -249,6 +250,10 @@ pub enum WsMessage {
     ThinkingBlock(ThinkingBlockEvent),
     ToolUseBlock(ToolUseBlockEvent),
 
+    // --- Phase 2.0 (F11) — server-side compaction event --------------------
+    /// Server-side context compaction fired; always precedes `LlmResponseEnded`.
+    ContextCompacted(ContextCompactedEvent),
+
     /// A `Reset` or `ResumeSession` frame was rejected because the
     /// working tree has uncommitted git changes and `allow_dirty` was
     /// not set.  The previous active session (if any) is untouched.
@@ -315,6 +320,8 @@ impl WsMessage {
             Self::TextBlock(e) => OmegaEvent::TextBlock(e),
             Self::ThinkingBlock(e) => OmegaEvent::ThinkingBlock(e),
             Self::ToolUseBlock(e) => OmegaEvent::ToolUseBlock(e),
+            // Phase 2.0 (F11).
+            Self::ContextCompacted(e) => OmegaEvent::ContextCompacted(e),
         })
     }
 }
