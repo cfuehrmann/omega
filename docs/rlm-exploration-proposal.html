@@ -1,0 +1,1527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Phase 3 RLM Exploration Proposal</title>
+
+<!-- Highlight.js from CDN (syntax highlighting) -->
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+      crossorigin="anonymous"
+      onerror="this.remove()" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+        crossorigin="anonymous"
+        onerror="window.__hljs_failed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+
+<style>
+/* ── Reset / base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #f9f9fb;
+  --surface:     #ffffff;
+  --border:      #e1e4e8;
+  --text:        #1a1a2e;
+  --muted:       #6a737d;
+  --accent:      #0550ae;
+  --accent-bg:   #dbeafe;
+  --warn-bg:     #fff8dc;
+  --warn-border: #e6c600;
+  --ok-bg:       #dcfce7;
+  --ok-border:   #16a34a;
+  --callout-bg:  #eff6ff;
+  --callout-border: #3b82f6;
+  --toc-width:   260px;
+  --content-max: 880px;
+  font-size: 16px;
+  color-scheme: light;
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:             #0d1117;
+    --surface:        #161b22;
+    --border:         #30363d;
+    --text:           #e6edf3;
+    --muted:          #8b949e;
+    --accent:         #58a6ff;
+    --accent-bg:      #1c2d48;
+    --warn-bg:        #2d2200;
+    --warn-border:    #d29922;
+    --ok-bg:          #0f2e16;
+    --ok-border:      #3fb950;
+    --callout-bg:     #0d1f33;
+    --callout-border: #1f6feb;
+    color-scheme: dark;
+  }
+
+  pre { background: #161b22 !important; }
+  pre code.hljs { background: transparent !important; color: #e6edf3 !important; }
+  code { background: #21262d !important; border-color: var(--border) !important; color: #e6edf3; }
+
+  details > summary { background: #21262d; }
+  details[open] > summary { background: var(--accent-bg); }
+
+  tr:nth-child(even) td { background: #1c2128; }
+  th { background: #21262d; }
+
+  .badge-audit { background: #1c2d48; color: #79b8ff; }
+  .badge-wip   { background: #3d1a29; color: #f0a8c4; }
+  .badge-ok    { background: var(--ok-bg); color: #3fb950; }
+
+  .callout.rec .callout-title  { color: #3fb950; }
+  .callout.warn .callout-title { color: #d29922; }
+  .callout .callout-title      { color: var(--accent); }
+
+  .id-tag { background: #21262d; border-color: var(--border); color: var(--muted); }
+
+  .survey-table td.yes  { background: #0f2e16; color: #3fb950; }
+  .survey-table td.no   { background: #2d1010; color: #f87171; }
+  .survey-table td.part { background: #2d2200; color: #d29922; }
+
+  .leaning { color: #d29922; }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sticky sidebar TOC ────────────────────────────────────────────────── */
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  width: var(--toc-width);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 1.5rem 1rem;
+}
+
+#toc h2 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+#toc ol { list-style: none; padding: 0; }
+#toc li { margin-bottom: 0.3rem; }
+
+#toc a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.82rem;
+  display: block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+#toc a:hover, #toc a.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+#toc .toc-h1  { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+#toc .toc-sub { padding-left: 0.9rem; }
+#toc .toc-divider {
+  border-top: 1px solid var(--border);
+  margin: 0.6rem 0 0.5rem;
+  padding-top: 0.5rem;
+}
+
+/* ── Main content ──────────────────────────────────────────────────────── */
+main {
+  flex: 1;
+  padding: 2.5rem 3rem;
+  max-width: calc(var(--toc-width) + var(--content-max));
+  overflow-x: hidden;
+}
+
+article { max-width: var(--content-max); }
+
+/* ── Typography ────────────────────────────────────────────────────────── */
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 0.4rem;
+}
+
+.doc-meta {
+  font-size: 0.83rem;
+  color: var(--muted);
+  margin-bottom: 2.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-top: 3rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 1.5rem;
+}
+
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  scroll-margin-top: 1.5rem;
+}
+
+p { margin-bottom: 0.85rem; }
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.85rem; }
+li { margin-bottom: 0.25rem; }
+
+blockquote {
+  border-left: 4px solid var(--accent);
+  background: var(--callout-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.2rem 0;
+  font-style: italic;
+  font-size: 1.05rem;
+}
+blockquote p { margin-bottom: 0; }
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.87em;
+  background: #f3f4f6;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+pre {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  font-size: 0.87rem;
+  line-height: 1.55;
+}
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+hr.section-divider {
+  border: none;
+  border-top: 2px solid var(--border);
+  margin: 3rem 0 1rem;
+}
+
+/* ── Callouts ──────────────────────────────────────────────────────────── */
+.callout {
+  border-left: 4px solid var(--callout-border);
+  background: var(--callout-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.2rem 0;
+}
+.callout.rec  { border-color: var(--ok-border);   background: var(--ok-bg); }
+.callout.warn { border-color: var(--warn-border);  background: var(--warn-bg); }
+
+.callout-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+}
+.callout.rec  .callout-title { color: #166534; }
+.callout.warn .callout-title { color: #92400e; }
+.callout      .callout-title { color: var(--accent); }
+
+/* ── Collapsible <details> ─────────────────────────────────────────────── */
+details {
+  margin: 0.8rem 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+details > summary {
+  cursor: pointer;
+  padding: 0.6rem 1rem;
+  font-size: 0.87rem;
+  font-weight: 600;
+  background: #f6f8fa;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: "▶ ";
+  font-size: 0.7em;
+  vertical-align: middle;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+details[open] > summary {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+details[open] > summary::before { transform: rotate(90deg); }
+details > .details-body { padding: 1rem 1.2rem; }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  margin-bottom: 1rem;
+}
+th {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+}
+td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.75rem;
+  vertical-align: top;
+}
+tr:nth-child(even) td { background: #fafbfc; }
+
+/* ── Survey table colour cells ─────────────────────────────────────────── */
+.survey-table td.yes  { background: #dcfce7; color: #166534; font-weight: 600; }
+.survey-table td.no   { background: #fee2e2; color: #991b1b; font-weight: 600; }
+.survey-table td.part { background: #fff8dc; color: #92400e; font-weight: 600; }
+
+/* ── ID tag ────────────────────────────────────────────────────────────── */
+.id-tag {
+  display: inline-block;
+  font-family: monospace;
+  font-size: 0.78rem;
+  background: #f3f4f6;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.5em;
+  color: var(--muted);
+  margin-right: 0.4em;
+}
+
+/* ── Phase / status tags ───────────────────────────────────────────────── */
+.phase-tag {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0.15em 0.6em;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* ── Leaning indicator ─────────────────────────────────────────────────── */
+.leaning {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 4px;
+  padding: 0.1em 0.6em;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  #toc { display: none; }
+  main { padding: 1.5rem 1.2rem; }
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────── */
+@media print {
+  #toc { display: none; }
+  body { background: white; }
+  details[open] > summary { background: #eee; }
+}
+
+.hljs { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar TOC ──────────────────────────────────────────────────────── -->
+<nav id="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#intro"       class="toc-h1">Introduction</a></li>
+    <li><a href="#ground-rules" class="toc-sub">Ground rules</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#survey"      class="toc-h1">[b2e97e] Survey</a></li>
+    <li><a href="#sv-opencode" class="toc-sub">opencode</a></li>
+    <li><a href="#sv-forgecode" class="toc-sub">forgecode</a></li>
+    <li><a href="#sv-pi"       class="toc-sub">pi-mono</a></li>
+    <li><a href="#sv-fastrlm"  class="toc-sub">fast-rlm</a></li>
+    <li><a href="#sv-claude"   class="toc-sub">Claude Code</a></li>
+    <li><a href="#sv-matrix"   class="toc-sub">Comparison matrix</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#order"       class="toc-h1">[cf2db0] REPL vs subagents first</a></li>
+    <li><a href="#language"    class="toc-h1">[368041] REPL language</a></li>
+    <li><a href="#integration" class="toc-h1">[fa3e44] REPL integration shape</a></li>
+    <li><a href="#persistence" class="toc-h1">[c88a22] REPL persistence</a></li>
+    <li><a href="#flags"       class="toc-h1">[b0bc06] Flag config mechanism</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#lean-8e161a" class="toc-h1">[8e161a] llm_query + SessionId</a></li>
+    <li><a href="#lean-053c4a" class="toc-sub">[053c4a] "The session" in RLM</a></li>
+    <li><a href="#lean-549288" class="toc-sub">[549288] Sandboxing</a></li>
+    <li><a href="#lean-bab784" class="toc-sub">[bab784] User interaction</a></li>
+    <li><a href="#lean-1f28f7" class="toc-sub">[1f28f7] Output format</a></li>
+    <li><a href="#lean-c86aa6" class="toc-sub">[c86aa6] Strict resume</a></li>
+    <li><a href="#lean-835f01" class="toc-sub">[835f01] Cost / determinism</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#next"        class="toc-h1">Recommended next steps</a></li>
+  </ol>
+</nav>
+
+<!-- ── Main content ─────────────────────────────────────────────────────── -->
+<main>
+<article>
+
+<h1>Phase 3 RLM Exploration Proposal</h1>
+<p class="doc-meta">
+  Status: <strong>Proposal — for review</strong> ·
+  Resolves the open questions blocking Phase 3 in
+  <code>docs/session-design.html §rlm-decision</code> ·
+  Written against codebase as of commit
+  <code>develop HEAD</code> (May 2026) ·
+  Canonical path: <code>docs/rlm-exploration-proposal.html</code>
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="intro">Introduction</h2>
+
+<p>
+  Phase 2 (strict resume) is complete. Before Phase 3 can start, two strategic
+  questions must be answered: whether to model Omega's multi-agent capability
+  on Recursive Language Models (RLM), and in what order REPL and subagent
+  primitives should be built. This document answers both, grounded in a
+  survey of five reference agents, and resolves the remaining open questions
+  from the design doc.
+</p>
+
+<blockquote>
+  <p>The RLM paper frames subagents not as <em>tool calls that return strings</em>
+  but as <em>first-class function calls inside a persistent REPL</em> — the
+  result lands as a Python variable, not as a string pasted into the LLM
+  context. The survey below tests whether this distinction matters for Omega.</p>
+</blockquote>
+
+<h3 id="ground-rules">Ground rules (already decided — not revisited here)</h3>
+
+<div class="callout rec">
+  <div class="callout-title">✓ [b0bc06] Two independent runtime flags, four-cell matrix</div>
+  <p>
+    Two flags — <code>repl</code> and <code>subagents</code> — each
+    defaulting to off, independently switchable at runtime, recorded in
+    <code>SessionStartedEvent</code>. The four combinations are:
+  </p>
+  <table style="width:auto;border-collapse:collapse;margin:0.5rem 0">
+    <thead><tr>
+      <th></th>
+      <th style="padding:0.25rem 0.75rem"><code>subagents=off</code></th>
+      <th style="padding:0.25rem 0.75rem"><code>subagents=on</code></th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td style="padding:0.25rem 0.75rem"><strong><code>repl=off</code></strong></td>
+        <td style="padding:0.25rem 0.75rem">baseline (current Omega)</td>
+        <td style="padding:0.25rem 0.75rem">vanilla subagents</td>
+      </tr>
+      <tr>
+        <td style="padding:0.25rem 0.75rem"><strong><code>repl=on</code></strong></td>
+        <td style="padding:0.25rem 0.75rem">REPL only (CodeAct-style)</td>
+        <td style="padding:0.25rem 0.75rem">RLM (REPL + <code>llm_query</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Config mechanism specifics are resolved in <a href="#flags">§&nbsp;[b0bc06]</a>.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ [abe7e7] Stay on develop; feature flags alone, no branch</div>
+  <p>
+    All new code lands on <code>develop</code> behind flags.
+    The gate runs every commit. No long-lived feature branch.
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="survey"><span class="id-tag">[b2e97e]</span> Comparative survey</h2>
+
+<p>
+  Five agents were surveyed across four dimensions: REPL availability,
+  subagent support, invocation primitive, and parent–child data flow.
+</p>
+
+<!-- ── opencode ─────────────────────────────────────────────────────────── -->
+<h3 id="sv-opencode">opencode <small style="font-weight:400;color:var(--muted)">— <code>~/opencode/</code></small></h3>
+
+<p>
+  TypeScript/Bun. Multi-agent orchestration built on an effect-typed session
+  loop. Subagents are defined as named agent configs with a <code>mode</code>
+  field (<code>"subagent"</code> | <code>"primary"</code> | <code>"all"</code>).
+</p>
+
+<details>
+  <summary>Key files inspected</summary>
+  <div class="details-body">
+    <ul>
+      <li><code>packages/opencode/src/tool/task.ts</code> — the <code>TaskTool</code>
+          (v2.1.63 renamed to Agent tool): creates or resumes a child session,
+          awaits its final text output, returns a string to the parent.</li>
+      <li><code>packages/opencode/src/session/prompt.ts</code> —
+          <code>handleSubtask()</code> drives the child's loop; the parent
+          streams the child's tool-call events to the UI <em>during</em>
+          execution, giving a "live" appearance, but still blocks until the
+          child finishes and collects a single result string.</li>
+      <li><code>packages/opencode/src/agent/agent.ts</code> —
+          <code>Info.mode</code> field; subagent-type agents can be given their
+          own model, tool allowlist, and permission rules.</li>
+    </ul>
+  </div>
+</details>
+
+<ul>
+  <li><strong>REPL:</strong> No (shell access via Bash tool but no stateful interpreter namespace).</li>
+  <li><strong>Subagents:</strong> Yes — via the Task/Agent <code>tool_use</code>.</li>
+  <li><strong>Invocation primitive:</strong> <code>tool_use</code> (<code>task</code> / <code>agent</code> tool ID).</li>
+  <li><strong>Data flow:</strong> Call-return. The child session produces a final text reply;
+      that text is returned as the tool result string, landing in the parent's LLM context.
+      Sessions can be <em>resumed</em> via <code>task_id</code> — stateful across calls but
+      the boundary is still tool-call granularity.</li>
+  <li><strong>Notable:</strong> Foreground (blocking) and background (concurrent, auto-deny-prompts)
+      modes. Result string is wrapped in XML tags —
+      <code>&lt;task_result&gt;…&lt;/task_result&gt;</code>.</li>
+</ul>
+
+<!-- ── forgecode ────────────────────────────────────────────────────────── -->
+<h3 id="sv-forgecode">forgecode <small style="font-weight:400;color:var(--muted)">— <code>~/forgecode/</code></small></h3>
+
+<p>
+  Rust. Clean separation of agent execution (<code>AgentExecutor</code>) from
+  conversations. Each named agent becomes a tool definition at runtime.
+</p>
+
+<details>
+  <summary>Key files inspected</summary>
+  <div class="details-body">
+    <ul>
+      <li><code>crates/forge_app/src/agent_executor.rs</code> — the
+          <code>execute()</code> method creates or reuses a
+          <code>ConversationId</code>, calls <code>ForgeApp::chat()</code>,
+          collects the final markdown reply via a streaming loop, and wraps
+          it in <code>ToolOutput::ai(Element::new("task_completed")…)</code>.</li>
+      <li><code>crates/forge_app/src/infra.rs</code> — <code>get_agents()</code>
+          / <code>get_agent_infos()</code> trait; agents are config-driven,
+          not code-defined.</li>
+    </ul>
+  </div>
+</details>
+
+<ul>
+  <li><strong>REPL:</strong> No.</li>
+  <li><strong>Subagents:</strong> Yes — agent names surface as tool names.</li>
+  <li><strong>Invocation primitive:</strong> <code>tool_use</code> (agent name ↔ tool name mapping).</li>
+  <li><strong>Data flow:</strong> Call-return. The child conversation streams internally;
+      the streaming output is collected and the final text is returned as a
+      <code>ToolOutput</code> XML string in the parent's LLM context.</li>
+  <li><strong>Notable:</strong> Can reuse an existing <code>ConversationId</code>
+      (stateful resumption). Interrupts propagate — the parent's abort triggers
+      <code>AgentToolInterrupted</code>.</li>
+</ul>
+
+<!-- ── pi-mono ──────────────────────────────────────────────────────────── -->
+<h3 id="sv-pi">pi-mono <small style="font-weight:400;color:var(--muted)">— <code>~/pi-mono/</code></small></h3>
+
+<p>
+  TypeScript. A lean multi-package monorepo: <code>packages/agent</code>
+  provides a generic agent loop; <code>packages/coding-agent</code> is the
+  product built on top. Neither implements subagent orchestration at the
+  library level. <code>~/pi/</code> (bare) does not exist.
+</p>
+
+<details>
+  <summary>Key files inspected</summary>
+  <div class="details-body">
+    <ul>
+      <li><code>packages/agent/src/agent-loop.ts</code> — standard LLM
+          request → tool-call → result loop. No subagent spawning.</li>
+      <li><code>packages/agent/src/agent.ts</code> — <code>AgentOptions</code>
+          / <code>AgentState</code>; tool list is flat, no concept of
+          agent-as-tool.</li>
+      <li><code>packages/web-ui/src/tools/javascript-repl.ts</code> — a
+          <em>UI renderer</em> for JavaScript code results (display only,
+          not an agent REPL).</li>
+    </ul>
+  </div>
+</details>
+
+<ul>
+  <li><strong>REPL:</strong> No (there is a JavaScript renderer in the UI but it is not an agent-level interpreter).</li>
+  <li><strong>Subagents:</strong> No — single-agent loop; no orchestration primitives.</li>
+  <li><strong>Invocation primitive:</strong> N/A.</li>
+  <li><strong>Data flow:</strong> N/A.</li>
+</ul>
+
+<!-- ── fast-rlm ─────────────────────────────────────────────────────────── -->
+<h3 id="sv-fastrlm">fast-rlm <small style="font-weight:400;color:var(--muted)">— <code>~/fast-rlm/</code></small></h3>
+
+<p>
+  Python/Deno. The reference RLM implementation. Each LLM call runs inside a
+  Pyodide (WebAssembly Python) REPL sandboxed in a Deno process. Subagents
+  are invoked via an <code>await llm_query(prompt, schema)</code> function
+  that is pre-loaded into every REPL namespace.
+</p>
+
+<details>
+  <summary>Key files inspected + RLMConfig knobs</summary>
+  <div class="details-body">
+    <p><strong>fast_rlm/_runner.py</strong> — the full Python driver:</p>
+    <ul>
+      <li><code>run(query, config, tools, output_schema, env_variables)</code>
+          — entry point; serialises everything to temp files, shells out to
+          <code>deno run src/subagents.ts</code>, reads back a JSON result.</li>
+      <li>Tools are Python callables; their source is extracted via
+          <code>inspect.getsource</code> and executed inside Pyodide before
+          the REPL starts.</li>
+      <li>Sub-agents do <strong>not</strong> inherit parent tools; must be
+          explicitly forwarded via <code>llm_query(prompt, schema, tools=[…])</code>.</li>
+    </ul>
+    <p><strong>RLMConfig dataclass knobs:</strong></p>
+    <table>
+      <thead><tr><th>Field</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>primary_agent</code></td><td><code>z-ai/glm-5</code></td><td>Model for the root agent</td></tr>
+        <tr><td><code>sub_agent</code></td><td><code>minimax/minimax-m2.5</code></td><td>Model for all spawned sub-agents</td></tr>
+        <tr><td><code>max_depth</code></td><td>3</td><td>Maximum recursion depth</td></tr>
+        <tr><td><code>max_calls_per_subagent</code></td><td>20</td><td>LLM call budget per REPL instance</td></tr>
+        <tr><td><code>truncate_len</code></td><td>2000</td><td>Max chars of REPL output returned to parent</td></tr>
+        <tr><td><code>max_money_spent</code></td><td>1.0</td><td>Hard cost cap (USD)</td></tr>
+        <tr><td><code>max_completion_tokens</code></td><td>50 000</td><td>Per-call completion token limit</td></tr>
+        <tr><td><code>max_prompt_tokens</code></td><td>200 000</td><td>Context window guard</td></tr>
+        <tr><td><code>api_max_retries</code></td><td>3</td><td>Retry count on transient failures</td></tr>
+        <tr><td><code>api_timeout_ms</code></td><td>600 000</td><td>Per-request timeout</td></tr>
+      </tbody>
+    </table>
+    <p><strong>examples/</strong>: <code>parallel_r_count.py</code> shows six
+    concurrent <code>llm_query</code> calls via <code>asyncio.gather</code>.
+    <code>http_smoke_test.py</code> shows tool injection — a Python callable
+    is extracted, sent to Deno, executed in Pyodide. Results land as
+    <em>Python objects</em> (Pydantic-validated), not as strings in any LLM
+    context.</p>
+  </div>
+</details>
+
+<ul>
+  <li><strong>REPL:</strong> Yes — Pyodide (WebAssembly Python) inside Deno. Sandboxed.
+      HTTP routed through <code>pyodide-http</code> / Deno <code>fetch</code>.</li>
+  <li><strong>Subagents:</strong> Yes — via <code>llm_query()</code> function in the REPL namespace.</li>
+  <li><strong>Invocation primitive:</strong> Python function call in the REPL (not <code>tool_use</code>).</li>
+  <li><strong>Data flow:</strong> Variables / Python objects. Results land as Python values
+      (Pydantic-validated); they do <em>not</em> enter the parent's LLM context as text.
+      The parent agent <em>assigns</em> <code>results = await llm_query(…)</code> and
+      then works with the object programmatically.</li>
+  <li><strong>Notable:</strong> Parallel spawning via <code>asyncio.gather</code>.
+      Typed output schemas. Two runtimes (Python + Deno). Tools must be self-contained
+      callables (no module-level closures). Sub-agents do not inherit tools.</li>
+</ul>
+
+<!-- ── Claude Code ───────────────────────────────────────────────────────── -->
+<h3 id="sv-claude">Claude Code <small style="font-weight:400;color:var(--muted)">— web docs</small></h3>
+
+<p>
+  Source not available locally; surveyed via
+  <a href="https://code.claude.com/docs/en/sub-agents">official docs</a>.
+  Claude Code is Anthropic's first-party coding agent; its subagent model is
+  the most elaborated of the five surveyed here.
+</p>
+
+<details>
+  <summary>Documentation highlights</summary>
+  <div class="details-body">
+    <ul>
+      <li><strong>Agent/Task tool</strong>: the parent invokes a named subagent
+          by emitting an <code>Agent</code> (formerly <code>Task</code>) tool call.
+          The subagent runs in its own context window and returns a result string.</li>
+      <li><strong>Built-in subagents</strong>: Explore (read-only, Haiku), Plan
+          (read-only), general-purpose. Subagents <em>cannot</em> spawn further
+          subagents — anti-nesting guard is explicit.</li>
+      <li><strong>Foreground / background</strong>: background subagents run
+          concurrently; they auto-deny any tool that would otherwise prompt.</li>
+      <li><strong>Session forking</strong>: a separate primitive (fork, not
+          subagent) that branches the conversation tree; each fork runs
+          independently and can be observed / steered.</li>
+      <li><strong>REPL</strong>: <code>code_execution_20250825</code> is a beta
+          API-level tool for sandboxed Python execution (Anthropic side).
+          An internal <code>REPLTool</code> exists for Anthropic engineers but
+          is not exposed to users. No general-purpose user-facing REPL in the
+          published agent.</li>
+      <li><strong>Data flow</strong>: call-return. Result lands in the parent's
+          LLM context as a summary string.</li>
+      <li><strong>Memory</strong>: optional persistent memory directory
+          (<code>~/.claude/agent-memory/</code>) per subagent, for cross-session
+          learning (separate from the main context).</li>
+    </ul>
+  </div>
+</details>
+
+<ul>
+  <li><strong>REPL:</strong> Partial — sandboxed code execution is an API-level beta tool,
+      not a first-class agent primitive for end users.</li>
+  <li><strong>Subagents:</strong> Yes — via Agent (formerly Task) <code>tool_use</code>.</li>
+  <li><strong>Invocation primitive:</strong> <code>tool_use</code> (Agent tool).</li>
+  <li><strong>Data flow:</strong> Call-return. Result string lands in parent's LLM context.
+      Subagents are anti-nested (a subagent cannot spawn a sub-subagent).</li>
+  <li><strong>Notable:</strong> Most mature subagent model. Session forking as a distinct
+      primitive. Background agents (concurrent). Per-subagent model and tool config.
+      No user-facing RLM-style REPL.</li>
+</ul>
+
+<!-- ── Comparison matrix ─────────────────────────────────────────────────── -->
+<h3 id="sv-matrix">Comparison matrix</h3>
+
+<table class="survey-table">
+  <thead>
+    <tr>
+      <th>Agent</th>
+      <th>REPL</th>
+      <th>Subagents</th>
+      <th>Invocation primitive</th>
+      <th>Result lands in…</th>
+      <th>Parallel?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>opencode</strong></td>
+      <td class="no">No</td>
+      <td class="yes">Yes</td>
+      <td><code>tool_use</code> (task/agent)</td>
+      <td>Parent LLM context (string)</td>
+      <td class="yes">Yes (background)</td>
+    </tr>
+    <tr>
+      <td><strong>forgecode</strong></td>
+      <td class="no">No</td>
+      <td class="yes">Yes</td>
+      <td><code>tool_use</code> (agent-as-tool)</td>
+      <td>Parent LLM context (XML string)</td>
+      <td class="no">No</td>
+    </tr>
+    <tr>
+      <td><strong>pi-mono</strong></td>
+      <td class="no">No</td>
+      <td class="no">No</td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td class="no">N/A</td>
+    </tr>
+    <tr>
+      <td><strong>fast-rlm</strong></td>
+      <td class="yes">Yes (Pyodide/Deno)</td>
+      <td class="yes">Yes (<code>llm_query</code>)</td>
+      <td>Function call in REPL</td>
+      <td>Python variable (typed object)</td>
+      <td class="yes">Yes (<code>asyncio.gather</code>)</td>
+    </tr>
+    <tr>
+      <td><strong>Claude Code</strong></td>
+      <td class="part">Beta (API-level)</td>
+      <td class="yes">Yes</td>
+      <td><code>tool_use</code> (Agent tool)</td>
+      <td>Parent LLM context (string)</td>
+      <td class="yes">Yes (background)</td>
+    </tr>
+    <tr>
+      <td><strong>Omega (target)</strong></td>
+      <td class="part">Proposed</td>
+      <td class="yes">Proposed</td>
+      <td>TBD (see below)</td>
+      <td>TBD (see below)</td>
+      <td class="part">Planned</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Survey finding:</strong> every production coding agent (opencode,
+  forgecode, Claude Code) uses call-return via <code>tool_use</code> with
+  results landing as strings in the parent LLM context. Only fast-rlm
+  (a research/demo project) uses the RLM REPL-variable model. The two
+  primitives are not mutually exclusive — the four-cell flag matrix captures
+  exactly this.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="order"><span class="id-tag">[cf2db0]</span> REPL first vs. subagents first</h2>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Subagents first</div>
+  <p>
+    Implement vanilla subagents (the <code>subagents=on, repl=off</code> cell)
+    before the REPL. The REPL follows in a subsequent iteration.
+  </p>
+</div>
+
+<details>
+  <summary>Rationale (full)</summary>
+  <div class="details-body">
+    <h4>Arguments for subagents first</h4>
+    <ol>
+      <li>
+        <strong>Survey consensus.</strong> All three production coding agents
+        surveyed — opencode, forgecode, Claude Code — ship subagents without a
+        REPL. The RLM REPL-first approach is found only in the research
+        implementation (fast-rlm). Omega is a coding agent, not a data-science
+        notebook; the survey confirms that subagents alone are sufficient for
+        a production-quality first deliverable.
+      </li>
+      <li>
+        <strong>Immediate value.</strong> Vanilla subagents let the agent
+        delegate tasks to child sessions today, using machinery (SessionId,
+        EventId, SessionRef, Origin, strict resume) that Phase 0–2 already
+        built. REPL adds capability later without invalidating subagents.
+      </li>
+      <li>
+        <strong>REPL persistence is unsolved.</strong> The REPL introduces a
+        live interpreter namespace (variables, function defs, imports) that
+        does not naturally event-source. The three candidate strategies
+        (replay, snapshot, hybrid — see <a href="#persistence">§&nbsp;[c88a22]</a>)
+        all have significant tradeoffs. Building subagents first defers this
+        complexity to a later, focused iteration.
+      </li>
+      <li>
+        <strong>Two runtimes vs. one.</strong> The Pyodide-in-Deno approach
+        (the only battle-tested RLM sandbox we surveyed) adds a Deno process
+        and a WASM Python interpreter to a Rust codebase. Subagents add
+        nothing — they re-use the existing Omega process and event store.
+      </li>
+      <li>
+        <strong><code>run_command</code> already covers the coding-agent REPL
+        use case.</strong> Omega's existing <code>run_command</code> tool gives
+        the LLM arbitrary shell execution. The primary advantage of a REPL
+        over repeated shell calls is statefulness (accumulated variables,
+        loaded data). For code editing this advantage is real but marginal;
+        for data manipulation (pandas, numpy) it is much larger — but that is
+        not Omega's primary use case.
+      </li>
+      <li>
+        <strong>Subagents are REPL prerequisites, not vice versa.</strong>
+        RLM requires that each <code>llm_query</code> call maps to a child
+        session (<code>[8e161a]</code>). The child session requires
+        <code>SessionId</code>, <code>EventId</code>, <code>SessionRef</code>,
+        and <code>Origin</code> — all of which Phase 1–2 already provide.
+        Building subagents first means we exercise this infrastructure before
+        adding the REPL layer. The RLM cell (<code>repl=on, subagents=on</code>)
+        can then add the REPL-level orchestration on top of working subagents.
+      </li>
+    </ol>
+
+    <h4>Arguments for REPL first (and why they lose)</h4>
+    <ul>
+      <li>
+        <em>"REPL is the substrate RLM is built on."</em> True in the paper's
+        framing; false for Omega in the immediate term. Omega does not need RLM
+        to be useful; vanilla subagents are useful on their own and are a
+        stepping stone toward RLM, not away from it.
+      </li>
+      <li>
+        <em>"Vanilla subagents lock in the wrong parent–child data-flow."</em>
+        Only partially true. The result-as-string model is simpler and is what
+        every production agent uses. The flag matrix means both can coexist;
+        vanilla subagents do not prevent the REPL-variable model from being
+        added later in the <code>repl=on</code> cells.
+      </li>
+    </ul>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="language"><span class="id-tag">[368041]</span> REPL language</h2>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Persistent shell session (PTY-based)</div>
+  <p>
+    When the REPL is eventually built, use a persistent shell session driven
+    by a PTY rather than embedding a Python interpreter. If data-science
+    workloads become important later, add Python as a second REPL kind behind
+    its own sub-flag.
+  </p>
+</div>
+
+<details>
+  <summary>Language options and tradeoffs</summary>
+  <div class="details-body">
+    <table>
+      <thead>
+        <tr>
+          <th>Option</th>
+          <th>Pros</th>
+          <th>Cons</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Shell (PTY)</strong></td>
+          <td>Zero new runtime dependencies; bash is universal; every
+              command already works; deterministic enough for replay;
+              matches Omega's coding-agent persona; familiar to the LLM</td>
+          <td>Output parsing is harder than structured returns;
+              PTY boundary detection is fiddly; non-interactive
+              commands still need careful stdout/stderr demuxing</td>
+          <td>✅ Recommended</td>
+        </tr>
+        <tr>
+          <td><strong>Python via Pyodide-in-Deno</strong></td>
+          <td>Battle-tested in fast-rlm; WASM sandbox;
+              full Python ecosystem (numpy, pandas)</td>
+          <td>Two foreign runtimes (Deno + WASM); large binary;
+              non-deterministic (time, network); hard to replay</td>
+          <td>❌ Too much runtime complexity for Omega's use case</td>
+        </tr>
+        <tr>
+          <td><strong>Python via PyO3</strong></td>
+          <td>Single foreign runtime; Rust-native bridge;
+              reasonably fast startup</td>
+          <td>Sandboxing is harder; Python GIL; import side-effects;
+              non-deterministic for replay</td>
+          <td>⚠ Viable but deferred; re-evaluate when data-science
+              workloads appear</td>
+        </tr>
+        <tr>
+          <td><strong>Rust-native scripting (rhai / rune)</strong></td>
+          <td>No foreign runtime; embedded cleanly; deterministic</td>
+          <td>Loses the Python ecosystem; LLM training data biased
+              toward Python/shell; syntax unfamiliar to most</td>
+          <td>❌ Too niche; LLM proficiency too low</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>Shell fits Omega's purpose.</strong> Omega is a coding agent
+      that edits files, runs builds, and executes tests. All of these are
+      shell operations. A persistent PTY session accumulates working-directory
+      state, environment variables, and shell functions — exactly the state
+      that matters for code work. Unlike Python REPL state (dataframes,
+      intermediate results), shell state is already implicitly managed by
+      our existing tools; the PTY just makes it stateful across individual
+      tool calls.
+    </p>
+    <p>
+      <strong>Replay note.</strong> Shell commands are more deterministic
+      than Python REPL cells: a <code>git checkout main</code> produces the
+      same result on replay; a <code>random.random()</code> call does not.
+      This makes replay-based persistence (see <a href="#persistence">§&nbsp;[c88a22]</a>)
+      significantly more reliable for shell than for Python.
+    </p>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="integration"><span class="id-tag">[fa3e44]</span> REPL vs. tool_use integration shape</h2>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — REPL as another tool, not a replacement</div>
+  <p>
+    The REPL is exposed as a new tool alongside the existing tool set. It does
+    not replace <code>tool_use</code>. The LLM chooses the REPL when it
+    benefits from accumulated state; it continues using individual tools
+    (read_file, run_command, etc.) for one-shot operations.
+  </p>
+</div>
+
+<details>
+  <summary>Full rationale and integration sketch</summary>
+  <div class="details-body">
+    <p>
+      The two extremes from the design doc:
+    </p>
+    <ul>
+      <li><strong>(a) REPL replaces tool_use entirely.</strong> Every capability
+          is exposed as a function in the REPL namespace. This is the RLM
+          article's design. It is a clean architecture but a large, risky
+          migration.</li>
+      <li><strong>(b) REPL is another tool.</strong> The existing tool set
+          remains. A <code>repl_exec</code> (or <code>shell_session</code>)
+          tool is added that feeds a command into the persistent session and
+          returns the output. The LLM can use REPL or individual tools as
+          appropriate.</li>
+    </ul>
+    <p>
+      Option (b) is recommended because:
+    </p>
+    <ol>
+      <li>
+        <strong>Preserves existing tool machinery.</strong> The full test
+        suite, the tool-call event log, and all existing tool implementations
+        remain valid. Switching to (a) would require re-implementing every
+        tool as a Python / shell function in the REPL namespace.
+      </li>
+      <li>
+        <strong>Matches the flag semantics.</strong> <code>repl=on</code>
+        adds capability; it does not rewrite the agent. The LLM's tool list
+        grows by one entry; everything else stays the same.
+      </li>
+      <li>
+        <strong>All three production agents use (b)-equivalent designs.</strong>
+        opencode, forgecode, and Claude Code add capabilities as tools;
+        they do not replace their tool sets with a REPL.
+      </li>
+      <li>
+        <strong>Progressive upgrade path.</strong> Under (b), moving toward
+        the RLM <code>llm_query</code>-in-REPL model later is a matter of
+        adding <code>llm_query</code> as another pre-loaded REPL function —
+        it does not require tearing out the tool layer.
+      </li>
+    </ol>
+    <p>
+      <strong>Sketch of the new tool (when REPL is built):</strong>
+    </p>
+    <pre><code class="language-json">// Tool definition (in ToolDefinition list, only when repl flag is on)
+{
+  "name": "shell_session",
+  "description": "Execute a shell command in the persistent session REPL. State (working directory, env vars, shell functions) persists across calls.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "command": { "type": "string", "description": "Shell command to execute" }
+    },
+    "required": ["command"]
+  }
+}
+
+// Corresponding event (recorded in events.jsonl)
+{
+  "type": "repl_executed",
+  "event_id": "...",
+  "command": "cargo test",
+  "stdout": "...",
+  "stderr": "...",
+  "exit_code": 0
+}
+</code></pre>
+
+    <p>
+      When <code>repl=on, subagents=on</code> (the RLM cell), <code>llm_query</code>
+      is added as a second pre-loaded function: the REPL namespace then has
+      both shell execution and child-agent invocation, and the orchestration
+      layer switches from <code>tool_use</code> to REPL-function calls.
+    </p>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="persistence"><span class="id-tag">[c88a22]</span> REPL state persistence sketch</h2>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Event-replay with determinism pragmatics</div>
+  <p>
+    Each REPL command is recorded as a <code>ReplExecuted</code> event.
+    On resume, commands are replayed in order to rebuild the session state.
+    Non-deterministic side effects are accepted as a known limitation;
+    failures during replay surface an error and offer a clean-start escape.
+  </p>
+</div>
+
+<details>
+  <summary>Full rationale, strategies compared, Rust sketch</summary>
+  <div class="details-body">
+    <h4>Strategy comparison</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy</th>
+          <th>How it works</th>
+          <th>Pros</th>
+          <th>Cons</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Replay</strong></td>
+          <td>Every executed command stored as an event.
+              Resume re-executes in sequence.</td>
+          <td>Pure event-sourcing; fits existing
+              <code>fold(events)</code> model; no binary blobs</td>
+          <td>Non-determinism: file I/O, time, randomness,
+              network calls may differ on replay</td>
+        </tr>
+        <tr>
+          <td><strong>Snapshot</strong></td>
+          <td>Interpreter state serialised (e.g. PTY env dump)
+              into an event payload.</td>
+          <td>Fast resume; exact state recovery</td>
+          <td>Binary blobs in events.jsonl violate
+              Contract Authority; PTY state is not
+              easily serialisable</td>
+        </tr>
+        <tr>
+          <td><strong>Hybrid</strong></td>
+          <td>Events record commands; snapshots cached
+              out-of-band keyed by event ID; resume uses
+              latest snapshot + forward replay.</td>
+          <td>Balances accuracy and speed</td>
+          <td>Two storage layers; cache invalidation; more
+              moving parts</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h4>Why replay wins for a shell REPL</h4>
+    <p>
+      Shell commands are far more deterministic than Python REPL cells.
+      A <code>cd /tmp &amp;&amp; ls</code> produces the same output on
+      replay. A <code>git status</code> reflects actual repository state.
+      Most failure modes (file not found, permission denied) are exactly
+      what we <em>want</em> to surface on resume. The remaining
+      non-determinism (wall clock, network I/O) is tolerable for a
+      coding agent where the primary state is the filesystem, not
+      in-memory objects.
+    </p>
+    <p>
+      Snapshots violate the Contract Authority rule: binary blobs in
+      events.jsonl would make the schema opaque and hard to evolve. The
+      hybrid approach adds complexity that is not justified at MVP.
+    </p>
+
+    <h4>Rust event type sketch</h4>
+    <pre><code class="language-rust">/// Recorded when the REPL executes a command.
+/// On resume: commands are replayed in order to rebuild session state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "repl_executed")]
+pub struct ReplExecuted {
+    pub command: String,
+    /// Captured stdout (may be truncated for large outputs).
+    pub stdout: String,
+    /// Captured stderr.
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+/// Recorded when the REPL session is reset (e.g. replay failure on resume).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "repl_reset")]
+pub struct ReplReset {
+    pub reason: ReplResetReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplResetReason {
+    /// Replay failed with this error; user accepted a clean start.
+    ReplayFailed { error: String },
+    /// Explicit user request.
+    UserRequested,
+}
+</code></pre>
+
+    <h4>Resume algorithm</h4>
+    <ol>
+      <li>Fold events up to the last resumable boundary.</li>
+      <li>Collect all <code>ReplExecuted</code> events since the last
+          <code>ReplReset</code> (or the beginning, if no reset).</li>
+      <li>Spawn a fresh PTY session; replay commands in order.</li>
+      <li>If any command exits non-zero or produces unexpected output,
+          log the divergence. Continue replay (the agent can observe and
+          correct on the next turn) unless a command causes an unrecoverable
+          error (e.g. PTY dies), in which case emit <code>ReplReset</code>
+          and offer a clean start.</li>
+    </ol>
+
+    <p>
+      <strong>Interaction with the round-trip gate test (<code>[c86aa6]</code>).</strong>
+      When REPL is built, the gate test must verify that REPL state is
+      equivalent after resume. For a shell REPL, "equivalent" means the
+      working directory and key environment variables match; it does not
+      require byte-for-byte stdout identity.
+    </p>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="flags"><span class="id-tag">[b0bc06]</span> Flag config mechanism specifics</h2>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Recommendation — Env vars only (for now); typed struct in SessionStartedEvent</div>
+  <p>
+    Resolve flags from env vars at startup. Record the resolved combination in
+    a typed <code>features</code> struct on <code>SessionStartedEvent</code>.
+    Do not expose via config file at this stage.
+  </p>
+</div>
+
+<h3>Env var names</h3>
+
+<pre><code class="language-bash">OMEGA_FEATURE_REPL=1        # enable the REPL tool (default: unset / 0 = off)
+OMEGA_FEATURE_SUBAGENTS=1   # enable subagent spawning (default: unset / 0 = off)
+</code></pre>
+
+<p>
+  Any non-empty, non-zero value is treated as <code>true</code>.
+  Unset or <code>0</code> is <code>false</code>. This matches Harbor's
+  environment-sweep model: four benchmark runs, each setting a different
+  combination, without rebuilding Omega.
+</p>
+
+<h3>Why not a config file?</h3>
+
+<details>
+  <summary>Config file rationale (collapsed)</summary>
+  <div class="details-body">
+    <ul>
+      <li>Env vars are sufficient for Harbor sweeps; a config file adds a
+          parsing layer without improving expressiveness for boolean flags.</li>
+      <li>Config files create a second source of truth that can conflict with
+          env vars (precedence questions). Env vars have a well-understood
+          override model (child process inherits; can be overridden per-run).</li>
+      <li>Config file exposure is worth adding if the flags grow in number
+          or gain non-boolean values (e.g. REPL interpreter choice, subagent
+          depth limit). At that point a TOML section in <code>omega.toml</code>
+          or a dedicated <code>[features]</code> block is appropriate. Defer
+          until the need is concrete.</li>
+    </ul>
+  </div>
+</details>
+
+<h3>SessionStartedEvent — <code>features</code> field</h3>
+
+<p>
+  The resolved flag combination is recorded at session creation time, not
+  re-read on resume. This ensures post-mortems and benchmark logs can
+  determine exactly which combination ran.
+</p>
+
+<pre><code class="language-rust">/// Typed features struct — add new fields here as new flags are introduced.
+/// Serialises to/from JSON as camelCase keys.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFeatures {
+    /// Whether the REPL tool is enabled for this session.
+    pub repl: bool,
+    /// Whether subagent spawning is enabled for this session.
+    pub subagents: bool,
+}
+
+// In SessionStartedEvent:
+pub struct SessionStartedEvent {
+    pub session_id: SessionId,
+    pub omega_commit: String,
+    pub model: String,
+    pub effort: String,
+    pub origin: Origin,
+    /// Resolved feature flags at session creation time.
+    /// Both default to false (preserving current behaviour).
+    pub features: SessionFeatures,
+}
+</code></pre>
+
+<details>
+  <summary>JSON shape and backward-compat note</summary>
+  <div class="details-body">
+    <p>On the wire (<code>events.jsonl</code>):</p>
+    <pre><code class="language-json">{
+  "type": "session_started",
+  "sessionId": "...",
+  "omegaCommit": "abc1234",
+  "model": "claude-sonnet-4-6",
+  "effort": "medium",
+  "origin": { "type": "root" },
+  "features": {
+    "repl": false,
+    "subagents": false
+  }
+}
+</code></pre>
+    <p>
+      <strong>Schema evolution note.</strong> Per the Contract Authority rule,
+      old sessions without a <code>features</code> field should <em>not</em>
+      be silently defaulted (that would mask schema drift). Sessions produced
+      before this field existed will fail to deserialise into the new
+      <code>SessionStartedEvent</code> — that is the intended loud failure.
+      If a best-effort migration path is later desired, it must be deliberate
+      (a migration script, not a <code>#[serde(default)]</code> band-aid).
+    </p>
+    <p>
+      <em>Exception:</em> if the team decides that defaulting <code>features</code>
+      to <code>{repl: false, subagents: false}</code> for old sessions is
+      semantically correct (old sessions ran without either feature, so the
+      absent field really does mean both-off), then <code>#[serde(default)]</code>
+      on <code>features</code> alone is justified. This is the only case where
+      a default is semantically meaningful, not defensive.
+    </p>
+  </div>
+</details>
+
+<h3>Startup resolution pseudocode</h3>
+
+<pre><code class="language-rust">fn resolve_session_features() -&gt; SessionFeatures {
+    SessionFeatures {
+        repl:      env_flag("OMEGA_FEATURE_REPL"),
+        subagents: env_flag("OMEGA_FEATURE_SUBAGENTS"),
+    }
+}
+
+fn env_flag(name: &amp;str) -&gt; bool {
+    std::env::var(name)
+        .map(|v| !v.is_empty() &amp;&amp; v != "0")
+        .unwrap_or(false)
+}
+</code></pre>
+
+<p>
+  The resolved <code>SessionFeatures</code> is passed into the agent
+  constructor and stored in <code>SessionStartedEvent</code>. From that
+  point forward, all flag-gated code paths read from the event, not from
+  the environment — this is important for determinism during strict resume.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="lean-8e161a">Briefer leans — remaining open questions</h2>
+
+<p>
+  The following questions are not yet resolved in full; each gets a
+  directional lean and notes on dependencies.
+</p>
+
+<h3 id="lean-8e161a"><span class="id-tag">[8e161a]</span> How does an <code>llm_query</code> call relate to <code>SessionId</code>?</h3>
+<p>
+  <strong>Lean: each <code>llm_query</code> invocation is its own session.</strong>
+  Mirrors the existing decision that subagents are child sessions
+  (<code>Origin::SubagentOf</code>). When the REPL is built and the RLM cell
+  is active, the REPL function <code>llm_query(prompt)</code> is syntactic
+  sugar over the same spawn-a-child-session machinery used by vanilla
+  subagents; only the invocation surface (REPL function vs.
+  <code>tool_use</code>) differs. The child gets its own
+  <code>SessionId</code>, <code>events.jsonl</code>, and folder. The parent's
+  <code>ReplExecuted</code> event records the returned value (or a reference to
+  the child <code>SessionId</code> if the value is large).
+</p>
+
+<h3 id="lean-053c4a"><span class="id-tag">[053c4a]</span> What is "the session" in an RLM Omega?</h3>
+<p>
+  <strong>Lean: today's framing survives intact.</strong> "The session" is the
+  outer Omega instance (the one the user interacts with). Its REPL is a
+  property of that instance, not a separate session. Child sessions spawned by
+  <code>llm_query</code> are child sessions in exactly the same sense as
+  vanilla subagents. The tree of sessions (parent + children + grandchildren
+  up to <code>max_depth</code>) is visible in the event-sourced session graph,
+  not a new concept.
+</p>
+
+<h3 id="lean-549288"><span class="id-tag">[549288]</span> Safety / sandboxing</h3>
+<p>
+  <strong>Lean: inherit Omega's existing model for the shell REPL; add explicit
+  sandboxing boundary if/when Python is adopted.</strong> Today's
+  <code>run_command</code> has no sandbox beyond OS permissions — a persistent
+  shell REPL raises the same risk by degree (accumulated state), not by kind.
+  The existing permission / approval model is sufficient for a first iteration.
+  If Python (PyO3 or Pyodide) is added later, a sandboxing story (seccomp,
+  WASM boundary, or at minimum network and filesystem restrictions) must be
+  designed before exposing it. The RLM article's Pyodide-in-Deno approach
+  is the reference: Deno's <code>--allow-*</code> flags provide a
+  coarse-grained sandbox.
+</p>
+
+<h3 id="lean-bab784"><span class="id-tag">[bab784]</span> User interaction with an RLM Omega</h3>
+<p>
+  <strong>Lean: chat messages stay; REPL is internal; UI optionally exposes
+  REPL state for inspection.</strong> The user continues to send prose messages
+  and receive prose replies. The REPL is an implementation detail of the agent
+  loop, visible in the event feed (each <code>ReplExecuted</code> event is
+  rendered as a collapsible code block with stdout/stderr) but not a
+  first-class UI primitive. A dedicated "REPL console" pane is a Phase 4
+  feature, not a prerequisite.
+</p>
+
+<h3 id="lean-1f28f7"><span class="id-tag">[1f28f7]</span> Output format — autoregressive vs. variable</h3>
+<p>
+  <strong>Lean: autoregressive prose at the user boundary; variable returns
+  only within the REPL and in subagent-to-parent data flow.</strong>
+  <code>FINAL(variable)</code>-style returns (from fast-rlm) make sense when
+  the consumer is another program (a parent REPL). They do not fit Omega's
+  chat-style UI where the user expects a readable response. For the outer
+  agent, the reply is always prose. For inner subagents returning to a parent
+  REPL, structured returns (Pydantic-validated objects in the Python case;
+  JSON in the shell case) are appropriate and will be designed in the REPL
+  iteration.
+</p>
+
+<h3 id="lean-c86aa6"><span class="id-tag">[c86aa6]</span> Interaction with strict resume</h3>
+<p>
+  <strong>Lean: the round-trip gate test must be extended to cover REPL state
+  when REPL is built.</strong> Today the gate asserts equivalence of
+  <code>active_model</code>, <code>active_effort</code>, <code>history</code>,
+  and <code>context_hashes</code>. When the REPL becomes part of
+  <code>Agent</code> state, the gate must additionally assert that the replayed
+  shell session ends in an equivalent working directory and environment.
+  The definition of "equivalent" is deliberately loose (not byte-for-byte
+  stdout) — see the persistence section above. This extension is a
+  prerequisite for the REPL iteration, not for the vanilla-subagents iteration.
+</p>
+
+<h3 id="lean-835f01"><span class="id-tag">[835f01]</span> Cost / determinism / debuggability</h3>
+<p>
+  <strong>Lean: real costs, worth tracking explicitly.</strong> A persistent
+  REPL adds latency (PTY startup, per-command round-trip), non-determinism
+  (especially if Python is used), and debugging complexity (an LLM-driven
+  shell trajectory has more failure modes than discrete tool calls). None of
+  these kill the proposal, but all should be weighed against the benefit. For
+  the shell REPL specifically: startup cost is small (bash is fast); commands
+  are deterministic enough; debugging is aided by the
+  <code>ReplExecuted</code> event log (every command and its output is
+  recorded and visible in the feed). The cost of RLM-style
+  <code>llm_query</code> recursion (additional LLM calls, token cost) is
+  captured by the <code>max_depth</code> and <code>max_money_spent</code>
+  analogues from <code>RLMConfig</code>, which Omega will need to implement
+  when the RLM cell becomes active.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="next">Recommended next steps</h2>
+
+<ol>
+  <li>
+    <strong>Review and accept this proposal.</strong> If accepted, fold the
+    decisions into <code>docs/session-design.html §rlm-decision</code>,
+    replacing the open-question callouts with resolved callouts linking here.
+  </li>
+  <li>
+    <strong>Start Phase 3.0: vanilla subagents protocol design.</strong>
+    The existing Phase 3 content in the design doc describes a pre-RLM-aware
+    subagent shape. Review which parts survive:
+    <ul>
+      <li><code>SubagentSpawned</code> / <code>SubagentReturned</code> events
+          — shapes need only minor adjustment (no mandatory
+          <code>model</code>/<code>effort</code> tool parameters; those become
+          optional fields).</li>
+      <li><code>spawn_subagent</code> tool definition — write its JSON schema
+          and add it to the tool registry gated on the <code>subagents</code>
+          flag.</li>
+      <li>Phase 1.5 (UI surfacing of <code>SessionRef</code>) and 1.6 (WS
+          protocol migration to <code>SessionId</code>) remain prerequisites
+          for Phase 3 implementation.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Add <code>SessionFeatures</code> to <code>SessionStartedEvent</code>.</strong>
+    Small schema change; update all event writers, the fold, the round-trip
+    gate test, and the WS protocol projection.
+  </li>
+  <li>
+    <strong>REPL iteration (later).</strong> After vanilla subagents are
+    working and benchmarked, design the shell REPL as a separate iteration.
+    At that point revisit <code>[368041]</code> (language choice) with
+    empirical data from the subagent benchmarks.
+  </li>
+</ol>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ One open design question for the review session</div>
+  <p>
+    The <code>SessionFeatures</code> / <code>#[serde(default)]</code>
+    question noted in <a href="#flags">§&nbsp;[b0bc06]</a> needs a deliberate
+    decision before the event type is changed: should old
+    <code>SessionStartedEvent</code> records without a <code>features</code>
+    field deserialise with <code>{repl: false, subagents: false}</code>
+    (semantically correct, low noise), or should they fail loudly (maximum
+    schema-evolution signal)? Both choices are defensible; the Contract
+    Authority rule is not prescriptive here because the absence of the field
+    genuinely means both-off. Pick one explicitly and document it.
+  </p>
+</div>
+
+</article>
+</main>
+
+<script>
+// ── Highlight.js init ───────────────────────────────────────────────────────
+(function () {
+  if (window.__hljs_failed) return;
+  if (typeof hljs === 'undefined') return;
+  document.querySelectorAll('pre code').forEach(function (block) {
+    hljs.highlightElement(block);
+  });
+})();
+
+// ── Active TOC link on scroll ───────────────────────────────────────────────
+(function () {
+  var toc = document.getElementById('toc');
+  if (!toc) return;
+
+  var headings = Array.from(
+    document.querySelectorAll('h2[id], h3[id]')
+  );
+  var links = Array.from(toc.querySelectorAll('a'));
+
+  function getActive() {
+    var scrollY = window.scrollY + 80;
+    var active = null;
+    for (var i = 0; i < headings.length; i++) {
+      if (headings[i].offsetTop <= scrollY) active = headings[i].id;
+      else break;
+    }
+    return active;
+  }
+
+  function update() {
+    var id = getActive();
+    links.forEach(function (a) {
+      var href = a.getAttribute('href');
+      if (href === '#' + id) a.classList.add('active');
+      else a.classList.remove('active');
+    });
+  }
+
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
+
+</body>
+</html>
