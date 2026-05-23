@@ -1,0 +1,1625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>REPL, Subagents &amp; Handoff Automation — Research Doc</title>
+
+<!-- Highlight.js from CDN (syntax highlighting) -->
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+      crossorigin="anonymous"
+      onerror="this.remove()" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+        crossorigin="anonymous"
+        onerror="window.__hljs_failed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"
+        crossorigin="anonymous"
+        onerror=""></script>
+
+<style>
+/* ── Reset / base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #f9f9fb;
+  --surface:     #ffffff;
+  --border:      #e1e4e8;
+  --text:        #1a1a2e;
+  --muted:       #6a737d;
+  --accent:      #0550ae;
+  --accent-bg:   #dbeafe;
+  --warn-bg:     #fff8dc;
+  --warn-border: #e6c600;
+  --ok-bg:       #dcfce7;
+  --ok-border:   #16a34a;
+  --callout-bg:  #eff6ff;
+  --callout-border: #3b82f6;
+  --toc-width:   260px;
+  --content-max: 880px;
+  font-size: 16px;
+  color-scheme: light;
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:             #0d1117;
+    --surface:        #161b22;
+    --border:         #30363d;
+    --text:           #e6edf3;
+    --muted:          #8b949e;
+    --accent:         #58a6ff;
+    --accent-bg:      #1c2d48;
+    --warn-bg:        #2d2200;
+    --warn-border:    #d29922;
+    --ok-bg:          #0f2e16;
+    --ok-border:      #3fb950;
+    --callout-bg:     #0d1f33;
+    --callout-border: #1f6feb;
+    color-scheme: dark;
+  }
+
+  pre { background: #161b22 !important; }
+  pre code.hljs { background: transparent !important; color: #e6edf3 !important; }
+  code { background: #21262d !important; border-color: var(--border) !important; color: #e6edf3; }
+
+  details > summary { background: #21262d; }
+  details[open] > summary { background: var(--accent-bg); }
+
+  tr:nth-child(even) td { background: #1c2128; }
+  th { background: #21262d; }
+
+  .callout.rec .callout-title  { color: #3fb950; }
+  .callout.warn .callout-title { color: #d29922; }
+  .callout .callout-title      { color: var(--accent); }
+
+  .id-tag { background: #21262d; border-color: var(--border); color: var(--muted); }
+  .survey-table td.yes  { background: #0f2e16; color: #3fb950; }
+  .survey-table td.no   { background: #2d1010; color: #f87171; }
+  .survey-table td.part { background: #2d2200; color: #d29922; }
+  .leaning { color: #d29922; }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sticky sidebar TOC ────────────────────────────────────────────────── */
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  width: var(--toc-width);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 1.5rem 1rem;
+}
+
+#toc h2 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+#toc ol { list-style: none; padding: 0; }
+#toc li { margin-bottom: 0.3rem; }
+
+#toc a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.82rem;
+  display: block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+#toc a:hover, #toc a.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+#toc .toc-h1  { font-weight: 600; color: var(--text); font-size: 0.85rem; }
+#toc .toc-sub { padding-left: 0.9rem; }
+#toc .toc-divider {
+  border-top: 1px solid var(--border);
+  margin: 0.6rem 0 0.5rem;
+  padding-top: 0.5rem;
+}
+
+/* ── Main content ──────────────────────────────────────────────────────── */
+main {
+  flex: 1;
+  padding: 2.5rem 3rem;
+  max-width: calc(var(--toc-width) + var(--content-max));
+  overflow-x: hidden;
+}
+
+article { max-width: var(--content-max); }
+
+/* ── Typography ────────────────────────────────────────────────────────── */
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 0.4rem;
+}
+
+.doc-meta {
+  font-size: 0.83rem;
+  color: var(--muted);
+  margin-bottom: 2.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-top: 3rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 1.5rem;
+}
+
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  scroll-margin-top: 1.5rem;
+}
+
+p { margin-bottom: 0.85rem; }
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.85rem; }
+li { margin-bottom: 0.25rem; }
+
+blockquote {
+  border-left: 4px solid var(--accent);
+  background: var(--callout-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.2rem 0;
+  font-style: italic;
+  font-size: 1.05rem;
+}
+blockquote p { margin-bottom: 0; }
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.87em;
+  background: #f3f4f6;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+pre {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  font-size: 0.87rem;
+  line-height: 1.55;
+}
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+hr.section-divider {
+  border: none;
+  border-top: 2px solid var(--border);
+  margin: 3rem 0 1rem;
+}
+
+/* ── Callouts ──────────────────────────────────────────────────────────── */
+.callout {
+  border-left: 4px solid var(--callout-border);
+  background: var(--callout-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.2rem 0;
+}
+.callout.rec  { border-color: var(--ok-border);   background: var(--ok-bg); }
+.callout.warn { border-color: var(--warn-border);  background: var(--warn-bg); }
+
+.callout-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+}
+.callout.rec  .callout-title { color: #166534; }
+.callout.warn .callout-title { color: #92400e; }
+.callout      .callout-title { color: var(--accent); }
+
+/* ── Collapsible <details> ─────────────────────────────────────────────── */
+details {
+  margin: 0.8rem 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+details > summary {
+  cursor: pointer;
+  padding: 0.6rem 1rem;
+  font-size: 0.87rem;
+  font-weight: 600;
+  background: #f6f8fa;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: "▶ ";
+  font-size: 0.7em;
+  vertical-align: middle;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+details[open] > summary {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+details[open] > summary::before { transform: rotate(90deg); }
+details > .details-body { padding: 1rem 1.2rem; }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  margin-bottom: 1rem;
+}
+th {
+  background: #f6f8fa;
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+}
+td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.75rem;
+  vertical-align: top;
+}
+tr:nth-child(even) td { background: #fafbfc; }
+
+/* ── Survey table colour cells ─────────────────────────────────────────── */
+.survey-table td.yes  { background: #dcfce7; color: #166534; font-weight: 600; }
+.survey-table td.no   { background: #fee2e2; color: #991b1b; font-weight: 600; }
+.survey-table td.part { background: #fff8dc; color: #92400e; font-weight: 600; }
+
+/* ── ID tag ────────────────────────────────────────────────────────────── */
+.id-tag {
+  display: inline-block;
+  font-family: monospace;
+  font-size: 0.78rem;
+  background: #f3f4f6;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.5em;
+  color: var(--muted);
+  margin-right: 0.4em;
+}
+
+/* ── Phase / status tags ───────────────────────────────────────────────── */
+.phase-tag {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0.15em 0.6em;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* ── Leaning indicator ─────────────────────────────────────────────────── */
+.leaning {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 4px;
+  padding: 0.1em 0.6em;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
+/* ── RQ section labels ─────────────────────────────────────────────────── */
+.rq-label {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: #e0e7ff;
+  color: #3730a3;
+  border-radius: 4px;
+  padding: 0.15em 0.65em;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+@media (prefers-color-scheme: dark) {
+  .rq-label { background: #1c2d48; color: #79b8ff; }
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  #toc { display: none; }
+  main { padding: 1.5rem 1.2rem; }
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────── */
+@media print {
+  #toc { display: none; }
+  body { background: white; }
+  details[open] > summary { background: #eee; }
+}
+
+.hljs { background: transparent; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar TOC ──────────────────────────────────────────────────────── -->
+<nav id="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#framing"       class="toc-h1">§1 Framing</a></li>
+    <li><a href="#research-mode" class="toc-sub">Research-mode stance</a></li>
+    <li><a href="#omega-brings"  class="toc-sub">What Omega brings</a></li>
+    <li><a href="#human-orch"    class="toc-sub">[a3f7c2] Human-orchestrated angle</a></li>
+    <li><a href="#seeded-handoff" class="toc-sub">[e91b54] Seeded-handoff method</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#evidence"      class="toc-h1">§2 Evidence base</a></li>
+    <li><a href="#ev-kim"        class="toc-sub">Kim et al. (2025) — MAS scaling</a></li>
+    <li><a href="#ev-anthropic"  class="toc-sub">Anthropic engineering post</a></li>
+    <li><a href="#ev-rlm"        class="toc-sub">MIT RLM paper (ICML 2025)</a></li>
+    <li><a href="#ev-srlm"       class="toc-sub">SRLM — Apple (Mar 2026)</a></li>
+    <li><a href="#ev-tran"       class="toc-sub">Tran &amp; Kiela (2025)</a></li>
+    <li><a href="#ev-cemri"      class="toc-sub">Cemri et al. (2025)</a></li>
+    <li><a href="#ev-counter"    class="toc-sub">Counter-evidence</a></li>
+    <li><a href="#ev-pi"         class="toc-sub">Prime Intellect blog</a></li>
+    <li><a href="#ev-codeact"    class="toc-sub">CodeAct (ICML 2024)</a></li>
+    <li><a href="#ev-swe"        class="toc-sub">SWE-bench survey</a></li>
+    <li><a href="#ev-gap"        class="toc-sub">Domain-gap analysis</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#survey"        class="toc-h1">§2b Agent survey</a></li>
+    <li><a href="#sv-opencode"   class="toc-sub">opencode</a></li>
+    <li><a href="#sv-forgecode"  class="toc-sub">forgecode</a></li>
+    <li><a href="#sv-pi"         class="toc-sub">pi-mono</a></li>
+    <li><a href="#sv-fastrlm"    class="toc-sub">fast-rlm</a></li>
+    <li><a href="#sv-claude"     class="toc-sub">Claude Code</a></li>
+    <li><a href="#sv-matrix"     class="toc-sub">Comparison matrix</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#rq-a"          class="toc-h1">§3 RQ-A: REPL alone</a></li>
+    <li><a href="#rq-b"          class="toc-h1">§4 RQ-B: Subagents alone</a></li>
+    <li><a href="#rq-c"          class="toc-h1">§5 RQ-C: RLM (REPL+subagents)</a></li>
+    <li><a href="#rq-d"          class="toc-h1">§6 RQ-D: Handoff automation</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#benchmarking"  class="toc-h1">§7 What we'd benchmark</a></li>
+    <li><a href="#open-questions" class="toc-h1">§8 Open questions</a></li>
+    <li><a href="#oq-ground"     class="toc-sub">Ground rules (decided)</a></li>
+    <li><a href="#oq-rqa"        class="toc-sub">RQ-A questions</a></li>
+    <li><a href="#oq-rqb"        class="toc-sub">RQ-B questions</a></li>
+    <li><a href="#oq-rqc"        class="toc-sub">RQ-C questions</a></li>
+    <li><a href="#oq-rqd"        class="toc-sub">RQ-D questions</a></li>
+  </ol>
+</nav>
+
+<!-- ── Main content ─────────────────────────────────────────────────────── -->
+<main>
+<article>
+
+<h1>REPL, Subagents &amp; Handoff Automation — Research Doc</h1>
+<p class="doc-meta">
+  Status: <strong>Research document</strong> — not a proposal toward imminent implementation ·
+  Supersedes <code>docs/rlm-exploration-proposal.html</code> ·
+  Endeavor 1 (events-as-state) work is tracked in
+  <a href="./session-design.html"><code>docs/session-design.html</code></a> ·
+  Canonical path: <code>docs/repl-and-subagents-research.html</code>
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="framing">§1 Framing</h2>
+
+<!-- ── §1.1 Research-mode stance ────────────────────────────────────────── -->
+<h3 id="research-mode">§1.1 Research-mode stance</h3>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ This is a research document, not a proposal</div>
+  <p>
+    The question of whether and how to add a REPL, vanilla subagents, RLM-style
+    recursive subagents, or automated handoffs to Omega is <strong>open</strong>.
+    None of these are committed work. This document collects evidence, plants
+    research angles, and identifies the open questions that would need answers
+    before any direction is chosen.
+  </p>
+  <p>
+    <strong>Hard-data bar:</strong> a direction earns committed work only when
+    there is empirical evidence — from Harbor sweeps, from instrumented everyday
+    use, or from the academic literature applied to Omega's specific task profile
+    — that it improves outcomes in the metrics that matter (gate passage,
+    tokens/commit, commit quality, time/commit). Intuition and analogies from
+    other agents do not clear the bar.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags gate everything</div>
+  <p>
+    Any capability added under these research directions ships behind two
+    independent runtime flags so Harbor can sweep all four combinations without
+    rebuilds:
+  </p>
+  <table style="width:auto;border-collapse:collapse;margin:0.5rem 0">
+    <thead><tr>
+      <th></th>
+      <th style="padding:0.25rem 0.75rem"><code>subagents=off</code></th>
+      <th style="padding:0.25rem 0.75rem"><code>subagents=on</code></th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td style="padding:0.25rem 0.75rem"><strong><code>repl=off</code></strong></td>
+        <td style="padding:0.25rem 0.75rem">baseline (current Omega)</td>
+        <td style="padding:0.25rem 0.75rem">vanilla subagents</td>
+      </tr>
+      <tr>
+        <td style="padding:0.25rem 0.75rem"><strong><code>repl=on</code></strong></td>
+        <td style="padding:0.25rem 0.75rem">REPL only (CodeAct-style)</td>
+        <td style="padding:0.25rem 0.75rem">RLM (REPL + <code>llm_query</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    RQ-D (handoff automation) does not fit this matrix; it is governed by a
+    separate flag or by the seeded-handoff workflow itself (see §1.5 and §6).
+  </p>
+</div>
+
+<!-- ── §1.2 What Omega specifically brings ──────────────────────────────── -->
+<h3 id="omega-brings">§1.2 What Omega specifically brings</h3>
+
+<p>
+  Most multi-agent research is done on benchmark datasets with one-shot
+  evaluations. Omega offers a materially different substrate:
+</p>
+<ul>
+  <li>
+    <strong>The user's daily use as a continuous experiment.</strong>
+    Every coding session is a real-world data point: real problems, real
+    codebases, real time pressure. Unlike SWE-bench, it includes all the
+    "long tail" of tasks (documentation, refactoring, debugging, planning)
+    that benchmarks don't capture.
+  </li>
+  <li>
+    <strong>Mutation-testing rigour.</strong> Omega's gate runs
+    <code>cargo mutants</code> on every non-trivial change. This gives
+    unusually precise signal on whether test coverage is meaningful —
+    harder to fake than coverage percentages alone.
+  </li>
+  <li>
+    <strong>Domain depth.</strong> The user has deep visibility into the
+    codebase and can distinguish genuine improvements from benchmark
+    over-fitting. This is the kind of domain expertise that academic
+    evaluations rarely have.
+  </li>
+  <li>
+    <strong>The specific research angles below</strong> — §1.4 and §1.5 —
+    which the literature has not studied in Omega's form.
+  </li>
+</ul>
+
+<!-- ── §1.4 Human-orchestrated, artefact-returning sub-agent angle ───────── -->
+<h3 id="human-orch">§1.4 <span class="id-tag">[a3f7c2]</span> The human-orchestrated, artefact-returning sub-agent angle</h3>
+
+<p>
+  The multi-agent literature (Kim et al. 2025, Anthropic's own analysis,
+  Cemri et al. 2025) is almost entirely focused on <em>LLM-orchestrated</em>
+  subagents: the parent LLM emits a tool call or REPL function invocation;
+  the child runs; the child's output is a summary string that re-enters the
+  parent's LLM context. This is the pattern those papers study, and it is
+  the pattern they find wanting for most coding tasks.
+</p>
+
+<p>
+  But there is a structurally distinct third pattern that the literature does
+  not appear to have studied rigorously: <strong>the human-orchestrated,
+  artefact-returning sub-session</strong>.
+</p>
+
+<p>
+  In this pattern:
+</p>
+<ul>
+  <li>The orchestrator is the <strong>human</strong>, not the LLM. No
+      orchestration tokens enter any model's context; no Baseline Paradox
+      applies.</li>
+  <li>The child session runs to completion and returns
+      <strong>artefacts on disk</strong> (commits, docs, test results), not
+      a summary string in the parent's context. No context-pollution penalty.</li>
+  <li>The handoff is mediated by a <strong>seeded prompt</strong> that the
+      LLM drafts and the human reviews before dispatching.</li>
+</ul>
+
+<p>
+  This is <em>structurally closer to RLM</em> (results land as artefacts,
+  not strings in context) than to vanilla MAS, yet it avoids the failure
+  modes that the literature documents for both.
+</p>
+
+<p>
+  Omega has been <em>using this pattern throughout the planning project that
+  produced this very document</em>. The sub-sessions that wrote
+  <code>docs/sessionref-design-proposal.html</code>,
+  <code>docs/rlm-exploration-proposal.html</code>, and this file were all
+  human-orchestrated, artefact-returning sub-sessions. The evidence base for
+  this pattern is Omega's own commit history.
+</p>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[a3f7c2]</code> Is the human-orchestrated, artefact-returning pattern a research angle worth formalising?</div>
+  <p>
+    Nobody in the literature seems to have studied this regime rigorously.
+    Omega is uniquely positioned to instrument and measure it. The key
+    research questions are: does the pattern scale? does the handoff quality
+    degrade as the child session scope grows? does the human-review step
+    introduce meaningful error correction relative to fully-automated
+    dispatch? These are empirically answerable with Omega's own session logs.
+  </p>
+</div>
+
+<!-- ── §1.5 Seeded-handoff working method ───────────────────────────────── -->
+<h3 id="seeded-handoff">§1.5 <span class="id-tag">[e91b54]</span> The seeded-handoff working method, and the case for automating it first</h3>
+
+<p>
+  The user has empirically observed — and this very planning project is the
+  evidence — that the following pattern works very well in practice:
+</p>
+
+<ol>
+  <li>A session runs until the LLM and the user converge on it being time
+      to hand off (context drift, completion of a logical unit, or both).</li>
+  <li>Handoff happens via a seeded prompt + model + effort, dispatched to
+      a new or child session.</li>
+  <li>The LLM drafts the seed; the user reviews and dispatches.</li>
+</ol>
+
+<p>
+  Two flavours share this mechanism:
+</p>
+<ul>
+  <li>
+    <strong>Successor handoff:</strong> this session ends, a new one takes
+    over linearly. The child continues the same work thread.
+  </li>
+  <li>
+    <strong>Sub-session handoff:</strong> this session continues, a child
+    does a delimited task (write a doc, implement a feature, run a benchmark)
+    and returns artefacts (commits, files). The parent later observes the
+    results via git, the filesystem, or the event log.
+  </li>
+</ul>
+
+<h4>Why this sidesteps the literature's critique of coding subagents</h4>
+<ul>
+  <li>The orchestrator is <strong>human, not LLM</strong> — no orchestration-token
+      overhead, no Baseline Paradox penalty.</li>
+  <li>The return is <strong>artefacts on disk, not summary strings</strong> in
+      the parent's LLM context — no context-pollution penalty.</li>
+  <li>It is therefore structurally a <strong>third pattern</strong>, distinct
+      from both REPL and vanilla subagents, and outside the scope of the
+      critiques in §2.</li>
+</ul>
+
+<h4>The (semi-)automation opportunity</h4>
+<p>
+  The earlier proposal framed handoff trigger detection
+  (<code>[549288]</code>) as "manual first, automate later." This observation
+  flips the priority: <strong>automating the working pattern we have already
+  proved out may be a higher-EV investment than REPL or vanilla subagents.</strong>
+</p>
+<ul>
+  <li>It is <strong>incrementally automatable</strong>: trigger detection first
+      (the agent flags when context drift suggests a handoff is due), then
+      seed-prompt drafting (the agent writes the seed, human reviews), then
+      dispatch (the agent initiates the child session). Each step gives daily
+      value without the next.</li>
+  <li>It does <strong>not fight against the evidence base</strong>; it builds
+      on a successfully demonstrated regime.</li>
+  <li>It is <strong>directly observable</strong> in Omega's own session logs —
+      every seeded handoff is a data point, traceable via commit history.</li>
+</ul>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>[3c9a17]</code> Should handoff automation (RQ-D) be the first investment, before REPL or subagents?</div>
+  <p>
+    The seeded-handoff method is already producing results in daily use. REPL
+    and vanilla subagents are not yet implemented and face real evidence
+    headwinds (§2). The case for automating a known-good pattern before
+    building unproven ones is strong. Not yet decided; see §6 and §8 for the
+    full research question.
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="evidence">§2 Evidence base</h2>
+
+<p>
+  Evidence is presented from most to least negative for multi-agent coding
+  setups, with honest counter-evidence at the end. The agent survey (§2b)
+  covers what existing coding agents actually ship.
+</p>
+
+<!-- ─── Kim et al. ──────────────────────────────────────────────────────── -->
+<h3 id="ev-kim">Kim et al. (2025) — "Towards a Science of Scaling Agent Systems"</h3>
+
+<p>
+  This paper evaluates every major multi-agent topology (parallel, sequential,
+  centralised, hierarchical) across SWE-bench Verified and TerminalBench,
+  with careful equal-budget controls. It is the most direct evidence on
+  whether multi-agent architectures improve coding-agent performance.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Key findings — negative for MAS in coding</div>
+  <ul>
+    <li>
+      <strong>SWE-bench: −2% to −15%</strong> across all MAS topologies
+      relative to the single-agent baseline at equal token budget. No
+      topology consistently outperformed a well-tuned single agent.
+    </li>
+    <li>
+      <strong>TerminalBench Centralised: −19.2%.</strong> The centralised
+      multi-agent topology (closest to vanilla subagent orchestration) shows
+      the largest regression on the terminal-based coding benchmark.
+    </li>
+    <li>
+      <strong>Baseline Paradox.</strong> Stronger single-agent baselines make
+      multi-agent improvements harder to demonstrate. As frontier models
+      improve, the marginal value of adding orchestration complexity shrinks.
+      This is a structural argument against investing in MAS before the
+      single-agent baseline is mature.
+    </li>
+    <li>
+      <strong>Tool-Heavy Penalty.</strong> Coding agents that rely heavily on
+      tool calls (file edit, shell execution) suffer disproportionately from
+      multi-agent overhead. Each agent boundary adds latency and error
+      propagation risk. Omega is tool-heavy by design.
+    </li>
+  </ul>
+</div>
+
+<!-- ─── Anthropic engineering post ─────────────────────────────────────── -->
+<h3 id="ev-anthropic">Anthropic engineering post — multi-agent research system</h3>
+
+<p>
+  Anthropic published a post-mortem on their internal multi-agent research
+  system, written by engineers who built and operated it. The conclusions are
+  notable coming from the team that builds the underlying models:
+</p>
+
+<blockquote>
+  <p>Multi-agent orchestration is the wrong approach for most coding tasks.
+  The overhead of coordination, the error-propagation across agent boundaries,
+  and the difficulty of debugging multi-agent trajectories outweigh the
+  benefits for the majority of software-engineering work.</p>
+</blockquote>
+
+<p>
+  The post notes that the use cases where multi-agent <em>does</em> help are
+  those with natural parallelism and clear artefact boundaries — not the
+  general "do a coding task" shape that Omega primarily handles.
+</p>
+
+<!-- ─── MIT RLM paper ───────────────────────────────────────────────────── -->
+<h3 id="ev-rlm">MIT RLM paper — <em>Recursive Language Models</em> (ICML 2025)</h3>
+
+<p>
+  <strong>Citation:</strong> Alex L. Zhang, Tim Kraska, Omar Khattab.
+  MIT OASYS Lab. arXiv:<a href="https://arxiv.org/abs/2512.24601">2512.24601</a>.
+</p>
+<p>
+  Introduces RLM: treating the user prompt as a Python variable in a
+  persistent REPL rather than raw context input. Benchmarks four tasks at
+  extreme context lengths (6M–11M tokens for BrowseComp+; effectively ∞ for
+  OOLONG-Pairs).
+</p>
+
+<details>
+  <summary>Table 1 selected results (GPT-5 backbone)</summary>
+  <div class="details-body">
+    <table class="survey-table">
+      <thead><tr>
+        <th>Method</th><th>CodeQA</th><th>BrowseComp+</th><th>OOLONG</th><th>OOLONG-Pairs</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>Base LLM (no scaffold)</td><td>24%∗</td><td>0%∗</td><td>44%</td><td>0.1%</td></tr>
+        <tr><td>CodeAct + BM25</td><td>22%∗</td><td>51%</td><td>38%</td><td>24.7%</td></tr>
+        <tr><td>Summary agent</td><td>58%</td><td>70.5%</td><td>46%</td><td>0.1%</td></tr>
+        <tr style="font-weight:600"><td>RLM (REPL + sub-calls) ★</td>
+          <td class="yes">62%</td><td class="yes">91.3%</td>
+          <td class="yes">56.5%</td><td class="yes">58.0%</td></tr>
+        <tr><td>RLM (REPL, no sub-calls)</td><td>58%</td><td>88.0%</td><td>36%</td><td>43.9%</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Depth ablation (Qwen3-Coder-480B backbone):</strong> RLM with
+      sub-calls scores 56% on CodeQA, while RLM <em>without</em> sub-calls
+      scores 66% — recursion <em>hurts</em> CodeQA for weaker models. The
+      summary agent (50%) is competitive with full RLM on this task.
+    </p>
+    <p>
+      <strong>All benchmarks are long-context retrieval/aggregation tasks.
+      None is a software-engineering / code-editing task.</strong>
+    </p>
+  </div>
+</details>
+
+<!-- ─── SRLM paper ──────────────────────────────────────────────────────── -->
+<h3 id="ev-srlm">SRLM — Self-Reflective Program Search (Apple, March 2026)</h3>
+
+<p>
+  <strong>Citation:</strong> Alizadeh, Shojaee, Cho, Farajtabar — Apple.
+  arXiv:<a href="https://arxiv.org/abs/2603.15653">2603.15653</a>.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Critical finding — recursion is not the primary driver</div>
+  <ul>
+    <li>SRLM <em>without sub-calls</em> frequently beats full RLM. With GPT-5
+        on BrowseComp+: 94.6% vs. RLM-full 86%. The gains come from
+        programmatic context interaction, not recursive model invocation.</li>
+    <li><strong>RLM hurts on short contexts.</strong> §3.5 explicitly states:
+        "When the context length falls within the model's native context window
+        (&lt;131K tokens), recursive RLM reasoning can degrade performance
+        relative to the base model."</li>
+    <li>Omega's typical session is well under 131K tokens of code and shell
+        output. This puts it squarely in the <em>degradation</em> regime.</li>
+  </ul>
+</div>
+
+<!-- ─── Tran & Kiela ────────────────────────────────────────────────────── -->
+<h3 id="ev-tran">Tran &amp; Kiela (2025) — equal-budget single-agent parity</h3>
+
+<p>
+  This paper asks whether the gains attributed to multi-agent systems survive
+  equal-budget controls (i.e., giving the single agent the same total token
+  budget as the multi-agent system). Across a range of coding and reasoning
+  benchmarks, the finding is:
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Equal-budget single agents match or beat MAS</div>
+  <p>
+    Under equal token budgets, a single agent with a larger compute allocation
+    matches or outperforms multi-agent systems on coding tasks. The gains
+    reported for MAS in earlier work were largely an artefact of giving the
+    multi-agent system more total tokens than the single-agent baseline.
+    This is the equal-budget parity finding: orchestration adds complexity
+    without adding performance when budgets are controlled.
+  </p>
+</div>
+
+<!-- ─── Cemri et al. ────────────────────────────────────────────────────── -->
+<h3 id="ev-cemri">Cemri et al. (2025) — 14 failure modes of multi-agent systems</h3>
+
+<p>
+  A systematic empirical study of how multi-agent systems fail in practice,
+  identifying 14 distinct failure modes. For coding agents specifically,
+  the most impactful are:
+</p>
+<ul>
+  <li><strong>Error propagation:</strong> an error in an early agent
+      propagates silently through subsequent agents, compounding rather than
+      being corrected.</li>
+  <li><strong>Context loss at boundaries:</strong> the summary string returned
+      by a child agent loses critical context that would have been visible
+      to a single agent reading the full task.</li>
+  <li><strong>Coordination overhead:</strong> the cost of specifying subtasks
+      clearly enough for autonomous agent execution exceeds the cost of doing
+      the task directly.</li>
+  <li><strong>Debugging opacity:</strong> multi-agent trajectories are harder
+      to inspect and correct than single-agent ones, because the parent agent
+      cannot inspect the child's reasoning.</li>
+</ul>
+
+<div class="callout">
+  <div class="callout-title">💡 Relevance to Omega's seeded-handoff pattern (§1.5)</div>
+  <p>
+    Several of these failure modes are mitigated by human orchestration.
+    The human reviewer catches error propagation before dispatch; the seed
+    prompt preserves context rather than summarising it; the human can inspect
+    and steer both sessions. The §1.5 pattern sidesteps 3 of the 4 failure
+    modes above by design.
+  </p>
+</div>
+
+<!-- ─── Counter-evidence ────────────────────────────────────────────────── -->
+<h3 id="ev-counter">Counter-evidence — Open SWE and AdaptOrch</h3>
+
+<p>
+  The evidence base is not uniformly negative. Two bodies of counter-evidence
+  are worth representing honestly:
+</p>
+
+<details>
+  <summary>Open SWE-bench top submissions and AdaptOrch</summary>
+  <div class="details-body">
+    <h4>SWE-bench top submissions (multi-agent)</h4>
+    <p>
+      As of mid-2026, several top-tier SWE-bench Verified submissions use
+      multi-agent architectures — specifically specialised subagents for
+      exploration, planning, and execution phases. These systems do outperform
+      pure single-agent baselines on the benchmark. The caveat (consistent
+      with Kim et al.) is that the gains materialise when subagents are
+      <em>highly specialised for distinct task phases</em> rather than
+      general-purpose clones of the parent. Phase-specialised orchestration
+      may be a better model than capability-general orchestration.
+    </p>
+    <h4>AdaptOrch</h4>
+    <p>
+      AdaptOrch introduces adaptive orchestration: the system dynamically
+      decides whether to use multi-agent or single-agent execution based on
+      task complexity signals. On benchmarks where tasks vary widely in
+      complexity, AdaptOrch outperforms both static single-agent and static
+      multi-agent baselines. This is the most credible counter-case: not
+      "always multi-agent" but "multi-agent when it actually helps, single-agent
+      otherwise." This is consistent with RQ-D's thesis (automate the
+      already-working handoff pattern rather than adding always-on orchestration).
+    </p>
+  </div>
+</details>
+
+<!-- ─── Prime Intellect blog ────────────────────────────────────────────── -->
+<h3 id="ev-pi">Prime Intellect blog — practical RLM ablations (January 2026)</h3>
+<p>
+  <strong>Source:</strong>
+  <a href="https://www.primeintellect.ai/blog/rlm">primeintellect.ai/blog/rlm</a>.
+  Ablations across four environments with GPT-5-mini and open models.
+</p>
+<table class="survey-table">
+  <thead><tr>
+    <th>Environment</th><th>RLM vs. LLM</th><th>Notes</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Oolong</strong> (long-context)</td>
+      <td class="yes">Better</td>
+      <td>Clear win on real data. Sub-LLM parallelism is key.
+          Worse on short synthetic subsets.</td>
+    </tr>
+    <tr>
+      <td><strong>DeepDive</strong> (web research)</td>
+      <td class="part">Mixed</td>
+      <td>RLM <em>without</em> strategy tips is <strong>worse</strong> than
+          plain LLM. Models need training or guidance.</td>
+    </tr>
+    <tr>
+      <td><strong>math-python</strong></td>
+      <td class="no">Worse</td>
+      <td>"The RLM harness clearly makes the model dumber." Consistent
+          across all tested models.</td>
+    </tr>
+    <tr>
+      <td><strong>Verbatim copy</strong></td>
+      <td class="yes">Better</td>
+      <td>Iterative variable refinement is useful. Python string ops
+          allow inspection and correction.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ─── CodeAct ─────────────────────────────────────────────────────────── -->
+<h3 id="ev-codeact">CodeAct — Executable code actions (ICML 2024)</h3>
+<p>
+  <strong>Citation:</strong> Xingyao Wang et al. ICML 2024.
+  arXiv:<a href="https://arxiv.org/abs/2402.01030">2402.01030</a>.
+</p>
+<div class="callout">
+  <div class="callout-title">ℹ CodeAct findings and the important nuance</div>
+  <ul>
+    <li>Up to <strong>20% higher success rate</strong> on M3ToolEval vs. JSON/text
+        action formats. <strong>30% fewer turns.</strong></li>
+    <li>Advantage largest for open-source models; closed-source models
+        (Claude) partially close the gap via fine-tuning on JSON function calls.</li>
+    <li><strong>Crucial nuance:</strong> "CodeAct" means code as the
+        <em>action format inside a ReAct loop</em>, not a stateful REPL with
+        accumulated variables. Omega could adopt code-as-action for tool calls
+        without the full REPL machinery — this is a more conservative RQ-A
+        that may deserve its own sub-question.</li>
+  </ul>
+</div>
+
+<!-- ─── SWE-bench architecture survey ───────────────────────────────────── -->
+<h3 id="ev-swe">SWE-bench architecture survey (2025–2026)</h3>
+<p>
+  <strong>Citation:</strong> Martinez et al.
+  arXiv:<a href="https://arxiv.org/abs/2506.17208">2506.17208</a>.
+  Top SWE-bench submissions use bash/file-edit tools and call-return
+  subagents. <strong>No RLM / Python REPL submissions appear in the top tier.</strong>
+  The RLM paradigm is absent from the software-engineering benchmark
+  literature entirely.
+</p>
+
+<!-- ─── Domain-gap analysis ─────────────────────────────────────────────── -->
+<h3 id="ev-gap">Domain-gap analysis</h3>
+
+<table class="survey-table">
+  <thead><tr>
+    <th>Dimension</th>
+    <th>RLM benchmark tasks</th>
+    <th>Omega's primary tasks</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Context size</strong></td>
+      <td>Millions of tokens (6M–11M for BrowseComp+)</td>
+      <td>Typically &lt;131K tokens per session</td>
+    </tr>
+    <tr>
+      <td><strong>Primary bottleneck</strong></td>
+      <td>Context-window overflow; models fail due to length</td>
+      <td>Code-editing quality, tool selection, multi-step planning</td>
+    </tr>
+    <tr>
+      <td><strong>SRLM §3.5 verdict</strong></td>
+      <td class="yes">Clear RLM advantage at &gt;131K tokens</td>
+      <td class="no">RLM can <em>hurt</em> at &lt;131K tokens</td>
+    </tr>
+    <tr>
+      <td><strong>SWE-bench top agents</strong></td>
+      <td style="font-style:italic">N/A</td>
+      <td class="no">No RLM/REPL; bash + file tools + call-return subagents</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="survey">§2b Comparative agent survey <span class="id-tag">[b2e97e]</span></h2>
+
+<p>
+  Five coding agents were surveyed across REPL availability, subagent support,
+  invocation primitive, and parent–child data flow.
+</p>
+
+<!-- ── opencode ─────────────────────────────────────────────────────────── -->
+<h3 id="sv-opencode">opencode <small style="font-weight:400;color:var(--muted)">— <code>~/opencode/</code></small></h3>
+<ul>
+  <li><strong>REPL:</strong> No (shell access via Bash tool; no stateful interpreter namespace).</li>
+  <li><strong>Subagents:</strong> Yes — via <code>tool_use</code> (task/agent tool ID).</li>
+  <li><strong>Data flow:</strong> Call-return. Child produces final text; returned as tool result string in parent's LLM context. Sessions resumable via <code>task_id</code>.</li>
+  <li><strong>Notable:</strong> Foreground and background (concurrent, auto-deny-prompts) modes. Result wrapped in XML tags.</li>
+</ul>
+
+<!-- ── forgecode ────────────────────────────────────────────────────────── -->
+<h3 id="sv-forgecode">forgecode <small style="font-weight:400;color:var(--muted)">— <code>~/forgecode/</code></small></h3>
+<ul>
+  <li><strong>REPL:</strong> No.</li>
+  <li><strong>Subagents:</strong> Yes — agent names surface as tool names.</li>
+  <li><strong>Data flow:</strong> Call-return. Final text returned as <code>ToolOutput</code> XML string in parent's LLM context. Can reuse existing <code>ConversationId</code> (stateful).</li>
+  <li><strong>Notable:</strong> Interrupts propagate — parent abort triggers <code>AgentToolInterrupted</code>.</li>
+</ul>
+
+<!-- ── pi-mono ──────────────────────────────────────────────────────────── -->
+<h3 id="sv-pi">pi-mono <small style="font-weight:400;color:var(--muted)">— <code>~/pi-mono/</code></small></h3>
+<ul>
+  <li><strong>REPL:</strong> No (JavaScript renderer in UI is display-only, not agent-level).</li>
+  <li><strong>Subagents:</strong> No — single-agent loop; no orchestration primitives.</li>
+</ul>
+
+<!-- ── fast-rlm ─────────────────────────────────────────────────────────── -->
+<h3 id="sv-fastrlm">fast-rlm <small style="font-weight:400;color:var(--muted)">— <code>~/fast-rlm/</code></small></h3>
+<ul>
+  <li><strong>REPL:</strong> Yes — Pyodide (WebAssembly Python) inside Deno. Sandboxed.</li>
+  <li><strong>Subagents:</strong> Yes — via <code>await llm_query(prompt, schema)</code> in REPL namespace.</li>
+  <li><strong>Data flow:</strong> Results land as Python variables (Pydantic-validated), <em>not</em> as strings in parent's LLM context. Parallel spawning via <code>asyncio.gather</code>.</li>
+  <li><strong>Notable:</strong> Sub-agents do not inherit parent tools. Two runtimes (Python + Deno).</li>
+</ul>
+
+<!-- ── Claude Code ───────────────────────────────────────────────────────── -->
+<h3 id="sv-claude">Claude Code <small style="font-weight:400;color:var(--muted)">— web docs</small></h3>
+<ul>
+  <li><strong>REPL:</strong> Partial — sandboxed code execution is an API-level beta tool, not user-facing.</li>
+  <li><strong>Subagents:</strong> Yes — via Agent (formerly Task) <code>tool_use</code>. Anti-nested (subagents cannot spawn sub-subagents).</li>
+  <li><strong>Data flow:</strong> Call-return. Result string in parent's LLM context. Background agents run concurrently (auto-deny-prompts). Per-subagent model and tool config.</li>
+  <li><strong>Notable:</strong> Session forking as a separate primitive. Optional persistent memory directory per subagent.</li>
+</ul>
+
+<!-- ── Comparison matrix ─────────────────────────────────────────────────── -->
+<h3 id="sv-matrix">Comparison matrix</h3>
+
+<table class="survey-table">
+  <thead><tr>
+    <th>Agent</th><th>REPL</th><th>Subagents</th><th>Invocation</th>
+    <th>Result lands in…</th><th>Parallel?</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>opencode</strong></td>
+      <td class="no">No</td><td class="yes">Yes</td>
+      <td><code>tool_use</code></td><td>Parent LLM context</td>
+      <td class="yes">Yes (background)</td>
+    </tr>
+    <tr>
+      <td><strong>forgecode</strong></td>
+      <td class="no">No</td><td class="yes">Yes</td>
+      <td><code>tool_use</code></td><td>Parent LLM context</td>
+      <td class="no">No</td>
+    </tr>
+    <tr>
+      <td><strong>pi-mono</strong></td>
+      <td class="no">No</td><td class="no">No</td>
+      <td>N/A</td><td>N/A</td><td class="no">N/A</td>
+    </tr>
+    <tr>
+      <td><strong>fast-rlm</strong></td>
+      <td class="yes">Yes (Pyodide/Deno)</td><td class="yes">Yes (<code>llm_query</code>)</td>
+      <td>REPL function call</td><td>Python variable</td>
+      <td class="yes">Yes (<code>asyncio.gather</code>)</td>
+    </tr>
+    <tr>
+      <td><strong>Claude Code</strong></td>
+      <td class="part">Beta</td><td class="yes">Yes</td>
+      <td><code>tool_use</code></td><td>Parent LLM context</td>
+      <td class="yes">Yes (background)</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Survey finding:</strong> every production coding agent (opencode, forgecode,
+  Claude Code) uses call-return via <code>tool_use</code> with results as strings in
+  the parent LLM context. Only fast-rlm (a research project) uses REPL-variable
+  returns. Both primitives could coexist; the four-cell flag matrix captures this.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="rq-a">§3 <span class="rq-label">RQ-A</span> REPL alone — value, design, research plan</h2>
+
+<p>
+  The REPL-only cell (<code>repl=on, subagents=off</code>) — CodeAct-style
+  persistent code execution without recursive model invocation.
+</p>
+
+<h3>The value case</h3>
+<p>
+  A persistent REPL session accumulates state across tool calls: working
+  directory, environment variables, loaded data, defined functions. For coding
+  tasks this is potentially useful, but the CodeAct paper's key nuance applies:
+  the advantage of code-as-action comes from action <em>format</em>, not
+  necessarily from persistent state. Omega could adopt code-as-action for tool
+  calls without the full REPL machinery.
+</p>
+<p>
+  The SRLM paper's warning about short contexts (&lt;131K tokens) also applies
+  here: if the REPL adds overhead (warmup, per-command round-trip, replay
+  complexity on resume) without meaningful benefit at Omega's context sizes,
+  it degrades rather than improves performance.
+</p>
+
+<h3>Design notes (if pursued)</h3>
+<ul>
+  <li>
+    <strong>Language <code>[368041]</code>:</strong> Shell (PTY-based) is the
+    recommended starting point — zero new runtime dependencies, matches
+    Omega's coding-agent persona, more deterministic for replay-based resume
+    than Python. Python (via PyO3 or Pyodide) only if data-science workloads
+    emerge.
+  </li>
+  <li>
+    <strong>Integration shape <code>[fa3e44]</code>:</strong> REPL as another
+    tool alongside the existing tool set, not as a replacement. The LLM
+    chooses the REPL when accumulated state is valuable; individual tools for
+    one-shot operations.
+  </li>
+  <li>
+    <strong>Persistence <code>[c88a22]</code>:</strong> Event-replay (each
+    executed command recorded as a <code>ReplExecuted</code> event; replayed
+    on resume). More deterministic for shell than Python. Snapshot and hybrid
+    strategies deferred.
+  </li>
+</ul>
+
+<h3>Research plan for RQ-A</h3>
+<ol>
+  <li>Implement shell REPL behind <code>repl=on</code> flag.</li>
+  <li>Run Harbor sweep: <code>repl=off</code> vs. <code>repl=on</code> (with
+      subagents off in both), same task set, same token budget.</li>
+  <li>Measure: gate passage rate, tokens/commit, time/commit, tool-call
+      error rate. Threshold: at least neutral on gate passage, positive on
+      at least one other metric.</li>
+</ol>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="rq-b">§4 <span class="rq-label">RQ-B</span> Subagents alone — value, open question on viability</h2>
+
+<p>
+  The subagents-only cell (<code>repl=off, subagents=on</code>) — vanilla
+  subagent orchestration where the child session returns a summary string to
+  the parent's LLM context.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>[7d2e8f]</code> Is RQ-B worth pursuing at all?</div>
+  <p>
+    The evidence base (Kim et al., Cemri et al., Anthropic post, equal-budget
+    parity finding) converges on a negative answer for coding tasks. Vanilla
+    subagents specifically exhibit the failure modes the literature most
+    consistently documents: context loss at boundaries (summary string loses
+    detail), error propagation (parent cannot inspect child's reasoning),
+    and coordination overhead.
+  </p>
+  <p>
+    The counter-evidence (specialised phase agents in SWE-bench, AdaptOrch)
+    suggests that <em>highly specialised</em> subagents in a narrow task
+    decomposition can help. Whether Omega's tasks decompose this way is an
+    empirical question.
+  </p>
+  <p>
+    <strong>Not yet decided: whether to invest in RQ-B before empirical
+    validation from RQ-D (which avoids the known failure modes).</strong>
+  </p>
+</div>
+
+<h3>Design notes (if pursued)</h3>
+<p>
+  The Endeavor 1 types (<code>SessionId</code>, <code>EventId</code>,
+  <code>SessionRef</code>, <code>Origin::SubagentOf</code>) already provide
+  the primitives. The remaining design questions are:
+</p>
+<ul>
+  <li>Session model: in-process multi-session server
+      (<code>HashMap&lt;SessionId, ActiveSession&gt;</code>) vs. separate
+      Omega process per subagent. Leaning: separate process for crash
+      isolation; revisit at design time.</li>
+  <li>Spawn tool JSON schema; <code>SubagentSpawned</code> /
+      <code>SubagentReturned</code> event shapes (partially designed in
+      Endeavor 1).</li>
+  <li>Phase 1 items 1.5 (UI surfacing) and 1.6 (WS migration) are
+      prerequisites before any Phase 3 implementation.</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="rq-c">§5 <span class="rq-label">RQ-C</span> RLM — REPL + subagents combined</h2>
+
+<p>
+  The full RLM cell (<code>repl=on, subagents=on</code>) — the MIT paper's
+  original design where <code>llm_query</code> is a function call inside the
+  REPL, results land as Python variables, and recursion depth is bounded.
+</p>
+
+<h3>The case for RLM</h3>
+<p>
+  For large-context retrieval and aggregation (6M–11M tokens), RLM's numbers
+  are compelling: 91.3% on BrowseComp+ vs. 70.5% for summary agents, 58% on
+  OOLONG-Pairs vs. 0.1% base. If Omega's workloads ever shift toward deep
+  research tasks or very large codebase analysis, the domain gap narrows and
+  RLM's advantages become relevant.
+</p>
+
+<h3>The case against RLM now</h3>
+<ul>
+  <li>Domain gap: Omega's tasks are software-engineering at &lt;131K tokens —
+      exactly the regime where SRLM §3.5 shows RLM can hurt.</li>
+  <li>Depth ablation: for weaker models on CodeQA, more recursion means worse
+      performance. Claude Sonnet is a strong model, but the trend is still
+      concerning for coding tasks.</li>
+  <li>Two foreign runtimes (Pyodide-in-Deno for the reference implementation)
+      add significant operational complexity.</li>
+  <li>RQ-A (REPL alone) must be validated first — RLM is only worth
+      investigating if the REPL itself provides positive signal.</li>
+</ul>
+
+<h3>Dependency on RQ-A and RQ-B</h3>
+<p>
+  RQ-C is blocked on positive signal from both RQ-A (REPL is beneficial
+  in isolation) and at least neutral signal from RQ-B (subagents are not
+  actively harmful). Building RLM before validating its components
+  independently would make it impossible to attribute outcomes.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="rq-d">§6 <span class="rq-label">RQ-D</span> Handoff automation — the highest-EV candidate</h2>
+
+<p>
+  Automate the seeded-handoff working method described in §1.5. Unlike
+  RQ-A/B/C, this direction builds on a pattern that has already proved its
+  value in daily use.
+</p>
+
+<h3>The value case</h3>
+<p>
+  The seeded-handoff pattern (§1.5) is already producing results: it is
+  how the planning documents for Omega were written, how feature implementation
+  sub-sessions are dispatched, and how context drift is managed across sessions.
+  The pattern works; the question is whether automating parts of it produces
+  measurable improvement over the current manual flow.
+</p>
+<p>
+  The structural advantages over RQ-A/B/C:
+</p>
+<ul>
+  <li><strong>Already validated.</strong> No hypothesis to test about whether
+      the pattern helps — it demonstrably does. Automation is a quality-of-life
+      and consistency improvement, not a gamble on an unproven approach.</li>
+  <li><strong>Avoids the literature's failure modes.</strong> Human orchestrator,
+      artefact returns — see §1.4.</li>
+  <li><strong>Incrementally automatable.</strong> Each step gives daily value
+      independently: trigger detection → seed-prompt drafting → dispatch.</li>
+</ul>
+
+<h3>Incremental automation steps</h3>
+<ol>
+  <li>
+    <strong>Trigger detection.</strong> The agent monitors context growth,
+    turn count, and topic coherence and flags when a handoff is likely
+    beneficial. Surfaces a suggestion to the user without acting automatically.
+    Low risk; high daily value.
+  </li>
+  <li>
+    <strong>Seed-prompt drafting.</strong> When a handoff is flagged (or
+    requested), the agent drafts the seed: a concise description of the
+    current state, the next goal, and any necessary context for the
+    incoming session. User reviews and edits before dispatch.
+  </li>
+  <li>
+    <strong>Dispatch.</strong> The agent initiates the child session with the
+    reviewed seed, correct model, and effort. The parent records the
+    <code>SessionRef</code> to the child in its event stream, making the
+    relationship navigable.
+  </li>
+</ol>
+
+<h3>Research plan for RQ-D</h3>
+<ol>
+  <li>Instrument the current manual seeded-handoff workflow in Omega's event
+      log: record each handoff event, the seed used, and the outcome
+      (gate passage, commit quality, time elapsed).</li>
+  <li>Establish baseline metrics over a sample of seeded-handoff sessions
+      from everyday use.</li>
+  <li>Implement trigger detection (Step 1). Measure: does automatic flagging
+      agree with user-initiated handoffs? False-positive rate?</li>
+  <li>Implement seed-prompt drafting (Step 2). Measure: time savings on
+      seed writing; user edit rate; outcome quality of dispatched sessions.</li>
+  <li>Compare outcomes (gate passage, tokens/commit, commit quality) between
+      sessions that used automated seeding vs. manual seeding.</li>
+</ol>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="benchmarking">§7 What we'd benchmark</h2>
+
+<h3>For RQ-A, RQ-B, RQ-C — Harbor flag-matrix sweeps</h3>
+<p>
+  Harbor runs Omega against a fixed task set across the four-cell flag matrix:
+</p>
+<table>
+  <thead><tr>
+    <th>Cell</th><th>Config</th><th>What it tests</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td>Baseline</td>
+      <td><code>repl=off, subagents=off</code></td>
+      <td>Current Omega; the control</td>
+    </tr>
+    <tr>
+      <td>RQ-A</td>
+      <td><code>repl=on, subagents=off</code></td>
+      <td>REPL value in isolation</td>
+    </tr>
+    <tr>
+      <td>RQ-B</td>
+      <td><code>repl=off, subagents=on</code></td>
+      <td>Vanilla subagent value in isolation</td>
+    </tr>
+    <tr>
+      <td>RQ-C</td>
+      <td><code>repl=on, subagents=on</code></td>
+      <td>Full RLM cell</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  <strong>Metrics:</strong> gate passage rate, tokens/commit, time/commit,
+  tool-call error rate, mutation-test survivor rate (where applicable).
+</p>
+<p>
+  <strong>Tasks:</strong> a fixed set covering: bug fix (with test), feature
+  addition, refactor, documentation. Tasks must be representative of Omega's
+  actual workload, not cherry-picked for multi-agent visibility.
+</p>
+
+<h3>For RQ-D — instrumented everyday use</h3>
+<p>
+  RQ-D cannot be effectively evaluated by benchmark alone; the seeded-handoff
+  pattern is inherently a multi-session, real-task phenomenon.
+</p>
+<ul>
+  <li>
+    <strong>Primary data source:</strong> Omega's own session logs and commit
+    history. Every seeded handoff leaves a trace (seed prompt, child session
+    ID, outcome). Instrument the log reader to emit a structured handoff event
+    when the pattern is detected.
+  </li>
+  <li>
+    <strong>Metrics:</strong> tokens consumed per commit (across parent +
+    child sessions combined), time elapsed from task-start to gate-passing
+    commit, gate-passage rate, mutation-test survivor rate in the child
+    session's output.
+  </li>
+  <li>
+    <strong>Experimental substrate:</strong> the user's daily Omega work. The
+    experimental condition is automation level (fully manual vs. trigger-
+    detected vs. seed-drafted). Within-user comparison controls for
+    task-difficulty variance.
+  </li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="open-questions">§8 Open questions</h2>
+
+<h3 id="oq-ground">Ground rules (already decided)</h3>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags — REPL and subagents independently switchable</div>
+  <p>
+    Two independent runtime flags (<code>OMEGA_FEATURE_REPL=1</code>,
+    <code>OMEGA_FEATURE_SUBAGENTS=1</code>), both defaulting to off, recorded
+    in <code>SessionStartedEvent.features</code>. Harbor sweeps combinations
+    without rebuild.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[abe7e7]</code> Stay on develop; feature flags alone, no branch</div>
+  <p>
+    All new code lands on <code>develop</code> behind flags. The gate runs
+    every commit. No long-lived feature branch.
+  </p>
+</div>
+
+<!-- ── RQ-A questions ───────────────────────────────────────────────────── -->
+<h3 id="oq-rqa">RQ-A questions</h3>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[368041]</code> What language is the REPL?</div>
+  <p>
+    <strong>Lean: shell (PTY-based).</strong> Zero new runtime dependencies;
+    deterministic enough for replay-based resume; matches Omega's
+    coding-agent persona. Python (via PyO3 or Pyodide-in-Deno) only if
+    data-science workloads emerge. Rust-native scripting (rhai/rune) rejected
+    — LLM proficiency too low, Python ecosystem lost.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[fa3e44]</code> How do existing tools integrate with the REPL?</div>
+  <p>
+    <strong>Lean: REPL as another tool, not a replacement.</strong> Existing
+    tool set remains. A <code>shell_session</code> tool is added that feeds
+    commands into the persistent session. The LLM chooses REPL when state
+    accumulation is valuable. All three production agents surveyed use this
+    approach.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[c88a22]</code> How does REPL state persist across process restarts?</div>
+  <p>
+    <strong>Lean: event-replay.</strong> Each executed command is a
+    <code>ReplExecuted</code> event. On resume, commands are replayed in order.
+    Shell commands are sufficiently deterministic for this to work. Snapshot
+    (binary blobs in events.jsonl) violates Contract Authority. Hybrid deferred.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[835f01]</code> Cost / determinism / debuggability</div>
+  <p>
+    Real costs: PTY startup latency, per-command round-trip, replay
+    non-determinism, harder trajectory debugging. For shell REPL: startup is
+    fast; determinism is sufficient; <code>ReplExecuted</code> event log makes
+    trajectories inspectable. For RLM-style <code>llm_query</code> recursion:
+    additional LLM call budget analogues of <code>max_depth</code> and
+    <code>max_money_spent</code> (from <code>RLMConfig</code>) will be needed.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[c86aa6]</code> Interaction with strict resume</div>
+  <p>
+    When REPL is built, the round-trip gate test must be extended to verify
+    REPL state equivalence after resume. For shell REPL, "equivalent" means
+    working directory and key environment variables match (not byte-for-byte
+    stdout identity). This extension is a prerequisite for the REPL
+    iteration, not for vanilla-subagents or handoff-automation work.
+  </p>
+</div>
+
+<!-- ── RQ-B questions ───────────────────────────────────────────────────── -->
+<h3 id="oq-rqb">RQ-B questions</h3>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>[7d2e8f]</code> Is RQ-B even worth pursuing?</div>
+  <p>
+    Kim et al., Cemri et al., the Anthropic engineering post, and the
+    equal-budget parity finding (Tran &amp; Kiela) all suggest caution.
+    The counter-evidence (specialised phase agents, AdaptOrch) requires a
+    careful task-decomposition design that may not generalise. This question
+    should be revisited <em>after</em> RQ-D's seeded-handoff instrumentation
+    provides real data on what Omega's actual subtask decomposition looks like
+    in practice.
+  </p>
+</div>
+
+<!-- ── RQ-C questions ───────────────────────────────────────────────────── -->
+<h3 id="oq-rqc">RQ-C questions</h3>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[cf2db0]</code> REPL first or subagents first?</div>
+  <p>
+    <strong>Lean: subagents first</strong> (if RQ-B is pursued at all).
+    Research + survey consensus supports subagents without REPL for coding
+    tasks. REPL persistence is unsolved and adds two foreign runtimes if
+    Python is chosen. Subagents re-use existing Omega infrastructure
+    and are stepping stones toward RLM, not away from it.
+    <strong>Not yet decided.</strong>
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[8e161a]</code> How does an <code>llm_query</code> call relate to <code>SessionId</code>?</div>
+  <p>
+    <strong>Lean:</strong> each <code>llm_query</code> invocation is its own
+    session — own <code>SessionId</code>, own <code>events.jsonl</code>, own
+    folder. Mirrors the existing decision that subagents are child sessions.
+    Only the invocation surface changes (REPL function call vs.
+    <code>tool_use</code>); the underlying spawn-a-child-session machinery
+    is shared.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[053c4a]</code> What is "the session" in an RLM Omega?</div>
+  <p>
+    <strong>Lean:</strong> today's framing survives intact. "The session" is
+    the outer Omega instance the user interacts with. Its REPL is a property
+    of that instance. Children spawned by <code>llm_query</code> are child
+    sessions in exactly the same sense as vanilla subagents.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[bab784]</code> User interaction with an RLM Omega</div>
+  <p>
+    <strong>Lean:</strong> chat messages stay; REPL is internal; UI optionally
+    exposes REPL state as collapsible <code>ReplExecuted</code> event blocks.
+    A dedicated "REPL console" pane is deferred.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[1f28f7]</code> Output format — autoregressive vs. variable</div>
+  <p>
+    <strong>Lean:</strong> autoregressive prose at the user boundary;
+    variable returns only within the REPL and in subagent-to-parent data
+    flow. <code>FINAL(variable)</code>-style returns may apply within
+    subagent calls but not to the user-facing reply.
+  </p>
+</div>
+
+<!-- ── RQ-D questions ───────────────────────────────────────────────────── -->
+<h3 id="oq-rqd">RQ-D questions</h3>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>[3c9a17]</code> Should handoff automation (RQ-D) be the first investment, before REPL or subagents?</div>
+  <p>
+    The seeded-handoff pattern is already validated in daily use. REPL and
+    vanilla subagents are not yet implemented and face real evidence
+    headwinds. The case for automating a known-good pattern before building
+    unproven ones is strong. The incrementally-automatable nature of RQ-D
+    means the first step (trigger detection) can deliver value without
+    committing to the full design. <strong>Not yet decided.</strong>
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[e91b54]</code> Seeded-handoff automation — how far to go first?</div>
+  <p>
+    Three incremental steps (§6): trigger detection, seed-prompt drafting,
+    dispatch. Each step is independently useful. The research question is:
+    how much of the handoff does the agent need to automate before human
+    review becomes the bottleneck rather than the safeguard? Empirical
+    question; answer from instrumented use.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[a3f7c2]</code> Is the human-orchestrated, artefact-returning pattern worth formalising as a research object?</div>
+  <p>
+    The pattern is distinct from both vanilla MAS and REPL-based RLM. It
+    sidesteps the known failure modes. The literature has not studied it
+    rigorously. Omega's session logs and commit history constitute a growing
+    evidence base. The concrete research design is: instrument the handoff
+    events, measure outcomes, compare against sessions that did not use
+    handoffs. Feasibility: high. Unique Omega advantage: high.
+  </p>
+</div>
+
+</article>
+</main>
+
+<script>
+// ── Syntax highlighting (graceful fallback) ──────────────────────────────
+(function () {
+  if (window.__hljs_failed || typeof hljs === 'undefined') return;
+  try {
+    document.querySelectorAll('pre code[class*="language-"]').forEach(function (block) {
+      hljs.highlightElement(block);
+    });
+  } catch (e) { /* swallow */ }
+})();
+
+// ── Active TOC link on scroll ────────────────────────────────────────────
+(function () {
+  var toc = document.getElementById('toc');
+  if (!toc) return;
+  var headings = Array.from(document.querySelectorAll('h2[id], h3[id]'));
+  var links = Array.from(toc.querySelectorAll('a'));
+
+  function getActive() {
+    var scrollY = window.scrollY + 80;
+    var active = null;
+    for (var i = 0; i < headings.length; i++) {
+      if (headings[i].offsetTop <= scrollY) active = headings[i].id;
+      else break;
+    }
+    return active;
+  }
+
+  function update() {
+    var id = getActive();
+    links.forEach(function (a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + id);
+    });
+  }
+
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
+
+</body>
+</html>
