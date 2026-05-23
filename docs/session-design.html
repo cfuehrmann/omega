@@ -878,32 +878,71 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 <ul>
   <li>
-    <strong>1.1 Define <code>EventId</code> and <code>SessionId</code>
+    <strong>✅ 1.1 Define <code>EventId</code> and <code>SessionId</code>
     newtypes</strong> (UUID v7 wrappers). Serde shape, Display, parse,
-    equality. Contract-authority territory.
+    equality. Contract-authority territory. <em>Done in commit
+    <code>b8930fc</code>.</em>
   </li>
   <li>
-    <strong>1.2 Define <code>SessionRef { session_id, event_id: Option&lt;EventId&gt; }</code>.</strong>
-    Serde shape, Display, parse.
+    <strong>✅ 1.2 Define <code>SessionRef { session_id, event_id: Option&lt;EventId&gt; }</code>.</strong>
+    Serde shape, Display, parse. <em>Done in <code>b8930fc</code>.</em>
   </li>
   <li>
-    <strong>1.3 Define <code>Origin</code> enum</strong> (<code>Root</code>,
+    <strong>✅ 1.3 Define <code>Origin</code> enum</strong> (<code>Root</code>,
     <code>SubagentOf { parent: SessionRef }</code>). Future-extend with
-    <code>ForkOf</code> planned but not added.
+    <code>ForkOf</code> planned but not added. <em>Done in <code>b8930fc</code>.</em>
   </li>
   <li>
-    <strong>1.4 Wire <code>EventId</code> into every existing event</strong>
+    <strong>🔄 1.4 Wire <code>EventId</code> into every existing event</strong>
     at write time. Read path: tolerate absent IDs in old logs only if no
     cross-version replay has been promised — which we haven't. Default: every
-    event in a current-version session has an ID.
+    event in a current-version session has an ID. <em>Envelope landed in
+    <code>b8930fc</code>; <code>SessionStartedEvent.session_id</code>
+    migrated to <code>SessionId</code> in <code>206327e</code>. <strong>Still
+    pending:</strong> WS protocol — see 1.6.</em>
   </li>
   <li>
-    <strong>1.5 UI surfacing scaffold.</strong> Render
+    <strong>⏳ 1.5 UI surfacing scaffold.</strong> Render
     <code>SessionRef</code>-bearing fields in the feed with: literal IDs,
     "more" button for full JSON, link to referenced item (placeholder where
-    target doesn't yet exist).
+    target doesn't yet exist). <em>Executable after Phase 2; required before
+    Phase 3 implementation.</em>
+  </li>
+  <li>
+    <strong>⏳ 1.6 Migrate WS protocol from <code>session_dir: String</code>
+    to <code>session_id: SessionId</code>.</strong> Today's
+    <code>WsMessage::ResumeSession</code>, <code>::AppendEvent</code>, etc.
+    identify sessions by folder name (a hint, per the framing) instead of by
+    canonical ID. With Phase 1's decoupling of folder name from
+    <code>SessionId</code>, the WS protocol now has the <em>weaker</em>
+    identifier. Migration:
+    <ul>
+      <li>Replace <code>session_dir: String</code> with
+        <code>session_id: SessionId</code> in every WS message variant.</li>
+      <li>Establish a canonical <code>SessionId → folder path</code> lookup
+        at the WS boundary (registry or scan — see open question; scan is
+        fine for now).</li>
+      <li>Update <code>HttpHandler</code> / router endpoints that take
+        session paths to also accept (or prefer) <code>SessionId</code>.</li>
+      <li>Update the leptos frontend to send <code>SessionId</code> rather
+        than directory strings.</li>
+    </ul>
+    <em>Executable after Phase 2; required before Phase 3 implementation,
+    because <code>SubagentSpawned</code>'s <code>SessionRef.session_id</code>
+    must be navigable end-to-end from the UI.</em>
   </li>
 </ul>
+
+<div class="callout note">
+  <div class="callout-title">💡 Why 1.5 and 1.6 run <em>after</em> Phase 2, not before</div>
+  <p>
+    Phase 2 (strict resume + gate test) is a backend event-fold concern and
+    doesn't depend on UI surfacing or WS-protocol shape. Phase 3 (subagents)
+    <em>does</em> depend on both, because cross-session navigation must be
+    typed and surfacable. Running 1.5 and 1.6 between Phase 2 and Phase 3
+    avoids interleaving frontend changes with the strict-resume implementation.
+  </p>
+</div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <h2 id="phase2"><span class="phase-tag">Phase 2</span> Strict resume + gate test <small style="font-weight:400;font-size:0.9rem">(closes the framing's promise)</small></h2>
@@ -1165,9 +1204,11 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h3 id="oq-phase3">Before Phase 3</h3>
 
 <div class="callout warn">
-  <div class="callout-title">⚠ Registry vs. scan for <code>SessionRef</code> resolution</div>
+  <div class="callout-title">⚠ Registry vs. scan for <code>SessionId → folder</code> resolution</div>
   <p>
-    Scan is fine for now if performance allows.
+    Phase 1.6 needs a canonical lookup. Scan-on-demand is the simplest start;
+    a small in-memory registry can replace it if scan latency becomes
+    noticeable. Performance-driven; deferrable to 1.6 execution time.
   </p>
 </div>
 
@@ -1177,6 +1218,30 @@ tr:nth-child(even) td { background: #fafbfc; }
     Covered in Phase 3.0. <span class="leaning">Leaning separate-process for now</span>;
     revisit at Phase 3 design time.
   </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Subagent cancellation / kill semantics</div>
+  <p>
+    How does a parent abort a running subagent? Surfaced via a tool, a
+    structural event, or both? Not yet designed.
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Streaming progress from child to parent</div>
+  <p>
+    Call-return only, or also intermediate progress reports? If yes, what
+    shape?
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Failure semantics on child panic / budget exhaustion</div>
+  <p>
+    What does the parent see when the child crashes or runs out of tokens /
+    time / tool budget? Likely a <code>SubagentFailed</code> event variant
+    distinct from <code>SubagentReturned</code>, but not yet designed.</p>
 </div>
 
 <!-- ── Resolved during Phase 1 design ───────────────────────────────────── -->
@@ -1239,6 +1304,25 @@ tr:nth-child(even) td { background: #fafbfc; }
     <code>SessionMetadata</code> (<code>session.jsonc</code>) is on its way
     out; its remaining fields (<code>name</code>, <code>resumed_from</code>)
     are candidates for eventual migration into events as a separate cleanup.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>SessionId</code> vs. folder name — decoupled (was audit
+    <span class="badge badge-audit" title="F2 — SessionStartedEvent.session_id was a string folder name">F2</span>)</div>
+  <p>
+    The folder name (timestamp-hex, on-disk only) and the canonical
+    <code>SessionId</code> (UUID v7, in events) are now independent values.
+    The agent generates a fresh <code>SessionId(Uuid::now_v7())</code> at
+    session start rather than parsing the folder basename. The folder name
+    serves filesystem hygiene; the <code>SessionId</code> is identity.
+  </p>
+  <p>
+    Consequence: a single canonical <code>SessionId → folder path</code>
+    mapping is required at the API boundary (the WS handler today does an
+    implicit mapping by accepting <code>session_dir</code> directly —
+    Phase 1.6 closes this). For Phase 2 internals nothing changes;
+    <code>events.jsonl</code> already uses the typed ID.
   </p>
 </div>
 
