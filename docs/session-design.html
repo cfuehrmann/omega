@@ -1085,6 +1085,19 @@ tr:nth-child(even) td { background: #fafbfc; }
   direction before continuing.
 </p>
 
+<p>
+  The article's author has an open-source reference implementation:
+  <a href="https://github.com/avbiswas/fast-rlm"><code>github.com/avbiswas/fast-rlm</code></a>,
+  cloned locally to <code>~/fast-rlm/</code>. Compact codebase
+  (~1.4&#8239;k lines of Python plus Deno/TS for the Pyodide sandbox). Core
+  runner lives in <code>fast_rlm/_runner.py</code>; <code>examples/</code>
+  shows concrete patterns (parallel <code>llm_query</code>, structured I/O,
+  HTTP smoke test). The <code>RLMConfig</code> dataclass exposes the knobs
+  the article gestures at (primary vs. sub-agent models, max depth,
+  per-subagent call cap, output truncation length, money cap). Useful
+  reference for the proposal sub-session.
+</p>
+
 <div class="callout warn">
   <div class="callout-title">⚠ <code>[cf2db0]</code> Headline question — REPL first or subagents first?</div>
   <p>
@@ -1107,6 +1120,53 @@ tr:nth-child(even) td { background: #fafbfc; }
     LLM context vs. landing as REPL variables).
     <strong>Not yet decided.</strong>
   </p>
+</div>
+
+<h3>Ground rules — already decided for whichever direction we pick</h3>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags — REPL and subagents independently switchable</div>
+  <p>
+    Whichever direction wins, the new behaviour ships behind two independent
+    runtime flags so Harbor can sweep all four combinations without rebuilds:
+  </p>
+  <table style="width:auto;border-collapse:collapse;margin:0.5rem 0">
+    <thead>
+      <tr>
+        <th></th>
+        <th style="padding:0.25rem 0.75rem"><code>subagents=off</code></th>
+        <th style="padding:0.25rem 0.75rem"><code>subagents=on</code></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding:0.25rem 0.75rem"><strong><code>repl=off</code></strong></td>
+        <td style="padding:0.25rem 0.75rem">baseline (current Omega)</td>
+        <td style="padding:0.25rem 0.75rem">vanilla subagents</td>
+      </tr>
+      <tr>
+        <td style="padding:0.25rem 0.75rem"><strong><code>repl=on</code></strong></td>
+        <td style="padding:0.25rem 0.75rem">REPL only (CodeAct)</td>
+        <td style="padding:0.25rem 0.75rem">RLM</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Subtle but important: when both flags are on, the subagent invocation
+    primitive flips from <code>tool_use</code> (vanilla) to <code>llm_query</code>
+    (RLM). Same underlying “spawn an LLM child” operation; different
+    orchestration layer depending on whether the REPL is available. Not a
+    third flag — emergent from the combination.
+  </p>
+  <p>
+    Requirements:
+  </p>
+  <ul>
+    <li><strong>Runtime-switchable</strong>, not Cargo features. Harbor must sweep combinations without rebuild.</li>
+    <li><strong>Recorded in <code>SessionStartedEvent</code></strong> so post-mortems and benchmark logs can tell which combination ran. Add a <code>features: BTreeMap&lt;String, bool&gt;</code> (or typed equivalent) to the event.</li>
+    <li><strong>Default: both off</strong>, preserving current behaviour for anyone not running benchmarks.</li>
+    <li>Source: env vars (<code>OMEGA_FEATURE_REPL=1</code>, <code>OMEGA_FEATURE_SUBAGENTS=1</code>) at minimum; precise config mechanism to be settled by the proposal sub-session.</li>
+  </ul>
 </div>
 
 <h3>What the work so far still buys us</h3>
@@ -1258,6 +1318,48 @@ tr:nth-child(even) td { background: #fafbfc; }
 </div>
 
 <div class="callout">
+  <div class="callout-title">💡 <code>[abe7e7]</code> Feature branch as well, or feature flags alone?</div>
+  <p>
+    Flags are already decided (<code>[b0bc06]</code>). The remaining question:
+    do we <em>also</em> want a feature branch on top? They are alternative
+    isolation strategies, isolating different things:
+  </p>
+  <table style="width:auto;border-collapse:collapse;margin:0.5rem 0">
+    <thead>
+      <tr>
+        <th style="padding:0.25rem 0.75rem;text-align:left">Strategy</th>
+        <th style="padding:0.25rem 0.75rem;text-align:left">What it isolates</th>
+        <th style="padding:0.25rem 0.75rem;text-align:left">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding:0.25rem 0.75rem;vertical-align:top">Flags alone</td>
+        <td style="padding:0.25rem 0.75rem;vertical-align:top">User-visible behaviour; Harbor benchmark surface</td>
+        <td style="padding:0.25rem 0.75rem;vertical-align:top">Code paths compose on <code>develop</code>; gate runs every commit</td>
+      </tr>
+      <tr>
+        <td style="padding:0.25rem 0.75rem;vertical-align:top">Branch + flags</td>
+        <td style="padding:0.25rem 0.75rem;vertical-align:top">The code itself from <code>develop</code>'s history; allows broken intermediate states</td>
+        <td style="padding:0.25rem 0.75rem;vertical-align:top">Drift, merge cost, sub-session checkout friction; gate loss during branch life</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    The branch would only earn its keep if we expect <em>knowingly broken
+    intermediate commits</em> that flags can't hide — e.g., refactoring the
+    event-store layer where partial states are unsafe to ship even with the
+    flag off. Our pattern so far is sub-session-sized atomic commits that each
+    pass the gate, which doesn't produce that kind of intermediate state.
+  </p>
+  <p>
+    <strong>Current lean: flags alone, no branch.</strong> The proposal
+    sub-session may surface reasons to reconsider; switching to a branch
+    later is cheaper than starting on one and merging back.
+  </p>
+</div>
+
+<div class="callout">
   <div class="callout-title">💡 <code>[b2e97e]</code> Comparative survey — what do existing agents do?</div>
   <p>
     Before deciding direction, survey the four agents we have on disk and
@@ -1271,8 +1373,10 @@ tr:nth-child(even) td { background: #fafbfc; }
   </ul>
   <p>
     Targets: <code>~/opencode/</code>, <code>~/forgecode/</code>, <code>~/pi/</code>,
-    and Claude Code (which we haven't audited yet — web docs may be needed).
-    A short table per agent is sufficient; no deep code dive.
+    <code>~/fast-rlm/</code> (the article's reference implementation, included
+    as a positive sample of the RLM shape), and Claude Code (which we haven't
+    audited yet — web docs may be needed). A short table per agent is
+    sufficient; no deep code dive.
   </p>
   <p>
     From our earlier conversational recall: opencode appears to do <em>continuous</em>
@@ -1300,11 +1404,13 @@ tr:nth-child(even) td { background: #fafbfc; }
     SessionRef proposal) that:
   </p>
   <ol>
-    <li>Performs the comparative survey <code>[b2e97e]</code> as a grounding section — short table per agent (opencode, forgecode, pi, Claude Code).</li>
+    <li>Performs the comparative survey <code>[b2e97e]</code> as a grounding section — short table per agent (opencode, forgecode, pi, fast-rlm, Claude Code).</li>
     <li>Takes a position on <code>[cf2db0]</code> (REPL first vs. subagents first) with reasoning, informed by the survey.</li>
     <li>Recommends a language for <code>[368041]</code> with tradeoffs.</li>
     <li>Proposes an integration shape for <code>[fa3e44]</code> (tool vs. replacement).</li>
     <li>Sketches REPL persistence per <code>[c88a22]</code>.</li>
+    <li>Resolves the feature-branch question <code>[abe7e7]</code>.</li>
+    <li>Specifies the feature-flag config mechanism per <code>[b0bc06]</code> (env vars at minimum; whether to also expose via config file).</li>
     <li>Defers the rest as follow-up but documents the lean.</li>
   </ol>
   <p>
