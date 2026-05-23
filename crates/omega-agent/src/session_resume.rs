@@ -857,7 +857,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use omega_types::{
-        ContinueMode, OmegaEvent,
+        ContinueMode, FeatureFlags, OmegaEvent,
         events::{
             AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, InterruptReason,
             LlmCallEvent, LlmResponseEndedEvent, LlmResponseUsage, ModelChangedEvent,
@@ -886,6 +886,7 @@ mod tests {
             omega_commit: "unknown".to_owned(),
             agent_time_zone: "UTC".to_owned(),
             origin: Origin::Root,
+            features: FeatureFlags::default(),
         })
     }
 

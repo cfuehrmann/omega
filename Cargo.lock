@@ -1581,6 +1581,7 @@ name = "omega-types"
 version = "0.1.0"
 dependencies = [
  "insta",
+ "mutants",
  "serde",
  "serde_json",
  "uuid",

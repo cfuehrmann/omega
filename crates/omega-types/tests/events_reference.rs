@@ -22,6 +22,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
@@ -79,6 +80,7 @@ fn all_27_events() -> Vec<OmegaEvent> {
             omega_commit: "abc1234".into(),
             agent_time_zone: "Europe/Berlin".into(),
             origin: Origin::Root,
+            features: FeatureFlags::default(),
         }),
         // 2. ServerStarted
         OmegaEvent::ServerStarted(ServerStartedEvent { time: T.into() }),

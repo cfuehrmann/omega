@@ -37,7 +37,7 @@ use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_server::{ActiveSession, AppState, build_router};
 use omega_store::{ContextStore, EventStore, SessionPaths};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
-use omega_types::{LlmResponseUsage, OmegaEvent, StreamSignal};
+use omega_types::{FeatureFlags, LlmResponseUsage, OmegaEvent, StreamSignal};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as TMessage;
@@ -685,6 +685,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         cwd: tmp.path().display().to_string(),
         name: None,
         has_pending_changes: false,
+        features: FeatureFlags::default(),
     };
     let active = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
@@ -694,6 +695,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         current_turn: None,
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
+        features: FeatureFlags::default(),
     };
 
     let state = make_test_state(Arc::clone(&provider), sessions_root);

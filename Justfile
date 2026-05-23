@@ -213,6 +213,14 @@ mutants-strict-resume:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
+# Run cargo-mutants targeted at the feature-flag parsing module.
+# Mutates omega-types/src/feature_flags.rs and runs the omega-types test suite.
+# Covers parse_flag_value / from_values; from_env is a thin env-read wrapper
+# excluded from mutation via #[mutants::skip] (requires process isolation).
+mutants-feature-flags:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/feature_flags.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

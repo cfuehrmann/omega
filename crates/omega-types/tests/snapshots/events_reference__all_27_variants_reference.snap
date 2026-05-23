@@ -1,7 +1,6 @@
 ---
 source: crates/omega-types/tests/events_reference.rs
 expression: events
-snapshot_kind: json
 ---
 [
   {
@@ -16,6 +15,10 @@ snapshot_kind: json
     "agentTimeZone": "Europe/Berlin",
     "origin": {
       "type": "root"
+    },
+    "features": {
+      "repl": false,
+      "subagents": false
     }
   },
   {

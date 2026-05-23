@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use omega_agent::{Agent, ControlHandle};
 use omega_store::SessionPaths;
+use omega_types::FeatureFlags;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
@@ -29,6 +30,10 @@ pub struct SessionInfoCache {
     /// was created.  Computed once by `git status --porcelain` and carried
     /// in every `session_info` broadcast so the client can show a warning.
     pub has_pending_changes: bool,
+    /// Runtime feature flags active for this session.
+    /// Forwarded verbatim onto every [`WsMessage::SessionInfo`] frame so
+    /// the UI can display capability badges without re-reading the event log.
+    pub features: FeatureFlags,
 }
 
 /// All state belonging to the currently-active session.
@@ -72,4 +77,9 @@ pub struct ActiveSession {
     /// session creation and refreshed by `handle_set_model`,
     /// `handle_set_effort`, and `handle_rename_session`.
     pub info_cache: Arc<Mutex<SessionInfoCache>>,
+    /// Runtime feature flags for this session.  A `Copy` snapshot of the
+    /// flags resolved at startup; available without acquiring any lock so
+    /// future branching code can check `active_session.features.repl` etc.
+    /// directly.
+    pub features: FeatureFlags,
 }

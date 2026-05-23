@@ -28,6 +28,7 @@
 use leptos::prelude::*;
 use leptos::reactive::owner::Owner;
 use leptos::tachys::view::RenderHtml;
+use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, LlmCallEvent, LlmResponseDiscardedEvent,
@@ -276,6 +277,7 @@ fn ev_session_started() -> OmegaEvent {
         omega_commit: "abc1234".into(),
         agent_time_zone: "Europe/Berlin".into(),
         origin: Origin::Root,
+        features: FeatureFlags::default(),
     })
 }
 

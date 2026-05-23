@@ -1084,6 +1084,7 @@ dependencies = [
 name = "omega-types"
 version = "0.1.0"
 dependencies = [
+ "mutants",
  "serde",
  "serde_json",
  "uuid",

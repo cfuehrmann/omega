@@ -9,5 +9,9 @@ expression: "serde_json::to_string_pretty(&redact(info)).unwrap()"
   "effort": "medium",
   "cwd": "[REDACTED]",
   "turnState": "idle",
-  "hasPendingChanges": "[REDACTED]"
+  "hasPendingChanges": "[REDACTED]",
+  "features": {
+    "repl": false,
+    "subagents": false
+  }
 }

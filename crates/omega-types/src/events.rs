@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::feature_flags::FeatureFlags;
 use crate::ids::SessionId;
 use crate::{ContextHash, ISOTimestamp};
 
@@ -184,6 +185,18 @@ pub struct SessionStartedEvent {
     /// subagents did not exist yet.  Not a defensive accommodation.
     #[serde(default = "default_origin")]
     pub origin: crate::ids::Origin,
+
+    /// Runtime feature flags active for this session.
+    ///
+    /// Defaults to [`FeatureFlags::default`] (both flags `false`) when absent
+    /// on deserialisation.  This is a deliberate semantic default, not a
+    /// defensive accommodation: every session recorded before feature flags
+    /// were introduced had both features off by construction — the REPL and
+    /// subagent code paths did not exist yet.  Old readers that encounter a
+    /// new `features` field will fail loudly; readers of old logs without
+    /// the field will correctly infer both-off semantics via this default.
+    #[serde(default)]
+    pub features: FeatureFlags,
 }
 
 /// The server process started.
@@ -598,6 +611,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use super::*;
+    use crate::feature_flags::FeatureFlags;
     use crate::ids::{Origin, SessionId};
 
     // -----------------------------------------------------------------------
@@ -618,6 +632,7 @@ mod tests {
             omega_commit: "abc1234".into(),
             agent_time_zone: "Europe/Berlin".into(),
             origin: Origin::Root,
+            features: FeatureFlags::default(),
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "session_started");
@@ -703,6 +718,67 @@ mod tests {
             }
             other => panic!("expected SessionStarted, got {other:?}"),
         }
+    }
+
+    /// Backward-compat: sessions written before the `features` field existed
+    /// must still deserialise cleanly — they default to `FeatureFlags::default()`
+    /// (both flags off), which is correct: the REPL and subagent code paths
+    /// did not exist before this field was introduced.
+    #[test]
+    fn session_started_uses_default_features_when_field_missing() {
+        let json = serde_json::json!({
+            "type": "session_started",
+            "time": "2024-01-15T12:00:00.000Z",
+            "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
+            "path": "",
+            "model": "claude-sonnet-4-6",
+            "effort": "medium",
+            "systemPrompt": "You are Omega.",
+            "omegaCommit": "abc1234",
+            "agentTimeZone": "Europe/Berlin",
+            "origin": {"type": "root"},
+            // features deliberately omitted — pre-flag-era session
+        });
+        let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
+        match parsed {
+            OmegaEvent::SessionStarted(ev) => {
+                assert_eq!(ev.features, FeatureFlags::default());
+                assert!(!ev.features.repl, "pre-flag-era repl must be false");
+                assert!(
+                    !ev.features.subagents,
+                    "pre-flag-era subagents must be false"
+                );
+            }
+            other => panic!("expected SessionStarted, got {other:?}"),
+        }
+    }
+
+    /// Serde round-trip for `SessionStartedEvent` with features set.
+    #[test]
+    fn session_started_features_round_trip() {
+        let sid: SessionId = "018f4c2e-3a1b-7d00-8000-abcdef012345".parse().unwrap();
+        let ev = OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: "2024-01-15T12:00:00.000Z".into(),
+            session_id: sid,
+            path: String::new(),
+            model: "claude-sonnet-4-6".into(),
+            effort: "medium".into(),
+            system_prompt: "You are Omega.".into(),
+            omega_commit: "abc1234".into(),
+            agent_time_zone: "UTC".into(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+            },
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        // features field is present with expected values
+        assert_eq!(v["features"]["repl"], true);
+        assert_eq!(v["features"]["subagents"], false);
+        // round-trip
+        let back: OmegaEvent = serde_json::from_value(v).unwrap();
+        assert_eq!(ev, back);
     }
 
     #[test]
@@ -1219,6 +1295,7 @@ mod tests {
             omega_commit: "abc".into(),
             agent_time_zone: "UTC".into(),
             origin: Origin::Root,
+            features: FeatureFlags::default(),
         });
         assert_eq!(ev.time().as_str(), ts);
     }

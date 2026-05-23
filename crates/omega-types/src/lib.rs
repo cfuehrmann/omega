@@ -17,6 +17,7 @@
 
 pub mod conversation;
 pub mod events;
+pub mod feature_flags;
 pub mod ids;
 pub mod stream_signal;
 
@@ -25,6 +26,7 @@ pub use events::{
     ContinueMode, InterruptReason, LlmResponseUsage, LlmRetryReason, OmegaEvent, ServerStopOutcome,
     TurnMetrics,
 };
+pub use feature_flags::FeatureFlags;
 pub use ids::{EventId, LoggedEvent, Origin, SessionId, SessionRef, SessionRefParseError};
 pub use stream_signal::StreamSignal;
 

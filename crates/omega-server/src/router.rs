@@ -230,6 +230,7 @@ async fn create_active_session(
     let controls = agent.controls();
     let active_model = agent.active_model().to_owned();
     let active_effort = agent.active_effort().to_owned();
+    let features = agent.features();
     let info_cache = SessionInfoCache {
         dir: dir_name.clone(),
         model: active_model,
@@ -237,6 +238,7 @@ async fn create_active_session(
         cwd: cwd_string,
         name: None,
         has_pending_changes,
+        features,
     };
     let session = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
@@ -246,6 +248,7 @@ async fn create_active_session(
         current_turn: None,
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
+        features,
     };
     Ok((session, dir_name))
 }
@@ -386,6 +389,7 @@ fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage 
         name: cache.name,
         turn_state,
         has_pending_changes: cache.has_pending_changes,
+        features: cache.features,
     }
 }
 

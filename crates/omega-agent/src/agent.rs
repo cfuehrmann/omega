@@ -31,6 +31,7 @@ use futures::stream::{FuturesUnordered, Stream, StreamExt};
 use omega_core::{
     AgentItem, ContentBlock, LlmError, LlmRequest, Message, ModelConfig, Provider, Role,
 };
+use omega_types::FeatureFlags;
 use omega_types::StreamSignal;
 use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
@@ -473,6 +474,13 @@ pub struct Agent {
     /// so `execute_tool` can block redundant `read_file` calls without
     /// any per-call allocation.
     system_prompt_paths: Arc<HashSet<PathBuf>>,
+    /// Runtime feature flags active for this session.
+    ///
+    /// Populated by [`Agent::init`] from environment variables via
+    /// [`FeatureFlags::from_env`].  Recorded in the `SessionStartedEvent`
+    /// so forensic analysis can determine which features were active.
+    /// Available via [`Agent::features`] for conditional branching.
+    features: FeatureFlags,
     /// In-memory mirror of `context.jsonl`; sent verbatim as the
     /// `messages` array on every API call.
     history: Vec<Message>,
@@ -514,6 +522,7 @@ impl Agent {
             system_prompt_paths: Arc::new(HashSet::new()),
             history: Vec::new(),
             context_hashes: Vec::new(),
+            features: FeatureFlags::default(),
         }
     }
 
@@ -526,6 +535,15 @@ impl Agent {
     ///
     /// Returns an error if serialisation or the file write fails.
     pub async fn init(&mut self) -> omega_store::Result<()> {
+        // 0. Load feature flags from environment variables.
+        //    Done first so the flags are available for SessionStartedEvent
+        //    and for any future conditional logic within this method.
+        self.features = FeatureFlags::from_env();
+        eprintln!(
+            "feature flags: repl={} subagents={}",
+            self.features.repl, self.features.subagents
+        );
+
         // 1. server_started
         let server_started = OmegaEvent::ServerStarted(ServerStartedEvent { time: now_iso() });
         self.event_store.append(&server_started).await?;
@@ -595,9 +613,21 @@ impl Agent {
             // Phase 1: all sessions started by the agent are root sessions
             // (no subagent support yet).
             origin: Origin::Root,
+            // Runtime feature flags resolved from env at init time.
+            features: self.features,
         });
         self.event_store.append(&session_started).await?;
         Ok(())
+    }
+
+    /// Runtime feature flags active for this session.
+    ///
+    /// Populated by [`Agent::init`].  Returns `FeatureFlags::default()` (both
+    /// flags off) if called before `init` completes — the flags are not
+    /// meaningful until the session has been initialised.
+    #[must_use]
+    pub fn features(&self) -> FeatureFlags {
+        self.features
     }
 
     /// Borrow a clone of the pause/continue/abort control handle.

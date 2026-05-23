@@ -814,6 +814,7 @@ fn format_time_intl(iso: &str, tz: &str) -> Option<String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic, clippy::float_cmp)]
 
+    use omega_types::FeatureFlags;
     use omega_types::events::{
         AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
         LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent,
@@ -965,6 +966,7 @@ mod tests {
             omega_commit: "u".into(),
             agent_time_zone: "UTC".into(),
             origin: Origin::Root,
+            features: FeatureFlags::default(),
         });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }

@@ -18,6 +18,7 @@
 //! helpers.
 
 use omega_core::AgentItem;
+use omega_types::FeatureFlags;
 use omega_types::ids::LoggedEvent;
 
 /// One WebSocket frame the server can emit.
@@ -51,6 +52,10 @@ pub enum WsMessage {
         /// Whether the working tree had uncommitted changes when this session
         /// was created.  Always present on the wire as `hasPendingChanges`.
         has_pending_changes: bool,
+        /// Runtime feature flags active for this session.
+        /// Always present on the wire as `features` so the UI can display
+        /// capability badges (e.g. "REPL on") without re-reading the event log.
+        features: FeatureFlags,
     },
     /// Persisted history batch sent on connect / reset / resume.
     /// `streaming` is omitted on the wire when `false` — matches the TS
@@ -156,8 +161,9 @@ impl WsMessage {
                 name,
                 turn_state,
                 has_pending_changes,
+                features,
             } => {
-                let mut obj = serde_json::Map::with_capacity(8);
+                let mut obj = serde_json::Map::with_capacity(9);
                 obj.insert("type".to_owned(), serde_json::Value::from("session_info"));
                 obj.insert("dir".to_owned(), serde_json::Value::from(dir.clone()));
                 obj.insert("model".to_owned(), serde_json::Value::from(model.clone()));
@@ -170,6 +176,10 @@ impl WsMessage {
                 obj.insert(
                     "hasPendingChanges".to_owned(),
                     serde_json::Value::from(*has_pending_changes),
+                );
+                obj.insert(
+                    "features".to_owned(),
+                    serde_json::to_value(features).unwrap_or_else(|_| serde_json::Value::Null),
                 );
                 if let Some(n) = name {
                     obj.insert("name".to_owned(), serde_json::Value::from(n.clone()));
@@ -226,6 +236,7 @@ mod tests {
 
     use super::{PendingChangesIntent, WsMessage};
     use omega_core::AgentItem;
+    use omega_types::FeatureFlags;
     use omega_types::ids::LoggedEvent;
     use omega_types::{StreamSignal, events::TurnEndEvent, events::TurnMetrics};
 
@@ -302,6 +313,7 @@ mod tests {
             name: None,
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
+            features: FeatureFlags::default(),
         }
         .to_json();
         assert_eq!(v["type"], "session_info");
@@ -311,9 +323,53 @@ mod tests {
         assert_eq!(v["cwd"], "/tmp");
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("name"), "name must be omitted when None");
-        assert_eq!(obj.len(), 7, "unexpected extra fields: {obj:?}");
+        // type, dir, model, effort, cwd, turnState, hasPendingChanges, features = 8
+        assert_eq!(obj.len(), 8, "unexpected extra fields: {obj:?}");
         assert_eq!(obj["turnState"], "idle");
         assert_eq!(obj["hasPendingChanges"], false);
+        // features is always present
+        assert!(obj.contains_key("features"), "features must be present");
+        assert_eq!(obj["features"]["repl"], false);
+        assert_eq!(obj["features"]["subagents"], false);
+    }
+
+    #[test]
+    fn session_info_features_flags_on_appear_on_wire() {
+        let v = WsMessage::SessionInfo {
+            dir: "d".to_owned(),
+            model: "m".to_owned(),
+            effort: "e".to_owned(),
+            cwd: "/c".to_owned(),
+            name: None,
+            turn_state: "idle".to_owned(),
+            has_pending_changes: false,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+            },
+        }
+        .to_json();
+        assert_eq!(v["features"]["repl"], true);
+        assert_eq!(v["features"]["subagents"], false);
+    }
+
+    #[test]
+    fn session_info_includes_name_with_features_gives_nine_fields() {
+        let v = WsMessage::SessionInfo {
+            dir: "d".to_owned(),
+            model: "m".to_owned(),
+            effort: "e".to_owned(),
+            cwd: "/c".to_owned(),
+            name: Some("my-session".to_owned()),
+            turn_state: "running".to_owned(),
+            has_pending_changes: false,
+            features: FeatureFlags::default(),
+        }
+        .to_json();
+        assert_eq!(v["name"], "my-session");
+        let obj = v.as_object().unwrap();
+        // type, dir, model, effort, cwd, turnState, hasPendingChanges, features, name = 9
+        assert_eq!(obj.len(), 9, "unexpected field count: {obj:?}");
     }
 
     #[test]
@@ -326,6 +382,7 @@ mod tests {
             name: None,
             turn_state: "idle".to_owned(),
             has_pending_changes: true,
+            features: FeatureFlags::default(),
         }
         .to_json();
         assert_eq!(v["hasPendingChanges"], true);
@@ -341,6 +398,7 @@ mod tests {
             name: Some("my-session".to_owned()),
             turn_state: "running".to_owned(),
             has_pending_changes: false,
+            features: FeatureFlags::default(),
         }
         .to_json();
         assert_eq!(v["name"], "my-session");
@@ -356,6 +414,7 @@ mod tests {
             name: Some("n".to_owned()),
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
+            features: FeatureFlags::default(),
         };
         let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
         assert_eq!(parsed, m.to_json());
