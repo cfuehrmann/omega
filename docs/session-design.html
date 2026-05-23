@@ -63,29 +63,14 @@
     color-scheme: dark;
   }
 
-  /* Override highlight.js light theme with dark theme for code blocks */
-  .hljs-github-dark-override pre,
   pre { background: #161b22 !important; }
-
   pre code.hljs { background: transparent !important; color: #e6edf3 !important; }
   code { background: #21262d !important; border-color: var(--border) !important; color: #e6edf3; }
-
   details > summary { background: #21262d; }
   details[open] > summary { background: var(--accent-bg); }
-
   tr:nth-child(even) td { background: #1c2128; }
   th { background: #21262d; }
-
-  .question-block { box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
-
   .badge-audit { background: #1c2d48; color: #79b8ff; }
-  .badge-wip   { background: #3d1a29; color: #f0a8c4; }
-  .badge-ok    { background: var(--ok-bg); color: #3fb950; }
-  .badge-done  { background: #0f2e16; color: #3fb950; }
-
-  .dismissed-grid .card { background: #161b22; border-color: var(--border); }
-  .dismissed-grid .card summary { background: #21262d; color: var(--muted); }
-  .dismissed-grid .card[open] > summary { background: var(--accent-bg); color: var(--accent); }
 }
 
 body {
@@ -119,14 +104,8 @@ body {
   margin-bottom: 0.75rem;
 }
 
-#toc ol {
-  list-style: none;
-  padding: 0;
-}
-
-#toc li {
-  margin-bottom: 0.3rem;
-}
+#toc ol { list-style: none; padding: 0; }
+#toc li { margin-bottom: 0.3rem; }
 
 #toc a {
   text-decoration: none;
@@ -159,18 +138,10 @@ main {
   overflow-x: hidden;
 }
 
-article {
-  max-width: var(--content-max);
-}
+article { max-width: var(--content-max); }
 
 /* ── Typography ────────────────────────────────────────────────────────── */
-h1 {
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.2;
-  margin-bottom: 0.4rem;
-  color: var(--text);
-}
+h1 { font-size: 2rem; font-weight: 700; line-height: 1.2; margin-bottom: 0.4rem; color: var(--text); }
 
 .doc-meta {
   font-size: 0.83rem;
@@ -190,16 +161,9 @@ h2 {
   scroll-margin-top: 1.5rem;
 }
 
-h3 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-top: 1.75rem;
-  margin-bottom: 0.4rem;
-  scroll-margin-top: 1.5rem;
-}
+h3 { font-size: 1rem; font-weight: 600; margin-top: 1.75rem; margin-bottom: 0.4rem; scroll-margin-top: 1.5rem; }
 
 p { margin-bottom: 0.85rem; }
-
 ul, ol { padding-left: 1.4rem; margin-bottom: 0.85rem; }
 li { margin-bottom: 0.25rem; }
 
@@ -212,11 +176,10 @@ blockquote {
   font-style: italic;
   font-size: 1.05rem;
 }
-
 blockquote p { margin-bottom: 0; }
 
 code {
-  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", Menlo, monospace;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 0.87em;
   background: #f3f4f6;
   border: 1px solid var(--border);
@@ -234,19 +197,9 @@ pre {
   font-size: 0.87rem;
   line-height: 1.55;
 }
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
 
-pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: inherit;
-}
-
-hr.section-divider {
-  border: none;
-  border-top: 2px solid var(--border);
-  margin: 3rem 0 1rem;
-}
+hr.section-divider { border: none; border-top: 2px solid var(--border); margin: 3rem 0 1rem; }
 
 /* ── Callouts ──────────────────────────────────────────────────────────── */
 .callout {
@@ -256,16 +209,8 @@ hr.section-divider {
   padding: 0.85rem 1.1rem;
   margin: 1.2rem 0;
 }
-
-.callout.rec {
-  border-color: var(--ok-border);
-  background: var(--ok-bg);
-}
-
-.callout.warn {
-  border-color: var(--warn-border);
-  background: var(--warn-bg);
-}
+.callout.rec  { border-color: var(--ok-border);   background: var(--ok-bg); }
+.callout.warn { border-color: var(--warn-border);  background: var(--warn-bg); }
 
 .callout-title {
   font-weight: 700;
@@ -274,44 +219,14 @@ hr.section-divider {
   letter-spacing: 0.05em;
   margin-bottom: 0.4rem;
 }
-
-.callout.rec .callout-title  { color: #166534; }
+.callout.rec  .callout-title { color: #166534; }
 .callout.warn .callout-title { color: #92400e; }
-.callout .callout-title      { color: var(--accent); }
+.callout      .callout-title { color: var(--accent); }
 
 @media (prefers-color-scheme: dark) {
-  .callout.rec .callout-title  { color: #3fb950; }
+  .callout.rec  .callout-title { color: #3fb950; }
   .callout.warn .callout-title { color: #d29922; }
-  .callout .callout-title      { color: var(--accent); }
-}
-
-/* ── Numbered list items styled as blocks ──────────────────────────────── */
-.decision-list {
-  list-style: none;
-  padding: 0;
-  margin-bottom: 0.85rem;
-}
-
-.decision-list li {
-  display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  align-items: flex-start;
-}
-
-.decision-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 700;
-  font-size: 0.75rem;
-  border-radius: 999px;
-  min-width: 1.4rem;
-  height: 1.4rem;
-  flex-shrink: 0;
-  margin-top: 0.15rem;
+  .callout      .callout-title { color: var(--accent); }
 }
 
 /* ── Collapsible <details> ─────────────────────────────────────────────── */
@@ -333,80 +248,11 @@ details > summary {
   user-select: none;
   transition: background 0.15s;
 }
-
 details > summary::-webkit-details-marker { display: none; }
-
-details > summary::before {
-  content: "▶ ";
-  font-size: 0.7em;
-  vertical-align: middle;
-  display: inline-block;
-  transition: transform 0.2s;
-}
-
-details[open] > summary {
-  background: var(--accent-bg);
-  color: var(--accent);
-  border-bottom: 1px solid var(--border);
-}
-
-details[open] > summary::before {
-  transform: rotate(90deg);
-}
-
-details > .details-body {
-  padding: 1rem 1.2rem;
-}
-
-/* ── Dismissed approaches — grid of cards ──────────────────────────────── */
-.dismissed-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 0.75rem;
-  margin: 1.2rem 0;
-}
-
-.dismissed-grid .card {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--surface);
-}
-
-.dismissed-grid .card > summary {
-  cursor: pointer;
-  padding: 0.7rem 1rem;
-  font-size: 0.87rem;
-  font-weight: 600;
-  background: #f6f8fa;
-  color: var(--muted);
-  list-style: none;
-  user-select: none;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  transition: background 0.15s;
-}
-
-.dismissed-grid .card > summary::-webkit-details-marker { display: none; }
-
-.dismissed-grid .card > summary::before {
-  content: "✗";
-  font-size: 0.85rem;
-  color: #dc2626;
-  flex-shrink: 0;
-}
-
-.dismissed-grid .card[open] > summary {
-  background: var(--accent-bg);
-  color: var(--accent);
-  border-bottom: 1px solid var(--border);
-}
-
-.dismissed-grid .card > .details-body {
-  padding: 0.85rem 1rem;
-  font-size: 0.87rem;
-}
+details > summary::before { content: "▶ "; font-size: 0.7em; vertical-align: middle; display: inline-block; transition: transform 0.2s; }
+details[open] > summary { background: var(--accent-bg); color: var(--accent); border-bottom: 1px solid var(--border); }
+details[open] > summary::before { transform: rotate(90deg); }
+details > .details-body { padding: 1rem 1.2rem; }
 
 /* ── Audit-finding badges ──────────────────────────────────────────────── */
 .badge {
@@ -418,37 +264,15 @@ details > .details-body {
   margin-right: 0.3em;
   vertical-align: middle;
 }
-
 .badge-audit { background: #e0e7ff; color: #3730a3; }
-.badge-wip   { background: #fce7f3; color: #9d174d; }
-.badge-ok    { background: var(--ok-bg); color: #166534; }
-.badge-done  { background: var(--ok-bg); color: #166534; }
 
 /* ── Tables ────────────────────────────────────────────────────────────── */
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.88rem;
-  margin-bottom: 1rem;
-}
-
-th {
-  background: #f6f8fa;
-  border: 1px solid var(--border);
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  font-weight: 600;
-}
-
-td {
-  border: 1px solid var(--border);
-  padding: 0.45rem 0.75rem;
-  vertical-align: top;
-}
-
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-bottom: 1rem; }
+th { background: #f6f8fa; border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; }
+td { border: 1px solid var(--border); padding: 0.45rem 0.75rem; vertical-align: top; }
 tr:nth-child(even) td { background: #fafbfc; }
 
-/* ── Phase headers ─────────────────────────────────────────────────────── */
+/* ── Phase tags ────────────────────────────────────────────────────────── */
 .phase-tag {
   display: inline-block;
   font-size: 0.75rem;
@@ -460,45 +284,12 @@ tr:nth-child(even) td { background: #fafbfc; }
   background: var(--accent-bg);
   color: var(--accent);
 }
+.phase-tag.done { background: var(--ok-bg); color: #166534; }
+@media (prefers-color-scheme: dark) { .phase-tag.done { color: #3fb950; } }
 
-.phase-tag.done {
-  background: var(--ok-bg);
-  color: #166534;
-}
-
-@media (prefers-color-scheme: dark) {
-  .phase-tag.done { color: #3fb950; }
-}
-
-/* ── Leaning indicator ─────────────────────────────────────────────────── */
-.leaning {
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  border-radius: 4px;
-  padding: 0.1em 0.6em;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #92400e;
-}
-
-@media (prefers-color-scheme: dark) {
-  .leaning { color: #d29922; }
-}
-
-/* ── Responsive: hide TOC on narrow screens ────────────────────────────── */
-@media (max-width: 700px) {
-  #toc { display: none; }
-  main { padding: 1.5rem 1.2rem; }
-}
-
-/* ── Print ─────────────────────────────────────────────────────────────── */
-@media print {
-  #toc { display: none; }
-  body { background: white; }
-  details[open] > summary { background: #eee; }
-}
-
-/* Fallback: if hljs didn't load, plain code blocks still look decent */
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 700px) { #toc { display: none; } main { padding: 1.5rem 1.2rem; } }
+@media print { #toc { display: none; } body { background: white; } details[open] > summary { background: #eee; } }
 .hljs { background: transparent; }
 </style>
 </head>
@@ -509,22 +300,17 @@ tr:nth-child(even) td { background: #fafbfc; }
   <h2>Contents</h2>
   <ol>
     <li><a href="#framing" class="toc-h1">Adopted framing</a></li>
-    <li><a href="#consequences" class="toc-sub">Consequences</a></li>
-    <li><a href="#testable" class="toc-sub">Testable criterion</a></li>
-    <li><a href="#dismissed" class="toc-h1">Dismissed approaches</a></li>
-    <li><a href="#subagent-vs-fork" class="toc-h1">Subagent-vs-fork choices</a></li>
-    <li><a href="#session-event-refs" class="toc-h1">Session &amp; event refs</a></li>
-    <li><a href="#concrete-shapes" class="toc-sub">Concrete event shapes</a></li>
-    <li><a href="#long-runs" class="toc-h1">Long autonomous runs</a></li>
+    <li><a href="#history" class="toc-sub">Design history</a></li>
     <li class="toc-divider"></li>
-    <li><a href="#phase0" class="toc-h1">Phase 0 — Done ✅</a></li>
-    <li><a href="#phase1" class="toc-h1">Phase 1 — SessionRef</a></li>
-    <li><a href="#phase2" class="toc-h1">Phase 2 — Strict resume</a></li>
-    <li><a href="#phase4" class="toc-h1">Phase 4 — Deferred</a></li>
+    <li><a href="#completed" class="toc-h1">Completed phases</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#phase15" class="toc-h1">Phase 1.5 — UI surfacing ⏳</a></li>
+    <li><a href="#phase16" class="toc-h1">Phase 1.6 — WS protocol ⏳</a></li>
     <li class="toc-divider"></li>
     <li><a href="#open-questions" class="toc-h1">Open questions</a></li>
-    <li><a href="#oq-followup" class="toc-sub">Follow-up items</a></li>
-    <li><a href="#oq-resolved" class="toc-sub">Resolved (Phase 1)</a></li>
+    <li><a href="#oq-allowlist" class="toc-sub">Ephemeral-allowlist follow-up</a></li>
+    <li><a href="#oq-registry" class="toc-sub">Registry vs. scan (1.6)</a></li>
+    <li><a href="#oq-resolved" class="toc-sub">Resolved references</a></li>
   </ol>
 </nav>
 
@@ -535,678 +321,239 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h1>Endeavor 1 — Events-as-State Architecture</h1>
 <p class="doc-meta">
   Status: <strong>Working document</strong> ·
-  Endeavor 1 scope only — events-as-state architecture ·
-  Captures the adopted framing, dismissed approaches, and phased implementation plan ·
+  Phases 0, 1.1–1.4, and 2 complete · Phases 1.5 and 1.6 pending ·
   Research directions (REPL, subagents, handoff automation) are in
   <a href="./repl-and-subagents-research.html"><code>docs/repl-and-subagents-research.html</code></a> ·
-  Canonical source: this file (<code>docs/session-design.html</code>)
+  Canonical source: <code>docs/session-design.html</code>
 </p>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <h2 id="framing">Adopted framing</h2>
 
 <blockquote>
-  <p><strong>A session is the persisted state of one Omega instance. It is
-  resumable at "awaiting user" boundaries, against the same Omega
-  version that created it. Subagents are child sessions; everything else
-  is a derived view.</strong></p>
+  <p><strong>A session is the persisted state of one Omega instance. It is resumable at
+  "awaiting user" boundaries, against the same Omega version that created it.
+  Subagents are child sessions; everything else is a derived view.</strong></p>
 </blockquote>
 
-<!-- ── Consequences ─────────────────────────────────────────────────────── -->
-<h3 id="consequences">Consequences</h3>
-
-<details>
-  <summary>Key conceptual clarifications (6 consequences of the framing)</summary>
-  <div class="details-body">
-    <ul>
-      <li>
-        <strong>Process incarnation is irrelevant.</strong> A session survives
-        app restarts; it ends when the agent's logical life ends, not when its
-        process does.
-      </li>
-      <li>
-        <strong>The persisted event stream is canonical.</strong> State at any
-        moment is <code>fold(events)</code>. The LLM context, the UI feed, and
-        any context-hash tree are <em>derived projections</em>, not the session
-        itself.
-      </li>
-      <li>
-        <strong>Subagent = child Omega instance = child session.</strong>
-        Structural, not stipulated. Child sessions live in a subfolder of the
-        parent's session folder; the parent references the child by ID.
-      </li>
-      <li>
-        <strong>Compaction (server-side or agent-side) is a within-session
-        event.</strong> Neither kind ends a session. The derived LLM-context
-        projection honours them.
-      </li>
-      <li>
-        <strong>Atomic unit is a turn,</strong> from one user message to the
-        next "awaiting user" state. Turns either complete or are discarded on
-        resume. Intra-turn state (streaming buffers, retries, in-flight tool
-        calls, partial responses) is ephemeral and matters only for forensics.
-      </li>
-      <li>
-        <strong>No cross-Omega-version replay.</strong> Sessions record the
-        build SHA at creation. The version field is not gated at resume; the
-        Rust type system + fold invariants reject incompatible events
-        structurally. The field is recorded for forensics and as a future hook.
-      </li>
-      <li>
-        <strong>No mid-flight resumption.</strong> Crash mid-turn → partial
-        turn is abandoned on resume; state restored to "just after last user
-        message."
-      </li>
-    </ul>
-  </div>
-</details>
-
-<!-- ── Testable criterion ────────────────────────────────────────────────── -->
-<h3 id="testable">Testable criterion</h3>
+<p>
+  Process incarnation is irrelevant — a session survives restarts and ends when the
+  agent's logical life ends. State at any moment is <code>fold(events)</code>; the
+  LLM context, UI feed, and context-hash tree are <em>derived projections</em>.
+  Compaction is a within-session event; forking is a deferred feature (Phase 4).
+  No cross-version replay: the Rust type system + fold invariants reject incompatible
+  events structurally.
+</p>
 
 <div class="callout rec">
   <div class="callout-title">✓ Gate-able criterion</div>
-  <p>
-    Stop Omega. Start a fresh process from the persisted events. The
-    resulting state (modulo declared-ephemeral pieces) must match what
-    the state would have been right after the last user message of the
-    dead process.
-  </p>
-  <p>A gate-able test, not a philosophical claim.</p>
+  <p>Stop Omega. Start a fresh process from the persisted events. The resulting state
+  (modulo declared-ephemeral pieces) must match what it would have been right after
+  the last user message. A gate-able test, not a philosophical claim.</p>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="dismissed">Rejected approaches</h2>
-
-<p>
-  Each approach is dismissed in one line. Full rationales are recorded in
-  git history at <code>9d311ee</code>.
-</p>
-
-<div class="dismissed-grid">
-
-  <details class="card">
-    <summary>Session = process lifetime</summary>
-    <div class="details-body">
-      <p>Conflates incarnation with identity.</p>
-      <p><em>Full rationale: <code>git show 9d311ee</code></em></p>
-    </div>
-  </details>
-
-  <details class="card">
-    <summary>Session = LLM-visible context</summary>
-    <div class="details-body">
-      <p>Boundaries leave our control; retrospective; ignores non-LLM events;
-      provider-dependent.</p>
-      <p><em>Full rationale: <code>git show 9d311ee</code></em></p>
-    </div>
-  </details>
-
-  <details class="card">
-    <summary>Session = persisted-log lifetime</summary>
-    <div class="details-body">
-      <p>Right answer for wrong reason; subsumed by the process-state framing
-      with a testable criterion.</p>
-      <p><em>Full rationale: <code>git show 9d311ee</code></em></p>
-    </div>
-  </details>
-
-  <details class="card">
-    <summary>Session = git-style tree of contexts</summary>
-    <div class="details-body">
-      <p>Useful internal index, not identity; doesn't carry non-LLM events.
-      Forking becomes a deliberate later feature, not a primitive.</p>
-      <p><em>Full rationale: <code>git show 9d311ee</code></em></p>
-    </div>
-  </details>
-
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="subagent-vs-fork">Subagent-vs-fork design choices <small style="font-weight:400;font-size:0.9rem">(forking deferred indefinitely)</small></h2>
-
-<ol class="decision-list">
-  <li>
-    <span class="decision-num">1</span>
-    <span>Session creation takes a <strong>seed</strong> (events + metadata).
-    Subagent seeds happen to be short
-    (<code>[system_prompt, initial_user_message]</code>); the API doesn't bake
-    in the short case.</span>
-  </li>
-  <li>
-    <span class="decision-num">2</span>
-    <span>Session metadata records <code>parent_session_id</code> and
-    <code>origin</code> enum (<code>Root</code>,
-    <code>SubagentOf{...}</code>; extendable to
-    <code>ForkOf{...}</code>).</span>
-  </li>
-  <li>
-    <span class="decision-num">3</span>
-    <span>On-disk layout: subagent sessions in subfolders of the parent;
-    forks would be top-level. Relationship lives in metadata, not in
-    filesystem layout.</span>
-  </li>
-  <li>
-    <span class="decision-num">4</span>
-    <span>Pointing events carry typed relationship metadata (the
-    <code>origin</code> variant), not raw IDs interpreted contextually.</span>
-  </li>
-  <li>
-    <span class="decision-num">5</span>
-    <span>Session IDs are flat and opaque (UUID v7). Never encode parent
-    relationships into IDs.</span>
-  </li>
-</ol>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="session-event-refs">Session and event references</h2>
-
-<ul>
-  <li>Both sessions and events have <strong>globally unique UUID v7 IDs</strong>.
-    Not content-derived, not position-derived.</li>
-  <li><code>SessionRef { session_id, event_id: Option&lt;EventId&gt; }</code>.
-    <code>None</code> means "the session as a whole"; <code>Some</code> means a
-    specific moment.</li>
-  <li>References are by ID. Folder layout is a <em>hint</em> for resolution.
-    Moving the whole <code>.omega/sessions</code> tree in unison doesn't break
-    references; moving folders relative to each other may.</li>
-  <li>Every event that references another session or event must, from day one:
-    render visibly in the feed; show the literal IDs; have a "more" button
-    revealing full JSON; ideally be clickable to navigate.
-    <strong>Transparency floor, not polish.</strong></li>
-</ul>
-
-<!-- ── Concrete event shapes ─────────────────────────────────────────────── -->
-<h3 id="concrete-shapes">Concrete event shapes (post-SessionRef)</h3>
-
-<ul>
-  <li>
-    <code>SubagentSpawned { child: SessionRef { session_id, event_id: None },
-    model, effort }</code> in the parent. <code>model</code> and
-    <code>effort</code> are the <em>resolved</em> values (LLM's requested
-    values live in the preceding <code>tool_use</code>).
-  </li>
-  <li>
-    Child's session metadata: <code>origin: SubagentOf { parent: SessionRef {
-    session_id, event_id: Some(spawn_event_in_parent) } }</code>.
-  </li>
-  <li>
-    <code>SubagentReturned { child: SessionRef { session_id,
-    event_id: Some(terminal_in_child) }, summary: ... }</code> in the parent.
-  </li>
-</ul>
-
-<pre><code class="language-json">// SubagentSpawned (session-only ref + resolved spawn parameters)
-{
-  "type":   "subagent_spawned",
-  "child":  { "sessionId": "&lt;uuid&gt;" },
-  "model":  "claude-sonnet-4-6",
-  "effort": "medium"
-}
-
-// SubagentReturned (event-pinned ref)
-{
-  "type":    "subagent_returned",
-  "child":   { "sessionId": "&lt;uuid&gt;", "eventId": "&lt;uuid&gt;" },
-  "summary": "..."
-}
-
-// Child's first SessionStartedEvent — origin field
-{
-  "type":   "session_started",
-  "origin": {
-    "type":   "subagent_of",
-    "parent": { "sessionId": "&lt;parent-uuid&gt;", "eventId": "&lt;spawn-event-uuid&gt;" }
-  }
-}</code></pre>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="long-runs">Long autonomous runs — retracted as a concern</h2>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Resolved — mid-turn resume is intentionally absent</div>
-  <p>
-    Every realistic failure during a long run is either:
-  </p>
-  <ul>
-    <li><strong>Infrastructure flake</strong> → Omega backs off, doesn't crash.</li>
-    <li><strong>Broken tool / timeout</strong> → surfaces to the agent loop, doesn't crash.</li>
-    <li><strong>Omega bug (OOM, panic)</strong> → benchmark <em>should</em> fail; Omega gets fixed.</li>
-    <li><strong>Host-level event</strong> → rare; restart acceptable.</li>
-  </ul>
-  <p>
-    Mid-turn resume would mask exactly the cases we want to see fail loudly.
-    Tool-completion checkpoints are not deferred features; their
-    <strong>absence is correct.</strong>
-  </p>
-</div>
-
-<!-- ─────────────────────────────────────────────────────────────────────── -->
-<hr class="section-divider" />
-<h1 style="font-size:1.6rem; margin-top:1.5rem; margin-bottom:0.3rem;">Implementation Plan</h1>
-<p style="color:var(--muted); font-size:0.9rem; margin-bottom:2rem;">Phases 0 and 2 complete · Phase 1 partially complete (1.5 and 1.6 pending).</p>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="phase0"><span class="phase-tag done">Phase 0</span> Audits and no-brainer prep <span style="color:#16a34a">✅ DONE</span></h2>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Complete — full findings in <a href="./session-state-audit.md" style="color:inherit"><code>docs/session-state-audit.md</code></a></div>
-  <p>Headlines:</p>
-  <ul>
-    <li>
-      <strong>0.1 / 0.7 State audit (incl. Agent internals)</strong> — every
-      cross-turn field in <code>Agent</code> is already event-sourced or
-      safely ephemeral; the scaffolding for reconstruction
-      (<code>extract_last_model_and_effort</code>, <code>seed_history</code>,
-      <code>ContextStore::read_all</code>) exists. <strong>One gap
-      surfaced:</strong> server-side compaction silently clears in-memory
-      history with no event recording it
-      (<span class="badge badge-audit" title="F11 — Compaction silently resets history / context_hashes in-memory (gap)">F11</span>).
-      Listed as Phase 2.0 below.
-    </li>
-    <li>
-      <strong>0.2 "Session" usage scan</strong> — eight distinct meanings
-      catalogued.
-    </li>
-    <li>
-      <strong>0.3 Parent-context-hash</strong> — already in
-      <code>LlmResponseEnded.context_hash</code>; full chain reconstructible
-      from <code>LlmCallEvent.context_hashes</code>.
-    </li>
-    <li>
-      <strong>0.4 Defensive serde</strong> — catalogued; kept for now, flagged
-      for a deliberate later sweep.
-    </li>
-    <li>
-      <strong>0.5 Session version field</strong> — already done as
-      <code>SessionStartedEvent.omega_commit</code>.
-    </li>
-    <li>
-      <strong>0.6 UUID v7 dependency</strong> — only Phase 0 item still
-      outstanding; small follow-up to fold into the start of Phase 1.
-    </li>
-    <li>
-      <span class="badge badge-audit" title="F13 — SessionStartedEvent.session_id equals the folder name (confirmed)">F13</span>
-      Today's <code>SessionStartedEvent.session_id</code> equals the folder
-      name; Phase 1 replaces this with a UUID.
-    </li>
-    <li>
-      <span class="badge badge-audit" title="F14 — Awaiting user boundary is TurnEnd or TurnInterrupted (confirmed)">F14</span>
-      "Awaiting user" = <code>TurnEnd</code> or <code>TurnInterrupted</code>.
-      Already unambiguous in the event stream.
-    </li>
-    <li>
-      <span class="badge badge-audit" title="F15 — system_blocks may differ on resume (known, accepted)">F15</span>
-      <code>system_blocks</code> may differ on resume if
-      <code>AGENTS.md</code> changes between runs; accepted per the
-      no-cross-version-replay stance.
-    </li>
-  </ul>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="phase1"><span class="phase-tag">Phase 1</span> SessionRef &amp; friends <small style="font-weight:400;font-size:0.9rem">(design-first; careful)</small></h2>
-
-<p>
-  These types have outsized blast radius — every cross-session event will use
-  them forever. Design carefully before any code lands.
-</p>
-
-<details>
-  <summary>Why this phase demands extra care (blast-radius note)</summary>
+<!-- ── Design history (collapsed) ────────────────────────────────────────── -->
+<details id="history">
+  <summary>Design history — rejected approaches, subagent-vs-fork, session/event refs</summary>
   <div class="details-body">
+
+    <h3>Rejected approaches <small style="font-weight:400;color:var(--muted)">(full rationale: <code>git show 9d311ee</code>)</small></h3>
+    <ul>
+      <li><strong>Session = process lifetime</strong> — conflates incarnation with identity.</li>
+      <li><strong>Session = LLM-visible context</strong> — boundaries leave our control; provider-dependent; ignores non-LLM events.</li>
+      <li><strong>Session = persisted-log lifetime</strong> — right answer for wrong reason; subsumed by the process-state framing with a testable criterion.</li>
+      <li><strong>Session = git-style tree of contexts</strong> — useful internal index, not identity; forking is now a deferred feature, not a primitive.</li>
+    </ul>
+
+    <h3>Subagent-vs-fork design choices</h3>
     <p>
-      Per the AGENTS.md Contract Authority rule, the Rust event types are the
-      canonical schema definition. <code>SessionId</code>,
-      <code>EventId</code>, <code>SessionRef</code>, and <code>Origin</code>
-      are the primitives that every subsequent cross-session event will use
-      forever once they land in <code>events.jsonl</code>. A wrong shape
-      discovered after Phase 3 is a painful migration. A wrong shape
-      discovered before any code lands is a conversation.
-    </p>
-    <p>
-      The nine open questions (see <a href="#oq-resolved">Resolved during Phase 1 design</a>)
-      were slated for a dedicated design sub-session; their answers live in
+      Session creation takes a seed (<code>[system_prompt, initial_user_message]</code>).
+      Metadata records <code>parent_session_id</code> and an <code>Origin</code> enum
+      (<code>Root</code> / <code>SubagentOf{...}</code>, extendable to <code>ForkOf</code>).
+      Session IDs are flat UUID v7 — never encode parent relationships in IDs.
+      On-disk: subagent sessions in subfolders of the parent; forks would be top-level.
+      Full type definitions and rationale:
       <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>.
     </p>
-  </div>
-</details>
 
-<ul>
-  <li>
-    <strong>✅ 1.1 Define <code>EventId</code> and <code>SessionId</code>
-    newtypes</strong> (UUID v7 wrappers). Serde shape, Display, parse,
-    equality. Contract-authority territory. <em>Done in commit
-    <code>b8930fc</code>.</em>
-  </li>
-  <li>
-    <strong>✅ 1.2 Define <code>SessionRef { session_id, event_id: Option&lt;EventId&gt; }</code>.</strong>
-    Serde shape, Display, parse. <em>Done in <code>b8930fc</code>.</em>
-  </li>
-  <li>
-    <strong>✅ 1.3 Define <code>Origin</code> enum</strong> (<code>Root</code>,
-    <code>SubagentOf { parent: SessionRef }</code>). Future-extend with
-    <code>ForkOf</code> planned but not added. <em>Done in <code>b8930fc</code>.</em>
-  </li>
-  <li>
-    <strong>🔄 1.4 Wire <code>EventId</code> into every existing event</strong>
-    at write time. Read path: tolerate absent IDs in old logs only if no
-    cross-version replay has been promised — which we haven't. Default: every
-    event in a current-version session has an ID. <em>Envelope landed in
-    <code>b8930fc</code>; <code>SessionStartedEvent.session_id</code>
-    migrated to <code>SessionId</code> in <code>206327e</code>. <strong>Still
-    pending:</strong> WS protocol — see 1.6.</em>
-  </li>
-  <li>
-    <strong>⏳ 1.5 UI surfacing scaffold.</strong> Render
-    <code>SessionRef</code>-bearing fields in the feed with: literal IDs,
-    "more" button for full JSON, link to referenced item (placeholder where
-    target doesn't yet exist). <em>Executable after Phase 2; required before
-    Phase 3 implementation.</em>
-  </li>
-  <li>
-    <strong>⏳ 1.6 Migrate WS protocol from <code>session_dir: String</code>
-    to <code>session_id: SessionId</code>.</strong> Today's
-    <code>WsMessage::ResumeSession</code>, <code>::AppendEvent</code>, etc.
-    identify sessions by folder name (a hint, per the framing) instead of by
-    canonical ID. With Phase 1's decoupling of folder name from
-    <code>SessionId</code>, the WS protocol now has the <em>weaker</em>
-    identifier. Migration:
-    <ul>
-      <li>Replace <code>session_dir: String</code> with
-        <code>session_id: SessionId</code> in every WS message variant.</li>
-      <li>Establish a canonical <code>SessionId → folder path</code> lookup
-        at the WS boundary (registry or scan — see open question; scan is
-        fine for now).</li>
-      <li>Update <code>HttpHandler</code> / router endpoints that take
-        session paths to also accept (or prefer) <code>SessionId</code>.</li>
-      <li>Update the leptos frontend to send <code>SessionId</code> rather
-        than directory strings.</li>
-    </ul>
-    <em>Executable after Phase 2; required before Phase 3 implementation,
-    because <code>SubagentSpawned</code>'s <code>SessionRef.session_id</code>
-    must be navigable end-to-end from the UI.</em>
-  </li>
-</ul>
-
-<div class="callout note">
-  <div class="callout-title">💡 Why 1.5 and 1.6 run <em>after</em> Phase 2, not before</div>
-  <p>
-    Phase 2 (strict resume + gate test) is a backend event-fold concern and
-    doesn't depend on UI surfacing or WS-protocol shape. Phase 3 (subagents)
-    <em>does</em> depend on both, because cross-session navigation must be
-    typed and surfacable. Running 1.5 and 1.6 between Phase 2 and Phase 3
-    avoids interleaving frontend changes with the strict-resume implementation.
-  </p>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="phase2"><span class="phase-tag">Phase 2</span> Strict resume + gate test <small style="font-weight:400;font-size:0.9rem">(closes the framing's promise)</small></h2>
-
-<ul>
-  <li>
-    <strong>2.0 Close
-    <span class="badge badge-audit" title="F11 — Compaction silently resets history / context_hashes in-memory (gap)">F11</span>
-    compaction gap.</strong>
-    Add an event (e.g. <code>ContextCompacted</code>) — or annotate
-    <code>LlmResponseEnded</code> — that records when a server-side
-    <code>compact_20260112</code> edit fired and the pre-compaction
-    <code>context.jsonl</code> records are now stale. Without this, the
-    resume path would naïvely replay the full pre-compaction context.
-    <strong>Prerequisite for 2.2.</strong>
-  </li>
-  <li>
-    <strong>2.1 Pin down "awaiting user" boundary in code.</strong> Per
-    <span class="badge badge-audit" title="F14 — Awaiting user boundary is TurnEnd or TurnInterrupted (confirmed)">F14</span>
-    this is <code>TurnEnd</code> or <code>TurnInterrupted</code>. Confirm and
-    document the exact read-side check.
-  </li>
-  <li>
-    <strong>2.2 Resume entry point.</strong> Given a session folder, fold
-    events into a fresh Omega instance state. Discard events after the last
-    "awaiting user" mark; honour compaction events from 2.0 by starting
-    history fresh at that point. Must handle the
-    <code>TurnInterrupted{Aborted}</code> case (dangling <code>ToolUse</code>
-    blocks — existing <code>send_message</code> Step 1 repair logic must fire
-    or history must be trimmed; see
-    <span class="badge badge-audit" title="F14 — Awaiting user boundary is TurnEnd or TurnInterrupted (confirmed)">F14</span>
-    note).
-  </li>
-  <li>
-    <strong>2.3 Round-trip gate test.</strong> Two-process test: run an Omega
-    up to some point, kill it, restart from the events, assert state
-    equivalence on non-ephemeral pieces. Add to the gate.
-  </li>
-  <li>
-    <strong>2.4 Close any remaining gaps from the audit.</strong>
-    <span class="badge badge-audit" title="F11 — Compaction silently resets history / context_hashes in-memory (gap)">F11</span>
-    is the known one; flag and close anything else surfaced by writing 2.3.
-  </li>
-</ul>
-
-<div class="callout rec">
-  <div class="callout-title">✅ Phase 2.1–2.4 implemented</div>
-  <p>
-    Strict resume is implemented in
-    <code>crates/omega-agent/src/session_resume.rs</code>.
-    Key design decisions made during implementation:
-  </p>
-
-  <h4>Awaiting-user boundary (2.1)</h4>
-  <p>
-    The boundary is defined by the predicate
-    <code>is_resumable_boundary(event)</code> which returns <code>true</code>
-    for exactly two variants: <code>TurnEnd</code> and
-    <code>TurnInterrupted</code>. This is the single authoritative definition;
-    all resume logic goes through it.
-  </p>
-  <ul>
-    <li><code>TurnEnd</code> — model replied cleanly (<code>stop_reason = "end_turn"</code>). Definitive safe resume point.</li>
-    <li><code>TurnInterrupted</code> — turn ended via abort or error. Also a safe resume point; the partial turn is silently discarded, and <code>send_message</code> Step 1 (dangling tool-use repair) handles any inconsistent <code>context.jsonl</code> tail.</li>
-  </ul>
-
-  <h4>Context-hash reconstruction algorithm (2.2)</h4>
-  <p>
-    The valid set of context records at the boundary is determined purely from
-    <code>events.jsonl</code> — no scanning of <code>context.jsonl</code>
-    order is needed:
-  </p>
-  <ol>
-    <li>Scan events up to (and including) the last boundary.</li>
-    <li>Track <code>last_call_hashes</code> (from each <code>LlmCallEvent.context_hashes</code>).</li>
-    <li>On <code>ContextCompacted</code>: clear <code>last_call_hashes</code>.
-        This is the compaction-gap fix (F11): the very next
-        <code>LlmResponseEnded.context_hash</code> becomes the sole post-compaction baseline record.</li>
-    <li>Result: <code>last_call_hashes + [last_response_hash]</code>.</li>
-  </ol>
-  <p>
-    This algorithm handles multiple compaction events, multiple tool-use
-    rounds, and process crashes (the crashed turn's user message is excluded
-    because no <code>LlmCallEvent</code> for it exists in
-    <code>events[..=boundary]</code>).
-  </p>
-  <p>
-    <strong>Known limitation:</strong> if <code>TurnInterrupted</code> fires
-    after tool-results are written to <code>context.jsonl</code> but before
-    the next <code>LlmCallEvent</code>, the tool-result context record is not
-    included in the reconstructed history. The dangling-tool-use repair in
-    <code>send_message</code> Step 1 synthesises error results instead.
-    This is acceptable per the "silent abandon" policy.
-  </p>
-
-  <h4>Schema-evolution-loud (strict event reader)</h4>
-  <p>
-    <code>strict_resume</code> reads <code>events.jsonl</code> via
-    <code>read_events_strict</code>, which fails loudly on any non-blank line
-    that does not deserialise as a <code>LoggedEvent</code>. Blank lines are
-    silently skipped (formatting artefacts). A <code>NotFound</code> error on
-    the events file returns an empty event list (session never started).
-  </p>
-
-  <h4>Ephemeral vs. durable state (round-trip gate)</h4>
-  <p>
-    The round-trip gate test in
-    <code>crates/omega-agent/tests/internal.rs :: round_trip_gate</code>
-    verifies the following classification:
-  </p>
-  <table style="font-size:0.88em;border-collapse:collapse;width:100%">
-    <thead><tr><th style="text-align:left;border-bottom:1px solid #ccc">Field</th><th style="text-align:left;border-bottom:1px solid #ccc">Class</th><th style="text-align:left;border-bottom:1px solid #ccc">Reason</th></tr></thead>
-    <tbody>
-      <tr><td><code>active_model</code></td><td>Durable</td><td>Last <code>ModelChanged</code>, else first <code>SessionStarted</code></td></tr>
-      <tr><td><code>active_effort</code></td><td>Durable</td><td>Last <code>EffortChanged</code>, else first <code>SessionStarted</code></td></tr>
-      <tr><td><code>history</code></td><td>Durable</td><td>Reconstructed via hash lookup in <code>context.jsonl</code></td></tr>
-      <tr><td><code>context_hashes</code></td><td>Durable</td><td>Parallel to <code>history</code>; same source</td></tr>
-      <tr><td><code>provider</code></td><td>Ephemeral</td><td>Process-bound; provided by caller</td></tr>
-      <tr><td><code>context_store</code></td><td>Ephemeral</td><td>Reconstructed from path</td></tr>
-      <tr><td><code>event_store</code></td><td>Ephemeral</td><td>Reconstructed from path</td></tr>
-      <tr><td><code>controls</code></td><td>Ephemeral</td><td>Intra-turn handles; always start fresh</td></tr>
-      <tr><td><code>config</code></td><td>Ephemeral</td><td>Provided by caller</td></tr>
-      <tr><td><code>system_blocks</code></td><td>Ephemeral</td><td>Rebuilt from <code>AGENTS.md</code> files on disk</td></tr>
-      <tr><td><code>system_prompt_paths</code></td><td>Ephemeral</td><td>Derived from <code>system_blocks</code></td></tr>
-    </tbody>
-  </table>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="phase4"><span class="phase-tag">Phase 4</span> Deferred <small style="font-weight:400;font-size:0.9rem">(may never happen)</small></h2>
-
-<details>
-  <summary>Deferred features — not in scope for Phases 1–3</summary>
-  <div class="details-body">
-    <ul>
-      <li><strong>Forks</strong> — independent agents seeded with a prefix of another session.</li>
-      <li><strong>Snapshots</strong> — folded-state checkpoints to skip early replay.</li>
-      <li><strong>Tool-completion checkpoints</strong> — within-turn resume granularity.</li>
-      <li><strong>Multi-version migration.</strong></li>
-    </ul>
+    <h3>Session and event references</h3>
     <p>
-      The Phase 1 design choices keep all of these reachable without structural
-      change.
+      Both sessions and events have globally unique UUID v7 IDs.
+      <code>SessionRef { session_id, event_id: Option&lt;EventId&gt; }</code> —
+      <code>None</code> means "session as a whole"; <code>Some</code> pins a moment.
+      References are by ID; folder layout is a resolution hint only.
+      Every cross-session event must render visibly in the feed with literal IDs and a
+      "more" button from day one — transparency floor, not polish.
+      Full shape, serde conventions, and rationale:
+      <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>.
+      Implemented in commit <code>b8930fc</code>.
     </p>
+
+    <h3>Long autonomous runs — retracted concern</h3>
+    <p>
+      Mid-turn resume is intentionally absent. Every realistic failure mid-run is either
+      an infrastructure flake (Omega backs off), a broken tool (surfaces to the agent
+      loop), or an Omega bug (benchmark should fail loudly). Tool-completion checkpoints
+      would mask exactly the cases we want to see fail. Their <strong>absence is correct</strong>.
+    </p>
+
   </div>
 </details>
 
-<!-- ─────────────────────────────────────────────────────────────────────── -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
-<h2 id="open-questions" style="margin-top:1.5rem;">Open questions — Endeavor 1 scope</h2>
+<h2 id="completed">Completed phases</h2>
 
-<!-- ── Follow-up items ──────────────────────────────────────────────────── -->
-<h3 id="oq-followup">Follow-up items (Endeavor 1)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Phase</th>
+      <th>Description</th>
+      <th>Status</th>
+      <th>Key notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="phase-tag done">Phase 0</span></td>
+      <td>Audits &amp; prep</td>
+      <td>✅ Done</td>
+      <td>
+        Full findings in <a href="./session-state-audit.md"><code>docs/session-state-audit.md</code></a>.
+        Eight meanings of "session" catalogued.
+        <span class="badge badge-audit" title="F11 — Compaction silently resets history (gap)">F11</span>
+        (compaction gap) identified; closed in Phase 2.
+        UUID v7 planned (Phase 0.6); folded into Phase 1.
+      </td>
+    </tr>
+    <tr>
+      <td><span class="phase-tag done">Phase 1.1–1.4</span></td>
+      <td>SessionRef types + EventId wiring</td>
+      <td>✅ Done (<code>b8930fc</code>, <code>206327e</code>)</td>
+      <td>
+        <code>SessionId</code>, <code>EventId</code>, <code>SessionRef</code>,
+        <code>Origin</code>, <code>LoggedEvent</code> envelope defined in
+        <code>omega-types</code>. <code>SessionStartedEvent.session_id</code>
+        migrated to UUID v7. WS protocol still uses folder strings (Phase 1.6 pending).
+      </td>
+    </tr>
+    <tr>
+      <td><span class="phase-tag done">Phase 2</span></td>
+      <td>Strict resume + gate test</td>
+      <td>✅ Done</td>
+      <td>
+        Implemented in <code>crates/omega-agent/src/session_resume.rs</code>.
+        Awaiting-user boundary = <code>TurnEnd</code> or <code>TurnInterrupted</code>.
+        <span class="badge badge-audit" title="F11 — Compaction gap">F11</span>
+        closed via <code>ContextCompacted</code> event and context-hash reconstruction
+        algorithm. Round-trip gate test in
+        <code>crates/omega-agent/tests/internal.rs::round_trip_gate</code>.
+      </td>
+    </tr>
+  </tbody>
+</table>
 
-<div class="callout">
+<p style="color:var(--muted);font-size:0.88rem">
+  Phase 4 (forks, snapshots, tool-completion checkpoints, multi-version migration) is
+  deferred indefinitely. The Phase 1 design keeps all of these reachable without
+  structural change.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="phase15"><span class="phase-tag">Phase 1.5</span> UI surfacing scaffold <span style="color:var(--warn-border)">⏳ Pending</span></h2>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Pending — required before Phase 3</div>
+  <p>
+    Render <code>SessionRef</code>-bearing fields in the feed with: literal IDs,
+    a "more" button for full JSON, and a link to the referenced item (placeholder
+    where the target doesn't yet exist in the UI).
+  </p>
+  <p>
+    <em>Executable now (Phase 2 is done); required before Phase 3 (subagents)
+    implementation because cross-session events must be surfaceable before they exist
+    at scale.</em>
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="phase16"><span class="phase-tag">Phase 1.6</span> WS protocol → <code>SessionId</code> migration <span style="color:var(--warn-border)">⏳ Pending</span></h2>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Pending — required before Phase 3</div>
+  <p>
+    Today's <code>WsMessage::ResumeSession</code>, <code>::AppendEvent</code>, etc.
+    identify sessions by folder name (a resolution hint, per the framing) instead of
+    by canonical <code>SessionId</code>. With Phase 1's decoupling of folder name from
+    <code>SessionId</code>, the WS protocol now carries the weaker identifier.
+  </p>
+</div>
+
+<p>Migration steps:</p>
+<ul>
+  <li>Replace <code>session_dir: String</code> with <code>session_id: SessionId</code>
+      in every WS message variant that identifies a session.</li>
+  <li>Establish a canonical <code>SessionId → folder path</code> lookup at the WS
+      boundary. Scan-on-demand is the simplest start; an in-memory registry replaces
+      it if scan latency becomes noticeable (see open question below).</li>
+  <li>Update <code>HttpHandler</code> / router endpoints that accept session paths to
+      accept (or prefer) <code>SessionId</code>.</li>
+  <li>Update the leptos frontend to send <code>SessionId</code> rather than directory
+      strings.</li>
+</ul>
+<p>
+  <em>Required before Phase 3 because <code>SubagentSpawned.child.session_id</code>
+  must be navigable end-to-end from the UI.</em>
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="open-questions">Open questions — Endeavor 1 scope</h2>
+
+<div class="callout" id="oq-allowlist">
   <div class="callout-title">💡 Ephemeral-allowlist as typed exclusion — planned follow-up</div>
   <p>
     The round-trip gate test in
-    <code>crates/omega-agent/tests/internal.rs :: round_trip_gate</code>
-    maintains an informal table of ephemeral vs. durable fields (see Phase 2
-    above). A planned follow-up is to formalise this distinction as typed
-    structs in the codebase — separating
+    <code>crates/omega-agent/tests/internal.rs::round_trip_gate</code>
+    maintains an informal table of ephemeral vs. durable fields.
+    A planned follow-up is to formalise this as typed structs — separating
     <code>DurableAgentState { active_model, active_effort, history, context_hashes }</code>
-    from the ephemeral process-bound pieces — so that the gate test and the
-    resume entry point reference the same authoritative type rather than a
-    prose list. Not a blocker for any current work; a code-quality follow-up.
+    from ephemeral process-bound pieces — so the gate test and the resume entry point
+    reference the same authoritative type rather than a prose list.
+    Not a blocker for any current work; a code-quality follow-up.
   </p>
 </div>
 
-<div class="callout rec">
-  <div class="callout-title">✓ Crash-recovery UX policy — resolved: silent abandon</div>
-  <p>
-    On resume after a crash mid-turn, the partial turn is silently discarded
-    and state is restored to "just after last user message." No prompt is
-    shown. The <code>TurnInterrupted</code> event in the stream is sufficient
-    forensic signal.
-  </p>
-</div>
-
-<div class="callout warn">
+<div class="callout warn" id="oq-registry">
   <div class="callout-title">⚠ Registry vs. scan for <code>SessionId → folder</code> resolution — needed for 1.6</div>
   <p>
-    Phase 1.6 (WS protocol migration) needs a canonical lookup from
-    <code>SessionId</code> to folder path. Scan-on-demand is the simplest
-    start; a small in-memory registry can replace it if scan latency becomes
-    noticeable. Performance-driven; deferrable to 1.6 execution time.
+    Phase 1.6 needs a canonical lookup from <code>SessionId</code> to folder path.
+    Scan-on-demand is the simplest start; a small in-memory registry can replace it
+    if scan latency becomes noticeable. Performance-driven; deferrable to 1.6
+    execution time.
   </p>
 </div>
 
-<!-- ── Resolved during Phase 1 design ───────────────────────────────────── -->
-<h3 id="oq-resolved">Resolved during Phase 1 design</h3>
-
-<div class="callout rec">
-  <div class="callout-title">✓ All 9 SessionRef-shape questions — resolved</div>
+<div class="callout rec" id="oq-resolved">
+  <div class="callout-title">✓ All 9 SessionRef-shape questions — resolved in Phase 1 design</div>
   <p>
-    The nine questions originally listed as "Before Phase 1" were resolved in
-    the dedicated SessionRef design sub-session and main-session review. Full
-    rationale, type definitions, and sample JSON are in
-    <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>.
-    Summary:
-  </p>
-  <ol style="margin-top:0.5rem">
-    <li><strong>Q1 — Newtypes, not aliases.</strong>
-      <code>pub struct SessionId(Uuid)</code> and
-      <code>pub struct EventId(Uuid)</code> with
-      <code>#[serde(transparent)]</code>.</li>
-    <li><strong>Q2 — One <code>SessionRef</code> type</strong> carrying
-      <code>event_id: Option&lt;EventId&gt;</code>, not two separate types.</li>
-    <li><strong>Q3 — Struct serde shape</strong> for the wire format in
-      <code>events.jsonl</code>:
-      <code>{"sessionId": "...", "eventId": "..."}</code>.</li>
-    <li><strong>Q4 — <code>Display</code> / <code>FromStr</code> format</strong>
-      uses <code>&lt;session_id&gt;#&lt;event_id&gt;</code> for human-facing
-      strings (tracing output, error messages, UI chips). Round-trips with
-      <code>FromStr</code>.</li>
-    <li><strong>Q5 — Derives:</strong> <code>Hash + Eq + PartialEq</code>,
-      no <code>Ord</code>/<code>PartialOrd</code>.</li>
-    <li><strong>Q6 — Crate home:</strong> <code>omega-types</code>.</li>
-    <li><strong>Q7 — <code>EventId</code> on the envelope</strong>
-      (<code>LoggedEvent { event_id, event: OmegaEvent }</code>), not on each
-      variant. Forwarded to the WS projection so UI display is one conditional
-      render away.</li>
-    <li><strong>Q8 — PK/FK rule:</strong> <code>SessionId</code> at call sites
-      that declare or key by identity (HashMap keys, folder names, an event's
-      own session_id); <code>SessionRef</code> at call sites that point
-      cross-session (event payloads referencing another session).</li>
-    <li><strong>Q9 — <code>Origin</code> enum:</strong> <code>Root</code> and
-      <code>SubagentOf { parent: SessionRef }</code>. Parent ref carries the
-      spawn event in the parent (<code>event_id: Some(_)</code>), required by
-      construction. <code>#[non_exhaustive]</code> so <code>ForkOf</code> can
-      be added later without breaking matches.</li>
-  </ol>
-</div>
-
-<div class="callout rec">
-  <div class="callout-title">✓ <code>Origin</code> storage location — resolved</div>
-  <p>
-    Field on the subagent's first <code>SessionStartedEvent</code> (single
-    source of truth in <code>events.jsonl</code>; matches event-sourcing
-    framing; UI rendering free via existing event display path). Old
-    <code>SessionStartedEvent</code> records deserialise with
-    <code>origin: Origin::Root</code> via a documented serde default — the
-    deliberate use case, encoding the real semantic that pre-Phase-1 sessions
-    are all roots by construction.
-  </p>
-  <p>
-    <code>SessionMetadata</code> (<code>session.jsonc</code>) is on its way
-    out; its remaining fields (<code>name</code>, <code>resumed_from</code>)
-    are candidates for eventual migration into events as a separate cleanup.
+    Full rationale, type definitions, and sample JSON in
+    <a href="./sessionref-design-proposal.html"><code>docs/sessionref-design-proposal.html</code></a>
+    (frozen reference). Summary: newtypes, one <code>SessionRef</code> type,
+    struct serde with camelCase, <code>&lt;sid&gt;#&lt;eid&gt;</code> display format,
+    <code>Hash+Eq</code> only (no <code>Ord</code>), <code>omega-types</code> crate,
+    envelope placement, PK/FK usage rule, <code>Origin</code> with
+    <code>#[non_exhaustive]</code>.
   </p>
 </div>
 
 <div class="callout rec">
-  <div class="callout-title">✓ <code>SessionId</code> vs. folder name — decoupled (was audit
-    <span class="badge badge-audit" title="F2 — SessionStartedEvent.session_id was a string folder name">F2</span>)</div>
+  <div class="callout-title">✓ Crash-recovery UX — resolved: silent abandon</div>
   <p>
-    The folder name (timestamp-hex, on-disk only) and the canonical
-    <code>SessionId</code> (UUID v7, in events) are now independent values.
-    The agent generates a fresh <code>SessionId(Uuid::now_v7())</code> at
-    session start rather than parsing the folder basename. The folder name
-    serves filesystem hygiene; the <code>SessionId</code> is identity.
-  </p>
-  <p>
-    Consequence: a single canonical <code>SessionId → folder path</code>
-    mapping is required at the API boundary (the WS handler today does an
-    implicit mapping by accepting <code>session_dir</code> directly —
-    Phase 1.6 closes this). For Phase 2 internals nothing changes;
-    <code>events.jsonl</code> already uses the typed ID.
+    On resume after a crash mid-turn, the partial turn is silently discarded and state
+    is restored to "just after last user message." No prompt is shown. The
+    <code>TurnInterrupted</code> event in the stream is sufficient forensic signal.
   </p>
 </div>
 
@@ -1214,42 +561,35 @@ tr:nth-child(even) td { background: #fafbfc; }
 </main>
 
 <script>
-// ── Syntax highlighting (graceful fallback) ──────────────────────────────
 (function () {
   if (window.__hljs_failed || typeof hljs === 'undefined') return;
   try {
     document.querySelectorAll('pre code[class*="language-"]').forEach(function (block) {
       hljs.highlightElement(block);
     });
-  } catch (e) { /* swallow — plain code blocks still look fine */ }
+  } catch (e) {}
 })();
 
-// ── Sticky TOC active-link tracking ─────────────────────────────────────
 (function () {
   var tocLinks = document.querySelectorAll('#toc a[href^="#"]');
   if (!tocLinks.length) return;
-
   var headings = [];
   tocLinks.forEach(function (a) {
     var id = a.getAttribute('href').slice(1);
     var el = document.getElementById(id);
     if (el) headings.push({ el: el, link: a });
   });
-
-  function onScroll() {
+  function update() {
     var scrollY = window.scrollY + 120;
     var active = headings[0];
     for (var i = 0; i < headings.length; i++) {
-      if (headings[i].el.getBoundingClientRect().top + window.scrollY <= scrollY) {
-        active = headings[i];
-      }
+      if (headings[i].el.getBoundingClientRect().top + window.scrollY <= scrollY) active = headings[i];
     }
     tocLinks.forEach(function (a) { a.classList.remove('active'); });
     if (active) active.link.classList.add('active');
   }
-
-  window.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
+  window.addEventListener('scroll', update, { passive: true });
+  update();
 })();
 </script>
 
