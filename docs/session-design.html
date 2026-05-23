@@ -1317,11 +1317,10 @@ tr:nth-child(even) td { background: #fafbfc; }
   </p>
 </div>
 
-<div class="callout">
-  <div class="callout-title">💡 <code>[abe7e7]</code> Feature branch as well, or feature flags alone?</div>
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[abe7e7]</code> Feature flags alone, no feature branch</div>
   <p>
-    Flags are already decided (<code>[b0bc06]</code>). The remaining question:
-    do we <em>also</em> want a feature branch on top? They are alternative
+    Flags (<code>[b0bc06]</code>) and a feature branch are alternative
     isolation strategies, isolating different things:
   </p>
   <table style="width:auto;border-collapse:collapse;margin:0.5rem 0">
@@ -1345,18 +1344,14 @@ tr:nth-child(even) td { background: #fafbfc; }
       </tr>
     </tbody>
   </table>
-  <p>
-    The branch would only earn its keep if we expect <em>knowingly broken
-    intermediate commits</em> that flags can't hide — e.g., refactoring the
-    event-store layer where partial states are unsafe to ship even with the
-    flag off. Our pattern so far is sub-session-sized atomic commits that each
-    pass the gate, which doesn't produce that kind of intermediate state.
-  </p>
-  <p>
-    <strong>Current lean: flags alone, no branch.</strong> The proposal
-    sub-session may surface reasons to reconsider; switching to a branch
-    later is cheaper than starting on one and merging back.
-  </p>
+  <p><strong>Reasoning:</strong></p>
+  <ul>
+    <li>Our sub-session-driven workflow produces atomic, gate-passing commits. The kind of knowingly-broken intermediate state that a branch protects against doesn't occur.</li>
+    <li>Foundational types being changed (<code>SessionId</code>, strict resume, event schema) have to land on <code>develop</code> anyway; isolating them on a branch would just delay their integration.</li>
+    <li>The pre-commit gate is our main correctness guardrail. A long-lived branch loses that protection during its life — worse than the small noise an experimental commit on <code>develop</code> adds.</li>
+    <li>Branch drift / merge cost grows weekly; flags don't have that cost.</li>
+    <li>If we later discover a need for a branch (e.g., a refactor that flags can't hide), switching to one is cheaper than starting on one and merging back.</li>
+  </ul>
 </div>
 
 <div class="callout">
@@ -1409,7 +1404,6 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li>Recommends a language for <code>[368041]</code> with tradeoffs.</li>
     <li>Proposes an integration shape for <code>[fa3e44]</code> (tool vs. replacement).</li>
     <li>Sketches REPL persistence per <code>[c88a22]</code>.</li>
-    <li>Resolves the feature-branch question <code>[abe7e7]</code>.</li>
     <li>Specifies the feature-flag config mechanism per <code>[b0bc06]</code> (env vars at minimum; whether to also expose via config file).</li>
     <li>Defers the rest as follow-up but documents the lean.</li>
   </ol>
