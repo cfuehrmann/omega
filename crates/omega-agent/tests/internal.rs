@@ -943,3 +943,180 @@ async fn system_prompt_guard_blocks_read_of_instruction_file_end_to_end() {
         tool_result.output
     );
 }
+
+// ---------------------------------------------------------------------------
+// 6. Round-trip gate — Phase 2.4 strict resume
+//
+// Creates a multi-turn session including a ContextCompacted event,
+// ModelChanged, and EffortChanged.  Snapshots durable state, drops the
+// agent (simulating a process restart), strict-resumes from the same
+// session directory, and asserts that all durable fields are identical.
+//
+// Ephemeral allowlist (fields allowed to differ across a round trip):
+//
+// | Field                | Reason it is ephemeral                             |
+// |----------------------|----------------------------------------------------|
+// | provider             | Process-bound; reconstructed from caller input     |
+// | context_store        | Reconstructed from session_dir/context.jsonl path  |
+// | event_store          | Reconstructed from session_dir/events.jsonl path   |
+// | controls             | Intra-turn handles; always start fresh at boundary |
+// | config               | Reconstructed from caller input (cwd, headless)    |
+// | system_blocks        | Rebuilt from AGENTS.md files on disk               |
+// | system_prompt_paths  | Derived from system_blocks                         |
+//
+// Durable fields that MUST be equal after a round trip:
+//   active_model, active_effort, history, context_hashes.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn round_trip_gate() {
+    use omega_agent::strict_resume;
+    use omega_types::events::{LlmResponseEndedEvent, LlmResponseUsage, UsageIteration};
+    use omega_types::{OmegaEvent, StreamSignal};
+
+    // === PART 1: Build a session with several turns ========================
+
+    let (mut agent, provider, tmp) = make_test_agent();
+
+    // init() writes ServerStarted + SessionStarted events; required for
+    // fold_model_and_effort in strict_resume to find the initial model.
+    agent.init().await.expect("init");
+
+    // Turn 1: simple
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "reply 1".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 10, 1)),
+    ]);
+    let _ = collect_stream(agent.send_message("q1".to_owned(), CancellationToken::new())).await;
+
+    // Turn 2: simple
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "reply 2".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 20, 2)),
+    ]);
+    let _ = collect_stream(agent.send_message("q2".to_owned(), CancellationToken::new())).await;
+
+    assert_eq!(
+        agent.history().len(),
+        4,
+        "turns 1+2: 2 user + 2 assistant records"
+    );
+
+    // Turn 3: server-side compaction — history collapses to 1 assistant record.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "compacted summary".to_owned(),
+        })),
+        Ok(AgentItem::Event(Box::new(OmegaEvent::LlmResponseEnded(
+            LlmResponseEndedEvent {
+                time: "2024-06-01T00:00:00.000Z".to_owned(),
+                stop_reason: "end_turn".to_owned(),
+                cleared_tool_uses: None,
+                cleared_input_tokens: None,
+                usage: LlmResponseUsage {
+                    input_tokens: 80_500,
+                    output_tokens: 250,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    service_tier: None,
+                    iterations: Some(vec![
+                        UsageIteration {
+                            iteration_type: "compaction".to_owned(),
+                            input_tokens: 80_000,
+                            output_tokens: 300,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                        UsageIteration {
+                            iteration_type: "message".to_owned(),
+                            input_tokens: 500,
+                            output_tokens: 50,
+                            cache_creation_input_tokens: None,
+                            cache_read_input_tokens: None,
+                            service_tier: None,
+                        },
+                    ]),
+                },
+                context_hash: String::new(),
+                response_summary: None,
+            },
+        )))),
+    ]);
+    let _ =
+        collect_stream(agent.send_message("compress".to_owned(), CancellationToken::new())).await;
+    assert_eq!(
+        agent.history().len(),
+        1,
+        "after compaction: 1 assistant record"
+    );
+
+    // Change model + effort (writes ModelChanged + EffortChanged to events.jsonl).
+    agent.set_model("claude-opus-4-7".to_owned()).await;
+    agent.set_effort("high".to_owned()).await;
+
+    // Turn 4: simple turn after model/effort changes.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "reply 4".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 30, 4)),
+    ]);
+    let _ = collect_stream(agent.send_message("q4".to_owned(), CancellationToken::new())).await;
+
+    // === PART 2: Snapshot durable state ===================================
+
+    let snap_model = agent.active_model().to_owned();
+    let snap_effort = agent.active_effort().to_owned();
+    let snap_history = agent.history().to_vec();
+    let snap_hashes = agent.context_hashes().to_vec();
+    let session_dir = tmp.path().to_path_buf();
+    let cwd = tmp.path().to_path_buf();
+
+    // Sanity-check the snapshot is what we expect.
+    assert_eq!(snap_model, "claude-opus-4-7", "snapshot model");
+    assert_eq!(snap_effort, "high", "snapshot effort");
+    // After compaction (collapses to 1 assistant) + turn 4 (user + assistant) = 3 records.
+    assert_eq!(snap_history.len(), 3, "snapshot history len");
+    assert_eq!(snap_hashes.len(), 3, "snapshot hashes len");
+
+    // === PART 3: Simulate process restart =================================
+    drop(agent);
+    drop(provider);
+
+    // === PART 4: Strict resume ============================================
+    let new_provider = std::sync::Arc::new(common::MockProvider::new());
+    let resumed = strict_resume(session_dir, cwd, new_provider, false)
+        .await
+        .expect("strict_resume must succeed");
+
+    // === PART 5: Assert all durable fields match the snapshot =============
+    assert_eq!(
+        resumed.active_model(),
+        snap_model,
+        "active_model must round-trip"
+    );
+    assert_eq!(
+        resumed.active_effort(),
+        snap_effort,
+        "active_effort must round-trip"
+    );
+    assert_eq!(
+        resumed.history(),
+        snap_history.as_slice(),
+        "history must round-trip"
+    );
+    assert_eq!(
+        resumed.context_hashes(),
+        snap_hashes.as_slice(),
+        "context_hashes must round-trip"
+    );
+}

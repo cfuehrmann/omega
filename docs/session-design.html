@@ -988,6 +988,89 @@ tr:nth-child(even) td { background: #fafbfc; }
   </li>
 </ul>
 
+<div class="callout rec">
+  <div class="callout-title">✅ Phase 2.1–2.4 implemented</div>
+  <p>
+    Strict resume is implemented in
+    <code>crates/omega-agent/src/session_resume.rs</code>.
+    Key design decisions made during implementation:
+  </p>
+
+  <h4>Awaiting-user boundary (2.1)</h4>
+  <p>
+    The boundary is defined by the predicate
+    <code>is_resumable_boundary(event)</code> which returns <code>true</code>
+    for exactly two variants: <code>TurnEnd</code> and
+    <code>TurnInterrupted</code>. This is the single authoritative definition;
+    all resume logic goes through it.
+  </p>
+  <ul>
+    <li><code>TurnEnd</code> — model replied cleanly (<code>stop_reason = "end_turn"</code>). Definitive safe resume point.</li>
+    <li><code>TurnInterrupted</code> — turn ended via abort or error. Also a safe resume point; the partial turn is silently discarded, and <code>send_message</code> Step 1 (dangling tool-use repair) handles any inconsistent <code>context.jsonl</code> tail.</li>
+  </ul>
+
+  <h4>Context-hash reconstruction algorithm (2.2)</h4>
+  <p>
+    The valid set of context records at the boundary is determined purely from
+    <code>events.jsonl</code> — no scanning of <code>context.jsonl</code>
+    order is needed:
+  </p>
+  <ol>
+    <li>Scan events up to (and including) the last boundary.</li>
+    <li>Track <code>last_call_hashes</code> (from each <code>LlmCallEvent.context_hashes</code>).</li>
+    <li>On <code>ContextCompacted</code>: clear <code>last_call_hashes</code>.
+        This is the compaction-gap fix (F11): the very next
+        <code>LlmResponseEnded.context_hash</code> becomes the sole post-compaction baseline record.</li>
+    <li>Result: <code>last_call_hashes + [last_response_hash]</code>.</li>
+  </ol>
+  <p>
+    This algorithm handles multiple compaction events, multiple tool-use
+    rounds, and process crashes (the crashed turn's user message is excluded
+    because no <code>LlmCallEvent</code> for it exists in
+    <code>events[..=boundary]</code>).
+  </p>
+  <p>
+    <strong>Known limitation:</strong> if <code>TurnInterrupted</code> fires
+    after tool-results are written to <code>context.jsonl</code> but before
+    the next <code>LlmCallEvent</code>, the tool-result context record is not
+    included in the reconstructed history. The dangling-tool-use repair in
+    <code>send_message</code> Step 1 synthesises error results instead.
+    This is acceptable per the "silent abandon" policy.
+  </p>
+
+  <h4>Schema-evolution-loud (strict event reader)</h4>
+  <p>
+    <code>strict_resume</code> reads <code>events.jsonl</code> via
+    <code>read_events_strict</code>, which fails loudly on any non-blank line
+    that does not deserialise as a <code>LoggedEvent</code>. Blank lines are
+    silently skipped (formatting artefacts). A <code>NotFound</code> error on
+    the events file returns an empty event list (session never started).
+  </p>
+
+  <h4>Ephemeral vs. durable state (round-trip gate)</h4>
+  <p>
+    The round-trip gate test in
+    <code>crates/omega-agent/tests/internal.rs :: round_trip_gate</code>
+    verifies the following classification:
+  </p>
+  <table style="font-size:0.88em;border-collapse:collapse;width:100%">
+    <thead><tr><th style="text-align:left;border-bottom:1px solid #ccc">Field</th><th style="text-align:left;border-bottom:1px solid #ccc">Class</th><th style="text-align:left;border-bottom:1px solid #ccc">Reason</th></tr></thead>
+    <tbody>
+      <tr><td><code>active_model</code></td><td>Durable</td><td>Last <code>ModelChanged</code>, else first <code>SessionStarted</code></td></tr>
+      <tr><td><code>active_effort</code></td><td>Durable</td><td>Last <code>EffortChanged</code>, else first <code>SessionStarted</code></td></tr>
+      <tr><td><code>history</code></td><td>Durable</td><td>Reconstructed via hash lookup in <code>context.jsonl</code></td></tr>
+      <tr><td><code>context_hashes</code></td><td>Durable</td><td>Parallel to <code>history</code>; same source</td></tr>
+      <tr><td><code>provider</code></td><td>Ephemeral</td><td>Process-bound; provided by caller</td></tr>
+      <tr><td><code>context_store</code></td><td>Ephemeral</td><td>Reconstructed from path</td></tr>
+      <tr><td><code>event_store</code></td><td>Ephemeral</td><td>Reconstructed from path</td></tr>
+      <tr><td><code>controls</code></td><td>Ephemeral</td><td>Intra-turn handles; always start fresh</td></tr>
+      <tr><td><code>config</code></td><td>Ephemeral</td><td>Provided by caller</td></tr>
+      <tr><td><code>system_blocks</code></td><td>Ephemeral</td><td>Rebuilt from <code>AGENTS.md</code> files on disk</td></tr>
+      <tr><td><code>system_prompt_paths</code></td><td>Ephemeral</td><td>Derived from <code>system_blocks</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <h2 id="phase3"><span class="phase-tag">Phase 3</span> Subagents <small style="font-weight:400;font-size:0.9rem">(the actual reason for all this)</small></h2>
 

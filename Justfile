@@ -205,6 +205,14 @@ mutants-events:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
 
+# Run cargo-mutants targeted at the strict-resume fold logic (Phase 2.1-2.4).
+# Mutates session_resume.rs (resumable-boundary predicate, context-hash
+# reconstruction, model/effort folding, strict event reader).
+# Uses omega-agent's full test suite including the round_trip_gate test.
+mutants-strict-resume:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

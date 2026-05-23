@@ -656,12 +656,53 @@ impl Agent {
         &self.active_effort
     }
 
+    /// Hashes of the records in [`Self::history`], in the same order.
+    ///
+    /// The i-th hash is the [`ContextHash`] of `history[i]` as stored in
+    /// `context.jsonl`. These are the foreign-key values that appear in
+    /// `events.jsonl` (`LlmCallEvent.context_hashes`,
+    /// `LlmResponseEndedEvent.context_hash`).
+    ///
+    /// Used by the strict-resume path to verify that history is
+    /// reconstructed faithfully across a process restart.
+    #[must_use]
+    pub fn context_hashes(&self) -> &[ContextHash] {
+        &self.context_hashes
+    }
+
     /// Pre-seed the in-memory history (used by resumption and tests).
     ///
     /// Callers must keep `history` and `context_hashes` aligned.
     pub fn seed_history(&mut self, history: Vec<Message>, hashes: Vec<ContextHash>) {
         self.history = history;
         self.context_hashes = hashes;
+    }
+
+    /// Initialise system blocks for an agent resumed from an existing session.
+    ///
+    /// Equivalent to the system-block setup phase of [`Self::init`], but
+    /// without writing [`ServerStartedEvent`] or [`SessionStartedEvent`] to
+    /// `events.jsonl`. Use this on a resumed agent; use [`Self::init`] on a
+    /// freshly created one.
+    ///
+    /// Called by
+    /// [`strict_resume`](crate::session_resume::strict_resume).
+    pub fn init_for_resume(&mut self) {
+        let files = discover_instruction_files(&self.config.cwd);
+        let max_tokens = max_output_tokens_for_model(&self.active_model);
+        self.system_blocks = build_system_blocks(
+            &self.config.cwd.to_string_lossy(),
+            max_tokens,
+            self.config.headless,
+            &files,
+        );
+        self.system_prompt_paths = Arc::new(
+            self.system_blocks
+                .iter()
+                .filter_map(|b| b.source_path.as_ref())
+                .filter_map(|p| p.canonicalize().ok())
+                .collect(),
+        );
     }
 
     /// Seed this session with a summary of a previous session.

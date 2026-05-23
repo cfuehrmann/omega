@@ -7,10 +7,26 @@
 //! Phase 1d.1c adds the [`RESUMPTION_SUMMARY_INSTRUCTIONS`] system prompt
 //! and the [`RESUMPTION_MODEL`] / [`RESUMPTION_EFFORT`] defaults consumed
 //! by [`Agent::perform_resumption`](crate::Agent::perform_resumption).
+//!
+//! **Phase 2.1–2.4 — Strict resume** adds:
+//! - [`is_resumable_boundary`] / [`find_last_resumable_boundary`]: the
+//!   authoritative "awaiting user" predicate.
+//! - [`strict_resume`]: reconstruct a live [`Agent`] from an existing
+//!   session directory, folding `events.jsonl` up to the last resumable
+//!   boundary and loading `context.jsonl` for history.
+//! - [`StrictResumeError`]: structured errors for the strict-resume path.
 
 use std::collections::HashMap;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use omega_core::{Message, Provider};
+use omega_store::{ContextRecord, ContextStore, EventStore, StoreError};
+use omega_types::ids::LoggedEvent;
 use omega_types::{OmegaEvent, events::InterruptReason};
+
+use crate::agent::{Agent, AgentConfig, DEFAULT_EFFORT};
 
 // ---------------------------------------------------------------------------
 // Resumption-call configuration (Phase 1d.1c)
@@ -419,6 +435,420 @@ pub fn extract_summary_from_response(response_text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2.1 — Resumable boundary predicate and locator
+// ---------------------------------------------------------------------------
+
+/// Returns `true` for the two event variants that mark the
+/// **"awaiting user" boundary** in an Omega session.
+///
+/// ## Awaiting-user boundary definition
+///
+/// The agent is "awaiting user" — and therefore at a safe
+/// **strict-resume** point — when the most recent terminal turn event
+/// is one of:
+///
+/// - **[`TurnEnd`]** — the model completed the turn cleanly
+///   (`stop_reason == "end_turn"`).  The definitive safe resume point;
+///   `history` and `context.jsonl` are fully consistent with no
+///   dangling references.
+///
+/// - **[`TurnInterrupted`]** — the turn ended via user abort
+///   (`reason: Aborted`) or an internal error (`reason: Error`).
+///   Still a resumable boundary: the partial turn is silently discarded
+///   on resume, and `send_message`’s **dangling-tool-use repair** (Step 1)
+///   handles any incomplete assistant record left in `context.jsonl`.
+///
+/// Both variants close the intra-turn lifecycle.  Neither can appear
+/// mid-turn; each appears at most once at a turn’s very end.
+///
+/// This function is the **single authoritative place** that defines
+/// “awaiting user” for the resume path.  All resume logic must go through
+/// it rather than pattern-matching on `TurnEnd`/`TurnInterrupted` directly.
+///
+/// [`TurnEnd`]: omega_types::OmegaEvent::TurnEnd
+/// [`TurnInterrupted`]: omega_types::OmegaEvent::TurnInterrupted
+#[must_use]
+pub fn is_resumable_boundary(event: &OmegaEvent) -> bool {
+    matches!(
+        event,
+        OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_)
+    )
+}
+
+/// Return the index of the last "awaiting user" boundary event in
+/// `events`, or `None` if no such event exists.
+///
+/// Scans right-to-left (O(n), one pass) so a single call finds the
+/// latest boundary without revisiting earlier ones.
+///
+/// A `None` result means the session has never completed or interrupted
+/// a turn — strict resume is not possible, and the caller must return or
+/// propagate [`StrictResumeError::NoResumableBoundary`].
+#[must_use]
+pub fn find_last_resumable_boundary(events: &[OmegaEvent]) -> Option<usize> {
+    events.iter().rposition(is_resumable_boundary)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.2 — State-folding helpers (private)
+// ---------------------------------------------------------------------------
+
+/// Compute the ordered list of context-record hashes that are
+/// **"live"** at the last resumable boundary.
+///
+/// `events` **must** be pre-trimmed to `events[..=boundary]`; callers
+/// are responsible for slicing before invoking this function.
+///
+/// ## Algorithm
+///
+/// 1. Scan left-to-right, tracking:
+///    - `last_call_hashes` — the `context_hashes` field of the most
+///      recent `LlmCallEvent`.  This list is the *ordered* snapshot of
+///      every context record the model received on that call: all prior
+///      turns’ user messages, assistant replies, and tool-result batches.
+///    - `last_response_hash` — the `context_hash` of the most recent
+///      `LlmResponseEndedEvent`: the assistant record written after that
+///      call returned.
+/// 2. When `ContextCompacted` is encountered, clear `last_call_hashes`.
+///    The agent cleared `history` in response to compaction, so the
+///    next `LlmResponseEndedEvent.context_hash` is the sole
+///    post-compaction record.
+/// 3. Return `last_call_hashes + [last_response_hash]`.  This list is
+///    exactly the set of context records loaded into `history` and
+///    `context_hashes` at the resumable boundary.
+///
+/// ## Edge cases
+///
+/// | Situation | Behaviour |
+/// |---|---|
+/// | No `LlmResponseEnded` in events | Returns `[]` (empty history) |
+/// | `TurnInterrupted` before any `LlmCall` | Returns `[]` |
+/// | `TurnInterrupted` after tool-results but before next `LlmCall` | Returns hashes up to last assistant; dangling repair fires on next `send_message` |
+/// | Multiple `ContextCompacted` events | Each clears `last_call_hashes`; last compaction wins |
+fn compute_valid_context_hashes(events: &[OmegaEvent]) -> Vec<String> {
+    let mut last_call_hashes: Vec<String> = Vec::new();
+    let mut last_response_hash: Option<String> = None;
+
+    for event in events {
+        match event {
+            OmegaEvent::LlmCall(e) => {
+                last_call_hashes.clone_from(&e.context_hashes);
+            }
+            OmegaEvent::ContextCompacted(_) => {
+                // Server-side compaction fired.  The agent cleared
+                // `history` and `context_hashes`; the very next
+                // `LlmResponseEndedEvent` carries the post-compaction
+                // baseline hash (a single record containing only the
+                // compacted summary).
+                //
+                // Clearing `last_call_hashes` here ensures the result
+                // `[last_call_hashes] + [response_hash]` contains only
+                // the compacted record, not the pre-compaction hashes
+                // that appeared in the `LlmCall` immediately before
+                // compaction was detected.
+                last_call_hashes.clear();
+            }
+            OmegaEvent::LlmResponseEnded(e) => {
+                last_response_hash = Some(e.context_hash.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let Some(response_hash) = last_response_hash else {
+        // No completed LLM response → empty history.
+        return Vec::new();
+    };
+
+    let mut ordered = last_call_hashes;
+    ordered.push(response_hash);
+    ordered
+}
+
+/// Fold all model- and effort-bearing events into a `(model, effort)` pair.
+///
+/// Priority (highest wins):
+/// 1. Last `ModelChangedEvent.model` / `EffortChangedEvent.effort`
+///    — explicit overrides beat the session baseline.
+/// 2. `SessionStartedEvent.model` / `.effort` — the baseline at
+///    session start (the first occurrence wins as the baseline).
+/// 3. Hard-coded defaults — only reached when `events.jsonl` contains
+///    no `SessionStarted` event (should not happen in production, but
+///    possible in tests that do not call `Agent::init`).
+fn fold_model_and_effort(events: &[OmegaEvent]) -> (String, String) {
+    let mut model_started: Option<String> = None;
+    let mut effort_started: Option<String> = None;
+    let mut model_changed: Option<String> = None;
+    let mut effort_changed: Option<String> = None;
+
+    for event in events {
+        match event {
+            OmegaEvent::SessionStarted(e) => {
+                // First `SessionStarted` wins as the baseline; subsequent
+                // ones are ignored (a session has exactly one).
+                if model_started.is_none() {
+                    model_started = Some(e.model.clone());
+                }
+                if effort_started.is_none() {
+                    effort_started = Some(e.effort.clone());
+                }
+            }
+            OmegaEvent::ModelChanged(e) => {
+                model_changed = Some(e.model.clone());
+            }
+            OmegaEvent::EffortChanged(e) => {
+                effort_changed = Some(e.effort.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let model = model_changed
+        .or(model_started)
+        .unwrap_or_else(|| RESUMPTION_MODEL.to_owned());
+    let effort = effort_changed
+        .or(effort_started)
+        .unwrap_or_else(|| DEFAULT_EFFORT.to_owned());
+
+    (model, effort)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.3 — StrictResumeError
+// ---------------------------------------------------------------------------
+
+/// Error returned by [`strict_resume`].
+#[derive(Debug)]
+pub enum StrictResumeError {
+    /// `events.jsonl` could not be read (I/O error).
+    Io(std::io::Error),
+
+    /// A non-blank line in `events.jsonl` could not be parsed as a
+    /// [`LoggedEvent`].
+    ///
+    /// Per the **schema-evolution-loud** rule in `AGENTS.md`,
+    /// type-system rejection is the intended guard against schema drift
+    /// — do **not** add `#[serde(default)]` attributes to make this
+    /// disappear.  Old log files that reference removed fields or
+    /// renamed variants must fail loudly so that the root cause
+    /// (schema mismatch) is visible.  A deserialization error on an
+    /// old log is diagnostic signal; silently skipping it is a latent
+    /// bug.
+    MalformedEvent {
+        /// 1-based line number in `events.jsonl`.
+        line: usize,
+        /// Deserialisation error from `serde_json`.
+        reason: String,
+    },
+
+    /// `events.jsonl` contains no `TurnEnd` or `TurnInterrupted` events;
+    /// strict resume requires at least one completed or interrupted turn.
+    ///
+    /// A new session that has never had a turn completed cannot be
+    /// strictly resumed — there is no safe "awaiting user" boundary to
+    /// fold up to.
+    NoResumableBoundary,
+
+    /// `context.jsonl` could not be read or parsed.
+    ContextStore(StoreError),
+
+    /// A context hash referenced in `events.jsonl` was not found in
+    /// `context.jsonl`.  Indicates file corruption or an events/context
+    /// mismatch.
+    MissingContextRecord {
+        /// The hash that was referenced but not found.
+        hash: String,
+    },
+}
+
+impl fmt::Display for StrictResumeError {
+    // Presentation-only; the exact wording of error messages is not
+    // semantically significant and cannot be meaningfully mutation-tested
+    // (any string survives because callers only check the variant, not the
+    // message).  Mutation coverage is therefore intentionally waived here.
+    #[mutants::skip]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "events.jsonl I/O error: {e}"),
+            Self::MalformedEvent { line, reason } => {
+                write!(f, "events.jsonl line {line}: {reason}")
+            }
+            Self::NoResumableBoundary => write!(
+                f,
+                "no TurnEnd or TurnInterrupted found in events.jsonl — \
+                 cannot determine a resumable boundary"
+            ),
+            Self::ContextStore(e) => write!(f, "context.jsonl store error: {e}"),
+            Self::MissingContextRecord { hash } => write!(
+                f,
+                "context record {hash} referenced in events.jsonl not found \
+                 in context.jsonl"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StrictResumeError {}
+
+// ---------------------------------------------------------------------------
+// Phase 2.2 — Strict event reader (private)
+// ---------------------------------------------------------------------------
+
+/// Read and strictly parse all events from `path` (`events.jsonl`).
+///
+/// Unlike [`EventStore::read_all`] (which reads raw `serde_json::Value`s
+/// and silently skips malformed lines), this function fails loudly on any
+/// non-blank line that does not deserialise as a [`LoggedEvent`].
+///
+/// This implements the **schema-evolution-loud** rule from `AGENTS.md`:
+/// a deserialization error on a stale log file is diagnostic signal —
+/// it tells you exactly which line uses a removed field or renamed
+/// variant.  Silently skipping it would mask the schema mismatch.
+///
+/// Blank or whitespace-only lines are silently skipped (they appear
+/// only as formatting artefacts and carry no semantic content).
+///
+/// Returns an empty `Vec` when the file does not exist (a session
+/// directory that has never had any events written).
+async fn read_events_strict(path: &Path) -> Result<Vec<OmegaEvent>, StrictResumeError> {
+    let text = match tokio::fs::read_to_string(path).await {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(StrictResumeError::Io(e)),
+    };
+
+    let mut events = Vec::new();
+    for (zero_idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let logged: LoggedEvent =
+            serde_json::from_str(trimmed).map_err(|e| StrictResumeError::MalformedEvent {
+                line: zero_idx + 1,
+                reason: e.to_string(),
+            })?;
+        events.push(logged.event);
+    }
+    Ok(events)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.4 — strict_resume entry point
+// ---------------------------------------------------------------------------
+
+/// Reconstruct a live [`Agent`] from an existing session directory.
+///
+/// ## What “strict resume” means
+///
+/// Strict resume replays `events.jsonl` and `context.jsonl` of a
+/// completed session to produce an `Agent` whose observable state is
+/// equivalent to what it was at the session’s last **"awaiting user"**
+/// boundary ([`TurnEnd`] or [`TurnInterrupted`]).  Any events after
+/// that boundary — from an abandoned partial turn, e.g., a process
+/// crash mid-turn — are **silently discarded**.  The next call to
+/// [`Agent::send_message`] on the returned agent picks up exactly where
+/// the last complete turn left off.
+///
+/// ## Durable state (must match across a round trip)
+///
+/// | Field             | Source in events                                    |
+/// |-------------------|-----------------------------------------------------|
+/// | `active_model`    | Last `ModelChanged`, else first `SessionStarted`    |
+/// | `active_effort`   | Last `EffortChanged`, else first `SessionStarted`   |
+/// | `history`         | Context records looked up via
+///   `LlmCallEvent.context_hashes` + `LlmResponseEndedEvent.context_hash` |
+/// | `context_hashes`  | Parallel hash vec reconstructed via same source    |
+///
+/// ## Ephemeral state (rebuilt from startup inputs, may differ)
+///
+/// | Field                | Reason it is ephemeral                             |
+/// |----------------------|----------------------------------------------------|
+/// | `provider`           | Process-bound; provided by the caller              |
+/// | `context_store`      | Reconstructed from `session_dir/context.jsonl`     |
+/// | `event_store`        | Reconstructed from `session_dir/events.jsonl`      |
+/// | `controls`           | Intra-turn handles; always start fresh             |
+/// | `config`             | Provided by the caller via `cwd` / `headless`      |
+/// | `system_blocks`      | Rebuilt from `AGENTS.md` files on disk             |
+/// | `system_prompt_paths`| Derived from `system_blocks`                       |
+///
+/// ## Errors
+///
+/// See [`StrictResumeError`] variants for the complete list.
+///
+/// [`TurnEnd`]: omega_types::OmegaEvent::TurnEnd
+/// [`TurnInterrupted`]: omega_types::OmegaEvent::TurnInterrupted
+pub async fn strict_resume(
+    session_dir: PathBuf,
+    cwd: PathBuf,
+    provider: Arc<dyn Provider>,
+    headless: bool,
+) -> Result<Agent, StrictResumeError> {
+    // --- 1. Read events.jsonl with strict typing -------------------------
+    let events = read_events_strict(&session_dir.join("events.jsonl")).await?;
+
+    // --- 2. Find last resumable boundary --------------------------------
+    let boundary =
+        find_last_resumable_boundary(&events).ok_or(StrictResumeError::NoResumableBoundary)?;
+
+    // --- 3. Fold state from events[..=boundary] -------------------------
+    let valid_events = &events[..=boundary];
+    let (model, effort) = fold_model_and_effort(valid_events);
+    let context_hash_strings = compute_valid_context_hashes(valid_events);
+
+    // --- 4. Load context.jsonl and build history ------------------------
+    let context_path = session_dir.join("context.jsonl");
+    let context_store = ContextStore::new(context_path);
+    let all_records = context_store
+        .read_all()
+        .await
+        .map_err(StrictResumeError::ContextStore)?;
+
+    // Build a lookup map: hash string → `ContextRecord`.
+    // Two records with the same `(role, content)` share a hash (HASH-1),
+    // but the payload is identical so either is fine.
+    let record_map: HashMap<String, ContextRecord> = all_records
+        .into_iter()
+        .map(|r| (r.hash.as_ref().to_owned(), r))
+        .collect();
+
+    let mut history: Vec<Message> = Vec::with_capacity(context_hash_strings.len());
+    let mut hashes = Vec::with_capacity(context_hash_strings.len());
+    for hash_str in &context_hash_strings {
+        let record =
+            record_map
+                .get(hash_str)
+                .ok_or_else(|| StrictResumeError::MissingContextRecord {
+                    hash: hash_str.clone(),
+                })?;
+        history.push(Message {
+            role: record.role,
+            content: record.content.clone(),
+        });
+        hashes.push(record.hash.clone());
+    }
+
+    // --- 5. Build Agent -------------------------------------------------
+    let event_store = EventStore::new(session_dir.join("events.jsonl"));
+    let config = AgentConfig {
+        model: model.clone(),
+        effort: Some(effort),
+        cwd,
+        session_dir,
+        headless,
+    };
+    let mut agent = Agent::new(provider, context_store, event_store, config);
+
+    // --- 6. Initialise system blocks (without writing events) -----------
+    agent.init_for_resume();
+
+    // --- 7. Seed history ------------------------------------------------
+    agent.seed_history(history, hashes);
+
+    Ok(agent)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -429,14 +859,374 @@ mod tests {
     use omega_types::{
         ContinueMode, OmegaEvent,
         events::{
-            AgentErrorEvent, EffortChangedEvent, InterruptReason, LlmResponseEndedEvent,
-            LlmResponseUsage, ModelChangedEvent, SessionResumedEvent, TextBlockEvent,
-            ToolCallEvent, ToolResultEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
-            TurnMetrics, TurnPausedEvent, UserMessageEvent,
+            AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, InterruptReason,
+            LlmCallEvent, LlmResponseEndedEvent, LlmResponseUsage, ModelChangedEvent,
+            SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ToolCallEvent,
+            ToolResultEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics,
+            TurnPausedEvent, UserMessageEvent,
         },
+        ids::{Origin, SessionId},
     };
 
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // Additional constructors for Phase 2 tests
+    // -----------------------------------------------------------------------
+
+    fn session_started(model: &str, effort: &str) -> OmegaEvent {
+        OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            // Using nil UUID — stable and unit-test-adequate.
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: model.to_owned(),
+            effort: effort.to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+        })
+    }
+
+    /// Build an `LlmCall` event carrying `context_hashes` (String aliases).
+    fn llm_call(context_hashes: Vec<&str>) -> OmegaEvent {
+        OmegaEvent::LlmCall(LlmCallEvent {
+            time: t(),
+            url: "https://api.anthropic.com/v1/messages".to_owned(),
+            model: "claude-sonnet-4-6".to_owned(),
+            context_hashes: context_hashes.into_iter().map(str::to_owned).collect(),
+            cache_breakpoint_index: None,
+            request_bytes: 0,
+            request_summary: None,
+        })
+    }
+
+    /// Build an `LlmResponseEnded` event with the given `context_hash`.
+    fn llm_response_with_hash(context_hash: &str) -> OmegaEvent {
+        OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
+            time: t(),
+            stop_reason: "end_turn".to_owned(),
+            cleared_tool_uses: None,
+            cleared_input_tokens: None,
+            usage: LlmResponseUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                service_tier: None,
+                iterations: None,
+            },
+            context_hash: context_hash.to_owned(),
+            response_summary: None,
+        })
+    }
+
+    /// Build a `ContextCompacted` event.
+    fn context_compacted() -> OmegaEvent {
+        OmegaEvent::ContextCompacted(ContextCompactedEvent {
+            time: t(),
+            tokens_before: 80_000,
+            tokens_after: 500,
+            summary_tokens: 300,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.1 — is_resumable_boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_resumable_boundary_true_for_turn_end() {
+        assert!(is_resumable_boundary(&turn_end()));
+    }
+
+    #[test]
+    fn is_resumable_boundary_true_for_turn_interrupted() {
+        assert!(is_resumable_boundary(&turn_interrupted(None)));
+        assert!(is_resumable_boundary(&turn_interrupted(Some(
+            InterruptReason::Aborted
+        ))));
+        assert!(is_resumable_boundary(&turn_interrupted(Some(
+            InterruptReason::Error
+        ))));
+    }
+
+    #[test]
+    fn is_resumable_boundary_false_for_non_boundary_events() {
+        // A representative sample of events that must NOT be resumable
+        // boundaries. Catches mutations that return `true` for everything.
+        assert!(!is_resumable_boundary(&user_msg("hi")));
+        assert!(!is_resumable_boundary(&model_changed("claude-opus-4-7")));
+        assert!(!is_resumable_boundary(&effort_changed("high")));
+        assert!(!is_resumable_boundary(&text_block("hello")));
+        assert!(!is_resumable_boundary(&llm_response_ended()));
+        assert!(!is_resumable_boundary(&context_compacted()));
+        assert!(!is_resumable_boundary(&tool_call(
+            "c1",
+            "read_file",
+            serde_json::json!({"path": "x"})
+        )));
+        assert!(!is_resumable_boundary(&tool_result(
+            "c1",
+            "read_file",
+            false,
+            "ok"
+        )));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.1 — find_last_resumable_boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_last_resumable_boundary_empty_is_none() {
+        assert!(find_last_resumable_boundary(&[]).is_none());
+    }
+
+    #[test]
+    fn find_last_resumable_boundary_no_boundary_is_none() {
+        let events = vec![user_msg("hi"), text_block("hello"), llm_response_ended()];
+        assert!(find_last_resumable_boundary(&events).is_none());
+    }
+
+    #[test]
+    fn find_last_resumable_boundary_single_turn_end() {
+        let events = vec![user_msg("hi"), llm_response_ended(), turn_end()];
+        assert_eq!(find_last_resumable_boundary(&events), Some(2));
+    }
+
+    #[test]
+    fn find_last_resumable_boundary_returns_last_not_first() {
+        // Two turn_end events; must return the index of the LAST one.
+        let events = vec![
+            user_msg("a"),
+            turn_end(), // index 1
+            user_msg("b"),
+            turn_end(), // index 3 ← must be returned
+        ];
+        assert_eq!(find_last_resumable_boundary(&events), Some(3));
+    }
+
+    #[test]
+    fn find_last_resumable_boundary_turn_interrupted_counts() {
+        let events = vec![
+            user_msg("a"),
+            turn_end(), // index 1
+            user_msg("b"),
+            turn_interrupted(None), // index 3 ← last boundary
+        ];
+        assert_eq!(find_last_resumable_boundary(&events), Some(3));
+    }
+
+    #[test]
+    fn find_last_resumable_boundary_events_after_boundary_ignored() {
+        // Events after the last turn_end (a partial turn) must not affect
+        // the boundary index.
+        let events = vec![
+            user_msg("a"),
+            turn_end(),            // index 1 ← last boundary
+            user_msg("abandoned"), // index 2 — partial turn, ignored
+        ];
+        assert_eq!(find_last_resumable_boundary(&events), Some(1));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.2 — compute_valid_context_hashes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compute_context_hashes_empty_events_returns_empty() {
+        assert_eq!(compute_valid_context_hashes(&[]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn compute_context_hashes_no_llm_response_returns_empty() {
+        // LlmCall without a corresponding LlmResponseEnded → empty history.
+        let events = vec![user_msg("hi"), llm_call(vec!["h_u1"])];
+        assert_eq!(compute_valid_context_hashes(&events), Vec::<String>::new());
+    }
+
+    #[test]
+    fn compute_context_hashes_single_turn() {
+        // One turn: LlmCall with user hash, then assistant response.
+        let events = vec![
+            llm_call(vec!["h_u1"]),
+            llm_response_with_hash("h_a1"),
+            turn_end(),
+        ];
+        assert_eq!(
+            compute_valid_context_hashes(&events),
+            vec!["h_u1".to_owned(), "h_a1".to_owned()]
+        );
+    }
+
+    #[test]
+    fn compute_context_hashes_two_turns_accumulates() {
+        // Turn 1: user + assistant.  Turn 2: user + assistant.
+        // The second LlmCall carries all four hashes; result appends the
+        // second assistant.
+        let events = vec![
+            llm_call(vec!["h_u1"]),
+            llm_response_with_hash("h_a1"),
+            turn_end(),
+            llm_call(vec!["h_u1", "h_a1", "h_u2"]),
+            llm_response_with_hash("h_a2"),
+            turn_end(),
+        ];
+        assert_eq!(
+            compute_valid_context_hashes(&events),
+            vec![
+                "h_u1".to_owned(),
+                "h_a1".to_owned(),
+                "h_u2".to_owned(),
+                "h_a2".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn compute_context_hashes_compaction_resets_call_hashes() {
+        // Compaction turn:
+        //   LlmCall carries [h_u1, h_a1, h_u2, h_a2, h_u3]
+        //   ContextCompacted fires → clear last_call_hashes
+        //   LlmResponseEnded(h_ac)           ← post-compaction baseline
+        // Result must be [h_ac] only (not the pre-compaction hashes).
+        let events = vec![
+            llm_call(vec!["h_u1", "h_a1", "h_u2", "h_a2", "h_u3"]),
+            context_compacted(),
+            llm_response_with_hash("h_ac"),
+            turn_end(),
+        ];
+        assert_eq!(
+            compute_valid_context_hashes(&events),
+            vec!["h_ac".to_owned()]
+        );
+    }
+
+    #[test]
+    fn compute_context_hashes_turn_after_compaction() {
+        // After compaction (h_ac baseline), one more turn:
+        //   LlmCall([h_ac, h_u4])  → response h_a4  → TurnEnd
+        // Result = [h_ac, h_u4, h_a4].
+        let events = vec![
+            // Compaction turn
+            llm_call(vec!["h_u1", "h_a1", "h_u2"]),
+            context_compacted(),
+            llm_response_with_hash("h_ac"),
+            turn_end(),
+            // Normal turn after compaction
+            llm_call(vec!["h_ac", "h_u4"]),
+            llm_response_with_hash("h_a4"),
+            turn_end(),
+        ];
+        assert_eq!(
+            compute_valid_context_hashes(&events),
+            vec!["h_ac".to_owned(), "h_u4".to_owned(), "h_a4".to_owned()]
+        );
+    }
+
+    #[test]
+    fn compute_context_hashes_multiple_tool_rounds() {
+        // Turn with tool use:
+        //   LlmCall #1([u1]) → h_a1_tool  (tool_use)
+        //   Tool results appended as user → not directly in events
+        //   LlmCall #2([u1, a1, tr1]) → h_a2
+        // Last LlmCall has all hashes → result = [u1, a1, tr1, a2].
+        let events = vec![
+            llm_call(vec!["h_u1"]),
+            llm_response_with_hash("h_a1"), // tool_use response
+            llm_call(vec!["h_u1", "h_a1", "h_tr1"]), // second call with tool results
+            llm_response_with_hash("h_a2"),
+            turn_end(),
+        ];
+        assert_eq!(
+            compute_valid_context_hashes(&events),
+            vec![
+                "h_u1".to_owned(),
+                "h_a1".to_owned(),
+                "h_tr1".to_owned(),
+                "h_a2".to_owned(),
+            ]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.2 — fold_model_and_effort
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fold_model_effort_empty_uses_defaults() {
+        let (model, effort) = fold_model_and_effort(&[]);
+        assert_eq!(model, RESUMPTION_MODEL);
+        assert_eq!(effort, DEFAULT_EFFORT);
+    }
+
+    #[test]
+    fn fold_model_effort_session_started_provides_baseline() {
+        let events = vec![session_started("claude-sonnet-4-6", "medium")];
+        let (model, effort) = fold_model_and_effort(&events);
+        assert_eq!(model, "claude-sonnet-4-6");
+        assert_eq!(effort, "medium");
+    }
+
+    #[test]
+    fn fold_model_effort_model_changed_overrides_started() {
+        let events = vec![
+            session_started("claude-sonnet-4-6", "medium"),
+            model_changed("claude-opus-4-7"),
+        ];
+        let (model, effort) = fold_model_and_effort(&events);
+        assert_eq!(model, "claude-opus-4-7");
+        assert_eq!(effort, "medium"); // unchanged
+    }
+
+    #[test]
+    fn fold_model_effort_effort_changed_overrides_started() {
+        let events = vec![
+            session_started("claude-sonnet-4-6", "medium"),
+            effort_changed("high"),
+        ];
+        let (model, effort) = fold_model_and_effort(&events);
+        assert_eq!(model, "claude-sonnet-4-6"); // unchanged
+        assert_eq!(effort, "high");
+    }
+
+    #[test]
+    fn fold_model_effort_last_model_changed_wins() {
+        let events = vec![
+            session_started("claude-sonnet-4-6", "medium"),
+            model_changed("claude-opus-4-7"),
+            model_changed("claude-sonnet-4-6"), // reverts to sonnet
+        ];
+        let (model, _) = fold_model_and_effort(&events);
+        assert_eq!(model, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn fold_model_effort_only_model_changed_no_started() {
+        // No SessionStarted event — only ModelChanged.  ModelChanged must win.
+        let events = vec![model_changed("claude-opus-4-7")];
+        let (model, effort) = fold_model_and_effort(&events);
+        assert_eq!(model, "claude-opus-4-7");
+        assert_eq!(effort, DEFAULT_EFFORT); // default
+    }
+
+    #[test]
+    fn fold_model_effort_session_started_after_model_changed_does_not_override() {
+        // SessionStarted appearing AFTER ModelChanged must NOT clobber the
+        // prior ModelChanged (it only sets the `_started` baseline, which
+        // loses to `_changed`).
+        let events = vec![
+            model_changed("claude-opus-4-7"),
+            session_started("claude-sonnet-4-6", "low"),
+        ];
+        let (model, effort) = fold_model_and_effort(&events);
+        // ModelChanged wins over SessionStarted for model.
+        assert_eq!(model, "claude-opus-4-7");
+        // SessionStarted provides the effort baseline (no EffortChanged).
+        assert_eq!(effort, "low");
+    }
 
     // -----------------------------------------------------------------------
     // Shared event constructors
@@ -1462,5 +2252,92 @@ mod tests {
             !result.contains("firstsecond"),
             "two responses must not be concatenated: {result:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.2 — read_events_strict tests
+    //
+    // These cover the two branches in the NotFound guard and the +1 line
+    // number calculation that cargo-mutants marked as survivors.
+    // -----------------------------------------------------------------------
+
+    /// Missing file is not an error — returns an empty event list.
+    ///
+    /// Kills the `replace guard with false` mutant: with `false`, a missing
+    /// file would propagate as `Err(StrictResumeError::Io(...))` instead of
+    /// `Ok(vec![])`.
+    #[tokio::test]
+    async fn read_events_strict_missing_file_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = read_events_strict(&dir.path().join("events.jsonl")).await;
+        assert!(
+            result.is_ok(),
+            "missing file should not be an error: {result:?}"
+        );
+        assert!(result.unwrap().is_empty());
+    }
+
+    /// An existing but unreadable path (permission denied) propagates as
+    /// `Err(StrictResumeError::Io)`, not silently treated as empty.
+    ///
+    /// Kills the `replace guard with true` mutant: with `true`, every I/O
+    /// error (including permission-denied) would silently return `Ok(vec![])`,
+    /// masking real read failures.
+    #[tokio::test]
+    async fn read_events_strict_io_error_propagates() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        // Create the file so it exists, then make it unreadable.
+        std::fs::write(&path, b"").unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let result = read_events_strict(&path).await;
+        // Restore permissions so tempdir cleanup doesn't fail.
+        let mut perms2 = std::fs::metadata(&path).unwrap().permissions();
+        perms2.set_mode(0o644);
+        std::fs::set_permissions(&path, perms2).unwrap();
+
+        assert!(
+            matches!(result, Err(StrictResumeError::Io(_))),
+            "permission-denied should be Io error, got {result:?}"
+        );
+    }
+
+    /// A malformed non-blank line causes `MalformedEvent` with a correct
+    /// 1-based line number.
+    ///
+    /// Kills the `replace + with -` and `replace + with *` mutants on
+    /// `zero_idx + 1`: with `-`, line 2 would be reported as 1; with `*`,
+    /// it would be 0.
+    #[tokio::test]
+    async fn read_events_strict_malformed_line_has_correct_line_number() {
+        use omega_types::ids::LoggedEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+
+        // First line: a valid ServerStarted event.
+        let valid = serde_json::to_string(&LoggedEvent {
+            event_id: None,
+            event: OmegaEvent::ServerStarted(omega_types::events::ServerStartedEvent {
+                time: "2024-01-01T00:00:00.000Z".to_owned(),
+            }),
+        })
+        .unwrap();
+        // Second line: invalid JSON / unknown variant.
+        let invalid = r#"{"type":"UNKNOWN_VARIANT","time":"t"}"#;
+        tokio::fs::write(&path, format!("{valid}\n{invalid}\n"))
+            .await
+            .unwrap();
+
+        let result = read_events_strict(&path).await;
+        match result {
+            Err(StrictResumeError::MalformedEvent { line, .. }) => {
+                assert_eq!(line, 2, "second line is line 2 (1-based)");
+            }
+            other => panic!("expected MalformedEvent, got {other:?}"),
+        }
     }
 }
