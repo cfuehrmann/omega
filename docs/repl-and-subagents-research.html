@@ -197,6 +197,8 @@ tr:nth-child(even) td { background: #fafbfc; }
 <nav id="toc" aria-label="Table of contents">
   <h2>Contents</h2>
   <ol>
+    <li><a href="#next-steps"         class="toc-h1">⏩ Next steps</a></li>
+    <li class="toc-divider"></li>
     <li><a href="#framing"            class="toc-h1">§1 Framing</a></li>
     <li><a href="#research-mode"      class="toc-sub">§1.1 Research-mode stance</a></li>
     <li><a href="#omega-brings"       class="toc-sub">§1.2 What Omega brings</a></li>
@@ -232,6 +234,61 @@ tr:nth-child(even) td { background: #fafbfc; }
   Endeavor 1 (events-as-state) tracked in
   <a href="./session-design.html"><code>docs/session-design.html</code></a> ·
   Canonical path: <code>docs/repl-and-subagents-research.html</code>
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="next-steps">⏩ Next steps</h2>
+
+<p class="doc-meta" style="margin-bottom:0.8rem;">
+  This block is live. Update as steps complete. Detail lives in §1.6
+  (<a href="#path-to-benchmark">Path to first benchmark</a>).
+</p>
+
+<div class="callout rec" style="border-left-width:6px;">
+  <ol style="margin:0; padding-left:1.3rem;">
+    <li style="margin-bottom:0.6rem;">
+      <strong>Sub-session: feature flag plumbing.</strong>
+      <code>OMEGA_FEATURE_REPL</code>, <code>OMEGA_FEATURE_SUBAGENTS</code>;
+      recorded in <code>SessionStartedEvent</code> with documented
+      <code>FeatureFlags::default()</code> serde default.
+      ~1–2 days. Strict prerequisite for steps 3 onward.
+    </li>
+    <li style="margin-bottom:0.6rem;">
+      <strong>Sub-session: typed ephemeral allowlist.</strong>
+      Convert the Phase 2 comment-table to a Rust exclusion structure
+      (e.g. <code>#[non_exhaustive]</code> enum) so new
+      <code>Agent</code>/<code>ActiveSession</code> fields force a
+      deliberate ephemeral/durable classification.
+      ~0.5 day. Recommended before REPL MVP.
+    </li>
+    <li style="margin-bottom:0.6rem;">
+      <strong>Sub-session: REPL MVP.</strong>
+      Per <a href="#path-to-benchmark">§1.6</a>. Target benchmark:
+      Terminal-Bench 2 (locked). Python subprocess REPL exposed as
+      <code>python_repl(code) -&gt; String</code> tool, available iff
+      <code>OMEGA_FEATURE_REPL</code> is on; output truncated RLM-style.
+      ~4–5 days.
+    </li>
+    <li style="margin-bottom:0.6rem;">
+      <strong>Harbor sweep.</strong>
+      <code>OMEGA_FEATURE_REPL ∈ {0,1}</code> on Terminal-Bench 2.
+      <em>First benchmark data.</em>
+    </li>
+    <li style="margin-bottom:0;">
+      <strong>If TB2 results warrant:</strong> subagent MVP, then RLM MVP,
+      then add SWE-bench Verified as an optional second sweep. Per the
+      §1.6 recommended order. Each stage produces benchmark data
+      independently.
+    </li>
+  </ol>
+</div>
+
+<p style="margin-top:1rem; color:var(--muted); font-size:0.92rem;">
+  <strong>Endeavor 1 follow-ups</strong>
+  (Phase 1.5 UI surfacing, Phase 1.6 WS → <code>SessionId</code>
+  migration, F11 audit follow-up) remain queued at lower priority than
+  the REPL track. See
+  <a href="./session-design.html"><code>docs/session-design.html</code></a>.
 </p>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
