@@ -267,6 +267,10 @@ tr:nth-child(even) td { background: #fafbfc; }
       Terminal-Bench 2 (locked). Python subprocess REPL exposed as
       <code>python_repl(code) -&gt; String</code> tool, available iff
       <code>OMEGA_FEATURE_REPL</code> is on; output truncated RLM-style.
+      <strong>Live-check requirement:</strong> existing tool-call rendering
+      in the UI must show the code, the output, and any truncation marker
+      without requiring frontend changes — verify at the end of the
+      sub-session that an interactive run is inspectable in the browser.
       ~4–5 days.
     </li>
     <li style="margin-bottom:0.6rem;">
