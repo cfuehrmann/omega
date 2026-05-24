@@ -997,8 +997,11 @@ async fn round_trip_gate() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let provider = std::sync::Arc::new(common::MockProvider::new());
     let cwd = tmp.path().to_path_buf();
+    // repl:false — REPL sessions refuse strict_resume (ReplResumeUnsupported),
+    // so we test feature round-trip with subagents=true only.  The REPL
+    // resume block is separately covered by python_repl_resume_returns_error.
     let non_default_features = FeatureFlags {
-        repl: true,
+        repl: false,
         subagents: true,
     };
     let mut agent = omega_agent::Agent::new(
@@ -1152,5 +1155,205 @@ async fn round_trip_gate() {
     assert_eq!(
         resumed_snap, snap,
         "DomainSnapshot must round-trip across a simulated process restart"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 7. Python REPL — strict resume refuses REPL sessions
+// ---------------------------------------------------------------------------
+
+/// A session started with `features.repl=true` must produce
+/// `StrictResumeError::ReplResumeUnsupported` when `strict_resume` is called.
+#[tokio::test]
+async fn python_repl_resume_returns_error() {
+    use omega_agent::{AgentConfig, StrictResumeError, strict_resume};
+    use omega_store::{ContextStore, EventStore};
+    use omega_types::FeatureFlags;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let session_dir = tmp.path().to_path_buf();
+    let cwd = session_dir.clone();
+
+    let provider = std::sync::Arc::new(common::MockProvider::new());
+    let mut agent = omega_agent::Agent::new(
+        provider,
+        ContextStore::new(session_dir.join("context.jsonl")),
+        EventStore::new(session_dir.join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: cwd.clone(),
+            session_dir: session_dir.clone(),
+            headless: true,
+            // Enable the REPL feature — this is the key ingredient.
+            features: Some(FeatureFlags {
+                repl: true,
+                subagents: false,
+            }),
+        },
+    );
+    // init() writes the SessionStartedEvent with features.repl=true.
+    agent.init().await.expect("init");
+    drop(agent);
+
+    let new_provider = std::sync::Arc::new(common::MockProvider::new());
+    match strict_resume(session_dir.clone(), cwd, new_provider, false).await {
+        Err(StrictResumeError::ReplResumeUnsupported {
+            session_dir: ref sd,
+        }) if sd == &session_dir => {
+            // Correct — exactly what we expect.
+        }
+        Err(other) => panic!("expected ReplResumeUnsupported, got: {other:?}"),
+        Ok(_) => panic!("strict_resume must not succeed for a REPL session"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Python REPL — tool state persists and event shapes are correct
+//
+// Runs an Agent with features.repl=true through two sequential turns.
+// Turn 1 defines a variable.  Turn 2 prints it.  We assert:
+//   a. The ToolResult for turn 2 contains the printed value — state persists.
+//   b. The ToolCall events carry the `code` argument.
+//   c. The ToolResult events carry the tool output.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn python_repl_tool_state_persists() {
+    use omega_agent::AgentConfig;
+    use omega_store::{ContextStore, EventStore};
+    use omega_types::FeatureFlags;
+    use omega_types::events::{ToolCallEvent, ToolResultEvent};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let session_dir = tmp.path().to_path_buf();
+
+    let provider = std::sync::Arc::new(common::MockProvider::new());
+    let mut agent = omega_agent::Agent::new(
+        provider.clone(),
+        ContextStore::new(session_dir.join("context.jsonl")),
+        EventStore::new(session_dir.join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: session_dir.clone(),
+            session_dir: session_dir.clone(),
+            headless: true,
+            features: Some(FeatureFlags {
+                repl: true,
+                subagents: false,
+            }),
+        },
+    );
+    agent.init().await.expect("init");
+
+    // --- Turn 1: define a variable -----------------------------------------
+    //
+    // Mock LLM: call python_repl with `x = 42` (no output), then end turn.
+    provider.push_response(common::make_tool_use_items(
+        "repl-call-01",
+        "python_repl",
+        json!({ "code": "x = 42" }),
+    ));
+    provider.push_response(vec![Ok(common::make_llm_response("end_turn", 10, 5))]);
+
+    let items1 = common::collect_stream(
+        agent.send_message("set x to 42".to_owned(), CancellationToken::new()),
+    )
+    .await;
+
+    // The ToolResult for the first call must be present with no error.
+    let tr1: &ToolResultEvent = items1
+        .iter()
+        .find_map(|item| {
+            if let AgentItem::Event(ev) = item {
+                if let OmegaEvent::ToolResult(tr) = ev.as_ref() {
+                    if tr.tool_call_id == "repl-call-01" {
+                        return Some(tr);
+                    }
+                }
+            }
+            None
+        })
+        .expect("ToolResult for repl-call-01 not found in turn-1 items");
+
+    assert!(
+        !tr1.is_error,
+        "turn-1 tool call must not be an error; output: {:?}",
+        tr1.output
+    );
+    // `x = 42` produces no output.
+    assert!(
+        tr1.output.trim().is_empty(),
+        "assignment must produce no output; got: {:?}",
+        tr1.output
+    );
+
+    // --- Turn 2: print the variable ----------------------------------------
+    //
+    // State must persist: `x` is still 42 from turn 1.
+    provider.push_response(common::make_tool_use_items(
+        "repl-call-02",
+        "python_repl",
+        json!({ "code": "print(x)" }),
+    ));
+    provider.push_response(vec![Ok(common::make_llm_response("end_turn", 15, 5))]);
+
+    let items2 = common::collect_stream(
+        agent.send_message("now print x".to_owned(), CancellationToken::new()),
+    )
+    .await;
+
+    // Find the ToolResult for the second call.
+    let tr2: &ToolResultEvent = items2
+        .iter()
+        .find_map(|item| {
+            if let AgentItem::Event(ev) = item {
+                if let OmegaEvent::ToolResult(tr) = ev.as_ref() {
+                    if tr.tool_call_id == "repl-call-02" {
+                        return Some(tr);
+                    }
+                }
+            }
+            None
+        })
+        .expect("ToolResult for repl-call-02 not found in turn-2 items");
+
+    assert!(
+        !tr2.is_error,
+        "turn-2 tool call must not be an error; output: {:?}",
+        tr2.output
+    );
+    // State persistence: `x` was 42 in turn 1 and must still be 42 in turn 2.
+    assert_eq!(
+        tr2.output.trim(),
+        "42",
+        "state must persist: `print(x)` must output 42; got: {:?}",
+        tr2.output
+    );
+
+    // --- Check ToolCall event shapes ---------------------------------------
+    //
+    // Both turns must have emitted ToolCall events with the correct `name`
+    // and `input` fields.
+    let tool_calls_turn1: Vec<&ToolCallEvent> = items1
+        .iter()
+        .filter_map(|item| {
+            if let AgentItem::Event(ev) = item {
+                if let OmegaEvent::ToolCall(tc) = ev.as_ref() {
+                    return Some(tc);
+                }
+            }
+            None
+        })
+        .collect();
+
+    assert_eq!(tool_calls_turn1.len(), 1, "exactly one ToolCall per turn");
+    let tc1 = tool_calls_turn1[0];
+    assert_eq!(tc1.name, "python_repl", "tool name must be python_repl");
+    assert_eq!(
+        tc1.input["code"].as_str(),
+        Some("x = 42"),
+        "full code must appear in ToolCall input"
     );
 }

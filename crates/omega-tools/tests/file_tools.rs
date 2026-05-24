@@ -113,6 +113,7 @@ fn ctx_protecting(protected: &std::path::Path) -> omega_tools::ToolCtx {
         cache_dir: protected.parent().expect("parent").to_path_buf(),
         tool_call_id: "guard-test".to_owned(),
         system_prompt_paths: Arc::new(paths),
+        python_repl: None,
     }
 }
 

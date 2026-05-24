@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 mod cap_and_tee;
 mod format;
 mod output_cleaner;
+pub mod python_repl;
 mod schemas;
 mod state;
 mod tool_ctx;
@@ -25,6 +26,7 @@ mod tools;
 
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
+pub use python_repl::PythonRepl;
 pub use schemas::tool_definitions;
 pub use tool_ctx::ToolCtx;
 
@@ -117,6 +119,45 @@ pub async fn execute_tool(
         "write_stdin" => tools::write_stdin::execute(input, cancel).await,
         "web_search" => tools::web_search::execute(input, cancel).await,
         "fetch_url" => tools::fetch_url::execute(input, cancel, ctx).await,
+        "python_repl" => {
+            // The REPL tool requires an active session context with the
+            // python_repl Arc.  Early-return ToolResult directly so the
+            // match arm type is `!` (compatible with Result<String,String>)
+            // without needing a Result wrapper for every early exit.
+            let Some(ctx) = ctx else {
+                return ToolResult::err("python_repl: no session context — REPL is not available");
+            };
+            let Some(repl_arc) = &ctx.python_repl else {
+                return ToolResult::err(
+                    "python_repl: feature not enabled \
+                     (start the session with OMEGA_FEATURE_REPL=1)",
+                );
+            };
+            let Some(code) = input["code"].as_str() else {
+                return ToolResult::err("python_repl: missing 'code' field in input");
+            };
+            let code = code.to_owned();
+            let mut guard = repl_arc.lock().await;
+            if guard.is_none() {
+                match python_repl::PythonRepl::start() {
+                    Ok(repl) => *guard = Some(repl),
+                    Err(e) => {
+                        return ToolResult::err(format!(
+                            "python_repl: failed to start Python interpreter: {e}"
+                        ));
+                    }
+                }
+            }
+            // SAFETY: guard is Some — either it was already Some or we
+            // just inserted a value above (or returned early on error).
+            let Some(repl) = guard.as_mut() else {
+                return ToolResult::err(
+                    "python_repl: internal error: REPL not initialised after successful start",
+                );
+            };
+            let output = repl.execute(&code).await;
+            return ToolResult::ok(output);
+        }
         other => Err(format!("Unknown tool: {other}")),
     };
     match res {
@@ -139,10 +180,10 @@ mod dispatch_tests {
 
     #[tokio::test]
     async fn dispatch_table_routes_every_known_name() {
-        // Every name listed in tool_definitions must dispatch to a body
-        // (even if that body is currently a stub). Verifies the table
-        // and the dispatch in execute_tool stay in sync.
-        let defs = tool_definitions();
+        // Every name listed in tool_definitions (with REPL enabled) must dispatch
+        // to a body — no "Unknown tool" errors.  Verifies the table and the
+        // dispatch in execute_tool stay in sync.
+        let defs = tool_definitions(true);
         for def in defs {
             let r = execute_tool(&def.name, json!({}), None, None).await;
             // Stubs return is_error=true with "not yet implemented".

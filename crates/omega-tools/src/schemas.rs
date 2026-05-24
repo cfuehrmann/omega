@@ -7,13 +7,17 @@
 use omega_core::ToolDefinition;
 use serde_json::{Value, json};
 
-/// All twelve tools Omega exposes, in stable order.
+/// All tools Omega exposes, in stable order.
 ///
 /// Order matches the TS `toolDefinitions` array. The agent does not depend
 /// on order, but tests do (snapshot/round-trip).
+///
+/// The base set is twelve tools.  When `include_repl` is `true` (i.e. the
+/// session was started with `OMEGA_FEATURE_REPL=1`), `python_repl` is
+/// appended as the thirteenth entry.
 #[must_use]
-pub fn tool_definitions() -> Vec<ToolDefinition> {
-    vec![
+pub fn tool_definitions(include_repl: bool) -> Vec<ToolDefinition> {
+    let mut defs = vec![
         read_file(),
         write_file(),
         run_command(),
@@ -26,7 +30,11 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         run_background(),
         wait_for_output(),
         write_stdin(),
-    ]
+    ];
+    if include_repl {
+        defs.push(python_repl());
+    }
+    defs
 }
 
 // -----------------------------------------------------------------------
@@ -306,6 +314,25 @@ fn wait_for_output() -> ToolDefinition {
     }
 }
 
+fn python_repl() -> ToolDefinition {
+    ToolDefinition {
+        name: "python_repl".into(),
+        description: "Execute Python code in a stateful REPL. Variables defined \
+                      in one call persist to subsequent calls within the session. \
+                      Returns combined stdout/stderr output, truncated if long. \
+                      Useful for calculations, data parsing, exploration, and \
+                      composing intermediate results."
+            .into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "code": { "type": "string", "description": "Python code to execute" },
+            },
+            "required": ["code"],
+        }),
+    }
+}
+
 fn write_stdin() -> ToolDefinition {
     ToolDefinition {
         name: "write_stdin".into(),
@@ -333,8 +360,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn twelve_tools_in_stable_order() {
-        let names: Vec<String> = tool_definitions().into_iter().map(|d| d.name).collect();
+    fn twelve_tools_without_repl() {
+        let names: Vec<String> = tool_definitions(false)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
         assert_eq!(
             names,
             vec![
@@ -355,8 +385,45 @@ mod tests {
     }
 
     #[test]
+    fn thirteen_tools_with_repl() {
+        let names: Vec<String> = tool_definitions(true).into_iter().map(|d| d.name).collect();
+        assert_eq!(
+            names,
+            vec![
+                "read_file",
+                "write_file",
+                "run_command",
+                "edit_file",
+                "list_files",
+                "web_search",
+                "fetch_url",
+                "grep_files",
+                "find_files",
+                "run_background",
+                "wait_for_output",
+                "write_stdin",
+                "python_repl",
+            ]
+        );
+    }
+
+    #[test]
+    fn repl_tool_appended_last() {
+        let without = tool_definitions(false);
+        let with_repl = tool_definitions(true);
+        // The first 12 tools are identical in both lists.
+        assert_eq!(without.len(), 12);
+        assert_eq!(with_repl.len(), 13);
+        for (a, b) in without.iter().zip(with_repl.iter()) {
+            assert_eq!(a.name, b.name, "base tools must not reorder");
+        }
+        assert_eq!(with_repl[12].name, "python_repl");
+    }
+
+    #[test]
     fn every_schema_is_an_object_with_required_array() {
-        for def in tool_definitions() {
+        // Test with REPL enabled so the python_repl schema is also checked.
+        for def in tool_definitions(true) {
             let schema = &def.input_schema;
             assert_eq!(
                 schema["type"], "object",
@@ -378,7 +445,7 @@ mod tests {
 
     #[test]
     fn descriptions_are_non_empty() {
-        for def in tool_definitions() {
+        for def in tool_definitions(true) {
             assert!(
                 !def.description.is_empty(),
                 "{} has empty description",

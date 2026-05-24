@@ -45,7 +45,7 @@ use omega_types::ids::{Origin, SessionId};
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
-use omega_tools::{ToolCtx, execute_tool, tool_definitions};
+use omega_tools::{PythonRepl, ToolCtx, execute_tool, tool_definitions};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -496,6 +496,17 @@ pub struct Agent {
     /// onto every `LlmCall` event so post-mortem inspection can pin
     /// the exact context the model saw.
     context_hashes: Vec<ContextHash>,
+    /// Shared handle to the session's stateful Python REPL subprocess.
+    ///
+    /// `None` inside the Mutex = subprocess not yet started (lazy startup).
+    /// The subprocess is started on the first `python_repl` tool call and
+    /// reused for all subsequent calls in the session.
+    ///
+    /// Only populated in the `ToolCtx` when `features.repl == true`.
+    /// Cleaned up (process killed) when the `PythonRepl` is dropped, which
+    /// happens when the `Arc` reference count reaches zero — either at
+    /// `Agent::drop` or when all outstanding `ToolCtx` handles are dropped.
+    python_repl: Arc<tokio::sync::Mutex<Option<PythonRepl>>>,
 }
 
 impl Agent {
@@ -534,6 +545,7 @@ impl Agent {
             history: Vec::new(),
             context_hashes: Vec::new(),
             features,
+            python_repl: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -581,6 +593,7 @@ impl Agent {
             max_tokens,
             self.config.headless,
             &files,
+            self.features.repl,
         );
         // Derive the set of canonical on-disk paths for the system-prompt
         // guard in `execute_tool`.  Canonicalisation happens here once so
@@ -810,6 +823,14 @@ impl Agent {
             // every call — a difference here is observable in future turns.
             // Domain state: restored from SessionStartedEvent on strict resume.
             features,
+            // python_repl: NOT in DomainSnapshot.
+            // The kernel state is domain-relevant (variables persist
+            // across turns), and the code that produced it is persisted
+            // (every python_repl tool call is in events.jsonl).  But this
+            // MVP does not replay tool calls on resume — strict_resume
+            // refuses REPL sessions instead.  See [oq-repl-replay] in
+            // docs/session-design.html for the principled future fix.
+            python_repl: _,
         } = self;
         DomainSnapshot {
             active_model: active_model.clone(),
@@ -1083,7 +1104,7 @@ impl Agent {
                     model: self.active_model.clone(),
                     messages: self.history.clone(),
                     system: Some(system_blocks),
-                    tools: tool_definitions(),
+                    tools: tool_definitions(self.features.repl),
                     config: ModelConfig {
                         max_tokens,
                         temperature: None,
@@ -1607,6 +1628,15 @@ impl Agent {
                     // into each future so they don't borrow self.
                     let session_cache_dir = self.config.session_dir.join("cache");
                     let system_prompt_paths = Arc::clone(&self.system_prompt_paths);
+                    // Pass the python_repl Arc into the tool context when the
+                    // REPL feature is enabled.  The outer Option<Arc<...>> is
+                    // None when features.repl=false so execute_tool knows the
+                    // feature is disabled and can return a clear error.
+                    let python_repl_opt = if self.features.repl {
+                        Some(Arc::clone(&self.python_repl))
+                    } else {
+                        None
+                    };
                     let mut futures: FuturesUnordered<_> = combined_tool_uses
                         .iter()
                         .enumerate()
@@ -1617,12 +1647,14 @@ impl Agent {
                             let cancel_clone = cancel.clone();
                             let cache_dir = session_cache_dir.clone();
                             let system_prompt_paths = Arc::clone(&system_prompt_paths);
+                            let python_repl = python_repl_opt.clone();
                             async move {
                                 let start = Instant::now();
                                 let ctx = ToolCtx {
                                     cache_dir,
                                     tool_call_id: tool_call_id.clone(),
                                     system_prompt_paths,
+                                    python_repl,
                                 };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;

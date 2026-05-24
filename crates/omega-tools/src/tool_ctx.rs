@@ -21,6 +21,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::python_repl::PythonRepl;
+
 /// Session-scoped execution context passed to every tool invocation.
 #[derive(Debug, Clone)]
 pub struct ToolCtx {
@@ -55,6 +57,22 @@ pub struct ToolCtx {
     /// telling the model the content is already available, saving a
     /// potentially large token-consuming redundant read.
     pub system_prompt_paths: Arc<HashSet<PathBuf>>,
+
+    /// Shared handle to the session's Python REPL state.
+    ///
+    /// `Some(…)` when `features.repl = true` for this session; `None` otherwise.
+    ///
+    /// The outer `Option` controls feature availability: `None` means REPL is
+    /// disabled and the `python_repl` tool returns an error.  The inner
+    /// `Option<PythonRepl>` supports lazy startup: `None` means the subprocess
+    /// has not yet been started; it is started on the first `python_repl` tool
+    /// call and reused for all subsequent calls in the session.
+    ///
+    /// The `Arc<Mutex<…>>` allows the same subprocess handle to be shared
+    /// across concurrent tool dispatches (concurrent `python_repl` calls are
+    /// serialised by the mutex — correct because the REPL is inherently
+    /// sequential).
+    pub python_repl: Option<Arc<tokio::sync::Mutex<Option<PythonRepl>>>>,
 }
 
 impl ToolCtx {
@@ -73,6 +91,7 @@ impl ToolCtx {
             cache_dir: session_dir.join("cache"),
             tool_call_id: tool_call_id.into(),
             system_prompt_paths: Arc::new(HashSet::new()),
+            python_repl: None,
         }
     }
 }

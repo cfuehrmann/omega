@@ -26,7 +26,7 @@ pub use session_resume::{
 };
 pub use system_prompt::{
     AGENTS_FILE, InstructionFile, SystemBlock, build_system_blocks, discover_instruction_files,
-    global_agents_md_path, join_blocks, repo_agents_md_path,
+    global_agents_md_path, join_blocks, repl_addendum, repo_agents_md_path,
 };
 
 /// Short git commit hash of the Omega binary, captured at compile time.

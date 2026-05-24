@@ -731,6 +731,20 @@ pub enum StrictResumeError {
         /// The hash that was referenced but not found.
         hash: String,
     },
+
+    /// The session was started with `OMEGA_FEATURE_REPL=1`.
+    ///
+    /// The REPL MVP does not support strict resume: the Python interpreter
+    /// state (defined variables, imported modules) is not persisted and
+    /// cannot be reconstructed from `events.jsonl` alone.
+    ///
+    /// **Remediation:** start a new session with `OMEGA_FEATURE_REPL=1`.
+    /// See `[oq-repl-replay]` in `docs/session-design.html` for the
+    /// principled future fix.
+    ReplResumeUnsupported {
+        /// The session directory that contains the REPL session.
+        session_dir: PathBuf,
+    },
 }
 
 impl fmt::Display for StrictResumeError {
@@ -767,6 +781,16 @@ impl fmt::Display for StrictResumeError {
                 f,
                 "context record {hash} referenced in events.jsonl not found \
                  in context.jsonl"
+            ),
+            Self::ReplResumeUnsupported { session_dir } => write!(
+                f,
+                "session {} was started with OMEGA_FEATURE_REPL=1 — \
+                 strict resume is not supported for REPL sessions (the Python \
+                 interpreter state cannot be reconstructed from events.jsonl). \
+                 Start a new session with OMEGA_FEATURE_REPL=1 instead. \
+                 See [oq-repl-replay] in docs/session-design.html for the \
+                 principled future fix.",
+                session_dir.display()
             ),
         }
     }
@@ -908,6 +932,26 @@ pub async fn strict_resume(
     // --- 1. Read events.jsonl with strict typing -------------------------
     let events = read_events_strict(&session_dir.join("events.jsonl")).await?;
 
+    // --- 1b. REPL sessions cannot be strictly resumed -------------------
+    //
+    // Check features immediately after reading events (before the boundary
+    // check) so that `ReplResumeUnsupported` has priority over
+    // `NoResumableBoundary`.  The REPL incompatibility is the more
+    // fundamental reason the resume cannot proceed; surfacing it first
+    // gives the user actionable remediation (start a new session) rather
+    // than the more opaque "no resumable boundary" message.
+    //
+    // `fold_features` may return `None` if no `SessionStartedEvent` is
+    // found — in that case we fall through and let the later
+    // `MissingFeatures` or `NoResumableBoundary` error fire as appropriate.
+    if let Some(f) = fold_features(&events)
+        && f.repl
+    {
+        return Err(StrictResumeError::ReplResumeUnsupported {
+            session_dir: session_dir.clone(),
+        });
+    }
+
     // --- 2. Find last resumable boundary --------------------------------
     let boundary =
         find_last_resumable_boundary(&events).ok_or(StrictResumeError::NoResumableBoundary)?;
@@ -954,6 +998,16 @@ pub async fn strict_resume(
     // Also recover feature flags before constructing, so they are passed
     // via AgentConfig and preserved as domain state.
     let features = fold_features(valid_events).ok_or(StrictResumeError::MissingFeatures)?;
+
+    // REPL sessions cannot be strictly resumed: the Python interpreter
+    // state (defined variables, imported modules) is not persisted and
+    // cannot be reconstructed from events.jsonl alone.
+    // See [oq-repl-replay] in docs/session-design.html for the future fix.
+    if features.repl {
+        return Err(StrictResumeError::ReplResumeUnsupported {
+            session_dir: session_dir.clone(),
+        });
+    }
 
     let event_store = EventStore::new(session_dir.join("events.jsonl"));
     let config = AgentConfig {

@@ -237,6 +237,20 @@ mutants-feature-flags:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/feature_flags.rs"
 
+# Run cargo-mutants targeted at the stateful Python REPL module
+# (PythonRepl::execute truncation logic, sentinel handling, output collection).
+# Spawns real python3 subprocesses — requires python3 in $PATH.
+mutants-python-repl:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/python_repl.rs"
+
+# Run cargo-mutants targeted at the REPL resume guard in session_resume.rs.
+# Verifies that the ReplResumeUnsupported check cannot be mutated away.
+# Template: mutants-system-prompt-guard (see AGENTS.md).
+mutants-repl-resume:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

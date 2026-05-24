@@ -186,14 +186,20 @@ fn read_existing(path: &Path) -> Option<String> {
 /// `files` is typically the output of [`discover_instruction_files`].
 /// Empty `content` files are skipped so we never push a stray header
 /// onto the wire.
+///
+/// When `include_repl` is `true` (session started with
+/// `OMEGA_FEATURE_REPL=1`), a `"repl"` block is appended after all
+/// instruction-file blocks.  It describes the `python_repl` tool and its
+/// usage pattern to the model.
 #[must_use]
 pub fn build_system_blocks(
     cwd: &str,
     max_output_tokens: u32,
     headless: bool,
     files: &[InstructionFile],
+    include_repl: bool,
 ) -> Vec<SystemBlock> {
-    let mut out = Vec::with_capacity(2 + files.len());
+    let mut out = Vec::with_capacity(2 + files.len() + usize::from(include_repl));
 
     out.push(SystemBlock {
         label: "core",
@@ -222,7 +228,40 @@ pub fn build_system_blocks(
         });
     }
 
+    if include_repl {
+        out.push(SystemBlock {
+            label: "repl",
+            content: repl_addendum(),
+            source_path: None,
+        });
+    }
+
     out
+}
+
+/// System-prompt addendum injected when `OMEGA_FEATURE_REPL=1`.
+///
+/// Placed after all instruction-file blocks so the Anthropic provider
+/// stamps `cache_control: ephemeral` on it (the last block).
+#[must_use]
+pub fn repl_addendum() -> String {
+    "## Python REPL
+
+\
+     You have access to a `python_repl` tool that executes Python code in a \
+     stateful interpreter.\n
+\
+     - Variables, imports, and definitions from one call persist into all \
+       subsequent calls within this session.\n\
+     - The tool returns combined stdout + stderr output, truncated at \
+       200 lines or 2000 characters (whichever comes first). When truncated, \
+       a `... [output truncated: N lines / M chars suppressed]` marker appears \
+       at the end.\n\
+     - Use it for arithmetic, data parsing, string manipulation, exploration, \
+       and building up intermediate results step-by-step.\n\
+     - Prefer a single call with all related statements over many small calls \
+       — state persists, so you can build on previous results."
+        .to_owned()
 }
 
 /// Concatenate every block's `content` with `\n\n` between them.
@@ -462,7 +501,7 @@ mod tests {
 
     #[test]
     fn core_block_is_first_and_unheadered() {
-        let blocks = build_system_blocks("/tmp/proj", 64_000, false, &[]);
+        let blocks = build_system_blocks("/tmp/proj", 64_000, false, &[], false);
         assert_eq!(blocks[0].label, "core");
         assert!(blocks[0].source_path.is_none());
         assert!(blocks[0].content.starts_with("You are an expert assistant"));
@@ -473,7 +512,7 @@ mod tests {
 
     #[test]
     fn runtime_block_contains_cwd_and_token_budget() {
-        let blocks = build_system_blocks("/tmp/proj", 12_345, false, &[]);
+        let blocks = build_system_blocks("/tmp/proj", 12_345, false, &[], false);
         let rt = blocks.iter().find(|b| b.label == "runtime").expect("rt");
         assert!(rt.content.starts_with("## Runtime context"));
         assert!(rt.content.contains("/tmp/proj"));
@@ -482,7 +521,7 @@ mod tests {
 
     #[test]
     fn no_instruction_files_yields_exactly_two_blocks() {
-        let blocks = build_system_blocks("/x", 1000, false, &[]);
+        let blocks = build_system_blocks("/x", 1000, false, &[], false);
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].label, "core");
         assert_eq!(blocks[1].label, "runtime");
@@ -502,7 +541,7 @@ mod tests {
                 content: "REPO".to_owned(),
             },
         ];
-        let blocks = build_system_blocks("/repo", 1000, false, &files);
+        let blocks = build_system_blocks("/repo", 1000, false, &files, false);
         assert_eq!(blocks.len(), 4);
         assert_eq!(blocks[2].label, "global-agents-md");
         assert!(
@@ -525,22 +564,76 @@ mod tests {
             path: PathBuf::from("/repo/AGENTS.md"),
             content: "   \n  ".to_owned(),
         }];
-        let blocks = build_system_blocks("/repo", 1000, false, &files);
+        let blocks = build_system_blocks("/repo", 1000, false, &files, false);
         assert_eq!(blocks.len(), 2, "whitespace-only file should be ignored");
     }
 
     #[test]
     fn join_blocks_separates_with_blank_line() {
-        let blocks = build_system_blocks("/x", 1000, false, &[]);
+        let blocks = build_system_blocks("/x", 1000, false, &[], false);
         let joined = join_blocks(&blocks);
         assert!(joined.contains("\n\n## Runtime context"));
+    }
+
+    // ---- REPL addendum ---------------------------------------------------
+
+    #[test]
+    fn repl_flag_false_adds_no_extra_block() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], false);
+        assert!(
+            blocks.iter().all(|b| b.label != "repl"),
+            "repl block must not be present when include_repl=false"
+        );
+    }
+
+    #[test]
+    fn repl_flag_true_appends_repl_block() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], true);
+        let repl_block = blocks.iter().find(|b| b.label == "repl");
+        assert!(
+            repl_block.is_some(),
+            "repl block must be present when include_repl=true"
+        );
+        // Repl block must be last.
+        assert_eq!(blocks.last().unwrap().label, "repl");
+    }
+
+    #[test]
+    fn repl_block_content_describes_tool() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], true);
+        let repl = blocks.iter().find(|b| b.label == "repl").unwrap();
+        assert!(
+            repl.content.contains("python_repl"),
+            "repl block must mention the tool name"
+        );
+        assert!(
+            repl.content.contains("persist"),
+            "repl block must describe state persistence"
+        );
+        assert!(
+            repl.content.contains("truncated"),
+            "repl block must describe truncation behaviour"
+        );
+    }
+
+    #[test]
+    fn repl_block_appended_after_instruction_files() {
+        let files = vec![InstructionFile {
+            label: "repo-agents-md",
+            path: PathBuf::from("/repo/AGENTS.md"),
+            content: "REPO".to_owned(),
+        }];
+        let blocks = build_system_blocks("/x", 1000, false, &files, true);
+        // core + runtime + repo-agents-md + repl = 4
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks.last().unwrap().label, "repl");
     }
 
     // ---- Headless mode ---------------------------------------------------
 
     #[test]
     fn headless_omits_output_format_and_discuss() {
-        let blocks = build_system_blocks("/tmp", 1000, true, &[]);
+        let blocks = build_system_blocks("/tmp", 1000, true, &[], false);
         let core = &blocks[0].content;
         assert!(
             !core.contains("## Output format"),
@@ -554,7 +647,7 @@ mod tests {
 
     #[test]
     fn interactive_includes_output_format_and_discuss() {
-        let blocks = build_system_blocks("/tmp", 1000, false, &[]);
+        let blocks = build_system_blocks("/tmp", 1000, false, &[], false);
         let core = &blocks[0].content;
         assert!(
             core.contains("## Output format"),
