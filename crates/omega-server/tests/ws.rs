@@ -675,6 +675,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
             cwd: tmp.path().to_path_buf(),
             session_dir,
             headless: false,
+            features: None,
         },
     );
     let controls = agent.controls();

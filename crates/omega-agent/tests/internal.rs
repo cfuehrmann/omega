@@ -896,6 +896,7 @@ async fn system_prompt_guard_blocks_read_of_instruction_file_end_to_end() {
             cwd: tmp.path().to_path_buf(),
             session_dir: tmp.path().to_path_buf(),
             headless: true,
+            features: None,
         },
     );
     agent.init().await.expect("init");
@@ -981,16 +982,45 @@ fn system_prompt_round_trips_init_for_resume() {
 
 #[tokio::test]
 async fn round_trip_gate() {
-    use omega_agent::strict_resume;
+    use omega_agent::{AgentConfig, strict_resume};
+    use omega_store::{ContextStore, EventStore};
+    use omega_types::FeatureFlags;
     use omega_types::events::{LlmResponseEndedEvent, LlmResponseUsage, UsageIteration};
     use omega_types::{OmegaEvent, StreamSignal};
 
     // === PART 1: Build a session with several turns ========================
-
-    let (mut agent, provider, tmp) = make_test_agent();
+    //
+    // Build the agent directly (not via make_test_agent) so we can inject
+    // non-default feature flags via AgentConfig::features.  This exercises
+    // the features round-trip through strict_resume without unsafe env-var
+    // manipulation.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let provider = std::sync::Arc::new(common::MockProvider::new());
+    let cwd = tmp.path().to_path_buf();
+    let non_default_features = FeatureFlags {
+        repl: true,
+        subagents: true,
+    };
+    let mut agent = omega_agent::Agent::new(
+        provider.clone(),
+        ContextStore::new(tmp.path().join("context.jsonl")),
+        EventStore::new(tmp.path().join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: cwd.clone(),
+            session_dir: cwd,
+            headless: false,
+            // Non-default features: exercises the features field in DomainSnapshot
+            // and the fold_features / strict_resume round-trip.
+            features: Some(non_default_features),
+        },
+    );
 
     // init() writes ServerStarted + SessionStarted events; required for
     // fold_model_and_effort in strict_resume to find the initial model.
+    // With features: Some(..) set above, init() skips from_env() and uses
+    // the supplied flags, recording them in SessionStartedEvent.
     agent.init().await.expect("init");
 
     // Turn 1: simple
@@ -1101,6 +1131,8 @@ async fn round_trip_gate() {
         !snap.system_prompt.is_empty(),
         "snapshot system_prompt must be non-empty"
     );
+    // Both feature flags must be non-default (as supplied in AgentConfig above).
+    assert_eq!(snap.features, non_default_features, "snapshot features");
 
     // === PART 3: Simulate process restart =================================
     drop(agent);

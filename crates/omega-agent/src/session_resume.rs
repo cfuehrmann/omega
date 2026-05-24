@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use omega_core::{Message, Provider};
 use omega_store::{ContextHash, ContextRecord, ContextStore, EventStore, StoreError};
+use omega_types::FeatureFlags;
 use omega_types::ids::LoggedEvent;
 use omega_types::{OmegaEvent, events::InterruptReason};
 
@@ -52,6 +53,13 @@ use crate::agent::{Agent, AgentConfig, DEFAULT_EFFORT};
 /// or plumbing (bound to `_`).  Silent "we're not checking it" situations are
 /// impossible at the type level.
 ///
+/// ## Domain-state mutation principle
+///
+/// If a domain field is ever mutated mid-session, a corresponding domain event
+/// must record the change — see `ModelChanged` / `EffortChanged` for the
+/// pattern.  Until a mutation mechanism exists for a field, it is restored
+/// from the first `SessionStartedEvent` on strict resume.
+///
 /// See also: `docs/session-design.html#domain-state`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DomainSnapshot {
@@ -67,6 +75,10 @@ pub struct DomainSnapshot {
     /// Full system prompt text (all blocks joined with `\n\n`).
     /// Observable by the LLM on every call; persisted in `SessionStartedEvent`.
     pub system_prompt: String,
+    /// Runtime feature flags controlling which tools are exposed to the LLM.
+    /// A difference in flags changes future tool availability — domain state.
+    /// Restored from `SessionStartedEvent.features` on strict resume.
+    pub features: FeatureFlags,
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +685,16 @@ pub enum StrictResumeError {
     /// produce a session whose LLM-visible state differs from the original.
     MissingSystemPrompt,
 
+    /// `events.jsonl` contains no `SessionStartedEvent` from which to recover
+    /// the feature flags active at session start.
+    ///
+    /// Per the **schema-evolution-loud** rule in `AGENTS.md`, strict resume
+    /// fails loudly rather than silently falling back to
+    /// [`FeatureFlags::default`] — that fallback would mask the missing
+    /// persisted data and could produce a session with a different tool set
+    /// from the original.
+    MissingFeatures,
+
     /// A non-blank line in `events.jsonl` could not be parsed as a
     /// [`LoggedEvent`].
     ///
@@ -733,6 +755,12 @@ impl fmt::Display for StrictResumeError {
                 "SessionStartedEvent.system_prompt is absent or empty in \
                  events.jsonl — cannot reconstruct the system prompt for \
                  strict resume (schema-evolution-loud: no silent fallback)"
+            ),
+            Self::MissingFeatures => write!(
+                f,
+                "no SessionStartedEvent found in events.jsonl — cannot \
+                 recover feature flags for strict resume \
+                 (schema-evolution-loud: no silent fallback)"
             ),
             Self::ContextStore(e) => write!(f, "context.jsonl store error: {e}"),
             Self::MissingContextRecord { hash } => write!(
@@ -805,6 +833,29 @@ fn fold_system_prompt(events: &[OmegaEvent]) -> Option<String> {
             && !e.system_prompt.is_empty()
         {
             return Some(e.system_prompt.clone());
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Private helper — feature flags extraction
+// ---------------------------------------------------------------------------
+
+/// Extract the feature flags from the first `SessionStartedEvent` in `events`.
+///
+/// Returns `None` when no `SessionStartedEvent` is present at all.
+/// [`strict_resume`] converts `None` to
+/// [`StrictResumeError::MissingFeatures`] — no silent fallback to default
+/// flags, because a wrong tool set is observable by the LLM.
+///
+/// Unlike [`fold_system_prompt`], this function accepts a `SessionStartedEvent`
+/// with the default (both-off) flags as valid — the absent-vs-default
+/// distinction is meaningful only for `system_prompt` (empty = missing).
+fn fold_features(events: &[OmegaEvent]) -> Option<FeatureFlags> {
+    for event in events {
+        if let OmegaEvent::SessionStarted(e) = event {
+            return Some(e.features);
         }
     }
     None
@@ -899,6 +950,11 @@ pub async fn strict_resume(
     }
 
     // --- 5. Build Agent -------------------------------------------------
+    //
+    // Also recover feature flags before constructing, so they are passed
+    // via AgentConfig and preserved as domain state.
+    let features = fold_features(valid_events).ok_or(StrictResumeError::MissingFeatures)?;
+
     let event_store = EventStore::new(session_dir.join("events.jsonl"));
     let config = AgentConfig {
         model: model.clone(),
@@ -906,6 +962,10 @@ pub async fn strict_resume(
         cwd,
         session_dir,
         headless,
+        // Restore the exact feature flags from the original session so the
+        // resumed agent exposes the same tool set to the LLM as before.
+        // Bypasses from_env() — features are locked in at session-start time.
+        features: Some(features),
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
 
@@ -1231,6 +1291,125 @@ mod tests {
                 "h_tr1".to_owned(),
                 "h_a2".to_owned(),
             ]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // fold_features
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fold_features_no_events_returns_none() {
+        assert_eq!(fold_features(&[]), None);
+    }
+
+    #[test]
+    fn fold_features_no_session_started_returns_none() {
+        // Only non-SessionStarted events — no SessionStartedEvent present.
+        let events = vec![user_msg("hi"), model_changed("claude-opus-4-7"), turn_end()];
+        assert_eq!(fold_features(&events), None);
+    }
+
+    #[test]
+    fn fold_features_returns_default_flags_when_both_off() {
+        // SessionStartedEvent with default (both-off) flags — valid, returns Some(default).
+        let events = vec![session_started("claude-sonnet-4-6", "medium")];
+        assert_eq!(fold_features(&events), Some(FeatureFlags::default()));
+    }
+
+    #[test]
+    fn fold_features_repl_on() {
+        let events = vec![OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+            },
+        })];
+        assert_eq!(
+            fold_features(&events),
+            Some(FeatureFlags {
+                repl: true,
+                subagents: false
+            })
+        );
+    }
+
+    #[test]
+    fn fold_features_both_on() {
+        let events = vec![OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: true,
+            },
+        })];
+        assert_eq!(
+            fold_features(&events),
+            Some(FeatureFlags {
+                repl: true,
+                subagents: true
+            })
+        );
+    }
+
+    #[test]
+    fn fold_features_uses_first_session_started() {
+        // Two SessionStartedEvents (unusual but defensive) — first one wins.
+        let first = OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+            },
+        });
+        let second = OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: false,
+                subagents: true,
+            },
+        });
+        let events = vec![first, second];
+        // First SessionStartedEvent wins.
+        assert_eq!(
+            fold_features(&events),
+            Some(FeatureFlags {
+                repl: true,
+                subagents: false
+            })
         );
     }
 

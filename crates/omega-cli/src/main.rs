@@ -198,6 +198,7 @@ async fn run(
         cwd: cwd.clone(),
         session_dir: paths.dir.clone(),
         headless,
+        features: None, // resolved from env in agent.init()
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
     if let Err(e) = agent.init().await {

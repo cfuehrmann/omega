@@ -127,6 +127,7 @@ pub fn make_test_agent() -> (Agent, Arc<MockProvider>, TempDir) {
             cwd: cwd.clone(),
             session_dir: cwd,
             headless: false,
+            features: None,
         },
     );
     (agent, provider, tmp)

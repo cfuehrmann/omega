@@ -436,6 +436,14 @@ pub struct AgentConfig {
     /// interactive-discussion policy are omitted from the core prompt.
     /// Set for headless / benchmark sessions where no human UI is attached.
     pub headless: bool,
+    /// Feature flags override.  `None` (the default for new sessions)
+    /// means [`Agent::init`] will read flags from environment variables
+    /// via [`FeatureFlags::from_env`].  `Some(flags)` bypasses the env
+    /// lookup and uses the supplied flags directly — used by
+    /// [`strict_resume`](crate::session_resume::strict_resume) to restore
+    /// the exact flags that were active in the original session, and by
+    /// tests that need deterministic, env-independent feature flags.
+    pub features: Option<FeatureFlags>,
 }
 
 /// The agentic loop.
@@ -508,6 +516,9 @@ impl Agent {
             .effort
             .clone()
             .unwrap_or_else(|| DEFAULT_EFFORT.to_owned());
+        // Extract before moving config into Self.  None → default (both off);
+        // strict_resume passes Some(recovered_flags) to skip from_env().
+        let features = config.features.unwrap_or_default();
         let event_store = Arc::new(event_store);
         let controls = ControlHandle::new(Arc::clone(&event_store));
         Self {
@@ -522,7 +533,7 @@ impl Agent {
             system_prompt_paths: Arc::new(HashSet::new()),
             history: Vec::new(),
             context_hashes: Vec::new(),
-            features: FeatureFlags::default(),
+            features,
         }
     }
 
@@ -535,10 +546,13 @@ impl Agent {
     ///
     /// Returns an error if serialisation or the file write fails.
     pub async fn init(&mut self) -> omega_store::Result<()> {
-        // 0. Load feature flags from environment variables.
-        //    Done first so the flags are available for SessionStartedEvent
-        //    and for any future conditional logic within this method.
-        self.features = FeatureFlags::from_env();
+        // 0. Resolve feature flags.
+        //    When config.features is None (new sessions), read from the
+        //    process environment.  When Some (strict-resume or tests),
+        //    the caller has already supplied the right flags — skip env.
+        if self.config.features.is_none() {
+            self.features = FeatureFlags::from_env();
+        }
         eprintln!(
             "feature flags: repl={} subagents={}",
             self.features.repl, self.features.subagents
@@ -792,12 +806,10 @@ impl Agent {
             // Derived deterministically from system_blocks; the new instance
             // is operationally equivalent.
             system_prompt_paths: _,
-            // Populated from environment variables at process start.
-            // The flags are persisted in SessionStartedEvent for forensic
-            // purposes but are not part of the LLM-visible session state —
-            // they are not reconstructed on resume and may differ across
-            // process restarts if the environment changes.
-            features: _,
+            // Features determine which tools are exposed to the LLM on
+            // every call — a difference here is observable in future turns.
+            // Domain state: restored from SessionStartedEvent on strict resume.
+            features,
         } = self;
         DomainSnapshot {
             active_model: active_model.clone(),
@@ -808,6 +820,7 @@ impl Agent {
             // directly so that mutations to system_prompt() are visible
             // to the test suite through domain_snapshot().
             system_prompt: self.system_prompt(),
+            features: *features,
         }
     }
 

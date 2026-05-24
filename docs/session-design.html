@@ -557,9 +557,10 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h2 id="open-questions">Open questions — Endeavor 1 scope</h2>
 
 <div class="callout rec" id="oq-allowlist">
-  <div class="callout-title">✓ Typed domain-state snapshot — implemented (Phase 2 follow-up)</div>
+  <div class="callout-title">✓ Typed domain-state snapshot — implemented (Phase 2 follow-up + feature-flags correction)</div>
   <p>
-    Completed in the Phase 2 follow-up sub-session.  The delivered items are:
+    Completed in the Phase 2 follow-up sub-session, with a correction applied
+    in a subsequent sub-session.  The delivered items are:
   </p>
   <ul>
     <li><code>DomainSnapshot</code> struct in
@@ -575,10 +576,28 @@ tr:nth-child(even) td { background: #fafbfc; }
         <code>domain-relevant&nbsp;⇒&nbsp;persisted</code> carve-out.
         Failing loudly (<code>StrictResumeError::MissingSystemPrompt</code>) when
         the field is absent per the schema-evolution-loud rule.</li>
-    <li><code>round_trip_gate</code> refactored to compare two
-        <code>DomainSnapshot</code>s with a single <code>assert_eq!</code>;
-        system-prompt round-trip is now exercised.</li>
+    <li><strong>Feature flags (<code>FeatureFlags</code>) are domain state</strong>,
+        not plumbing.  They determine which tools are exposed to the LLM on every
+        call — a difference is observable in future turns.  Added
+        <code>features: FeatureFlags</code> to <code>DomainSnapshot</code>;
+        <code>fold_features</code> recovers them from the first
+        <code>SessionStartedEvent</code> in <code>events.jsonl</code> on strict
+        resume; fails loudly (<code>StrictResumeError::MissingFeatures</code>)
+        when the event is absent.</li>
+    <li><code>round_trip_gate</code> exercises the features round-trip with
+        non-default flags (<code>repl: true, subagents: true</code>); a single
+        <code>assert_eq!</code> on two <code>DomainSnapshot</code>s covers all
+        domain fields including features.</li>
   </ul>
+  <p>
+    <strong>Principle recorded:</strong> any mechanism that mutates domain state
+    must emit a corresponding domain event.  For feature flags, no mutation
+    mechanism exists today (they are read from env at process start and never
+    changed), so the immediate work is only restoration on strict resume.
+    If a future toggle is added (admin WS message, auto-disable on failures,
+    etc.), it must come with a <code>FeatureFlagsChanged</code> domain event —
+    structurally analogous to <code>ModelChanged</code> / <code>EffortChanged</code>.
+  </p>
   <p>
     One new carve-out was surfaced during the field audit — see
     <a href="#oq-cwd-carveout">oq-cwd-carveout</a> below.
