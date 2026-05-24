@@ -19,7 +19,8 @@ expression: events
     "features": {
       "repl": false,
       "subagents": false,
-      "repl_replaces_fileops": false
+      "repl_replaces_fileops": false,
+      "repl_replaces_shell": false
     }
   },
   {

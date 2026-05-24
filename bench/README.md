@@ -72,13 +72,38 @@ Setting `OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` without `OMEGA_FEATURE_REPL=1`
 is a configuration error and the agent will exit with a clear message at
 startup.
 
-The three-mode sweep for the v0.1.9 benchmark is:
+### Shell-replacement treatment arm (Tier 2)
+
+To run the **shell-replacement** treatment (removes `run_command`,
+`run_background`, `wait_for_output`, `write_stdin` — forcing shell work through
+`subprocess` inside `python_repl`), use:
+
+```bash
+--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1
+```
+
+Setting `OMEGA_FEATURE_REPL_REPLACES_SHELL=1` without `OMEGA_FEATURE_REPL=1`
+is a configuration error (same loud-failure policy as the fileops flag).
+
+The two `REPL_REPLACES_*` flags are **orthogonal** — all four combinations are
+valid when `OMEGA_FEATURE_REPL=1`.  For the full Tier 2 (REPL-only, no direct
+file or shell access) use:
+
+```bash
+--ae OMEGA_FEATURE_REPL=1 \
+--ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1 \
+--ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1
+```
+
+The five-mode sweep matrix for the REPL benchmark is:
 
 | Treatment arm | `--ae` flags |
 |---|---|
 | OFF (baseline) | _(none)_ |
 | Additive REPL | `--ae OMEGA_FEATURE_REPL=1` |
-| Limit-mode REPL | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` |
+| Limit-mode REPL (fileops removed) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` |
+| Shell-replacement REPL (Tier 2) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1` |
+| Full Tier 2 (fileops + shell removed) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1` |
 
 ### REPL benchmark plan (v0.1.8, first benchmark data on the REPL MVP)
 

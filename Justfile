@@ -231,8 +231,8 @@ mutants-domain-snapshot:
 
 # Run cargo-mutants targeted at the feature-flag parsing module.
 # Mutates omega-types/src/feature_flags.rs and runs the omega-types test suite.
-# Covers parse_flag_value / from_values; from_env is a thin env-read wrapper
-# excluded from mutation via #[mutants::skip] (requires process isolation).
+# Covers parse_flag_value / from_values / validate for all flags including
+# repl_replaces_shell; from_env is excluded via #[mutants::skip].
 mutants-feature-flags:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/feature_flags.rs"
@@ -252,14 +252,16 @@ mutants-repl-resume:
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
 # Run cargo-mutants targeted at the schemas.rs tool-definition filtering.
-# Covers the repl_replaces_fileops branch and the limit-mode tool exclusion.
+# Covers the repl_replaces_fileops and repl_replaces_shell branches, the
+# both-replaces (Tier 2) path, and all tool-exclusion logic.
 # Adds omega-types as an in-scope dep (resolved automatically by cargo-mutants).
 mutants-schemas:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/schemas.rs"
 
 # Run cargo-mutants targeted at the system_prompt.rs block assembly.
-# Covers the new repl_replaces_fileops branch and reduced_toolset_addendum.
+# Covers repl_replaces_fileops, repl_replaces_shell, both-replaces (Tier 2),
+# shell-tool gating, and the combined reduced_toolset_addendum.
 mutants-system-prompt:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"

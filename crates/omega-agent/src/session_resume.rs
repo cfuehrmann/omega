@@ -1387,6 +1387,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             },
         })];
         assert_eq!(
@@ -1395,6 +1396,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             })
         );
     }
@@ -1415,6 +1417,7 @@ mod tests {
                 repl: true,
                 subagents: true,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             },
         })];
         assert_eq!(
@@ -1423,6 +1426,7 @@ mod tests {
                 repl: true,
                 subagents: true,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             })
         );
     }
@@ -1445,6 +1449,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: true,
+                repl_replaces_shell: false,
             },
         })];
         assert_eq!(
@@ -1453,6 +1458,72 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: true,
+                repl_replaces_shell: false,
+            })
+        );
+    }
+
+    #[test]
+    fn fold_features_repl_replaces_shell_on() {
+        // Verify repl_replaces_shell flows through fold_features via SessionStartedEvent.
+        // This is the round-trip gate for the new flag.
+        let events = vec![OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+                repl_replaces_fileops: false,
+                repl_replaces_shell: true,
+            },
+        })];
+        assert_eq!(
+            fold_features(&events),
+            Some(FeatureFlags {
+                repl: true,
+                subagents: false,
+                repl_replaces_fileops: false,
+                repl_replaces_shell: true,
+            })
+        );
+    }
+
+    #[test]
+    fn fold_features_both_replaces_on() {
+        // Verify the Tier 2 configuration (both replaces_* flags on) flows
+        // through fold_features correctly — the round-trip gate for the
+        // combined case.
+        let events = vec![OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+                repl_replaces_fileops: true,
+                repl_replaces_shell: true,
+            },
+        })];
+        assert_eq!(
+            fold_features(&events),
+            Some(FeatureFlags {
+                repl: true,
+                subagents: false,
+                repl_replaces_fileops: true,
+                repl_replaces_shell: true,
             })
         );
     }
@@ -1474,6 +1545,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             },
         });
         let second = OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -1490,6 +1562,7 @@ mod tests {
                 repl: false,
                 subagents: true,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             },
         });
         let events = vec![first, second];
@@ -1500,6 +1573,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             })
         );
     }

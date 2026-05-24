@@ -314,6 +314,24 @@ tr:nth-child(even) td { background: #fafbfc; }
       <code>--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>.
     </li>
     <li style="margin-bottom:0.6rem;">
+      <strong>Sub-session: add shell-replacement flag
+      (<code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code>). &#x2705; done</strong>
+      Tier&nbsp;2 (RLM-paper-style &#x201C;REPL as orchestrator&#x201D;): removes the four
+      shell-execution tools (<code>run_command</code>,
+      <code>run_background</code>, <code>wait_for_output</code>,
+      <code>write_stdin</code>) when set, forcing the LLM to run shell
+      commands via <code>subprocess</code> inside <code>python_repl</code>.
+      Requires <code>OMEGA_FEATURE_REPL=1</code>; fails loudly otherwise.
+      Orthogonal to <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code> &#x2014;
+      all four flag combinations are valid when <code>repl=true</code>.
+      Motivation: limit-mode shows REPL engagement on file-centric tasks
+      (fix-git) but shell-natural tasks (crack-7z-hash) use
+      <code>run_command</code> exclusively; this flag forces engagement there.
+      Bench invocations:
+      <code>--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1</code>
+      (shell-only removal) or both replaces flags together for Tier&nbsp;2 full mode.
+    </li>
+    <li style="margin-bottom:0.6rem;">
       <strong>Operator: tag v0.1.9, point bench at it, sweep three modes.</strong>
       Both cached tasks (<code>fix-git</code>, <code>crack-7z-hash</code>)
       in three treatment arms:

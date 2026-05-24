@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 /// [`FeatureFlags::from_env`]. Recorded in every
 /// [`SessionStartedEvent`](crate::events::SessionStartedEvent) for forensic
 /// traceability.
+#[allow(clippy::struct_excessive_bools)] // Four bools are intentional: each flag is an independent binary on/off experiment.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct FeatureFlags {
     /// Enable the REPL tool.
@@ -42,6 +43,28 @@ pub struct FeatureFlags {
     /// error.  [`FeatureFlags::validate`] returns
     /// [`FeatureFlagsConfigError::ReplLimitWithoutRepl`] in that case.
     pub repl_replaces_fileops: bool,
+    /// Experimental.  When true, removes four shell-execution tools
+    /// (`run_command`, `run_background`, `wait_for_output`, `write_stdin`)
+    /// from the tool list so that `python_repl` is the sole shell-execution
+    /// mechanism (via `subprocess` inside the REPL).  Requires `repl=true`.
+    ///
+    /// This is the RLM-paper-style "REPL as orchestrator" configuration —
+    /// useful for forcing REPL engagement on shell-natural tasks (e.g.
+    /// hash-cracking) where `run_command` would otherwise be the natural path.
+    ///
+    /// Set `OMEGA_FEATURE_REPL_REPLACES_SHELL=1` or
+    /// `OMEGA_FEATURE_REPL_REPLACES_SHELL=true`.
+    ///
+    /// Orthogonal to [`repl_replaces_fileops`]: both flags can be set
+    /// simultaneously to produce the minimal "Tier 2" toolset
+    /// (`python_repl`, `web_search`, `fetch_url` only).
+    ///
+    /// Validation: setting this flag without `repl=true` is a configuration
+    /// error.  [`FeatureFlags::validate`] returns
+    /// [`FeatureFlagsConfigError::ReplShellWithoutRepl`] in that case.
+    ///
+    /// [`repl_replaces_fileops`]: Self::repl_replaces_fileops
+    pub repl_replaces_shell: bool,
 }
 
 /// Configuration errors detected during [`FeatureFlags::validate`].
@@ -51,6 +74,10 @@ pub enum FeatureFlagsConfigError {
     /// `OMEGA_FEATURE_REPL=1`.  The limit-mode flag has no effect without a
     /// REPL to replace the removed tools.
     ReplLimitWithoutRepl,
+    /// `OMEGA_FEATURE_REPL_REPLACES_SHELL=1` was set without
+    /// `OMEGA_FEATURE_REPL=1`.  The shell-replacement flag has no effect
+    /// without a REPL to replace the removed shell tools.
+    ReplShellWithoutRepl,
 }
 
 impl std::fmt::Display for FeatureFlagsConfigError {
@@ -59,6 +86,10 @@ impl std::fmt::Display for FeatureFlagsConfigError {
             Self::ReplLimitWithoutRepl => write!(
                 f,
                 "OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1 requires OMEGA_FEATURE_REPL=1"
+            ),
+            Self::ReplShellWithoutRepl => write!(
+                f,
+                "OMEGA_FEATURE_REPL_REPLACES_SHELL=1 requires OMEGA_FEATURE_REPL=1"
             ),
         }
     }
@@ -74,6 +105,7 @@ impl FeatureFlags {
     /// | `OMEGA_FEATURE_REPL`                    | [`FeatureFlags::repl`]                             |
     /// | `OMEGA_FEATURE_SUBAGENTS`               | [`FeatureFlags::subagents`]                        |
     /// | `OMEGA_FEATURE_REPL_REPLACES_FILEOPS`   | [`FeatureFlags::repl_replaces_fileops`]            |
+    /// | `OMEGA_FEATURE_REPL_REPLACES_SHELL`     | [`FeatureFlags::repl_replaces_shell`]              |
     ///
     /// Truthy values: `"1"` or `"true"` (case-insensitive).\
     /// Falsy values: `"0"`, `"false"`, `""`, or the variable being unset —
@@ -105,10 +137,12 @@ impl FeatureFlags {
         let repl_val = std::env::var("OMEGA_FEATURE_REPL").ok();
         let subagents_val = std::env::var("OMEGA_FEATURE_SUBAGENTS").ok();
         let repl_replaces_fileops_val = std::env::var("OMEGA_FEATURE_REPL_REPLACES_FILEOPS").ok();
+        let repl_replaces_shell_val = std::env::var("OMEGA_FEATURE_REPL_REPLACES_SHELL").ok();
         Self::from_values(
             repl_val.as_deref(),
             subagents_val.as_deref(),
             repl_replaces_fileops_val.as_deref(),
+            repl_replaces_shell_val.as_deref(),
         )
     }
 
@@ -127,6 +161,7 @@ impl FeatureFlags {
         repl_val: Option<&str>,
         subagents_val: Option<&str>,
         repl_replaces_fileops_val: Option<&str>,
+        repl_replaces_shell_val: Option<&str>,
     ) -> Self {
         Self {
             repl: parse_flag_value("OMEGA_FEATURE_REPL", repl_val),
@@ -134,6 +169,10 @@ impl FeatureFlags {
             repl_replaces_fileops: parse_flag_value(
                 "OMEGA_FEATURE_REPL_REPLACES_FILEOPS",
                 repl_replaces_fileops_val,
+            ),
+            repl_replaces_shell: parse_flag_value(
+                "OMEGA_FEATURE_REPL_REPLACES_SHELL",
+                repl_replaces_shell_val,
             ),
         }
     }
@@ -143,6 +182,8 @@ impl FeatureFlags {
     /// Currently checks:
     /// - [`FeatureFlagsConfigError::ReplLimitWithoutRepl`][]: `repl_replaces_fileops`
     ///   requires `repl`.
+    /// - [`FeatureFlagsConfigError::ReplShellWithoutRepl`][]: `repl_replaces_shell`
+    ///   requires `repl`.
     ///
     /// Called by [`Agent::init`](crate::Agent::init) at startup; the agent
     /// exits with a clear error message if validation fails.
@@ -151,9 +192,15 @@ impl FeatureFlags {
     ///
     /// Returns `Err(FeatureFlagsConfigError::ReplLimitWithoutRepl)` when
     /// `repl_replaces_fileops` is `true` but `repl` is `false`.
+    ///
+    /// Returns `Err(FeatureFlagsConfigError::ReplShellWithoutRepl)` when
+    /// `repl_replaces_shell` is `true` but `repl` is `false`.
     pub fn validate(self) -> Result<(), FeatureFlagsConfigError> {
         if self.repl_replaces_fileops && !self.repl {
             return Err(FeatureFlagsConfigError::ReplLimitWithoutRepl);
+        }
+        if self.repl_replaces_shell && !self.repl {
+            return Err(FeatureFlagsConfigError::ReplShellWithoutRepl);
         }
         Ok(())
     }
@@ -212,6 +259,10 @@ mod tests {
             !flags.repl_replaces_fileops,
             "default repl_replaces_fileops must be false"
         );
+        assert!(
+            !flags.repl_replaces_shell,
+            "default repl_replaces_shell must be false"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -219,77 +270,84 @@ mod tests {
 
     #[test]
     fn unset_repl_is_false() {
-        let f = FeatureFlags::from_values(None, None, None);
+        let f = FeatureFlags::from_values(None, None, None, None);
         assert!(!f.repl);
     }
 
     #[test]
     fn unset_subagents_is_false() {
-        let f = FeatureFlags::from_values(None, None, None);
+        let f = FeatureFlags::from_values(None, None, None, None);
         assert!(!f.subagents);
     }
 
     #[test]
     fn unset_repl_replaces_fileops_is_false() {
-        let f = FeatureFlags::from_values(None, None, None);
+        let f = FeatureFlags::from_values(None, None, None, None);
         assert!(!f.repl_replaces_fileops);
+    }
+
+    #[test]
+    fn unset_repl_replaces_shell_is_false() {
+        let f = FeatureFlags::from_values(None, None, None, None);
+        assert!(!f.repl_replaces_shell);
     }
 
     #[test]
     fn truthy_one_enables_repl() {
-        let f = FeatureFlags::from_values(Some("1"), None, None);
+        let f = FeatureFlags::from_values(Some("1"), None, None, None);
         assert!(f.repl);
         assert!(!f.subagents);
         assert!(!f.repl_replaces_fileops);
+        assert!(!f.repl_replaces_shell);
     }
 
     #[test]
     fn truthy_true_lowercase_enables_subagents() {
-        let f = FeatureFlags::from_values(None, Some("true"), None);
+        let f = FeatureFlags::from_values(None, Some("true"), None, None);
         assert!(!f.repl);
         assert!(f.subagents);
     }
 
     #[test]
     fn truthy_true_uppercase_enables_repl() {
-        let f = FeatureFlags::from_values(Some("TRUE"), None, None);
+        let f = FeatureFlags::from_values(Some("TRUE"), None, None, None);
         assert!(f.repl);
     }
 
     #[test]
     fn truthy_true_mixed_case_enables_repl() {
-        let f = FeatureFlags::from_values(Some("True"), None, None);
+        let f = FeatureFlags::from_values(Some("True"), None, None, None);
         assert!(f.repl);
     }
 
     #[test]
     fn falsy_zero_disables_repl() {
-        let f = FeatureFlags::from_values(Some("0"), None, None);
+        let f = FeatureFlags::from_values(Some("0"), None, None, None);
         assert!(!f.repl);
     }
 
     #[test]
     fn falsy_false_disables_subagents() {
-        let f = FeatureFlags::from_values(None, Some("false"), None);
+        let f = FeatureFlags::from_values(None, Some("false"), None, None);
         assert!(!f.subagents);
     }
 
     #[test]
     fn falsy_empty_string_disables_repl() {
-        let f = FeatureFlags::from_values(Some(""), None, None);
+        let f = FeatureFlags::from_values(Some(""), None, None, None);
         assert!(!f.repl);
     }
 
     #[test]
     fn garbage_value_defaults_to_false_repl() {
         // "yes" is not a recognised value; must default to false without panic.
-        let f = FeatureFlags::from_values(Some("yes"), None, None);
+        let f = FeatureFlags::from_values(Some("yes"), None, None, None);
         assert!(!f.repl, "garbage repl value must default to false");
     }
 
     #[test]
     fn garbage_value_defaults_to_false_subagents() {
-        let f = FeatureFlags::from_values(None, Some("on"), None);
+        let f = FeatureFlags::from_values(None, Some("on"), None, None);
         assert!(
             !f.subagents,
             "garbage subagents value must default to false"
@@ -298,21 +356,21 @@ mod tests {
 
     #[test]
     fn both_flags_on() {
-        let f = FeatureFlags::from_values(Some("1"), Some("1"), None);
+        let f = FeatureFlags::from_values(Some("1"), Some("1"), None, None);
         assert!(f.repl);
         assert!(f.subagents);
     }
 
     #[test]
     fn repl_on_subagents_off() {
-        let f = FeatureFlags::from_values(Some("true"), Some("0"), None);
+        let f = FeatureFlags::from_values(Some("true"), Some("0"), None, None);
         assert!(f.repl);
         assert!(!f.subagents);
     }
 
     #[test]
     fn repl_off_subagents_on() {
-        let f = FeatureFlags::from_values(Some("false"), Some("1"), None);
+        let f = FeatureFlags::from_values(Some("false"), Some("1"), None, None);
         assert!(!f.repl);
         assert!(f.subagents);
     }
@@ -322,46 +380,137 @@ mod tests {
 
     #[test]
     fn truthy_one_enables_repl_replaces_fileops() {
-        let f = FeatureFlags::from_values(Some("1"), None, Some("1"));
+        let f = FeatureFlags::from_values(Some("1"), None, Some("1"), None);
         assert!(f.repl_replaces_fileops);
     }
 
     #[test]
     fn truthy_true_enables_repl_replaces_fileops() {
-        let f = FeatureFlags::from_values(Some("1"), None, Some("true"));
+        let f = FeatureFlags::from_values(Some("1"), None, Some("true"), None);
         assert!(f.repl_replaces_fileops);
     }
 
     #[test]
     fn truthy_true_uppercase_enables_repl_replaces_fileops() {
-        let f = FeatureFlags::from_values(Some("1"), None, Some("TRUE"));
+        let f = FeatureFlags::from_values(Some("1"), None, Some("TRUE"), None);
         assert!(f.repl_replaces_fileops);
     }
 
     #[test]
     fn falsy_zero_disables_repl_replaces_fileops() {
-        let f = FeatureFlags::from_values(Some("1"), None, Some("0"));
+        let f = FeatureFlags::from_values(Some("1"), None, Some("0"), None);
         assert!(!f.repl_replaces_fileops);
     }
 
     #[test]
     fn falsy_false_disables_repl_replaces_fileops() {
-        let f = FeatureFlags::from_values(Some("1"), None, Some("false"));
+        let f = FeatureFlags::from_values(Some("1"), None, Some("false"), None);
         assert!(!f.repl_replaces_fileops);
     }
 
     #[test]
     fn garbage_value_defaults_to_false_repl_replaces_fileops() {
-        let f = FeatureFlags::from_values(Some("1"), None, Some("yes"));
+        let f = FeatureFlags::from_values(Some("1"), None, Some("yes"), None);
         assert!(!f.repl_replaces_fileops);
     }
 
     #[test]
     fn all_three_flags_on() {
-        let f = FeatureFlags::from_values(Some("1"), Some("1"), Some("1"));
+        let f = FeatureFlags::from_values(Some("1"), Some("1"), Some("1"), None);
         assert!(f.repl);
         assert!(f.subagents);
         assert!(f.repl_replaces_fileops);
+    }
+
+    // -----------------------------------------------------------------------
+    // repl_replaces_shell parsing
+
+    #[test]
+    fn truthy_one_enables_repl_replaces_shell() {
+        let f = FeatureFlags::from_values(Some("1"), None, None, Some("1"));
+        assert!(f.repl_replaces_shell);
+        assert!(!f.repl_replaces_fileops, "fileops must remain false");
+    }
+
+    #[test]
+    fn truthy_true_enables_repl_replaces_shell() {
+        let f = FeatureFlags::from_values(Some("1"), None, None, Some("true"));
+        assert!(f.repl_replaces_shell);
+    }
+
+    #[test]
+    fn truthy_true_uppercase_enables_repl_replaces_shell() {
+        let f = FeatureFlags::from_values(Some("1"), None, None, Some("TRUE"));
+        assert!(f.repl_replaces_shell);
+    }
+
+    #[test]
+    fn falsy_zero_disables_repl_replaces_shell() {
+        let f = FeatureFlags::from_values(Some("1"), None, None, Some("0"));
+        assert!(!f.repl_replaces_shell);
+    }
+
+    #[test]
+    fn falsy_false_disables_repl_replaces_shell() {
+        let f = FeatureFlags::from_values(Some("1"), None, None, Some("false"));
+        assert!(!f.repl_replaces_shell);
+    }
+
+    #[test]
+    fn garbage_value_defaults_to_false_repl_replaces_shell() {
+        let f = FeatureFlags::from_values(Some("1"), None, None, Some("yes"));
+        assert!(!f.repl_replaces_shell);
+    }
+
+    // -----------------------------------------------------------------------
+    // All four combinations of the two replaces_* flags with repl=true
+
+    #[test]
+    fn both_replaces_flags_off_with_repl_is_valid() {
+        let f = FeatureFlags::from_values(Some("1"), None, Some("0"), Some("0"));
+        assert!(f.repl);
+        assert!(!f.repl_replaces_fileops);
+        assert!(!f.repl_replaces_shell);
+        assert!(f.validate().is_ok());
+    }
+
+    #[test]
+    fn replaces_fileops_only_with_repl_is_valid() {
+        let f = FeatureFlags::from_values(Some("1"), None, Some("1"), Some("0"));
+        assert!(f.repl);
+        assert!(f.repl_replaces_fileops);
+        assert!(!f.repl_replaces_shell);
+        assert!(f.validate().is_ok());
+    }
+
+    #[test]
+    fn replaces_shell_only_with_repl_is_valid() {
+        let f = FeatureFlags::from_values(Some("1"), None, Some("0"), Some("1"));
+        assert!(f.repl);
+        assert!(!f.repl_replaces_fileops);
+        assert!(f.repl_replaces_shell);
+        assert!(f.validate().is_ok());
+    }
+
+    #[test]
+    fn both_replaces_flags_on_with_repl_is_valid() {
+        let f = FeatureFlags::from_values(Some("1"), None, Some("1"), Some("1"));
+        assert!(f.repl);
+        assert!(f.repl_replaces_fileops);
+        assert!(f.repl_replaces_shell);
+        assert!(
+            f.validate().is_ok(),
+            "all four combinations must be valid when repl=true"
+        );
+    }
+
+    #[test]
+    fn all_four_flags_on() {
+        let f = FeatureFlags::from_values(Some("1"), Some("1"), Some("1"), Some("1"));
+        assert!(f.repl);
+        assert!(f.subagents);
+        assert!(f.repl_replaces_fileops);
+        assert!(f.repl_replaces_shell);
     }
 
     // -----------------------------------------------------------------------
@@ -373,6 +522,7 @@ mod tests {
             repl: false,
             subagents: false,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         };
         assert!(f.validate().is_ok());
     }
@@ -383,6 +533,7 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         };
         assert!(f.validate().is_ok());
     }
@@ -393,8 +544,31 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: true,
+            repl_replaces_shell: false,
         };
         assert!(f.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_repl_and_shell_replace_is_ok() {
+        let f = FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: false,
+            repl_replaces_shell: true,
+        };
+        assert!(f.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_repl_and_both_replaces_is_ok() {
+        let f = FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: true,
+            repl_replaces_shell: true,
+        };
+        assert!(f.validate().is_ok(), "Tier 2 configuration must be valid");
     }
 
     #[test]
@@ -403,17 +577,44 @@ mod tests {
             repl: false,
             subagents: false,
             repl_replaces_fileops: true,
+            repl_replaces_shell: false,
         };
         let err = f.validate().unwrap_err();
         assert_eq!(err, FeatureFlagsConfigError::ReplLimitWithoutRepl);
     }
 
     #[test]
-    fn validate_error_message_contains_env_var_names() {
+    fn validate_shell_replace_without_repl_is_error() {
+        let f = FeatureFlags {
+            repl: false,
+            subagents: false,
+            repl_replaces_fileops: false,
+            repl_replaces_shell: true,
+        };
+        let err = f.validate().unwrap_err();
+        assert_eq!(err, FeatureFlagsConfigError::ReplShellWithoutRepl);
+    }
+
+    #[test]
+    fn validate_repl_limit_error_message_contains_env_var_names() {
         let err = FeatureFlagsConfigError::ReplLimitWithoutRepl;
         let msg = err.to_string();
         assert!(
             msg.contains("OMEGA_FEATURE_REPL_REPLACES_FILEOPS"),
+            "message must name the offending var: {msg}"
+        );
+        assert!(
+            msg.contains("OMEGA_FEATURE_REPL"),
+            "message must name the required var: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_shell_replace_error_message_contains_env_var_names() {
+        let err = FeatureFlagsConfigError::ReplShellWithoutRepl;
+        let msg = err.to_string();
+        assert!(
+            msg.contains("OMEGA_FEATURE_REPL_REPLACES_SHELL"),
             "message must name the offending var: {msg}"
         );
         assert!(
@@ -428,6 +629,7 @@ mod tests {
             repl: false,
             subagents: true,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         };
         assert!(f.validate().is_ok());
     }
@@ -449,6 +651,7 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         };
         let json = serde_json::to_string(&flags).unwrap();
         let back: FeatureFlags = serde_json::from_str(&json).unwrap();
@@ -461,6 +664,7 @@ mod tests {
             repl: true,
             subagents: true,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         };
         let json = serde_json::to_string(&flags).unwrap();
         let back: FeatureFlags = serde_json::from_str(&json).unwrap();
@@ -473,6 +677,33 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: true,
+            repl_replaces_shell: false,
+        };
+        let json = serde_json::to_string(&flags).unwrap();
+        let back: FeatureFlags = serde_json::from_str(&json).unwrap();
+        assert_eq!(flags, back);
+    }
+
+    #[test]
+    fn serde_round_trip_shell_replace() {
+        let flags = FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: false,
+            repl_replaces_shell: true,
+        };
+        let json = serde_json::to_string(&flags).unwrap();
+        let back: FeatureFlags = serde_json::from_str(&json).unwrap();
+        assert_eq!(flags, back);
+    }
+
+    #[test]
+    fn serde_round_trip_tier2() {
+        let flags = FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: true,
+            repl_replaces_shell: true,
         };
         let json = serde_json::to_string(&flags).unwrap();
         let back: FeatureFlags = serde_json::from_str(&json).unwrap();
@@ -485,10 +716,12 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: true,
+            repl_replaces_shell: true,
         };
         let v: serde_json::Value = serde_json::to_value(flags).unwrap();
         assert_eq!(v["repl"], true);
         assert_eq!(v["subagents"], false);
         assert_eq!(v["repl_replaces_fileops"], true);
+        assert_eq!(v["repl_replaces_shell"], true);
     }
 }

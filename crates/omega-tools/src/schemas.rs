@@ -19,26 +19,53 @@ use serde_json::{Value, json};
 ///
 /// When `flags.repl_replaces_fileops` is `true`, the six file-op tools
 /// (`read_file`, `write_file`, `edit_file`, `find_files`, `grep_files`,
-/// `list_files`) are excluded so that `python_repl` is the primary
-/// alternative for file work.  The retained tools are:
+/// `list_files`) are excluded.  The retained tools are:
 /// `run_command`, `run_background`, `wait_for_output`, `write_stdin`,
 /// `web_search`, `fetch_url`, `python_repl`.
+///
+/// When `flags.repl_replaces_shell` is `true`, the four shell-execution
+/// tools (`run_command`, `run_background`, `wait_for_output`, `write_stdin`)
+/// are excluded.  The retained tools are the six file-op tools plus
+/// `web_search`, `fetch_url`, `python_repl`.
+///
+/// When both `repl_replaces_fileops` **and** `repl_replaces_shell` are
+/// `true` ("Tier 2" configuration), only `python_repl`, `web_search`, and
+/// `fetch_url` are exposed.
 #[must_use]
 pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
-    if flags.repl_replaces_fileops {
-        // Limit mode: exclude the six file-op tools that python_repl replaces.
-        let mut defs = vec![
+    if flags.repl_replaces_fileops && flags.repl_replaces_shell {
+        // Tier 2: both file-op and shell tools removed.  Only the three
+        // tools that python_repl cannot replace are retained.
+        // Both flags require repl=true (validated at startup).
+        vec![web_search(), fetch_url(), python_repl()]
+    } else if flags.repl_replaces_fileops {
+        // File-ops limit mode: exclude the six file-op tools.
+        // python_repl is always included (repl_replaces_fileops requires
+        // repl=true; validated at startup).
+        vec![
             run_command(),
             run_background(),
             wait_for_output(),
             write_stdin(),
             web_search(),
             fetch_url(),
-        ];
-        // python_repl is always included in limit mode (repl_replaces_fileops
-        // requires repl=true; validated at startup).
-        defs.push(python_repl());
-        defs
+            python_repl(),
+        ]
+    } else if flags.repl_replaces_shell {
+        // Shell limit mode: exclude the four shell-execution tools.
+        // python_repl is always included (repl_replaces_shell requires
+        // repl=true; validated at startup).
+        vec![
+            read_file(),
+            write_file(),
+            edit_file(),
+            list_files(),
+            web_search(),
+            fetch_url(),
+            grep_files(),
+            find_files(),
+            python_repl(),
+        ]
     } else {
         let mut defs = vec![
             read_file(),
@@ -393,6 +420,7 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         }
     }
 
@@ -401,6 +429,25 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: true,
+            repl_replaces_shell: false,
+        }
+    }
+
+    fn flags_repl_replaces_shell() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: false,
+            repl_replaces_shell: true,
+        }
+    }
+
+    fn flags_tier2() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: true,
+            repl_replaces_shell: true,
         }
     }
 
@@ -556,6 +603,160 @@ mod tests {
                 def.name
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // repl_replaces_shell tests
+
+    #[test]
+    fn nine_tools_when_repl_replaces_shell_only() {
+        // Shell tools removed; file tools retained.  Expected: 6 file tools +
+        // web_search + fetch_url + python_repl = 9.
+        let names: Vec<String> = tool_definitions(flags_repl_replaces_shell())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "read_file",
+                "write_file",
+                "edit_file",
+                "list_files",
+                "web_search",
+                "fetch_url",
+                "grep_files",
+                "find_files",
+                "python_repl",
+            ],
+            "repl_replaces_shell must expose exactly the six file tools plus web/fetch/repl"
+        );
+    }
+
+    #[test]
+    fn repl_replaces_shell_excludes_all_four_shell_tools() {
+        let names: Vec<String> = tool_definitions(flags_repl_replaces_shell())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        for removed in &[
+            "run_command",
+            "run_background",
+            "wait_for_output",
+            "write_stdin",
+        ] {
+            assert!(
+                !names.contains(&removed.to_string()),
+                "repl_replaces_shell must not include {removed}"
+            );
+        }
+    }
+
+    #[test]
+    fn three_tools_when_both_replaces_flags_set() {
+        // Tier 2: both file-op and shell tools removed.  Only python_repl,
+        // web_search, fetch_url remain.
+        let names: Vec<String> = tool_definitions(flags_tier2())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["web_search", "fetch_url", "python_repl"],
+            "Tier 2 must expose exactly 3 tools"
+        );
+    }
+
+    #[test]
+    fn tier2_excludes_all_ten_removable_tools() {
+        let names: Vec<String> = tool_definitions(flags_tier2())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        for removed in &[
+            "read_file",
+            "write_file",
+            "edit_file",
+            "find_files",
+            "grep_files",
+            "list_files",
+            "run_command",
+            "run_background",
+            "wait_for_output",
+            "write_stdin",
+        ] {
+            assert!(
+                !names.contains(&removed.to_string()),
+                "Tier 2 must not include {removed}"
+            );
+        }
+    }
+
+    #[test]
+    fn repl_replaces_shell_schemas_are_valid() {
+        for def in tool_definitions(flags_repl_replaces_shell()) {
+            let schema = &def.input_schema;
+            assert_eq!(
+                schema["type"], "object",
+                "{} schema not an object",
+                def.name
+            );
+            assert!(
+                schema["properties"].is_object(),
+                "{} missing properties",
+                def.name
+            );
+            assert!(
+                schema["required"].is_array(),
+                "{} missing required[]",
+                def.name
+            );
+        }
+    }
+
+    #[test]
+    fn tier2_schemas_are_valid() {
+        for def in tool_definitions(flags_tier2()) {
+            let schema = &def.input_schema;
+            assert_eq!(
+                schema["type"], "object",
+                "{} schema not an object",
+                def.name
+            );
+            assert!(
+                schema["properties"].is_object(),
+                "{} missing properties",
+                def.name
+            );
+            assert!(
+                schema["required"].is_array(),
+                "{} missing required[]",
+                def.name
+            );
+        }
+    }
+
+    // fileops-only mode unchanged by shell flag
+    #[test]
+    fn fileops_limit_mode_unchanged_by_shell_flag() {
+        // Existing seven-tools-when-limit-mode behaviour: only fileops removed.
+        let names: Vec<String> = tool_definitions(flags_limit_mode())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "run_command",
+                "run_background",
+                "wait_for_output",
+                "write_stdin",
+                "web_search",
+                "fetch_url",
+                "python_repl",
+            ],
+            "fileops-only limit mode must still expose exactly 7 tools"
+        );
     }
 
     #[test]

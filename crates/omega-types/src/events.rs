@@ -771,6 +771,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             },
         });
         let v = serde_json::to_value(&ev).unwrap();

@@ -193,12 +193,13 @@ fn read_existing(path: &Path) -> Option<String> {
 /// instruction-file blocks.  It describes the `python_repl` tool and its
 /// usage pattern to the model.
 ///
-/// When `flags.repl_replaces_fileops` is also `true`, an additional
-/// `"reduced-toolset"` block is appended after `"repl"`, explaining which
-/// file-op tools have been removed and how to accomplish the same work
-/// with `python_repl` or `run_command`.  In this mode the `"core"` and
-/// `"runtime"` blocks are generated without any references to the six
-/// removed file-op tools, so the model receives consistent instructions.
+/// When `flags.repl_replaces_fileops` and/or `flags.repl_replaces_shell`
+/// is `true`, an additional `"reduced-toolset"` block is appended after
+/// `"repl"`, explaining which tools have been removed and how to
+/// accomplish the same work with `python_repl` (and/or `subprocess` inside
+/// `python_repl`).  The `"core"` and `"runtime"` blocks are generated
+/// without references to the removed tools, so the model receives
+/// consistent instructions that match the actual toolset.
 #[must_use]
 pub fn build_system_blocks(
     cwd: &str,
@@ -212,10 +213,13 @@ pub fn build_system_blocks(
     // When the six file-op tools are absent, omit all guidance that
     // references them from the core and runtime blocks.
     let file_tools = !flags.repl_replaces_fileops;
+    // When the four shell-execution tools are absent, omit all guidance that
+    // references them from the core block.
+    let shell_tools = !flags.repl_replaces_shell;
 
     out.push(SystemBlock {
         label: "core",
-        content: core_prompt(headless, file_tools),
+        content: core_prompt(headless, file_tools, shell_tools),
         source_path: None,
     });
 
@@ -248,10 +252,10 @@ pub fn build_system_blocks(
         });
     }
 
-    if flags.repl_replaces_fileops {
+    if flags.repl_replaces_fileops || flags.repl_replaces_shell {
         out.push(SystemBlock {
             label: "reduced-toolset",
-            content: reduced_toolset_addendum(),
+            content: reduced_toolset_addendum(flags),
             source_path: None,
         });
     }
@@ -284,19 +288,42 @@ pub fn repl_addendum() -> String {
         .to_owned()
 }
 
-/// System-prompt addendum injected when `OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1`.
+/// System-prompt addendum injected when `OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1`
+/// and/or `OMEGA_FEATURE_REPL_REPLACES_SHELL=1`.
 ///
 /// Placed after the `"repl"` block.  The Anthropic provider stamps
 /// `cache_control: ephemeral` on the last block, so this is the block
-/// that gets cached when limit mode is active.
+/// that gets cached when either or both reduced-toolset flags are active.
 ///
-/// The text is intentionally neutral — it does not bias toward Python or
-/// shell; the experiment measures which the LLM picks naturally.
+/// The heading is always `## Reduced toolset`.  Then:
+/// - If `flags.repl_replaces_fileops`: a paragraph explains the six
+///   removed file-op tools and how to replace them.
+/// - If `flags.repl_replaces_shell`: a paragraph explains the four
+///   removed shell-execution tools and shows the `subprocess` pattern.
+///
+/// When both flags are set (Tier 2), both paragraphs appear under the
+/// single heading.  In that case, the fileops paragraph does **not**
+/// suggest `run_command` as an alternative (since it is also removed).
 #[must_use]
-pub fn reduced_toolset_addendum() -> String {
-    "## Reduced toolset
+pub fn reduced_toolset_addendum(flags: FeatureFlags) -> String {
+    let mut sections: Vec<String> = Vec::new();
 
-This session does not expose `read_file`, `write_file`, `edit_file`, \
+    if flags.repl_replaces_fileops {
+        if flags.repl_replaces_shell {
+            // Both flags set: run_command is also removed, so do not suggest it.
+            sections.push(
+                "This session does not expose `read_file`, `write_file`, `edit_file`, \
+`find_files`, `grep_files`, or `list_files`.
+\
+For file operations, use `python_repl` — idiomatic Python \
+(`pathlib`, `open`, `re`, `os`)."
+                    .to_owned(),
+            );
+        } else {
+            // Only fileops removed; shell tools are still available.
+            // Text is intentionally neutral: experiment measures which the LLM picks.
+            sections.push(
+                "This session does not expose `read_file`, `write_file`, `edit_file`, \
 `find_files`, `grep_files`, or `list_files`.
 For any of these operations, use either:
 
@@ -304,7 +331,33 @@ For any of these operations, use either:
 - `run_command` — shell commands (`cat`, `sed`, `grep`, `find`).
 
 Choose whichever is cleaner for the situation."
-        .to_owned()
+                    .to_owned(),
+            );
+        }
+    }
+
+    if flags.repl_replaces_shell {
+        sections.push(
+            "This session does not expose `run_command`, `run_background`, \
+`wait_for_output`, or `write_stdin`.  To run shell commands,
+\
+use `subprocess` inside `python_repl`, for example:
+
+    import subprocess
+    r = subprocess.run([\"7z\", \"e\", \"secrets.7z\"],
+                       capture_output=True, text=True)
+    print(r.stdout, r.stderr, \"exit:\", r.returncode)
+
+For long-running processes, use `subprocess.Popen`, keep
+\
+the handle in a REPL variable, and read from it
+\
+incrementally."
+                .to_owned(),
+        );
+    }
+
+    format!("## Reduced toolset\n\n{}", sections.join("\n\n"))
 }
 
 /// Concatenate every block's `content` with `\n\n` between them.
@@ -365,8 +418,13 @@ existing files: always prefer `edit_file` over a full rewrite.",
 /// `list_files`) is included.  Pass `false` when those tools are absent from
 /// the toolset (i.e. `flags.repl_replaces_fileops` is `true`) so that the
 /// model receives consistent instructions that match the actual toolset.
+///
+/// `shell_tools` controls whether guidance referencing the four
+/// shell-execution tools (`run_command`, `run_background`, `wait_for_output`,
+/// `write_stdin`) is included.  Pass `false` when those tools are absent
+/// (i.e. `flags.repl_replaces_shell` is `true`).
 #[allow(clippy::too_many_lines)]
-fn core_prompt(headless: bool, file_tools: bool) -> String {
+fn core_prompt(headless: bool, file_tools: bool, shell_tools: bool) -> String {
     let mut s = String::new();
 
     // --- Introduction + Project orientation ---
@@ -415,9 +473,10 @@ path — don't brute-force with repeated `list_files` calls.\n",
         );
     }
 
-    // run_command / run_background guidance — always present.
-    s.push_str(
-        "Use `run_command` for builds, test suites, commits, and any finite command.\n\
+    // run_command / run_background guidance — only when shell tools are present.
+    if shell_tools {
+        s.push_str(
+            "Use `run_command` for builds, test suites, commits, and any finite command.\n\
 The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands\n\
 you expect to take longer. Reserve `run_background` for processes that must\n\
 stay alive indefinitely (dev servers, file watchers).\n\
@@ -425,9 +484,12 @@ All `run_command` and `wait_for_output` results are tee'd to a session-cache\n\
 log and the path is surfaced in a footer:\n\
 - `[full output: <path>]` when the output fit within the cap.\n\
 - `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.\n",
-    );
+        );
+    }
 
     // Truncation recovery hint — only mention file tools when they are present.
+    // fetch_url also produces cached output, so this hint remains useful even
+    // when shell tools are absent.
     if file_tools {
         s.push_str(
             "When a result is **truncated**, use `read_file` or `grep_files` on the cache\n\
@@ -440,8 +502,13 @@ when an earlier (full) output has aged out of immediate context and you need\n\
 to revisit it without re-running the command — re-running is slow and may\n\
 produce different output. When the bytes you need are already inline and\n\
 recent, read them directly rather than calling another tool over the same\n\
-bytes.\n\
-Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on\n\
+bytes.\n",
+    );
+
+    // truncation_bias, wait_for_output, write_stdin — only when shell tools are present.
+    if shell_tools {
+        s.push_str(
+            "Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on\n\
 success), or `\"middle\"` to control which portion is returned when the\n\
 output is truncated.\n\
 To wait for a background process to become ready (e.g. a dev server), use\n\
@@ -452,8 +519,12 @@ waiting for the full timeout.\n\
 The `pattern` is a **JavaScript regex** — use `|` for alternation (e.g. `\"ready|Error|done\"`).\n\
 If a background process prompts for interactive input, use\n\
 `write_stdin(pid, text)` to respond (include \\n to submit a line). Pass\n\
-`end_stdin=true` to signal EOF after writing.\n\
-Chain independent tool calls in parallel when results don't depend on each\n\
+`end_stdin=true` to signal EOF after writing.\n",
+        );
+    }
+
+    s.push_str(
+        "Chain independent tool calls in parallel when results don't depend on each\n\
 other.\n\
 Check for a task runner and use it to discover available commands\n\
 (`just --list`, `make help`, `npm run`, etc.).\n",
@@ -476,38 +547,50 @@ error messages, or anything not in local files. Prefer it over guessing or\n\
 relying on potentially stale training data.\n",
     );
 
-    // fetch_url: cache-reuse hint varies by toolset.
+    // fetch_url: cache-reuse hint varies by toolset availability.
     if file_tools {
         s.push_str(
             "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
 on it. The result includes a cache path — for any further queries on the same\n\
 content, use `grep_files`/`read_file` on that path.\n",
         );
-    } else {
+    } else if shell_tools {
+        // File tools absent but shell tools present: run_command is an option.
         s.push_str(
             "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
 on it. The result includes a cache path — for any further queries on the same\n\
 content, reuse it with `run_command` (e.g. grep) or `python_repl`.\n",
+        );
+    } else {
+        // Both file and shell tools absent (Tier 2): only python_repl available.
+        s.push_str(
+            "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
+on it. The result includes a cache path — for any further queries on the same\n\
+content, reuse it with `python_repl`.\n",
         );
     }
 
     s.push_str(
         "`postprocess` is required. Prefer `grep` or `awk` when you know what to\n\
 look for, and `head -N` as the catch-all. Never use `cat` — `head -N`\n\
-gives the same result on short pages and stays bounded on long ones.\n\
-\n\
-When a command produces verbose output — whether from `run_background`'s\n\
-`logFile` or from a `run_command` redirected to a file — inspect it with\n",
+gives the same result on short pages and stays bounded on long ones.\n",
     );
 
-    // Verbose-output inspection method varies by toolset.
-    if file_tools {
+    // Verbose-output inspection: only relevant when shell tools are present
+    // (run_background log files / run_command redirected output).
+    if shell_tools {
         s.push_str(
-            "`read_file` (use `offset`/`limit` to paginate through large files) and\n\
-`grep_files` to search for specific patterns. ",
+            "\nWhen a command produces verbose output — whether from `run_background`'s\n\
+`logFile` or from a `run_command` redirected to a file — inspect it with\n",
         );
-    } else {
-        s.push_str("`python_repl` or `run_command` to inspect the output. ");
+        if file_tools {
+            s.push_str(
+                "`read_file` (use `offset`/`limit` to paginate through large files) and\n\
+`grep_files` to search for specific patterns. ",
+            );
+        } else {
+            s.push_str("`python_repl` or `run_command` to inspect the output. ");
+        }
     }
 
     s.push_str(
@@ -643,6 +726,7 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: false,
+            repl_replaces_shell: false,
         }
     }
 
@@ -651,6 +735,25 @@ mod tests {
             repl: true,
             subagents: false,
             repl_replaces_fileops: true,
+            repl_replaces_shell: false,
+        }
+    }
+
+    fn flags_repl_replaces_shell() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: false,
+            repl_replaces_shell: true,
+        }
+    }
+
+    fn flags_both_replaces() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: true,
+            repl_replaces_shell: true,
         }
     }
 
@@ -811,7 +914,8 @@ mod tests {
 
     #[test]
     fn limit_mode_block_names_all_six_removed_tools() {
-        let content = reduced_toolset_addendum();
+        // This tests the fileops-only configuration (repl_replaces_shell=false).
+        let content = reduced_toolset_addendum(flags_limit_mode());
         for tool in &[
             "read_file",
             "write_file",
@@ -829,14 +933,16 @@ mod tests {
 
     #[test]
     fn limit_mode_block_mentions_both_alternatives() {
-        let content = reduced_toolset_addendum();
+        // Fileops-only mode: both python_repl and run_command are available
+        // alternatives (run_command is still in the toolset).
+        let content = reduced_toolset_addendum(flags_limit_mode());
         assert!(
             content.contains("python_repl"),
             "reduced-toolset block must mention python_repl"
         );
         assert!(
             content.contains("run_command"),
-            "reduced-toolset block must mention run_command"
+            "reduced-toolset block must mention run_command (shell tools are still present)"
         );
     }
 
@@ -929,7 +1035,7 @@ mod tests {
 
         // Strip the reduced-toolset block content from the assembled prompt.
         // This is the only place the six tool names are allowed to appear.
-        let reduced_content = reduced_toolset_addendum();
+        let reduced_content = reduced_toolset_addendum(flags_limit_mode());
         let residue = full_prompt.replace(&reduced_content, "");
 
         for tool in &FILE_TOOLS {
@@ -948,7 +1054,7 @@ mod tests {
     fn limit_mode_headless_has_no_file_tool_refs_outside_reduced_toolset_block() {
         let blocks = build_system_blocks("/x", 1000, true, &[], flags_limit_mode());
         let full_prompt = join_blocks(&blocks);
-        let reduced_content = reduced_toolset_addendum();
+        let reduced_content = reduced_toolset_addendum(flags_limit_mode());
         let residue = full_prompt.replace(&reduced_content, "");
 
         for tool in &FILE_TOOLS {
@@ -1008,6 +1114,211 @@ mod tests {
                 "repl-only mode must still contain `{tool}` guidance"
             );
         }
+    }
+
+    // ---- Shell-tool guidance gating (repl_replaces_shell) ----------------
+    //
+    // Contract: when repl_replaces_shell=true, the assembled prompt must
+    // contain zero bare-backtick references to the four removed shell tools
+    // outside the "Reduced toolset" block (which legitimately lists them as
+    // absent).  When repl_replaces_shell=false, the assembled prompt must
+    // still contain the existing shell-tool guidance.
+
+    const SHELL_TOOLS: [&str; 4] = [
+        "run_command",
+        "run_background",
+        "wait_for_output",
+        "write_stdin",
+    ];
+
+    /// When `repl_replaces_shell=true`: strip the "Reduced toolset" block, then
+    /// verify no bare-backtick references remain for any of the four removed
+    /// shell tools.
+    #[test]
+    fn repl_replaces_shell_assembled_prompt_has_no_shell_tool_refs_outside_reduced_toolset_block() {
+        let flags = flags_repl_replaces_shell();
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags);
+        let full_prompt = join_blocks(&blocks);
+
+        // Strip the reduced-toolset block — it legitimately lists the removed tools.
+        let reduced_content = reduced_toolset_addendum(flags);
+        let residue = full_prompt.replace(&reduced_content, "");
+
+        for tool in &SHELL_TOOLS {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                !residue.contains(&backtick_ref),
+                "repl_replaces_shell residue must not contain `{tool}` — found a \
+                 bare-backtick reference outside the Reduced toolset block"
+            );
+        }
+    }
+
+    /// Headless variant of the shell-tool gating test.
+    #[test]
+    fn repl_replaces_shell_headless_has_no_shell_tool_refs_outside_reduced_toolset_block() {
+        let flags = flags_repl_replaces_shell();
+        let blocks = build_system_blocks("/x", 1000, true, &[], flags);
+        let full_prompt = join_blocks(&blocks);
+        let reduced_content = reduced_toolset_addendum(flags);
+        let residue = full_prompt.replace(&reduced_content, "");
+
+        for tool in &SHELL_TOOLS {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                !residue.contains(&backtick_ref),
+                "headless repl_replaces_shell residue must not contain `{tool}`"
+            );
+        }
+    }
+
+    /// When only `repl_replaces_shell=true`, the six file-op tools are still
+    /// present in the assembled prompt.
+    #[test]
+    fn repl_replaces_shell_still_contains_file_tool_guidance() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_repl_replaces_shell());
+        let full_prompt = join_blocks(&blocks);
+
+        for tool in &FILE_TOOLS {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                full_prompt.contains(&backtick_ref),
+                "repl_replaces_shell mode must still contain `{tool}` guidance (file tools remain)"
+            );
+        }
+    }
+
+    /// When `repl_replaces_shell=false` (normal or repl-only mode), the
+    /// assembled prompt must contain the shell-tool guidance.
+    #[test]
+    fn normal_mode_assembled_prompt_contains_shell_tool_guidance() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_default());
+        let full_prompt = join_blocks(&blocks);
+
+        assert!(
+            full_prompt.contains("`run_command`"),
+            "normal mode must contain run_command guidance"
+        );
+        assert!(
+            full_prompt.contains("`run_background`"),
+            "normal mode must contain run_background guidance"
+        );
+        assert!(
+            full_prompt.contains("`wait_for_output`"),
+            "normal mode must contain wait_for_output guidance"
+        );
+        // `write_stdin` is always referenced as `write_stdin(pid, text)` in the core
+        // prompt, so check for the name without requiring the standalone backtick form.
+        assert!(
+            full_prompt.contains("write_stdin"),
+            "normal mode must contain write_stdin guidance"
+        );
+    }
+
+    /// `repl_replaces_shell` mode appends a reduced-toolset block after repl.
+    #[test]
+    fn repl_replaces_shell_appends_reduced_toolset_block() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_repl_replaces_shell());
+        assert_eq!(
+            blocks.len(),
+            4,
+            "must produce 4 blocks: core+runtime+repl+reduced-toolset"
+        );
+        let labels: Vec<&str> = blocks.iter().map(|b| b.label).collect();
+        assert_eq!(labels, vec!["core", "runtime", "repl", "reduced-toolset"]);
+    }
+
+    /// `repl_replaces_shell` reduced-toolset block names all four removed tools.
+    #[test]
+    fn repl_replaces_shell_block_names_all_four_removed_shell_tools() {
+        let content = reduced_toolset_addendum(flags_repl_replaces_shell());
+        for tool in &SHELL_TOOLS {
+            assert!(
+                content.contains(tool),
+                "reduced-toolset block must mention {tool}"
+            );
+        }
+    }
+
+    /// `repl_replaces_shell` reduced-toolset block describes the subprocess pattern.
+    #[test]
+    fn repl_replaces_shell_block_mentions_subprocess_pattern() {
+        let content = reduced_toolset_addendum(flags_repl_replaces_shell());
+        assert!(
+            content.contains("subprocess"),
+            "reduced-toolset block must mention subprocess"
+        );
+        assert!(
+            content.contains("python_repl"),
+            "reduced-toolset block must reference python_repl"
+        );
+    }
+
+    // ---- Both replaces_* flags (Tier 2) ----------------------------------
+
+    /// Tier 2: stripped residue must contain no backtick refs to any of
+    /// the ten removable tools (6 file + 4 shell).
+    #[test]
+    fn both_replaces_assembled_prompt_has_no_removable_tool_refs_outside_reduced_toolset_block() {
+        let flags = flags_both_replaces();
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags);
+        let full_prompt = join_blocks(&blocks);
+        let reduced_content = reduced_toolset_addendum(flags);
+        let residue = full_prompt.replace(&reduced_content, "");
+
+        for tool in FILE_TOOLS.iter().chain(SHELL_TOOLS.iter()) {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                !residue.contains(&backtick_ref),
+                "Tier 2 residue must not contain `{tool}` — found a bare-backtick \
+                 reference outside the Reduced toolset block"
+            );
+        }
+    }
+
+    /// Tier 2: the combined reduced-toolset block covers both sections.
+    #[test]
+    fn both_replaces_combined_block_has_both_sections() {
+        let content = reduced_toolset_addendum(flags_both_replaces());
+        // File section
+        for tool in &FILE_TOOLS {
+            assert!(content.contains(tool), "Tier 2 block must mention {tool}");
+        }
+        // Shell section
+        for tool in &SHELL_TOOLS {
+            assert!(content.contains(tool), "Tier 2 block must mention {tool}");
+        }
+        assert!(
+            content.contains("subprocess"),
+            "Tier 2 block must describe subprocess pattern"
+        );
+    }
+
+    /// Tier 2: the fileops section does NOT mention `run_command` (shell tools removed).
+    #[test]
+    fn both_replaces_fileops_section_does_not_mention_run_command_as_alternative() {
+        let content = reduced_toolset_addendum(flags_both_replaces());
+        // run_command appears in the shell-removed section ("does not expose"),
+        // but must NOT appear in the fileops section as an alternative.
+        // The shell section legitimately lists it as removed; the fileops section
+        // must only suggest python_repl.
+        //
+        // We verify this indirectly: the single heading "## Reduced toolset" is
+        // present, the fileops paragraph does not say "run_command" as an option
+        // ("choose whichever is cleaner" wording is absent).
+        assert!(
+            !content.contains("Choose whichever is cleaner"),
+            "Tier 2 fileops section must not offer run_command as an alternative"
+        );
+    }
+
+    /// Tier 2: block order is core → runtime → repl → reduced-toolset.
+    #[test]
+    fn both_replaces_block_order() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_both_replaces());
+        assert_eq!(blocks.len(), 4);
+        let labels: Vec<&str> = blocks.iter().map(|b| b.label).collect();
+        assert_eq!(labels, vec!["core", "runtime", "repl", "reduced-toolset"]);
     }
 
     // ---- Discovery: repo tier ----------------------------------------

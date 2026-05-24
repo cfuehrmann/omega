@@ -1004,6 +1004,7 @@ async fn round_trip_gate() {
         repl: false,
         subagents: true,
         repl_replaces_fileops: false,
+        repl_replaces_shell: false,
     };
     let mut agent = omega_agent::Agent::new(
         provider.clone(),
@@ -1191,6 +1192,7 @@ async fn python_repl_resume_returns_error() {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             }),
         },
     );
@@ -1245,6 +1247,7 @@ async fn python_repl_tool_state_persists() {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             }),
         },
     );

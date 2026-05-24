@@ -347,6 +347,7 @@ mod tests {
                 repl: true,
                 subagents: false,
                 repl_replaces_fileops: false,
+                repl_replaces_shell: false,
             },
         }
         .to_json();
