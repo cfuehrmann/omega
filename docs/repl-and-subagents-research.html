@@ -275,10 +275,19 @@ tr:nth-child(even) td { background: #fafbfc; }
       Terminal-Bench 2 (locked). Python subprocess REPL exposed as
       <code>python_repl(code) -&gt; String</code> tool, available iff
       <code>OMEGA_FEATURE_REPL</code> is on; output truncated RLM-style.
-      <strong>Live-check requirement:</strong> existing tool-call rendering
-      in the UI must show the code, the output, and any truncation marker
-      without requiring frontend changes — verify at the end of the
-      sub-session that an interactive run is inspectable in the browser.
+      <strong>Forensics requirement (urgent):</strong> machine-assisted
+      post-mortem must work from <code>events.jsonl</code> alone — every
+      <code>python_repl</code> call records the code (in tool-use), the
+      output and any truncation marker (in tool-result), and any error.
+      <strong>Live-check requirement (deferred):</strong> existing tool-call
+      rendering in the UI shows the code and output without frontend
+      changes; verify at the end of the sub-session.
+      <strong>Resume policy:</strong> <code>strict_resume</code> refuses
+      REPL sessions loudly with a new
+      <code>StrictResumeError::ReplResumeUnsupported</code> variant
+      — cleaner than silent fresh-subprocess divergence. UI-assisted
+      “open past REPL session in browser” temporarily regresses;
+      machine-assisted post-mortem from the file is unaffected.
       ~4–5 days.
     </li>
     <li style="margin-bottom:0.6rem;">

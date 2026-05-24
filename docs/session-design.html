@@ -310,6 +310,8 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#open-questions" class="toc-h1">Open questions</a></li>
     <li><a href="#oq-allowlist" class="toc-sub">Typed domain-state snapshot ✓</a></li>
     <li><a href="#oq-cwd-carveout" class="toc-sub">cwd carve-out follow-up</a></li>
+    <li><a href="#oq-repl-view" class="toc-sub">REPL view-only WS endpoint</a></li>
+    <li><a href="#oq-repl-replay" class="toc-sub">REPL strict-resume replay</a></li>
     <li><a href="#oq-registry" class="toc-sub">Registry vs. scan (1.6)</a></li>
     <li><a href="#oq-resolved" class="toc-sub">Resolved references</a></li>
   </ol>
@@ -625,6 +627,42 @@ tr:nth-child(even) td { background: #fafbfc; }
     and reconstruct it from there in <code>strict_resume</code> rather than
     accepting it from the caller.  Not fixed in this sub-session; flagged for
     the next appropriate slot in the work queue.
+  </p>
+</div>
+
+<div class="callout warn" id="oq-repl-view">
+  <div class="callout-title">⚠ [oq-repl-view] View-only WS endpoint for REPL session forensics</div>
+  <p>
+    Once REPL sessions exist, <code>strict_resume</code> refuses them loudly
+    (<code>StrictResumeError::ReplResumeUnsupported</code> — to avoid silent
+    divergence from a fresh subprocess).  Consequence: the UI's “open past
+    session” flow regresses for REPL sessions.
+  </p>
+  <p>
+    Machine-assisted post-mortem is unaffected (it reads <code>events.jsonl</code>
+    directly).  UI-assisted post-mortem needs a new
+    <code>WsMessage::ViewSession</code> path that streams events to the
+    frontend without constructing an <code>Agent</code>.
+    ~1 day. Sequence: whenever UI forensics for REPL sessions becomes
+    pressing.
+  </p>
+</div>
+
+<div class="callout warn" id="oq-repl-replay">
+  <div class="callout-title">⚠ [oq-repl-replay] Strict-resume replay for REPL sessions</div>
+  <p>
+    The principled fix to the same problem: <code>strict_resume</code>
+    replays historical <code>python_repl</code> calls into a fresh
+    subprocess before returning, reconstructing the Python kernel state
+    that the LLM relied on.  Restores observational equivalence for REPL
+    sessions across restarts.
+  </p>
+  <p>
+    Cost: ~2 days plus careful design.  Subtle correctness wrinkle:
+    non-deterministic calls (clock, network, filesystem) may produce
+    different output on replay; need a policy for divergence between
+    recorded and replayed output.  Sequence: only if REPL benchmark
+    results justify investing further in interactive REPL UX.
   </p>
 </div>
 
