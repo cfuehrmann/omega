@@ -763,7 +763,10 @@ impl Agent {
             active_effort,
             history,
             context_hashes,
-            system_blocks,
+            // Content captured as `self.system_prompt()` in the return value
+            // below.  Using the getter rather than join_blocks directly means
+            // mutations to system_prompt() are observable by mutation testing.
+            system_blocks: _,
             // Process-bound; provided by the caller of strict_resume.
             // Does not influence future LLM runs — the provider is a
             // transport layer, not session state.
@@ -801,7 +804,10 @@ impl Agent {
             active_effort: active_effort.clone(),
             history: history.clone(),
             context_hashes: context_hashes.clone(),
-            system_prompt: join_blocks(system_blocks),
+            // Call system_prompt() rather than join_blocks(system_blocks)
+            // directly so that mutations to system_prompt() are visible
+            // to the test suite through domain_snapshot().
+            system_prompt: self.system_prompt(),
         }
     }
 
