@@ -47,6 +47,53 @@ Results land in `bench/jobs/<job-name>/`. Each trial directory contains
 > **Note on effort:** `xhigh` is too slow for tasks with ≤ 900 s budgets — extended
 > thinking consumes 2–4× the token budget per call. Use `high` for tasks under ~15 min.
 
+## Feature flag sweeps
+
+Omega's research-mode feature flags (`[b0bc06]`) are runtime-switchable env
+vars surfaced via Harbor's `--ae KEY=VAL`. No `omega_agent.py` change required
+to enable them — pass `--ae OMEGA_FEATURE_REPL=1` and/or
+`--ae OMEGA_FEATURE_SUBAGENTS=1` at run time.
+
+The resolved combination lands in `SessionStartedEvent.features` for every
+session; post-mortem can grep `events.jsonl` to know which combination a run
+used.
+
+### REPL benchmark plan (v0.1.8, first benchmark data on the REPL MVP)
+
+Run both legs at the **same Omega tag** so the comparison is apples-to-apples.
+The legacy `v0.1.7` baseline (53/89 sonnet-medium, 62/89 opus-high) is not
+comparable directly — `v0.1.8` includes intervening scaffolding work
+(`FeatureFlags`, `DomainSnapshot`, `fold_features`, system-prompt round-trip)
+that may shift the baseline by a percentage point or two.
+
+```bash
+cd bench
+
+# Baseline at v0.1.8 (REPL off).
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaRustAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  --job-name v018-baseline-sonnet-medium
+
+# Treatment: same everything, OMEGA_FEATURE_REPL=1.
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaRustAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  --ae OMEGA_FEATURE_REPL=1 \
+  --job-name v018-repl-on-sonnet-medium
+```
+
+The headline number: **delta between v018-baseline and v018-repl-on**.
+
+Start with sonnet-medium only (cheaper, faster to iterate; Kim et al.'s
+results suggest small-model effects are where multi-agent / scaffold changes
+matter most). Opus-high can be a follow-up sweep if sonnet results are
+interesting in either direction.
+
+See `docs/repl-and-subagents-research.html` §1.6 for the broader context.
+
 ## Ingest and view results
 
 The ingest and summary scripts are lightweight Python utilities. If they are
