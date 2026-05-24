@@ -770,6 +770,7 @@ mod tests {
             features: FeatureFlags {
                 repl: true,
                 subagents: false,
+                repl_replaces_fileops: false,
             },
         });
         let v = serde_json::to_value(&ev).unwrap();

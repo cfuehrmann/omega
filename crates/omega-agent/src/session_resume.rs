@@ -1386,13 +1386,15 @@ mod tests {
             features: FeatureFlags {
                 repl: true,
                 subagents: false,
+                repl_replaces_fileops: false,
             },
         })];
         assert_eq!(
             fold_features(&events),
             Some(FeatureFlags {
                 repl: true,
-                subagents: false
+                subagents: false,
+                repl_replaces_fileops: false,
             })
         );
     }
@@ -1412,13 +1414,45 @@ mod tests {
             features: FeatureFlags {
                 repl: true,
                 subagents: true,
+                repl_replaces_fileops: false,
             },
         })];
         assert_eq!(
             fold_features(&events),
             Some(FeatureFlags {
                 repl: true,
-                subagents: true
+                subagents: true,
+                repl_replaces_fileops: false,
+            })
+        );
+    }
+
+    #[test]
+    fn fold_features_repl_replaces_fileops_on() {
+        // Verify the new repl_replaces_fileops field flows through
+        // fold_features correctly via the SessionStartedEvent.
+        let events = vec![OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: SessionId(uuid::Uuid::nil()),
+            path: String::new(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: String::new(),
+            omega_commit: "unknown".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags {
+                repl: true,
+                subagents: false,
+                repl_replaces_fileops: true,
+            },
+        })];
+        assert_eq!(
+            fold_features(&events),
+            Some(FeatureFlags {
+                repl: true,
+                subagents: false,
+                repl_replaces_fileops: true,
             })
         );
     }
@@ -1439,6 +1473,7 @@ mod tests {
             features: FeatureFlags {
                 repl: true,
                 subagents: false,
+                repl_replaces_fileops: false,
             },
         });
         let second = OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -1454,6 +1489,7 @@ mod tests {
             features: FeatureFlags {
                 repl: false,
                 subagents: true,
+                repl_replaces_fileops: false,
             },
         });
         let events = vec![first, second];
@@ -1462,7 +1498,8 @@ mod tests {
             fold_features(&events),
             Some(FeatureFlags {
                 repl: true,
-                subagents: false
+                subagents: false,
+                repl_replaces_fileops: false,
             })
         );
     }

@@ -19,6 +19,7 @@
 //! **last** present block, so blocks 1..=N are all part of the cached
 //! prefix.
 
+use omega_types::FeatureFlags;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -187,19 +188,24 @@ fn read_existing(path: &Path) -> Option<String> {
 /// Empty `content` files are skipped so we never push a stray header
 /// onto the wire.
 ///
-/// When `include_repl` is `true` (session started with
+/// When `flags.repl` is `true` (session started with
 /// `OMEGA_FEATURE_REPL=1`), a `"repl"` block is appended after all
 /// instruction-file blocks.  It describes the `python_repl` tool and its
 /// usage pattern to the model.
+///
+/// When `flags.repl_replaces_fileops` is also `true`, an additional
+/// `"reduced-toolset"` block is appended after `"repl"`, explaining which
+/// file-op tools have been removed and how to accomplish the same work
+/// with `python_repl` or `run_command`.
 #[must_use]
 pub fn build_system_blocks(
     cwd: &str,
     max_output_tokens: u32,
     headless: bool,
     files: &[InstructionFile],
-    include_repl: bool,
+    flags: FeatureFlags,
 ) -> Vec<SystemBlock> {
-    let mut out = Vec::with_capacity(2 + files.len() + usize::from(include_repl));
+    let mut out = Vec::new();
 
     out.push(SystemBlock {
         label: "core",
@@ -228,10 +234,18 @@ pub fn build_system_blocks(
         });
     }
 
-    if include_repl {
+    if flags.repl {
         out.push(SystemBlock {
             label: "repl",
             content: repl_addendum(),
+            source_path: None,
+        });
+    }
+
+    if flags.repl_replaces_fileops {
+        out.push(SystemBlock {
+            label: "reduced-toolset",
+            content: reduced_toolset_addendum(),
             source_path: None,
         });
     }
@@ -241,8 +255,8 @@ pub fn build_system_blocks(
 
 /// System-prompt addendum injected when `OMEGA_FEATURE_REPL=1`.
 ///
-/// Placed after all instruction-file blocks so the Anthropic provider
-/// stamps `cache_control: ephemeral` on it (the last block).
+/// When limit mode is not active, this is the last block, so the Anthropic
+/// provider stamps `cache_control: ephemeral` on it.
 #[must_use]
 pub fn repl_addendum() -> String {
     "## Python REPL
@@ -261,6 +275,29 @@ pub fn repl_addendum() -> String {
        and building up intermediate results step-by-step.\n\
      - Prefer a single call with all related statements over many small calls \
        — state persists, so you can build on previous results."
+        .to_owned()
+}
+
+/// System-prompt addendum injected when `OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1`.
+///
+/// Placed after the `"repl"` block.  The Anthropic provider stamps
+/// `cache_control: ephemeral` on the last block, so this is the block
+/// that gets cached when limit mode is active.
+///
+/// The text is intentionally neutral — it does not bias toward Python or
+/// shell; the experiment measures which the LLM picks naturally.
+#[must_use]
+pub fn reduced_toolset_addendum() -> String {
+    "## Reduced toolset
+
+This session does not expose `read_file`, `write_file`, `edit_file`, \
+`find_files`, `grep_files`, or `list_files`.
+For any of these operations, use either:
+
+- `python_repl` — idiomatic Python (`pathlib`, `open`, `re`, `os`).
+- `run_command` — shell commands (`cat`, `sed`, `grep`, `find`).
+
+Choose whichever is cleaner for the situation."
         .to_owned()
 }
 
@@ -499,9 +536,29 @@ mod tests {
 
     // ---- Assembly ----------------------------------------------------
 
+    fn flags_default() -> FeatureFlags {
+        FeatureFlags::default()
+    }
+
+    fn flags_repl_only() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: false,
+        }
+    }
+
+    fn flags_limit_mode() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: true,
+        }
+    }
+
     #[test]
     fn core_block_is_first_and_unheadered() {
-        let blocks = build_system_blocks("/tmp/proj", 64_000, false, &[], false);
+        let blocks = build_system_blocks("/tmp/proj", 64_000, false, &[], flags_default());
         assert_eq!(blocks[0].label, "core");
         assert!(blocks[0].source_path.is_none());
         assert!(blocks[0].content.starts_with("You are an expert assistant"));
@@ -512,7 +569,7 @@ mod tests {
 
     #[test]
     fn runtime_block_contains_cwd_and_token_budget() {
-        let blocks = build_system_blocks("/tmp/proj", 12_345, false, &[], false);
+        let blocks = build_system_blocks("/tmp/proj", 12_345, false, &[], flags_default());
         let rt = blocks.iter().find(|b| b.label == "runtime").expect("rt");
         assert!(rt.content.starts_with("## Runtime context"));
         assert!(rt.content.contains("/tmp/proj"));
@@ -521,7 +578,7 @@ mod tests {
 
     #[test]
     fn no_instruction_files_yields_exactly_two_blocks() {
-        let blocks = build_system_blocks("/x", 1000, false, &[], false);
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_default());
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].label, "core");
         assert_eq!(blocks[1].label, "runtime");
@@ -541,7 +598,7 @@ mod tests {
                 content: "REPO".to_owned(),
             },
         ];
-        let blocks = build_system_blocks("/repo", 1000, false, &files, false);
+        let blocks = build_system_blocks("/repo", 1000, false, &files, flags_default());
         assert_eq!(blocks.len(), 4);
         assert_eq!(blocks[2].label, "global-agents-md");
         assert!(
@@ -564,13 +621,13 @@ mod tests {
             path: PathBuf::from("/repo/AGENTS.md"),
             content: "   \n  ".to_owned(),
         }];
-        let blocks = build_system_blocks("/repo", 1000, false, &files, false);
+        let blocks = build_system_blocks("/repo", 1000, false, &files, flags_default());
         assert_eq!(blocks.len(), 2, "whitespace-only file should be ignored");
     }
 
     #[test]
     fn join_blocks_separates_with_blank_line() {
-        let blocks = build_system_blocks("/x", 1000, false, &[], false);
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_default());
         let joined = join_blocks(&blocks);
         assert!(joined.contains("\n\n## Runtime context"));
     }
@@ -579,28 +636,28 @@ mod tests {
 
     #[test]
     fn repl_flag_false_adds_no_extra_block() {
-        let blocks = build_system_blocks("/x", 1000, false, &[], false);
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_default());
         assert!(
             blocks.iter().all(|b| b.label != "repl"),
-            "repl block must not be present when include_repl=false"
+            "repl block must not be present when repl=false"
         );
     }
 
     #[test]
     fn repl_flag_true_appends_repl_block() {
-        let blocks = build_system_blocks("/x", 1000, false, &[], true);
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_repl_only());
         let repl_block = blocks.iter().find(|b| b.label == "repl");
         assert!(
             repl_block.is_some(),
-            "repl block must be present when include_repl=true"
+            "repl block must be present when repl=true"
         );
-        // Repl block must be last.
+        // Repl block must be last when limit mode is off.
         assert_eq!(blocks.last().unwrap().label, "repl");
     }
 
     #[test]
     fn repl_block_content_describes_tool() {
-        let blocks = build_system_blocks("/x", 1000, false, &[], true);
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_repl_only());
         let repl = blocks.iter().find(|b| b.label == "repl").unwrap();
         assert!(
             repl.content.contains("python_repl"),
@@ -623,17 +680,105 @@ mod tests {
             path: PathBuf::from("/repo/AGENTS.md"),
             content: "REPO".to_owned(),
         }];
-        let blocks = build_system_blocks("/x", 1000, false, &files, true);
+        let blocks = build_system_blocks("/x", 1000, false, &files, flags_repl_only());
         // core + runtime + repo-agents-md + repl = 4
         assert_eq!(blocks.len(), 4);
         assert_eq!(blocks.last().unwrap().label, "repl");
+    }
+
+    // ---- Reduced-toolset (limit-mode) addendum ---------------------------
+
+    #[test]
+    fn limit_mode_appends_reduced_toolset_block_after_repl() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_limit_mode());
+        // core + runtime + repl + reduced-toolset = 4
+        assert_eq!(blocks.len(), 4, "limit mode must produce 4 blocks");
+        let labels: Vec<&str> = blocks.iter().map(|b| b.label).collect();
+        assert_eq!(
+            labels,
+            vec!["core", "runtime", "repl", "reduced-toolset"],
+            "block order must be core → runtime → repl → reduced-toolset"
+        );
+    }
+
+    #[test]
+    fn limit_mode_reduced_toolset_is_last_block() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_limit_mode());
+        assert_eq!(
+            blocks.last().unwrap().label,
+            "reduced-toolset",
+            "reduced-toolset must be the last block (gets cache_control: ephemeral)"
+        );
+    }
+
+    #[test]
+    fn limit_mode_block_names_all_six_removed_tools() {
+        let content = reduced_toolset_addendum();
+        for tool in &[
+            "read_file",
+            "write_file",
+            "edit_file",
+            "find_files",
+            "grep_files",
+            "list_files",
+        ] {
+            assert!(
+                content.contains(tool),
+                "reduced-toolset block must mention {tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn limit_mode_block_mentions_both_alternatives() {
+        let content = reduced_toolset_addendum();
+        assert!(
+            content.contains("python_repl"),
+            "reduced-toolset block must mention python_repl"
+        );
+        assert!(
+            content.contains("run_command"),
+            "reduced-toolset block must mention run_command"
+        );
+    }
+
+    #[test]
+    fn no_reduced_toolset_block_when_limit_mode_off() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_repl_only());
+        assert!(
+            blocks.iter().all(|b| b.label != "reduced-toolset"),
+            "reduced-toolset block must not appear when repl_replaces_fileops=false"
+        );
+    }
+
+    #[test]
+    fn limit_mode_with_instruction_files_has_correct_order() {
+        let files = vec![InstructionFile {
+            label: "repo-agents-md",
+            path: PathBuf::from("/repo/AGENTS.md"),
+            content: "REPO".to_owned(),
+        }];
+        let blocks = build_system_blocks("/x", 1000, false, &files, flags_limit_mode());
+        // core + runtime + repo-agents-md + repl + reduced-toolset = 5
+        assert_eq!(blocks.len(), 5);
+        let labels: Vec<&str> = blocks.iter().map(|b| b.label).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "core",
+                "runtime",
+                "repo-agents-md",
+                "repl",
+                "reduced-toolset"
+            ]
+        );
     }
 
     // ---- Headless mode ---------------------------------------------------
 
     #[test]
     fn headless_omits_output_format_and_discuss() {
-        let blocks = build_system_blocks("/tmp", 1000, true, &[], false);
+        let blocks = build_system_blocks("/tmp", 1000, true, &[], flags_default());
         let core = &blocks[0].content;
         assert!(
             !core.contains("## Output format"),
@@ -647,7 +792,7 @@ mod tests {
 
     #[test]
     fn interactive_includes_output_format_and_discuss() {
-        let blocks = build_system_blocks("/tmp", 1000, false, &[], false);
+        let blocks = build_system_blocks("/tmp", 1000, false, &[], flags_default());
         let core = &blocks[0].content;
         assert!(
             core.contains("## Output format"),

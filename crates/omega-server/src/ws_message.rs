@@ -346,6 +346,7 @@ mod tests {
             features: FeatureFlags {
                 repl: true,
                 subagents: false,
+                repl_replaces_fileops: false,
             },
         }
         .to_json();

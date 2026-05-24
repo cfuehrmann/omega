@@ -1567,6 +1567,7 @@ dependencies = [
  "ignore",
  "mutants",
  "omega-core",
+ "omega-types",
  "regex",
  "reqwest",
  "serde_json",

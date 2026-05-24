@@ -5,6 +5,7 @@
 //! `src/tools.schema.ts` and `src/tools.ts` in the TypeScript codebase.
 
 use omega_core::ToolDefinition;
+use omega_types::FeatureFlags;
 use serde_json::{Value, json};
 
 /// All tools Omega exposes, in stable order.
@@ -12,29 +13,52 @@ use serde_json::{Value, json};
 /// Order matches the TS `toolDefinitions` array. The agent does not depend
 /// on order, but tests do (snapshot/round-trip).
 ///
-/// The base set is twelve tools.  When `include_repl` is `true` (i.e. the
+/// The base set is twelve tools.  When `flags.repl` is `true` (i.e. the
 /// session was started with `OMEGA_FEATURE_REPL=1`), `python_repl` is
-/// appended as the thirteenth entry.
+/// appended.
+///
+/// When `flags.repl_replaces_fileops` is `true`, the six file-op tools
+/// (`read_file`, `write_file`, `edit_file`, `find_files`, `grep_files`,
+/// `list_files`) are excluded so that `python_repl` is the primary
+/// alternative for file work.  The retained tools are:
+/// `run_command`, `run_background`, `wait_for_output`, `write_stdin`,
+/// `web_search`, `fetch_url`, `python_repl`.
 #[must_use]
-pub fn tool_definitions(include_repl: bool) -> Vec<ToolDefinition> {
-    let mut defs = vec![
-        read_file(),
-        write_file(),
-        run_command(),
-        edit_file(),
-        list_files(),
-        web_search(),
-        fetch_url(),
-        grep_files(),
-        find_files(),
-        run_background(),
-        wait_for_output(),
-        write_stdin(),
-    ];
-    if include_repl {
+pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
+    if flags.repl_replaces_fileops {
+        // Limit mode: exclude the six file-op tools that python_repl replaces.
+        let mut defs = vec![
+            run_command(),
+            run_background(),
+            wait_for_output(),
+            write_stdin(),
+            web_search(),
+            fetch_url(),
+        ];
+        // python_repl is always included in limit mode (repl_replaces_fileops
+        // requires repl=true; validated at startup).
         defs.push(python_repl());
+        defs
+    } else {
+        let mut defs = vec![
+            read_file(),
+            write_file(),
+            run_command(),
+            edit_file(),
+            list_files(),
+            web_search(),
+            fetch_url(),
+            grep_files(),
+            find_files(),
+            run_background(),
+            wait_for_output(),
+            write_stdin(),
+        ];
+        if flags.repl {
+            defs.push(python_repl());
+        }
+        defs
     }
-    defs
 }
 
 // -----------------------------------------------------------------------
@@ -358,10 +382,31 @@ fn write_stdin() -> ToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omega_types::FeatureFlags;
+
+    fn flags_default() -> FeatureFlags {
+        FeatureFlags::default()
+    }
+
+    fn flags_repl_only() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: false,
+        }
+    }
+
+    fn flags_limit_mode() -> FeatureFlags {
+        FeatureFlags {
+            repl: true,
+            subagents: false,
+            repl_replaces_fileops: true,
+        }
+    }
 
     #[test]
     fn twelve_tools_without_repl() {
-        let names: Vec<String> = tool_definitions(false)
+        let names: Vec<String> = tool_definitions(flags_default())
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -386,7 +431,10 @@ mod tests {
 
     #[test]
     fn thirteen_tools_with_repl() {
-        let names: Vec<String> = tool_definitions(true).into_iter().map(|d| d.name).collect();
+        let names: Vec<String> = tool_definitions(flags_repl_only())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
         assert_eq!(
             names,
             vec![
@@ -409,8 +457,8 @@ mod tests {
 
     #[test]
     fn repl_tool_appended_last() {
-        let without = tool_definitions(false);
-        let with_repl = tool_definitions(true);
+        let without = tool_definitions(flags_default());
+        let with_repl = tool_definitions(flags_repl_only());
         // The first 12 tools are identical in both lists.
         assert_eq!(without.len(), 12);
         assert_eq!(with_repl.len(), 13);
@@ -421,9 +469,76 @@ mod tests {
     }
 
     #[test]
+    fn seven_tools_when_limit_mode() {
+        // repl_replaces_fileops removes the six file-op tools, leaving exactly
+        // the seven tools that python_repl cannot replace.
+        let names: Vec<String> = tool_definitions(flags_limit_mode())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "run_command",
+                "run_background",
+                "wait_for_output",
+                "write_stdin",
+                "web_search",
+                "fetch_url",
+                "python_repl",
+            ],
+            "limit mode must expose exactly 7 tools"
+        );
+    }
+
+    #[test]
+    fn limit_mode_excludes_all_six_file_op_tools() {
+        let names: Vec<String> = tool_definitions(flags_limit_mode())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        for removed in &[
+            "read_file",
+            "write_file",
+            "edit_file",
+            "find_files",
+            "grep_files",
+            "list_files",
+        ] {
+            assert!(
+                !names.contains(&removed.to_string()),
+                "limit mode must not include {removed}"
+            );
+        }
+    }
+
+    #[test]
     fn every_schema_is_an_object_with_required_array() {
         // Test with REPL enabled so the python_repl schema is also checked.
-        for def in tool_definitions(true) {
+        for def in tool_definitions(flags_repl_only()) {
+            let schema = &def.input_schema;
+            assert_eq!(
+                schema["type"], "object",
+                "{} schema not an object",
+                def.name
+            );
+            assert!(
+                schema["properties"].is_object(),
+                "{} missing properties",
+                def.name
+            );
+            assert!(
+                schema["required"].is_array(),
+                "{} missing required[]",
+                def.name
+            );
+        }
+    }
+
+    #[test]
+    fn limit_mode_schemas_are_valid() {
+        // Verify the limit-mode tool set also has valid schemas.
+        for def in tool_definitions(flags_limit_mode()) {
             let schema = &def.input_schema;
             assert_eq!(
                 schema["type"], "object",
@@ -445,7 +560,7 @@ mod tests {
 
     #[test]
     fn descriptions_are_non_empty() {
-        for def in tool_definitions(true) {
+        for def in tool_definitions(flags_repl_only()) {
             assert!(
                 !def.description.is_empty(),
                 "{} has empty description",

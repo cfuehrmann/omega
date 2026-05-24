@@ -18,7 +18,8 @@ expression: events
     },
     "features": {
       "repl": false,
-      "subagents": false
+      "subagents": false,
+      "repl_replaces_fileops": false
     }
   },
   {

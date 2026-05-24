@@ -251,6 +251,19 @@ mutants-repl-resume:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
+# Run cargo-mutants targeted at the schemas.rs tool-definition filtering.
+# Covers the repl_replaces_fileops branch and the limit-mode tool exclusion.
+# Adds omega-types as an in-scope dep (resolved automatically by cargo-mutants).
+mutants-schemas:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/schemas.rs"
+
+# Run cargo-mutants targeted at the system_prompt.rs block assembly.
+# Covers the new repl_replaces_fileops branch and reduced_toolset_addendum.
+mutants-system-prompt:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

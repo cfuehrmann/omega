@@ -291,15 +291,43 @@ tr:nth-child(even) td { background: #fafbfc; }
       ~4–5 days.
     </li>
     <li style="margin-bottom:0.6rem;">
-      <strong>Harbor sweep.</strong>
-      <code>OMEGA_FEATURE_REPL ∈ {0,1}</code> on Terminal-Bench 2.
-      <em>First benchmark data.</em>
+      <strong>v0.1.8 smoke (fix-git, crack-7z-hash, additive REPL).</strong>
+      Two cached TB2 tasks swept with <code>OMEGA_FEATURE_REPL=1</code>.
+      <strong>Finding:</strong> the LLM did <em>not</em> call
+      <code>python_repl</code> once in either task — it consistently chose
+      <code>run_command</code> and the dedicated file tools. The
+      additive-REPL design cannot measure REPL value because the tool is
+      never engaged. (See <a href="#rq-a-limit-mode-finding">§§3 empirical note</a>.)
+    </li>
+    <li style="margin-bottom:0.6rem;">
+      <strong>Sub-session: add limit-mode flag
+      (<code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>). ✅ done</strong>
+      Removes the six file-op tools
+      (<code>read_file</code>, <code>write_file</code>, <code>edit_file</code>,
+      <code>find_files</code>, <code>grep_files</code>, <code>list_files</code>)
+      when set, forcing the LLM to choose between <code>python_repl</code> and
+      <code>run_command</code> for file work.
+      Requires <code>OMEGA_FEATURE_REPL=1</code>; fails loudly otherwise.
+      System prompt gains a “Reduced toolset” section explaining the constraint
+      neutrally (no bias toward Python or shell).
+      Bench invocation:
+      <code>--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>.
+    </li>
+    <li style="margin-bottom:0.6rem;">
+      <strong>Operator: tag v0.1.9, point bench at it, sweep three modes.</strong>
+      Both cached tasks (<code>fix-git</code>, <code>crack-7z-hash</code>)
+      in three treatment arms:
+      <em>OFF</em> (<code>OMEGA_FEATURE_REPL=0</code>),
+      <em>additive</em> (<code>OMEGA_FEATURE_REPL=1</code>),
+      <em>limit-mode</em> (<code>OMEGA_FEATURE_REPL=1 OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>).
+      <em>First benchmark data on REPL engagement.</em>
     </li>
     <li style="margin-bottom:0;">
-      <strong>If TB2 results warrant:</strong> subagent MVP, then RLM MVP,
-      then add SWE-bench Verified as an optional second sweep. Per the
-      §1.6 recommended order. Each stage produces benchmark data
-      independently.
+      <strong>Harbor broader sweep.</strong>
+      Full Terminal-Bench 2 once limit-mode data validates engagement.
+      If results warrant: subagent MVP, then RLM MVP, then add SWE-bench
+      Verified as an optional second sweep. Per the §1.6 recommended order.
+      Each stage produces benchmark data independently.
     </li>
   </ol>
 </div>
@@ -733,6 +761,27 @@ tr:nth-child(even) td { background: #fafbfc; }
 <p><strong>Next step:</strong> implement shell REPL behind <code>repl=on</code> flag;
 run Harbor sweep; measure gate passage rate, tokens/commit, time/commit, tool-call
 error rate vs. baseline. <em>See §1.6 for the REPL MVP sketch and effort estimate.</em></p>
+
+<div id="rq-a-limit-mode-finding" class="callout" style="border-left-color: #e6a817;">
+  <div class="callout-title">⚠️ Empirical finding — v0.1.8 smoke (fix-git, crack-7z-hash)</div>
+  <p>
+    Both tasks were run with <code>OMEGA_FEATURE_REPL=1</code> (additive design:
+    <code>python_repl</code> available alongside all twelve standard tools).
+    In <strong>both sessions the LLM did not call <code>python_repl</code>
+    once</strong> — it consistently chose <code>run_command</code> and the
+    dedicated file tools (<code>read_file</code>, <code>grep_files</code>, etc.).
+    Session events are in <code>bench/jobs/v018-smoke-*/</code>.
+  </p>
+  <p>
+    <strong>Implication for RQ-A:</strong> the additive REPL design is not
+    measurable with the current LLM behaviour. The tool is present but ignored.
+    To obtain benchmark data we need to create a context where the LLM
+    <em>must</em> choose between <code>python_repl</code> and
+    <code>run_command</code> — hence the
+    <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code> limit-mode flag
+    added in the next sub-session (see Next Steps above).
+  </p>
+</div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />

@@ -183,7 +183,11 @@ mod dispatch_tests {
         // Every name listed in tool_definitions (with REPL enabled) must dispatch
         // to a body — no "Unknown tool" errors.  Verifies the table and the
         // dispatch in execute_tool stay in sync.
-        let defs = tool_definitions(true);
+        use omega_types::FeatureFlags;
+        let defs = tool_definitions(FeatureFlags {
+            repl: true,
+            ..Default::default()
+        });
         for def in defs {
             let r = execute_tool(&def.name, json!({}), None, None).await;
             // Stubs return is_error=true with "not yet implemented".

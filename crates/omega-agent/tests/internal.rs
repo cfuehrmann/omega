@@ -1003,6 +1003,7 @@ async fn round_trip_gate() {
     let non_default_features = FeatureFlags {
         repl: false,
         subagents: true,
+        repl_replaces_fileops: false,
     };
     let mut agent = omega_agent::Agent::new(
         provider.clone(),
@@ -1189,6 +1190,7 @@ async fn python_repl_resume_returns_error() {
             features: Some(FeatureFlags {
                 repl: true,
                 subagents: false,
+                repl_replaces_fileops: false,
             }),
         },
     );
@@ -1242,6 +1244,7 @@ async fn python_repl_tool_state_persists() {
             features: Some(FeatureFlags {
                 repl: true,
                 subagents: false,
+                repl_replaces_fileops: false,
             }),
         },
     );

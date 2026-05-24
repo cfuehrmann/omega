@@ -58,6 +58,28 @@ The resolved combination lands in `SessionStartedEvent.features` for every
 session; post-mortem can grep `events.jsonl` to know which combination a run
 used.
 
+### Limit-mode treatment arm
+
+To run the **limit-mode** treatment (removes the six file-op tools so the LLM
+must choose between `python_repl` and `run_command` for file work), pass both
+flags together:
+
+```bash
+--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1
+```
+
+Setting `OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` without `OMEGA_FEATURE_REPL=1`
+is a configuration error and the agent will exit with a clear message at
+startup.
+
+The three-mode sweep for the v0.1.9 benchmark is:
+
+| Treatment arm | `--ae` flags |
+|---|---|
+| OFF (baseline) | _(none)_ |
+| Additive REPL | `--ae OMEGA_FEATURE_REPL=1` |
+| Limit-mode REPL | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` |
+
 ### REPL benchmark plan (v0.1.8, first benchmark data on the REPL MVP)
 
 Run both legs at the **same Omega tag** so the comparison is apples-to-apples.

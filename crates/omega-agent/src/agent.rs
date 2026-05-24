@@ -565,9 +565,13 @@ impl Agent {
         if self.config.features.is_none() {
             self.features = FeatureFlags::from_env();
         }
+        // Validate cross-flag constraints — fail loudly at startup.
+        self.features
+            .validate()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
         eprintln!(
-            "feature flags: repl={} subagents={}",
-            self.features.repl, self.features.subagents
+            "feature flags: repl={} subagents={} repl_replaces_fileops={}",
+            self.features.repl, self.features.subagents, self.features.repl_replaces_fileops
         );
 
         // 1. server_started
@@ -593,7 +597,7 @@ impl Agent {
             max_tokens,
             self.config.headless,
             &files,
-            self.features.repl,
+            self.features,
         );
         // Derive the set of canonical on-disk paths for the system-prompt
         // guard in `execute_tool`.  Canonicalisation happens here once so
@@ -1104,7 +1108,7 @@ impl Agent {
                     model: self.active_model.clone(),
                     messages: self.history.clone(),
                     system: Some(system_blocks),
-                    tools: tool_definitions(self.features.repl),
+                    tools: tool_definitions(self.features),
                     config: ModelConfig {
                         max_tokens,
                         temperature: None,
