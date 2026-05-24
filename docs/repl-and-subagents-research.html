@@ -254,12 +254,20 @@ tr:nth-child(even) td { background: #fafbfc; }
       ~1–2 days. Strict prerequisite for steps 3 onward.
     </li>
     <li style="margin-bottom:0.6rem;">
-      <strong>Sub-session: typed ephemeral allowlist.</strong>
-      Convert the Phase 2 comment-table to a Rust exclusion structure
-      (e.g. <code>#[non_exhaustive]</code> enum) so new
-      <code>Agent</code>/<code>ActiveSession</code> fields force a
-      deliberate ephemeral/durable classification.
-      ~0.5 day. Recommended before REPL MVP.
+      <strong>Sub-session: typed domain-state snapshot.</strong>
+      Per the
+      <a href="./session-design.html#domain-state">domain-state framing</a>:
+      replace the comment-table classification with a typed
+      <code>DomainSnapshot</code> whose constructor exhaustively destructures
+      <code>&amp;Agent</code>, forcing compile-time classification of every
+      field as <strong>domain state</strong> (observable by LLM or UI) or
+      <strong>plumbing</strong> (with an inline domain-terms rationale).
+      <strong>Also fixes</strong> strict resume to use
+      <code>SessionStartedEvent.system_prompt</code> rather than re-reading
+      <code>AGENTS.md</code> from disk — closing the only current carve-out
+      from <code>domain-relevant&nbsp;⇒&nbsp;persisted</code>.
+      ~1 day. Recommended before REPL MVP so the new <code>PythonRepl</code>
+      field arrives forced-to-be-classified.
     </li>
     <li style="margin-bottom:0.6rem;">
       <strong>Sub-session: REPL MVP.</strong>

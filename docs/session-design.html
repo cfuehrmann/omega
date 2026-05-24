@@ -345,11 +345,55 @@ tr:nth-child(even) td { background: #fafbfc; }
   events structurally.
 </p>
 
+<h3 id="domain-state">Domain state and the consistency chain</h3>
+
+<p>
+  The events-as-state promise is precisely <strong>observational equivalence after
+  resumption</strong>: an external observer cannot distinguish a resumed session
+  from one that never stopped. Two relevant observers:
+</p>
+<ul>
+  <li><strong>The LLM and the tools.</strong> Future turns must unfold the same way.</li>
+  <li><strong>The UI / user.</strong> The past must display the same way.</li>
+</ul>
+
+<p>
+  A piece of agent state is <strong>domain state</strong> iff a difference in it could
+  be observed by either observer. Everything else — connection handles, channels,
+  file descriptors, freshly-recomputed indices — is plumbing: the resumed process needs
+  <em>some</em> technical instance, but the contents need not match the predecessor's.
+</p>
+
+<p>The contract between domain state, events, and UI is the chain:</p>
+
+<blockquote style="border-left-color: var(--rec-border, #3a8a3a);">
+  <p style="font-size:1.05rem; margin:0;"><strong>domain-relevant&nbsp;⇒&nbsp;persisted&nbsp;⇒&nbsp;visible in UI</strong></p>
+</blockquote>
+
+<p>Both implications are load-bearing:</p>
+<ul>
+  <li>
+    <strong>domain-relevant &rArr; persisted</strong> &mdash; anything affecting future
+    behavior or past display must be in the event log. <strong>No carve-outs.</strong>
+    Concrete consequence: the system prompt is persisted at session start in
+    <code>SessionStartedEvent.system_prompt</code> and stays fixed for the lifetime of
+    the session. Strict resume must use that persisted value &mdash; <em>not</em> re-read
+    <code>AGENTS.md</code> from disk, which would introduce a behavioral change with no
+    recorded event. To pick up an updated system prompt, start a new session.
+  </li>
+  <li>
+    <strong>persisted &rArr; visible in UI</strong> &mdash; anything in the event log
+    should have a UI representation. No secret state; no events without UI.
+  </li>
+</ul>
+
 <div class="callout rec">
   <div class="callout-title">✓ Gate-able criterion</div>
-  <p>Stop Omega. Start a fresh process from the persisted events. The resulting state
-  (modulo declared-ephemeral pieces) must match what it would have been right after
-  the last user message. A gate-able test, not a philosophical claim.</p>
+  <p>Stop Omega. Start a fresh process from the persisted events. The resulting
+  <strong>domain state</strong> must match what it would have been right after the
+  last user message. Plumbing fields are not part of this check &mdash; by construction
+  they cannot influence behavior or display. The classification of "domain state vs.
+  plumbing" is enforced at compile time (see Phase 2 follow-up below).</p>
 </div>
 
 <!-- ── Design history (collapsed) ────────────────────────────────────────── -->
@@ -511,17 +555,34 @@ tr:nth-child(even) td { background: #fafbfc; }
 <hr class="section-divider" />
 <h2 id="open-questions">Open questions — Endeavor 1 scope</h2>
 
-<div class="callout" id="oq-allowlist">
-  <div class="callout-title">💡 Ephemeral-allowlist as typed exclusion — planned follow-up</div>
+<div class="callout warn" id="oq-allowlist">
+  <div class="callout-title">⚠ Typed domain-state snapshot — planned follow-up (step 2 of REPL track)</div>
   <p>
     The round-trip gate test in
     <code>crates/omega-agent/tests/internal.rs::round_trip_gate</code>
-    maintains an informal table of ephemeral vs. durable fields.
-    A planned follow-up is to formalise this as typed structs — separating
-    <code>DurableAgentState { active_model, active_effort, history, context_hashes }</code>
-    from ephemeral process-bound pieces — so the gate test and the resume entry point
-    reference the same authoritative type rather than a prose list.
-    Not a blocker for any current work; a code-quality follow-up.
+    maintains an informal comment-table classifying <code>Agent</code> fields as
+    durable or ephemeral. Under the
+    <a href="#domain-state">domain state framing</a>, the cleaner formulation is:
+  </p>
+  <ul>
+    <li>A typed <code>DomainSnapshot</code> contains exactly the fields that are
+        <strong>domain state</strong> (observable by LLM or UI).</li>
+    <li>The constructor exhaustively destructures <code>&amp;Agent</code> so the
+        compiler forces classification on every future field addition.</li>
+    <li>Each non-domain field is bound to <code>_</code> with an inline comment
+        explaining in <em>domain terms</em> why it's plumbing.</li>
+    <li><strong>Strict resume must use <code>SessionStartedEvent.system_prompt</code></strong>
+        rather than re-reading <code>AGENTS.md</code> from disk — closing the
+        only current carve-out from
+        <code>domain-relevant&nbsp;⇒&nbsp;persisted</code>.</li>
+    <li>Any other fields currently rebuilt from caller input or disk state should
+        be examined the same way; if domain-relevant, persist and reconstruct.</li>
+  </ul>
+  <p>
+    Sequenced as step 2 in the REPL track (see
+    <a href="./repl-and-subagents-research.html">»repl-and-subagents-research.html«</a>),
+    immediately before the REPL MVP so that the new <code>PythonRepl</code> field
+    arrives forced-to-be-classified.
   </p>
 </div>
 
