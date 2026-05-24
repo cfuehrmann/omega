@@ -196,7 +196,9 @@ fn read_existing(path: &Path) -> Option<String> {
 /// When `flags.repl_replaces_fileops` is also `true`, an additional
 /// `"reduced-toolset"` block is appended after `"repl"`, explaining which
 /// file-op tools have been removed and how to accomplish the same work
-/// with `python_repl` or `run_command`.
+/// with `python_repl` or `run_command`.  In this mode the `"core"` and
+/// `"runtime"` blocks are generated without any references to the six
+/// removed file-op tools, so the model receives consistent instructions.
 #[must_use]
 pub fn build_system_blocks(
     cwd: &str,
@@ -207,15 +209,19 @@ pub fn build_system_blocks(
 ) -> Vec<SystemBlock> {
     let mut out = Vec::new();
 
+    // When the six file-op tools are absent, omit all guidance that
+    // references them from the core and runtime blocks.
+    let file_tools = !flags.repl_replaces_fileops;
+
     out.push(SystemBlock {
         label: "core",
-        content: core_prompt(headless),
+        content: core_prompt(headless, file_tools),
         source_path: None,
     });
 
     out.push(SystemBlock {
         label: "runtime",
-        content: runtime_context(cwd, max_output_tokens),
+        content: runtime_context(cwd, max_output_tokens, file_tools),
         source_path: None,
     });
 
@@ -324,101 +330,193 @@ pub fn join_blocks(blocks: &[SystemBlock]) -> String {
 /// `cwd` and `max_output_tokens`.  Kept separate from the core prompt
 /// so the core text is byte-for-byte identical across sessions and
 /// benefits from Anthropic's prefix cache the first time it appears.
-fn runtime_context(cwd: &str, max_output_tokens: u32) -> String {
-    format!(
+///
+/// When `file_tools` is `false` (limit mode), the advice about
+/// `write_file` and `edit_file` is omitted so the model receives
+/// consistent instructions that match the actual toolset.
+fn runtime_context(cwd: &str, max_output_tokens: u32, file_tools: bool) -> String {
+    let mut s = format!(
         "## Runtime context\n\
 \n\
 Your working directory is {cwd}. Treat it as the root of your work — use\n\
 relative paths from there unless the user directs otherwise.\n\
 \n\
 The output token budget is {max_output_tokens} tokens per response. Tool call\n\
-arguments count against this budget. Very large `write_file` calls risk\n\
+arguments count against this budget."
+    );
+    if file_tools {
+        s.push_str(
+            " Very large `write_file` calls risk\n\
 hitting the limit mid-generation, leaving a broken turn. For large new\n\
 files: write a skeleton first, then extend with `edit_file`. For large\n\
-existing files: always prefer `edit_file` over a full rewrite."
-    )
+existing files: always prefer `edit_file` over a full rewrite.",
+        );
+    }
+    s
 }
 
 /// Core prompt (block #1).
+///
 /// `headless` drops the two sections that require an interactive human UI:
 /// output-format rendering guidance and the discussion-before-acting policy.
+///
+/// `file_tools` controls whether guidance referencing the six file-op tools
+/// (`read_file`, `write_file`, `edit_file`, `find_files`, `grep_files`,
+/// `list_files`) is included.  Pass `false` when those tools are absent from
+/// the toolset (i.e. `flags.repl_replaces_fileops` is `true`) so that the
+/// model receives consistent instructions that match the actual toolset.
 #[allow(clippy::too_many_lines)]
-fn core_prompt(headless: bool) -> String {
-    let mut s = "\
-You are an expert assistant operating inside Omega, a software engineering agent harness. Use tools when needed.
+fn core_prompt(headless: bool, file_tools: bool) -> String {
+    let mut s = String::new();
 
-## Project orientation
+    // --- Introduction + Project orientation ---
+    s.push_str(
+        "You are an expert assistant operating inside Omega, a software engineering agent harness. Use tools when needed.\n\
+\n\
+## Project orientation\n\
+\n\
+When you have no prior context about the project structure, check manifest\n\
+files (e.g. `Cargo.toml`, `package.json`, `*.csproj`, `pyproject.toml`) to\n\
+learn the stack. Project-specific conventions are in the attached `AGENTS.md`\n\
+blocks (if any) — do not search the filesystem for them. ",
+    );
+    if file_tools {
+        s.push_str(
+            "Any file listed as\n\
+`Instructions from: <path>` is already present here; a `read_file` call for\n\
+it is unnecessary and will be blocked.",
+        );
+    } else {
+        s.push_str(
+            "Any file listed as\n\
+`Instructions from: <path>` is already present here; reading it again is\n\
+unnecessary and will be blocked.",
+        );
+    }
 
-When you have no prior context about the project structure, check manifest
-files (e.g. `Cargo.toml`, `package.json`, `*.csproj`, `pyproject.toml`) to
-learn the stack. Project-specific conventions are in the attached `AGENTS.md`
-blocks (if any) — do not search the filesystem for them. Any file listed as
-`Instructions from: <path>` is already present here; a `read_file` call for
-it is unnecessary and will be blocked.
+    // --- Tools section ---
+    s.push_str(
+        "\n\
+\n\
+## Tools\n\
+\n\
+The operator has pre-approved all tool calls. No confirmation is needed.\n",
+    );
 
-## Tools
+    // File-tool search/navigation guidance — omitted when those tools are absent.
+    if file_tools {
+        s.push_str(
+            "\n\
+Prefer `grep_files` over speculative `read_file` calls when searching for\n\
+a symbol, string, or pattern across the codebase. It's faster and returns\n\
+only what's relevant.\n\
+Use `find_files` when you know a file's name or extension but not its exact\n\
+path — don't brute-force with repeated `list_files` calls.\n",
+        );
+    }
 
-The operator has pre-approved all tool calls. No confirmation is needed.
+    // run_command / run_background guidance — always present.
+    s.push_str(
+        "Use `run_command` for builds, test suites, commits, and any finite command.\n\
+The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands\n\
+you expect to take longer. Reserve `run_background` for processes that must\n\
+stay alive indefinitely (dev servers, file watchers).\n\
+All `run_command` and `wait_for_output` results are tee'd to a session-cache\n\
+log and the path is surfaced in a footer:\n\
+- `[full output: <path>]` when the output fit within the cap.\n\
+- `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.\n",
+    );
 
-Prefer `grep_files` over speculative `read_file` calls when searching for
-a symbol, string, or pattern across the codebase. It's faster and returns
-only what's relevant.
-Use `find_files` when you know a file's name or extension but not its exact
-path — don't brute-force with repeated `list_files` calls.
-Use `run_command` for builds, test suites, commits, and any finite command.
-The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands
-you expect to take longer. Reserve `run_background` for processes that must
-stay alive indefinitely (dev servers, file watchers).
-All `run_command` and `wait_for_output` results are tee'd to a session-cache
-log and the path is surfaced in a footer:
-- `[full output: <path>]` when the output fit within the cap.
-- `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.
-When a result is **truncated**, use `read_file` or `grep_files` on the cache
-path to recover the bytes that didn't fit inline. The cache is also useful
-when an earlier (full) output has aged out of immediate context and you need
-to revisit it without re-running the command — re-running is slow and may
-produce different output. When the bytes you need are already inline and
-recent, read them directly rather than calling another tool over the same
-bytes.
-Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on
-success), or `\"middle\"` to control which portion is returned when the
-output is truncated.
-To wait for a background process to become ready (e.g. a dev server), use
-`wait_for_output(logFile, pid, timeoutMs, pattern?)` instead of `sleep` + `tail`.
-Always pass the `pid` from `run_background` — if the process exits before the pattern matches,
-`wait_for_output` returns immediately with `processExited: true` and the exit code instead of
-waiting for the full timeout.
-The `pattern` is a **JavaScript regex** — use `|` for alternation (e.g. `\"ready|Error|done\"`).
-If a background process prompts for interactive input, use
-`write_stdin(pid, text)` to respond (include \\n to submit a line). Pass
-`end_stdin=true` to signal EOF after writing.
-Chain independent tool calls in parallel when results don't depend on each
-other.
-Check for a task runner and use it to discover available commands
-(`just --list`, `make help`, `npm run`, etc.).
-For `edit_file`: read or grep the file first to identify **all** needed
-changes, then apply them in a single call with `replacements`. Never call
-`edit_file` on the same file twice in a row — that is always a mistake.
+    // Truncation recovery hint — only mention file tools when they are present.
+    if file_tools {
+        s.push_str(
+            "When a result is **truncated**, use `read_file` or `grep_files` on the cache\n\
+path to recover the bytes that didn't fit inline. ",
+        );
+    }
+    s.push_str(
+        "The cache is also useful\n\
+when an earlier (full) output has aged out of immediate context and you need\n\
+to revisit it without re-running the command — re-running is slow and may\n\
+produce different output. When the bytes you need are already inline and\n\
+recent, read them directly rather than calling another tool over the same\n\
+bytes.\n\
+Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on\n\
+success), or `\"middle\"` to control which portion is returned when the\n\
+output is truncated.\n\
+To wait for a background process to become ready (e.g. a dev server), use\n\
+`wait_for_output(logFile, pid, timeoutMs, pattern?)` instead of `sleep` + `tail`.\n\
+Always pass the `pid` from `run_background` — if the process exits before the pattern matches,\n\
+`wait_for_output` returns immediately with `processExited: true` and the exit code instead of\n\
+waiting for the full timeout.\n\
+The `pattern` is a **JavaScript regex** — use `|` for alternation (e.g. `\"ready|Error|done\"`).\n\
+If a background process prompts for interactive input, use\n\
+`write_stdin(pid, text)` to respond (include \\n to submit a line). Pass\n\
+`end_stdin=true` to signal EOF after writing.\n\
+Chain independent tool calls in parallel when results don't depend on each\n\
+other.\n\
+Check for a task runner and use it to discover available commands\n\
+(`just --list`, `make help`, `npm run`, etc.).\n",
+    );
 
-Use `web_search` freely for documentation, current information, API details,
-error messages, or anything not in local files. Prefer it over guessing or
-relying on potentially stale training data.
-`fetch_url` downloads a URL **once** and runs a single `postprocess` query
-on it. The result includes a cache path — for any further queries on the same
-content, use `grep_files`/`read_file` on that path.
-`postprocess` is required. Prefer `grep` or `awk` when you know what to
-look for, and `head -N` as the catch-all. Never use `cat` — `head -N`
-gives the same result on short pages and stays bounded on long ones.
+    // edit_file workflow guidance — omitted when that tool is absent.
+    if file_tools {
+        s.push_str(
+            "For `edit_file`: read or grep the file first to identify **all** needed\n\
+changes, then apply them in a single call with `replacements`. Never call\n\
+`edit_file` on the same file twice in a row — that is always a mistake.\n",
+        );
+    }
 
-When a command produces verbose output — whether from `run_background`'s
-`logFile` or from a `run_command` redirected to a file — inspect it with
-`read_file` (use `offset`/`limit` to paginate through large files) and
-`grep_files` to search for specific patterns. Never re-run a command just to
-see more output. Never re-run any command without making a code change in
-between.
+    // web_search / fetch_url guidance.
+    s.push_str(
+        "\n\
+Use `web_search` freely for documentation, current information, API details,\n\
+error messages, or anything not in local files. Prefer it over guessing or\n\
+relying on potentially stale training data.\n",
+    );
 
-If a tool fails in a noteworthy way, mention it in your response."
-        .to_owned();
+    // fetch_url: cache-reuse hint varies by toolset.
+    if file_tools {
+        s.push_str(
+            "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
+on it. The result includes a cache path — for any further queries on the same\n\
+content, use `grep_files`/`read_file` on that path.\n",
+        );
+    } else {
+        s.push_str(
+            "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
+on it. The result includes a cache path — for any further queries on the same\n\
+content, reuse it with `run_command` (e.g. grep) or `python_repl`.\n",
+        );
+    }
+
+    s.push_str(
+        "`postprocess` is required. Prefer `grep` or `awk` when you know what to\n\
+look for, and `head -N` as the catch-all. Never use `cat` — `head -N`\n\
+gives the same result on short pages and stays bounded on long ones.\n\
+\n\
+When a command produces verbose output — whether from `run_background`'s\n\
+`logFile` or from a `run_command` redirected to a file — inspect it with\n",
+    );
+
+    // Verbose-output inspection method varies by toolset.
+    if file_tools {
+        s.push_str(
+            "`read_file` (use `offset`/`limit` to paginate through large files) and\n\
+`grep_files` to search for specific patterns. ",
+        );
+    } else {
+        s.push_str("`python_repl` or `run_command` to inspect the output. ");
+    }
+
+    s.push_str(
+        "Never re-run a command just to\n\
+see more output. Never re-run any command without making a code change in\n\
+between.\n\
+\n\
+If a tool fails in a noteworthy way, mention it in your response.",
+    );
 
     // Both sections below require an interactive human UI; omit in headless mode.
     if !headless {
@@ -802,6 +900,114 @@ mod tests {
             core.contains("stop and discuss"),
             "interactive must include discussion policy"
         );
+    }
+
+    // ---- File-tool guidance gating ---------------------------------------
+    //
+    // Contract: when repl_replaces_fileops=true, the assembled prompt must
+    // contain zero bare-backtick references to the six removed tools outside
+    // the "Reduced toolset" block (which legitimately lists them as absent).
+    // When repl_replaces_fileops=false, the assembled prompt must still
+    // contain the existing file-tool guidance.
+
+    const FILE_TOOLS: [&str; 6] = [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "find_files",
+        "grep_files",
+        "list_files",
+    ];
+
+    /// In limit mode: strip the "Reduced toolset" block content from the
+    /// assembled prompt, then verify no bare-backtick references remain for
+    /// any of the six removed tools.
+    #[test]
+    fn limit_mode_assembled_prompt_has_no_file_tool_refs_outside_reduced_toolset_block() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_limit_mode());
+        let full_prompt = join_blocks(&blocks);
+
+        // Strip the reduced-toolset block content from the assembled prompt.
+        // This is the only place the six tool names are allowed to appear.
+        let reduced_content = reduced_toolset_addendum();
+        let residue = full_prompt.replace(&reduced_content, "");
+
+        for tool in &FILE_TOOLS {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                !residue.contains(&backtick_ref),
+                "limit-mode residue must not contain `{tool}` — found a \
+                 bare-backtick reference outside the Reduced toolset block"
+            );
+        }
+    }
+
+    /// In limit mode with headless=true: same contract — no file-tool
+    /// references in the residue after stripping the reduced-toolset block.
+    #[test]
+    fn limit_mode_headless_has_no_file_tool_refs_outside_reduced_toolset_block() {
+        let blocks = build_system_blocks("/x", 1000, true, &[], flags_limit_mode());
+        let full_prompt = join_blocks(&blocks);
+        let reduced_content = reduced_toolset_addendum();
+        let residue = full_prompt.replace(&reduced_content, "");
+
+        for tool in &FILE_TOOLS {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                !residue.contains(&backtick_ref),
+                "headless limit-mode residue must not contain `{tool}`"
+            );
+        }
+    }
+
+    /// In normal mode (`repl_replaces_fileops=false`), the assembled prompt must
+    /// still contain guidance for the file-op tools.
+    #[test]
+    fn normal_mode_assembled_prompt_contains_file_tool_guidance() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_default());
+        let full_prompt = join_blocks(&blocks);
+
+        // Each of these is representative of a specific guidance fragment.
+        assert!(
+            full_prompt.contains("`grep_files`"),
+            "normal mode must contain grep_files guidance"
+        );
+        assert!(
+            full_prompt.contains("`read_file`"),
+            "normal mode must contain read_file guidance"
+        );
+        assert!(
+            full_prompt.contains("`edit_file`"),
+            "normal mode must contain edit_file guidance"
+        );
+        assert!(
+            full_prompt.contains("`find_files`"),
+            "normal mode must contain find_files guidance"
+        );
+        assert!(
+            full_prompt.contains("`list_files`"),
+            "normal mode must contain list_files guidance"
+        );
+        assert!(
+            full_prompt.contains("`write_file`"),
+            "normal mode must contain write_file guidance"
+        );
+    }
+
+    /// With repl=true but `repl_replaces_fileops=false`, the file-tool guidance
+    /// is still present (only the repl addendum is added).
+    #[test]
+    fn repl_only_mode_still_contains_file_tool_guidance() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], flags_repl_only());
+        let full_prompt = join_blocks(&blocks);
+
+        for tool in &FILE_TOOLS {
+            let backtick_ref = format!("`{tool}`");
+            assert!(
+                full_prompt.contains(&backtick_ref),
+                "repl-only mode must still contain `{tool}` guidance"
+            );
+        }
     }
 
     // ---- Discovery: repo tier ----------------------------------------
