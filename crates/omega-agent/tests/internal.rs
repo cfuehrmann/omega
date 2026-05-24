@@ -945,6 +945,28 @@ async fn system_prompt_guard_blocks_read_of_instruction_file_end_to_end() {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. system_prompt round-trips through init_for_resume (mutation test anchor)
+//
+// A unit carve-out: the round_trip_gate test compares two DomainSnapshots
+// that both derive system_prompt via the same (possibly mutated) code path,
+// making "replace system_prompt with literal" mutations invisible to it.
+// This focused test pins system_prompt() against a known literal so that
+// any mutation returning a wrong constant is detected.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn system_prompt_round_trips_init_for_resume() {
+    let (mut agent, _, _tmp) = make_test_agent();
+    let known_text = "known system prompt text for mutation testing".to_owned();
+    agent.init_for_resume(known_text.clone());
+    assert_eq!(
+        agent.system_prompt(),
+        known_text,
+        "system_prompt() must return exactly the text passed to init_for_resume()"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 6. Round-trip gate — Phase 2.4 strict resume + Phase 2 follow-up snapshot
 //
 // Creates a multi-turn session including a ContextCompacted event,

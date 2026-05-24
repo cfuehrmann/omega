@@ -216,12 +216,12 @@ mutants-strict-resume:
 # Run cargo-mutants targeted at the domain-snapshot type and related logic
 # (Phase 2 follow-up): DomainSnapshot, Agent::domain_snapshot,
 # fold_system_prompt, and Agent::init_for_resume.
-# Uses --in-diff to restrict to code changed in the last commit, keeping
-# the run fast (10 targeted mutations vs. hundreds in the full files).
+# Uses --in-diff to restrict to code changed since main, keeping the run
+# fast (10 targeted mutations vs. hundreds in the full files).
 # Uses omega-agent's full test suite including the updated round_trip_gate.
 mutants-domain-snapshot:
     mkdir -p {{mutants-tmp}}
-    HOME=/tmp git --no-pager diff HEAD~1 -- \
+    HOME=/tmp git --no-pager diff HEAD~2..HEAD -- \
         crates/omega-agent/src/agent.rs \
         crates/omega-agent/src/session_resume.rs \
         > /tmp/omega-domain-snapshot.diff
