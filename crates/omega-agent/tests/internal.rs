@@ -945,27 +945,16 @@ async fn system_prompt_guard_blocks_read_of_instruction_file_end_to_end() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Round-trip gate — Phase 2.4 strict resume
+// 6. Round-trip gate — Phase 2.4 strict resume + Phase 2 follow-up snapshot
 //
 // Creates a multi-turn session including a ContextCompacted event,
-// ModelChanged, and EffortChanged.  Snapshots durable state, drops the
-// agent (simulating a process restart), strict-resumes from the same
-// session directory, and asserts that all durable fields are identical.
+// ModelChanged, and EffortChanged.  Takes a DomainSnapshot before drop,
+// strict-resumes from the same session directory (simulating a process
+// restart), and asserts that the resumed agent's DomainSnapshot is equal.
 //
-// Ephemeral allowlist (fields allowed to differ across a round trip):
-//
-// | Field                | Reason it is ephemeral                             |
-// |----------------------|----------------------------------------------------|
-// | provider             | Process-bound; reconstructed from caller input     |
-// | context_store        | Reconstructed from session_dir/context.jsonl path  |
-// | event_store          | Reconstructed from session_dir/events.jsonl path   |
-// | controls             | Intra-turn handles; always start fresh at boundary |
-// | config               | Reconstructed from caller input (cwd, headless)    |
-// | system_blocks        | Rebuilt from AGENTS.md files on disk               |
-// | system_prompt_paths  | Derived from system_blocks                         |
-//
-// Durable fields that MUST be equal after a round trip:
-//   active_model, active_effort, history, context_hashes.
+// The field-by-field classification of domain state vs. plumbing lives in
+// DomainSnapshot (session_resume.rs) and Agent::domain_snapshot (agent.rs).
+// This test is the executable proof that the classification is correct.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1072,21 +1061,24 @@ async fn round_trip_gate() {
     ]);
     let _ = collect_stream(agent.send_message("q4".to_owned(), CancellationToken::new())).await;
 
-    // === PART 2: Snapshot durable state ===================================
+    // === PART 2: Take a DomainSnapshot ====================================
 
-    let snap_model = agent.active_model().to_owned();
-    let snap_effort = agent.active_effort().to_owned();
-    let snap_history = agent.history().to_vec();
-    let snap_hashes = agent.context_hashes().to_vec();
+    let snap = agent.domain_snapshot();
     let session_dir = tmp.path().to_path_buf();
     let cwd = tmp.path().to_path_buf();
 
     // Sanity-check the snapshot is what we expect.
-    assert_eq!(snap_model, "claude-opus-4-7", "snapshot model");
-    assert_eq!(snap_effort, "high", "snapshot effort");
+    assert_eq!(snap.active_model, "claude-opus-4-7", "snapshot model");
+    assert_eq!(snap.active_effort, "high", "snapshot effort");
     // After compaction (collapses to 1 assistant) + turn 4 (user + assistant) = 3 records.
-    assert_eq!(snap_history.len(), 3, "snapshot history len");
-    assert_eq!(snap_hashes.len(), 3, "snapshot hashes len");
+    assert_eq!(snap.history.len(), 3, "snapshot history len");
+    assert_eq!(snap.context_hashes.len(), 3, "snapshot hashes len");
+    // init() always assembles at least the core + runtime blocks, so the
+    // system prompt is non-empty.  This exercises the system-prompt round-trip.
+    assert!(
+        !snap.system_prompt.is_empty(),
+        "snapshot system_prompt must be non-empty"
+    );
 
     // === PART 3: Simulate process restart =================================
     drop(agent);
@@ -1098,25 +1090,13 @@ async fn round_trip_gate() {
         .await
         .expect("strict_resume must succeed");
 
-    // === PART 5: Assert all durable fields match the snapshot =============
+    // === PART 5: Assert the full DomainSnapshot round-trips exactly =======
+    //
+    // A single structural equality check; the field names in the Debug output
+    // identify which component differed on failure.
+    let resumed_snap = resumed.domain_snapshot();
     assert_eq!(
-        resumed.active_model(),
-        snap_model,
-        "active_model must round-trip"
-    );
-    assert_eq!(
-        resumed.active_effort(),
-        snap_effort,
-        "active_effort must round-trip"
-    );
-    assert_eq!(
-        resumed.history(),
-        snap_history.as_slice(),
-        "history must round-trip"
-    );
-    assert_eq!(
-        resumed.context_hashes(),
-        snap_hashes.as_slice(),
-        "context_hashes must round-trip"
+        resumed_snap, snap,
+        "DomainSnapshot must round-trip across a simulated process restart"
     );
 }

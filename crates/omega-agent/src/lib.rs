@@ -19,10 +19,10 @@ pub use config::max_output_tokens_for_model;
 pub use controls::ControlHandle;
 pub use error_classify::{is_context_too_long, is_invalid_tool_json};
 pub use session_resume::{
-    RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
-    StrictResumeError, extract_last_model_and_effort, extract_resumption_basis,
-    extract_summary_from_response, find_last_resumable_boundary, is_resumable_boundary,
-    strict_resume,
+    DomainSnapshot, RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL,
+    RESUMPTION_SUMMARY_INSTRUCTIONS, StrictResumeError, extract_last_model_and_effort,
+    extract_resumption_basis, extract_summary_from_response, find_last_resumable_boundary,
+    is_resumable_boundary, strict_resume,
 };
 pub use system_prompt::{
     AGENTS_FILE, InstructionFile, SystemBlock, build_system_blocks, discover_instruction_files,

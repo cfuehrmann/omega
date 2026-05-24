@@ -308,7 +308,8 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#phase16" class="toc-h1">Phase 1.6 — WS protocol ⏳</a></li>
     <li class="toc-divider"></li>
     <li><a href="#open-questions" class="toc-h1">Open questions</a></li>
-    <li><a href="#oq-allowlist" class="toc-sub">Ephemeral-allowlist follow-up</a></li>
+    <li><a href="#oq-allowlist" class="toc-sub">Typed domain-state snapshot ✓</a></li>
+    <li><a href="#oq-cwd-carveout" class="toc-sub">cwd carve-out follow-up</a></li>
     <li><a href="#oq-registry" class="toc-sub">Registry vs. scan (1.6)</a></li>
     <li><a href="#oq-resolved" class="toc-sub">Resolved references</a></li>
   </ol>
@@ -555,34 +556,56 @@ tr:nth-child(even) td { background: #fafbfc; }
 <hr class="section-divider" />
 <h2 id="open-questions">Open questions — Endeavor 1 scope</h2>
 
-<div class="callout warn" id="oq-allowlist">
-  <div class="callout-title">⚠ Typed domain-state snapshot — planned follow-up (step 2 of REPL track)</div>
+<div class="callout rec" id="oq-allowlist">
+  <div class="callout-title">✓ Typed domain-state snapshot — implemented (Phase 2 follow-up)</div>
   <p>
-    The round-trip gate test in
-    <code>crates/omega-agent/tests/internal.rs::round_trip_gate</code>
-    maintains an informal comment-table classifying <code>Agent</code> fields as
-    durable or ephemeral. Under the
-    <a href="#domain-state">domain state framing</a>, the cleaner formulation is:
+    Completed in the Phase 2 follow-up sub-session.  The delivered items are:
   </p>
   <ul>
-    <li>A typed <code>DomainSnapshot</code> contains exactly the fields that are
-        <strong>domain state</strong> (observable by LLM or UI).</li>
-    <li>The constructor exhaustively destructures <code>&amp;Agent</code> so the
-        compiler forces classification on every future field addition.</li>
-    <li>Each non-domain field is bound to <code>_</code> with an inline comment
-        explaining in <em>domain terms</em> why it's plumbing.</li>
-    <li><strong>Strict resume must use <code>SessionStartedEvent.system_prompt</code></strong>
-        rather than re-reading <code>AGENTS.md</code> from disk — closing the
-        only current carve-out from
-        <code>domain-relevant&nbsp;⇒&nbsp;persisted</code>.</li>
-    <li>Any other fields currently rebuilt from caller input or disk state should
-        be examined the same way; if domain-relevant, persist and reconstruct.</li>
+    <li><code>DomainSnapshot</code> struct in
+        <code>crates/omega-agent/src/session_resume.rs</code> — typed,
+        <code>PartialEq</code>, with doc comment explaining the compile-time
+        classification contract.</li>
+    <li><code>Agent::domain_snapshot()</code> — exhaustive
+        <code>let Self { … } = self;</code> destructuring with no <code>..</code>
+        rest pattern; every plumbing field carries an inline domain-terms comment.</li>
+    <li><strong>Strict resume now uses
+        <code>SessionStartedEvent.system_prompt</code></strong> rather than
+        re-reading <code>AGENTS.md</code> from disk — closing the
+        <code>domain-relevant&nbsp;⇒&nbsp;persisted</code> carve-out.
+        Failing loudly (<code>StrictResumeError::MissingSystemPrompt</code>) when
+        the field is absent per the schema-evolution-loud rule.</li>
+    <li><code>round_trip_gate</code> refactored to compare two
+        <code>DomainSnapshot</code>s with a single <code>assert_eq!</code>;
+        system-prompt round-trip is now exercised.</li>
   </ul>
   <p>
-    Sequenced as step 2 in the REPL track (see
-    <a href="./repl-and-subagents-research.html">»repl-and-subagents-research.html«</a>),
-    immediately before the REPL MVP so that the new <code>PythonRepl</code> field
-    arrives forced-to-be-classified.
+    One new carve-out was surfaced during the field audit — see
+    <a href="#oq-cwd-carveout">oq-cwd-carveout</a> below.
+  </p>
+</div>
+
+<div class="callout warn" id="oq-cwd-carveout">
+  <div class="callout-title">⚠ [oq-cwd-carveout] config.cwd latent carve-out — follow-up needed</div>
+  <p>
+    During the Phase 2 follow-up audit of <code>Agent</code> fields, <code>config.cwd</code>
+    was identified as a latent carve-out from
+    <code>domain-relevant&nbsp;⇒&nbsp;persisted</code>:
+  </p>
+  <ul>
+    <li>Future tool calls resolve file paths relative to <code>cwd</code> —
+        observable by the LLM via tool outputs.</li>
+    <li><code>cwd</code> is not persisted in any event; it is provided by the
+        caller of <code>strict_resume</code> at process start.</li>
+    <li>If a session is resumed with a different <code>cwd</code>, future
+        tool-call behavior (path resolution, <code>AGENTS.md</code> discovery)
+        would differ from the original session — a silent semantic divergence.</li>
+  </ul>
+  <p>
+    Recommended fix: persist <code>cwd</code> in <code>SessionStartedEvent</code>
+    and reconstruct it from there in <code>strict_resume</code> rather than
+    accepting it from the caller.  Not fixed in this sub-session; flagged for
+    the next appropriate slot in the work queue.
   </p>
 </div>
 

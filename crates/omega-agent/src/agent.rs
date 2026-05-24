@@ -53,8 +53,8 @@ use crate::config::{cap_effort_for_model, max_output_tokens_for_model};
 use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
 use crate::session_resume::{
-    RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
-    extract_summary_from_response,
+    DomainSnapshot, RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL,
+    RESUMPTION_SUMMARY_INSTRUCTIONS, extract_summary_from_response,
 };
 use crate::system_prompt::{
     SystemBlock, build_system_blocks, discover_instruction_files, join_blocks,
@@ -710,29 +710,99 @@ impl Agent {
 
     /// Initialise system blocks for an agent resumed from an existing session.
     ///
-    /// Equivalent to the system-block setup phase of [`Self::init`], but
-    /// without writing [`ServerStartedEvent`] or [`SessionStartedEvent`] to
-    /// `events.jsonl`. Use this on a resumed agent; use [`Self::init`] on a
-    /// freshly created one.
+    /// Unlike [`Self::init`], does **not** read `AGENTS.md` from disk or write
+    /// any events to `events.jsonl`.  Instead, it reconstructs the system
+    /// blocks from the `system_prompt` text persisted in `SessionStartedEvent`,
+    /// so the resumed agent sees exactly what the original session saw.
     ///
-    /// Called by
-    /// [`strict_resume`](crate::session_resume::strict_resume).
-    pub fn init_for_resume(&mut self) {
-        let files = discover_instruction_files(&self.config.cwd);
-        let max_tokens = max_output_tokens_for_model(&self.active_model);
-        self.system_blocks = build_system_blocks(
-            &self.config.cwd.to_string_lossy(),
-            max_tokens,
-            self.config.headless,
-            &files,
-        );
-        self.system_prompt_paths = Arc::new(
-            self.system_blocks
-                .iter()
-                .filter_map(|b| b.source_path.as_ref())
-                .filter_map(|p| p.canonicalize().ok())
-                .collect(),
-        );
+    /// `system_prompt_paths` is left empty: source paths are not persisted,
+    /// so the system-prompt guard is disabled for resumed sessions.  This is
+    /// acceptable — the guard is a best-effort UX protection, not a security
+    /// boundary.
+    ///
+    /// Called by [`strict_resume`](crate::session_resume::strict_resume).
+    pub fn init_for_resume(&mut self, system_prompt: String) {
+        // A single synthetic block with no source_path.  join_blocks()
+        // on a one-element slice returns the content unchanged, so
+        // domain_snapshot().system_prompt round-trips exactly.
+        self.system_blocks = vec![SystemBlock {
+            label: "persisted",
+            content: system_prompt,
+            source_path: None,
+        }];
+        self.system_prompt_paths = Arc::new(HashSet::new());
+    }
+
+    /// The full system prompt text currently in effect for this session.
+    ///
+    /// Computed on demand by joining all [`SystemBlock`]s with `\n\n`.
+    /// Used by [`Self::domain_snapshot`] to capture the system-prompt
+    /// component of domain state.
+    #[must_use]
+    pub fn system_prompt(&self) -> String {
+        join_blocks(&self.system_blocks)
+    }
+
+    /// Snapshot the domain state of this agent.
+    ///
+    /// **Domain state** contains every field that could be observed by the
+    /// LLM (future turns) or by the UI / user (past display).  Fields that
+    /// are merely plumbing — connection handles, reconstructed stores,
+    /// per-process controls — are excluded.
+    ///
+    /// The implementation uses an exhaustive `let Self { … } = self;`
+    /// destructuring with **no** `..` rest pattern.  This forces every future
+    /// field addition to be explicitly classified at compile time — there is
+    /// no silent "we're not checking it" bucket.
+    ///
+    /// See also: `docs/session-design.html#domain-state`.
+    #[must_use]
+    pub fn domain_snapshot(&self) -> DomainSnapshot {
+        let Self {
+            active_model,
+            active_effort,
+            history,
+            context_hashes,
+            system_blocks,
+            // Process-bound; provided by the caller of strict_resume.
+            // Does not influence future LLM runs — the provider is a
+            // transport layer, not session state.
+            provider: _,
+            // Reconstructed deterministically from session_dir; the new
+            // instance is operationally equivalent.
+            context_store: _,
+            // Reconstructed deterministically from session_dir; the new
+            // instance is operationally equivalent.
+            event_store: _,
+            // Intra-turn control handles; always start fresh at a resumable
+            // boundary.  Future turns begin a new turn lifecycle regardless.
+            controls: _,
+            // Provided by the caller of strict_resume; part of how this
+            // process was started, not of the agent's state.
+            //
+            // NOTE [oq-cwd-carveout]: config.cwd is a latent carve-out from
+            // domain-relevant ⇒ persisted.  If a session is resumed with a
+            // different cwd, future tool calls (path resolution, AGENTS.md
+            // discovery) would behave differently.  Flagged in
+            // docs/session-design.html#oq-cwd-carveout for a future fix.
+            config: _,
+            // Derived deterministically from system_blocks; the new instance
+            // is operationally equivalent.
+            system_prompt_paths: _,
+            // Populated from environment variables at process start.
+            // The flags are persisted in SessionStartedEvent for forensic
+            // purposes but are not part of the LLM-visible session state —
+            // they are not reconstructed on resume and may differ across
+            // process restarts if the environment changes.
+            features: _,
+        } = self;
+        DomainSnapshot {
+            active_model: active_model.clone(),
+            active_effort: active_effort.clone(),
+            history: history.clone(),
+            context_hashes: context_hashes.clone(),
+            system_prompt: join_blocks(system_blocks),
+        }
     }
 
     /// Seed this session with a summary of a previous session.

@@ -22,11 +22,52 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use omega_core::{Message, Provider};
-use omega_store::{ContextRecord, ContextStore, EventStore, StoreError};
+use omega_store::{ContextHash, ContextRecord, ContextStore, EventStore, StoreError};
 use omega_types::ids::LoggedEvent;
 use omega_types::{OmegaEvent, events::InterruptReason};
 
 use crate::agent::{Agent, AgentConfig, DEFAULT_EFFORT};
+
+// ---------------------------------------------------------------------------
+// DomainSnapshot — typed compile-time-enforced classification (Phase 2 follow-up)
+// ---------------------------------------------------------------------------
+
+/// A snapshot of the **domain state** of an [`Agent`] at a point in time.
+///
+/// Contains exactly the fields that are domain state — those whose values could
+/// be observed by either of the two observers:
+///
+/// - The **LLM** (future turns unfold the same way).
+/// - The **UI / user** (the past displays the same way).
+///
+/// Everything else is plumbing: the resumed process needs some technical
+/// instance, but its contents need not match the predecessor's.
+///
+/// ## Compile-time classification contract
+///
+/// [`Agent::domain_snapshot`] builds a `DomainSnapshot` through an exhaustive
+/// `let Self { field1, field2, _: field3, … } = self;` destructuring with
+/// **no** `..` rest pattern.  This means the compiler forces every future
+/// field addition to be explicitly classified as domain state (bound by name)
+/// or plumbing (bound to `_`).  Silent "we're not checking it" situations are
+/// impossible at the type level.
+///
+/// See also: `docs/session-design.html#domain-state`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DomainSnapshot {
+    /// Currently selected model id.  Affects every future LLM call.
+    pub active_model: String,
+    /// Currently selected thinking-effort level.  Affects every future LLM call.
+    pub active_effort: String,
+    /// In-memory message history sent on every LLM call.  Observable by the LLM.
+    pub history: Vec<Message>,
+    /// Hashes of the history records, in insertion order.
+    /// Snapshotted onto every `LlmCall` event; observable via the event log.
+    pub context_hashes: Vec<ContextHash>,
+    /// Full system prompt text (all blocks joined with `\n\n`).
+    /// Observable by the LLM on every call; persisted in `SessionStartedEvent`.
+    pub system_prompt: String,
+}
 
 // ---------------------------------------------------------------------------
 // Resumption-call configuration (Phase 1d.1c)
@@ -623,6 +664,15 @@ pub enum StrictResumeError {
     /// `events.jsonl` could not be read (I/O error).
     Io(std::io::Error),
 
+    /// `events.jsonl` contains no `SessionStartedEvent` with a non-empty
+    /// `system_prompt`.
+    ///
+    /// Per the **schema-evolution-loud** rule in `AGENTS.md`, strict resume
+    /// fails loudly rather than silently falling back to reading `AGENTS.md`
+    /// from disk — that fallback would mask the missing persisted data and
+    /// produce a session whose LLM-visible state differs from the original.
+    MissingSystemPrompt,
+
     /// A non-blank line in `events.jsonl` could not be parsed as a
     /// [`LoggedEvent`].
     ///
@@ -677,6 +727,12 @@ impl fmt::Display for StrictResumeError {
                 f,
                 "no TurnEnd or TurnInterrupted found in events.jsonl — \
                  cannot determine a resumable boundary"
+            ),
+            Self::MissingSystemPrompt => write!(
+                f,
+                "SessionStartedEvent.system_prompt is absent or empty in \
+                 events.jsonl — cannot reconstruct the system prompt for \
+                 strict resume (schema-evolution-loud: no silent fallback)"
             ),
             Self::ContextStore(e) => write!(f, "context.jsonl store error: {e}"),
             Self::MissingContextRecord { hash } => write!(
@@ -734,6 +790,27 @@ async fn read_events_strict(path: &Path) -> Result<Vec<OmegaEvent>, StrictResume
 }
 
 // ---------------------------------------------------------------------------
+// Private helper — system prompt extraction
+// ---------------------------------------------------------------------------
+
+/// Extract the system prompt from the first `SessionStartedEvent` in `events`
+/// that has a non-empty `system_prompt` field.
+///
+/// Returns `None` when no such event exists (e.g. in test logs that never
+/// called `Agent::init`).  [`strict_resume`] converts `None` to
+/// [`StrictResumeError::MissingSystemPrompt`] — no silent fallback.
+fn fold_system_prompt(events: &[OmegaEvent]) -> Option<String> {
+    for event in events {
+        if let OmegaEvent::SessionStarted(e) = event
+            && !e.system_prompt.is_empty()
+        {
+            return Some(e.system_prompt.clone());
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2.4 — strict_resume entry point
 // ---------------------------------------------------------------------------
 
@@ -750,27 +827,20 @@ async fn read_events_strict(path: &Path) -> Result<Vec<OmegaEvent>, StrictResume
 /// [`Agent::send_message`] on the returned agent picks up exactly where
 /// the last complete turn left off.
 ///
-/// ## Durable state (must match across a round trip)
+/// ## Domain state vs. plumbing
 ///
-/// | Field             | Source in events                                    |
-/// |-------------------|-----------------------------------------------------|
-/// | `active_model`    | Last `ModelChanged`, else first `SessionStarted`    |
-/// | `active_effort`   | Last `EffortChanged`, else first `SessionStarted`   |
-/// | `history`         | Context records looked up via
-///   `LlmCallEvent.context_hashes` + `LlmResponseEndedEvent.context_hash` |
-/// | `context_hashes`  | Parallel hash vec reconstructed via same source    |
+/// The authoritative field-by-field classification lives in
+/// [`DomainSnapshot`] and in [`Agent::domain_snapshot`]'s exhaustive
+/// destructuring.  In brief: `active_model`, `active_effort`, `history`,
+/// `context_hashes`, and `system_prompt` are domain state (observable
+/// by the LLM or user); everything else is plumbing (reconstructed from
+/// files or provided fresh by the caller).
 ///
-/// ## Ephemeral state (rebuilt from startup inputs, may differ)
-///
-/// | Field                | Reason it is ephemeral                             |
-/// |----------------------|----------------------------------------------------|
-/// | `provider`           | Process-bound; provided by the caller              |
-/// | `context_store`      | Reconstructed from `session_dir/context.jsonl`     |
-/// | `event_store`        | Reconstructed from `session_dir/events.jsonl`      |
-/// | `controls`           | Intra-turn handles; always start fresh             |
-/// | `config`             | Provided by the caller via `cwd` / `headless`      |
-/// | `system_blocks`      | Rebuilt from `AGENTS.md` files on disk             |
-/// | `system_prompt_paths`| Derived from `system_blocks`                       |
+/// `system_prompt` is reconstructed from
+/// `SessionStartedEvent.system_prompt` — **not** re-read from `AGENTS.md`
+/// on disk — so the resumed session sees exactly what the original
+/// session saw, regardless of any changes to instruction files since
+/// the session started.
 ///
 /// ## Errors
 ///
@@ -839,8 +909,20 @@ pub async fn strict_resume(
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
 
-    // --- 6. Initialise system blocks (without writing events) -----------
-    agent.init_for_resume();
+    // --- 6. Reconstruct system prompt from persisted SessionStartedEvent ---
+    //
+    // Use `SessionStartedEvent.system_prompt` as the sole source of truth,
+    // NOT AGENTS.md on disk.  This guarantees the resumed agent sees exactly
+    // what the original session saw, regardless of any changes to instruction
+    // files since the session started.
+    //
+    // Failing loudly when the field is absent or empty implements the
+    // schema-evolution-loud rule: a missing system_prompt is diagnostic
+    // signal that the event log is incomplete or stale, not a condition
+    // to paper over with a silent disk fallback.
+    let system_prompt =
+        fold_system_prompt(valid_events).ok_or(StrictResumeError::MissingSystemPrompt)?;
+    agent.init_for_resume(system_prompt);
 
     // --- 7. Seed history ------------------------------------------------
     agent.seed_history(history, hashes);

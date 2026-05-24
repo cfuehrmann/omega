@@ -213,6 +213,16 @@ mutants-strict-resume:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
+# Run cargo-mutants targeted at the domain-snapshot type and related logic
+# (Phase 2 follow-up): DomainSnapshot, Agent::domain_snapshot,
+# fold_system_prompt, and Agent::init_for_resume.
+# Uses omega-agent's full test suite including the updated round_trip_gate.
+mutants-domain-snapshot:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true \
+        --file "crates/omega-agent/src/session_resume.rs" \
+        --file "crates/omega-agent/src/agent.rs"
+
 # Run cargo-mutants targeted at the feature-flag parsing module.
 # Mutates omega-types/src/feature_flags.rs and runs the omega-types test suite.
 # Covers parse_flag_value / from_values; from_env is a thin env-read wrapper
