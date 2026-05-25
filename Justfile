@@ -244,6 +244,13 @@ mutants-python-repl:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/python_repl.rs"
 
+# Run cargo-mutants targeted at the shared process-kill helpers (kill_group, kill_soft).
+# Both functions route through the shell; mutations that swap SIGKILL for SIGINT or
+# alter the negated-pgid sign are caught by the timeout integration tests.
+mutants-process-util:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/process_util.rs"
+
 # Run cargo-mutants targeted at the python3 bootstrap logic in python_repl.rs.
 # Covers is_not_found(), start_inner() branching (AptNotFound / AptFailed /
 # Succeeded), retry logic, and the BootstrapInfo return path.

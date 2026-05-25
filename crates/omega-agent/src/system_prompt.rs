@@ -279,12 +279,22 @@ pub fn repl_addendum() -> String {
        subsequent calls within this session.\n\
      - The tool returns combined stdout + stderr output, truncated at \
        200 lines or 2000 characters (whichever comes first). When truncated, \
-       a `... [output truncated: N lines / M chars suppressed]` marker appears \
-       at the end.\n\
+       a `... [output truncated: N lines / M chars suppressed. Capture large \
+       values in variables and inspect/slice them in subsequent calls rather \
+       than printing them whole.]` marker appears at the end.\n\
      - Use it for arithmetic, data parsing, string manipulation, exploration, \
        and building up intermediate results step-by-step.\n\
      - Prefer a single call with all related statements over many small calls \
-       — state persists, so you can build on previous results."
+       — state persists, so you can build on previous results.\n\
+     - Optional `timeout` parameter (default 60 s, max 600 s). For calls that \
+       may take longer (e.g. large downloads, heavy computation), pass an \
+       explicit timeout. On timeout, SIGINT is sent first; if the kernel \
+       recovers, REPL state is preserved. If it does not, the kernel is \
+       killed and all prior state is lost.\n\
+     - Variable pattern: store large intermediate results in variables \
+       (`result = expensive_compute()`) and print only the summary needed \
+       for the next decision. Variables persist across calls; printed bytes \
+       do not."
         .to_owned()
 }
 

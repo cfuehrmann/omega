@@ -396,12 +396,16 @@ fn python_repl() -> ToolDefinition {
                       in one call persist to subsequent calls within the session. \
                       Returns combined stdout/stderr output, truncated if long. \
                       Useful for calculations, data parsing, exploration, and \
-                      composing intermediate results."
+                      composing intermediate results. \
+                      Optional `timeout` parameter (default 60 s, max 600 s) controls \
+                      how long to wait before sending SIGINT (soft) and then SIGKILL \
+                      (hard) to the kernel."
             .into(),
         input_schema: json!({
             "type": "object",
             "properties": {
-                "code": { "type": "string", "description": "Python code to execute" },
+                "code":    { "type": "string", "description": "Python code to execute" },
+                "timeout": { "type": "number", "description": "Per-call timeout in seconds (optional, default 60, max 600). On timeout: SIGINT is sent first; if the kernel does not recover within 2 s, the process group is SIGKILL'd and all REPL state is lost." },
             },
             "required": ["code"],
         }),

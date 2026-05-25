@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::cap_and_tee::{TruncationBias, cap_and_tee};
 use crate::output_cleaner::clean_output;
+use crate::process_util::kill_group;
 use crate::tool_ctx::ToolCtx;
 
 /// LLM-facing cap: maximum bytes returned in the tool result.
@@ -270,20 +271,4 @@ fn sanitize_tag(s: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     clean.trim_matches('-').to_string()
-}
-
-/// Send SIGKILL to the entire process group identified by `pgid`.
-///
-/// We go through the **shell's built-in** `kill` rather than the external
-/// `util-linux kill` binary.  On systems where `/usr/bin/kill` is the
-/// util-linux build, passing a negative PID (`-pgid`) causes it to do a
-/// process-name search instead of a process-group signal, silently failing.
-/// The POSIX shell built-in calls `kill(-pgid, SIGKILL)` correctly.
-fn kill_group(pgid: u32) {
-    let _ = std::process::Command::new("sh")
-        .args(["-c", &format!("kill -9 -{pgid}")])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .stdin(std::process::Stdio::null())
-        .status();
 }

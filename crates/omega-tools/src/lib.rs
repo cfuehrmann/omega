@@ -21,6 +21,7 @@ use omega_types::events::PythonReplBootstrappedEvent;
 mod cap_and_tee;
 mod format;
 mod output_cleaner;
+mod process_util;
 pub mod python_repl;
 mod schemas;
 mod state;
@@ -175,7 +176,18 @@ pub async fn execute_tool(
                     "python_repl: internal error: REPL not initialised after successful start",
                 );
             };
-            let output = repl.execute(&code).await;
+            // Parse per-call timeout: default 60 s, clamped to [1, 600].
+            let timeout_secs = input["timeout"]
+                .as_u64()
+                .unwrap_or(python_repl::DEFAULT_TIMEOUT_SECS)
+                .min(python_repl::MAX_TIMEOUT_SECS);
+            let output = repl.execute(&code, timeout_secs, Some(ctx)).await;
+            // If the repl was hard-killed during execute, clear the cached
+            // handle so the next call spawns a fresh kernel.
+            let repl_dead = repl.is_dead();
+            if repl_dead {
+                *guard = None;
+            }
             let mut result = ToolResult::ok(output);
             // If python3 was just bootstrapped via apt-get, emit a
             // PythonReplBootstrapped event so forensics can see it happened.
