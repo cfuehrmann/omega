@@ -230,6 +230,11 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#evidence"           class="toc-h1">§2 Evidence base</a></li>
     <li><a href="#survey"             class="toc-h1">§2b Agent survey</a></li>
     <li class="toc-divider"></li>
+    <li><a href="#method-note"        class="toc-h1">🔬 Methodological note</a></li>
+    <li><a href="#mn-framing"         class="toc-sub">Cost-fluency-density framing</a></li>
+    <li><a href="#mn-substrates"      class="toc-sub">Candidate substrates</a></li>
+    <li><a href="#mn-sh"              class="toc-sub"><code>sh()</code> helper &amp; experiment</a></li>
+    <li class="toc-divider"></li>
     <li><a href="#rq-a"               class="toc-h1">§3 RQ-A: REPL alone</a></li>
     <li><a href="#rq-b"               class="toc-h1">§4 RQ-B: Subagents alone</a></li>
     <li><a href="#rq-c"               class="toc-h1">§5 RQ-C: RLM (REPL+subagents)</a></li>
@@ -1133,6 +1138,289 @@ with open('/path/to/file.md', 'w') as f:
   returns. Both primitives could coexist; the four-cell flag matrix captures this.
 </p>
 
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="method-note">🔬 Methodological note: the language-choice question</h2>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Retraction — earlier framing used cargo-culted language essentialism</div>
+  <p>
+    Phrases like "orchestration is shell-shaped" or "Python is a natural fit for
+    coding work" presuppose that languages have intrinsic domains they are
+    <em>for</em>.  This conflicts with Turing equivalence and conflates three
+    empirically independent factors.  The framing below is the correction.  Where
+    similar phrasing appeared in earlier chat or in this document (including the
+    original wording of the <code>[368041]</code> callout below), treat this
+    section as the authoritative revision.
+  </p>
+</div>
+
+<h3 id="mn-framing">The decomposed empirical framing</h3>
+
+<p>
+  The actual phenomenon we observed has three independent axes — none of
+  which is "what language X is for":
+</p>
+
+<ul>
+  <li>
+    <strong>Encoding cost <code>c(L, P)</code>:</strong> the number of tokens (or
+    characters) needed to express operational pattern <em>P</em> in language
+    <em>L</em>.  This is a property of <em>L</em>'s primitives, defaults, and
+    idioms — not of any domain.  Shell has very low encoding cost for
+    pipe-composition; Python has low encoding cost for in-process data
+    manipulation.  Both are measurable.
+  </li>
+  <li>
+    <strong>Model fluency <code>f(M, L, P)</code>:</strong> how reliably model
+    <em>M</em> produces correct, idiomatic <em>L</em>-code for pattern <em>P</em>.
+    This is a property of <em>M</em>'s training distribution — not of the
+    language itself.  Current frontier models have very high fluency in Python
+    and Bash; much lower fluency in Nushell or Steel.
+  </li>
+  <li>
+    <strong>Pattern density:</strong> how much of a benchmark's mass falls on
+    pattern <em>P</em> versus other patterns.  Crack-7z-hash is dense in
+    subprocess invocation and process management; fix-git is dense in file
+    manipulation and git commands.
+  </li>
+</ul>
+
+<p>
+  Total cost is the sum over patterns of
+  <code>c(L, P) × density(P) / f(M, L, P)</code>.  Lower is better.
+  The language that minimises this sum for a given task and model is the
+  better substrate — and that answer is empirical, model-dependent, and
+  contingent on the task distribution.  There is no language-domain
+  essentialism here.
+</p>
+
+<details>
+<summary>The Felleisen-expressiveness sharpening — why shell's apparent win is about encoding density, not expressive power</summary>
+<div class="details-body">
+<p>
+  Shell's pipe-composition operator is macro-expansible into Python;
+  the reverse is not true.  Python is strictly more expressive in
+  Felleisen's formal sense (1991): it can express patterns that shell cannot
+  without a global program transformation.  Shell's apparent win on
+  orchestration-heavy tasks is therefore <em>not</em> about expressive
+  power — it is about encoding density for one specific pattern class
+  (chained subprocess invocation).
+</p>
+<p>
+  Ruby's backtick syntax (<code>`cmd`</code>) demonstrates the point concretely:
+  shell-level encoding density is achievable as syntax sugar <em>inside</em> a
+  more expressive language.  Substrate and density are orthogonal axes.  A
+  language can have high density for a pattern without being "shaped" for it
+  — it just needs the right primitives or a thin helper.
+</p>
+<p>
+  <strong>Implication:</strong> any substrate that can be given low-cost syntax
+  for the dominant pattern <em>P</em> in a task set — whether via language
+  design or via a helper pre-loaded into the REPL — can match shell's
+  encoding cost while retaining superior expressiveness for remaining
+  patterns.  The <code>sh()</code> helper is the minimal instance of this.
+</p>
+</div>
+</details>
+
+<h4>Why coding-agent work looks shell-aligned — without essentialism</h4>
+
+<p>
+  Coding-agent work consists largely of stateful operations on a file tree via
+  specialised external programs: compile, test, lint, format, grep, git, diff,
+  and so on.  Those programs are <em>CLI tools designed for shell</em>.  That
+  is the load-bearing fact — and it is contingent on Unix history, not on any
+  intrinsic property of either programming or shell.
+</p>
+<p>
+  Concretely: the agent's <em>programming thought</em> happens in the LLM's
+  weights.  Shell only handles "do the thing".  A future ecosystem with typed
+  library APIs (pygit2, Bazel's API, LSP clients, etc.) would shift the
+  encoding-cost balance toward Python for those operations specifically.
+  The framing is stable; only the numbers would change.
+</p>
+
+<h3 id="mn-substrates">Candidate substrates — honest assessment</h3>
+
+<p>
+  The table below surveys the main candidate REPL substrates against the three
+  axes.  Encoding-cost and fluency claims are <em>estimates</em>, not
+  measurements — several of these have not been benchmarked.
+</p>
+
+<table class="survey-table">
+  <thead><tr>
+    <th>Substrate</th>
+    <th>Encoding cost<br/>(orchestration pattern)</th>
+    <th>Model fluency</th>
+    <th>Native statefulness</th>
+    <th>Install / bootstrap</th>
+    <th>Notes</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Bash</strong><br/>(current <code>run_command</code>)</td>
+      <td class="yes">Very low</td>
+      <td class="yes">Very high</td>
+      <td class="no">None — each call is a fresh shell</td>
+      <td class="yes">Ubiquitous</td>
+      <td>No cross-call variable state; the simplicity that makes it fast is also the ceiling.</td>
+    </tr>
+    <tr>
+      <td><strong>Python REPL</strong><br/>(current <code>python_repl</code>)</td>
+      <td class="part">Medium<br/>(verbose <code>subprocess.run</code>)</td>
+      <td class="yes">High</td>
+      <td class="yes">Native</td>
+      <td class="part">Requires bootstrap (<code>apt-get</code>)</td>
+      <td>Subprocess invocation costs ~3× shell tokens on the same command.  Encoding gap is the primary hypothesis for why Python underperforms Bash on subprocess-heavy tasks.</td>
+    </tr>
+    <tr>
+      <td><strong>Python REPL + <code>sh()</code></strong></td>
+      <td class="yes">Low<br/>(≈ shell density)</td>
+      <td class="yes">High</td>
+      <td class="yes">Native</td>
+      <td class="part">Same as Python REPL</td>
+      <td>Minimum-change candidate.  Pre-loads <code>sh("cmd")</code> in the preamble.  ~5 chars over bare shell; full Python statefulness on top.  Zero per-tool maintenance.  See experiment below.</td>
+    </tr>
+    <tr>
+      <td><strong>PowerShell</strong></td>
+      <td class="yes">Low</td>
+      <td class="part">Medium-high<br/>(Anthropic-validated on Windows)</td>
+      <td class="yes">Native REPL</td>
+      <td class="part">Requires <code>pwsh</code></td>
+      <td>Structured-object pipes; good model fluency on Windows workloads.  Less studied on Linux/coding tasks.  Needs benchmarking.</td>
+    </tr>
+    <tr>
+      <td><strong>Nushell</strong></td>
+      <td class="yes">Low<br/>(structured pipes)</td>
+      <td class="no">Low<br/>(sparse training data)</td>
+      <td class="yes">Native REPL</td>
+      <td class="no">Niche binary</td>
+      <td>Excellent encoding density; severe fluency bottleneck under current models.  Worth revisiting if training coverage improves.</td>
+    </tr>
+    <tr>
+      <td><strong>Ruby (irb)</strong></td>
+      <td class="yes">Low<br/>(backtick syntax)</td>
+      <td class="part">Medium</td>
+      <td class="yes">Native REPL</td>
+      <td class="yes">Usually preinstalled</td>
+      <td>Backtick syntax gives shell-level encoding density within a more expressive language — the Felleisen-Ruby point.  Model fluency lower than Python on agentic tasks.</td>
+    </tr>
+    <tr>
+      <td><strong>TypeScript + Deno</strong></td>
+      <td class="part">Medium<br/>(<code>Deno.Command</code> verbose)</td>
+      <td class="yes">High</td>
+      <td class="yes">Native REPL</td>
+      <td class="part">Single-binary install</td>
+      <td>High model fluency; encoding cost for subprocess invocation similar to Python without a helper.  Single-binary install is a practical advantage.</td>
+    </tr>
+    <tr>
+      <td><strong>Steel (embedded Scheme)</strong></td>
+      <td class="yes">Very low<br/>(if functions registered)</td>
+      <td class="no">Near-zero for orchestration</td>
+      <td class="yes">Native<br/>(Rust <code>Engine</code> instance)</td>
+      <td class="yes">No bootstrap<br/>(Rust library)</td>
+      <td>Engineering-elegant: the REPL is a Rust library, no process spawn.  Fluency-bottlenecked under current models.  Zero-bootstrap property is uniquely attractive; worth revisiting as model coverage grows.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Maintenance burden of structured tool wrappers</div>
+  <p>
+    A library that wraps git, cargo, grep, etc. with typed APIs requires permanent
+    maintenance: every subcommand, every flag, every output-format change in the
+    underlying tool ships a breakage.  The LLM uses 5% of any such library;
+    the other 95% rots.  This is not a viable approach.  The <code>sh()</code>
+    helper sidesteps the problem: it knows nothing about git, doesn't need to,
+    and never breaks unless <code>bash</code> itself changes.
+  </p>
+</div>
+
+<h3 id="mn-sh">The <code>sh()</code> helper as minimum-viable experiment</h3>
+
+<p>
+  The proposed change is a single function pre-loaded into the
+  <code>python_repl</code> preamble:
+</p>
+
+<pre><code class="language-python">def sh(cmd: str, *, timeout: float | None = None) -&gt; tuple[str, str, int]:
+    r = subprocess.run(["bash", "-c", cmd], capture_output=True,
+                       text=True, timeout=timeout)
+    return r.stdout, r.stderr, r.returncode
+</code></pre>
+
+<p>Encoding-cost comparison for a representative command:</p>
+
+<table style="width:auto">
+  <thead><tr><th>Substrate</th><th>Expression</th><th>Approx. chars</th></tr></thead>
+  <tbody>
+    <tr><td>Bash (<code>run_command</code>)</td><td><code>git log --oneline -10</code></td><td>21</td></tr>
+    <tr><td>Python REPL (current)</td><td><code>subprocess.run(["git","log","--oneline","-10"], capture_output=True, text=True).stdout</code></td><td>83</td></tr>
+    <tr><td>Python + <code>sh()</code></td><td><code>sh("git log --oneline -10")</code></td><td>26</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The <code>sh()</code> wrapper adds roughly 5 characters over bare shell.
+  Combined with Python's stdlib (<code>pathlib</code>, <code>re</code>,
+  <code>json</code>, <code>threading</code>, etc.) for in-process work, this
+  covers the full operational surface without per-tool wrappers.
+</p>
+
+<details>
+<summary>Concrete experimental steps and expected discriminating outcomes</summary>
+<div class="details-body">
+<p>
+  If encoding cost was the bottleneck on Python REPL's shell-heavy performance
+  relative to Bash, adding <code>sh()</code> should produce visible
+  improvements: lower cache+output tokens, faster trials, and competitive or
+  higher pass rates versus v0.1.13/v0.1.14.  If the LLM's behaviour doesn't
+  shift meaningfully, then model fluency (<code>f(M, Python,
+  subprocess-pattern)</code>) was the actual bottleneck — and the two
+  hypotheses have been cleanly distinguished.
+</p>
+<ol>
+  <li>
+    <strong>Add <code>sh()</code> to the <code>python_repl</code> initialization</strong>
+    (one Rust function call to register the preamble code).
+  </li>
+  <li>
+    <strong>Mention it in the system-prompt addendum:</strong>
+    "For shell commands, prefer <code>sh('…')</code> which returns
+    <code>(stdout, stderr, returncode)</code>."
+  </li>
+  <li>
+    <strong>Re-run cached tasks</strong> (fix-git, crack-7z-hash) at the new
+    version — a few trials each.
+  </li>
+  <li>
+    <strong>Compare</strong> cache tokens, output tokens, wall time, and pass
+    rate against the v0.1.13/v0.1.14 cost columns in the F-F comparison table.
+  </li>
+</ol>
+<p>
+  Open question: <span class="id-tag">[b3e7f2]</span> (see §8).
+  Implementation note: this sub-session is documentation only;
+  the code change is a separate future step.
+</p>
+</div>
+</details>
+
+<h4>Forward-looking caveat</h4>
+
+<p>
+  The analysis above reflects the current model generation's fluency
+  distribution.  A model trained on more diverse agentic-substrate traces —
+  PowerShell, Nushell, Scheme, structured-pipeline languages — could shift
+  the picture substantially.  The cost-fluency-density framing is robust to
+  that shift: the same three axes apply, only the numbers change.  The point
+  is not to crown Python+<code>sh()</code> permanently, but to have a
+  principled method for re-evaluating as the landscape evolves.
+</p>
+
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
 <h2 id="rq-a">§3 <span class="rq-label">RQ-A</span> REPL alone</h2>
@@ -1443,8 +1731,14 @@ with open('/path/to/file.md', 'w') as f:
     <strong>Decided: Python (subprocess-based, not PTY).</strong>
     The original lean was shell/PTY; implementation used
     <code>python3 -c</code> with a long-lived subprocess.
-    Python proved natural for the LLM (F-F: the LLM used
-    <code>subprocess</code>, <code>threading</code>, and file I/O fluently).
+    Current frontier models show high fluency in Python across the subprocess,
+    threading, and file-I/O patterns used in F-F
+    (<code>f(M, Python, P)</code> is high for those pattern classes).
+    The remaining encoding-cost gap on subprocess-heavy tasks is the primary
+    candidate for the <code>sh()</code> helper experiment.
+    See the <a href="#method-note">Methodological note</a> for the principled
+    framing and <a href="#oq-rqa-sh"><code>[b3e7f2]</code></a> for the
+    experimental proposal.
     PTY-based shell REPL remains unexplored.
   </p>
 </div>
@@ -1548,6 +1842,31 @@ with open('/path/to/file.md', 'w') as f:
     <strong>Lean:</strong> autoregressive prose at the user boundary;
     variable returns only within the REPL and in subagent-to-parent data flow.
     Not yet relevant; RQ-C not started.
+  </p>
+</div>
+
+<h3 id="oq-rqa-sh">RQ-A — substrate experiment</h3>
+
+<div class="callout">
+  <div class="callout-title">💡 <span class="id-tag">[b3e7f2]</span> Does adding a <code>sh()</code> helper close the encoding-cost gap on shell-heavy tasks? <span class="status-open">OPEN</span></div>
+  <p>
+    Does adding a <code>sh()</code> helper to <code>python_repl</code>'s preamble
+    close the encoding-cost gap with Bash on shell-heavy tasks?
+  </p>
+  <p>
+    <strong>Acceptance:</strong> comparable or lower cache+output tokens and
+    competitive pass rate on cached crack-7z-hash trials versus
+    v0.1.13/v0.1.14 baselines.
+  </p>
+  <p>
+    <strong>Interpretation:</strong> if cost drops and pass rate holds, encoding
+    cost was the bottleneck.  If behaviour doesn't shift, model fluency
+    (<code>f(M, Python, subprocess-pattern)</code>) was the actual bottleneck
+    — and the two hypotheses are cleanly distinguished.
+  </p>
+  <p>
+    See the <a href="#mn-sh">Methodological note §<code>sh()</code></a> for the
+    experimental steps.
   </p>
 </div>
 
