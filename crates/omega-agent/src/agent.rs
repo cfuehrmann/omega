@@ -1632,6 +1632,9 @@ impl Agent {
                     // into each future so they don't borrow self.
                     let session_cache_dir = self.config.session_dir.join("cache");
                     let system_prompt_paths = Arc::clone(&self.system_prompt_paths);
+                    // Capture feature flags before the async block so they
+                    // can be moved into each tool context without borrowing self.
+                    let self_features = self.features;
                     // Pass the python_repl Arc into the tool context when the
                     // REPL feature is enabled.  The outer Option<Arc<...>> is
                     // None when features.repl=false so execute_tool knows the
@@ -1659,6 +1662,7 @@ impl Agent {
                                     tool_call_id: tool_call_id.clone(),
                                     system_prompt_paths,
                                     python_repl,
+                                    flags: self_features,
                                 };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;

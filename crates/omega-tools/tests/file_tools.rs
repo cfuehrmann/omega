@@ -114,6 +114,7 @@ fn ctx_protecting(protected: &std::path::Path) -> omega_tools::ToolCtx {
         tool_call_id: "guard-test".to_owned(),
         system_prompt_paths: Arc::new(paths),
         python_repl: None,
+        flags: omega_types::FeatureFlags::default(),
     }
 }
 

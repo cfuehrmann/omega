@@ -57,6 +57,11 @@ async fn run_subprocess(cmd: &str, args: &[String]) -> Result<SubprocOutput, Str
 const PP_CAP: usize = 16_000;
 const FETCH_TIMEOUT_S: u64 = 15;
 
+/// Maximum number of lines returned in shell-gated mode (no postprocess).
+const SHELL_GATED_MAX_LINES: usize = 2000;
+/// Maximum number of bytes returned in shell-gated mode (no postprocess).
+const SHELL_GATED_MAX_BYTES: usize = 50 * 1024;
+
 // ---------------------------------------------------------------------------
 // Cache directory
 // ---------------------------------------------------------------------------
@@ -77,20 +82,39 @@ pub async fn execute(
     _cancel: Option<&CancellationToken>,
     ctx: Option<&ToolCtx>,
 ) -> Result<String, String> {
+    // Check whether the shell-gated mode is active: when repl_replaces_shell is
+    // set, the postprocess pipeline is disabled to close the shell-loophole.
+    let shell_gated = ctx.is_some_and(|c| c.flags.repl_replaces_shell);
+
     let url_str = input["url"]
         .as_str()
         .ok_or("fetch_url: url is required")?
-        .trim()
-        .to_owned();
-    let postprocess = input["postprocess"]
-        .as_str()
-        .ok_or("fetch_url: postprocess is required")?
         .trim()
         .to_owned();
 
     if url_str.is_empty() {
         return Err("fetch_url: url must not be empty".into());
     }
+
+    if shell_gated {
+        // Defensive: if the caller somehow included a postprocess value despite
+        // the schema not listing it, log a warning and ignore it.
+        if input["postprocess"].as_str().is_some() {
+            eprintln!(
+                "warning: fetch_url received a postprocess value while \
+                 repl_replaces_shell is active — ignoring it (shell loophole closed)"
+            );
+        }
+        return execute_shell_gated(url_str, ctx).await;
+    }
+
+    // Default mode: postprocess is required.
+    let postprocess = input["postprocess"]
+        .as_str()
+        .ok_or("fetch_url: postprocess is required")?
+        .trim()
+        .to_owned();
+
     if postprocess.is_empty() {
         return Err("fetch_url: postprocess must not be empty".into());
     }
@@ -216,6 +240,151 @@ pub async fn execute(
     result.push_str("\n--- end ---");
 
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Shell-gated execution (repl_replaces_shell mode)
+// ---------------------------------------------------------------------------
+
+/// Execute `fetch_url` when `repl_replaces_shell` is active.
+///
+/// No shell pipeline is spawned.  The cached plain text is read and
+/// truncated to at most [`SHELL_GATED_MAX_LINES`] lines or
+/// [`SHELL_GATED_MAX_BYTES`] bytes, whichever limit is reached first.
+/// A truncation marker is appended when the cap is hit:
+/// `\n... [content truncated: N lines / M chars suppressed]`.
+async fn execute_shell_gated(url_str: String, ctx: Option<&ToolCtx>) -> Result<String, String> {
+    let parsed =
+        reqwest::Url::parse(&url_str).map_err(|_| format!("fetch_url: invalid URL: {url_str}"))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(format!(
+            "fetch_url: unsupported protocol: {}:",
+            parsed.scheme()
+        ));
+    }
+
+    let url_hash = {
+        let mut h = sha2::Sha256::new();
+        h.update(parsed.as_str().as_bytes());
+        hex::encode(h.finalize())
+    };
+
+    let dir: PathBuf = ctx.map_or_else(|| cache_dir().clone(), |c| c.cache_dir.join("fetch"));
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("fetch_url: failed to create cache dir: {e}"))?;
+    let cache_file = dir.join(format!("{url_hash}.txt"));
+
+    // Serve from cache when available; download otherwise.
+    let text = if cache_file.exists() {
+        tokio::fs::read_to_string(&cache_file)
+            .await
+            .unwrap_or_default()
+    } else {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(FETCH_TIMEOUT_S))
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| format!("fetch_url: failed to build HTTP client: {e}"))?;
+
+        let res = client
+            .get(parsed.as_str())
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            )
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            .send()
+            .await
+            .map_err(|e| format!("fetch_url: request failed: {e}"))?;
+
+        if !res.status().is_success() {
+            return Err(format!("fetch_url: HTTP {}", res.status()));
+        }
+
+        let content_type = res
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
+
+        let body = res
+            .text()
+            .await
+            .map_err(|e| format!("fetch_url: failed to read body: {e}"))?;
+
+        let t = if content_type.contains("text/html") || content_type.contains("application/xhtml")
+        {
+            html_to_text(&body)
+        } else {
+            body
+        };
+
+        tokio::fs::write(&cache_file, &t)
+            .await
+            .map_err(|e| format!("fetch_url: failed to write cache: {e}"))?;
+        t
+    };
+
+    let cache_str = cache_file.to_string_lossy().into_owned();
+    let total_chars = text.chars().count();
+
+    // Apply line and byte caps.
+    let (body, suppressed_lines, suppressed_chars) =
+        apply_shell_gated_cap(&text, SHELL_GATED_MAX_LINES, SHELL_GATED_MAX_BYTES);
+
+    let mut result = format!("Cached: {cache_str} ({total_chars} chars)\n\n");
+    result.push_str(&body);
+    if suppressed_lines > 0 || suppressed_chars > 0 {
+        let _ = write!(
+            result,
+            "\n... [content truncated: {suppressed_lines} lines / {suppressed_chars} chars suppressed]"
+        );
+    }
+
+    Ok(result)
+}
+
+/// Truncate `text` to at most `max_lines` lines or `max_bytes` bytes,
+/// whichever limit is reached first.  Returns `(body, suppressed_lines,
+/// suppressed_chars)`.  When neither limit is exceeded, `suppressed_*` are
+/// both zero and `body` equals `text`.
+fn apply_shell_gated_cap(text: &str, max_lines: usize, max_bytes: usize) -> (String, usize, usize) {
+    let mut byte_count = 0usize;
+    let mut kept_end = 0usize; // byte offset into `text` of the last kept character
+    let mut capped = false;
+
+    for (line_idx, line) in text.lines().enumerate() {
+        let line_bytes = line.len() + 1; // +1 for the newline
+        if line_idx >= max_lines || byte_count + line_bytes > max_bytes {
+            capped = true;
+            break;
+        }
+        byte_count += line_bytes;
+        kept_end += line_bytes;
+    }
+
+    if !capped {
+        return (text.to_owned(), 0, 0);
+    }
+
+    // Ensure the slice boundary is on a char boundary.
+    let safe_end = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .take_while(|&i| i <= kept_end)
+        .last()
+        .unwrap_or(0);
+
+    let body = text[..safe_end].to_owned();
+    let remainder = &text[safe_end..];
+    let suppressed_lines = remainder.lines().count();
+    let suppressed_chars = remainder.chars().count();
+    (body, suppressed_lines, suppressed_chars)
 }
 
 // ---------------------------------------------------------------------------

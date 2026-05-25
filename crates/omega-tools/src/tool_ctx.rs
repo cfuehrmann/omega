@@ -21,6 +21,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use omega_types::FeatureFlags;
+
 use crate::python_repl::PythonRepl;
 
 /// Session-scoped execution context passed to every tool invocation.
@@ -73,6 +75,14 @@ pub struct ToolCtx {
     /// serialised by the mutex — correct because the REPL is inherently
     /// sequential).
     pub python_repl: Option<Arc<tokio::sync::Mutex<Option<PythonRepl>>>>,
+
+    /// Runtime feature flags active for this session.
+    ///
+    /// Controls flag-gated tool behaviour (e.g. `repl_replaces_shell` disables
+    /// the `fetch_url` postprocess shell pipeline).  Defaults to
+    /// `FeatureFlags::default()` (all flags off) when constructed via
+    /// [`ToolCtx::new`]; the agent sets this to the live session flags.
+    pub flags: FeatureFlags,
 }
 
 impl ToolCtx {
@@ -92,6 +102,7 @@ impl ToolCtx {
             tool_call_id: tool_call_id.into(),
             system_prompt_paths: Arc::new(HashSet::new()),
             python_repl: None,
+            flags: FeatureFlags::default(),
         }
     }
 }

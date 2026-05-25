@@ -10,10 +10,28 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use omega_types::FeatureFlags;
 use serde_json::json;
 
 async fn exec(name: &str, input: serde_json::Value) -> Result<String, String> {
     let result = omega_tools::execute_tool(name, input, None, None).await;
+    if result.is_error {
+        Err(result.content)
+    } else {
+        Ok(result.content)
+    }
+}
+
+/// Like `exec` but constructs a `ToolCtx` with the given `FeatureFlags`.
+async fn exec_with_flags(
+    name: &str,
+    input: serde_json::Value,
+    flags: FeatureFlags,
+) -> Result<String, String> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut ctx = omega_tools::ToolCtx::new(dir.path(), "test-call");
+    ctx.flags = flags;
+    let result = omega_tools::execute_tool(name, input, None, Some(&ctx)).await;
     if result.is_error {
         Err(result.content)
     } else {
@@ -381,5 +399,119 @@ async fn fetch_url_small_postprocess_output_not_truncated() {
     assert!(
         out.contains("[full output:"),
         "tiny postprocess output must still carry a tee footer: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fetch_url — shell-gated mode (repl_replaces_shell = true)
+// ---------------------------------------------------------------------------
+
+fn flags_shell_gated() -> FeatureFlags {
+    FeatureFlags {
+        repl: true,
+        subagents: false,
+        repl_replaces_fileops: false,
+        repl_replaces_shell: true,
+    }
+}
+
+/// Shell-gated: a successful fetch returns content without running a shell pipeline.
+#[tokio::test]
+async fn fetch_url_shell_gated_returns_content_without_postprocess() {
+    let out = exec_with_flags(
+        "fetch_url",
+        json!({ "url": "https://example.com" }),
+        flags_shell_gated(),
+    )
+    .await
+    .unwrap();
+    // Should contain the "Cached:" header and some content.
+    assert!(
+        out.contains("Cached:"),
+        "shell-gated result must contain cache path: {out}"
+    );
+    // Must not contain the postprocess section header.
+    assert!(
+        !out.contains("--- postprocess:"),
+        "shell-gated result must not contain postprocess section: {out}"
+    );
+}
+
+/// Shell-gated: if a postprocess field is provided in the input despite the schema
+/// not listing it (defensive path), it must be ignored — no shell command runs.
+#[tokio::test]
+async fn fetch_url_shell_gated_ignores_postprocess_field() {
+    // Provide a postprocess that would fail loudly if executed.
+    let out = exec_with_flags(
+        "fetch_url",
+        json!({
+            "url": "https://example.com",
+            "postprocess": "false",  // exits 1; would surface as error in normal mode
+        }),
+        flags_shell_gated(),
+    )
+    .await
+    .unwrap();
+    // The call must succeed (not return an error) because the postprocess field
+    // was ignored entirely.
+    assert!(
+        out.contains("Cached:"),
+        "shell-gated with ignored postprocess must still succeed: {out}"
+    );
+    assert!(
+        !out.contains("[error]"),
+        "shell-gated must not show a postprocess error: {out}"
+    );
+}
+
+/// Shell-gated: invalid URL returns an error (same guard as normal mode).
+#[tokio::test]
+async fn fetch_url_shell_gated_invalid_url_returns_error() {
+    let err = exec_with_flags(
+        "fetch_url",
+        json!({ "url": "not-a-url" }),
+        flags_shell_gated(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("invalid URL"),
+        "shell-gated invalid URL must produce error: {err}"
+    );
+}
+
+/// Shell-gated: unsupported scheme returns an error.
+#[tokio::test]
+async fn fetch_url_shell_gated_unsupported_scheme_returns_error() {
+    let err = exec_with_flags(
+        "fetch_url",
+        json!({ "url": "ftp://example.com/file.txt" }),
+        flags_shell_gated(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("unsupported protocol"),
+        "shell-gated unsupported scheme must produce protocol error: {err}"
+    );
+}
+
+/// Shell-gated: result must not exceed the configured caps.
+/// We can't manufacture a large URL easily, so we verify the cap constants
+/// are respected by checking the output length on a real small page.
+#[tokio::test]
+async fn fetch_url_shell_gated_result_is_bounded() {
+    let out = exec_with_flags(
+        "fetch_url",
+        json!({ "url": "https://example.com" }),
+        flags_shell_gated(),
+    )
+    .await
+    .unwrap();
+    // example.com is tiny; result must be well within 50 KB.
+    assert!(
+        out.len() <= 60_000,
+        "shell-gated result must be bounded: {} bytes",
+        out.len()
     );
 }

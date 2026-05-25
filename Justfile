@@ -259,6 +259,14 @@ mutants-schemas:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/schemas.rs"
 
+# Run cargo-mutants targeted at the fetch_url tool implementation.
+# Covers the shell-gated branch (repl_replaces_shell), the postprocess path,
+# and the apply_shell_gated_cap truncation logic.
+# Requires network access (real HTTP fetches to example.com).
+mutants-fetch-url:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/tools/fetch_url.rs"
+
 # Run cargo-mutants targeted at the system_prompt.rs block assembly.
 # Covers repl_replaces_fileops, repl_replaces_shell, both-replaces (Tier 2),
 # shell-tool gating, and the combined reduced_toolset_addendum.

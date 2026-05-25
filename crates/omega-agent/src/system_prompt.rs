@@ -547,34 +547,38 @@ error messages, or anything not in local files. Prefer it over guessing or\n\
 relying on potentially stale training data.\n",
     );
 
-    // fetch_url: cache-reuse hint varies by toolset availability.
-    if file_tools {
-        s.push_str(
-            "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
+    // fetch_url: guidance depends on whether the shell pipeline is available.
+    if shell_tools {
+        // Shell tools present: postprocess pipeline is available.
+        if file_tools {
+            s.push_str(
+                "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
 on it. The result includes a cache path — for any further queries on the same\n\
 content, use `grep_files`/`read_file` on that path.\n",
-        );
-    } else if shell_tools {
-        // File tools absent but shell tools present: run_command is an option.
-        s.push_str(
-            "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
+            );
+        } else {
+            // File tools absent but shell tools present: run_command is an option.
+            s.push_str(
+                "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
 on it. The result includes a cache path — for any further queries on the same\n\
 content, reuse it with `run_command` (e.g. grep) or `python_repl`.\n",
-        );
-    } else {
-        // Both file and shell tools absent (Tier 2): only python_repl available.
+            );
+        }
         s.push_str(
-            "`fetch_url` downloads a URL **once** and runs a single `postprocess` query\n\
-on it. The result includes a cache path — for any further queries on the same\n\
-content, reuse it with `python_repl`.\n",
-        );
-    }
-
-    s.push_str(
-        "`postprocess` is required. Prefer `grep` or `awk` when you know what to\n\
+            "`postprocess` is required. Prefer `grep` or `awk` when you know what to\n\
 look for, and `head -N` as the catch-all. Never use `cat` — `head -N`\n\
 gives the same result on short pages and stays bounded on long ones.\n",
-    );
+        );
+    } else {
+        // Shell-gated mode (repl_replaces_shell): postprocess is disabled to
+        // close the shell-loophole.  Content is capped at 2000 lines / 50 KB;
+        // use python_repl for further filtering.
+        s.push_str(
+            "`fetch_url` downloads a URL **once** and returns the content as text,\n\
+capped at 2000 lines / 50\u{00a0}KB. For further filtering or analysis, pass\n\
+the cache path to `python_repl`.\n",
+        );
+    }
 
     // Verbose-output inspection: only relevant when shell tools are present
     // (run_background log files / run_command redirected output).
@@ -1212,6 +1216,78 @@ mod tests {
         assert!(
             full_prompt.contains("write_stdin"),
             "normal mode must contain write_stdin guidance"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_url / postprocess gating tests
+    // -----------------------------------------------------------------------
+
+    /// When `repl_replaces_shell` is off, the assembled prompt must mention
+    /// `postprocess` in the `fetch_url` guidance.
+    #[test]
+    fn flag_off_assembled_prompt_mentions_postprocess() {
+        let full_prompt = join_blocks(&build_system_blocks(
+            "/x",
+            1000,
+            false,
+            &[],
+            flags_default(),
+        ));
+        assert!(
+            full_prompt.contains("`postprocess`"),
+            "flag-off prompt must mention postprocess: length={}",
+            full_prompt.len()
+        );
+    }
+
+    /// When `repl_replaces_shell` is on, the assembled prompt must NOT contain
+    /// any bare-backtick reference to `postprocess`.
+    #[test]
+    fn flag_on_assembled_prompt_has_no_postprocess_reference() {
+        let full_prompt = join_blocks(&build_system_blocks(
+            "/x",
+            1000,
+            false,
+            &[],
+            flags_repl_replaces_shell(),
+        ));
+        assert!(
+            !full_prompt.contains("`postprocess`"),
+            "flag-on prompt must not contain `postprocess` reference"
+        );
+    }
+
+    /// Tier 2 (both replaces flags on) prompt must also have no postprocess reference.
+    #[test]
+    fn tier2_assembled_prompt_has_no_postprocess_reference() {
+        let full_prompt = join_blocks(&build_system_blocks(
+            "/x",
+            1000,
+            false,
+            &[],
+            flags_both_replaces(),
+        ));
+        assert!(
+            !full_prompt.contains("`postprocess`"),
+            "Tier 2 prompt must not contain `postprocess` reference"
+        );
+    }
+
+    /// Shell-gated: the `fetch_url` guidance must mention the byte/line cap.
+    #[test]
+    fn flag_on_fetch_url_guidance_mentions_cap() {
+        let full_prompt = join_blocks(&build_system_blocks(
+            "/x",
+            1000,
+            false,
+            &[],
+            flags_repl_replaces_shell(),
+        ));
+        // "2000" is the line cap; "50" appears in "50 KB".
+        assert!(
+            full_prompt.contains("2000") || full_prompt.contains("50"),
+            "flag-on fetch_url guidance must mention the cap (2000 lines / 50 KB)"
         );
     }
 

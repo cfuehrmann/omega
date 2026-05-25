@@ -37,7 +37,7 @@ pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
         // Tier 2: both file-op and shell tools removed.  Only the three
         // tools that python_repl cannot replace are retained.
         // Both flags require repl=true (validated at startup).
-        vec![web_search(), fetch_url(), python_repl()]
+        vec![web_search(), fetch_url(flags), python_repl()]
     } else if flags.repl_replaces_fileops {
         // File-ops limit mode: exclude the six file-op tools.
         // python_repl is always included (repl_replaces_fileops requires
@@ -48,7 +48,7 @@ pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
             wait_for_output(),
             write_stdin(),
             web_search(),
-            fetch_url(),
+            fetch_url(flags),
             python_repl(),
         ]
     } else if flags.repl_replaces_shell {
@@ -61,7 +61,7 @@ pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
             edit_file(),
             list_files(),
             web_search(),
-            fetch_url(),
+            fetch_url(flags),
             grep_files(),
             find_files(),
             python_repl(),
@@ -74,7 +74,7 @@ pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
             edit_file(),
             list_files(),
             web_search(),
-            fetch_url(),
+            fetch_url(flags),
             grep_files(),
             find_files(),
             run_background(),
@@ -234,32 +234,56 @@ fn web_search() -> ToolDefinition {
     }
 }
 
-fn fetch_url() -> ToolDefinition {
-    ToolDefinition {
-        name: "fetch_url".into(),
-        description: "Download a URL to a session-local cache file (content-addressed by URL hash) and \
-                      immediately run a shell postprocessing command on the full downloaded text. \
-                      HTML is converted to readable text before caching. \
-                      The tool result contains the cache file path and the postprocess output. \
-                      The postprocess output is always tee\u{2019}d to a log file; a footer \
-                      (`[full output: <path>]` or `[truncated; showed first N\u{00a0}KB of M\u{00a0}KB. Full output: <path>]`) \
-                      appears on every result. For further queries on the same content, \
-                      use read_file or grep_files on the cache path. \
-                      postprocess is required and receives the full content on stdin. \
-                      Prefer grep or awk when you know what to look for, head -N as the catch-all. \
-                      Never use cat \u{2014} head -N gives the same result on short pages and stays bounded on long ones."
-            .into(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "url":         { "type": "string", "description": "The URL to fetch (must be http or https)" },
-                "postprocess": {
-                    "type": "string",
-                    "description": "Shell command to run on the downloaded text, received on stdin. Examples: grep -n 'pattern', head -80, jq '.', awk '/foo/', python3 -c '...'. Required: decide what to extract before fetching.",
+fn fetch_url(flags: FeatureFlags) -> ToolDefinition {
+    if flags.repl_replaces_shell {
+        // Shell-gated mode: postprocess is disabled to prevent using
+        // fetch_url as a shell-command loophole.  Content is returned
+        // with a byte/line-level cap; use python_repl for further filtering.
+        ToolDefinition {
+            name: "fetch_url".into(),
+            description: "Download a URL to a session-local cache file (content-addressed by URL hash) \
+                          and return the content as text. HTML is converted to readable text before caching. \
+                          The result is capped at 2000 lines / 50\u{00a0}KB (whichever is hit first); \
+                          a truncation marker is appended when the cap is reached. \
+                          For further filtering or analysis, pass the cache path to python_repl."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The URL to fetch (must be http or https)" },
                 },
-            },
-            "required": ["url", "postprocess"],
-        }),
+                "required": ["url"],
+            }),
+        }
+    } else {
+        // Default mode: postprocess is a required shell pipeline applied to the
+        // fetched content.
+        ToolDefinition {
+            name: "fetch_url".into(),
+            description: "Download a URL to a session-local cache file (content-addressed by URL hash) and \
+                          immediately run a shell postprocessing command on the full downloaded text. \
+                          HTML is converted to readable text before caching. \
+                          The tool result contains the cache file path and the postprocess output. \
+                          The postprocess output is always tee\u{2019}d to a log file; a footer \
+                          (`[full output: <path>]` or `[truncated; showed first N\u{00a0}KB of M\u{00a0}KB. Full output: <path>]`) \
+                          appears on every result. For further queries on the same content, \
+                          use read_file or grep_files on the cache path. \
+                          postprocess is required and receives the full content on stdin. \
+                          Prefer grep or awk when you know what to look for, head -N as the catch-all. \
+                          Never use cat \u{2014} head -N gives the same result on short pages and stays bounded on long ones."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url":         { "type": "string", "description": "The URL to fetch (must be http or https)" },
+                    "postprocess": {
+                        "type": "string",
+                        "description": "Shell command to run on the downloaded text, received on stdin. Examples: grep -n 'pattern', head -80, jq '.', awk '/foo/', python3 -c '...'. Required: decide what to extract before fetching.",
+                    },
+                },
+                "required": ["url", "postprocess"],
+            }),
+        }
     }
 }
 
@@ -407,6 +431,7 @@ fn write_stdin() -> ToolDefinition {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use omega_types::FeatureFlags;
@@ -768,5 +793,126 @@ mod tests {
                 def.name
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_url schema gating (repl_replaces_shell)
+    // -----------------------------------------------------------------------
+
+    /// When flag is off, `fetch_url` requires both `url` and `postprocess`.
+    #[test]
+    fn fetch_url_schema_flag_off_has_url_and_postprocess_required() {
+        let def = tool_definitions(flags_default())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present");
+        let required = def.input_schema["required"]
+            .as_array()
+            .expect("required must be array");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            required_names.contains(&"url"),
+            "flag-off schema must require url: {required_names:?}"
+        );
+        assert!(
+            required_names.contains(&"postprocess"),
+            "flag-off schema must require postprocess: {required_names:?}"
+        );
+    }
+
+    /// When flag is off, `fetch_url` schema lists `postprocess` in properties.
+    #[test]
+    fn fetch_url_schema_flag_off_has_postprocess_property() {
+        let def = tool_definitions(flags_default())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present");
+        assert!(
+            def.input_schema["properties"]["postprocess"].is_object(),
+            "flag-off schema must list postprocess as a property"
+        );
+    }
+
+    /// When flag is on (`repl_replaces_shell`), `fetch_url` requires only `url`.
+    #[test]
+    fn fetch_url_schema_flag_on_has_only_url_required() {
+        let def = tool_definitions(flags_repl_replaces_shell())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present in repl_replaces_shell mode");
+        let required = def.input_schema["required"]
+            .as_array()
+            .expect("required must be array");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(
+            required_names,
+            vec!["url"],
+            "flag-on schema must require only url"
+        );
+    }
+
+    /// When flag is on, `postprocess` must not appear anywhere in the schema.
+    #[test]
+    fn fetch_url_schema_flag_on_has_no_postprocess_parameter() {
+        let def = tool_definitions(flags_repl_replaces_shell())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present in repl_replaces_shell mode");
+        assert!(
+            def.input_schema["properties"]["postprocess"].is_null(),
+            "flag-on schema must not list postprocess in properties"
+        );
+        // Serialise and scan the raw JSON to be certain.
+        let raw = serde_json::to_string(&def.input_schema).unwrap();
+        assert!(
+            !raw.contains("postprocess"),
+            "flag-on schema must not mention postprocess at all: {raw}"
+        );
+    }
+
+    /// Tier 2 `fetch_url` schema is also flag-on (`repl_replaces_shell` is true).
+    #[test]
+    fn fetch_url_schema_tier2_has_only_url_required() {
+        let def = tool_definitions(flags_tier2())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present in Tier 2 mode");
+        let required = def.input_schema["required"]
+            .as_array()
+            .expect("required must be array");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(
+            required_names,
+            vec!["url"],
+            "Tier 2 schema must require only url"
+        );
+    }
+
+    /// When flag is on, the `fetch_url` description mentions the byte/line cap.
+    #[test]
+    fn fetch_url_description_flag_on_mentions_cap() {
+        let def = tool_definitions(flags_repl_replaces_shell())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present");
+        assert!(
+            def.description.contains("2000") || def.description.contains("50"),
+            "flag-on description must mention the truncation cap: {}",
+            def.description
+        );
+    }
+
+    /// When flag is on, the `fetch_url` description does not mention `postprocess`.
+    #[test]
+    fn fetch_url_description_flag_on_has_no_postprocess_mention() {
+        let def = tool_definitions(flags_repl_replaces_shell())
+            .into_iter()
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present");
+        assert!(
+            !def.description.contains("postprocess"),
+            "flag-on description must not mention postprocess: {}",
+            def.description
+        );
     }
 }
