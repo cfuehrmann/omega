@@ -216,6 +216,7 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#finding-d"          class="toc-sub">F-D: Loophole &amp; closure</a></li>
     <li><a href="#finding-e"          class="toc-sub">F-E: Tooling hardening</a></li>
     <li><a href="#finding-f"          class="toc-sub">F-F: v0.1.13 headline result</a></li>
+    <li><a href="#finding-g"          class="toc-sub">F-G: Timeout alignment</a></li>
     <li class="toc-divider"></li>
     <li><a href="#next-steps"         class="toc-h1">⏩ Next steps</a></li>
     <li class="toc-divider"></li>
@@ -578,16 +579,160 @@ with open('/path/to/file.md', 'w') as f:
 <p>
   <strong>State summary:</strong> variables <code>proc</code>, <code>john_files</code>,
   <code>passwords</code>, <code>hash_val</code>, and <code>found_password</code> each
-  persisted across 2–4 calls.  The three "timeouts" were Python-level
-  <code>subprocess.run(timeout=60)</code> exceptions within the REPL code —
-  the REPL itself remained alive and the LLM continued in subsequent calls
-  without re-initialising.
+  persisted across 2–4 calls.  Three of the calls hit the <code>python_repl</code>
+  outer 60 s timeout and were recovered via SIGINT escalation — the kernel
+  stayed alive with all defined variables intact and the LLM continued in
+  subsequent calls without re-initialising.  See F-G for an analysis of
+  which calls triggered the escalations and what was misaligned.
 </p>
 <p>
   <strong>Timing:</strong> agent_execution 12:38:49 → 12:45:30 (UTC) = 401 s.
   Total job (including container setup + verifier): 10 min 44 s.
   Result: <code>reward: 1.0</code> (<code>bench/jobs/v0113-crack-7z-tier2-timeout/result.json</code>).
 </p>
+</div>
+</details>
+
+<details>
+<summary>Detail — cost and timing comparison to historical baselines</summary>
+<div class="details-body">
+<p>
+  N=1 results invite over-confident framing.  The honest reading: v0.1.13
+  Tier 2's pass on crack-7z-hash is <em>competitive</em> with the
+  distribution of pre-REPL <code>sonnet-medium</code> baselines on the
+  same task, not strictly faster or cheaper.
+</p>
+
+<table class="survey-table">
+  <thead><tr><th>Date</th><th>Version</th><th>Mode</th><th>Result</th><th>Wall</th><th>Cache</th><th>Output</th><th>Est. cost</th></tr></thead>
+  <tbody>
+    <tr><td>2026-04-23 23:36</td><td>v0.1.0</td><td>baseline</td><td class="yes">✅ 1.0</td><td>15 m 8 s</td><td>540,233</td><td>5,570</td><td>$0.246</td></tr>
+    <tr><td>2026-04-24 19:37 phaseC</td><td>v0.1.0</td><td>baseline</td><td class="yes">✅ 1.0</td><td>7 m 8 s</td><td>157,381</td><td>1,911</td><td>$0.076</td></tr>
+    <tr><td>2026-04-25 17:17</td><td>v0.1.2 <strong>opus-4-7-xhigh</strong></td><td>baseline</td><td class="yes">✅ 1.0</td><td>9 m 4 s</td><td>197,545</td><td>2,302</td><td>$0.469</td></tr>
+    <tr><td>2026-05-03 01:43</td><td>v0.1.4</td><td>baseline</td><td class="no">❌ 0.0</td><td>14 m 34 s</td><td>366,742</td><td>4,812</td><td>$0.182</td></tr>
+    <tr><td>2026-05-24 v018-base</td><td>v0.1.8</td><td>baseline</td><td class="yes">✅ 1.0</td><td>16 m 8 s</td><td>321,881</td><td>4,573</td><td>$0.165</td></tr>
+    <tr><td>2026-05-24 v018-add</td><td>v0.1.8</td><td>additive REPL</td><td class="yes">✅ 1.0</td><td>13 m 24 s</td><td>779,404</td><td>11,235</td><td>$0.403</td></tr>
+    <tr style="font-weight:bold;"><td>2026-05-25 v0.1.13</td><td>v0.1.13</td><td>Tier 2 (full)</td><td class="yes">✅ 1.0</td><td>10 m 44 s</td><td>207,974</td><td>5,760</td><td>$0.149</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Cost computation: <code>claude-sonnet-4-6</code> input $3/Mtok, cache-read
+  $0.30/Mtok, output $15/Mtok; <code>claude-opus-4-7</code> input $15/Mtok,
+  cache-read $1.50/Mtok, output $75/Mtok.  Each row uses the model named in
+  the version column.
+</p>
+
+<p>
+  <strong>What this means:</strong>
+</p>
+<ul>
+  <li>v0.1.13 Tier 2 wall-clock (10 m 44 s) sits in the middle of the
+      successful-baseline range (7 m 8 s – 16 m 8 s).  Not the fastest
+      pass; not the slowest.</li>
+  <li>v0.1.13 Tier 2 cost ($0.149) is in the lower third of historical
+      sonnet runs.  Cheaper than the slow v0.1.0 pass ($0.246), much
+      cheaper than the v0.1.8 additive REPL run ($0.403).  The fastest
+      baseline (phaseC v0.1.0, $0.076) is still about 2× cheaper.</li>
+  <li>The honest summary: <strong>REPL-only operation on this task is
+      competitive with full-tool baseline.</strong>  The LLM did not pay a
+      significant overhead for being forced into REPL.  It is not strictly
+      better either — the fastest pre-REPL baseline beats it on time and
+      cost.</li>
+</ul>
+
+<p>
+  Earlier framing of the v0.1.13 result as &quot;faster than baseline (16 m)&quot;
+  used the single v0.1.8 trial as the comparator, which happened to be one
+  of the slower passes.  Across the full distribution, the right framing is
+  <strong>&quot;comparable to typical baseline performance, while using only
+  python_repl with no shell access.&quot;</strong>  That is still a real finding —
+  a constrained-tool experiment reaches comparable performance to the
+  unconstrained baseline — just smaller than &quot;faster.&quot;
+</p>
+
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h3 id="finding-g"><span class="finding-badge">F-G</span> Inner/outer timeout misalignment in v0.1.13's three SIGINT escalations</h3>
+
+<p>
+  Each of the three <code>[python_repl: call timed out after 60s; SIGINT
+  sent; ...]</code> annotations in the v0.1.13 Tier 2 trajectory came from a
+  different kind of misalignment between the LLM's inner timeouts (passed to
+  <code>subprocess.run</code> or implicit in <code>time.sleep</code>) and the
+  <code>python_repl</code> tool's outer timeout (60 s default).  All three
+  were recovered correctly by the new escalation, but the inner timeouts the
+  LLM specified weren't actually doing useful work — the outer fires first.
+</p>
+
+<details>
+<summary>Detail — the three misalignments</summary>
+<div class="details-body">
+
+<table class="survey-table">
+  <thead><tr><th>Call</th><th>LLM's code (gist)</th><th>Inner timeout</th><th>Outer</th><th>Misalignment</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>#3 (42e72c2e)</td>
+      <td><code>subprocess.run([&quot;7z&quot;, &quot;e&quot;, ...])</code></td>
+      <td><strong>none</strong></td>
+      <td>60 s</td>
+      <td>No bound at all — 7z hung waiting for archive password.</td>
+    </tr>
+    <tr>
+      <td>#12 (4fa86a44)</td>
+      <td><code>subprocess.run([&quot;john&quot;, &quot;--wordlist=...&quot;], timeout=60)</code></td>
+      <td>60 s</td>
+      <td>60 s</td>
+      <td><strong>Equal</strong> — race condition; outer fires first in the polling loop, inner <code>TimeoutExpired</code> never raised.</td>
+    </tr>
+    <tr>
+      <td>#16 (d192a7c9)</td>
+      <td><code>time.sleep(60)</code> + <code>subprocess.run(..., timeout=10)</code></td>
+      <td>sequential ≥ 70 s</td>
+      <td>60 s</td>
+      <td><strong>Sequence exceeds outer</strong> — sleep alone consumed the budget; subprocess never ran.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Implication for the system-prompt addendum.</strong>  The hierarchy
+  between outer and inner timeouts should be made explicit:
+</p>
+<ul>
+  <li>The <code>python_repl</code> tool itself has a timeout (default 60 s,
+      configurable per call via the <code>timeout</code> parameter, max 600 s).</li>
+  <li>Any inner timeouts the LLM uses (<code>subprocess.run(...,
+      timeout=N)</code>, <code>threading</code>, etc.) must be <strong>strictly
+      less than</strong> the python_repl outer timeout for them to do useful
+      work.</li>
+  <li>For known-slow operations, the LLM should <em>raise the outer
+      timeout</em> (e.g. <code>python_repl(code=..., timeout=300)</code>) rather
+      than rely on inner subprocess timeouts.  The <code>timeout</code>
+      parameter on python_repl is the right knob.</li>
+  <li>Sequential operations within a single python_repl call must total less
+      than the outer timeout.  When in doubt, split into multiple calls.</li>
+</ul>
+
+<p>
+  Without this guidance the LLM tends to put timeouts on
+  <code>subprocess.run</code> by reflex — necessary but not sufficient.
+  The outer escalation catches the misalignments, but the LLM is doing
+  extra reasoning that does not pay off, and the misaligned timeouts make
+  the trajectory harder to read.
+</p>
+
+<p>
+  Worth filing as an open question for RQ-A: <em>does updating the
+  system-prompt addendum to surface the timeout hierarchy reduce the rate
+  of misaligned timeouts and SIGINT escalations per Tier 2 trial?</em>
+  Measurable side-effect: fewer <code>[call timed out]</code> annotations
+  in events.jsonl across confirmation runs.
+</p>
+
 </div>
 </details>
 
