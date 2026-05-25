@@ -113,6 +113,11 @@ static BOOTSTRAP_CACHE: OnceLock<BootstrapOutcome> = OnceLock::new();
 /// Returns `Ok(stderr)` on success or `Err(BootstrapOutcome)` on failure.
 /// A non-zero exit code, timeout, or spawn failure all map to [`BootstrapOutcome::AptFailed`];
 /// a missing `apt-get` binary maps to [`BootstrapOutcome::AptNotFound`].
+///
+/// Marked `#[mutants::skip]`: like `bootstrap_python3`, the branches depend on
+/// whether `apt-get` is present and succeeds, which is an OS-level invariant
+/// not testable deterministically in unit tests.
+#[mutants::skip]
 fn run_apt_get(args: &[&str], timeout: std::time::Duration) -> Result<String, BootstrapOutcome> {
     let mut cmd = std::process::Command::new("apt-get");
     cmd.args(args)
@@ -973,6 +978,42 @@ mod tests {
         assert!(result.is_ok());
         let (_repl, info) = result.unwrap();
         assert!(info.is_none(), "no bootstrap needed → info must be None");
+    }
+
+    /// A spawn error that is *not* `NotFound` (e.g. `PermissionDenied`) must
+    /// not trigger the bootstrap path — bootstrap is only for missing binaries.
+    ///
+    /// This test catches the mutation `replace match guard is_not_found(e) with true`
+    /// which would incorrectly send *all* spawn errors through the bootstrap branch.
+    #[tokio::test]
+    async fn non_not_found_spawn_error_skips_bootstrap() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("not_executable");
+        // Create a file that exists but has no execute bit → PermissionDenied on spawn.
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let path_str = path.to_string_lossy().into_owned();
+
+        let mut bootstrap_called = false;
+        let result = PythonRepl::start_inner(&path_str, || {
+            bootstrap_called = true;
+            BootstrapOutcome::AptNotFound
+        });
+
+        assert!(
+            !bootstrap_called,
+            "bootstrap must not fire for non-NotFound spawn errors"
+        );
+        assert!(
+            result.is_err(),
+            "start_inner must propagate the spawn error"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            !msg.contains("bootstrap"),
+            "error message must not mention bootstrap: {msg:?}"
+        );
     }
 
     /// `is_not_found` returns true for `NotFound` and false for other errors.
