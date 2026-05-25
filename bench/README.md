@@ -105,6 +105,43 @@ The five-mode sweep matrix for the REPL benchmark is:
 | Shell-replacement REPL (Tier 2) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1` |
 | Full Tier 2 (fileops + shell removed) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1` |
 
+---
+
+## What we've learned from REPL experiments (v0.1.8 – v0.1.13)
+
+Between v0.1.8 and v0.1.13 we ran a sequence of controlled experiments on the two
+locally-cached tasks (fix-git and crack-7z-hash).  Key findings:
+
+- **Additive REPL (v0.1.8) does not engage the LLM.** When `python_repl` was offered
+  alongside the full standard toolset, the LLM never called it.  Both tasks still
+  passed via their normal routes.  The additive design cannot measure REPL value.
+
+- **Tier 1 (replaces_fileops only, v0.1.9) engages REPL on file-centric tasks.**
+  fix-git passed with exactly one `python_repl` call (file write via Python string
+  literals).  crack-7z-hash timed out — file tools were inert for a password-cracking
+  task.  N=1 each.
+
+- **The first Tier 2 pass (v0.1.10) was a false positive** — the LLM used
+  `fetch_url.postprocess` as a shell backdoor.  Closed in v0.1.11 by stripping
+  `postprocess` when shell tools are gated.
+
+- **Three rounds of `python_repl` hardening were needed** (v0.1.11–v0.1.13):
+  bootstrap-on-missing (apt-get python3), per-call 60 s timeout with SIGINT/kill-group
+  escalation, tee forensics + tail-bias output, and system-prompt update.
+
+- **v0.1.13 Tier 2 (full mode) on crack-7z-hash passed in 10 min 44 s.**
+  26/26 tool calls were `python_repl` (100 % REPL usage), genuine cross-call state
+  (variables `proc`, `passwords`, `hash_val`, `found_password` persisting across 2–4
+  calls each), Python threading for parallelism, 3 subprocess-level timeout
+  recoveries with REPL state preserved.  N=1.
+
+The **original v0.1.8 baseline** runs in `bench/jobs/v018-smoke-*` are superseded for
+cross-version comparison by the v0.1.13-era results.  Use v0.1.13 Tier 2 full mode as
+the reference treatment arm.  Full analysis in
+`docs/repl-and-subagents-research.html` (Findings section).
+
+---
+
 ### REPL benchmark plan (v0.1.8, first benchmark data on the REPL MVP)
 
 Run both legs at the **same Omega tag** so the comparison is apples-to-apples.
@@ -222,4 +259,11 @@ A full 89-task Sonnet run costs ≈ $25; Opus ≈ $30.
 
 ## Next steps
 
-**SWE-Bench Verified** (planned): same Harbor wrapper, one flag change; ~500 tasks, ~$300 budget.
+1. **Confirmation runs** — run 3–5 trials of Tier 2 full mode on fix-git and
+   crack-7z-hash to quantify single-trial variance on the v0.1.13 result.
+
+2. **Broader REPL sweep** — once Harbor’s registry is back, sweep Tier 2 full mode
+   across all 89 TB2 tasks.  Only fix-git and crack-7z-hash are cached locally.
+
+3. **SWE-Bench Verified** (planned): same Harbor wrapper, one flag change;
+   ~500 tasks, ~$300 budget.

@@ -185,6 +185,18 @@ tr:nth-child(even) td { background: #fafbfc; }
 .rq-label { display: inline-block; font-size: 0.8rem; font-weight: 700; background: #e0e7ff; color: #3730a3; border-radius: 4px; padding: 0.15em 0.65em; margin-right: 0.5rem; vertical-align: middle; }
 @media (prefers-color-scheme: dark) { .rq-label { background: #1c2d48; color: #79b8ff; } }
 
+/* ── Finding badges ────────────────────────────────────────────────────── */
+.finding-badge { display: inline-block; font-size: 0.78rem; font-weight: 700; background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; border-radius: 4px; padding: 0.1em 0.6em; margin-right: 0.5rem; vertical-align: middle; }
+@media (prefers-color-scheme: dark) { .finding-badge { background: #2d2200; color: #fbbf24; border-color: #92400e; } }
+
+/* ── Status pills ──────────────────────────────────────────────────────── */
+.status-resolved { display: inline-block; font-size: 0.78rem; font-weight: 700; background: #dcfce7; color: #166534; border-radius: 4px; padding: 0.1em 0.6em; margin-left: 0.4em; }
+.status-open { display: inline-block; font-size: 0.78rem; font-weight: 700; background: #fff8dc; color: #92400e; border-radius: 4px; padding: 0.1em 0.6em; margin-left: 0.4em; }
+@media (prefers-color-scheme: dark) {
+  .status-resolved { background: #0f2e16; color: #3fb950; }
+  .status-open { background: #2d2200; color: #d29922; }
+}
+
 /* ── Responsive / print ────────────────────────────────────────────────── */
 @media (max-width: 700px) { #toc { display: none; } main { padding: 1.5rem 1.2rem; } }
 @media print { #toc { display: none; } body { background: white; } details[open] > summary { background: #eee; } }
@@ -197,6 +209,14 @@ tr:nth-child(even) td { background: #fafbfc; }
 <nav id="toc" aria-label="Table of contents">
   <h2>Contents</h2>
   <ol>
+    <li><a href="#findings"           class="toc-h1">📊 Findings to date</a></li>
+    <li><a href="#finding-a"          class="toc-sub">F-A: Flag matrix is sound</a></li>
+    <li><a href="#finding-b"          class="toc-sub">F-B: Additive REPL silent</a></li>
+    <li><a href="#finding-c"          class="toc-sub">F-C: Tier 1 engages on fix-git</a></li>
+    <li><a href="#finding-d"          class="toc-sub">F-D: Loophole &amp; closure</a></li>
+    <li><a href="#finding-e"          class="toc-sub">F-E: Tooling hardening</a></li>
+    <li><a href="#finding-f"          class="toc-sub">F-F: v0.1.13 headline result</a></li>
+    <li class="toc-divider"></li>
     <li><a href="#next-steps"         class="toc-h1">⏩ Next steps</a></li>
     <li class="toc-divider"></li>
     <li><a href="#framing"            class="toc-h1">§1 Framing</a></li>
@@ -204,7 +224,7 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#omega-brings"       class="toc-sub">§1.2 What Omega brings</a></li>
     <li><a href="#human-orch"         class="toc-sub">§1.4 Human-orchestrated angle</a></li>
     <li><a href="#seeded-handoff"     class="toc-sub">§1.5 Seeded-handoff method</a></li>
-    <li><a href="#path-to-benchmark"  class="toc-sub">§1.6 Path to first benchmark ⭐</a></li>
+    <li><a href="#how-we-ran"         class="toc-h1">§7 How we ran the experiments</a></li>
     <li class="toc-divider"></li>
     <li><a href="#evidence"           class="toc-h1">§2 Evidence base</a></li>
     <li><a href="#survey"             class="toc-h1">§2b Agent survey</a></li>
@@ -237,124 +257,373 @@ tr:nth-child(even) td { background: #fafbfc; }
 </p>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next-steps">⏩ Next steps</h2>
+<h2 id="findings">📊 Findings to date</h2>
 
-<p class="doc-meta" style="margin-bottom:0.8rem;">
-  This block is live. Update as steps complete. Detail lives in §1.6
-  (<a href="#path-to-benchmark">Path to first benchmark</a>).
+<p>
+  Between v0.1.8 and v0.1.13 we ran a sequence of feature-flag benchmark experiments
+  on two cached Terminal-Bench 2 tasks: <strong>fix-git</strong> and
+  <strong>crack-7z-hash</strong>.  The six findings below capture what we have
+  actually learned.  Details are in collapsibles; the §3–§6 research questions
+  are updated with status lines.
 </p>
+
+<!-- ─── F-A ─────────────────────────────────────────────────────────────── -->
+<h3 id="finding-a"><span class="finding-badge">F-A</span> Feature-flag tier matrix is sound</h3>
+
+<p>
+  Three independent boolean flags — <code>OMEGA_FEATURE_REPL</code>,
+  <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>,
+  <code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code> — are each runtime-switchable via
+  Harbor's <code>--ae KEY=VAL</code> mechanism and each recorded in
+  <code>SessionStartedEvent.features</code>.  All four valid combinations (with
+  <code>repl=1</code>) have been exercised end-to-end and confirmed to produce the
+  expected toolset in agent sessions.  The matrix enables apples-to-apples comparison
+  without rebuilds; post-mortem can grep <code>events.jsonl</code> to know which
+  combination a run used.
+</p>
+
+<details>
+<summary>Detail — tier definitions and flag combinations</summary>
+<div class="details-body">
+<table>
+  <thead><tr>
+    <th>Tier name</th><th>Flags</th><th>Tools removed</th><th>What the LLM must use for…</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Baseline (OFF)</strong></td>
+      <td>none</td><td>—</td><td>standard tool set</td>
+    </tr>
+    <tr>
+      <td><strong>Additive REPL</strong></td>
+      <td><code>repl=1</code></td><td>nothing</td>
+      <td><code>python_repl</code> available alongside all 12 standard tools</td>
+    </tr>
+    <tr>
+      <td><strong>Tier 1</strong> (limit-mode)</td>
+      <td><code>repl=1 replaces_fileops=1</code></td>
+      <td>6 file-op tools</td>
+      <td>file reads/writes → must choose python_repl or run_command</td>
+    </tr>
+    <tr>
+      <td><strong>Tier 2a</strong></td>
+      <td><code>repl=1 replaces_shell=1</code></td>
+      <td>4 shell tools</td>
+      <td>shell execution → must use subprocess inside python_repl</td>
+    </tr>
+    <tr>
+      <td><strong>Tier 2 (full)</strong></td>
+      <td><code>repl=1 replaces_fileops=1 replaces_shell=1</code></td>
+      <td>10 tools total</td>
+      <td>everything → python_repl only</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  Setting either <code>REPLACES_*</code> flag without <code>REPL=1</code> is a
+  configuration error; the agent exits loudly at startup.
+</p>
+</div>
+</details>
+
+<!-- ─── F-B ─────────────────────────────────────────────────────────────── -->
+<h3 id="finding-b"><span class="finding-badge">F-B</span> Additive REPL does not engage the LLM</h3>
+
+<p>
+  On both fix-git and crack-7z-hash, when <code>python_repl</code> was offered
+  alongside the full standard tool set, the LLM never called it once.  Both runs
+  still passed (the tasks are well within baseline capability), but the tool was
+  completely ignored.  The additive design cannot measure REPL value because the
+  experimental variable is never engaged.  N=2.
+</p>
+
+<details>
+<summary>Detail — likely cause and implication</summary>
+<div class="details-body">
+<p>
+  The most likely explanation is that the LLM is heavily fine-tuned on dedicated
+  file-operation and shell-execution tool calls.  Given a free choice, it defaults
+  to the familiar pattern.  This is consistent with Kim et al.'s
+  <strong>Baseline Paradox</strong> finding: stronger single agents (with well-tuned
+  tool sets) make it harder to demonstrate the marginal value of new primitives.
+  The finding implies that any benchmark of REPL value must use a
+  <em>constrained</em> treatment arm — either remove competing tools or make the
+  task structure strongly favour the REPL pattern.
+</p>
+<p>
+  Event logs: <code>bench/jobs/v018-smoke-crack-repl-on/</code> (crack-7z-hash),
+  <code>bench/jobs/v018-smoke-short-repl-on/</code> (fix-git).
+</p>
+</div>
+</details>
+
+<!-- ─── F-C ─────────────────────────────────────────────────────────────── -->
+<h3 id="finding-c"><span class="finding-badge">F-C</span> Tier 1 engages REPL on file-centric tasks; inert on shell-centric ones</h3>
+
+<p>
+  With <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>, the LLM used
+  <code>python_repl</code> exactly once on fix-git — to write the conflict-resolved
+  file content — and the task passed.  On crack-7z-hash the file tools being removed
+  were inert for the task anyway (it involves cracking a 7z password, not manipulating
+  text files), so the LLM just timed out.  N=1 each.
+</p>
+
+<details>
+<summary>Detail — what the python_repl call on fix-git looked like</summary>
+<div class="details-body">
+<p>
+  The LLM resolved a Git merge conflict that required reconstructing a Markdown
+  biography file with correct content.  After gathering all context via
+  <code>run_command</code>, it wrote the final file in a single
+  <code>python_repl</code> call using an embedded Python heredoc:
+</p>
+<pre><code class="language-python">content = """I am a Postdoctoral Researcher at Stanford CS.
+
+Previously, I was a Student Researcher at [Google Research](...),
+...
+"""
+with open('/path/to/file.md', 'w') as f:
+    f.write(content)
+</code></pre>
+<p>
+  This is a clean signal: the file-write tools were not available, and the LLM
+  naturally reached for Python string literals and <code>open()</code>.  The task
+  passed.
+</p>
+<p>
+  The crack-7z-hash Tier 1 run timed out without attempting
+  <code>python_repl</code> meaningfully — the removed tools
+  (<code>read_file</code>, <code>grep_files</code>, etc.) were simply not part of
+  the solution path for a password-cracking task.  Removing file tools provides no
+  forcing function for a pure-shell task.
+</p>
+<p>
+  Event logs: <code>bench/jobs/v019-inspect-fix-git-limit-mode/</code>,
+  <code>bench/jobs/v019-inspect-crack-7z-hash-limit-mode/</code>.
+</p>
+</div>
+</details>
+
+<!-- ─── F-D ─────────────────────────────────────────────────────────────── -->
+<h3 id="finding-d"><span class="finding-badge">F-D</span> Tier 2 first passed via a <code>fetch_url.postprocess</code> shell backdoor</h3>
+
+<p>
+  The very first Tier 2 (full) run — v0.1.10 on crack-7z-hash — produced a pass, but
+  for the wrong reason.  The LLM discovered that <code>fetch_url</code>'s
+  <code>postprocess</code> field was executed as a shell command inside the container,
+  and used it as a backdoor: 31 of 33 tool calls were <code>fetch_url</code> with
+  arbitrary shell commands in <code>postprocess</code>.  This was a loophole, not
+  REPL engagement.  After closing it (removing <code>postprocess</code> entirely when
+  shell tools are gated), the next run (v0.1.11) failed.  The cleaner Tier 2 mode
+  is what was then actually studied.
+</p>
+
+<details>
+<summary>Detail — loophole discovery and patch</summary>
+<div class="details-body">
+<p>
+  The v0.1.10 crack-7z-hash run shows the pattern clearly in
+  <code>bench/jobs/v0110-inspect-crack-7z-hash-tier2/</code>: calls like
+</p>
+<pre><code>fetch_url(url="https://example.com",
+          postprocess="apt-get install -y p7zip-full &lt;/dev/null &gt;/tmp/apt_log 2&gt;&amp;1")
+</code></pre>
+<p>
+  The fix in v0.1.11 was to strip <code>postprocess</code> from the
+  <code>fetch_url</code> tool description (and refuse to execute it) when
+  <code>OMEGA_FEATURE_REPL_REPLACES_SHELL=1</code> is set.  This forced the LLM
+  to execute shell work through <code>subprocess</code> inside
+  <code>python_repl</code>.
+</p>
+<p>
+  Note: v0.1.10's fix-git Tier 2 pass is also suspect for the same reason —
+  event logs show <code>fetch_url</code> usage there too.
+</p>
+</div>
+</details>
+
+<!-- ─── F-E ─────────────────────────────────────────────────────────────── -->
+<h3 id="finding-e"><span class="finding-badge">F-E</span> Several rounds of <code>python_repl</code> hardening were needed</h3>
+
+<p>
+  After closing the loophole, v0.1.11 failed (no bootstrap), v0.1.12 failed (no
+  timeout recovery), and only v0.1.13 passed.  The hardening work that accumulated
+  across those versions was necessary to make Tier 2 a real experiment.
+</p>
+
+<details>
+<summary>Detail — the hardening sequence</summary>
+<div class="details-body">
+<ul>
+  <li>
+    <strong>Marker rename</strong> (<code>REPL_END</code> → <code>REPL_RESPONSE</code>):
+    the original end-of-output sentinel sometimes appeared in Python tracebacks,
+    causing premature truncation.  Renaming to something less likely to collide
+    fixed spurious truncations.
+  </li>
+  <li>
+    <strong>python3 bootstrap-on-missing:</strong> the benchmark container does not
+    have a running Python3 interpreter on PATH at agent startup.  Added
+    <code>apt-get install -y python3</code> as a first-call bootstrap, emitting a
+    <code>python_repl_bootstrapped</code> event on success.  Without this, the first
+    call to <code>python_repl</code> silently failed.
+  </li>
+  <li>
+    <strong>Per-call timeout with SIGINT-soft / kill_group-hard escalation:</strong>
+    long-running REPL calls (password cracking, compilation) would hang indefinitely
+    before this.  Added a 60-second per-call timeout that sends SIGINT first (giving
+    Python a chance to print partial output and return control) and escalates to
+    process-group kill if SIGINT is ignored.  REPL state is preserved across the
+    interruption.
+  </li>
+  <li>
+    <strong>tee-always forensics + tail-bias on timeout:</strong> all output is
+    written to a side-channel log file as it streams.  On timeout, the
+    <em>last</em> N bytes of output are returned rather than the beginning, giving
+    the LLM context about where execution was when it was interrupted.
+  </li>
+  <li>
+    <strong>System-prompt rework to encourage variable-pattern:</strong>
+    updated the REPL section of the system prompt to explicitly suggest storing
+    results in variables (rather than re-opening file handles) so that
+    cross-call state accumulates naturally.
+  </li>
+</ul>
+<p>
+  Each of these was diagnosed from a failing run's <code>events.jsonl</code> and
+  fixed in the subsequent version.
+</p>
+</div>
+</details>
+
+<!-- ─── F-F ─────────────────────────────────────────────────────────────── -->
+<h3 id="finding-f"><span class="finding-badge">F-F</span> v0.1.13 Tier 2 on crack-7z-hash: 100% REPL, genuine state, 10 min 44 s — passed</h3>
+
+<p>
+  The v0.1.13 Tier 2 (full) run on crack-7z-hash produced the result the
+  RLM hypothesis predicts: every tool call was <code>python_repl</code> (26/26),
+  the Python interpreter carried state across 4+ calls in multiple variable chains,
+  the LLM used Python threading to parallelise the password search, and three
+  subprocess timeouts were recovered from with REPL state intact.  The task passed
+  in 10 minutes 44 seconds total (6 min 41 s agent execution).  N=1, but the
+  qualitative trajectory is clean.
+</p>
+
+<details>
+<summary>Detail — trajectory of the 26-step Python session</summary>
+<div class="details-body">
+<p>
+  Full event log: <code>bench/jobs/v0113-crack-7z-tier2-timeout/c5b858a93a842b32c06ce0713d82af10__cmM2bFD/agent/omega-session/</code>
+</p>
+
+<table>
+  <thead><tr><th>Calls</th><th>What the LLM did</th><th>State persisted</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>#0–1</td><td>Probe for 7z binary → FileNotFoundError</td><td>—</td>
+    </tr>
+    <tr>
+      <td>#2</td><td><code>apt-get install -y p7zip-full</code> via subprocess</td><td>—</td>
+    </tr>
+    <tr>
+      <td>#3–5</td><td>Extract archive (wrong password attempts), list contents</td><td>—</td>
+    </tr>
+    <tr>
+      <td>#6–8</td><td>Walk <code>/app/john/</code> to find John the Ripper binary</td>
+      <td><code>john_files</code> list (used in #8)</td>
+    </tr>
+    <tr>
+      <td>#9–11</td><td>Run <code>7z2john.pl</code> to extract hash (Perl module install + retry)</td><td>—</td>
+    </tr>
+    <tr>
+      <td>#12</td><td>Assign extracted hash string to <code>hash_val</code>; save to file</td>
+      <td><code>hash_val</code> available in subsequent calls</td>
+    </tr>
+    <tr>
+      <td>#13–14</td><td>Find <code>password.lst</code>; launch John as background <code>Popen</code></td>
+      <td><code>proc</code> handle retained</td>
+    </tr>
+    <tr>
+      <td>#15–17</td><td>Check <code>proc.poll()</code>; sleep 60 s; check again — two subprocess timeouts recovered</td>
+      <td><code>proc</code> still live across calls</td>
+    </tr>
+    <tr>
+      <td>#18</td><td><code>proc.kill()</code> — John too slow; pivot to direct 7z brute-force</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>#19–21</td><td>Try batches of common passwords via <code>7z e -p&lt;pwd&gt;</code></td>
+      <td><code>passwords</code> list reused across #20, #21</td>
+    </tr>
+    <tr>
+      <td>#22</td><td>Check for hashcat (not available)</td><td>—</td>
+    </tr>
+    <tr>
+      <td>#23</td><td>
+        <strong>Python threading</strong>: launch 8 worker threads, each trying a slice of
+        <code>passwords</code>; set <code>found_password</code> variable in shared state;
+        third subprocess timeout during <code>communicate()</code>
+      </td>
+      <td><code>found_password</code> set</td>
+    </tr>
+    <tr>
+      <td>#24</td><td>Extract archive with <code>found_password</code></td><td>—</td>
+    </tr>
+    <tr>
+      <td>#25</td><td>Write <code>"honeybear"</code> to <code>/app/solution.txt</code></td><td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>State summary:</strong> variables <code>proc</code>, <code>john_files</code>,
+  <code>passwords</code>, <code>hash_val</code>, and <code>found_password</code> each
+  persisted across 2–4 calls.  The three "timeouts" were Python-level
+  <code>subprocess.run(timeout=60)</code> exceptions within the REPL code —
+  the REPL itself remained alive and the LLM continued in subsequent calls
+  without re-initialising.
+</p>
+<p>
+  <strong>Timing:</strong> agent_execution 12:38:49 → 12:45:30 (UTC) = 401 s.
+  Total job (including container setup + verifier): 10 min 44 s.
+  Result: <code>reward: 1.0</code> (<code>bench/jobs/v0113-crack-7z-tier2-timeout/result.json</code>).
+</p>
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="next-steps">⏩ Next steps</h2>
 
 <div class="callout rec" style="border-left-width:6px;">
   <ol style="margin:0; padding-left:1.3rem;">
     <li style="margin-bottom:0.6rem;">
-      <strong>Sub-session: feature flag plumbing.</strong>
-      <code>OMEGA_FEATURE_REPL</code>, <code>OMEGA_FEATURE_SUBAGENTS</code>;
-      recorded in <code>SessionStartedEvent</code> with documented
-      <code>FeatureFlags::default()</code> serde default.
-      ~1–2 days. Strict prerequisite for steps 3 onward.
+      <strong>Confirmation runs.</strong>
+      Single-trial results on fix-git and crack-7z-hash have high noise.
+      Run 3–5 trials of Tier 2 full mode on each task to quantify variance
+      before drawing conclusions.
     </li>
     <li style="margin-bottom:0.6rem;">
-      <strong>Sub-session: typed domain-state snapshot.</strong>
-      Per the
-      <a href="./session-design.html#domain-state">domain-state framing</a>:
-      replace the comment-table classification with a typed
-      <code>DomainSnapshot</code> whose constructor exhaustively destructures
-      <code>&amp;Agent</code>, forcing compile-time classification of every
-      field as <strong>domain state</strong> (observable by LLM or UI) or
-      <strong>plumbing</strong> (with an inline domain-terms rationale).
-      <strong>Also fixes</strong> strict resume to use
-      <code>SessionStartedEvent.system_prompt</code> rather than re-reading
-      <code>AGENTS.md</code> from disk — closing the only current carve-out
-      from <code>domain-relevant&nbsp;⇒&nbsp;persisted</code>.
-      ~1 day. Recommended before REPL MVP so the new <code>PythonRepl</code>
-      field arrives forced-to-be-classified.
-    </li>
-    <li style="margin-bottom:0.6rem;">
-      <strong>Sub-session: REPL MVP.</strong>
-      Per <a href="#path-to-benchmark">§1.6</a>. Target benchmark:
-      Terminal-Bench 2 (locked). Python subprocess REPL exposed as
-      <code>python_repl(code) -&gt; String</code> tool, available iff
-      <code>OMEGA_FEATURE_REPL</code> is on; output truncated RLM-style.
-      <strong>Forensics requirement (urgent):</strong> machine-assisted
-      post-mortem must work from <code>events.jsonl</code> alone — every
-      <code>python_repl</code> call records the code (in tool-use), the
-      output and any truncation marker (in tool-result), and any error.
-      <strong>Live-check requirement (deferred):</strong> existing tool-call
-      rendering in the UI shows the code and output without frontend
-      changes; verify at the end of the sub-session.
-      <strong>Resume policy:</strong> <code>strict_resume</code> refuses
-      REPL sessions loudly with a new
-      <code>StrictResumeError::ReplResumeUnsupported</code> variant
-      — cleaner than silent fresh-subprocess divergence. UI-assisted
-      “open past REPL session in browser” temporarily regresses;
-      machine-assisted post-mortem from the file is unaffected.
-      ~4–5 days.
-    </li>
-    <li style="margin-bottom:0.6rem;">
-      <strong>v0.1.8 smoke (fix-git, crack-7z-hash, additive REPL).</strong>
-      Two cached TB2 tasks swept with <code>OMEGA_FEATURE_REPL=1</code>.
-      <strong>Finding:</strong> the LLM did <em>not</em> call
-      <code>python_repl</code> once in either task — it consistently chose
-      <code>run_command</code> and the dedicated file tools. The
-      additive-REPL design cannot measure REPL value because the tool is
-      never engaged. (See <a href="#rq-a-limit-mode-finding">§§3 empirical note</a>.)
-    </li>
-    <li style="margin-bottom:0.6rem;">
-      <strong>Sub-session: add limit-mode flag
-      (<code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>). ✅ done</strong>
-      Removes the six file-op tools
-      (<code>read_file</code>, <code>write_file</code>, <code>edit_file</code>,
-      <code>find_files</code>, <code>grep_files</code>, <code>list_files</code>)
-      when set, forcing the LLM to choose between <code>python_repl</code> and
-      <code>run_command</code> for file work.
-      Requires <code>OMEGA_FEATURE_REPL=1</code>; fails loudly otherwise.
-      System prompt gains a “Reduced toolset” section explaining the constraint
-      neutrally (no bias toward Python or shell).
-      Bench invocation:
-      <code>--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>.
-    </li>
-    <li style="margin-bottom:0.6rem;">
-      <strong>Sub-session: add shell-replacement flag
-      (<code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code>). &#x2705; done</strong>
-      Tier&nbsp;2 (RLM-paper-style &#x201C;REPL as orchestrator&#x201D;): removes the four
-      shell-execution tools (<code>run_command</code>,
-      <code>run_background</code>, <code>wait_for_output</code>,
-      <code>write_stdin</code>) when set, forcing the LLM to run shell
-      commands via <code>subprocess</code> inside <code>python_repl</code>.
-      Requires <code>OMEGA_FEATURE_REPL=1</code>; fails loudly otherwise.
-      Orthogonal to <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code> &#x2014;
-      all four flag combinations are valid when <code>repl=true</code>.
-      Motivation: limit-mode shows REPL engagement on file-centric tasks
-      (fix-git) but shell-natural tasks (crack-7z-hash) use
-      <code>run_command</code> exclusively; this flag forces engagement there.
-      Bench invocations:
-      <code>--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1</code>
-      (shell-only removal) or both replaces flags together for Tier&nbsp;2 full mode.
-    </li>
-    <li style="margin-bottom:0.6rem;">
-      <strong>Operator: tag v0.1.9, point bench at it, sweep three modes.</strong>
-      Both cached tasks (<code>fix-git</code>, <code>crack-7z-hash</code>)
-      in three treatment arms:
-      <em>OFF</em> (<code>OMEGA_FEATURE_REPL=0</code>),
-      <em>additive</em> (<code>OMEGA_FEATURE_REPL=1</code>),
-      <em>limit-mode</em> (<code>OMEGA_FEATURE_REPL=1 OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>).
-      <em>First benchmark data on REPL engagement.</em>
+      <strong>Resume the broader sweep once Harbor's registry is back.</strong>
+      Only fix-git and crack-7z-hash are cached locally; the remaining 87
+      TB2 tasks require the Harbor registry.  Once available, sweep Tier 2
+      full mode across the full 89-task set to identify which task categories
+      benefit and which do not.
     </li>
     <li style="margin-bottom:0;">
-      <strong>Harbor broader sweep.</strong>
-      Full Terminal-Bench 2 once limit-mode data validates engagement.
-      If results warrant: subagent MVP, then RLM MVP, then add SWE-bench
-      Verified as an optional second sweep. Per the §1.6 recommended order.
-      Each stage produces benchmark data independently.
+      <strong>Revisit RQ-D (handoff automation) or RQ-B/C (subagents) based on
+      broader sweep data.</strong>
+      If Tier 2 shows consistent benefit across task categories, the next
+      question is which features drive it.  If results are mixed, handoff
+      automation (RQ-D) may be the higher-EV path.  No commitment yet;
+      data decides.
     </li>
   </ol>
 </div>
 
 <p style="margin-top:1rem; color:var(--muted); font-size:0.92rem;">
   <strong>Endeavor 1 follow-ups</strong>
-  (Phase 1.5 UI surfacing, Phase 1.6 WS → <code>SessionId</code>
-  migration, F11 audit follow-up) remain queued at lower priority than
-  the REPL track. See
+  (Phase 1.5 UI surfacing, Phase 1.6 WS → <code>SessionId</code>
+  migration) remain queued at lower priority than the REPL track. See
   <a href="./session-design.html"><code>docs/session-design.html</code></a>.
 </p>
 
@@ -377,14 +646,16 @@ tr:nth-child(even) td { background: #fafbfc; }
 </div>
 
 <div class="callout rec">
-  <div class="callout-title">✓ <code>[b0bc06]</code> Ground rule — feature flags, no branch</div>
+  <div class="callout-title">✓ <code>[b0bc06]</code> Ground rule — feature flags, no branch <span class="status-resolved">RESOLVED</span></div>
   <p>
-    Two independent runtime flags (<code>OMEGA_FEATURE_REPL=1</code>,
-    <code>OMEGA_FEATURE_SUBAGENTS=1</code>), both defaulting to off, recorded in
-    <code>SessionStartedEvent.features</code>. Harbor sweeps all four cells without
-    rebuilds. All new code lands on <code>develop</code> behind flags — no
-    long-lived feature branch.
-    <strong><code>[abe7e7]</code></strong>
+    Implemented as three independent runtime flags:
+    <code>OMEGA_FEATURE_REPL</code>,
+    <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>,
+    <code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code>.
+    All default off; all recorded in <code>SessionStartedEvent.features</code>.
+    Harbor sweeps combinations without rebuilds.  All new code landed on
+    <code>develop</code> behind flags — no long-lived feature branch.
+    <strong><code>[abe7e7]</code></strong> <span class="status-resolved">RESOLVED</span>
   </p>
   <table style="width:auto;border-collapse:collapse;margin:0.5rem 0">
     <thead><tr>
@@ -405,9 +676,33 @@ tr:nth-child(even) td { background: #fafbfc; }
       </tr>
     </tbody>
   </table>
-  <p>RQ-D (handoff automation) falls outside this matrix; see §1.5 and §6.</p>
+  <p>
+    Subagents remain entirely unimplemented.  REPL was built first per the
+    <code>[cf2db0]</code> ordering decision below.
+    RQ-D (handoff automation) falls outside this matrix; see §1.5 and §6.
+  </p>
 </div>
 
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[cf2db0]</code> Decided — REPL first, subagent second, RLM third <span class="status-resolved">RESOLVED</span></div>
+  <p>
+    REPL was done first; subagents remain entirely unimplemented.  The sequencing
+    proved correct: REPL benchmarks (F-B through F-F) are now producing data.
+    Subagent work can be revisited after the broader REPL sweep.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[3c9a17]</code> Decided — benchmark data first; handoff automation sequenced after <span class="status-resolved">RESOLVED-as-deferred</span></div>
+  <p>
+    Originally posed as "should handoff automation be the first investment, before
+    REPL or subagents?" Answered no.  Benchmark data (F-B through F-F) arrived
+    before any handoff automation work.  RQ-D remains documented in §6 and may
+    rise in priority based on what the broader sweep shows.
+  </p>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────────────── -->
 <h3 id="omega-brings">§1.2 What Omega specifically brings</h3>
 <p>
   Unlike one-shot benchmark datasets, Omega offers: the user's daily work as a
@@ -448,178 +743,116 @@ tr:nth-child(even) td { background: #fafbfc; }
   this pattern sidesteps the three failure modes the literature most consistently
   documents (context loss, error propagation, coordination overhead). It is
   incrementally automatable: trigger detection → seed-prompt drafting → dispatch,
-  each step independently valuable. See §6 for the automation roadmap and §1.6
-  for why automation is sequenced <em>after</em> first benchmark data.
+  each step independently valuable. See §6 for the automation roadmap.
 </p>
-
-<div class="callout rec">
-  <div class="callout-title">✓ <code>[3c9a17]</code> Decided — benchmark data first; handoff automation sequenced after</div>
-  <p>
-    Originally posed as "should handoff automation be the first investment, before
-    REPL or subagents?" Answered by §1.6: no. The MVP-for-benchmark strategy makes
-    REPL/subagent/RLM data cheap to obtain; benchmarks then inform what workflow is
-    worth automating. Handoff automation (RQ-D, §6) remains valuable and may rise
-    in priority if benchmark sweeps return null or weak results.
-  </p>
-</div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
-<h3 id="path-to-benchmark">§1.6 <span class="id-tag">[f8a1e0]</span> Path to first benchmark — build to measure, not to ship</h3>
+<h2 id="how-we-ran">§7 How we ran the experiments</h2>
 
 <p>
-  The strategic question for RQ-A, RQ-B, and RQ-C is not
-  <em>"how do we build the polished feature"</em> but
-  <strong>"how do we get reliable benchmark data fastest?"</strong>
-  The bar is: Harbor can sweep a feature flag and we can score the runs.
-  Everything beyond that is deferred until after data exists.
+  The MVP-for-benchmark strategy from the original §1.6 framing proved out: ship just
+  enough to measure, hold everything else constant, score the runs, iterate.  Below is
+  the actual sequence.
 </p>
 
-<h4>What MVP allows us to cut</h4>
+<h4>Infrastructure — cached tasks workaround</h4>
 <p>
-  The benchmark MVP only needs enough machinery for Harbor to execute a
-  task and produce a pass/fail signal. That drops a lot of normally-required
-  production concerns:
+  Harbor's task registry was unavailable for much of the experiment period.  Two TB2
+  tasks were locally cached from earlier runs: <strong>fix-git</strong> (a Git
+  merge-conflict resolution task) and <strong>crack-7z-hash</strong> (crack a
+  password-protected 7-zip archive using John the Ripper and a wordlist).  All
+  reported experiments used these two cached tasks.  The broader 89-task sweep
+  requires the registry.
 </p>
 
-<table class="survey-table">
-  <thead><tr><th>Production concern</th><th>Needed for benchmark MVP?</th></tr></thead>
+<h4>Invocation pattern</h4>
+<p>
+  Each run was launched from the <code>bench/</code> directory via:
+</p>
+<pre><code class="language-bash">harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaRustAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  [--ae OMEGA_FEATURE_REPL=1] \
+  [--ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1] \
+  [--ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1] \
+  --job-name &lt;descriptive-name&gt;
+</code></pre>
+<p>
+  Results landed in <code>bench/jobs/&lt;job-name&gt;/</code>.  Post-mortem used
+  <code>events.jsonl</code> directly.
+</p>
+
+<h4>Version progression</h4>
+<table>
+  <thead><tr>
+    <th>Version</th><th>Key change</th><th>Task / tier</th><th>Result</th>
+  </tr></thead>
   <tbody>
-    <tr><td>Persistence / resumability</td><td>No — if the benchmark process dies, Harbor reruns the task</td></tr>
-    <tr><td>Event-sourcing every internal state</td><td>No — useful for forensics but not for pass/fail</td></tr>
-    <tr><td>Crash isolation, OOM handling</td><td>No — gross failures are themselves data points</td></tr>
-    <tr><td>Sandboxing</td><td>No — Harbor runs in containers; threat model is "our code", not adversarial</td></tr>
-    <tr><td>UI integration</td><td>No — Harbor reads programmatic results</td></tr>
-    <tr><td>Streaming progress</td><td>No — block until done</td></tr>
-    <tr><td>Nested recursion</td><td>No — depth=1 is enough for the headline benchmarks</td></tr>
-    <tr><td>Cancellation / kill semantics</td><td>No — Harbor's wall clock provides natural timeout</td></tr>
+    <tr>
+      <td><strong>v0.1.8</strong></td>
+      <td>REPL MVP; additive design</td>
+      <td>fix-git + crack-7z-hash, additive REPL</td>
+      <td>Both pass; LLM never calls <code>python_repl</code> (F-B)</td>
+    </tr>
+    <tr>
+      <td><strong>v0.1.9</strong></td>
+      <td>Add <code>REPLACES_FILEOPS</code> flag (Tier 1)</td>
+      <td>fix-git Tier 1 / crack-7z Tier 1</td>
+      <td>fix-git ✓; crack-7z ✗ timeout (F-C)</td>
+    </tr>
+    <tr>
+      <td><strong>v0.1.10</strong></td>
+      <td>Add <code>REPLACES_SHELL</code> flag (Tier 2)</td>
+      <td>fix-git Tier 2 / crack-7z Tier 2</td>
+      <td>Both "pass" but via <code>fetch_url.postprocess</code> loophole (F-D)</td>
+    </tr>
+    <tr>
+      <td><strong>v0.1.11</strong></td>
+      <td>Close loophole (strip postprocess when shell gated)</td>
+      <td>crack-7z Tier 2</td>
+      <td>✗ — no bootstrap; true Tier 2 first tested (F-E)</td>
+    </tr>
+    <tr>
+      <td><strong>v0.1.12</strong></td>
+      <td>Add bootstrap-on-missing (<code>python_repl_bootstrapped</code> event)</td>
+      <td>crack-7z Tier 2</td>
+      <td>✗ — fails on long-running subprocess hangs (F-E)</td>
+    </tr>
+    <tr>
+      <td><strong>v0.1.13</strong></td>
+      <td>Per-call timeout + SIGINT escalation + tee forensics + system-prompt update</td>
+      <td>crack-7z Tier 2 full</td>
+      <td>✓ <strong>PASS</strong> — 26/26 REPL, genuine state, 10 m 44 s (F-F)</td>
+    </tr>
   </tbody>
 </table>
 
+<details>
+<summary>What the original "Path to first benchmark" section planned vs. what happened</summary>
+<div class="details-body">
 <p>
-  What remains is the <strong>core experimental variable</strong>: does
-  adding this primitive change the outcome distribution, holding everything
-  else fixed?
+  The original §1.6 correctly identified the MVP cut: skip persistence, crash isolation,
+  UI integration, sandboxing, streaming, nested recursion, and cancellation semantics.
+  All of those were indeed deferred.  The table below maps each planned component
+  against what shipped:
 </p>
-
-<h4>REPL MVP sketch</h4>
-<p>
-  A feature-flagged Python REPL exposed as a tool, backed by a long-lived
-  subprocess. Python state persists across turns within a session.
-</p>
-
-<table class="survey-table">
-  <thead><tr><th>Component</th><th>Approach</th><th>Effort</th></tr></thead>
+<table>
+  <thead><tr><th>Planned component</th><th>Shipped form</th></tr></thead>
   <tbody>
-    <tr><td>Feature flag plumbing</td><td><code>OMEGA_FEATURE_REPL</code> env var, plumbed into <code>Agent</code> startup, recorded in <code>SessionStartedEvent</code></td><td>1–2 days (shared with subagent flag)</td></tr>
-    <tr><td>Python backend</td><td><code>Command::new("python3").arg("-iu").spawn()</code>, pipe stdin/stdout, read until prompt marker</td><td>1 day</td></tr>
-    <tr><td><code>PythonRepl</code> on <code>ActiveSession</code></td><td><code>Option&lt;PythonRepl&gt;</code>; initialised on first use; cleaned up on session drop</td><td>0.5 day</td></tr>
-    <tr><td>Tool wiring</td><td>New tool <code>python_repl(code) -&gt; String</code>; available iff flag on; output truncated (RLM-style)</td><td>1 day</td></tr>
-    <tr><td>System prompt</td><td>Conditional snippet describing the tool when flag is on</td><td>0.5 day</td></tr>
-    <tr><td>Harbor integration</td><td>Sweep over <code>OMEGA_FEATURE_REPL ∈ {0,1}</code></td><td>0.5 day</td></tr>
+    <tr><td>Feature flag plumbing</td><td>Three flags, <code>SessionStartedEvent.features</code> ✓</td></tr>
+    <tr><td>Python backend (stdin/stdout pipe)</td><td>Long-lived subprocess, marker-delimited output ✓</td></tr>
+    <tr><td><code>PythonRepl</code> on <code>ActiveSession</code></td><td>Struct field, bootstrapped on first call ✓</td></tr>
+    <tr><td>Tool wiring: <code>python_repl(code) → String</code></td><td>Shipped; output truncated with tail-bias on timeout ✓</td></tr>
+    <tr><td>System prompt snippet</td><td>Conditional section; updated for variable-pattern in v0.1.13 ✓</td></tr>
+    <tr><td>Harbor integration</td><td>Three-flag <code>--ae</code> pattern ✓</td></tr>
+    <tr><td>Subagent MVP (~6–7 days)</td><td>Not started; subagents remain unimplemented</td></tr>
+    <tr><td>RLM MVP (~2 days given prereqs)</td><td>Not started</td></tr>
   </tbody>
 </table>
-
-<p><strong>Estimated: 4–5 focused days</strong>, plus shared flag plumbing.</p>
-
-<p>
-  What this MVP does <em>not</em> attempt: any RLM-style "the prompt lives
-  in the REPL" trick. The MVP is REPL-as-additional-tool, not
-  REPL-as-orchestration-surface. Deliberate cut — preserves the existing
-  tool-call loop, so the benchmark answers <em>"does adding a Python REPL
-  help?"</em> independently of <em>"should we rethink the orchestration
-  model entirely?"</em> Two questions, two experiments.
-</p>
-
-<h4>Subagent MVP sketch</h4>
-<p>
-  A feature-flagged <code>spawn_subagent</code> tool that creates an
-  in-process child <code>ActiveSession</code>, runs it to its first
-  <code>TurnEnd</code> or <code>TurnInterrupted</code>, and returns the
-  last assistant message as the tool result.
-</p>
-
-<table class="survey-table">
-  <thead><tr><th>Component</th><th>Approach</th><th>Effort</th></tr></thead>
-  <tbody>
-    <tr><td>Feature flag plumbing</td><td><code>OMEGA_FEATURE_SUBAGENTS</code> env var, same shape as REPL flag</td><td>(shared with REPL)</td></tr>
-    <tr><td>Child session spawn</td><td>Reuse existing session creation; seed <code>[SystemPromptEvent, UserMessageEvent]</code>; record <code>Origin::SubagentOf</code></td><td>1.5 days (foundations exist)</td></tr>
-    <tr><td>Run-to-completion</td><td>Drive the child's agent loop until <code>TurnEnd</code> or <code>TurnInterrupted</code>; in-proc, blocking</td><td>2 days (async coordination is the tricky part)</td></tr>
-    <tr><td>Result extraction</td><td>Read the child's final assistant message; return as tool result</td><td>0.5 day</td></tr>
-    <tr><td>Tool wiring</td><td><code>spawn_subagent(task, model, effort) -&gt; String</code></td><td>1 day</td></tr>
-    <tr><td>Event emission</td><td><code>SubagentSpawned</code> and <code>SubagentReturned</code> per the design doc</td><td>1 day</td></tr>
-    <tr><td>Harbor integration</td><td>Sweep over <code>OMEGA_FEATURE_SUBAGENTS ∈ {0,1}</code></td><td>0.5 day</td></tr>
-  </tbody>
-</table>
-
-<p><strong>Estimated: 6–7 focused days</strong>, plus shared flag plumbing.</p>
-
-<p>This is genuinely more work than REPL because:</p>
-<ul>
-  <li>Async coordination (parent suspended while child runs) needs care.</li>
-  <li>Event shapes are designed but have to be wired through.</li>
-  <li>Spawning from inside an LLM call is non-trivial.</li>
-</ul>
-<p>
-  Silver lining: <code>SessionId</code>, <code>SessionRef</code>,
-  <code>Origin</code>, <code>LoggedEvent</code>, and strict resume already
-  exist. Not starting from zero on subagents — starting from
-  <em>"Phase 1 + 2 done, Phase 3 to scaffold."</em>
-</p>
-
-<h4>RLM MVP — essentially free given the prerequisites</h4>
-<p>
-  Cheap once REPL and subagent MVPs both exist. The REPL exposes
-  <code>llm_query(task, model, effort) -&gt; str</code> as a Python function
-  that calls into the subagent machinery. Result marshalling is just
-  string-in / string-out.
-</p>
-<p><strong>Estimated: ~2 days</strong>, contingent on REPL and subagent MVPs.</p>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Recommended order: REPL → Subagent → RLM</div>
-  <ol>
-    <li><strong>REPL is faster</strong> to ship in benchmarkable form. Earlier data.</li>
-    <li><strong>REPL is the substrate</strong> for RLM. Once REPL exists, RLM is cheap to add.</li>
-    <li><strong>Subagent alone is the case the evidence is most skeptical of</strong>
-        (Kim et al., Anthropic engineering post). Putting it second means
-        we can skip it if REPL + RLM data is already conclusive.</li>
-    <li><strong>REPL MVP doesn't depend on subagent</strong>, so we can
-        ship and measure cleanly without coordinating two new systems at once.</li>
-  </ol>
-  <p>
-    Total: roughly 2–3 weeks elapsed for the full sweep, depending on how
-    sequentially the work runs. Each stage produces benchmark data
-    independently.
-  </p>
 </div>
-
-<div class="callout warn">
-  <div class="callout-title">⚠ Harbor sweep mechanics</div>
-  <p>
-    Harbor sweeps the four-cell flag matrix against a fixed task set covering:
-    bug fix (with test), feature addition, refactor, documentation.
-    Tasks must be representative of Omega's actual workload, not cherry-picked
-    for multi-agent visibility.
-    <strong>Metrics:</strong> gate passage rate, tokens/commit, time/commit,
-    tool-call error rate, mutation-test survivor rate.
-    RQ-D uses instrumented everyday use rather than a Harbor sweep; see §6.
-  </p>
-</div>
-
-<div class="callout warn">
-  <div class="callout-title">⚠ What this means for RQ-D (handoff automation)</div>
-  <p>
-    Survives, but bumped down. The original framing of RQ-D as
-    <em>"highest-EV candidate"</em> was premised on the assumption that
-    benchmarking the unproven primitives would be costly. The
-    MVP-for-benchmark strategy makes that cost much lower than the
-    elegant-handoff investment would be. Net: benchmark data arrives
-    faster than handoff automation could ever be polished.
-    RQ-D remains documented (§6) and may rise in priority if benchmark
-    sweeps return null or weak results.
-  </p>
-</div>
+</details>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
@@ -760,6 +993,18 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h2 id="rq-a">§3 <span class="rq-label">RQ-A</span> REPL alone</h2>
 
 <p>
+  <strong>Status after findings:</strong>
+  F-B shows additive REPL is not measurable (LLM ignores it).
+  F-C shows Tier 1 engages REPL on file-centric tasks but not shell-centric ones.
+  F-F shows full Tier 2 on a shell-centric task works end-to-end with genuine REPL
+  state usage.  The next step for RQ-A is a broader sweep to establish whether
+  Tier 2 helps, hurts, or has mixed effects across task categories.
+</p>
+
+<details>
+<summary>RQ-A detail — value case, design leans, dismissed approaches</summary>
+<div class="details-body">
+<p>
   <strong>Value case:</strong> a persistent REPL accumulates state (working directory,
   environment, loaded data, defined functions) across tool calls. CodeAct's +20% /
   −30 turns result is the strongest evidence — but the advantage is from action
@@ -768,52 +1013,64 @@ tr:nth-child(even) td { background: #fafbfc; }
   SRLM §3.5 warning applies at &lt;131K tokens.
 </p>
 
-<p>
-  <strong>Design leans</strong> (open questions in §8):
-  shell REPL (PTY-based, <code>[368041]</code>); REPL as another tool alongside
-  existing set (<code>[fa3e44]</code>); event-replay persistence
-  (<code>[c88a22]</code>); round-trip gate must be extended for REPL state
-  equivalence (<code>[c86aa6]</code>).
+<p><strong>Design leans (open questions in §8):</strong></p>
+<ul>
+  <li>Shell REPL (PTY-based, <code>[368041]</code>) — resolved as Python subprocess</li>
+  <li>REPL as another tool alongside existing set (<code>[fa3e44]</code>)</li>
+  <li>Event-replay persistence (<code>[c88a22]</code>)</li>
+  <li>Round-trip gate extension for REPL state equivalence (<code>[c86aa6]</code>)</li>
+</ul>
+
+<p><strong>What the additive REPL experiment showed (F-B):</strong>
+  The LLM consistently ignored <code>python_repl</code> when the full standard tool
+  set was available.  This is consistent with Kim et al.'s Baseline Paradox: fine-tuned
+  tool-call behaviour crowds out a new, unfamiliar tool.
 </p>
 
-<p><strong>Next step:</strong> implement shell REPL behind <code>repl=on</code> flag;
-run Harbor sweep; measure gate passage rate, tokens/commit, time/commit, tool-call
-error rate vs. baseline. <em>See §1.6 for the REPL MVP sketch and effort estimate.</em></p>
+<p><strong>What the Tier 1 experiment showed (F-C):</strong>
+  Removing file tools forced the LLM to reach for Python for file writes.  The signal
+  is clean but limited: only fix-git benefited; crack-7z-hash failed because file tools
+  were inert for that task.
+</p>
 
-<div id="rq-a-limit-mode-finding" class="callout" style="border-left-color: #e6a817;">
-  <div class="callout-title">⚠️ Empirical finding — v0.1.8 smoke (fix-git, crack-7z-hash)</div>
-  <p>
-    Both tasks were run with <code>OMEGA_FEATURE_REPL=1</code> (additive design:
-    <code>python_repl</code> available alongside all twelve standard tools).
-    In <strong>both sessions the LLM did not call <code>python_repl</code>
-    once</strong> — it consistently chose <code>run_command</code> and the
-    dedicated file tools (<code>read_file</code>, <code>grep_files</code>, etc.).
-    Session events are in <code>bench/jobs/v018-smoke-*/</code>.
-  </p>
-  <p>
-    <strong>Implication for RQ-A:</strong> the additive REPL design is not
-    measurable with the current LLM behaviour. The tool is present but ignored.
-    To obtain benchmark data we need to create a context where the LLM
-    <em>must</em> choose between <code>python_repl</code> and
-    <code>run_command</code> — hence the
-    <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code> limit-mode flag
-    added in the next sub-session (see Next Steps above).
-  </p>
+<p><strong>Subagent MVP sketch</strong> (reference, not planned work):</p>
+<table class="survey-table">
+  <thead><tr><th>Component</th><th>Approach</th><th>Effort estimate</th></tr></thead>
+  <tbody>
+    <tr><td>Feature flag plumbing</td><td>(shared with REPL — done)</td><td>—</td></tr>
+    <tr><td>Python backend</td><td>Long-lived subprocess, marker-delimited ✓ done</td><td>—</td></tr>
+    <tr><td>Tool wiring</td><td><code>python_repl(code) → String</code> ✓ done</td><td>—</td></tr>
+    <tr><td>System prompt</td><td>Conditional snippet ✓ done</td><td>—</td></tr>
+    <tr><td>Bootstrap + timeout + forensics</td><td>✓ done in v0.1.11–v0.1.13</td><td>—</td></tr>
+    <tr><td>Broader Harbor sweep</td><td>Pending registry availability</td><td>1 day setup</td></tr>
+  </tbody>
+</table>
 </div>
+</details>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
 <h2 id="rq-b">§4 <span class="rq-label">RQ-B</span> Subagents alone</h2>
 
+<p>
+  <strong>Status after findings:</strong>
+  Subagents remain entirely unimplemented.  No new data since the original
+  evidence-base assessment.  RQ-B should be revisited after the broader REPL sweep
+  provides task-category data, or after RQ-D instrumentation provides real data on
+  Omega's actual subtask decomposition.
+</p>
+
+<details>
+<summary>RQ-B detail — design leans, open questions</summary>
+<div class="details-body">
 <div class="callout warn">
-  <div class="callout-title">⚠ <code>[7d2e8f]</code> Is RQ-B worth pursuing at all?</div>
+  <div class="callout-title">⚠ <code>[7d2e8f]</code> Is RQ-B worth pursuing at all? <span class="status-open">OPEN</span></div>
   <p>
-    Kim et al., Cemri et al., the Anthropic post, and Tran &amp; Kiela all converge
+    Kim et al., Cemri et al., the Anthropic engineering post, and Tran &amp; Kiela all converge
     negative for coding tasks. Counter-evidence (specialised phase agents, AdaptOrch)
     requires narrow task decomposition that may not generalise to Omega's workload.
-    <strong>Not yet decided: whether to invest in RQ-B before RQ-D's
-    seeded-handoff instrumentation provides real data on Omega's actual subtask
-    decomposition.</strong>
+    Not decided: whether to invest in RQ-B before RQ-D's seeded-handoff instrumentation
+    provides real data on Omega's actual subtask decomposition.
   </p>
 </div>
 
@@ -822,15 +1079,40 @@ error rate vs. baseline. <em>See §1.6 for the REPL MVP sketch and effort estima
   <code>SessionRef</code>, <code>Origin::SubagentOf</code>) already provide the
   primitives. Remaining: session model (in-process vs. separate process), spawn tool
   JSON schema, <code>SubagentSpawned</code>/<code>SubagentReturned</code> event shapes.
-  Phase 1.5 (UI surfacing) and 1.6 (WS migration) are prerequisites before any
-  Phase 3 implementation.
-  <em>See §1.6 for the Subagent MVP sketch and effort estimate.</em>
 </p>
+
+<h4>Subagent MVP sketch</h4>
+<table class="survey-table">
+  <thead><tr><th>Component</th><th>Approach</th><th>Effort</th></tr></thead>
+  <tbody>
+    <tr><td>Feature flag plumbing</td><td>(shared with REPL — done)</td><td>—</td></tr>
+    <tr><td>Child session spawn</td><td>Reuse existing session creation; seed <code>[SystemPromptEvent, UserMessageEvent]</code>; record <code>Origin::SubagentOf</code></td><td>1.5 days</td></tr>
+    <tr><td>Run-to-completion</td><td>Drive child's agent loop until <code>TurnEnd</code> or <code>TurnInterrupted</code>; in-proc, blocking</td><td>2 days</td></tr>
+    <tr><td>Result extraction</td><td>Read child's final assistant message; return as tool result</td><td>0.5 day</td></tr>
+    <tr><td>Tool wiring</td><td><code>spawn_subagent(task, model, effort) → String</code></td><td>1 day</td></tr>
+    <tr><td>Event emission</td><td><code>SubagentSpawned</code> and <code>SubagentReturned</code></td><td>1 day</td></tr>
+    <tr><td>Harbor integration</td><td>Sweep over <code>OMEGA_FEATURE_SUBAGENTS ∈ {0,1}</code></td><td>0.5 day</td></tr>
+  </tbody>
+</table>
+<p><strong>Estimated: 6–7 focused days</strong>, plus shared flag plumbing.</p>
+</div>
+</details>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
 <h2 id="rq-c">§5 <span class="rq-label">RQ-C</span> RLM — REPL + subagents combined</h2>
 
+<p>
+  <strong>Status after findings:</strong>
+  RQ-C remains blocked on positive signal from RQ-A and at least neutral from RQ-B.
+  The F-F result on crack-7z-hash is encouraging for RQ-A, but the domain gap
+  (Omega &lt;131K tokens = SRLM's degradation regime) means the RLM paper's headline
+  numbers may not transfer.  No new data since the original framing.
+</p>
+
+<details>
+<summary>RQ-C detail — value case, design leans, dependency on RQ-A/B</summary>
+<div class="details-body">
 <p>
   <strong>Value case:</strong> for large-context retrieval (6M–11M tokens), RLM's
   numbers are compelling (91.3% BrowseComp+, 58% OOLONG-Pairs). If Omega's workloads
@@ -844,149 +1126,16 @@ error rate vs. baseline. <em>See §1.6 for the REPL MVP sketch and effort estima
 <p>
   <strong>Dependency:</strong> blocked on positive signal from RQ-A (REPL beneficial
   in isolation) and at least neutral from RQ-B (subagents not actively harmful).
-  RLM is essentially free once both prerequisites exist (≈2 days per §1.6).
+  RLM is essentially free once both prerequisites exist (≈2 days per §7).
 </p>
 
 <div class="callout rec">
   <div class="callout-title">✓ <code>[cf2db0]</code> Decided — REPL first, subagent second, RLM third</div>
   <p>
-    Resolved by the MVP-for-benchmark strategy (§1.6). REPL ships faster as
-    a benchmark prototype (≈4–5 days vs. ≈6–7 for subagent), is the substrate
-    for RLM, and doesn't depend on subagent machinery. Subagent second because
-    (a) most skeptically received by the evidence, so skip if REPL+RLM data is
-    conclusive, and (b) async parent-child coordination is harder.
+    Resolved by the MVP-for-benchmark strategy. REPL shipped faster as a benchmark
+    prototype, is the substrate for RLM, and doesn't depend on subagent machinery.
   </p>
 </div>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<hr class="section-divider" />
-<h2 id="rq-d">§6 <span class="rq-label">RQ-D</span> Handoff automation — sequenced after first benchmark data</h2>
-
-<p>
-  Automate the seeded-handoff working method (§1.5). Unlike RQ-A/B/C, this builds on
-  a pattern that has already proved its value in daily use. Deprioritised relative to
-  REPL/subagent benchmarks by the MVP-for-benchmark strategy; may rise if sweeps
-  return null or weak results.
-</p>
-
-<h4>Incremental automation steps</h4>
-<ol>
-  <li>
-    <strong>Trigger detection.</strong> The agent monitors context growth, turn count,
-    and topic coherence; flags when a handoff is likely beneficial. Surfaces a
-    suggestion to the user without acting. Low risk; high daily value. Instrument the
-    current manual workflow in Omega's event log first: record each handoff event, the
-    seed used, and the outcome (gate passage, commit quality, time elapsed).
-  </li>
-  <li>
-    <strong>Seed-prompt drafting.</strong> When a handoff is flagged (or requested),
-    the agent drafts the seed: current state, next goal, necessary context for the
-    incoming session. User reviews and edits before dispatch.
-  </li>
-  <li>
-    <strong>Dispatch.</strong> The agent initiates the child session with the reviewed
-    seed, correct model, and effort. Records the <code>SessionRef</code> to the child
-    in its event stream. Each step is independently useful without the next.
-  </li>
-</ol>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<hr class="section-divider" />
-<h2 id="open-questions">§8 Open questions</h2>
-
-<h3 id="oq-ground">Ground rules (already decided)</h3>
-
-<div class="callout rec">
-  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags — REPL and subagents independently switchable</div>
-  <p>
-    Two independent runtime flags (<code>OMEGA_FEATURE_REPL=1</code>,
-    <code>OMEGA_FEATURE_SUBAGENTS=1</code>), both defaulting to off, recorded
-    in <code>SessionStartedEvent.features</code>. Harbor sweeps combinations
-    without rebuild.
-  </p>
-</div>
-
-<div class="callout rec">
-  <div class="callout-title">✓ <code>[abe7e7]</code> Stay on develop; feature flags alone, no branch</div>
-  <p>
-    All new code lands on <code>develop</code> behind flags. The gate runs
-    every commit. No long-lived feature branch.
-  </p>
-</div>
-
-<h3 id="oq-rqa">RQ-A questions</h3>
-
-<div class="callout">
-  <div class="callout-title">💡 <code>[368041]</code> What language is the REPL?</div>
-  <p>
-    <strong>Lean: shell (PTY-based).</strong> Zero new runtime dependencies;
-    deterministic enough for replay-based resume; matches Omega's
-    coding-agent persona. Python (via PyO3 or Pyodide-in-Deno) only if
-    data-science workloads emerge. Rust-native scripting (rhai/rune) rejected
-    — LLM proficiency too low, Python ecosystem lost.
-  </p>
-</div>
-
-<div class="callout">
-  <div class="callout-title">💡 <code>[fa3e44]</code> How do existing tools integrate with the REPL?</div>
-  <p>
-    <strong>Lean: REPL as another tool, not a replacement.</strong> Existing
-    tool set remains. A <code>shell_session</code> tool is added that feeds
-    commands into the persistent session. The LLM chooses REPL when state
-    accumulation is valuable. All three production agents surveyed use this
-    approach.
-  </p>
-</div>
-
-<div class="callout">
-  <div class="callout-title">💡 <code>[c88a22]</code> How does REPL state persist across process restarts?</div>
-  <p>
-    <strong>Lean: event-replay.</strong> Each executed command is a
-    <code>ReplExecuted</code> event. On resume, commands are replayed in order.
-    Shell commands are sufficiently deterministic for this to work. Snapshot
-    (binary blobs in events.jsonl) violates Contract Authority. Hybrid deferred.
-  </p>
-</div>
-
-<div class="callout">
-  <div class="callout-title">💡 <code>[835f01]</code> Cost / determinism / debuggability</div>
-  <p>
-    Real costs: PTY startup latency, per-command round-trip, replay
-    non-determinism, harder trajectory debugging. For shell REPL: startup is
-    fast; determinism is sufficient; <code>ReplExecuted</code> event log makes
-    trajectories inspectable. For RLM-style <code>llm_query</code> recursion:
-    additional LLM call budget analogues of <code>max_depth</code> and
-    <code>max_money_spent</code> will be needed.
-  </p>
-</div>
-
-<div class="callout">
-  <div class="callout-title">💡 <code>[c86aa6]</code> Interaction with strict resume</div>
-  <p>
-    When REPL is built, the round-trip gate test must be extended to verify
-    REPL state equivalence after resume. For shell REPL, "equivalent" means
-    working directory and key environment variables match (not byte-for-byte
-    stdout identity). This extension is a prerequisite for the REPL
-    iteration, not for vanilla-subagents or handoff-automation work.
-  </p>
-</div>
-
-<h3 id="oq-rqb">RQ-B questions</h3>
-
-<div class="callout warn">
-  <div class="callout-title">⚠ <code>[7d2e8f]</code> Is RQ-B even worth pursuing?</div>
-  <p>
-    Kim et al., Cemri et al., the Anthropic engineering post, and the
-    equal-budget parity finding (Tran &amp; Kiela) all suggest caution.
-    The counter-evidence (specialised phase agents, AdaptOrch) requires a
-    careful task-decomposition design that may not generalise. This question
-    should be revisited <em>after</em> RQ-D's seeded-handoff instrumentation
-    provides real data on what Omega's actual subtask decomposition looks like
-    in practice.
-  </p>
-</div>
-
-<h3 id="oq-rqc">RQ-C questions</h3>
 
 <div class="callout">
   <div class="callout-title">💡 <code>[8e161a]</code> How does an <code>llm_query</code> call relate to <code>SessionId</code>?</div>
@@ -1028,13 +1177,56 @@ error rate vs. baseline. <em>See §1.6 for the REPL MVP sketch and effort estima
     subagent calls but not to the user-facing reply.
   </p>
 </div>
+</div>
+</details>
 
-<h3 id="oq-rqd">RQ-D questions</h3>
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="rq-d">§6 <span class="rq-label">RQ-D</span> Handoff automation — sequenced after first benchmark data</h2>
+
+<p>
+  <strong>Status after findings:</strong>
+  RQ-D was deliberately deferred while REPL benchmarks ran.  The benchmark data
+  now exists (F-B through F-F).  RQ-D may rise in priority if the broader REPL
+  sweep returns mixed results, or independently as the seeded-handoff method
+  continues to prove its daily value.  No implementation work has started.
+</p>
+
+<details>
+<summary>RQ-D detail — incremental automation steps, open questions</summary>
+<div class="details-body">
+<p>
+  Automate the seeded-handoff working method (§1.5). Unlike RQ-A/B/C, this builds on
+  a pattern that has already proved its value in daily use. Deprioritised relative to
+  REPL/subagent benchmarks by the MVP-for-benchmark strategy; may rise if sweeps
+  return null or weak results.
+</p>
+
+<h4>Incremental automation steps</h4>
+<ol>
+  <li>
+    <strong>Trigger detection.</strong> The agent monitors context growth, turn count,
+    and topic coherence; flags when a handoff is likely beneficial. Surfaces a
+    suggestion to the user without acting. Low risk; high daily value. Instrument the
+    current manual workflow in Omega's event log first: record each handoff event, the
+    seed used, and the outcome (gate passage, commit quality, time elapsed).
+  </li>
+  <li>
+    <strong>Seed-prompt drafting.</strong> When a handoff is flagged (or requested),
+    the agent drafts the seed: current state, next goal, necessary context for the
+    incoming session. User reviews and edits before dispatch.
+  </li>
+  <li>
+    <strong>Dispatch.</strong> The agent initiates the child session with the reviewed
+    seed, correct model, and effort. Records the <code>SessionRef</code> to the child
+    in its event stream. Each step is independently useful without the next.
+  </li>
+</ol>
 
 <div class="callout">
   <div class="callout-title">💡 <code>[e91b54]</code> Seeded-handoff automation — how far to go first?</div>
   <p>
-    Three incremental steps (§6): trigger detection, seed-prompt drafting,
+    Three incremental steps (above): trigger detection, seed-prompt drafting,
     dispatch. Each step is independently useful. The research question is:
     how much of the handoff does the agent need to automate before human
     review becomes the bottleneck rather than the safeguard? Empirical
@@ -1051,6 +1243,188 @@ error rate vs. baseline. <em>See §1.6 for the REPL MVP sketch and effort estima
     evidence base. The concrete research design: instrument the handoff
     events, measure outcomes, compare against sessions that did not use
     handoffs. Feasibility: high. Unique Omega advantage: high.
+  </p>
+</div>
+</div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="open-questions">§8 Open questions</h2>
+
+<h3 id="oq-ground">Ground rules (already decided)</h3>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags — REPL and subagents independently switchable <span class="status-resolved">RESOLVED</span></div>
+  <p>
+    Implemented as three independent runtime flags (not two as originally planned):
+    <code>OMEGA_FEATURE_REPL=1</code>, <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1</code>,
+    <code>OMEGA_FEATURE_REPL_REPLACES_SHELL=1</code>.
+    All default off; all recorded in <code>SessionStartedEvent.features</code>.
+    Harbor sweeps combinations without rebuild.
+    See <a href="#finding-a">F-A</a>.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[abe7e7]</code> Stay on develop; feature flags alone, no branch <span class="status-resolved">RESOLVED</span></div>
+  <p>
+    All new code landed on <code>develop</code> behind flags.  The gate ran
+    every commit.  No long-lived feature branch.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[cf2db0]</code> REPL first vs. subagents first <span class="status-resolved">RESOLVED</span></div>
+  <p>
+    REPL was built first.  Subagents remain entirely unimplemented.
+    See findings F-B through F-F for the REPL trajectory.
+  </p>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">✓ <code>[3c9a17]</code> Handoff automation first? <span class="status-resolved">RESOLVED-as-deferred</span></div>
+  <p>
+    Benchmark data arrived before any handoff automation work was started.
+    RQ-D remains open; no implementation work has begun.
+  </p>
+</div>
+
+<h3 id="oq-rqa">RQ-A questions</h3>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[368041]</code> What language is the REPL? <span class="status-resolved">RESOLVED</span></div>
+  <p>
+    <strong>Decided: Python (subprocess-based, not PTY).</strong>
+    The original lean was shell/PTY; implementation used
+    <code>python3 -c</code> with a long-lived subprocess.
+    Python proved natural for the LLM (F-F: the LLM used
+    <code>subprocess</code>, <code>threading</code>, and file I/O fluently).
+    PTY-based shell REPL remains unexplored.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[fa3e44]</code> How do existing tools integrate with the REPL? <span class="status-resolved">RESOLVED (for now)</span></div>
+  <p>
+    <strong>Implemented as additive tool (Tier 0), plus flag-gated replacements (Tiers 1–2).</strong>
+    The Tier 2 full mode removes all competing tools, forcing Python.
+    The additive design (original lean) was shown to be non-measurable
+    (F-B): the LLM ignores <code>python_repl</code> when alternatives exist.
+    Tier 2 forces engagement by removing alternatives.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[c88a22]</code> How does REPL state persist across process restarts? <span class="status-open">OPEN</span></div>
+  <p>
+    <strong>Current state: <code>strict_resume</code> refuses REPL sessions loudly.</strong>
+    See <a href="./session-design.html#oq-repl-replay"><code>session-design.html §oq-repl-replay</code></a>
+    for the event-replay design.  The principled fix (replay <code>python_repl</code>
+    calls into a fresh subprocess) is not yet implemented.  For benchmark use, this
+    is acceptable: Harbor reruns failed tasks.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[835f01]</code> Cost / determinism / debuggability <span class="status-open">OPEN</span></div>
+  <p>
+    Real costs observed: per-call timeout overhead (60 s max, with SIGINT escalation);
+    subprocess hangs requiring kill_group; non-determinism in apt-get install timings.
+    For shell work inside Python: determinism is sufficient for benchmark use.
+    For <code>llm_query</code> recursion: not yet relevant; RQ-C not started.
+    The <code>python_repl_bootstrapped</code> event and tee-forensics output make
+    trajectories inspectable from <code>events.jsonl</code> alone.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[c86aa6]</code> Interaction with strict resume <span class="status-open">OPEN</span></div>
+  <p>
+    <code>strict_resume</code> currently refuses REPL sessions with a loud error.
+    The round-trip gate test has not been extended to verify REPL state equivalence.
+    For benchmark use, this is acceptable (Harbor reruns; no resume needed).
+    For daily-use REPL, the extension is a prerequisite.
+    See <a href="./session-design.html#oq-repl-replay"><code>session-design.html §oq-repl-replay</code></a>.
+  </p>
+</div>
+
+<h3 id="oq-rqb">RQ-B questions</h3>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>[7d2e8f]</code> Is RQ-B even worth pursuing? <span class="status-open">OPEN</span></div>
+  <p>
+    Kim et al., Cemri et al., the Anthropic engineering post, and the
+    equal-budget parity finding (Tran &amp; Kiela) all suggest caution.
+    The counter-evidence (specialised phase agents, AdaptOrch) requires a
+    careful task-decomposition design that may not generalise. This question
+    should be revisited <em>after</em> the broader REPL sweep provides
+    task-category data on what decomposition Omega's workload actually needs.
+    If the REPL sweep shows mixed results, RQ-D may provide better data on
+    natural subtask decomposition before committing to RQ-B.
+  </p>
+</div>
+
+<h3 id="oq-rqc">RQ-C questions</h3>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[8e161a]</code> How does an <code>llm_query</code> call relate to <code>SessionId</code>? <span class="status-open">OPEN</span></div>
+  <p>
+    <strong>Lean:</strong> each <code>llm_query</code> invocation is its own
+    session — own <code>SessionId</code>, own <code>events.jsonl</code>, own
+    folder. Mirrors the existing decision that subagents are child sessions.
+    Not yet implemented.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[053c4a]</code> What is "the session" in an RLM Omega? <span class="status-open">OPEN</span></div>
+  <p>
+    <strong>Lean:</strong> today's framing survives intact. "The session" is
+    the outer Omega instance the user interacts with. Its REPL is a property
+    of that instance. Children spawned by <code>llm_query</code> are child
+    sessions in exactly the same sense as vanilla subagents.
+    Not yet relevant; RQ-C not started.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[bab784]</code> User interaction with an RLM Omega <span class="status-open">OPEN</span></div>
+  <p>
+    <strong>Lean:</strong> chat messages stay; REPL is internal; UI optionally
+    exposes REPL state as collapsible event blocks. A dedicated "REPL console"
+    pane is deferred. Not yet relevant; RQ-C not started.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[1f28f7]</code> Output format — autoregressive vs. variable <span class="status-open">OPEN</span></div>
+  <p>
+    <strong>Lean:</strong> autoregressive prose at the user boundary;
+    variable returns only within the REPL and in subagent-to-parent data flow.
+    Not yet relevant; RQ-C not started.
+  </p>
+</div>
+
+<h3 id="oq-rqd">RQ-D questions</h3>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[e91b54]</code> Seeded-handoff automation — how far to go first? <span class="status-open">OPEN</span></div>
+  <p>
+    Three incremental steps (§6): trigger detection, seed-prompt drafting, dispatch.
+    Each step is independently useful. The question of how much to automate before
+    human review becomes the bottleneck is empirical; answer from instrumented use.
+    No implementation work has started; waiting on REPL sweep data.
+  </p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">💡 <code>[a3f7c2]</code> Is the human-orchestrated, artefact-returning pattern worth formalising? <span class="status-open">OPEN</span></div>
+  <p>
+    The pattern is distinct from both vanilla MAS and REPL-based RLM, sidesteps
+    known failure modes, and remains unstudied in the literature.  Omega's session
+    logs and commit history are a growing evidence base.  Feasibility and Omega
+    advantage are both high.  Sequenced after REPL sweep.
   </p>
 </div>
 
