@@ -337,16 +337,35 @@ async fn execute_shell_gated(url_str: String, ctx: Option<&ToolCtx>) -> Result<S
     let (body, suppressed_lines, suppressed_chars) =
         apply_shell_gated_cap(&text, SHELL_GATED_MAX_LINES, SHELL_GATED_MAX_BYTES);
 
+    Ok(format_shell_gated_result(
+        &cache_str,
+        total_chars,
+        &body,
+        suppressed_lines,
+        suppressed_chars,
+    ))
+}
+
+/// Format the final output string for shell-gated `fetch_url`.
+///
+/// Extracted as a pure function so that the `suppressed_lines > 0 || suppressed_chars > 0`
+/// condition can be unit-tested without network access.
+fn format_shell_gated_result(
+    cache_str: &str,
+    total_chars: usize,
+    body: &str,
+    suppressed_lines: usize,
+    suppressed_chars: usize,
+) -> String {
     let mut result = format!("Cached: {cache_str} ({total_chars} chars)\n\n");
-    result.push_str(&body);
+    result.push_str(body);
     if suppressed_lines > 0 || suppressed_chars > 0 {
         let _ = write!(
             result,
             "\n... [content truncated: {suppressed_lines} lines / {suppressed_chars} chars suppressed]"
         );
     }
-
-    Ok(result)
+    result
 }
 
 /// Truncate `text` to at most `max_lines` lines or `max_bytes` bytes,
@@ -444,4 +463,218 @@ fn html_to_text(html: &str) -> String {
     let s: Cow<str> = re_newlines.replace_all(s.as_ref(), "\n\n");
 
     s.trim().to_owned()
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    // ------------------------------------------------------------------
+    // apply_shell_gated_cap
+    // ------------------------------------------------------------------
+
+    /// No truncation when content fits within both limits.
+    #[test]
+    fn cap_no_truncation_needed() {
+        let text = "hello\nworld\n";
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 100, 10_000);
+        assert_eq!(body, text);
+        assert_eq!(sup_lines, 0);
+        assert_eq!(sup_chars, 0);
+    }
+
+    /// Line limit triggers truncation even when byte limit is not hit.
+    #[test]
+    fn cap_line_limit_alone_triggers_truncation() {
+        let text = "line1\nline2\nline3\n";
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 2, 10_000);
+        assert_eq!(body, "line1\nline2\n");
+        assert_eq!(sup_lines, 1);
+        assert_eq!(sup_chars, 6); // "line3\n" = 6 chars
+    }
+
+    /// Byte limit triggers truncation even when line limit is not hit.
+    #[test]
+    fn cap_byte_limit_alone_triggers_truncation() {
+        // "line1\n" = 6 bytes, limit 8 → fits; "line2\n" = 6 bytes, 6+6 > 8 → capped.
+        let text = "line1\nline2\nline3\n";
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 1_000, 8);
+        assert_eq!(body, "line1\n");
+        assert_eq!(sup_lines, 2);
+        assert_eq!(sup_chars, 12); // "line2\nline3\n" = 12 chars
+    }
+
+    /// A line that exactly fills `max_bytes` must be KEPT (`>`, not `>=`).
+    #[test]
+    fn cap_exact_byte_boundary_line_is_kept() {
+        // "abcde\n" = 6 bytes.  With `>`, 0+6 > 6 = false → kept.
+        // With `>=` mutation: 0+6 >= 6 = true → capped (wrong).
+        let text = "abcde\nnext\n";
+        let (body, sup_lines, _) = apply_shell_gated_cap(text, 1_000, 6);
+        assert_eq!(
+            body, "abcde\n",
+            "line filling the byte limit exactly must be kept"
+        );
+        assert_eq!(sup_lines, 1);
+    }
+
+    /// Verifies the byte check uses ADDITION, not multiplication.
+    ///
+    /// With `byte_count + line_bytes > max_bytes` (correct): the first `"\n"` fits
+    /// exactly (0+1 = 1, not > 1) and the second is capped (1+1 = 2 > 1).
+    /// With the `+ → *` mutation: `0*1 = 0` and `1*1 = 1`, neither > 1, so
+    /// BOTH lines would be kept (wrong).
+    #[test]
+    fn cap_byte_check_uses_addition_not_multiplication() {
+        let text = "\n\n";
+        let (body, _, sup_chars) = apply_shell_gated_cap(text, 1_000, 1);
+        assert_eq!(body, "\n", "first empty line must be kept; second capped");
+        assert!(sup_chars > 0, "second line must be suppressed");
+    }
+
+    /// Exactly `max_lines` lines — no truncation (tests `>=` boundary).
+    #[test]
+    fn cap_exact_line_count_at_limit_no_truncation() {
+        let text = "a\nb\nc\n";
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 3, 10_000);
+        assert_eq!(body, text);
+        assert_eq!(sup_lines, 0);
+        assert_eq!(sup_chars, 0);
+    }
+
+    /// One line over `max_lines` — truncates (confirms `>=` not `>`).
+    #[test]
+    fn cap_one_line_over_limit_truncates() {
+        let text = "a\nb\nc\nd\n";
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 3, 10_000);
+        assert_eq!(body, "a\nb\nc\n");
+        assert_eq!(sup_lines, 1);
+        assert_eq!(sup_chars, 2); // "d\n" = 2 chars
+    }
+
+    /// Trailing double-newline: the second `\n` becomes a lone `\n` remainder.
+    ///
+    /// `"a\n\n"` capped at 1 line: body=`"a\n"`, remainder=`"\n"`.  In Rust,
+    /// `"\n".lines()` yields `[""]` (one empty line), so both suppressed counts
+    /// equal 1.
+    #[test]
+    fn cap_trailing_double_newline_has_correct_suppressed_counts() {
+        let text = "a\n\n";
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 1, 10_000);
+        assert_eq!(body, "a\n");
+        // remainder = "\n": lines().count() = 1 (empty-string line), chars().count() = 1
+        assert_eq!(sup_lines, 1);
+        assert_eq!(sup_chars, 1);
+    }
+
+    /// Suppressed line and char counts are correct.
+    #[test]
+    fn cap_suppressed_counts_are_correct() {
+        let text = "one\ntwo\nthree\nfour\n";
+        // max_lines=2 → body="one\ntwo\n", remainder="three\nfour\n"
+        let (body, sup_lines, sup_chars) = apply_shell_gated_cap(text, 2, 10_000);
+        assert_eq!(body, "one\ntwo\n");
+        assert_eq!(sup_lines, 2);
+        assert_eq!(sup_chars, 11); // "three\nfour\n" = 11 chars
+    }
+
+    /// `SHELL_GATED_MAX_BYTES` (50×1024 = 51200): sub-50-KB content must not be
+    /// truncated.  If the constant were mutated to `50 + 1024 = 1074`, the
+    /// 5000-byte content used here WOULD be truncated → test fails → caught.
+    #[test]
+    fn max_bytes_constant_allows_sub_50kb_content() {
+        // 500 lines × 10 bytes/line = 5000 bytes — well below 50 KB
+        let text = "xxxxxxxxx\n".repeat(500);
+        assert_eq!(text.len(), 5000);
+        let (body, sup_lines, sup_chars) =
+            apply_shell_gated_cap(&text, SHELL_GATED_MAX_LINES, SHELL_GATED_MAX_BYTES);
+        assert_eq!(
+            sup_lines, 0,
+            "5 KB must not be truncated at the 50 KB limit"
+        );
+        assert_eq!(sup_chars, 0);
+        assert_eq!(body, text);
+    }
+
+    /// Content > 50 KB must be truncated.
+    #[test]
+    fn max_bytes_constant_truncates_over_50kb_content() {
+        // 1000 lines × 64 bytes/line = 64 000 bytes — over 50 KB
+        let chunk = "x".repeat(63); // 63 chars + 1 newline = 64 bytes
+        let text = format!("{chunk}\n").repeat(1000);
+        assert_eq!(text.len(), 64_000);
+        let (_, sup_lines, sup_chars) =
+            apply_shell_gated_cap(&text, SHELL_GATED_MAX_LINES, SHELL_GATED_MAX_BYTES);
+        assert!(
+            sup_chars > 0,
+            "64 KB content must be truncated at the 50 KB limit"
+        );
+        assert!(sup_lines > 0);
+    }
+
+    // ------------------------------------------------------------------
+    // format_shell_gated_result
+    // ------------------------------------------------------------------
+
+    /// No suppressed content → no truncation marker.
+    #[test]
+    fn format_result_no_marker_when_not_truncated() {
+        let result = format_shell_gated_result("/tmp/foo.txt", 10, "body text", 0, 0);
+        assert!(
+            !result.contains("[content truncated"),
+            "no marker expected: {result}"
+        );
+        assert!(result.contains("body text"));
+    }
+
+    /// Suppressed lines only → truncation marker appears (tests `||` not `&&`).
+    #[test]
+    fn format_result_marker_when_only_sup_lines_nonzero() {
+        let result = format_shell_gated_result("/tmp/foo.txt", 20, "body", 3, 0);
+        assert!(
+            result.contains("[content truncated"),
+            "marker expected when sup_lines=3: {result}"
+        );
+    }
+
+    /// Suppressed chars only → truncation marker appears (tests `||` not `&&`).
+    /// This case arises when the remainder is a bare trailing `\n` (zero logical
+    /// lines in Rust's iterator, one char).
+    #[test]
+    fn format_result_marker_when_only_sup_chars_nonzero() {
+        let result = format_shell_gated_result("/tmp/foo.txt", 100, "body", 0, 1);
+        assert!(
+            result.contains("[content truncated"),
+            "marker expected when sup_chars=1: {result}"
+        );
+    }
+
+    /// Marker includes both suppressed line and char counts.
+    #[test]
+    fn format_result_marker_includes_counts() {
+        let result = format_shell_gated_result("/tmp/foo.txt", 100, "body", 5, 42);
+        assert!(
+            result.contains("5 lines"),
+            "must include line count: {result}"
+        );
+        assert!(
+            result.contains("42 chars"),
+            "must include char count: {result}"
+        );
+    }
+
+    /// The header line includes the cache path and total char count.
+    #[test]
+    fn format_result_header_includes_cache_path_and_total_chars() {
+        let result = format_shell_gated_result("/my/cache/file.txt", 777, "body", 0, 0);
+        assert!(
+            result.contains("Cached: /my/cache/file.txt (777 chars)"),
+            "header missing: {result}"
+        );
+    }
 }

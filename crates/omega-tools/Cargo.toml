@@ -28,3 +28,4 @@ mutants = "0.0.4" # #[mutants::skip] attribute for equivalent-mutation suppressi
 [dev-dependencies]
 tempfile = "3"
 tokio    = { version = "1", features = ["macros", "rt"] }
+wiremock = { version = "0.6", default-features = false }

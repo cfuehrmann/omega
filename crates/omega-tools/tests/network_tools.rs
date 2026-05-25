@@ -515,3 +515,93 @@ async fn fetch_url_shell_gated_result_is_bounded() {
         out.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Wiremock-backed tests (no real network, no #[ignore])
+// ---------------------------------------------------------------------------
+
+/// Shell-gated: `text/html` content is converted to plain text.
+///
+/// The `content_type.contains("text/html") || content_type.contains("application/xhtml")`
+/// branch is tested with a mock server that returns `text/html`.  If the `||`
+/// were mutated to `&&`, the HTML-to-text conversion would not fire and the raw
+/// HTML tags would appear in the output.
+#[tokio::test]
+async fn fetch_url_shell_gated_html_content_is_converted_to_text() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let html_body =
+        "<html><head><title>Test Page</title></head><body><p>Hello World</p></body></html>";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(html_body, "text/html; charset=utf-8"),
+        )
+        .mount(&server)
+        .await;
+
+    let out = exec_with_flags(
+        "fetch_url",
+        json!({ "url": server.uri() }),
+        flags_shell_gated(),
+    )
+    .await
+    .expect("shell-gated HTML fetch must succeed");
+
+    // The HTML must have been converted: no raw tags in the body.
+    assert!(
+        !out.contains("<html>") && !out.contains("<body>") && !out.contains("<p>"),
+        "HTML tags must be stripped by conversion: {out}"
+    );
+    // The text content must be present.
+    assert!(
+        out.contains("Hello World"),
+        "text content must survive HTML-to-text conversion: {out}"
+    );
+}
+
+/// Normal mode (postprocess): `text/html` content is also converted to plain text.
+///
+/// Mirrors the shell-gated test for the existing `execute` path so that
+/// `content_type.contains("text/html") || content_type.contains("application/xhtml")`
+/// is covered in both branches.
+#[tokio::test]
+async fn fetch_url_normal_html_content_is_converted_to_text() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let html_body = "<html><head><title>Test</title></head><body><p>Converted</p></body></html>";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(html_body, "text/html; charset=utf-8"),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ctx = omega_tools::ToolCtx::new(dir.path(), "test-html-normal");
+    let result = omega_tools::execute_tool(
+        "fetch_url",
+        json!({ "url": server.uri(), "postprocess": "head -10" }),
+        None,
+        Some(&ctx),
+    )
+    .await;
+    assert!(
+        !result.is_error,
+        "normal HTML fetch must succeed: {}",
+        result.content
+    );
+    assert!(
+        !result.content.contains("<html>") && !result.content.contains("<p>"),
+        "HTML tags must be stripped: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Converted"),
+        "text content must appear: {}",
+        result.content
+    );
+}
