@@ -397,15 +397,18 @@ fn python_repl() -> ToolDefinition {
                       Returns combined stdout/stderr output, truncated if long. \
                       Useful for calculations, data parsing, exploration, and \
                       composing intermediate results. \
-                      Optional `timeout` parameter (default 60 s, max 600 s) controls \
-                      how long to wait before sending SIGINT (soft) and then SIGKILL \
-                      (hard) to the kernel."
+                      Optional `timeout` parameter (default 60 s, max 600 s) is the \
+                      OUTER bound on the call; any inner timeouts in the code itself \
+                      (subprocess.run timeout, threading joins, time.sleep) must be \
+                      strictly less than this outer value, and sequential operations \
+                      must total less than it.  For known-slow operations raise the \
+                      outer timeout rather than rely on inner subprocess timeouts."
             .into(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "code":    { "type": "string", "description": "Python code to execute" },
-                "timeout": { "type": "number", "description": "Per-call timeout in seconds (optional, default 60, max 600). On timeout: SIGINT is sent first; if the kernel does not recover within 2 s, the process group is SIGKILL'd and all REPL state is lost." },
+                "timeout": { "type": "number", "description": "Outer per-call timeout in seconds (optional, default 60, max 600). Any inner timeouts in the code (subprocess.run timeout, threading joins, time.sleep durations) must be strictly less than this value to do useful work \u{2014} the outer fires first. On outer timeout: SIGINT is sent first; if the kernel does not recover within 2 s, the process group is SIGKILL'd and all REPL state is lost." },
             },
             "required": ["code"],
         }),

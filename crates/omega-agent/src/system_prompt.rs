@@ -286,11 +286,20 @@ pub fn repl_addendum() -> String {
        and building up intermediate results step-by-step.\n\
      - Prefer a single call with all related statements over many small calls \
        — state persists, so you can build on previous results.\n\
-     - Optional `timeout` parameter (default 60 s, max 600 s). For calls that \
-       may take longer (e.g. large downloads, heavy computation), pass an \
-       explicit timeout. On timeout, SIGINT is sent first; if the kernel \
-       recovers, REPL state is preserved. If it does not, the kernel is \
-       killed and all prior state is lost.\n\
+     - Optional `timeout` parameter (default 60 s, max 600 s).  This is the \
+       OUTER bound on a single call.  Any inner timeouts you set in the \
+       code itself (`subprocess.run(..., timeout=N)`, `threading` joins, \
+       etc.) must be **strictly less than** this outer timeout \u{2014} inner \
+       timeouts equal to or greater than the outer never fire, because the \
+       outer escalates first.  For known-slow operations (downloads, \
+       password cracking, heavy computation), raise the OUTER timeout \
+       (e.g. `python_repl(code=..., timeout=300)`) rather than rely on a \
+       long inner subprocess timeout.  Sequential operations within a \
+       single call (multiple `subprocess.run` invocations, `time.sleep`, \
+       etc.) must total less than the outer timeout; when in doubt, split \
+       into multiple calls.  On outer timeout, SIGINT is sent first; if \
+       the kernel recovers, REPL state is preserved.  If it does not, the \
+       kernel is killed and all prior state is lost.\n\
      - Variable pattern: store large intermediate results in variables \
        (`result = expensive_compute()`) and print only the summary needed \
        for the next decision. Variables persist across calls; printed bytes \
