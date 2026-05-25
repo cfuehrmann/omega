@@ -1679,6 +1679,13 @@ impl Agent {
                     // land in the same shape the model emitted.
                     let mut by_call_id: HashMap<String, (String, bool)> = HashMap::new();
                     while let Some((_idx, tool_call_id, name, res, elapsed)) = futures.next().await {
+                        // Emit side-band events (e.g. python_repl bootstrap)
+                        // before the ToolResultEvent so the log tells the
+                        // full story in chronological order.
+                        for ev in &res.extra_events {
+                            let _ = self.event_store.append(ev).await;
+                            yield AgentItem::event(ev.clone());
+                        }
                         let duration_ms = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
                         let tr = OmegaEvent::ToolResult(ToolResultEvent {
                             time: now_iso(),

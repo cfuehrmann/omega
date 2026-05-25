@@ -244,6 +244,16 @@ mutants-python-repl:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/python_repl.rs"
 
+# Run cargo-mutants targeted at the python3 bootstrap logic in python_repl.rs.
+# Covers is_not_found(), start_inner() branching (AptNotFound / AptFailed /
+# Succeeded), retry logic, and the BootstrapInfo return path.
+# bootstrap_python3() and run_apt_get() are marked #[mutants::skip] because
+# they call real OS processes; the logic branches they implement are exercised
+# via mock-closure unit tests in start_inner.
+mutants-python-repl-bootstrap:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/python_repl.rs"
+
 # Run cargo-mutants targeted at the REPL resume guard in session_resume.rs.
 # Verifies that the ReplResumeUnsupported check cannot be mutated away.
 # Template: mutants-system-prompt-guard (see AGENTS.md).

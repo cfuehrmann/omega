@@ -368,6 +368,26 @@ pub struct ToolResultEvent {
     pub output: String,
 }
 
+/// Omega automatically bootstrapped `python3` via `apt-get` because the binary
+/// was absent from `$PATH` when `python_repl` was first called.
+///
+/// Emitted at most once per Omega process (the first successful `python_repl`
+/// invocation that triggered the bootstrap).  The event tells forensics
+/// "Omega had to install python3 here" without requiring the reader to scan
+/// the `ToolResult` output for apt-get log lines.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PythonReplBootstrappedEvent {
+    pub time: ISOTimestamp,
+    /// Elapsed time of the full bootstrap (both `apt-get update` and
+    /// `apt-get install`) in milliseconds.
+    pub duration_ms: i64,
+    /// Whether the bootstrap succeeded (python3 is now available).
+    pub success: bool,
+    /// First 500 characters of combined apt-get stderr output.
+    pub stderr_excerpt: String,
+}
+
 /// Server-side context compaction fired during this turn.
 ///
 /// Emitted immediately before the accompanying [`LlmResponseEndedEvent`].
@@ -559,6 +579,12 @@ pub enum OmegaEvent {
     /// Server-side context compaction fired; history was reset.
     /// Always immediately precedes the corresponding `LlmResponseEnded`.
     ContextCompacted(ContextCompactedEvent),
+
+    // --- python_repl bootstrap event ---------------------------------------
+    /// Omega auto-installed python3 via apt-get because it was absent.
+    /// Emitted at most once per process, on the first `python_repl` call that
+    /// triggered a successful bootstrap.
+    PythonReplBootstrapped(PythonReplBootstrappedEvent),
 }
 
 impl OmegaEvent {
@@ -598,6 +624,7 @@ impl OmegaEvent {
             Self::ThinkingBlock(e) => &e.time,
             Self::ToolUseBlock(e) => &e.time,
             Self::ContextCompacted(e) => &e.time,
+            Self::PythonReplBootstrapped(e) => &e.time,
         }
     }
 }

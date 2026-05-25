@@ -100,7 +100,9 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::LlmResponseEnded(_)
         | OmegaEvent::LlmResponseDiscarded(_)
         // Phase 2.0 (F11): server-side compaction is a lifecycle marker.
-        | OmegaEvent::ContextCompacted(_) => EventKind::Status,
+        | OmegaEvent::ContextCompacted(_)
+        // python_repl bootstrap: treated as a status / informational event.
+        | OmegaEvent::PythonReplBootstrapped(_) => EventKind::Status,
     }
 }
 
@@ -167,6 +169,8 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::ToolUseBlock(_) => "tool_use_block",
         // Phase 2.0 (F11).
         OmegaEvent::ContextCompacted(_) => "context_compacted",
+        // python_repl bootstrap.
+        OmegaEvent::PythonReplBootstrapped(_) => "python_repl_bootstrapped",
     }
 }
 
@@ -208,6 +212,7 @@ pub const LABEL_LLM_RESPONSE_ENDED: &str = "LLM response end";
 pub const LABEL_ASSISTANT: &str = "Assistant";
 pub const LABEL_THINKING: &str = "Thinking";
 pub const LABEL_CONTEXT_COMPACTED: &str = "Context compacted";
+pub const LABEL_PYTHON_REPL_BOOTSTRAPPED: &str = "python3 bootstrapped";
 
 /// Canonical human label for an event.  Used by the big-block
 /// `<span class="block-label">` and the status chip alike.
@@ -246,6 +251,8 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::ToolUseBlock(e) => &e.name,
         // Phase 2.0 (F11).
         OmegaEvent::ContextCompacted(_) => LABEL_CONTEXT_COMPACTED,
+        // python_repl bootstrap.
+        OmegaEvent::PythonReplBootstrapped(_) => LABEL_PYTHON_REPL_BOOTSTRAPPED,
     }
 }
 

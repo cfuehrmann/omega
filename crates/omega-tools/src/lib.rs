@@ -15,6 +15,9 @@
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use omega_types::OmegaEvent;
+use omega_types::events::PythonReplBootstrappedEvent;
+
 mod cap_and_tee;
 mod format;
 mod output_cleaner;
@@ -35,10 +38,18 @@ pub use tool_ctx::ToolCtx;
 /// `content` is the string the agent feeds back to the LLM as the
 /// `tool_result` block content.  Stderr-style errors are NOT a separate
 /// channel: when `is_error` is true, `content` carries the error message.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// `extra_events` carries side-band [`OmegaEvent`]s to be emitted by the
+/// agent before the `ToolResultEvent`.  Normally empty; populated only by
+/// `python_repl` dispatch when a successful bootstrap occurs.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ToolResult {
     pub content: String,
     pub is_error: bool,
+    /// Extra events to be emitted before the `ToolResultEvent`.  The agent
+    /// layer persists these to `events.jsonl` and streams them to UI consumers
+    /// just like any other event.
+    pub extra_events: Vec<OmegaEvent>,
 }
 
 impl ToolResult {
@@ -47,6 +58,7 @@ impl ToolResult {
         Self {
             content: content.into(),
             is_error: false,
+            extra_events: vec![],
         }
     }
 
@@ -55,6 +67,7 @@ impl ToolResult {
         Self {
             content: content.into(),
             is_error: true,
+            extra_events: vec![],
         }
     }
 }
@@ -138,15 +151,22 @@ pub async fn execute_tool(
             };
             let code = code.to_owned();
             let mut guard = repl_arc.lock().await;
+            // bootstrap_info is Some when python3 was just installed via apt-get.
+            let bootstrap_info: Option<python_repl::BootstrapInfo>;
             if guard.is_none() {
                 match python_repl::PythonRepl::start() {
-                    Ok(repl) => *guard = Some(repl),
+                    Ok((repl, info)) => {
+                        *guard = Some(repl);
+                        bootstrap_info = info;
+                    }
                     Err(e) => {
                         return ToolResult::err(format!(
                             "python_repl: failed to start Python interpreter: {e}"
                         ));
                     }
                 }
+            } else {
+                bootstrap_info = None;
             }
             // SAFETY: guard is Some — either it was already Some or we
             // just inserted a value above (or returned early on error).
@@ -156,7 +176,22 @@ pub async fn execute_tool(
                 );
             };
             let output = repl.execute(&code).await;
-            return ToolResult::ok(output);
+            let mut result = ToolResult::ok(output);
+            // If python3 was just bootstrapped via apt-get, emit a
+            // PythonReplBootstrapped event so forensics can see it happened.
+            if let Some(info) = bootstrap_info {
+                result.extra_events.push(OmegaEvent::PythonReplBootstrapped(
+                    PythonReplBootstrappedEvent {
+                        time: chrono::Utc::now()
+                            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                            .to_string(),
+                        duration_ms: i64::try_from(info.duration_ms).unwrap_or(i64::MAX),
+                        success: true,
+                        stderr_excerpt: info.stderr_excerpt,
+                    },
+                ));
+            }
+            return result;
         }
         other => Err(format!("Unknown tool: {other}")),
     };

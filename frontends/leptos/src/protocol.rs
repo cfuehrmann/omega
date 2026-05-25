@@ -50,10 +50,11 @@ use omega_types::events::AgentErrorEvent;
 use omega_types::events::{
     ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
     LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmRetryEvent,
-    ModelChangedEvent, PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent,
-    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
-    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UserMessageEvent,
+    ModelChangedEvent, PauseRequestedEvent, PythonReplBootstrappedEvent, ResumingSessionEvent,
+    ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent,
+    UserMessageEvent,
 };
 use serde::{Deserialize, Serialize};
 
@@ -254,6 +255,10 @@ pub enum WsMessage {
     /// Server-side context compaction fired; always precedes `LlmResponseEnded`.
     ContextCompacted(ContextCompactedEvent),
 
+    // --- python_repl bootstrap event ---------------------------------------
+    /// Omega auto-installed python3 via apt-get because it was absent from PATH.
+    PythonReplBootstrapped(PythonReplBootstrappedEvent),
+
     /// A `Reset` or `ResumeSession` frame was rejected because the
     /// working tree has uncommitted git changes and `allow_dirty` was
     /// not set.  The previous active session (if any) is untouched.
@@ -322,6 +327,8 @@ impl WsMessage {
             Self::ToolUseBlock(e) => OmegaEvent::ToolUseBlock(e),
             // Phase 2.0 (F11).
             Self::ContextCompacted(e) => OmegaEvent::ContextCompacted(e),
+            // python_repl bootstrap.
+            Self::PythonReplBootstrapped(e) => OmegaEvent::PythonReplBootstrapped(e),
         })
     }
 }
