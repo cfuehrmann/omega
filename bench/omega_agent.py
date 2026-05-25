@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from harbor.environments.base import BaseEnvironment
     from harbor.models.agent.context import AgentContext
 
-OMEGA_VERSION = "v0.1.12"
+OMEGA_VERSION = "v0.1.13"
 OMEGA_REPO = "https://github.com/cfuehrmann/omega"
 OMEGA_RUST_INSTALL_DIR = "/home/agent/omega-rust"
 OMEGA_RUST_BIN = f"{OMEGA_RUST_INSTALL_DIR}/target/release/omega"
