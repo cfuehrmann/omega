@@ -240,9 +240,13 @@ mutants-feature-flags:
 # Run cargo-mutants targeted at the stateful Python REPL module
 # (PythonRepl::execute truncation logic, sentinel handling, output collection).
 # Spawns real python3 subprocesses — requires python3 in $PATH.
+# After the 2025-11 file split, the module is a directory with one submodule
+# per concern; we sweep the whole tree.
 mutants-python-repl:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/python_repl.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/python_repl.rs" \
+        --file "crates/omega-tools/src/python_repl/*.rs"
 
 # Run cargo-mutants targeted at the shared process-kill helpers (kill_group, kill_soft).
 # Both functions route through the shell; mutations that swap SIGKILL for SIGINT or
@@ -259,7 +263,8 @@ mutants-process-util:
 # via mock-closure unit tests in start_inner.
 mutants-python-repl-bootstrap:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/python_repl.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/python_repl/bootstrap.rs"
 
 # Run cargo-mutants targeted at the REPL resume guard in session_resume.rs.
 # Verifies that the ReplResumeUnsupported check cannot be mutated away.
