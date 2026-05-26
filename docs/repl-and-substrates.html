@@ -265,16 +265,16 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h3 id="pf-pivot">The pivot</h3>
 
 <div class="callout">
-  <div class="callout-title">📍 Current status (develop @ <code>8f557aa</code>)</div>
+  <div class="callout-title">📍 Current status (develop @ <code>7cd3bd6</code>)</div>
   <ul style="margin:0; padding-left:1.3rem;">
     <li><strong>Phase 1.1 — file split:</strong> ✓ landed (<code>8f557aa</code>).
         <code>python_repl.rs</code> is now a directory module with one submodule per concern
         (<code>wrapper</code>, <code>sentinel</code>, <code>tee</code>,
-        <code>output</code>, <code>bootstrap</code>, <code>repl</code>).
+        <code>output</code>, <code>bootstrap</code>, <code>repl</code>).</li>
+    <li><strong>Phase 1.1 — <code>execute()</code> cleanup:</strong> ✓ landed
+        (<code>7cd3bd6</code>).  Shared <code>read_phase</code> helper extracted from
+        the three I/O loops; drain's deliberate lack of sentinel check preserved.
         37 tests + 50 mutants green.</li>
-    <li><strong>Phase 1.1 — <code>execute()</code> cleanup:</strong> outstanding.
-        Extract a shared <code>read_phase</code> helper from the three near-duplicate
-        I/O loops in <code>repl.rs::execute()</code>. Behavior-preserving.</li>
     <li><strong>Phase 1.3 — <code>sh()</code> helper:</strong> next. Independent of the
         session-resumption discussion below.</li>
     <li><strong>Phase 1.2 — tool-selection mechanism:</strong> mostly independent, but its
@@ -483,11 +483,11 @@ tr:nth-child(even) td { background: #fafbfc; }
 </div>
 
 <div class="callout">
-  <div class="callout-title">📋 Recommended ordering (as of <code>8f557aa</code>)</div>
+  <div class="callout-title">📋 Recommended ordering (as of <code>7cd3bd6</code>)</div>
   <ol style="margin:0; padding-left:1.3rem;">
     <li><strong>Phase 1.1 follow-up</strong> — extract the <code>read_phase</code> helper
-        from <code>execute()</code>. Closes out Phase 1.1.</li>
-    <li><strong>Phase 1.3</strong> — <code>sh()</code> helper. Tiny, fully independent.</li>
+        from <code>execute()</code>.  <em>Closed (<code>7cd3bd6</code>).</em></li>
+    <li><strong>Phase 1.3</strong> — <code>sh()</code> helper. Tiny, fully independent. <strong>Next.</strong></li>
     <li><strong>Phase 1.2</strong> — tool-selection mechanism. The schema change
         (events, system_prompt, ws_message) is independent of the strict-resume rethink;
         the <code>session_resume.rs</code> touchpoint depends on it. Two viable approaches:
@@ -505,7 +505,10 @@ tr:nth-child(even) td { background: #fafbfc; }
   </ol>
 </div>
 
-<h4>Phase 1.1 follow-up — extract <code>read_phase</code> helper</h4>
+<h4>Phase 1.1 follow-up — extract <code>read_phase</code> helper <em>(✓ done, <code>7cd3bd6</code>)</em></h4>
+<p>
+  <em>Historical brief preserved for context; the work landed at <code>7cd3bd6</code>.</em>
+</p>
 <p>
   The file split has landed (<code>8f557aa</code>); the file is now a directory module under
   <code>crates/omega-tools/src/python_repl/</code>.  One mechanical cleanup remains: in
