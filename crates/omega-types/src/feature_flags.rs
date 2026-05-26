@@ -5,7 +5,7 @@
 //! making the four-cell matrix (vanilla / REPL-only / subagents-only / RLM)
 //! visible without analysing behaviour.
 //!
-//! See: docs/repl-and-subagents-research.html §8 and "Next steps" step 1.
+//! See: docs/repl-and-substrates.html §Path-forward and §8 open-questions.
 //!
 //! [`SessionStartedEvent`]: crate::events::SessionStartedEvent
 

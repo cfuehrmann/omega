@@ -138,7 +138,7 @@ locally-cached tasks (fix-git and crack-7z-hash).  Key findings:
 The **original v0.1.8 baseline** runs in `bench/jobs/v018-smoke-*` are superseded for
 cross-version comparison by the v0.1.13-era results.  Use v0.1.13 Tier 2 full mode as
 the reference treatment arm.  Full analysis in
-`docs/repl-and-subagents-research.html` (Findings section).
+`docs/repl-and-substrates.html` (Findings section).
 
 ---
 
@@ -176,7 +176,7 @@ results suggest small-model effects are where multi-agent / scaffold changes
 matter most). Opus-high can be a follow-up sweep if sonnet results are
 interesting in either direction.
 
-See `docs/repl-and-subagents-research.html` §1.6 for the broader context.
+See `docs/repl-and-substrates.html` for the broader context.
 
 ## Ingest and view results
 
