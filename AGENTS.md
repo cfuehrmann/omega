@@ -14,6 +14,15 @@ Reporting back without committing defeats the gate entirely. Never use
   `cfuehrmann`.
 - Active branch: `develop`. Merge to `main` when stable.
 
+## Auxiliary-session prompts
+
+When you propose handing work off to another session (sub-session,
+fresh session, parallel run), present the prompt as a **fenced code
+block** so the UI surfaces a copy button. Use four-backtick fences if
+the prompt itself contains triple-backtick code blocks. Put any
+surrounding meta (recommended model, effort, rationale) outside the
+fence, in prose — only the prompt text belongs inside.
+
 ## Cargo dependencies
 
 When adding or updating a dependency, declare only the features the crate's own source directly uses — never `features = ["full"]` in production or dev dependencies. Use `default-features = false` wherever a crate's default features pull in transitive deps that aren't needed (alternative TLS backends, executors, etc.).
