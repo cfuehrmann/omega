@@ -307,11 +307,13 @@ tr:nth-child(even) td { background: #fafbfc; }
     <li><a href="#phase15" class="toc-h1">Phase 1.5 — UI surfacing ⏳</a></li>
     <li><a href="#phase16" class="toc-h1">Phase 1.6 — WS protocol ⏳</a></li>
     <li class="toc-divider"></li>
+    <li><a href="#decision-drop-strict-resume" class="toc-h1">Decision: drop strict resume ✓</a></li>
+    <li class="toc-divider"></li>
     <li><a href="#open-questions" class="toc-h1">Open questions</a></li>
-    <li><a href="#oq-allowlist" class="toc-sub">Typed domain-state snapshot ✓</a></li>
-    <li><a href="#oq-cwd-carveout" class="toc-sub">cwd carve-out follow-up</a></li>
-    <li><a href="#oq-repl-view" class="toc-sub">REPL view-only WS endpoint</a></li>
-    <li><a href="#oq-repl-replay" class="toc-sub">REPL strict-resume replay</a></li>
+    <li><a href="#oq-allowlist" class="toc-sub">Typed domain-state snapshot ✓ (scheduled for removal)</a></li>
+    <li><a href="#oq-cwd-carveout" class="toc-sub">cwd carve-out — moot</a></li>
+    <li><a href="#oq-repl-view" class="toc-sub">REPL view-only WS endpoint — deferred indefinitely</a></li>
+    <li><a href="#oq-repl-replay" class="toc-sub">REPL strict-resume replay — moot</a></li>
     <li><a href="#oq-registry" class="toc-sub">Registry vs. scan (1.6)</a></li>
     <li><a href="#oq-resolved" class="toc-sub">Resolved references</a></li>
   </ol>
@@ -489,7 +491,7 @@ tr:nth-child(even) td { background: #fafbfc; }
     <tr>
       <td><span class="phase-tag done">Phase 2</span></td>
       <td>Strict resume + gate test</td>
-      <td>✅ Done</td>
+      <td>✅ Done — ⚠ scheduled for removal</td>
       <td>
         Implemented in <code>crates/omega-agent/src/session_resume.rs</code>.
         Awaiting-user boundary = <code>TurnEnd</code> or <code>TurnInterrupted</code>.
@@ -497,6 +499,15 @@ tr:nth-child(even) td { background: #fafbfc; }
         closed via <code>ContextCompacted</code> event and context-hash reconstruction
         algorithm. Round-trip gate test in
         <code>crates/omega-agent/tests/internal.rs::round_trip_gate</code>.
+        <strong>Strict resume is being dropped</strong> — see
+        <a href="#decision-drop-strict-resume">decision record below</a>.  The
+        <code>strict_resume</code> entry point, <code>StrictResumeError</code>,
+        the <code>fold_*</code> reconstruction helpers, and
+        <code>round_trip_gate</code> will be removed in a follow-up sub-session
+        tracked in the
+        <a href="./repl-and-substrates.html#pf-backlog">repl-and-substrates backlog</a>.
+        The event-reading half of <code>session_resume.rs</code> stays (typed
+        parse of <code>events.jsonl</code> — needed for AI-based forensics).
       </td>
     </tr>
   </tbody>
@@ -507,6 +518,100 @@ tr:nth-child(even) td { background: #fafbfc; }
   deferred indefinitely. The Phase 1 design keeps all of these reachable without
   structural change.
 </p>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<hr class="section-divider" />
+<h2 id="decision-drop-strict-resume">Decision: drop strict session resume — ✓ resolved</h2>
+
+<div class="callout rec">
+  <div class="callout-title">✓ Strict session resume is being dropped entirely</div>
+  <p>
+    Reached in the session-resumption discussion that paused Phase 1.2 work
+    (the ⏸ pause was previously recorded in
+    <a href="./repl-and-substrates.html">repl-and-substrates.html</a> and is now
+    resolved here).  Applies to <em>all</em> sessions, not just REPL.
+  </p>
+
+  <h4 style="margin-bottom:0.3rem;">Reasoning</h4>
+  <ul>
+    <li><strong>The observational-equivalence promise was always a half-truth.</strong>
+        <code>strict_resume</code> preserves the agent's internal state
+        (conversation history, tool definitions, system prompt, feature flags,
+        last user-message boundary) but never preserved the <em>world</em> those
+        tools observe.  After a resume:
+        <code>read_file("foo.rs")</code> can return different bytes following a
+        <code>git pull</code>; <code>run_command("cargo test")</code> output
+        drifts with a dependency bump; <code>fetch_url(…)</code> was never stable
+        across time; even <code>list_files(".")</code> sees a changed
+        <code>target/</code>.  The closed-system equivalence we deliver is the
+        agent's bookkeeping; the open-system drift was always there.  REPL just
+        makes the drift impossible to ignore — the kernel state
+        becomes part of what diverges, not merely the world.</li>
+    <li><strong>The user's empirical usage data does not motivate strict resume.</strong>
+        Never used cross-machine; never desired when the repo had moved; the
+        only sustained pattern (weekly Arch reboot) is scheduleable around
+        natural session boundaries.  Other cases (IT-forced work-laptop reboot,
+        process-count concerns) are rare and fork-from-last-user-message would
+        be acceptable for them — but the user did not endorse adding
+        fork-from-event either.  Idle sessions are cheap; there is no resource
+        pressure that demands resumption.</li>
+    <li><strong>Forensics is real and crucial, but it's AI-based, not UI-based.</strong>
+        The forensic interface is a fresh agent reading <code>events.jsonl</code>
+        from a past session directory and reasoning over it — not the user
+        scrolling a past-session UI.  This works today via existing
+        <code>read_file</code> / <code>grep_files</code> tools; no new code is
+        required.  The schema-evolution-loud rule already guards readability.</li>
+    <li><strong>Future-other-users argument is hedged and the fallback is clean.</strong>
+        If/when Omega is ever offered to other users with strict resume as a
+        hard requirement, the right answer is to fork Omega as a base for a
+        slimmed-down agent — not to burden the current codebase indefinitely
+        with weak-guarantee machinery for a use case the primary user does not
+        have.</li>
+    <li><strong>Sunk cost is not a reason to keep code.</strong>  A non-trivial
+        amount of <code>session_resume.rs</code> was real engineering (Phase 2,
+        the typed domain-state snapshot, the F11 compaction-gap closure).
+        Acknowledged; not a reason to keep code that doesn't earn its complexity
+        going forward.</li>
+  </ul>
+
+  <h4 style="margin-bottom:0.3rem;">Consequences for the codebase</h4>
+  <ul>
+    <li><strong>To be removed</strong> (in a backlog follow-up sub-session, see
+        <a href="./repl-and-substrates.html#pf-backlog">repl-and-substrates backlog</a>):
+        <code>strict_resume()</code>, <code>StrictResumeError</code> and all its
+        variants, <code>read_events_strict</code>, the <code>fold_*</code>
+        reconstruction helpers, <code>DomainSnapshot</code>
+        (the typed-domain-state work documented under
+        <a href="#oq-allowlist">oq-allowlist</a>), and
+        <code>round_trip_gate</code> in
+        <code>crates/omega-agent/tests/internal.rs</code>.  Any
+        <code>WsMessage</code> variant whose sole purpose was strict resume
+        goes with them.</li>
+    <li><strong>Stays</strong>: the event-reading half of
+        <code>session_resume.rs</code> — typed parsing of
+        <code>events.jsonl</code>.  AI-based forensics needs it.  If a future
+        view-only UI ever materializes, it needs it too.</li>
+    <li><strong>Phase 1.2 simplifies</strong>: the <code>tool_selection</code>
+        migration in <code>SessionStartedEvent</code> is still right, but the
+        <code>session_resume.rs</code> touchpoint collapses to (at most) a serde
+        round-trip unit test on the new event field.  No
+        <code>fold_tool_selection</code> to write.  See
+        <a href="./repl-and-substrates.html#pf-next">repl-and-substrates Next
+        concrete steps</a>.</li>
+  </ul>
+
+  <h4 style="margin-bottom:0.3rem;">What rises in priority instead</h4>
+  <p style="margin-top:0;margin-bottom:0;">
+    <strong>Live-session intelligibility for REPL.</strong>  The cold-path
+    "past session" problem dissolves into AI-based forensics.  The hot-path
+    "current session" problem — whether the WS stream + frontend surface
+    enough of a live REPL turn (persistent kernel variables, streaming stdout,
+    <code>sh()</code> output, tracebacks, cell boundaries) for the user to keep
+    intuition intact and form new ideas — is where attention belongs.  Scoped
+    as a read-only audit sub-session in the
+    <a href="./repl-and-substrates.html#pf-backlog">repl-and-substrates backlog</a>.
+  </p>
+</div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <hr class="section-divider" />
@@ -561,10 +666,20 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h2 id="open-questions">Open questions — Endeavor 1 scope</h2>
 
 <div class="callout rec" id="oq-allowlist">
-  <div class="callout-title">✓ Typed domain-state snapshot — implemented (Phase 2 follow-up + feature-flags correction)</div>
+  <div class="callout-title">✓ Typed domain-state snapshot — implemented (Phase 2 follow-up + feature-flags correction); now scheduled for removal</div>
+  <p>
+    <strong>Status update:</strong> the work below was delivered as described
+    and remains in <code>session_resume.rs</code> today, but with the
+    <a href="#decision-drop-strict-resume">decision to drop strict resume</a>,
+    <code>DomainSnapshot</code> and the <code>fold_*</code> helpers no longer
+    have a purpose and are scheduled for removal along with
+    <code>strict_resume()</code>.  The principle recorded at the bottom of this
+    callout — <em>any mechanism that mutates domain state must emit a domain
+    event</em> — outlives the implementation and stays valid.
+  </p>
   <p>
     Completed in the Phase 2 follow-up sub-session, with a correction applied
-    in a subsequent sub-session.  The delivered items are:
+    in a subsequent sub-session.  The delivered items were:
   </p>
   <ul>
     <li><code>DomainSnapshot</code> struct in
@@ -608,63 +723,54 @@ tr:nth-child(even) td { background: #fafbfc; }
   </p>
 </div>
 
-<div class="callout warn" id="oq-cwd-carveout">
-  <div class="callout-title">⚠ [oq-cwd-carveout] config.cwd latent carve-out — follow-up needed</div>
+<div class="callout rec" id="oq-cwd-carveout">
+  <div class="callout-title">✓ [oq-cwd-carveout] config.cwd latent carve-out — moot</div>
   <p>
-    During the Phase 2 follow-up audit of <code>Agent</code> fields, <code>config.cwd</code>
-    was identified as a latent carve-out from
-    <code>domain-relevant&nbsp;⇒&nbsp;persisted</code>:
+    Was a follow-up flagged during the Phase 2 audit: <code>config.cwd</code>
+    was not persisted in any event but would affect tool-call behaviour
+    (path resolution, <code>AGENTS.md</code> discovery) after a strict resume
+    with a different <code>cwd</code>.
   </p>
-  <ul>
-    <li>Future tool calls resolve file paths relative to <code>cwd</code> —
-        observable by the LLM via tool outputs.</li>
-    <li><code>cwd</code> is not persisted in any event; it is provided by the
-        caller of <code>strict_resume</code> at process start.</li>
-    <li>If a session is resumed with a different <code>cwd</code>, future
-        tool-call behavior (path resolution, <code>AGENTS.md</code> discovery)
-        would differ from the original session — a silent semantic divergence.</li>
-  </ul>
   <p>
-    Recommended fix: persist <code>cwd</code> in <code>SessionStartedEvent</code>
-    and reconstruct it from there in <code>strict_resume</code> rather than
-    accepting it from the caller.  Not fixed in this sub-session; flagged for
-    the next appropriate slot in the work queue.
+    <strong>Now moot</strong> with the
+    <a href="#decision-drop-strict-resume">decision to drop strict resume</a>:
+    there is no resume path against which the silent semantic divergence could
+    materialize.  The principle still applies if any future feature reconstructs
+    an <code>Agent</code> from persisted state — reopen if that happens.
   </p>
 </div>
 
-<div class="callout warn" id="oq-repl-view">
-  <div class="callout-title">⚠ [oq-repl-view] View-only WS endpoint for REPL session forensics</div>
+<div class="callout rec" id="oq-repl-view">
+  <div class="callout-title">✓ [oq-repl-view] View-only WS endpoint for REPL session forensics — deferred indefinitely</div>
   <p>
-    Once REPL sessions exist, <code>strict_resume</code> refuses them loudly
-    (<code>StrictResumeError::ReplResumeUnsupported</code> — to avoid silent
-    divergence from a fresh subprocess).  Consequence: the UI's “open past
-    session” flow regresses for REPL sessions.
+    Was proposed as a way to preserve UI-based browsing of past REPL sessions
+    once <code>strict_resume</code> started refusing them.
   </p>
   <p>
-    Machine-assisted post-mortem is unaffected (it reads <code>events.jsonl</code>
-    directly).  UI-assisted post-mortem needs a new
-    <code>WsMessage::ViewSession</code> path that streams events to the
-    frontend without constructing an <code>Agent</code>.
-    ~1 day. Sequence: whenever UI forensics for REPL sessions becomes
-    pressing.
+    <strong>Deferred indefinitely</strong> following the
+    <a href="#decision-drop-strict-resume">decision to drop strict resume</a>.
+    The actual forensic workflow is AI-based: a fresh agent reading
+    <code>events.jsonl</code> from a past session directory.  A UI scrollback
+    of past events would be a redundant second path — useful only if a
+    concrete UX need surfaces that the AI cannot serve.  Reopen if such a need
+    appears.
   </p>
 </div>
 
-<div class="callout warn" id="oq-repl-replay">
-  <div class="callout-title">⚠ [oq-repl-replay] Strict-resume replay for REPL sessions</div>
+<div class="callout rec" id="oq-repl-replay">
+  <div class="callout-title">✓ [oq-repl-replay] Strict-resume replay for REPL sessions — moot</div>
   <p>
-    The principled fix to the same problem: <code>strict_resume</code>
-    replays historical <code>python_repl</code> calls into a fresh
-    subprocess before returning, reconstructing the Python kernel state
-    that the LLM relied on.  Restores observational equivalence for REPL
-    sessions across restarts.
+    Was proposed as the principled fix to REPL strict-resume divergence:
+    replay historical <code>python_repl</code> calls into a fresh subprocess on
+    resume, with a policy for divergence between recorded and replayed output.
   </p>
   <p>
-    Cost: ~2 days plus careful design.  Subtle correctness wrinkle:
-    non-deterministic calls (clock, network, filesystem) may produce
-    different output on replay; need a policy for divergence between
-    recorded and replayed output.  Sequence: only if REPL benchmark
-    results justify investing further in interactive REPL UX.
+    <strong>Moot</strong> with the
+    <a href="#decision-drop-strict-resume">decision to drop strict resume</a>.
+    The non-determinism worry that motivated it generalizes beyond REPL
+    (<code>read_file</code>, <code>run_command</code>, <code>fetch_url</code> all
+    drift across resumes), which was itself part of the case for dropping
+    strict resume rather than papering over it.
   </p>
 </div>
 
