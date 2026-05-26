@@ -62,10 +62,24 @@ mod common;
 // ---------------------------------------------------------------------------
 // MockProvider — replays a queue of transcripts, one per `stream()` call.
 // Same pattern as tests/ws.rs, kept local to avoid cross-test coupling.
+//
+// `step_gate` is the deterministic-sync hook used by the pause/abort tests
+// to block the LLM stream between items.  See tests/ws.rs for the full
+// rationale; the short version is that the prior timing-based
+// `set_item_delay(30 ms)` slack was flaky under heavy parallel-test CPU
+// load (the WS control-frame round-trip didn't fit in 30 ms).
 // ---------------------------------------------------------------------------
 
 struct MockProvider {
     responses: Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>,
+    /// If `Some`, the stream awaits `notify_one()` between successive items
+    /// within a single response (after the first item).  Lets the test park
+    /// the agent at a known point so a WS control frame can be processed
+    /// server-side before the agent advances.
+    step_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    /// Per-item sleep (only used by the `history_streaming_flag_*` tests,
+    /// which need wall-clock slack to connect a second WS during streaming;
+    /// the pause/abort tests use `step_gate` instead).
     item_delay: Mutex<Option<Duration>>,
 }
 
@@ -73,12 +87,22 @@ impl MockProvider {
     fn new() -> Self {
         Self {
             responses: Mutex::new(VecDeque::new()),
+            step_gate: Mutex::new(None),
             item_delay: Mutex::new(None),
         }
     }
 
     fn push(&self, items: Vec<Result<AgentItem, LlmError>>) {
         self.responses.lock().unwrap().push_back(items);
+    }
+
+    /// Install a step gate; the returned `Notify` releases one item per
+    /// `notify_one()` call.  Notifications are not lost — `Notify` stores
+    /// one permit if no waiter is currently parked.
+    fn enable_step_gate(&self) -> Arc<tokio::sync::Notify> {
+        let n = Arc::new(tokio::sync::Notify::new());
+        *self.step_gate.lock().unwrap() = Some(Arc::clone(&n));
+        n
     }
 
     fn set_item_delay(&self, d: Duration) {
@@ -94,18 +118,29 @@ impl Provider for MockProvider {
             .unwrap()
             .pop_front()
             .unwrap_or_default();
+        let gate = self.step_gate.lock().unwrap().clone();
         let delay = *self.item_delay.lock().unwrap();
-        let base = futures::stream::iter(items);
-        if let Some(d) = delay {
-            let slow: BoxStream<'static, Result<AgentItem, LlmError>> =
-                Box::pin(base.then(move |x| async move {
-                    tokio::time::sleep(d).await;
-                    x
-                }));
-            slow
-        } else {
-            Box::pin(base) as AgentItemStream
-        }
+        let base = futures::stream::iter(items.into_iter().enumerate());
+        let s: BoxStream<'static, Result<AgentItem, LlmError>> =
+            Box::pin(base.then(move |(i, item)| {
+                let gate = gate.clone();
+                async move {
+                    // `step_gate` only fires *between* items (after the
+                    // first), to give the test a parking point for the
+                    // agent.  `item_delay` matches the original behaviour
+                    // and sleeps before every item including the first.
+                    if i > 0
+                        && let Some(g) = gate
+                    {
+                        g.notified().await;
+                    }
+                    if let Some(d) = delay {
+                        tokio::time::sleep(d).await;
+                    }
+                    item
+                }
+            }));
+        s
     }
 }
 
@@ -628,7 +663,9 @@ async fn turn_interrupted_emits_session_info_with_idle_turn_state() {
         p
     };
     let provider = Arc::new(MockProvider::new());
-    provider.set_item_delay(Duration::from_millis(30));
+    // Park the agent on the step gate after consuming item 0 so the WS
+    // round-trip for `abort` is guaranteed to land before the agent advances.
+    let step_gate = provider.enable_step_gate();
     provider.push(tool_use_items(
         "tu_abort",
         "read_file",
@@ -651,8 +688,20 @@ async fn turn_interrupted_emits_session_info_with_idle_turn_state() {
         serde_json::json!({ "type": "user_message", "content": "go" }),
     )
     .await;
-    let _ = recv_until_type(&mut ws, "tool_call").await;
+    // `llm_response_started` is the earliest WS frame that proves the
+    // agent has consumed item 0 and is parked on the step gate.  We can't
+    // wait for `tool_call` here because that's only emitted post-drain.
+    let _ = recv_until_type(&mut ws, "llm_response_started").await;
     send_json(&mut ws, serde_json::json!({ "type": "abort" })).await;
+    // `handle_abort` has no server→client ack frame, so use an
+    // invalid-JSON sync probe: WS frames are processed in order, so once
+    // `agent_error` for the probe arrives, the prior `abort` has been
+    // processed and the cancel token cancelled.
+    ws.send(TMessage::Text("sync-probe".to_owned().into()))
+        .await
+        .unwrap();
+    let _ = recv_until_type(&mut ws, "agent_error").await;
+    step_gate.notify_one();
     let _ = recv_until_type(&mut ws, "turn_interrupted").await;
 
     // session_info with turnState="idle" must immediately follow.
@@ -678,7 +727,7 @@ async fn turn_paused_emits_session_info_with_paused_turn_state() {
         p
     };
     let provider = Arc::new(MockProvider::new());
-    provider.set_item_delay(Duration::from_millis(30));
+    let step_gate = provider.enable_step_gate();
     provider.push(tool_use_items(
         "tu_pause",
         "read_file",
@@ -700,8 +749,16 @@ async fn turn_paused_emits_session_info_with_paused_turn_state() {
         serde_json::json!({ "type": "user_message", "content": "go" }),
     )
     .await;
-    let _ = recv_until_type(&mut ws, "tool_call").await;
+    // Wait for `llm_response_started` — the agent is now parked on the
+    // step gate after consuming item 0.  See the abort variant above
+    // for why we don't wait for `tool_call` here.
+    let _ = recv_until_type(&mut ws, "llm_response_started").await;
     send_json(&mut ws, serde_json::json!({ "type": "pause" })).await;
+    // `handle_pause` emits `pause_requested` *after* `request_pause()` has
+    // set the agent's pause flag, so observing that frame is a positive
+    // confirmation that the flag is set.
+    let _ = recv_until_type(&mut ws, "pause_requested").await;
+    step_gate.notify_one();
     // Drain until turn_paused.
     let frames = recv_until_type(&mut ws, "turn_paused").await;
 
@@ -741,7 +798,7 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
         p
     };
     let provider = Arc::new(MockProvider::new());
-    provider.set_item_delay(Duration::from_millis(30));
+    let step_gate = provider.enable_step_gate();
     provider.push(tool_use_items(
         "tu_pr",
         "read_file",
@@ -763,11 +820,14 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
         serde_json::json!({ "type": "user_message", "content": "go" }),
     )
     .await;
-    let _ = recv_until_type(&mut ws, "tool_call").await;
+    // Agent is parked on the step gate once we see `llm_response_started`.
+    let _ = recv_until_type(&mut ws, "llm_response_started").await;
     send_json(&mut ws, serde_json::json!({ "type": "pause" })).await;
 
     // Collect frames until we see pause_requested event, then check the
-    // immediately following session_info.
+    // immediately following session_info.  Because the agent is parked on
+    // the gate, no agent-emitted frames can interleave between
+    // `pause_requested` and the session_info `handle_pause` sends next.
     let pause_frames = recv_until_type(&mut ws, "pause_requested").await;
     // session_info with "pause_requested" must follow.
     let info = recv_json(&mut ws).await;
@@ -780,7 +840,8 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
         "turnState must be pause_requested; got {info}",
     );
 
-    // Clean up.
+    // Release the gate so the agent can finish (continue → turn_end).
+    step_gate.notify_one();
     send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
     let _ = recv_until_type(&mut ws, "turn_end").await;
 }

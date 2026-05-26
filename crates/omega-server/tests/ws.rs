@@ -48,17 +48,24 @@ use tokio_tungstenite::tungstenite::Message as TMessage;
 
 struct MockProvider {
     responses: Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>,
-    /// Optional per-item sleep applied to every yielded item.  Used by the
-    /// pause test to give the WS round-trip enough headroom to deliver
-    /// `pause` before the agent reaches the post-tool-results seam.
-    item_delay: Mutex<Option<Duration>>,
+    /// Optional deterministic gate awaited *between* successive items of a
+    /// single response (the first item of each response is always yielded
+    /// immediately).  The pause/abort tests install one so they can drive
+    /// the WS round-trip for a control frame to completion *before* the
+    /// agent receives the next LLM item and crosses the post-tool-results
+    /// cancel seam.  This replaces the previous time-based slack
+    /// (`set_item_delay(30 ms)`), which was flaky under heavy parallel-test
+    /// CPU load (the slack was the only headroom for the WS read loop to
+    /// dispatch `handle_pause`/`handle_abort` before the agent's stream
+    /// advanced).
+    step_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 
 impl MockProvider {
     fn new() -> Self {
         Self {
             responses: Mutex::new(VecDeque::new()),
-            item_delay: Mutex::new(None),
+            step_gate: Mutex::new(None),
         }
     }
 
@@ -66,8 +73,15 @@ impl MockProvider {
         self.responses.lock().unwrap().push_back(items);
     }
 
-    fn set_item_delay(&self, d: Duration) {
-        *self.item_delay.lock().unwrap() = Some(d);
+    /// Install (or replace) the step gate and return a handle.  Each call
+    /// to `Notify::notify_one()` on the returned handle releases exactly
+    /// one waiting item; permits are queued (max 1) when no waiter is
+    /// parked, so a notify issued before the stream reaches the await is
+    /// not lost.
+    fn enable_step_gate(&self) -> Arc<tokio::sync::Notify> {
+        let n = Arc::new(tokio::sync::Notify::new());
+        *self.step_gate.lock().unwrap() = Some(Arc::clone(&n));
+        n
     }
 }
 
@@ -79,19 +93,21 @@ impl Provider for MockProvider {
             .unwrap()
             .pop_front()
             .unwrap_or_default();
-        let delay = *self.item_delay.lock().unwrap();
-        let base = futures::stream::iter(items);
-        if let Some(d) = delay {
-            let slow: BoxStream<'static, Result<AgentItem, LlmError>> =
-                Box::pin(base.then(move |x| async move {
-                    tokio::time::sleep(d).await;
+        let gate = self.step_gate.lock().unwrap().clone();
+        let base = futures::stream::iter(items.into_iter().enumerate());
+        let s: BoxStream<'static, Result<AgentItem, LlmError>> = match gate {
+            Some(g) => Box::pin(base.then(move |(i, x)| {
+                let g = Arc::clone(&g);
+                async move {
+                    if i > 0 {
+                        g.notified().await;
+                    }
                     x
-                }));
-            slow
-        } else {
-            let s: BoxStream<'static, Result<AgentItem, LlmError>> = Box::pin(base);
-            s
-        }
+                }
+            })),
+            None => Box::pin(base.map(|(_, x)| x)),
+        };
+        s
     }
 }
 
@@ -299,9 +315,12 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
     let tmp = TempDir::new().unwrap();
     let scratch = write_scratch(tmp.path());
     let provider = Arc::new(MockProvider::new());
-    // 30 ms per item slack so `pause` reaches the server before the agent
-    // crosses the post-tool-results seam.  See note in MockProvider.
-    provider.set_item_delay(Duration::from_millis(30));
+    // Block the LLM stream between successive items of turn 1 so the WS
+    // round-trip for `pause` is guaranteed to land at the server *before*
+    // the agent receives the next item and crosses the post-tool-results
+    // cancel seam.  Replaces the old timing-based `set_item_delay(30 ms)`,
+    // which was flaky under heavy parallel-test CPU load.
+    let step_gate = provider.enable_step_gate();
     // Turn 1: tool_use; Turn 2 (after continue): final text.
     provider.push(tool_use_items(
         "tu_1",
@@ -328,12 +347,24 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
         serde_json::json!({ "type": "user_message", "content": "hi" }),
     )
     .await;
-    // Drive past the first ToolCall — at that point the agent has entered
-    // the loop and the next iteration will hit the post-tool-results seam.
-    let _ = recv_until_type(&mut ws, "tool_call").await;
+    // Wait for `llm_response_started`, which the agent yields *after*
+    // consuming item 0 (the buffered `ToolCall`) and *before* requesting
+    // item 1 — at which point the stream is parked on the step gate.
+    // We can't wait for `tool_call` here because the agent only emits
+    // it post-drain (after the entire LLM stream returns `None`), which
+    // can't happen while the gate is held.  `llm_response_started` is
+    // the earliest frame that proves the agent is parked on the gate.
+    let _ = recv_until_type(&mut ws, "llm_response_started").await;
 
-    // Pause.
+    // Pause.  `handle_pause` emits a `pause_requested` event back to us
+    // *after* `request_pause().await` has set the agent's pause flag,
+    // so observing that frame is positive confirmation the flag is set.
+    // Releasing the gate now lets the agent finish the stream, emit
+    // `tool_call`, run the tool, then hit the post-tool-results seam
+    // with the pause already pending.
     send_json(&mut ws, serde_json::json!({ "type": "pause" })).await;
+    let _ = recv_until_type(&mut ws, "pause_requested").await;
+    step_gate.notify_one();
     let frames = recv_until_type(&mut ws, "turn_paused").await;
     assert!(frames.iter().any(|v| v["type"] == "turn_paused"));
 
@@ -357,9 +388,11 @@ async fn abort_during_turn_emits_turn_interrupted() {
     let tmp = TempDir::new().unwrap();
     let scratch = write_scratch(tmp.path());
     let provider = Arc::new(MockProvider::new());
-    // Slow the LLM stream so `abort` lands before the post-tool-results
-    // cancel check.
-    provider.set_item_delay(Duration::from_millis(30));
+    // Block the LLM stream between items so the WS round-trip for `abort`
+    // lands before the agent crosses the post-tool-results cancel seam.
+    // See the pause test for the rationale; replaces the old timing-based
+    // `set_item_delay(30 ms)` slack.
+    let step_gate = provider.enable_step_gate();
     // Turn 1: tool_use.  Turn 2: end_turn — *if* the agent gets that far.
     // Pushing a natural-completion second turn means the test can only
     // pass when `request_abort` actually cancels the turn; without it
@@ -390,10 +423,26 @@ async fn abort_during_turn_emits_turn_interrupted() {
         serde_json::json!({ "type": "user_message", "content": "hi" }),
     )
     .await;
-    // Drive past the first ToolCall, then abort at the next loop-top
-    // cancel check (matching the omega-agent test pattern).
-    let _ = recv_until_type(&mut ws, "tool_call").await;
+    // Wait for `llm_response_started` — the agent has consumed item 0
+    // (the buffered `ToolCall`) and is now parked on the step gate.
+    // See the pause test for why we can't wait for `tool_call` here.
+    let _ = recv_until_type(&mut ws, "llm_response_started").await;
     send_json(&mut ws, serde_json::json!({ "type": "abort" })).await;
+
+    // `handle_abort` does not emit a server→client confirmation frame, so
+    // use an invalid-JSON sync probe: the WS read loop processes frames
+    // in order, so once `agent_error` for the probe arrives, the prior
+    // `abort` frame has been processed and the cancel token cancelled.
+    ws.send(TMessage::Text("sync-probe".to_owned().into()))
+        .await
+        .unwrap();
+    let _ = recv_until_type(&mut ws, "agent_error").await;
+
+    // Release the gate.  The agent's `while let Some(item) = stream.next()`
+    // loop wakes up, sees the cancel token already cancelled, breaks out
+    // of the drain, hits the post-stream cancel handler, and emits
+    // `turn_interrupted`.
+    step_gate.notify_one();
 
     let frames = recv_until_type(&mut ws, "turn_interrupted").await;
     assert!(frames.iter().any(|v| v["type"] == "turn_interrupted"));
