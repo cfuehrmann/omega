@@ -505,6 +505,27 @@ tr:nth-child(even) td { background: #fafbfc; }
   </ol>
 </div>
 
+<div class="callout warn">
+  <div class="callout-title">⏸ Planned pause — session-resumption discussion with the user</div>
+  <p>
+    Before Phase 1.2's <code>session_resume.rs</code> touchpoint is written, and
+    before Phase 2.3 is started, <strong>stop and raise the session-resumption
+    rethink with the user</strong>.  The current policy
+    (<code>strict_resume</code> refuses REPL sessions loudly via
+    <code>StrictResumeError::ReplResumeUnsupported</code>) is under reconsideration,
+    and its outcome shapes both the gate test in Phase 1.2 and the entire scope of
+    Phase 2.3.  Do not pick a direction unilaterally in a sub-session — surface
+    it, get a decision, then proceed.
+  </p>
+  <p style="margin-bottom:0;">
+    Concretely: if Phase 1.2 is taken with option (a) from the ordering above,
+    pause after the schema change lands and before writing
+    <code>fold_tool_selection</code>'s assertions.  If option (b) is chosen, the
+    pause is deferred until Phase 2.3 — but the discussion still has to happen
+    before 2.3 starts.
+  </p>
+</div>
+
 <h4>Phase 1.1 follow-up — extract <code>read_phase</code> helper <em>(✓ done, <code>7cd3bd6</code>)</em></h4>
 <p>
   <em>Historical brief preserved for context; the work landed at <code>7cd3bd6</code>.</em>
