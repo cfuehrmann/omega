@@ -15,8 +15,11 @@
 //! - [`super::tee`]      — full-fidelity tee log (forensics only).
 
 use std::fmt;
+use std::fmt::Write as _;
+use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 
 use crate::process_util::{kill_group, kill_soft};
@@ -50,6 +53,25 @@ const SOFT_GRACE_SECS: u64 = 2;
 /// I/O drain window (milliseconds) after `kill_group` before giving up on
 /// reading any remaining bytes.  Matches `run_command`'s grace period.
 const HARD_DRAIN_MS: u64 = 500;
+
+// ---------------------------------------------------------------------------
+// ReadStop — outcome of a single I/O phase
+// ---------------------------------------------------------------------------
+
+/// Outcome returned by [`PythonRepl::read_phase`].
+///
+/// Each variant corresponds to one of the four ways a read phase can end:
+/// sentinel received, clean EOF from the child, I/O error, or timeout.
+enum ReadStop {
+    /// The end-of-response sentinel was received (only when `check_sentinel = true`).
+    Sentinel,
+    /// Clean EOF: the child closed its stdout (`Ok(0)`).
+    Eof,
+    /// I/O error reading from the child; carries the error message.
+    Error(String),
+    /// The phase timeout expired before EOF or sentinel.
+    Timeout,
+}
 
 // ---------------------------------------------------------------------------
 // Spawn helper
@@ -207,6 +229,48 @@ impl PythonRepl {
         trimmed == self.sentinel
     }
 
+    /// Run one I/O phase: read lines from the child stdout until either the
+    /// phase `timeout` expires, a sentinel is seen (when `check_sentinel` is
+    /// `true`), the child closes stdout (`Eof`), or an I/O error occurs
+    /// (`Error`).
+    ///
+    /// Each line is teed to `log` and appended to `lines`.  For the hard-drain
+    /// phase the caller passes a throwaway vec and discards the return value;
+    /// `check_sentinel` is `false` so the drain never misidentifies a late
+    /// sentinel line as end-of-output.
+    async fn read_phase(
+        &mut self,
+        timeout: Duration,
+        lines: &mut Vec<String>,
+        log: &mut Option<BufWriter<File>>,
+        check_sentinel: bool,
+    ) -> ReadStop {
+        let timeout_fut = tokio::time::sleep(timeout);
+        tokio::pin!(timeout_fut);
+        loop {
+            let mut line = String::new();
+            tokio::select! {
+                biased;
+                result = self.stdout.read_line(&mut line) => {
+                    match result {
+                        Ok(0) => return ReadStop::Eof,
+                        Ok(_) => {
+                            tee_line(log, &line).await;
+                            let trimmed =
+                                line.trim_end_matches('\n').trim_end_matches('\r');
+                            if check_sentinel && self.is_end_sentinel(trimmed) {
+                                return ReadStop::Sentinel;
+                            }
+                            lines.push(line);
+                        }
+                        Err(e) => return ReadStop::Error(e.to_string()),
+                    }
+                }
+                () = &mut timeout_fut => return ReadStop::Timeout,
+            }
+        }
+    }
+
     /// Execute `code` in the persistent REPL and return the combined
     /// stdout+stderr output.
     ///
@@ -227,7 +291,6 @@ impl PythonRepl {
     ///   state preserved.
     /// - Hard-timeout annotation: `[python_repl: call timed out…]` with REPL
     ///   state lost; sets `is_dead() = true`.
-    #[allow(clippy::too_many_lines)]
     pub async fn execute(
         &mut self,
         code: &str,
@@ -240,12 +303,11 @@ impl PythonRepl {
         }
 
         let clamped_timeout = timeout_secs.clamp(1, MAX_TIMEOUT_SECS);
-        let timeout_dur = tokio::time::Duration::from_secs(clamped_timeout);
+        let timeout_dur = Duration::from_secs(clamped_timeout);
 
         // Open the tee log (best-effort — failure is silently ignored).
         let log_path = make_repl_log_path(ctx);
-        let mut log_writer: Option<tokio::io::BufWriter<tokio::fs::File>> =
-            open_log_writer(&log_path).await;
+        let mut log_writer: Option<BufWriter<File>> = open_log_writer(&log_path).await;
 
         // Write the code snippet followed by the end-of-code sentinel.
         let payload = format!("{code}\n{CODE_END_MARKER}\n");
@@ -260,56 +322,24 @@ impl PythonRepl {
         // Primary read loop — races the timeout.
         // ---------------------------------------------------------------
         let mut all_lines: Vec<String> = Vec::new();
-        let mut sentinel_found = false;
-        let mut early_exit_msg: Option<String> = None;
-
-        let timeout_fut = tokio::time::sleep(timeout_dur);
-        tokio::pin!(timeout_fut);
-
-        'read_loop: loop {
-            let mut line = String::new();
-            tokio::select! {
-                biased;
-                result = self.stdout.read_line(&mut line) => {
-                    match result {
-                        Ok(0) => {
-                            early_exit_msg = Some(
-                                "\n[REPL error: Python process exited unexpectedly]\n".to_owned()
-                            );
-                            break 'read_loop;
-                        }
-                        Ok(_) => {
-                            tee_line(&mut log_writer, &line).await;
-                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                            if self.is_end_sentinel(trimmed) {
-                                sentinel_found = true;
-                                break 'read_loop;
-                            }
-                            all_lines.push(line);
-                        }
-                        Err(e) => {
-                            early_exit_msg = Some(
-                                format!("\n[REPL error: I/O error reading output: {e}]\n")
-                            );
-                            break 'read_loop;
-                        }
-                    }
-                }
-                () = &mut timeout_fut => {
-                    break 'read_loop;
-                }
-            }
-        }
-
+        let primary_stop = self
+            .read_phase(timeout_dur, &mut all_lines, &mut log_writer, true)
+            .await;
         flush_log(&mut log_writer).await;
 
-        // Normal completion (sentinel found or early exit error).
-        if sentinel_found || early_exit_msg.is_some() {
-            let mut output = truncate_for_llm(&all_lines, false);
-            if let Some(msg) = early_exit_msg {
-                output.push_str(&msg);
+        match primary_stop {
+            ReadStop::Sentinel => return truncate_for_llm(&all_lines, false),
+            ReadStop::Eof => {
+                let mut output = truncate_for_llm(&all_lines, false);
+                output.push_str("\n[REPL error: Python process exited unexpectedly]\n");
+                return output;
             }
-            return output;
+            ReadStop::Error(e) => {
+                let mut output = truncate_for_llm(&all_lines, false);
+                let _ = write!(output, "\n[REPL error: I/O error reading output: {e}]\n");
+                return output;
+            }
+            ReadStop::Timeout => {}
         }
 
         // ---------------------------------------------------------------
@@ -320,36 +350,17 @@ impl PythonRepl {
         }
 
         let mut grace_lines: Vec<String> = Vec::new();
-        let mut grace_sentinel = false;
-
-        let grace_fut = tokio::time::sleep(tokio::time::Duration::from_secs(SOFT_GRACE_SECS));
-        tokio::pin!(grace_fut);
-
-        'grace_loop: loop {
-            let mut line = String::new();
-            tokio::select! {
-                biased;
-                result = self.stdout.read_line(&mut line) => {
-                    match result {
-                        Ok(0) | Err(_) => break 'grace_loop,
-                        Ok(_) => {
-                            tee_line(&mut log_writer, &line).await;
-                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                            if self.is_end_sentinel(trimmed) {
-                                grace_sentinel = true;
-                                break 'grace_loop;
-                            }
-                            grace_lines.push(line);
-                        }
-                    }
-                }
-                () = &mut grace_fut => break 'grace_loop,
-            }
-        }
-
+        let grace_stop = self
+            .read_phase(
+                Duration::from_secs(SOFT_GRACE_SECS),
+                &mut grace_lines,
+                &mut log_writer,
+                true,
+            )
+            .await;
         flush_log(&mut log_writer).await;
 
-        if grace_sentinel {
+        if matches!(grace_stop, ReadStop::Sentinel) {
             // Soft recovery succeeded — kernel is responsive again.
             // Show tail of the main output (most-recent bytes before hang)
             // followed by the traceback from the grace period.
@@ -371,23 +382,17 @@ impl PythonRepl {
         self.dead = true;
 
         // Brief I/O drain — the pipe should EOF almost immediately.
-        let drain_fut = tokio::time::sleep(tokio::time::Duration::from_millis(HARD_DRAIN_MS));
-        tokio::pin!(drain_fut);
-        loop {
-            let mut line = String::new();
-            tokio::select! {
-                biased;
-                result = self.stdout.read_line(&mut line) => {
-                    match result {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            tee_line(&mut log_writer, &line).await;
-                        }
-                    }
-                }
-                () = &mut drain_fut => break,
-            }
-        }
+        // check_sentinel=false: the drain loop deliberately does not look for
+        // the sentinel; any stray sentinel bytes are teed but not acted on.
+        let mut drain_lines: Vec<String> = Vec::new();
+        let _ = self
+            .read_phase(
+                Duration::from_millis(HARD_DRAIN_MS),
+                &mut drain_lines,
+                &mut log_writer,
+                false,
+            )
+            .await;
         flush_log(&mut log_writer).await;
 
         let output = truncate_for_llm(&all_lines, true);
