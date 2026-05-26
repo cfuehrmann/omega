@@ -25,8 +25,12 @@ pub(super) const CODE_END_MARKER: &str = "__CODE_END__";
 /// other non-`Exception` raises produce a traceback in the output rather than
 /// killing the wrapper process.
 pub(super) const PYTHON_WRAPPER: &str = "\
-import sys, io, traceback
-_globals = {}
+import sys, io, traceback, subprocess
+def sh(cmd, timeout=None):
+    r = subprocess.run([\"bash\", \"-c\", cmd], capture_output=True,
+                       text=True, timeout=timeout)
+    return r.stdout, r.stderr, r.returncode
+_globals = {\"sh\": sh}
 sentinel = sys.argv[1]
 lines = []
 for raw_line in sys.stdin:

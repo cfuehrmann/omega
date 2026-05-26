@@ -62,6 +62,62 @@ async fn only_assignment_produces_no_output() {
 }
 
 // -----------------------------------------------------------------------
+// sh() preamble helper
+// -----------------------------------------------------------------------
+
+/// `sh()` is pre-injected into `_globals` by the wrapper preamble; user code
+/// can call it without any import and must receive a `(stdout, stderr, rc)`
+/// 3-tuple.
+#[tokio::test]
+async fn sh_helper_is_available_and_returns_3_tuple() {
+    let mut r = repl_sync();
+    let out = r
+        .execute(
+            "out, err, rc = sh('echo hi')\nprint(repr((out.strip(), err, rc)))",
+            DEFAULT_TIMEOUT_SECS,
+            None,
+        )
+        .await;
+    assert_eq!(
+        out.trim(),
+        "('hi', '', 0)",
+        "sh() must return (stdout, stderr, returncode): {out:?}"
+    );
+}
+
+/// `sh()` captures stderr separately from stdout.
+#[tokio::test]
+async fn sh_helper_captures_stderr() {
+    let mut r = repl_sync();
+    let out = r
+        .execute(
+            "out, err, rc = sh('echo errline >&2')\nprint(repr((out, err.strip(), rc)))",
+            DEFAULT_TIMEOUT_SECS,
+            None,
+        )
+        .await;
+    assert_eq!(
+        out.trim(),
+        "('', 'errline', 0)",
+        "sh() must capture stderr separately: {out:?}"
+    );
+}
+
+/// Non-zero exit codes are propagated faithfully.
+#[tokio::test]
+async fn sh_helper_propagates_nonzero_exit_code() {
+    let mut r = repl_sync();
+    let out = r
+        .execute(
+            "_, _, rc = sh('exit 42')\nprint(rc)",
+            DEFAULT_TIMEOUT_SECS,
+            None,
+        )
+        .await;
+    assert_eq!(out.trim(), "42", "sh() must propagate exit code: {out:?}");
+}
+
+// -----------------------------------------------------------------------
 // State persistence
 // -----------------------------------------------------------------------
 

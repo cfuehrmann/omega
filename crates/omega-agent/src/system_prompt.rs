@@ -303,7 +303,10 @@ pub fn repl_addendum() -> String {
      - Variable pattern: store large intermediate results in variables \
        (`result = expensive_compute()`) and print only the summary needed \
        for the next decision. Variables persist across calls; printed bytes \
-       do not."
+       do not.\n\
+     - Use `sh(\"cmd\")` to run shell commands: \
+       `out, err, rc = sh(\"echo hi\")`.  Returns `(stdout, stderr, returncode)` \
+       (str, str, int).  Pre-imported — no `import subprocess` needed."
         .to_owned()
 }
 
@@ -358,20 +361,15 @@ Choose whichever is cleaner for the situation."
     if flags.repl_replaces_shell {
         sections.push(
             "This session does not expose `run_command`, `run_background`, \
-`wait_for_output`, or `write_stdin`.  To run shell commands,
-\
-use `subprocess` inside `python_repl`, for example:
+`wait_for_output`, or `write_stdin`.  To run shell commands, use the \
+pre-imported `sh()` helper inside `python_repl`:
 
-    import subprocess
-    r = subprocess.run([\"7z\", \"e\", \"secrets.7z\"],
-                       capture_output=True, text=True)
-    print(r.stdout, r.stderr, \"exit:\", r.returncode)
+    out, err, rc = sh(\"7z e secrets.7z\")
+    print(out, err, \"exit:\", rc)
 
-For long-running processes, use `subprocess.Popen`, keep
-\
-the handle in a REPL variable, and read from it
-\
-incrementally."
+`sh(cmd)` returns `(stdout, stderr, returncode)` (str, str, int).  \
+For long-running processes, use `subprocess.Popen` directly (also \
+available), keep the handle in a REPL variable, and read from it incrementally."
                 .to_owned(),
         );
     }
@@ -1335,17 +1333,39 @@ mod tests {
         }
     }
 
-    /// `repl_replaces_shell` reduced-toolset block describes the subprocess pattern.
+    /// `repl_replaces_shell` reduced-toolset block describes the `sh()` pattern.
     #[test]
-    fn repl_replaces_shell_block_mentions_subprocess_pattern() {
+    fn repl_replaces_shell_block_mentions_sh_pattern() {
         let content = reduced_toolset_addendum(flags_repl_replaces_shell());
         assert!(
+            content.contains("sh("),
+            "reduced-toolset block must mention sh() helper"
+        );
+        assert!(
+            content.contains("(stdout, stderr, returncode)"),
+            "reduced-toolset block must describe the sh() return tuple"
+        );
+        assert!(
             content.contains("subprocess"),
-            "reduced-toolset block must mention subprocess"
+            "reduced-toolset block must still mention subprocess (for Popen)"
         );
         assert!(
             content.contains("python_repl"),
             "reduced-toolset block must reference python_repl"
+        );
+    }
+
+    /// `repl_addendum()` mentions the `sh()` helper.
+    #[test]
+    fn repl_addendum_mentions_sh_helper() {
+        let content = repl_addendum();
+        assert!(
+            content.contains("sh("),
+            "repl_addendum must mention sh() helper"
+        );
+        assert!(
+            content.contains("(stdout, stderr, returncode)"),
+            "repl_addendum must describe sh() return tuple"
         );
     }
 
