@@ -265,7 +265,7 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h3 id="pf-pivot">The pivot</h3>
 
 <div class="callout">
-  <div class="callout-title">📍 Current status (develop @ <code>7cd3bd6</code>)</div>
+  <div class="callout-title">📍 Current status (develop @ <code>b6c7c2a</code>)</div>
   <ul style="margin:0; padding-left:1.3rem;">
     <li><strong>Phase 1.1 — file split:</strong> ✓ landed (<code>8f557aa</code>).
         <code>python_repl.rs</code> is now a directory module with one submodule per concern
@@ -279,15 +279,38 @@ tr:nth-child(even) td { background: #fafbfc; }
         (<code>700e8f4</code>).  Pre-imported <code>sh(cmd)</code> in REPL preamble;
         system-prompt updated; 40 tests + 50 mutants (python-repl) + 34 mutants
         (system-prompt) green.</li>
-    <li><strong>Strict-resume rethink:</strong> ✓ resolved — strict session resume is
-        being dropped entirely; AI-based forensics over <code>events.jsonl</code> covers
-        the real use case.  See the resolution callout under
+    <li><strong>ws-test flake:</strong> ✓ fixed (<code>68ee22c</code>).  Deterministic
+        <code>Notify</code>-based step gate replaced 30 ms timing slack in
+        <code>tests/ws.rs</code> and <code>tests/ws_router.rs</code>; closed a cross-binary
+        parallel-execution race that surfaced under CPU load.  0 / 30 fails after fix
+        under 8× <code>yes &gt;/dev/null</code>.</li>
+    <li><strong>Strict-resume rethink:</strong> ✓ resolved (<code>a19ebb2</code>) — strict session
+        resume dropped entirely; AI-based forensics over <code>events.jsonl</code> covers the
+        real use case.  See the resolution callout under
         <a href="#pf-next">Next concrete steps</a> and the decision record in
         <a href="./session-design.html#decision-drop-strict-resume">session-design.html</a>.
         Phase 2.3 is removed; Phase 1.2's <code>session_resume.rs</code> touchpoint
         collapses to schema-only.</li>
+    <li><strong>Strict-resume code deletion:</strong> ✓ done (<code>d8538d4</code>, doc
+        cross-refs in <code>b6c7c2a</code>).  −1892 / +131 LOC across 6 files;
+        <code>session_resume.rs</code> went 2770 → 1351 lines.  Deleted:
+        <code>strict_resume()</code>, <code>StrictResumeError</code>,
+        <code>DomainSnapshot</code>, <code>fold_*</code> helpers,
+        <code>read_events_strict</code>, <code>find_last_resumable_boundary</code>,
+        <code>is_resumable_boundary</code>, <code>Agent::domain_snapshot()</code>, plus
+        all associated tests.  <strong>Kept entirely:</strong> the AI-resume
+        (LLM-summary) path — <code>handle_resume_session</code>,
+        <code>perform_resumption</code>, <code>seed_with_resumption_summary</code>,
+        <code>extract_resumption_basis</code>, <code>extract_summary_from_response</code>,
+        <code>RESUMPTION_*</code> constants, WS <code>resume_session</code> frame.
+        Sunset trigger for AI-resume documented at
+        <a href="./session-design.html#ai-resume-sunset">session-design.html
+        §ai-resume-sunset</a> (removal when the subagent feature lands).</li>
     <li><strong>Phase 1.2 — tool-selection mechanism:</strong> <strong>Next</strong> — now
-        a focused schema migration without resume entanglement.</li>
+        a focused schema migration without resume-reconstruction entanglement.  Note:
+        AI-resume is kept, so the migration must still consider whether
+        <code>tool_selection</code> flows through the AI-resume seed path; see the
+        Phase 1.2 brief below for the audit list.</li>
   </ul>
 </div>
 
@@ -635,20 +658,26 @@ async fn read_phase(
       toolset from the event field, not from env vars.  The "REPL mode / Tier"
       conditional blocks are replaced by a loop over the tool list.
   </li>
-  <li><code>crates/omega-agent/src/session_resume.rs</code> — <em>touchpoint reduced</em>.
-      With strict resume being dropped (see resolution callout above), there is no
-      <code>fold_tool_selection</code> to write and no resume gate test.  The only
-      change here is: if <code>DomainSnapshot</code> still exists at the time
-      Phase 1.2 is executed, drop the <code>features</code> field from it; otherwise
-      this bullet is moot.  Coordinate with the backlog item that removes
-      <code>strict_resume</code> internals — ideally that deletion lands first so
-      Phase 1.2 doesn't have to touch this file at all.
+  <li><code>crates/omega-agent/src/session_resume.rs</code> — <em>shrunk, but still
+      relevant for AI-resume</em>.  The strict_resume code was deleted in
+      <code>d8538d4</code>; <code>DomainSnapshot</code> is gone.  What remains is
+      the AI-resume (LLM-summary) machinery: <code>extract_resumption_basis</code>,
+      <code>extract_summary_from_response</code>, <code>RESUMPTION_*</code> constants,
+      plus the helpers feeding <code>Agent::perform_resumption</code> and
+      <code>Agent::seed_with_resumption_summary</code>.  Audit question for Phase
+      1.2: does <code>tool_selection</code> need to flow through the AI-resume
+      seed path so a successor session inherits the parent's toolset?  If
+      <code>handle_resume_session</code> always reads the parent's
+      <code>SessionStartedEvent</code> to derive the successor's start config, this
+      may be free — verify before assuming.
   </li>
-  <li><code>crates/omega-server/src/ws_message.rs</code> — session-creation WS
-      message gains <code>tool_selection</code> field; the features field is removed
-      from any WS message that carried it.  The previous "session-resume message
-      reads it from the persisted event" framing is moot — there is no session-resume
-      message after strict resume is dropped.
+  <li><code>crates/omega-server/src/router.rs</code> + <code>ws_message.rs</code> —
+      session-creation WS message gains <code>tool_selection</code> field; the
+      <code>features</code> field is removed from any WS message that carried it.
+      The AI-resume path's <code>ClientFrame::ResumeSession</code> survives (it
+      triggers an LLM-summary seed, not a strict reconstruction); confirm it does
+      not carry a redundant <code>features</code>-derived field that needs migrating
+      to <code>tool_selection</code>.
   </li>
 </ul>
 
