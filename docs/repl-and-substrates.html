@@ -506,64 +506,59 @@ tr:nth-child(even) td { background: #fafbfc; }
 </div>
 
 <div class="callout rec">
-  <div class="callout-title">✓ Strict-resume rethink — resolved: drop strict_resume entirely</div>
+  <div class="callout-title">✓ Strict-resume rethink — resolved: drop strict_resume entirely (code deleted)</div>
   <p>
     Decision reached in the session-resumption discussion (closes the ⏸ planned
-    pause that was previously here).  Strict session resume is being dropped —
-    for REPL and non-REPL sessions alike.  Full decision record with reasoning
-    in <a href="./session-design.html#decision-drop-strict-resume">session-design.html</a>;
+    pause that was previously here).  The <code>strict_resume()</code> machinery
+    was dropped for REPL and non-REPL sessions alike, and has since been deleted
+    from the codebase.  Full decision record with reasoning in
+    <a href="./session-design.html#decision-drop-strict-resume">session-design.html</a>;
     short form here:
   </p>
   <ul>
     <li><strong>The over-promise is real and pre-existed REPL.</strong>
-        <code>strict_resume</code> preserves the agent's internal state (history,
+        <code>strict_resume</code> preserved the agent's internal state (history,
         tools, system prompt) but never preserved the world the tools observe.
-        After a resume, <code>read_file</code> bytes can shift via
-        <code>git pull</code>; <code>run_command</code> output drifts with the
-        environment; even <code>list_files</code> sees a different <code>target/</code>.
-        REPL just makes this impossible to ignore because the kernel state is
-        part of what diverges.</li>
+        REPL just makes the divergence impossible to ignore.  Sunk-cost is not
+        a reason to keep code.</li>
     <li><strong>The user's empirical usage data does not motivate strict resume.</strong>
         Never cross-machine; never desired when the repo moved; the strongest case
-        (weekly Arch reboot) is schedulable around natural session boundaries.
-        Sunk-cost is not a reason to keep code.</li>
+        (weekly Arch reboot) is schedulable around natural session boundaries.</li>
     <li><strong>What forensics actually needs is AI-based, not UI-based.</strong>
-        The forensic interface is a fresh agent reading <code>events.jsonl</code>
-        from a past session directory and reasoning over it.  This works today
-        via existing <code>read_file</code> / <code>grep_files</code>; nothing new
-        is required.  A scrollable UI of past events would be a redundant second
-        path.</li>
-    <li><strong>Future other-users argument is hedged.</strong> If/when Omega is
-        ever offered to other users with strict-resume as a hard requirement,
-        the right answer is to fork Omega as a base for a slimmed-down agent —
-        not to burden the current codebase indefinitely with weak-guarantee
-        machinery.</li>
+        A fresh agent reads <code>events.jsonl</code> from a past session
+        directory.  This works today; nothing new is required.</li>
   </ul>
+  <p>
+    <strong>Note:</strong> "strict resume" refers specifically to the deleted
+    <code>strict_resume()</code> machinery.  The operational
+    <strong>AI-resume</strong> (LLM-summary) mechanism was
+    <em>kept</em> — see
+    <a href="./session-design.html#ai-resume-sunset">session-design.html
+    §ai-resume-sunset</a> for the sunset plan when subagents land.
+  </p>
   <p style="margin-bottom:0.4rem;"><strong>What rises in priority instead:</strong></p>
   <p style="margin-top:0;">
     <strong>Live-session intelligibility, REPL-focused.</strong>  The cold-path
     "past session" problem dissolves into AI-based forensics; the hot-path
-    "current session" problem becomes the work item that earns attention.  The
-    question is whether the WS stream + frontend surface enough of the live
-    REPL state — kernel persistent variables, streaming stdout/stderr,
-    <code>sh()</code> output rendering, traceback presentation, cell boundaries —
-    that the user can keep intuition intact while a session unfolds.  Scoped as
-    a read-only audit sub-session, deliverable a written gap list; see backlog.
+    "current session" problem becomes the work item that earns attention.
+    Scoped as a read-only audit sub-session, deliverable a written gap list;
+    see backlog.
   </p>
 </div>
 
 <div class="callout" id="pf-backlog">
   <div class="callout-title">📁 Backlog (deferred from the strict-resume resolution)</div>
   <ul style="margin:0; padding-left:1.3rem;">
-    <li><strong>Code deletion of <code>strict_resume</code> internals.</strong>
-        Remove <code>strict_resume()</code>, <code>StrictResumeError</code>, the
-        <code>fold_*</code> reconstruction helpers, <code>read_events_strict</code>,
-        and associated tests from <code>crates/omega-agent/src/session_resume.rs</code>.
-        Keep the event-reading half (typed parse of <code>events.jsonl</code>) —
-        AI-based forensics and future view-only paths both need it.  Also remove
-        <code>round_trip_gate</code> in <code>crates/omega-agent/tests/internal.rs</code>
-        and any WS messages whose sole purpose is strict resume.  Non-trivial
-        deletion; deserves its own sub-session.</li>
+    <li>✅ <strong>Code deletion of <code>strict_resume</code> internals — done.</strong>
+        Removed <code>strict_resume()</code>, <code>StrictResumeError</code>,
+        <code>fold_*</code> helpers, <code>read_events_strict</code>,
+        <code>DomainSnapshot</code>, <code>Agent::domain_snapshot()</code>, and
+        <code>round_trip_gate</code> in a follow-up sub-session.  The AI-resume
+        portion of <code>session_resume.rs</code> (<code>extract_resumption_basis</code>,
+        <code>extract_summary_from_response</code>, <code>RESUMPTION_*</code>
+        constants) was kept — see
+        <a href="./session-design.html#ai-resume-sunset">session-design.html
+        §ai-resume-sunset</a> for the AI-resume sunset plan.</li>
     <li><strong>Live-session intelligibility audit (REPL-focused).</strong>
         Read-only investigation producing a written gap list + recommendations.
         Inputs: <code>WsMessage</code> variants emitted during a REPL turn; frontend
@@ -1432,11 +1427,11 @@ harbor run -d terminal-bench@2.0 \
 <div class="callout">
   <div class="callout-title">💡 <code>[c88a22]</code> How does REPL state persist across process restarts? <span class="status-open">OPEN — deferred to Phase 2.3</span></div>
   <p>
-    <code>strict_resume</code> refuses REPL sessions loudly.  The principled fix
-    (replay <code>python_repl</code> calls into a fresh subprocess) is not implemented.
-    See
-    <a href="./session-design.html#oq-repl-replay"><code>session-design.html §oq-repl-replay</code></a>.
-    For Phase 2, starting a new session is the resume story.
+    <code>strict_resume</code> was removed (it refused REPL sessions loudly);
+    the AI-resume mechanism remains operational for all session types.
+    For Phase 2, starting a new session is the resume story.  See
+    <a href="./session-design.html#oq-repl-replay"><code>session-design.html
+    §oq-repl-replay</code></a>.
   </p>
 </div>
 

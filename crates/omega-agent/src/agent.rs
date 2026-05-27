@@ -53,8 +53,8 @@ use crate::config::{cap_effort_for_model, max_output_tokens_for_model};
 use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
 use crate::session_resume::{
-    DomainSnapshot, RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL,
-    RESUMPTION_SUMMARY_INSTRUCTIONS, extract_summary_from_response,
+    RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
+    extract_summary_from_response,
 };
 use crate::system_prompt::{
     SystemBlock, build_system_blocks, discover_instruction_files, join_blocks,
@@ -439,10 +439,9 @@ pub struct AgentConfig {
     /// Feature flags override.  `None` (the default for new sessions)
     /// means [`Agent::init`] will read flags from environment variables
     /// via [`FeatureFlags::from_env`].  `Some(flags)` bypasses the env
-    /// lookup and uses the supplied flags directly — used by
-    /// [`strict_resume`](crate::session_resume::strict_resume) to restore
-    /// the exact flags that were active in the original session, and by
-    /// tests that need deterministic, env-independent feature flags.
+    /// lookup and uses the supplied flags directly — used by tests that
+    /// need deterministic, env-independent feature flags, and by the
+    /// AI-resume path to seed a new session with specific flags.
     pub features: Option<FeatureFlags>,
 }
 
@@ -528,7 +527,7 @@ impl Agent {
             .clone()
             .unwrap_or_else(|| DEFAULT_EFFORT.to_owned());
         // Extract before moving config into Self.  None → default (both off);
-        // strict_resume passes Some(recovered_flags) to skip from_env().
+        // Some(flags) bypasses from_env() (used by tests and the AI-resume path).
         let features = config.features.unwrap_or_default();
         let event_store = Arc::new(event_store);
         let controls = ControlHandle::new(Arc::clone(&event_store));
@@ -560,7 +559,7 @@ impl Agent {
     pub async fn init(&mut self) -> omega_store::Result<()> {
         // 0. Resolve feature flags.
         //    When config.features is None (new sessions), read from the
-        //    process environment.  When Some (strict-resume or tests),
+        //    process environment.  When Some (tests or AI-resume seeding),
         //    the caller has already supplied the right flags — skip env.
         if self.config.features.is_none() {
             self.features = FeatureFlags::from_env();
@@ -751,11 +750,14 @@ impl Agent {
     /// acceptable — the guard is a best-effort UX protection, not a security
     /// boundary.
     ///
-    /// Called by [`strict_resume`](crate::session_resume::strict_resume).
+    /// Used by the AI-resume path to seed a new session with the system
+    /// prompt text that was persisted in the original session's
+    /// `SessionStartedEvent` (so the resumed session sees exactly what
+    /// the original saw, regardless of any changes to instruction files
+    /// since the session started).
     pub fn init_for_resume(&mut self, system_prompt: String) {
         // A single synthetic block with no source_path.  join_blocks()
-        // on a one-element slice returns the content unchanged, so
-        // domain_snapshot().system_prompt round-trips exactly.
+        // on a one-element slice returns the content unchanged.
         self.system_blocks = vec![SystemBlock {
             label: "persisted",
             content: system_prompt,
@@ -767,86 +769,9 @@ impl Agent {
     /// The full system prompt text currently in effect for this session.
     ///
     /// Computed on demand by joining all [`SystemBlock`]s with `\n\n`.
-    /// Used by [`Self::domain_snapshot`] to capture the system-prompt
-    /// component of domain state.
     #[must_use]
     pub fn system_prompt(&self) -> String {
         join_blocks(&self.system_blocks)
-    }
-
-    /// Snapshot the domain state of this agent.
-    ///
-    /// **Domain state** contains every field that could be observed by the
-    /// LLM (future turns) or by the UI / user (past display).  Fields that
-    /// are merely plumbing — connection handles, reconstructed stores,
-    /// per-process controls — are excluded.
-    ///
-    /// The implementation uses an exhaustive `let Self { … } = self;`
-    /// destructuring with **no** `..` rest pattern.  This forces every future
-    /// field addition to be explicitly classified at compile time — there is
-    /// no silent "we're not checking it" bucket.
-    ///
-    /// See also: `docs/session-design.html#domain-state`.
-    #[must_use]
-    pub fn domain_snapshot(&self) -> DomainSnapshot {
-        let Self {
-            active_model,
-            active_effort,
-            history,
-            context_hashes,
-            // Content captured as `self.system_prompt()` in the return value
-            // below.  Using the getter rather than join_blocks directly means
-            // mutations to system_prompt() are observable by mutation testing.
-            system_blocks: _,
-            // Process-bound; provided by the caller of strict_resume.
-            // Does not influence future LLM runs — the provider is a
-            // transport layer, not session state.
-            provider: _,
-            // Reconstructed deterministically from session_dir; the new
-            // instance is operationally equivalent.
-            context_store: _,
-            // Reconstructed deterministically from session_dir; the new
-            // instance is operationally equivalent.
-            event_store: _,
-            // Intra-turn control handles; always start fresh at a resumable
-            // boundary.  Future turns begin a new turn lifecycle regardless.
-            controls: _,
-            // Provided by the caller of strict_resume; part of how this
-            // process was started, not of the agent's state.
-            //
-            // NOTE [oq-cwd-carveout]: config.cwd is a latent carve-out from
-            // domain-relevant ⇒ persisted.  If a session is resumed with a
-            // different cwd, future tool calls (path resolution, AGENTS.md
-            // discovery) would behave differently.  Flagged in
-            // docs/session-design.html#oq-cwd-carveout for a future fix.
-            config: _,
-            // Derived deterministically from system_blocks; the new instance
-            // is operationally equivalent.
-            system_prompt_paths: _,
-            // Features determine which tools are exposed to the LLM on
-            // every call — a difference here is observable in future turns.
-            // Domain state: restored from SessionStartedEvent on strict resume.
-            features,
-            // python_repl: NOT in DomainSnapshot.
-            // The kernel state is domain-relevant (variables persist
-            // across turns), and the code that produced it is persisted
-            // (every python_repl tool call is in events.jsonl).  But this
-            // MVP does not replay tool calls on resume — strict_resume
-            // refuses REPL sessions instead.  See [oq-repl-replay] in
-            // docs/session-design.html for the principled future fix.
-            python_repl: _,
-        } = self;
-        DomainSnapshot {
-            active_model: active_model.clone(),
-            active_effort: active_effort.clone(),
-            history: history.clone(),
-            context_hashes: context_hashes.clone(),
-            // Call system_prompt() rather than join_blocks(system_blocks)
-            // directly so that mutations to system_prompt() are visible
-            // to the test suite through domain_snapshot().
-            system_prompt: self.system_prompt(),
-            features: *features,
-        }
     }
 
     /// Seed this session with a summary of a previous session.

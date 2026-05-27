@@ -491,23 +491,19 @@ tr:nth-child(even) td { background: #fafbfc; }
     <tr>
       <td><span class="phase-tag done">Phase 2</span></td>
       <td>Strict resume + gate test</td>
-      <td>✅ Done — ⚠ scheduled for removal</td>
+      <td>✅ Done — ✅ removed</td>
       <td>
-        Implemented in <code>crates/omega-agent/src/session_resume.rs</code>.
-        Awaiting-user boundary = <code>TurnEnd</code> or <code>TurnInterrupted</code>.
-        <span class="badge badge-audit" title="F11 — Compaction gap">F11</span>
-        closed via <code>ContextCompacted</code> event and context-hash reconstruction
-        algorithm. Round-trip gate test in
-        <code>crates/omega-agent/tests/internal.rs::round_trip_gate</code>.
-        <strong>Strict resume is being dropped</strong> — see
-        <a href="#decision-drop-strict-resume">decision record below</a>.  The
-        <code>strict_resume</code> entry point, <code>StrictResumeError</code>,
-        the <code>fold_*</code> reconstruction helpers, and
-        <code>round_trip_gate</code> will be removed in a follow-up sub-session
-        tracked in the
-        <a href="./repl-and-substrates.html#pf-backlog">repl-and-substrates backlog</a>.
-        The event-reading half of <code>session_resume.rs</code> stays (typed
-        parse of <code>events.jsonl</code> — needed for AI-based forensics).
+        Implemented, then removed.  Strict resume was dropped per the
+        <a href="#decision-drop-strict-resume">decision record below</a>
+        (<code>a19ebb2</code>); the <code>strict_resume()</code>,
+        <code>StrictResumeError</code>, <code>fold_*</code> reconstruction
+        helpers, and <code>round_trip_gate</code> gate test were deleted in
+        the follow-up sub-session.  Principle preserved; code does not.  Note
+        that the operational <strong>AI-resume</strong> mechanism
+        (<code>perform_resumption</code> / <code>handle_resume_session</code>)
+        is a separate feature and was <em>not</em> removed — see the
+        <a href="#decision-drop-strict-resume">decision record</a> for the
+        distinction.
       </td>
     </tr>
   </tbody>
@@ -576,17 +572,17 @@ tr:nth-child(even) td { background: #fafbfc; }
 
   <h4 style="margin-bottom:0.3rem;">Consequences for the codebase</h4>
   <ul>
-    <li><strong>To be removed</strong> (in a backlog follow-up sub-session, see
-        <a href="./repl-and-substrates.html#pf-backlog">repl-and-substrates backlog</a>):
+    <li><strong>Removed</strong> in the follow-up sub-session:
         <code>strict_resume()</code>, <code>StrictResumeError</code> and all its
         variants, <code>read_events_strict</code>, the <code>fold_*</code>
         reconstruction helpers, <code>DomainSnapshot</code>
-        (the typed-domain-state work documented under
-        <a href="#oq-allowlist">oq-allowlist</a>), and
-        <code>round_trip_gate</code> in
-        <code>crates/omega-agent/tests/internal.rs</code>.  Any
-        <code>WsMessage</code> variant whose sole purpose was strict resume
-        goes with them.</li>
+        (documented under <a href="#oq-allowlist">oq-allowlist</a>),
+        <code>Agent::domain_snapshot()</code>, and <code>round_trip_gate</code>
+        in <code>crates/omega-agent/tests/internal.rs</code>.  No
+        <code>WsMessage</code> variant was strict-resume-only; none were removed.
+        The AI-resume mechanism (<code>perform_resumption</code> /
+        <code>handle_resume_session</code> / <code>seed_with_resumption_summary</code>)
+        is a separate operational feature and was kept — see below.</li>
     <li><strong>Stays</strong>: the event-reading half of
         <code>session_resume.rs</code> — typed parsing of
         <code>events.jsonl</code>.  AI-based forensics needs it.  If a future
@@ -599,6 +595,40 @@ tr:nth-child(even) td { background: #fafbfc; }
         <a href="./repl-and-substrates.html#pf-next">repl-and-substrates Next
         concrete steps</a>.</li>
   </ul>
+
+  <h4 style="margin-bottom:0.3rem;">Note: "strict resume" ≠ AI-resume</h4>
+  <p>
+    The decision above applies specifically to the dead
+    <code>strict_resume()</code> machinery that was never wired to the UI.
+    There is a second, <em>operational</em> resume mechanism — the
+    <strong>AI-resume</strong> (LLM-summary) flow — which is
+    <strong>kept</strong>:
+    <code>resume_session</code> WS frame
+    → <code>handle_resume_session</code> (router)
+    → <code>extract_resumption_basis</code> builds a digest from prior events
+    → <code>Agent::perform_resumption</code> makes an LLM summary call
+    → <code>extract_summary_from_response</code> pulls
+      <code>&lt;summary&gt;…&lt;/summary&gt;</code>
+    → <code>Agent::seed_with_resumption_summary</code> seeds a <em>new</em>
+      session with the summary as a user-message preamble.
+    This is the mechanism the UI surfaces; it is distinct from the deleted
+    strict-resume path.
+  </p>
+
+  <p id="ai-resume-sunset">
+    <strong>AI-resume sunset trigger:</strong> the LLM-summary AI-resume
+    feature is scheduled for removal when the subagent / prompt-passing
+    mechanism lands — that mechanism will cover the same use case more
+    flexibly.  Until then it remains operational.  See
+    <a href="./repl-and-substrates.html#pf-backlog">repl-and-substrates
+    backlog</a> for the subagent work item.
+  </p>
+
+  <p>
+    <strong>Manual prompt-passing is the user's dominant resume workflow
+    today:</strong> one session writes a prompt for a successor session.
+    This is currently manual; the subagent feature is its forward path.
+  </p>
 
   <h4 style="margin-bottom:0.3rem;">What rises in priority instead</h4>
   <p style="margin-top:0;margin-bottom:0;">
@@ -666,60 +696,16 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h2 id="open-questions">Open questions — Endeavor 1 scope</h2>
 
 <div class="callout rec" id="oq-allowlist">
-  <div class="callout-title">✓ Typed domain-state snapshot — implemented (Phase 2 follow-up + feature-flags correction); now scheduled for removal</div>
+  <div class="callout-title">✓ Typed domain-state snapshot — removed</div>
   <p>
-    <strong>Status update:</strong> the work below was delivered as described
-    and remains in <code>session_resume.rs</code> today, but with the
-    <a href="#decision-drop-strict-resume">decision to drop strict resume</a>,
-    <code>DomainSnapshot</code> and the <code>fold_*</code> helpers no longer
-    have a purpose and are scheduled for removal along with
-    <code>strict_resume()</code>.  The principle recorded at the bottom of this
-    callout — <em>any mechanism that mutates domain state must emit a domain
-    event</em> — outlives the implementation and stays valid.
-  </p>
-  <p>
-    Completed in the Phase 2 follow-up sub-session, with a correction applied
-    in a subsequent sub-session.  The delivered items were:
-  </p>
-  <ul>
-    <li><code>DomainSnapshot</code> struct in
-        <code>crates/omega-agent/src/session_resume.rs</code> — typed,
-        <code>PartialEq</code>, with doc comment explaining the compile-time
-        classification contract.</li>
-    <li><code>Agent::domain_snapshot()</code> — exhaustive
-        <code>let Self { … } = self;</code> destructuring with no <code>..</code>
-        rest pattern; every plumbing field carries an inline domain-terms comment.</li>
-    <li><strong>Strict resume now uses
-        <code>SessionStartedEvent.system_prompt</code></strong> rather than
-        re-reading <code>AGENTS.md</code> from disk — closing the
-        <code>domain-relevant&nbsp;⇒&nbsp;persisted</code> carve-out.
-        Failing loudly (<code>StrictResumeError::MissingSystemPrompt</code>) when
-        the field is absent per the schema-evolution-loud rule.</li>
-    <li><strong>Feature flags (<code>FeatureFlags</code>) are domain state</strong>,
-        not plumbing.  They determine which tools are exposed to the LLM on every
-        call — a difference is observable in future turns.  Added
-        <code>features: FeatureFlags</code> to <code>DomainSnapshot</code>;
-        <code>fold_features</code> recovers them from the first
-        <code>SessionStartedEvent</code> in <code>events.jsonl</code> on strict
-        resume; fails loudly (<code>StrictResumeError::MissingFeatures</code>)
-        when the event is absent.</li>
-    <li><code>round_trip_gate</code> exercises the features round-trip with
-        non-default flags (<code>repl: true, subagents: true</code>); a single
-        <code>assert_eq!</code> on two <code>DomainSnapshot</code>s covers all
-        domain fields including features.</li>
-  </ul>
-  <p>
-    <strong>Principle recorded:</strong> any mechanism that mutates domain state
-    must emit a corresponding domain event.  For feature flags, no mutation
-    mechanism exists today (they are read from env at process start and never
-    changed), so the immediate work is only restoration on strict resume.
-    If a future toggle is added (admin WS message, auto-disable on failures,
-    etc.), it must come with a <code>FeatureFlagsChanged</code> domain event —
-    structurally analogous to <code>ModelChanged</code> / <code>EffortChanged</code>.
-  </p>
-  <p>
-    One new carve-out was surfaced during the field audit — see
-    <a href="#oq-cwd-carveout">oq-cwd-carveout</a> below.
+    <code>DomainSnapshot</code> and <code>Agent::domain_snapshot()</code> were
+    removed in the strict-resume deletion sub-session (see
+    <a href="#decision-drop-strict-resume">decision record</a>).  The
+    principle survives: <strong>any mechanism that mutates domain state must
+    emit a domain event.</strong>  For feature flags specifically, no mutation
+    mechanism exists today; if a future toggle is added it must come with a
+    <code>FeatureFlagsChanged</code> event — structurally analogous to
+    <code>ModelChanged</code> / <code>EffortChanged</code>.
   </p>
 </div>
 
