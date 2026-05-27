@@ -549,11 +549,11 @@ tr:nth-child(even) td { background: #fafbfc; }
 <div class="callout" id="pf-backlog">
   <div class="callout-title">📁 Backlog (deferred from the strict-resume resolution)</div>
   <ul style="margin:0; padding-left:1.3rem;">
-    <li>✅ <strong>Code deletion of <code>strict_resume</code> internals — done.</strong>
+    <li>✅ <strong>Code deletion of <code>strict_resume</code> internals — done (<code>d8538d4</code>).</strong>
         Removed <code>strict_resume()</code>, <code>StrictResumeError</code>,
         <code>fold_*</code> helpers, <code>read_events_strict</code>,
         <code>DomainSnapshot</code>, <code>Agent::domain_snapshot()</code>, and
-        <code>round_trip_gate</code> in a follow-up sub-session.  The AI-resume
+        <code>round_trip_gate</code>.  The AI-resume
         portion of <code>session_resume.rs</code> (<code>extract_resumption_basis</code>,
         <code>extract_summary_from_response</code>, <code>RESUMPTION_*</code>
         constants) was kept — see
