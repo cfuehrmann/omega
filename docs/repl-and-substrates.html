@@ -203,46 +203,25 @@ tr:nth-child(even) td { background: #fafbfc; }
 </head>
 <body>
 
+
 <!-- ── Sidebar TOC ──────────────────────────────────────────────────────── -->
 <nav id="toc" aria-label="Table of contents">
   <h2>Contents</h2>
   <ol>
-    <li><a href="#path-forward"       class="toc-h1">🗺 Path forward</a></li>
-    <li><a href="#pf-pivot"           class="toc-sub">The pivot</a></li>
-    <li><a href="#pf-phase1"          class="toc-sub">Phase 1 — Cleanup</a></li>
-    <li><a href="#pf-phase2"          class="toc-sub">Phase 2 — User-grade</a></li>
-    <li><a href="#pf-phase3"          class="toc-sub">Phase 3 — Multi-lang</a></li>
-    <li><a href="#pf-acceptance"      class="toc-sub">Acceptance criteria</a></li>
-    <li><a href="#pf-next"            class="toc-sub">Next concrete steps</a></li>
+    <li><a href="#next"        class="toc-h1">⏭ Next step</a></li>
+    <li><a href="#done"        class="toc-h1">✅ Done</a></li>
+    <li><a href="#backlog"     class="toc-h1">📦 Backlog</a></li>
+    <li><a href="#plan"        class="toc-h1">🗺 The plan</a></li>
+    <li><a href="#phase1"      class="toc-sub">Phase 1 — Cleanup</a></li>
+    <li><a href="#phase2"      class="toc-sub">Phase 2 — User-grade</a></li>
+    <li><a href="#phase3"      class="toc-sub">Phase 3 — Multi-language</a></li>
+    <li><a href="#acceptance"  class="toc-sub">Acceptance criteria</a></li>
+    <li><a href="#decisions"   class="toc-h1">🧭 Decisions on record</a></li>
     <li class="toc-divider"></li>
-    <li><a href="#findings"           class="toc-h1">📊 Findings to date</a></li>
-    <li><a href="#finding-a"          class="toc-sub">F-A: Tier matrix sound</a></li>
-    <li><a href="#finding-b"          class="toc-sub">F-B: Additive REPL silent</a></li>
-    <li><a href="#finding-c"          class="toc-sub">F-C: Tier 1 engages on fix-git</a></li>
-    <li><a href="#finding-d"          class="toc-sub">F-D: Loophole &amp; closure</a></li>
-    <li><a href="#finding-e"          class="toc-sub">F-E: Tooling hardening</a></li>
-    <li><a href="#finding-f"          class="toc-sub">F-F: v0.1.13 headline result</a></li>
-    <li><a href="#finding-g"          class="toc-sub">F-G: Timeout alignment</a></li>
-    <li class="toc-divider"></li>
-    <li><a href="#framing"            class="toc-h1">§1 Framing</a></li>
-    <li><a href="#omega-brings"       class="toc-sub">§1.2 What Omega brings</a></li>
-    <li class="toc-divider"></li>
-    <li><a href="#evidence"           class="toc-h1">§2 Evidence base</a></li>
-    <li><a href="#survey"             class="toc-h1">§2b Agent survey</a></li>
-    <li class="toc-divider"></li>
-    <li><a href="#method-note"        class="toc-h1">🔬 Methodological note</a></li>
-    <li><a href="#mn-framing"         class="toc-sub">Cost-fluency-density</a></li>
-    <li><a href="#mn-substrates"      class="toc-sub">Candidate substrates</a></li>
-    <li><a href="#mn-sh"              class="toc-sub"><code>sh()</code> helper</a></li>
-    <li class="toc-divider"></li>
-    <li><a href="#rq-a"               class="toc-h1">§3 RQ-A: REPL alone</a></li>
-    <li><a href="#how-we-ran"         class="toc-h1">§7 How we ran</a></li>
-    <li class="toc-divider"></li>
-    <li><a href="#open-questions"     class="toc-h1">§8 Open questions</a></li>
-    <li><a href="#oq-ground"          class="toc-sub">Ground rules (decided)</a></li>
-    <li><a href="#oq-rqa"             class="toc-sub">RQ-A questions</a></li>
+    <li><a href="#background"  class="toc-h1">📜 Background &amp; research</a></li>
   </ol>
 </nav>
+
 
 <!-- ── Main content ─────────────────────────────────────────────────────── -->
 <main>
@@ -251,237 +230,207 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h1>REPL &amp; Substrates — Implementation Plan</h1>
 <p class="doc-meta">
   Status: <strong>Active implementation plan</strong> ·
-  Successor to <code>docs/repl-and-subagents-research.html</code> ·
   Subagent and handoff research moved to
   <a href="./subagents-research.html"><code>docs/subagents-research.html</code></a> ·
   Events-as-state architecture in
-  <a href="./session-design.html"><code>docs/session-design.html</code></a> ·
-  Canonical path: <code>docs/repl-and-substrates.html</code>
+  <a href="./session-design.html"><code>docs/session-design.html</code></a>.
 </p>
 
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<h2 id="path-forward">🗺 Path forward</h2>
 
-<h3 id="pf-pivot">The pivot</h3>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h2 id="next">⏭ Next step: Phase 1.2 — tool-selection mechanism</h2>
 
 <div class="callout">
-  <div class="callout-title">📍 Current status (develop @ <code>b6c7c2a</code>)</div>
-  <ul style="margin:0; padding-left:1.3rem;">
-    <li><strong>Phase 1.1 — file split:</strong> ✓ landed (<code>8f557aa</code>).
-        <code>python_repl.rs</code> is now a directory module with one submodule per concern
-        (<code>wrapper</code>, <code>sentinel</code>, <code>tee</code>,
-        <code>output</code>, <code>bootstrap</code>, <code>repl</code>).</li>
-    <li><strong>Phase 1.1 — <code>execute()</code> cleanup:</strong> ✓ landed
-        (<code>7cd3bd6</code>).  Shared <code>read_phase</code> helper extracted from
-        the three I/O loops; drain's deliberate lack of sentinel check preserved.
-        37 tests + 50 mutants green.</li>
-    <li><strong>Phase 1.3 — <code>sh()</code> helper:</strong> ✓ landed
-        (<code>700e8f4</code>).  Pre-imported <code>sh(cmd)</code> in REPL preamble;
-        system-prompt updated; 40 tests + 50 mutants (python-repl) + 34 mutants
-        (system-prompt) green.</li>
-    <li><strong>ws-test flake:</strong> ✓ fixed (<code>68ee22c</code>).  Deterministic
-        <code>Notify</code>-based step gate replaced 30 ms timing slack in
-        <code>tests/ws.rs</code> and <code>tests/ws_router.rs</code>; closed a cross-binary
-        parallel-execution race that surfaced under CPU load.  0 / 30 fails after fix
-        under 8× <code>yes &gt;/dev/null</code>.</li>
-    <li><strong>Strict-resume rethink:</strong> ✓ resolved (<code>a19ebb2</code>) — strict session
-        resume dropped entirely; AI-based forensics over <code>events.jsonl</code> covers the
-        real use case.  See the resolution callout under
-        <a href="#pf-next">Next concrete steps</a> and the decision record in
-        <a href="./session-design.html#decision-drop-strict-resume">session-design.html</a>.
-        Phase 2.3 is removed; Phase 1.2's <code>session_resume.rs</code> touchpoint
-        collapses to schema-only.</li>
-    <li><strong>Strict-resume code deletion:</strong> ✓ done (<code>d8538d4</code>, doc
-        cross-refs in <code>b6c7c2a</code>).  −1892 / +131 LOC across 6 files;
-        <code>session_resume.rs</code> went 2770 → 1351 lines.  Deleted:
-        <code>strict_resume()</code>, <code>StrictResumeError</code>,
-        <code>DomainSnapshot</code>, <code>fold_*</code> helpers,
-        <code>read_events_strict</code>, <code>find_last_resumable_boundary</code>,
-        <code>is_resumable_boundary</code>, <code>Agent::domain_snapshot()</code>, plus
-        all associated tests.  <strong>Kept entirely:</strong> the AI-resume
-        (LLM-summary) path — <code>handle_resume_session</code>,
-        <code>perform_resumption</code>, <code>seed_with_resumption_summary</code>,
-        <code>extract_resumption_basis</code>, <code>extract_summary_from_response</code>,
-        <code>RESUMPTION_*</code> constants, WS <code>resume_session</code> frame.
-        Sunset trigger for AI-resume documented at
-        <a href="./session-design.html#ai-resume-sunset">session-design.html
-        §ai-resume-sunset</a> (removal when the subagent feature lands).</li>
-    <li><strong>Phase 1.2 — tool-selection mechanism:</strong> <strong>Next</strong> — now
-        a focused schema migration without resume-reconstruction entanglement.  Note:
-        AI-resume is kept, so the migration must still consider whether
-        <code>tool_selection</code> flows through the AI-resume seed path; see the
-        Phase 1.2 brief below for the audit list.</li>
+  <div class="callout-title">What to do</div>
+  <p>
+    Migrate the three REPL feature flags (currently env vars:
+    <code>OMEGA_FEATURE_REPL</code>,
+    <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>,
+    <code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code>) into a
+    <code>tool_selection</code> field on <code>SessionStartedEvent</code>.
+    System-prompt assembly derives the toolset from the field; the
+    "REPL mode / Tier 1 / Tier 2" terminology is dropped.  Env vars are
+    removed.
+  </p>
+
+  <p style="margin-bottom:0.4rem;"><strong>Files to touch:</strong></p>
+  <ul style="margin-top:0;">
+    <li><code>crates/omega-types/src/events.rs</code> — add
+        <code>tool_selection</code> field to <code>SessionStartedEvent</code>;
+        remove the old <code>features.repl*</code> booleans (schema-evolution-loud
+        rule: rename, don't alias).</li>
+    <li><code>crates/omega-agent/src/system_prompt.rs</code> — derive toolset
+        from <code>tool_selection</code> instead of env vars.</li>
+    <li><code>crates/omega-agent/src/agent.rs</code> — wire the field through
+        at session creation.  Audit env-var reads — they should disappear.</li>
+    <li><code>crates/omega-agent/src/session_resume.rs</code> — kept after the
+        strict-resume deletion for AI-resume helpers.  Audit: does
+        <code>tool_selection</code> need to flow through
+        <code>handle_resume_session</code>'s seed path so a successor session
+        inherits the parent's toolset?  Likely free if the seed path reads
+        the parent's <code>SessionStartedEvent</code>.</li>
+    <li><code>crates/omega-server/src/router.rs</code> +
+        <code>ws_message.rs</code> — session-creation WS message carries
+        <code>tool_selection</code>; remove any features-derived field from
+        <code>ClientFrame::ResumeSession</code> if present.</li>
+  </ul>
+
+  <p style="margin-bottom:0.4rem;"><strong>Acceptance:</strong></p>
+  <ul style="margin-top:0;">
+    <li>Round-trip serde test on the new <code>SessionStartedEvent</code> field.</li>
+    <li>System-prompt unit tests pin the actual prompt text for the relevant tool subsets.</li>
+    <li>End-to-end <code>Agent::send_message</code> test confirming a REPL-enabled
+        session gets the REPL toolset advertised in the system prompt.</li>
+    <li><code>cargo test --workspace</code>, clippy, and mutation tests on the
+        touched files all green.</li>
   </ul>
 </div>
 
 <p>
-  Between v0.1.8 and v0.1.14, a sequence of benchmark experiments on two cached
-  Terminal-Bench 2 tasks hardened the Python REPL from an MVP into a capable tool:
-  bootstrap-on-missing, per-call SIGINT/kill-group escalation, tee forensics,
-  sentinel renaming, and system-prompt refinements were all diagnosed from failing
-  runs and fixed iteratively.  The v0.1.13 Tier 2 result — 26/26 tool calls via
-  <code>python_repl</code>, genuine cross-call state, Python threading, three
-  timeout recoveries, task passed in 10 min 44 s — validated that the approach works
-  in practice.
+  Load-bearing rationale for this migration: see <a href="#q3">Q3</a> and
+  <a href="#q1">Q1</a> in <a href="#decisions">Decisions on record</a>.
 </p>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h2 id="done">✅ Done</h2>
+
+<table>
+  <thead>
+    <tr><th>What</th><th>Commit</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Phase 1.1 — file split</td>
+      <td><code>8f557aa</code></td>
+      <td><code>python_repl.rs</code> → directory module
+          (<code>wrapper</code>, <code>sentinel</code>, <code>tee</code>,
+          <code>output</code>, <code>bootstrap</code>, <code>repl</code>).</td>
+    </tr>
+    <tr>
+      <td>Phase 1.1 — <code>execute()</code> cleanup</td>
+      <td><code>7cd3bd6</code></td>
+      <td>Shared <code>read_phase</code> helper extracted from three I/O loops;
+          drain's deliberate lack of sentinel check preserved.</td>
+    </tr>
+    <tr>
+      <td>Phase 1.3 — <code>sh()</code> helper</td>
+      <td><code>700e8f4</code></td>
+      <td>Pre-imported <code>sh(cmd)</code> in the REPL preamble; system prompt
+          updated to lead with it.</td>
+    </tr>
+    <tr>
+      <td>ws-test flake fix</td>
+      <td><code>68ee22c</code></td>
+      <td>Deterministic <code>Notify</code>-based step gate replaced 30 ms
+          timing slack in <code>ws.rs</code> and <code>ws_router.rs</code>.</td>
+    </tr>
+    <tr>
+      <td>Strict-resume rethink — decision</td>
+      <td><code>a19ebb2</code></td>
+      <td>Drop <code>strict_resume()</code> entirely; AI-based forensics covers
+          the real use case.  Full reasoning in
+          <a href="./session-design.html#decision-drop-strict-resume">session-design.html
+          §decision-drop-strict-resume</a>.</td>
+    </tr>
+    <tr>
+      <td>Strict-resume — code deletion</td>
+      <td><code>d8538d4</code></td>
+      <td>−1892 / +131 LOC.  Deleted <code>strict_resume()</code>,
+          <code>StrictResumeError</code>, <code>DomainSnapshot</code>,
+          <code>fold_*</code> helpers, <code>read_events_strict</code>, and
+          their tests.  AI-resume kept; see
+          <a href="./session-design.html#ai-resume-sunset">§ai-resume-sunset</a>.</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h2 id="backlog">📦 Backlog</h2>
+
+<ul>
+  <li><strong>Live-session intelligibility audit (REPL-focused).</strong>
+      Read-only investigation producing a written gap list + recommendations.
+      Inputs to examine: <code>WsMessage</code> variants emitted during a REPL
+      turn; frontend rendering for <code>ToolCallEvent</code> /
+      <code>ToolResultEvent</code> when <code>name == "python_repl"</code>;
+      treatment of streaming output, kernel state, <code>sh()</code> three-tuple,
+      tracebacks, cell boundaries.</li>
+
+  <li><strong>Forensics affordance for the AI.</strong>  One-line system-prompt
+      or doc note teaching the agent that
+      <code>.omega/sessions/&lt;id&gt;/events.jsonl</code> is the canonical
+      post-mortem source for past sessions, so the model picks the right file
+      without fishing.</li>
+
+  <li><strong>AI-resume sunset.</strong>  The LLM-summary AI-resume mechanism is
+      scheduled for removal when the subagent / prompt-passing feature lands.
+      See <a href="./session-design.html#ai-resume-sunset">session-design.html
+      §ai-resume-sunset</a>.</li>
+
+  <li><strong>View-only WS endpoint <span class="id-tag">[oq-repl-view]</span>.</strong>
+      Deferred indefinitely.  Documented in
+      <a href="./session-design.html#oq-repl-view">session-design.html</a>;
+      AI-based forensics covers the real use case.  Reopen if a concrete UI
+      need surfaces.</li>
+
+  <li><strong>Fork-from-event primitive.</strong>  Not planned.  Recorded so the
+      option isn't forgotten if a concrete use case appears.</li>
+</ul>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h2 id="plan">🗺 The plan</h2>
+
 <p>
-  <strong>The direction now pivots from benchmark-driven experimentation to
-  user-grade implementation.</strong>  The benchmark question (does REPL help on
-  Terminal-Bench?) is no longer the primary driver.  The engineering question is:
-  how do we make the REPL useful and visible to a real user, without env-var
-  fiddling, in a way that is obviously correct from the UI alone?
-</p>
-<p>
-  Four design decisions were settled during the pivot discussion (Q1–Q4 below)
-  and are encoded directly into the three-phase plan.
+  Three sequential phases.  Phase 1 cleans up the existing Python REPL surface.
+  Phase 2 makes REPL a first-class UI affordance.  Phase 3 generalizes to a
+  pluggable substrate, with Bash REPL as the second implementation.
 </p>
 
-<!-- ─── Phase 1 ────────────────────────────────────────────────────────── -->
-<h3 id="pf-phase1"><span class="phase-badge">Phase 1</span> Cleanup and consolidation</h3>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Q3 — Migrate env vars into tool-selection mechanism</div>
-  <p>
-    The three REPL feature flags (<code>OMEGA_FEATURE_REPL</code>,
-    <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>,
-    <code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code>) are migrated into a
-    tool-selection list captured at session creation in
-    <code>SessionStartedEvent</code>.  Default = current full toolset.  The env
-    vars are removed.  System-prompt assembly is updated to reflect the actual
-    toolset; the "REPL mode / Tier 1 / Tier 2" terminology is dropped.
-    <strong>Tool selection IS the new mechanism; no env-var carve-out unless a
-    feature genuinely does not map to a tool selection (none identified).</strong>
-  </p>
-</div>
-
+<h3 id="phase1">Phase 1 — Cleanup &amp; consolidation</h3>
 <ul>
-  <li>
-    <strong>1.1 — Refactor <code>python_repl.rs</code>.</strong>
-    The file had grown to ~1600 lines through layered additions.
-    <strong>File split landed at <code>8f557aa</code></strong>: the single file is
-    now a directory module (<code>python_repl/{wrapper,sentinel,tee,output,bootstrap,repl}.rs</code>),
-    visibility narrowed, tests + mutants green.
-    One small follow-up remains: extract a shared <code>read_phase</code> helper from the
-    three near-duplicate I/O loops in <code>repl.rs::execute()</code> (primary read,
-    soft-grace, hard-drain). Behavior-preserving; the helper must respect the
-    drain loop's deliberate lack of sentinel check.
-  </li>
-  <li>
-    <strong>1.2 — Design and implement tool-selection mechanism.</strong>
-    Add a <code>tool_selection</code> (or equivalent) field to
-    <code>SessionStartedEvent</code>.  Remove the three REPL env vars.  Update
-    system-prompt assembly to derive toolset from the event field rather than
-    env vars.  Update domain snapshot and strict resume to restore the toolset
-    on resume.  Update WS protocol so the session-creation message carries the
-    tool selection.
-  </li>
-  <li>
-    <strong>1.3 — Add <code>sh()</code> helper to python_repl preamble.</strong>
-    Pre-load <code>def sh(cmd, *, timeout=None)</code> in the Python startup
-    code; mention it in the system-prompt addendum.  This closes the
-    encoding-cost gap with bare shell on subprocess-heavy tasks (see
-    <a href="#mn-sh">§ sh() helper</a>).  The <span class="id-tag">[b3e7f2]</span>
-    benchmark experiment is folded into Phase 1 as an ergonomic improvement
-    rather than a separate research step.
-  </li>
+  <li><strong>1.1 — Refactor <code>python_repl.rs</code>.</strong>
+      ✅ Done (<code>8f557aa</code> + <code>7cd3bd6</code>).</li>
+  <li><strong>1.2 — Tool-selection mechanism.</strong>
+      ⏭ Next.  See <a href="#next">Next step</a> above.</li>
+  <li><strong>1.3 — <code>sh()</code> helper.</strong>
+      ✅ Done (<code>700e8f4</code>).</li>
 </ul>
 
-<!-- ─── Phase 2 ────────────────────────────────────────────────────────── -->
-<h3 id="pf-phase2"><span class="phase-badge">Phase 2</span> User-grade affordances</h3>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Q1 — Tool selection is start-only</div>
-  <p>
-    Tool selection is captured in <code>SessionStartedEvent</code> and is
-    <strong>immutable for the lifetime of the session</strong>.  Mid-session
-    toggling is not supported.  Reason: caching hygiene (the system prompt is
-    stable across turns); symmetry with model/effort/system-prompt which are all
-    start-time decisions; avoids growing the domain-event surface.  Users change
-    their tool set by starting a new session.
-  </p>
-</div>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Q2 — Per-tool checkboxes as the UI model</div>
-  <p>
-    Maximum granularity: one checkbox per tool.  The old "REPL mode / Tier 1 /
-    Tier 2" abstractions become <strong>saved configurations</strong> that users
-    can pick from ("default", "REPL-only", "REPL no-shell", etc.).  This is
-    strictly more powerful — saved configurations are just named subsets of
-    per-tool toggles, with no loss of flexibility.
-  </p>
-</div>
-
+<h3 id="phase2">Phase 2 — User-grade affordances</h3>
 <ul>
-  <li>
-    <strong>2.1 — Tool-selection UI at session creation.</strong>
-    Per-tool checkboxes in the session-creation panel.  Small list of preset
-    configurations (<em>default</em>, <em>REPL-only</em>, <em>REPL
-    no-shell</em>, etc.) as quick-picks above the checkbox grid.
-  </li>
-  <li>
-    <strong>2.2 — REPL observability in the UI feed.</strong>
-    Best-possible rendering of REPL events:
-    code block visible, output with truncation marker, bootstrap event surfaced,
-    timeout/escalation event surfaced.  Consider dedicated REPL-call rendering
-    if low implementation cost.
-  </li>
-  <li>
-    <strong>2.3 — <s>Strict session resume for REPL sessions</s> — removed.</strong>
-    Strict session resume is being dropped entirely (REPL and non-REPL alike);
-    the over-promise of observational equivalence does not survive scrutiny once
-    you account for world drift across resumes (repo changes, env changes, REPL
-    kernel state).  AI-based forensics over <code>events.jsonl</code> covers the
-    real use case; the user's empirical usage data does not motivate strict
-    resume.  Full decision record in
-    <a href="./session-design.html#decision-drop-strict-resume">session-design.html</a>.
-    For Phase 2, starting a new session is the only resume story — and that's
-    fine.
-  </li>
+  <li><strong>2.1 — Tool-selection UI at session creation.</strong>
+      Per-tool checkboxes in the session-creation panel.  Small list of preset
+      configurations (<em>default</em>, <em>REPL-only</em>,
+      <em>REPL no-shell</em>, …) as quick-picks.</li>
+  <li><strong>2.2 — REPL observability in the UI feed.</strong>
+      Best-possible rendering of REPL events: code block visible, output with
+      truncation marker, bootstrap event surfaced, timeout/escalation events
+      surfaced.  Scope informed by the live-session intelligibility audit
+      (see backlog).</li>
+  <li><strong>2.3 — Strict session resume for REPL sessions.</strong>
+      ❌ Removed.  See <a href="#strict-resume">decision below</a>.</li>
 </ul>
 
-<!-- ─── Phase 3 ────────────────────────────────────────────────────────── -->
-<h3 id="pf-phase3"><span class="phase-badge">Phase 3</span> Multi-language substrate</h3>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Q4 — Python first, Bash REPL second; Steel/PowerShell deferred</div>
-  <p>
-    Bash REPL is the second substrate because it isolates the statefulness
-    variable from the substrate-switching variable — the cleanest experimental
-    design.  Bash was already available (as stateless <code>run_command</code>);
-    adding a stateful Bash REPL lets us measure exactly what statefulness
-    contributes.  Steel and PowerShell are documented candidates in the
-    <a href="#mn-substrates">candidate substrates table</a> but are deferred
-    until the abstraction is shaken out.
-  </p>
-</div>
-
+<h3 id="phase3">Phase 3 — Multi-language substrate</h3>
 <ul>
-  <li>
-    <strong>3.1 — Pluggable REPL backend abstraction.</strong>
-    Python REPL becomes one implementation of a <code>ReplBackend</code> trait
-    (or equivalent).  The abstraction covers: process spawn, sentinel protocol,
-    SIGINT/kill-group escalation, tee-always output, bootstrap (where applicable).
-  </li>
-  <li>
-    <strong>3.2 — Bash REPL as second implementation.</strong>
-    Same plumbing as Python REPL.  No bootstrap required (bash is always present).
-    Tool name: <code>bash_repl</code>.
-  </li>
-  <li>
-    <strong>3.3 — Tool selection includes REPL backend choice.</strong>
-    The per-tool checkbox grid from Phase 2 naturally covers this: enabling
-    <code>python_repl</code> vs. <code>bash_repl</code> vs. both.
-  </li>
-  <li>
-    <strong>Steel and PowerShell</strong> remain documented in the substrates
-    table; no Phase 3 implementation.
-  </li>
+  <li><strong>3.1 — Pluggable REPL backend abstraction.</strong>
+      Python REPL becomes one implementation of a <code>ReplBackend</code>
+      trait (or equivalent).  Abstraction covers: process spawn, sentinel
+      protocol, SIGINT/kill-group escalation, tee-always output, bootstrap.</li>
+  <li><strong>3.2 — Bash REPL as second implementation.</strong>
+      Same plumbing as Python REPL.  No bootstrap required.  Tool name:
+      <code>bash_repl</code>.</li>
+  <li><strong>3.3 — Tool selection includes backend choice.</strong>
+      The per-tool checkbox grid from Phase 2 naturally covers this.</li>
+  <li>Steel and PowerShell remain documented in the candidate-substrates
+      table (see <a href="#background">Background</a>); no Phase 3
+      implementation planned.</li>
 </ul>
 
-<!-- ─── Acceptance criteria ───────────────────────────────────────────── -->
-<h3 id="pf-acceptance">Acceptance criteria for "user-grade REPL"</h3>
-
+<h3 id="acceptance">Acceptance criteria for "user-grade REPL"</h3>
 <ul>
   <li>User starts a session with REPL enabled via a UI gesture — no env-var fiddling.</li>
   <li>REPL code and output render clearly in the feed.</li>
@@ -491,216 +440,94 @@ tr:nth-child(even) td { background: #fafbfc; }
       without expert hand-holding.</li>
 </ul>
 
-<!-- ─── Next concrete steps ───────────────────────────────────────────── -->
-<h3 id="pf-next">Next concrete steps</h3>
 
-<div class="callout warn">
-  <div class="callout-title">⚠ Reading order when picking this up in a new session</div>
-  <p>
-    Start by reading these three documents <em>in order</em> before touching any code:
-  </p>
-  <ol style="margin:0; padding-left:1.3rem;">
-    <li><strong>This document</strong> (<code>docs/repl-and-substrates.html</code>) — plan and findings.</li>
-    <li><strong><a href="./session-design.html"><code>docs/session-design.html</code></a></strong>
-        — events-as-state architecture, strict resume, domain snapshot, open
-        WS questions.</li>
-    <li><strong><code>AGENTS.md</code></strong> — Contract Authority rule, schema-evolution-loud
-        discipline, testing and mutation-testing requirements.</li>
-  </ol>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h2 id="decisions">🧭 Decisions on record</h2>
+
+<ol>
+  <li id="q1"><strong>Q1 — Tool selection is start-only.</strong>
+      Captured in <code>SessionStartedEvent</code>, <em>immutable for the
+      lifetime of the session</em>.  Caching hygiene; symmetry with
+      model/effort/system-prompt; avoids growing the domain-event surface.
+      Users change toolset by starting a new session.</li>
+
+  <li id="q2"><strong>Q2 — Per-tool checkboxes as the UI model.</strong>
+      Maximum granularity: one checkbox per tool.  "REPL mode / Tier 1 /
+      Tier 2" become saved configurations (named subsets) users can pick from
+      — strictly more powerful than tiered abstractions.</li>
+
+  <li id="q3"><strong>Q3 — Migrate env vars into the tool-selection mechanism.</strong>
+      No env-var carve-out unless a feature genuinely cannot map to a tool
+      selection (none identified).  Tool selection <em>is</em> the new
+      mechanism.</li>
+
+  <li id="q4"><strong>Q4 — Python first, Bash REPL second; Steel and PowerShell deferred.</strong>
+      Bash REPL is the second substrate because it isolates the
+      statefulness variable from the substrate-switching variable — the
+      cleanest experimental design.  Steel and PowerShell are candidates
+      documented in the substrates table but deferred until the abstraction
+      shakes out.</li>
+
+  <li id="strict-resume"><strong>Strict session resume — dropped (with code deleted).</strong>
+      Full reasoning at
+      <a href="./session-design.html#decision-drop-strict-resume">session-design.html
+      §decision-drop-strict-resume</a>.  Short form: the
+      observational-equivalence promise never survived world drift across
+      resumes; the user's empirical usage data does not motivate the
+      complexity; AI-based forensics over <code>events.jsonl</code> covers
+      the real use case.</li>
+
+  <li id="ai-resume"><strong>AI-resume kept; sunset when subagents land.</strong>
+      The LLM-summary resume mechanism is operationally useful and honest
+      about its semantics (it summarizes a parent session and seeds a new
+      session with that summary as preamble — no equivalence claim).  It
+      stays until the subagent / prompt-passing feature subsumes its use
+      case.  See
+      <a href="./session-design.html#ai-resume-sunset">session-design.html
+      §ai-resume-sunset</a>.</li>
+</ol>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<h2 id="background">📜 Background &amp; research history</h2>
+
+<p style="color:var(--muted);font-size:0.92rem;">
+  Empirical work that produced Q1–Q4 above: benchmark findings on
+  Terminal-Bench 2 (fix-git, crack-7z-hash), the methodological rationale
+  for Python REPL specifically, a comparative agent survey, and the open
+  questions on REPL scope.  Collapsed by default — open if you need to
+  verify the empirical basis for a current decision.
+</p>
+
+<details>
+<summary>The pivot — how we got from benchmarks to user-grade</summary>
+<div class="details-body">
+<p>
+  Between v0.1.8 and v0.1.14, a sequence of benchmark experiments on two
+  cached Terminal-Bench 2 tasks (fix-git and crack-7z-hash) hardened the
+  Python REPL from an MVP into a capable tool: bootstrap-on-missing, per-call
+  SIGINT/kill-group escalation, tee forensics, sentinel renaming, and system
+  prompt refinements were all diagnosed from failing runs and fixed
+  iteratively.  The v0.1.13 Tier 2 result — 26/26 tool calls via
+  <code>python_repl</code>, genuine cross-call state, Python threading, three
+  timeout recoveries, task passed in 10 min 44 s — validated that the
+  approach works in practice.
+</p>
+<p>
+  After that result, the direction pivoted from
+  <em>benchmark-driven experimentation</em> to <em>user-grade implementation</em>.
+  The engineering question is no longer "does REPL help on Terminal-Bench?" but
+  "how do we make the REPL useful and visible to a real user, without env-var
+  fiddling, in a way that is obviously correct from the UI alone?"  Four
+  design decisions (Q1–Q4 above) were settled during the pivot discussion
+  and are encoded directly into the three-phase plan.
+</p>
 </div>
+</details>
 
-<div class="callout">
-  <div class="callout-title">📋 Recommended ordering (as of strict-resume rethink resolution)</div>
-  <ol style="margin:0; padding-left:1.3rem;">
-    <li><strong>Phase 1.1 follow-up</strong> — extract the <code>read_phase</code> helper
-        from <code>execute()</code>.  <em>Closed (<code>7cd3bd6</code>).</em></li>
-    <li><strong>Phase 1.3</strong> — <code>sh()</code> helper. <em>Closed (<code>700e8f4</code>).</em></li>
-    <li><strong>Strict-resume rethink</strong> — <em>Closed</em> in this session: drop
-        strict_resume entirely; see resolution callout below.</li>
-    <li><strong>Phase 1.2</strong> — tool-selection mechanism. <strong>Next.</strong>
-        Now a focused schema migration: <code>tool_selection</code> field in
-        <code>SessionStartedEvent</code>, system prompt derives toolset from it,
-        WS create-session message carries it.  No resume gate test — the
-        <code>session_resume.rs</code> touchpoint shrinks to a serde round-trip
-        unit test on the new event field.</li>
-    <li><strong>Phase 2.1 / 2.2</strong> — checkbox UI, REPL feed rendering. Independent.</li>
-    <li><strong>Backlog items</strong> — see resolution callout below.</li>
-  </ol>
-</div>
-
-<div class="callout rec">
-  <div class="callout-title">✓ Strict-resume rethink — resolved: drop strict_resume entirely (code deleted)</div>
-  <p>
-    Decision reached in the session-resumption discussion (closes the ⏸ planned
-    pause that was previously here).  The <code>strict_resume()</code> machinery
-    was dropped for REPL and non-REPL sessions alike, and has since been deleted
-    from the codebase.  Full decision record with reasoning in
-    <a href="./session-design.html#decision-drop-strict-resume">session-design.html</a>;
-    short form here:
-  </p>
-  <ul>
-    <li><strong>The over-promise is real and pre-existed REPL.</strong>
-        <code>strict_resume</code> preserved the agent's internal state (history,
-        tools, system prompt) but never preserved the world the tools observe.
-        REPL just makes the divergence impossible to ignore.  Sunk-cost is not
-        a reason to keep code.</li>
-    <li><strong>The user's empirical usage data does not motivate strict resume.</strong>
-        Never cross-machine; never desired when the repo moved; the strongest case
-        (weekly Arch reboot) is schedulable around natural session boundaries.</li>
-    <li><strong>What forensics actually needs is AI-based, not UI-based.</strong>
-        A fresh agent reads <code>events.jsonl</code> from a past session
-        directory.  This works today; nothing new is required.</li>
-  </ul>
-  <p>
-    <strong>Note:</strong> "strict resume" refers specifically to the deleted
-    <code>strict_resume()</code> machinery.  The operational
-    <strong>AI-resume</strong> (LLM-summary) mechanism was
-    <em>kept</em> — see
-    <a href="./session-design.html#ai-resume-sunset">session-design.html
-    §ai-resume-sunset</a> for the sunset plan when subagents land.
-  </p>
-  <p style="margin-bottom:0.4rem;"><strong>What rises in priority instead:</strong></p>
-  <p style="margin-top:0;">
-    <strong>Live-session intelligibility, REPL-focused.</strong>  The cold-path
-    "past session" problem dissolves into AI-based forensics; the hot-path
-    "current session" problem becomes the work item that earns attention.
-    Scoped as a read-only audit sub-session, deliverable a written gap list;
-    see backlog.
-  </p>
-</div>
-
-<div class="callout" id="pf-backlog">
-  <div class="callout-title">📁 Backlog (deferred from the strict-resume resolution)</div>
-  <ul style="margin:0; padding-left:1.3rem;">
-    <li>✅ <strong>Code deletion of <code>strict_resume</code> internals — done (<code>d8538d4</code>).</strong>
-        Removed <code>strict_resume()</code>, <code>StrictResumeError</code>,
-        <code>fold_*</code> helpers, <code>read_events_strict</code>,
-        <code>DomainSnapshot</code>, <code>Agent::domain_snapshot()</code>, and
-        <code>round_trip_gate</code>.  The AI-resume
-        portion of <code>session_resume.rs</code> (<code>extract_resumption_basis</code>,
-        <code>extract_summary_from_response</code>, <code>RESUMPTION_*</code>
-        constants) was kept — see
-        <a href="./session-design.html#ai-resume-sunset">session-design.html
-        §ai-resume-sunset</a> for the AI-resume sunset plan.</li>
-    <li><strong>Live-session intelligibility audit (REPL-focused).</strong>
-        Read-only investigation producing a written gap list + recommendations.
-        Inputs: <code>WsMessage</code> variants emitted during a REPL turn; frontend
-        rendering for <code>ToolCallEvent</code> / <code>ToolResultEvent</code> when
-        <code>name == "python_repl"</code>; treatment of streaming output, kernel
-        state, <code>sh()</code> three-tuple, tracebacks, cell boundaries.  Cheap;
-        outputs feed concrete UI follow-ups.</li>
-    <li><strong>Forensics affordance for the AI.</strong>  One-line system-prompt
-        or doc note teaching the agent that <code>.omega/sessions/&lt;id&gt;/events.jsonl</code>
-        is the canonical post-mortem source for past sessions, so the model picks
-        the right file without fishing.  Trivial; can ride along with another
-        small change.</li>
-    <li><strong>View-only WS endpoint <span class="id-tag">[oq-repl-view]</span>.</strong>
-        Demoted to deferred indefinitely.  Documented in
-        <a href="./session-design.html#oq-repl-view">session-design.html</a> but no
-        longer scheduled — AI-based forensics covers the real use case.  Reopen if
-        a concrete UI need surfaces.</li>
-    <li><strong>Fork-from-event primitive.</strong>  Not planned.  Considered as a
-        replacement for strict resume; the user did not endorse it as needed.
-        Recorded here so the option isn't forgotten if a concrete use case
-        appears later.</li>
-  </ul>
-</div>
-
-<h4>Phase 1.1 follow-up — extract <code>read_phase</code> helper <em>(✓ done, <code>7cd3bd6</code>)</em></h4>
-<p>
-  <em>Historical brief preserved for context; the work landed at <code>7cd3bd6</code>.</em>
-</p>
-<p>
-  The file split has landed (<code>8f557aa</code>); the file is now a directory module under
-  <code>crates/omega-tools/src/python_repl/</code>.  One mechanical cleanup remains: in
-  <code>python_repl/repl.rs</code>, <code>execute()</code> contains three near-duplicate I/O
-  loops — primary read, soft-grace, hard-drain — that share 80% of their structure (pin a
-  timeout future, <code>tokio::select!</code> between <code>read_line</code> and the timeout,
-  tee each line, decide termination).  Extract a private helper with signature roughly:
-</p>
-<pre><code class="language-rust">enum ReadStop { Sentinel, Eof, Error(String), Timeout }
-async fn read_phase(
-    &amp;mut self,
-    timeout: Duration,
-    lines: &amp;mut Vec&lt;String&gt;,
-    log: &amp;mut Option&lt;BufWriter&lt;File&gt;&gt;,
-    check_sentinel: bool,
-) -&gt; ReadStop { ... }</code></pre>
-<p>
-  <strong>Behavior-preservation constraint.</strong>  The three loops have real differences:
-  primary returns an "early exit" error message on EOF/Err; grace breaks quietly on EOF/Err;
-  drain does <strong>not</strong> check the sentinel and just tees until EOF or drain timeout.
-  The <code>check_sentinel: bool</code> parameter is what distinguishes them.  Do not
-  accidentally regularize the drain loop to check the sentinel — that would be a semantic
-  change.  If the lack of sentinel check in drain feels like a latent bug, raise it as a
-  question rather than fixing it silently.
-</p>
-<p>
-  Verification: <code>cargo test -p omega-tools --lib python_repl</code> matches the
-  <code>8f557aa</code> baseline (37 passed, 1 ignored); <code>just mutants-python-repl</code>
-  all caught or unviable (baseline: 50 mutants, 40 caught, 10 unviable, 0 missed);
-  <code>cargo clippy --workspace --all-targets -- -D warnings</code> clean.
-</p>
-
-<h4>Phase 1.2 — Design the tool-selection mechanism</h4>
-<p>
-  This is the load-bearing design step.  It touches several crates; design the
-  schema change first, then implement.  Key files:
-</p>
-<ul>
-  <li><code>crates/omega-types/src/events.rs</code> — add
-      <code>tool_selection</code> field to <code>SessionStartedEvent</code>.
-      Schema-evolution-loud rule applies: the old three
-      <code>features.repl*</code> booleans must be removed (not kept as aliases)
-      so old logs fail loudly on the new schema.
-  </li>
-  <li><code>crates/omega-agent/src/system_prompt.rs</code> — derive the active
-      toolset from the event field, not from env vars.  The "REPL mode / Tier"
-      conditional blocks are replaced by a loop over the tool list.
-  </li>
-  <li><code>crates/omega-agent/src/session_resume.rs</code> — <em>shrunk, but still
-      relevant for AI-resume</em>.  The strict_resume code was deleted in
-      <code>d8538d4</code>; <code>DomainSnapshot</code> is gone.  What remains is
-      the AI-resume (LLM-summary) machinery: <code>extract_resumption_basis</code>,
-      <code>extract_summary_from_response</code>, <code>RESUMPTION_*</code> constants,
-      plus the helpers feeding <code>Agent::perform_resumption</code> and
-      <code>Agent::seed_with_resumption_summary</code>.  Audit question for Phase
-      1.2: does <code>tool_selection</code> need to flow through the AI-resume
-      seed path so a successor session inherits the parent's toolset?  If
-      <code>handle_resume_session</code> always reads the parent's
-      <code>SessionStartedEvent</code> to derive the successor's start config, this
-      may be free — verify before assuming.
-  </li>
-  <li><code>crates/omega-server/src/router.rs</code> + <code>ws_message.rs</code> —
-      session-creation WS message gains <code>tool_selection</code> field; the
-      <code>features</code> field is removed from any WS message that carried it.
-      The AI-resume path's <code>ClientFrame::ResumeSession</code> survives (it
-      triggers an LLM-summary seed, not a strict reconstruction); confirm it does
-      not carry a redundant <code>features</code>-derived field that needs migrating
-      to <code>tool_selection</code>.
-  </li>
-</ul>
-
-<h4>Phase 1.3 — Add <code>sh()</code> helper to <code>python_repl</code> preamble</h4>
-<p>
-  In <code>crates/omega-tools/src/python_repl/wrapper.rs</code> (the
-  <code>PYTHON_WRAPPER</code> constant, post-<code>8f557aa</code>), add the
-  following to the Python startup preamble:
-</p>
-<pre><code class="language-python">def sh(cmd: str, *, timeout: float | None = None) -> tuple[str, str, int]:
-    r = subprocess.run(["bash", "-c", cmd], capture_output=True,
-                       text=True, timeout=timeout)
-    return r.stdout, r.stderr, r.returncode
-</code></pre>
-<p>
-  Also update the system-prompt addendum in
-  <code>crates/omega-agent/src/system_prompt.rs</code> to mention
-  <code>sh("cmd")</code> as the preferred pattern for shell commands inside
-  a REPL call, with a note that it returns <code>(stdout, stderr, returncode)</code>.
-</p>
-
-<!-- ═══════════════════════════════════════════════════════════════════════ -->
-<hr class="section-divider" />
+<details>
+<summary>Findings F-A through F-G, framing, evidence base, comparative agent survey, methodological note, RQ-A discussion, how-we-ran-experiments, open questions on REPL scope</summary>
+<div class="details-body">
 <h2 id="findings">📊 Findings to date</h2>
 
 <p>
@@ -1494,6 +1321,10 @@ harbor run -d terminal-bench@2.0 \
     See <a href="#mn-sh">§ sh() helper</a>.
   </p>
 </div>
+
+</div>
+</details>
+
 
 </article>
 </main>
