@@ -10,7 +10,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use omega_types::FeatureFlags;
 use serde_json::json;
 
 async fn exec(name: &str, input: serde_json::Value) -> Result<String, String> {
@@ -22,15 +21,15 @@ async fn exec(name: &str, input: serde_json::Value) -> Result<String, String> {
     }
 }
 
-/// Like `exec` but constructs a `ToolCtx` with the given `FeatureFlags`.
-async fn exec_with_flags(
+/// Like `exec` but constructs a `ToolCtx` with the given `tool_selection`.
+async fn exec_with_selection(
     name: &str,
     input: serde_json::Value,
-    flags: FeatureFlags,
+    selection: Vec<String>,
 ) -> Result<String, String> {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut ctx = omega_tools::ToolCtx::new(dir.path(), "test-call");
-    ctx.flags = flags;
+    ctx.tool_selection = selection;
     let result = omega_tools::execute_tool(name, input, None, Some(&ctx)).await;
     if result.is_error {
         Err(result.content)
@@ -403,25 +402,26 @@ async fn fetch_url_small_postprocess_output_not_truncated() {
 }
 
 // ---------------------------------------------------------------------------
-// fetch_url — shell-gated mode (repl_replaces_shell = true)
+// fetch_url — shell-gated mode (no_shell_tools = true)
 // ---------------------------------------------------------------------------
 
-fn flags_shell_gated() -> FeatureFlags {
-    FeatureFlags {
-        repl: true,
-        subagents: false,
-        repl_replaces_fileops: false,
-        repl_replaces_shell: true,
-    }
+/// Selection without any shell-execution tool: `fetch_url` is forced into
+/// shell-gated mode (postprocess pipeline disabled).
+fn selection_no_shell_tools() -> Vec<String> {
+    vec![
+        "web_search".into(),
+        "fetch_url".into(),
+        "python_repl".into(),
+    ]
 }
 
 /// Shell-gated: a successful fetch returns content without running a shell pipeline.
 #[tokio::test]
 async fn fetch_url_shell_gated_returns_content_without_postprocess() {
-    let out = exec_with_flags(
+    let out = exec_with_selection(
         "fetch_url",
         json!({ "url": "https://example.com" }),
-        flags_shell_gated(),
+        selection_no_shell_tools(),
     )
     .await
     .unwrap();
@@ -442,13 +442,13 @@ async fn fetch_url_shell_gated_returns_content_without_postprocess() {
 #[tokio::test]
 async fn fetch_url_shell_gated_ignores_postprocess_field() {
     // Provide a postprocess that would fail loudly if executed.
-    let out = exec_with_flags(
+    let out = exec_with_selection(
         "fetch_url",
         json!({
             "url": "https://example.com",
             "postprocess": "false",  // exits 1; would surface as error in normal mode
         }),
-        flags_shell_gated(),
+        selection_no_shell_tools(),
     )
     .await
     .unwrap();
@@ -467,10 +467,10 @@ async fn fetch_url_shell_gated_ignores_postprocess_field() {
 /// Shell-gated: invalid URL returns an error (same guard as normal mode).
 #[tokio::test]
 async fn fetch_url_shell_gated_invalid_url_returns_error() {
-    let err = exec_with_flags(
+    let err = exec_with_selection(
         "fetch_url",
         json!({ "url": "not-a-url" }),
-        flags_shell_gated(),
+        selection_no_shell_tools(),
     )
     .await
     .unwrap_err();
@@ -483,10 +483,10 @@ async fn fetch_url_shell_gated_invalid_url_returns_error() {
 /// Shell-gated: unsupported scheme returns an error.
 #[tokio::test]
 async fn fetch_url_shell_gated_unsupported_scheme_returns_error() {
-    let err = exec_with_flags(
+    let err = exec_with_selection(
         "fetch_url",
         json!({ "url": "ftp://example.com/file.txt" }),
-        flags_shell_gated(),
+        selection_no_shell_tools(),
     )
     .await
     .unwrap_err();
@@ -501,10 +501,10 @@ async fn fetch_url_shell_gated_unsupported_scheme_returns_error() {
 /// are respected by checking the output length on a real small page.
 #[tokio::test]
 async fn fetch_url_shell_gated_result_is_bounded() {
-    let out = exec_with_flags(
+    let out = exec_with_selection(
         "fetch_url",
         json!({ "url": "https://example.com" }),
-        flags_shell_gated(),
+        selection_no_shell_tools(),
     )
     .await
     .unwrap();
@@ -541,10 +541,10 @@ async fn fetch_url_shell_gated_html_content_is_converted_to_text() {
         .mount(&server)
         .await;
 
-    let out = exec_with_flags(
+    let out = exec_with_selection(
         "fetch_url",
         json!({ "url": server.uri() }),
-        flags_shell_gated(),
+        selection_no_shell_tools(),
     )
     .await
     .expect("shell-gated HTML fetch must succeed");

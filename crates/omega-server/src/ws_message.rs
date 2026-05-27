@@ -329,7 +329,6 @@ mod tests {
         assert_eq!(obj["hasPendingChanges"], false);
         // features is always present
         assert!(obj.contains_key("features"), "features must be present");
-        assert_eq!(obj["features"]["repl"], false);
         assert_eq!(obj["features"]["subagents"], false);
     }
 
@@ -343,16 +342,10 @@ mod tests {
             name: None,
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
-            features: FeatureFlags {
-                repl: true,
-                subagents: false,
-                repl_replaces_fileops: false,
-                repl_replaces_shell: false,
-            },
+            features: FeatureFlags { subagents: true },
         }
         .to_json();
-        assert_eq!(v["features"]["repl"], true);
-        assert_eq!(v["features"]["subagents"], false);
+        assert_eq!(v["features"]["subagents"], true);
     }
 
     #[test]

@@ -82,9 +82,17 @@ pub async fn execute(
     _cancel: Option<&CancellationToken>,
     ctx: Option<&ToolCtx>,
 ) -> Result<String, String> {
-    // Check whether the shell-gated mode is active: when repl_replaces_shell is
-    // set, the postprocess pipeline is disabled to close the shell-loophole.
-    let shell_gated = ctx.is_some_and(|c| c.flags.repl_replaces_shell);
+    // Check whether the shell-gated mode is active: when no shell-execution
+    // tool is in this session's tool_selection, the postprocess pipeline is
+    // disabled to close the shell-loophole.
+    let shell_gated = ctx.is_some_and(|c| {
+        !c.tool_selection.iter().any(|n| {
+            matches!(
+                n.as_str(),
+                "run_command" | "run_background" | "wait_for_output" | "write_stdin"
+            )
+        })
+    });
 
     let url_str = input["url"]
         .as_str()
@@ -102,7 +110,7 @@ pub async fn execute(
         if input["postprocess"].as_str().is_some() {
             eprintln!(
                 "warning: fetch_url received a postprocess value while \
-                 repl_replaces_shell is active — ignoring it (shell loophole closed)"
+                 shell-gated mode is active — ignoring it (shell loophole closed)"
             );
         }
         return execute_shell_gated(url_str, ctx).await;
@@ -243,10 +251,10 @@ pub async fn execute(
 }
 
 // ---------------------------------------------------------------------------
-// Shell-gated execution (repl_replaces_shell mode)
+// Shell-gated execution (no shell-tool in selection)
 // ---------------------------------------------------------------------------
 
-/// Execute `fetch_url` when `repl_replaces_shell` is active.
+/// Execute `fetch_url` when no shell-execution tool is in the selection.
 ///
 /// No shell pipeline is spawned.  The cached plain text is read and
 /// truncated to at most [`SHELL_GATED_MAX_LINES`] lines or

@@ -278,6 +278,7 @@ fn ev_session_started() -> OmegaEvent {
         agent_time_zone: "Europe/Berlin".into(),
         origin: Origin::Root,
         features: FeatureFlags::default(),
+        tool_selection: Vec::new(),
     })
 }
 

@@ -188,15 +188,23 @@ pub struct SessionStartedEvent {
 
     /// Runtime feature flags active for this session.
     ///
-    /// Defaults to [`FeatureFlags::default`] (both flags `false`) when absent
+    /// Defaults to [`FeatureFlags::default`] (`subagents = false`) when absent
     /// on deserialisation.  This is a deliberate semantic default, not a
     /// defensive accommodation: every session recorded before feature flags
-    /// were introduced had both features off by construction — the REPL and
-    /// subagent code paths did not exist yet.  Old readers that encounter a
-    /// new `features` field will fail loudly; readers of old logs without
-    /// the field will correctly infer both-off semantics via this default.
+    /// were introduced had subagents off by construction — that code path did
+    /// not exist yet.
     #[serde(default)]
     pub features: FeatureFlags,
+
+    /// Names of the tools exposed to the model in this session, in the
+    /// canonical order they appear in `tool_definitions`.
+    ///
+    /// **Required field** — no `#[serde(default)]`.  Old `events.jsonl` files
+    /// that lack it will fail to deserialise loudly; that is intended (per
+    /// the schema-loud rule in AGENTS.md).  The toolset is part of the
+    /// session's identity; silently inferring it from older flags would mask
+    /// exactly the kind of semantic drift we want to see.
+    pub tool_selection: Vec<String>,
 }
 
 /// The server process started.
@@ -660,6 +668,7 @@ mod tests {
             agent_time_zone: "Europe/Berlin".into(),
             origin: Origin::Root,
             features: FeatureFlags::default(),
+            tool_selection: vec!["read_file".into(), "write_file".into()],
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "session_started");
@@ -667,6 +676,33 @@ mod tests {
         assert_eq!(json["systemPrompt"], "You are Omega.");
         assert_eq!(json["agentTimeZone"], "Europe/Berlin");
         assert_eq!(json["origin"]["type"], "root");
+        // tool_selection is camelCased on the wire and round-trips losslessly.
+        assert_eq!(json["toolSelection"][0], "read_file");
+        assert_eq!(json["toolSelection"][1], "write_file");
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    /// Required-field rejection: `SessionStartedEvent` JSON without
+    /// `toolSelection` must fail to deserialise loudly (per AGENTS.md
+    /// schema-loud rule).
+    #[test]
+    fn session_started_missing_tool_selection_fails_loudly() {
+        let json = serde_json::json!({
+            "type": "session_started",
+            "time": "2024-01-15T12:00:00.000Z",
+            "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
+            "path": "",
+            "model": "claude-sonnet-4-6",
+            "effort": "medium",
+            "systemPrompt": "You are Omega.",
+            // toolSelection deliberately omitted
+        });
+        let err = serde_json::from_value::<OmegaEvent>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("toolSelection"),
+            "error must mention the missing field, got: {err}"
+        );
     }
 
     /// Backward-compat: sessions written before the `omegaCommit` field
@@ -685,6 +721,7 @@ mod tests {
             "model": "claude-sonnet-4-6",
             "effort": "medium",
             "systemPrompt": "You are Omega.",
+            "toolSelection": [],
             // omegaCommit deliberately omitted
         });
         let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
@@ -710,6 +747,7 @@ mod tests {
             "effort": "medium",
             "systemPrompt": "You are Omega.",
             "omegaCommit": "abc1234",
+            "toolSelection": [],
             // agentTimeZone deliberately omitted
         });
         let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
@@ -736,6 +774,7 @@ mod tests {
             "systemPrompt": "You are Omega.",
             "omegaCommit": "abc1234",
             "agentTimeZone": "Europe/Berlin",
+            "toolSelection": [],
             // origin deliberately omitted
         });
         let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
@@ -749,8 +788,8 @@ mod tests {
 
     /// Backward-compat: sessions written before the `features` field existed
     /// must still deserialise cleanly — they default to `FeatureFlags::default()`
-    /// (both flags off), which is correct: the REPL and subagent code paths
-    /// did not exist before this field was introduced.
+    /// (subagents off), which is correct: the subagent code path did not
+    /// exist before this field was introduced.
     #[test]
     fn session_started_uses_default_features_when_field_missing() {
         let json = serde_json::json!({
@@ -764,13 +803,13 @@ mod tests {
             "omegaCommit": "abc1234",
             "agentTimeZone": "Europe/Berlin",
             "origin": {"type": "root"},
+            "toolSelection": [],
             // features deliberately omitted — pre-flag-era session
         });
         let parsed: OmegaEvent = serde_json::from_value(json).unwrap();
         match parsed {
             OmegaEvent::SessionStarted(ev) => {
                 assert_eq!(ev.features, FeatureFlags::default());
-                assert!(!ev.features.repl, "pre-flag-era repl must be false");
                 assert!(
                     !ev.features.subagents,
                     "pre-flag-era subagents must be false"
@@ -794,17 +833,12 @@ mod tests {
             omega_commit: "abc1234".into(),
             agent_time_zone: "UTC".into(),
             origin: Origin::Root,
-            features: FeatureFlags {
-                repl: true,
-                subagents: false,
-                repl_replaces_fileops: false,
-                repl_replaces_shell: false,
-            },
+            features: FeatureFlags { subagents: true },
+            tool_selection: vec!["python_repl".into(), "web_search".into()],
         });
         let v = serde_json::to_value(&ev).unwrap();
         // features field is present with expected values
-        assert_eq!(v["features"]["repl"], true);
-        assert_eq!(v["features"]["subagents"], false);
+        assert_eq!(v["features"]["subagents"], true);
         // round-trip
         let back: OmegaEvent = serde_json::from_value(v).unwrap();
         assert_eq!(ev, back);
@@ -984,7 +1018,7 @@ mod tests {
     #[test]
     fn deserialize_ts_session_started() {
         // Typical line from events.jsonl written by the TS agent
-        let line = r#"{"type":"session_started","time":"2024-01-15T12:00:00.000Z","sessionId":"018f4c2e-3a1b-7d00-8000-abcdef012345","path":".omega/sessions/abc","model":"claude-sonnet-4-6","effort":"medium","systemPrompt":"You are Omega.","omegaCommit":"abc1234"}"#;
+        let line = r#"{"type":"session_started","time":"2024-01-15T12:00:00.000Z","sessionId":"018f4c2e-3a1b-7d00-8000-abcdef012345","path":".omega/sessions/abc","model":"claude-sonnet-4-6","effort":"medium","systemPrompt":"You are Omega.","omegaCommit":"abc1234","toolSelection":["read_file"]}"#;
         let ev: OmegaEvent = serde_json::from_str(line).unwrap();
         match ev {
             OmegaEvent::SessionStarted(s) => {
@@ -1325,6 +1359,7 @@ mod tests {
             agent_time_zone: "UTC".into(),
             origin: Origin::Root,
             features: FeatureFlags::default(),
+            tool_selection: Vec::new(),
         });
         assert_eq!(ev.time().as_str(), ts);
     }

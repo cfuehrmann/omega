@@ -44,6 +44,9 @@ pub fn retry_frame_for(intent: &PendingChangesIntent) -> ClientFrame {
             model: model.clone(),
             effort: effort.clone(),
             allow_dirty: true,
+            // TODO(Phase 2.1): plumb the picker's tool selection through
+            // `PendingChangesIntent::Reset` so the retry preserves it.
+            tool_selection: None,
         },
         PendingChangesIntent::ResumeSession { session_dir } => ClientFrame::ResumeSession {
             session_dir: session_dir.clone(),
@@ -185,10 +188,12 @@ mod tests {
                 model,
                 effort,
                 allow_dirty,
+                tool_selection,
             } => {
                 assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
                 assert_eq!(effort.as_deref(), Some("high"));
                 assert!(allow_dirty);
+                assert!(tool_selection.is_none());
             }
             other => panic!("expected Reset, got {other:?}"),
         }
@@ -206,10 +211,12 @@ mod tests {
                 model,
                 effort,
                 allow_dirty,
+                tool_selection,
             } => {
                 assert!(model.is_none());
                 assert!(effort.is_none());
                 assert!(allow_dirty);
+                assert!(tool_selection.is_none());
             }
             other => panic!("expected Reset, got {other:?}"),
         }

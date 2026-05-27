@@ -231,8 +231,8 @@ mutants-domain-snapshot:
 
 # Run cargo-mutants targeted at the feature-flag parsing module.
 # Mutates omega-types/src/feature_flags.rs and runs the omega-types test suite.
-# Covers parse_flag_value / from_values / validate for all flags including
-# repl_replaces_shell; from_env is excluded via #[mutants::skip].
+# Covers parse_flag_value / from_values for the `subagents` flag;
+# from_env is excluded via #[mutants::skip].
 mutants-feature-flags:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/feature_flags.rs"
@@ -274,27 +274,42 @@ mutants-repl-resume:
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
 # Run cargo-mutants targeted at the schemas.rs tool-definition filtering.
-# Covers the repl_replaces_fileops and repl_replaces_shell branches, the
-# both-replaces (Tier 2) path, and all tool-exclusion logic.
-# Adds omega-types as an in-scope dep (resolved automatically by cargo-mutants).
+# Covers the tool_definitions(tool_selection) membership-driven filtering,
+# canonical-order iteration, and the shell-aware fetch_url schema branch.
 mutants-schemas:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/schemas.rs"
 
 # Run cargo-mutants targeted at the fetch_url tool implementation.
-# Covers the shell-gated branch (repl_replaces_shell), the postprocess path,
-# and the apply_shell_gated_cap truncation logic.
+# Covers the shell-aware branch (driven by shell-tool presence in
+# tool_selection), the postprocess path, and the apply_shell_gated_cap
+# truncation logic.
 # Requires network access (real HTTP fetches to example.com).
 mutants-fetch-url:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/tools/fetch_url.rs"
 
 # Run cargo-mutants targeted at the system_prompt.rs block assembly.
-# Covers repl_replaces_fileops, repl_replaces_shell, both-replaces (Tier 2),
-# shell-tool gating, and the combined reduced_toolset_addendum.
+# Covers file-tool-absent and shell-tool-absent branches (driven by
+# tool_selection membership), the python_repl addendum, and the combined
+# reduced_toolset_addendum.
 mutants-system-prompt:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
+
+# Phase 1.2 — the three files most changed when REPL feature flags were
+# replaced with `SessionStartedEvent.tool_selection`:
+#
+#   * `feature_flags.rs`  — now exposes only `subagents`.
+#   * `schemas.rs`        — owns `DEFAULT_TOOL_NAMES` / `ALL_TOOL_NAMES`
+#                           and the membership-driven `tool_definitions`.
+#   * `system_prompt.rs`  — derives `has_file_tools`, `has_shell_tools`,
+#                           `has_python_repl` from the selection.
+#
+# Mutations on any of these would silently break the new contract — every
+# mutation must end up *caught* or *unviable*.  Run this recipe whenever
+# you touch the toolset wiring.
+mutants-tool-selection: mutants-feature-flags mutants-schemas mutants-system-prompt
 
 # -----------------------------------------------------------------------
 # Repo housekeeping

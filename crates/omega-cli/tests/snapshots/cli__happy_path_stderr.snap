@@ -3,7 +3,7 @@ source: crates/omega-cli/tests/cli.rs
 expression: stderr
 ---
 Session: [SESSION_DIR]
-feature flags: repl=false subagents=false repl_replaces_fileops=false
+feature flags: subagents=false; tool_selection=read_file,write_file,run_command,edit_file,list_files,web_search,fetch_url,grep_files,find_files,run_background,wait_for_output,write_stdin
 AGENTS.md: not found in repo
 .
 [turn complete | in=7 out=2 cache_hit=0 cache_write=0]

@@ -11,9 +11,6 @@ expression: "serde_json::to_string_pretty(&redact(info)).unwrap()"
   "turnState": "idle",
   "hasPendingChanges": "[REDACTED]",
   "features": {
-    "repl": false,
-    "subagents": false,
-    "repl_replaces_fileops": false,
-    "repl_replaces_shell": false
+    "subagents": false
   }
 }

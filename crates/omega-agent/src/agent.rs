@@ -443,6 +443,14 @@ pub struct AgentConfig {
     /// need deterministic, env-independent feature flags, and by the
     /// AI-resume path to seed a new session with specific flags.
     pub features: Option<FeatureFlags>,
+    /// Tools enabled for this session.  `None` (the default for new
+    /// sessions) → use [`omega_tools::DEFAULT_TOOL_NAMES`] (12 base
+    /// tools, no `python_repl`).  `Some(names)` passes through verbatim;
+    /// [`Agent::init`] then validates every name against
+    /// [`omega_tools::ALL_TOOL_NAMES`].  Used by tests that need a
+    /// deterministic toolset, and by the session-resume path to copy the
+    /// parent's selection into the seed config.
+    pub tool_selection: Option<Vec<String>>,
 }
 
 /// The agentic loop.
@@ -488,6 +496,14 @@ pub struct Agent {
     /// so forensic analysis can determine which features were active.
     /// Available via [`Agent::features`] for conditional branching.
     features: FeatureFlags,
+    /// Tools exposed to the model for this session, in canonical order.
+    ///
+    /// Resolved in [`Agent::new`] from `config.tool_selection`, falling
+    /// back to [`omega_tools::DEFAULT_TOOL_NAMES`] when `None`.  Validated
+    /// against [`omega_tools::ALL_TOOL_NAMES`] in [`Agent::init`].  Used
+    /// by `tool_definitions`, `build_system_blocks`, and the
+    /// `python_repl` gate inside the tool-dispatch loop.
+    tool_selection: Vec<String>,
     /// In-memory mirror of `context.jsonl`; sent verbatim as the
     /// `messages` array on every API call.
     history: Vec<Message>,
@@ -501,7 +517,8 @@ pub struct Agent {
     /// The subprocess is started on the first `python_repl` tool call and
     /// reused for all subsequent calls in the session.
     ///
-    /// Only populated in the `ToolCtx` when `features.repl == true`.
+    /// Only populated in the `ToolCtx` when `python_repl` is in the
+    /// tool selection.
     /// Cleaned up (process killed) when the `PythonRepl` is dropped, which
     /// happens when the `Arc` reference count reaches zero — either at
     /// `Agent::drop` or when all outstanding `ToolCtx` handles are dropped.
@@ -529,6 +546,14 @@ impl Agent {
         // Extract before moving config into Self.  None → default (both off);
         // Some(flags) bypasses from_env() (used by tests and the AI-resume path).
         let features = config.features.unwrap_or_default();
+        // Resolve tool selection.  None → the canonical 12 base tools.
+        // Some(names) passes through verbatim; validated in `init`.
+        let tool_selection = config.tool_selection.clone().unwrap_or_else(|| {
+            omega_tools::DEFAULT_TOOL_NAMES
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect()
+        });
         let event_store = Arc::new(event_store);
         let controls = ControlHandle::new(Arc::clone(&event_store));
         Self {
@@ -544,6 +569,7 @@ impl Agent {
             history: Vec::new(),
             context_hashes: Vec::new(),
             features,
+            tool_selection,
             python_repl: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -564,13 +590,23 @@ impl Agent {
         if self.config.features.is_none() {
             self.features = FeatureFlags::from_env();
         }
-        // Validate cross-flag constraints — fail loudly at startup.
-        self.features
-            .validate()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
+        // Validate the tool selection: every name must be in
+        // `ALL_TOOL_NAMES`.  Fail loudly at startup so a typo on the
+        // wire surfaces to the client / CLI instead of silently
+        // shipping a wrong toolset.
+        for name in &self.tool_selection {
+            if !omega_tools::ALL_TOOL_NAMES.iter().any(|n| n == name) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("unknown tool name in tool_selection: {name}"),
+                )
+                .into());
+            }
+        }
         eprintln!(
-            "feature flags: repl={} subagents={} repl_replaces_fileops={}",
-            self.features.repl, self.features.subagents, self.features.repl_replaces_fileops
+            "feature flags: subagents={}; tool_selection={}",
+            self.features.subagents,
+            self.tool_selection.join(","),
         );
 
         // 1. server_started
@@ -596,7 +632,7 @@ impl Agent {
             max_tokens,
             self.config.headless,
             &files,
-            self.features,
+            &self.tool_selection,
         );
         // Derive the set of canonical on-disk paths for the system-prompt
         // guard in `execute_tool`.  Canonicalisation happens here once so
@@ -645,6 +681,9 @@ impl Agent {
             origin: Origin::Root,
             // Runtime feature flags resolved from env at init time.
             features: self.features,
+            // Tool selection resolved in `Agent::new` (defaults to the 12
+            // base tools when `config.tool_selection` is `None`).
+            tool_selection: self.tool_selection.clone(),
         });
         self.event_store.append(&session_started).await?;
         Ok(())
@@ -658,6 +697,19 @@ impl Agent {
     #[must_use]
     pub fn features(&self) -> FeatureFlags {
         self.features
+    }
+
+    /// Borrow the resolved tool selection for this session.
+    ///
+    /// Populated in [`Agent::new`] from `config.tool_selection` (falling
+    /// back to [`omega_tools::DEFAULT_TOOL_NAMES`] when `None`) and
+    /// validated in [`Agent::init`].  Useful for tests and for callers
+    /// that need to inspect or forward the active selection (e.g. the
+    /// session-resume path copying the parent's selection into a
+    /// successor session's seed config).
+    #[must_use]
+    pub fn tool_selection(&self) -> &[String] {
+        &self.tool_selection
     }
 
     /// Borrow a clone of the pause/continue/abort control handle.
@@ -1033,7 +1085,7 @@ impl Agent {
                     model: self.active_model.clone(),
                     messages: self.history.clone(),
                     system: Some(system_blocks),
-                    tools: tool_definitions(self.features),
+                    tools: tool_definitions(&self.tool_selection),
                     config: ModelConfig {
                         max_tokens,
                         temperature: None,
@@ -1557,14 +1609,20 @@ impl Agent {
                     // into each future so they don't borrow self.
                     let session_cache_dir = self.config.session_dir.join("cache");
                     let system_prompt_paths = Arc::clone(&self.system_prompt_paths);
-                    // Capture feature flags before the async block so they
-                    // can be moved into each tool context without borrowing self.
-                    let self_features = self.features;
-                    // Pass the python_repl Arc into the tool context when the
-                    // REPL feature is enabled.  The outer Option<Arc<...>> is
-                    // None when features.repl=false so execute_tool knows the
-                    // feature is disabled and can return a clear error.
-                    let python_repl_opt = if self.features.repl {
+                    // Capture the tool selection before the async block so
+                    // each tool context can own a clone without borrowing
+                    // self.
+                    let self_tool_selection = self.tool_selection.clone();
+                    // Pass the python_repl Arc into the tool context when
+                    // `python_repl` is in the selection.  The outer
+                    // Option<Arc<...>> is None otherwise so execute_tool
+                    // knows the tool is unavailable and can return a clear
+                    // error.
+                    let python_repl_opt = if self
+                        .tool_selection
+                        .iter()
+                        .any(|n| n == "python_repl")
+                    {
                         Some(Arc::clone(&self.python_repl))
                     } else {
                         None
@@ -1580,6 +1638,7 @@ impl Agent {
                             let cache_dir = session_cache_dir.clone();
                             let system_prompt_paths = Arc::clone(&system_prompt_paths);
                             let python_repl = python_repl_opt.clone();
+                            let tool_selection = self_tool_selection.clone();
                             async move {
                                 let start = Instant::now();
                                 let ctx = ToolCtx {
@@ -1587,7 +1646,7 @@ impl Agent {
                                     tool_call_id: tool_call_id.clone(),
                                     system_prompt_paths,
                                     python_repl,
-                                    flags: self_features,
+                                    tool_selection,
                                 };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;

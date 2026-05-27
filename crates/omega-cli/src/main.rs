@@ -198,7 +198,8 @@ async fn run(
         cwd: cwd.clone(),
         session_dir: paths.dir.clone(),
         headless,
-        features: None, // resolved from env in agent.init()
+        features: None,       // resolved from env in agent.init()
+        tool_selection: None, // defaults to omega_tools::DEFAULT_TOOL_NAMES in Agent::new
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
     if let Err(e) = agent.init().await {

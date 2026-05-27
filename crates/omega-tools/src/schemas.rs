@@ -5,87 +5,104 @@
 //! `src/tools.schema.ts` and `src/tools.ts` in the TypeScript codebase.
 
 use omega_core::ToolDefinition;
-use omega_types::FeatureFlags;
 use serde_json::{Value, json};
 
-/// All tools Omega exposes, in stable order.
+/// The default toolset — twelve tools, no `python_repl`.
 ///
-/// Order matches the TS `toolDefinitions` array. The agent does not depend
-/// on order, but tests do (snapshot/round-trip).
+/// Used when [`AgentConfig::tool_selection`] is `None`.  Order is canonical
+/// and matches the order `tool_definitions` emits.
 ///
-/// The base set is twelve tools.  When `flags.repl` is `true` (i.e. the
-/// session was started with `OMEGA_FEATURE_REPL=1`), `python_repl` is
-/// appended.
+/// [`AgentConfig::tool_selection`]: ../../omega_agent/struct.AgentConfig.html#structfield.tool_selection
+pub const DEFAULT_TOOL_NAMES: &[&str] = &[
+    "read_file",
+    "write_file",
+    "run_command",
+    "edit_file",
+    "list_files",
+    "web_search",
+    "fetch_url",
+    "grep_files",
+    "find_files",
+    "run_background",
+    "wait_for_output",
+    "write_stdin",
+];
+
+/// Every tool Omega knows how to expose, in canonical order.
 ///
-/// When `flags.repl_replaces_fileops` is `true`, the six file-op tools
-/// (`read_file`, `write_file`, `edit_file`, `find_files`, `grep_files`,
-/// `list_files`) are excluded.  The retained tools are:
-/// `run_command`, `run_background`, `wait_for_output`, `write_stdin`,
-/// `web_search`, `fetch_url`, `python_repl`.
+/// `python_repl` is in `ALL_TOOL_NAMES` but not in [`DEFAULT_TOOL_NAMES`] —
+/// it must be requested explicitly via
+/// `AgentConfig::tool_selection`.
 ///
-/// When `flags.repl_replaces_shell` is `true`, the four shell-execution
-/// tools (`run_command`, `run_background`, `wait_for_output`, `write_stdin`)
-/// are excluded.  The retained tools are the six file-op tools plus
-/// `web_search`, `fetch_url`, `python_repl`.
+/// Names not present in this list are rejected by the agent at session
+/// creation time.
+pub const ALL_TOOL_NAMES: &[&str] = &[
+    "read_file",
+    "write_file",
+    "run_command",
+    "edit_file",
+    "list_files",
+    "web_search",
+    "fetch_url",
+    "grep_files",
+    "find_files",
+    "run_background",
+    "wait_for_output",
+    "write_stdin",
+    "python_repl",
+];
+
+/// Build the tool definitions exposed to the LLM for this session.
 ///
-/// When both `repl_replaces_fileops` **and** `repl_replaces_shell` are
-/// `true` ("Tier 2" configuration), only `python_repl`, `web_search`, and
-/// `fetch_url` are exposed.
+/// Iterates [`ALL_TOOL_NAMES`] in canonical order and emits the definition
+/// for each name that appears in `tool_selection`.
+///
+/// `fetch_url` keeps its current shell-aware schema variant: when no
+/// shell-execution tool is present in the selection, `fetch_url` switches
+/// to a postprocess-free schema (so it cannot be used as a shell
+/// loophole).  When any of `run_command`, `run_background`,
+/// `wait_for_output`, or `write_stdin` is selected, the full schema with
+/// a required `postprocess` argument is used.
+///
+/// Order in the returned `Vec` matches `ALL_TOOL_NAMES`, not the order of
+/// `tool_selection`.
 #[must_use]
-pub fn tool_definitions(flags: FeatureFlags) -> Vec<ToolDefinition> {
-    if flags.repl_replaces_fileops && flags.repl_replaces_shell {
-        // Tier 2: both file-op and shell tools removed.  Only the three
-        // tools that python_repl cannot replace are retained.
-        // Both flags require repl=true (validated at startup).
-        vec![web_search(), fetch_url(flags), python_repl()]
-    } else if flags.repl_replaces_fileops {
-        // File-ops limit mode: exclude the six file-op tools.
-        // python_repl is always included (repl_replaces_fileops requires
-        // repl=true; validated at startup).
-        vec![
-            run_command(),
-            run_background(),
-            wait_for_output(),
-            write_stdin(),
-            web_search(),
-            fetch_url(flags),
-            python_repl(),
-        ]
-    } else if flags.repl_replaces_shell {
-        // Shell limit mode: exclude the four shell-execution tools.
-        // python_repl is always included (repl_replaces_shell requires
-        // repl=true; validated at startup).
-        vec![
-            read_file(),
-            write_file(),
-            edit_file(),
-            list_files(),
-            web_search(),
-            fetch_url(flags),
-            grep_files(),
-            find_files(),
-            python_repl(),
-        ]
-    } else {
-        let mut defs = vec![
-            read_file(),
-            write_file(),
-            run_command(),
-            edit_file(),
-            list_files(),
-            web_search(),
-            fetch_url(flags),
-            grep_files(),
-            find_files(),
-            run_background(),
-            wait_for_output(),
-            write_stdin(),
-        ];
-        if flags.repl {
-            defs.push(python_repl());
+pub fn tool_definitions(tool_selection: &[String]) -> Vec<ToolDefinition> {
+    let shell_tools_present = tool_selection.iter().any(|n| {
+        matches!(
+            n.as_str(),
+            "run_command" | "run_background" | "wait_for_output" | "write_stdin"
+        )
+    });
+    let mut out = Vec::new();
+    for &name in ALL_TOOL_NAMES {
+        if !tool_selection.iter().any(|n| n == name) {
+            continue;
         }
-        defs
+        let def = match name {
+            "read_file" => read_file(),
+            "write_file" => write_file(),
+            "run_command" => run_command(),
+            "edit_file" => edit_file(),
+            "list_files" => list_files(),
+            "web_search" => web_search(),
+            "fetch_url" => fetch_url(shell_tools_present),
+            "grep_files" => grep_files(),
+            "find_files" => find_files(),
+            "run_background" => run_background(),
+            "wait_for_output" => wait_for_output(),
+            "write_stdin" => write_stdin(),
+            "python_repl" => python_repl(),
+            // Unreachable: ALL_TOOL_NAMES is the source of truth and is
+            // covered by an exhaustive match here — every name we iterate
+            // came from this list.  If a new entry is added to
+            // ALL_TOOL_NAMES without an arm here, the `unreachable!` will
+            // fire in tests immediately.
+            other => unreachable!("unhandled tool name in ALL_TOOL_NAMES: {other}"),
+        };
+        out.push(def);
     }
+    out
 }
 
 // -----------------------------------------------------------------------
@@ -234,28 +251,8 @@ fn web_search() -> ToolDefinition {
     }
 }
 
-fn fetch_url(flags: FeatureFlags) -> ToolDefinition {
-    if flags.repl_replaces_shell {
-        // Shell-gated mode: postprocess is disabled to prevent using
-        // fetch_url as a shell-command loophole.  Content is returned
-        // with a byte/line-level cap; use python_repl for further filtering.
-        ToolDefinition {
-            name: "fetch_url".into(),
-            description: "Download a URL to a session-local cache file (content-addressed by URL hash) \
-                          and return the content as text. HTML is converted to readable text before caching. \
-                          The result is capped at 2000 lines / 50\u{00a0}KB (whichever is hit first); \
-                          a truncation marker is appended when the cap is reached. \
-                          For further filtering or analysis, pass the cache path to python_repl."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "The URL to fetch (must be http or https)" },
-                },
-                "required": ["url"],
-            }),
-        }
-    } else {
+fn fetch_url(shell_tools_present: bool) -> ToolDefinition {
+    if shell_tools_present {
         // Default mode: postprocess is a required shell pipeline applied to the
         // fetched content.
         ToolDefinition {
@@ -282,6 +279,26 @@ fn fetch_url(flags: FeatureFlags) -> ToolDefinition {
                     },
                 },
                 "required": ["url", "postprocess"],
+            }),
+        }
+    } else {
+        // Shell-gated mode: postprocess is disabled to prevent using
+        // fetch_url as a shell-command loophole.  Content is returned
+        // with a byte/line-level cap; use python_repl for further filtering.
+        ToolDefinition {
+            name: "fetch_url".into(),
+            description: "Download a URL to a session-local cache file (content-addressed by URL hash) \
+                          and return the content as text. HTML is converted to readable text before caching. \
+                          The result is capped at 2000 lines / 50\u{00a0}KB (whichever is hit first); \
+                          a truncation marker is appended when the cap is reached. \
+                          For further filtering or analysis, pass the cache path to python_repl."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "The URL to fetch (must be http or https)" },
+                },
+                "required": ["url"],
             }),
         }
     }
@@ -441,57 +458,60 @@ fn write_stdin() -> ToolDefinition {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use omega_types::FeatureFlags;
 
-    fn flags_default() -> FeatureFlags {
-        FeatureFlags::default()
+    fn sel(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| (*s).to_owned()).collect()
     }
 
-    fn flags_repl_only() -> FeatureFlags {
-        FeatureFlags {
-            repl: true,
-            subagents: false,
-            repl_replaces_fileops: false,
-            repl_replaces_shell: false,
-        }
+    fn sel_default() -> Vec<String> {
+        sel(DEFAULT_TOOL_NAMES)
     }
 
-    fn flags_limit_mode() -> FeatureFlags {
-        FeatureFlags {
-            repl: true,
-            subagents: false,
-            repl_replaces_fileops: true,
-            repl_replaces_shell: false,
-        }
+    fn sel_default_plus_repl() -> Vec<String> {
+        let mut v = sel(DEFAULT_TOOL_NAMES);
+        v.push("python_repl".into());
+        v
     }
 
-    fn flags_repl_replaces_shell() -> FeatureFlags {
-        FeatureFlags {
-            repl: true,
-            subagents: false,
-            repl_replaces_fileops: false,
-            repl_replaces_shell: true,
-        }
+    /// Shell-only + `python_repl` + web/fetch — the "no file tools" selection.
+    fn sel_no_file_tools() -> Vec<String> {
+        sel(&[
+            "run_command",
+            "run_background",
+            "wait_for_output",
+            "write_stdin",
+            "web_search",
+            "fetch_url",
+            "python_repl",
+        ])
     }
 
-    fn flags_tier2() -> FeatureFlags {
-        FeatureFlags {
-            repl: true,
-            subagents: false,
-            repl_replaces_fileops: true,
-            repl_replaces_shell: true,
-        }
+    /// File tools + web/fetch + `python_repl` — the "no shell tools" selection.
+    fn sel_no_shell_tools() -> Vec<String> {
+        sel(&[
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_files",
+            "web_search",
+            "fetch_url",
+            "grep_files",
+            "find_files",
+            "python_repl",
+        ])
+    }
+
+    /// Minimal selection: `web_search` + `fetch_url` + `python_repl` only.
+    fn sel_minimal() -> Vec<String> {
+        sel(&["web_search", "fetch_url", "python_repl"])
     }
 
     #[test]
-    fn twelve_tools_without_repl() {
-        let names: Vec<String> = tool_definitions(flags_default())
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
+    fn default_tool_names_are_twelve_in_canonical_order() {
+        assert_eq!(DEFAULT_TOOL_NAMES.len(), 12);
         assert_eq!(
-            names,
-            vec![
+            DEFAULT_TOOL_NAMES,
+            &[
                 "read_file",
                 "write_file",
                 "run_command",
@@ -509,49 +529,72 @@ mod tests {
     }
 
     #[test]
-    fn thirteen_tools_with_repl() {
-        let names: Vec<String> = tool_definitions(flags_repl_only())
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
-        assert_eq!(
-            names,
-            vec![
-                "read_file",
-                "write_file",
-                "run_command",
-                "edit_file",
-                "list_files",
-                "web_search",
-                "fetch_url",
-                "grep_files",
-                "find_files",
-                "run_background",
-                "wait_for_output",
-                "write_stdin",
-                "python_repl",
-            ]
-        );
-    }
-
-    #[test]
-    fn repl_tool_appended_last() {
-        let without = tool_definitions(flags_default());
-        let with_repl = tool_definitions(flags_repl_only());
-        // The first 12 tools are identical in both lists.
-        assert_eq!(without.len(), 12);
-        assert_eq!(with_repl.len(), 13);
-        for (a, b) in without.iter().zip(with_repl.iter()) {
-            assert_eq!(a.name, b.name, "base tools must not reorder");
+    fn all_tool_names_is_default_plus_python_repl() {
+        assert_eq!(ALL_TOOL_NAMES.len(), DEFAULT_TOOL_NAMES.len() + 1);
+        assert_eq!(*ALL_TOOL_NAMES.last().unwrap(), "python_repl");
+        // Defaults appear in `ALL` in the same order.
+        for (i, name) in DEFAULT_TOOL_NAMES.iter().enumerate() {
+            assert_eq!(ALL_TOOL_NAMES[i], *name);
         }
-        assert_eq!(with_repl[12].name, "python_repl");
     }
 
     #[test]
-    fn seven_tools_when_limit_mode() {
-        // repl_replaces_fileops removes the six file-op tools, leaving exactly
-        // the seven tools that python_repl cannot replace.
-        let names: Vec<String> = tool_definitions(flags_limit_mode())
+    fn empty_selection_yields_no_definitions() {
+        assert!(tool_definitions(&[]).is_empty());
+    }
+
+    #[test]
+    fn twelve_tools_for_default_selection() {
+        let names: Vec<String> = tool_definitions(&sel_default())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, sel_default());
+    }
+
+    #[test]
+    fn thirteen_tools_for_default_plus_python_repl() {
+        let names: Vec<String> = tool_definitions(&sel_default_plus_repl())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        let mut expected = sel_default();
+        expected.push("python_repl".into());
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn output_order_follows_all_tool_names_not_input_order() {
+        // Reverse-order input — output must still be in ALL_TOOL_NAMES order.
+        let mut reversed = sel_default();
+        reversed.reverse();
+        let names: Vec<String> = tool_definitions(&reversed)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, sel_default());
+    }
+
+    #[test]
+    fn unknown_tool_names_in_selection_are_ignored_by_tool_definitions() {
+        // `tool_definitions` itself is permissive — name validation is the
+        // agent's responsibility.  Unknown names simply do not match any
+        // entry in `ALL_TOOL_NAMES`.
+        let sel = sel(&["read_file", "does_not_exist", "write_file"]);
+        let names: Vec<String> = tool_definitions(&sel).into_iter().map(|d| d.name).collect();
+        assert_eq!(names, vec!["read_file", "write_file"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // No-file-tools selection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn no_file_tools_selection_emits_seven_tools() {
+        // Output order follows ALL_TOOL_NAMES (canonical), not selection
+        // order: run_command → web_search/fetch_url → run_background → … →
+        // python_repl.
+        let names: Vec<String> = tool_definitions(&sel_no_file_tools())
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -559,20 +602,19 @@ mod tests {
             names,
             vec![
                 "run_command",
+                "web_search",
+                "fetch_url",
                 "run_background",
                 "wait_for_output",
                 "write_stdin",
-                "web_search",
-                "fetch_url",
                 "python_repl",
             ],
-            "limit mode must expose exactly 7 tools"
         );
     }
 
     #[test]
-    fn limit_mode_excludes_all_six_file_op_tools() {
-        let names: Vec<String> = tool_definitions(flags_limit_mode())
+    fn no_file_tools_selection_excludes_all_six_file_op_tools() {
+        let names: Vec<String> = tool_definitions(&sel_no_file_tools())
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -584,67 +626,17 @@ mod tests {
             "grep_files",
             "list_files",
         ] {
-            assert!(
-                !names.contains(&removed.to_string()),
-                "limit mode must not include {removed}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_schema_is_an_object_with_required_array() {
-        // Test with REPL enabled so the python_repl schema is also checked.
-        for def in tool_definitions(flags_repl_only()) {
-            let schema = &def.input_schema;
-            assert_eq!(
-                schema["type"], "object",
-                "{} schema not an object",
-                def.name
-            );
-            assert!(
-                schema["properties"].is_object(),
-                "{} missing properties",
-                def.name
-            );
-            assert!(
-                schema["required"].is_array(),
-                "{} missing required[]",
-                def.name
-            );
-        }
-    }
-
-    #[test]
-    fn limit_mode_schemas_are_valid() {
-        // Verify the limit-mode tool set also has valid schemas.
-        for def in tool_definitions(flags_limit_mode()) {
-            let schema = &def.input_schema;
-            assert_eq!(
-                schema["type"], "object",
-                "{} schema not an object",
-                def.name
-            );
-            assert!(
-                schema["properties"].is_object(),
-                "{} missing properties",
-                def.name
-            );
-            assert!(
-                schema["required"].is_array(),
-                "{} missing required[]",
-                def.name
-            );
+            assert!(!names.contains(&(*removed).to_string()));
         }
     }
 
     // -----------------------------------------------------------------------
-    // repl_replaces_shell tests
+    // No-shell-tools selection
+    // -----------------------------------------------------------------------
 
     #[test]
-    fn nine_tools_when_repl_replaces_shell_only() {
-        // Shell tools removed; file tools retained.  Expected: 6 file tools +
-        // web_search + fetch_url + python_repl = 9.
-        let names: Vec<String> = tool_definitions(flags_repl_replaces_shell())
+    fn no_shell_tools_selection_emits_nine_tools() {
+        let names: Vec<String> = tool_definitions(&sel_no_shell_tools())
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -661,13 +653,12 @@ mod tests {
                 "find_files",
                 "python_repl",
             ],
-            "repl_replaces_shell must expose exactly the six file tools plus web/fetch/repl"
         );
     }
 
     #[test]
-    fn repl_replaces_shell_excludes_all_four_shell_tools() {
-        let names: Vec<String> = tool_definitions(flags_repl_replaces_shell())
+    fn no_shell_tools_selection_excludes_all_four_shell_tools() {
+        let names: Vec<String> = tool_definitions(&sel_no_shell_tools())
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -677,31 +668,26 @@ mod tests {
             "wait_for_output",
             "write_stdin",
         ] {
-            assert!(
-                !names.contains(&removed.to_string()),
-                "repl_replaces_shell must not include {removed}"
-            );
+            assert!(!names.contains(&(*removed).to_string()));
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Minimal selection (web + fetch + python_repl)
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn three_tools_when_both_replaces_flags_set() {
-        // Tier 2: both file-op and shell tools removed.  Only python_repl,
-        // web_search, fetch_url remain.
-        let names: Vec<String> = tool_definitions(flags_tier2())
+    fn minimal_selection_emits_three_tools() {
+        let names: Vec<String> = tool_definitions(&sel_minimal())
             .into_iter()
             .map(|d| d.name)
             .collect();
-        assert_eq!(
-            names,
-            vec!["web_search", "fetch_url", "python_repl"],
-            "Tier 2 must expose exactly 3 tools"
-        );
+        assert_eq!(names, vec!["web_search", "fetch_url", "python_repl"]);
     }
 
     #[test]
-    fn tier2_excludes_all_ten_removable_tools() {
-        let names: Vec<String> = tool_definitions(flags_tier2())
+    fn minimal_selection_excludes_all_ten_other_tools() {
+        let names: Vec<String> = tool_definitions(&sel_minimal())
             .into_iter()
             .map(|d| d.name)
             .collect();
@@ -717,22 +703,18 @@ mod tests {
             "wait_for_output",
             "write_stdin",
         ] {
-            assert!(
-                !names.contains(&removed.to_string()),
-                "Tier 2 must not include {removed}"
-            );
+            assert!(!names.contains(&(*removed).to_string()));
         }
     }
 
-    #[test]
-    fn repl_replaces_shell_schemas_are_valid() {
-        for def in tool_definitions(flags_repl_replaces_shell()) {
+    // -----------------------------------------------------------------------
+    // Schema shape sanity (every selection produces well-formed schemas)
+    // -----------------------------------------------------------------------
+
+    fn assert_schemas_well_formed(defs: &[ToolDefinition]) {
+        for def in defs {
             let schema = &def.input_schema;
-            assert_eq!(
-                schema["type"], "object",
-                "{} schema not an object",
-                def.name
-            );
+            assert_eq!(schema["type"], "object", "{} not an object", def.name);
             assert!(
                 schema["properties"].is_object(),
                 "{} missing properties",
@@ -743,183 +725,92 @@ mod tests {
                 "{} missing required[]",
                 def.name
             );
+            assert!(!def.description.is_empty(), "{} empty desc", def.name);
         }
     }
 
     #[test]
-    fn tier2_schemas_are_valid() {
-        for def in tool_definitions(flags_tier2()) {
-            let schema = &def.input_schema;
-            assert_eq!(
-                schema["type"], "object",
-                "{} schema not an object",
-                def.name
-            );
-            assert!(
-                schema["properties"].is_object(),
-                "{} missing properties",
-                def.name
-            );
-            assert!(
-                schema["required"].is_array(),
-                "{} missing required[]",
-                def.name
-            );
-        }
+    fn default_plus_repl_schemas_are_well_formed() {
+        assert_schemas_well_formed(&tool_definitions(&sel_default_plus_repl()));
     }
 
-    // fileops-only mode unchanged by shell flag
     #[test]
-    fn fileops_limit_mode_unchanged_by_shell_flag() {
-        // Existing seven-tools-when-limit-mode behaviour: only fileops removed.
-        let names: Vec<String> = tool_definitions(flags_limit_mode())
+    fn no_file_tools_schemas_are_well_formed() {
+        assert_schemas_well_formed(&tool_definitions(&sel_no_file_tools()));
+    }
+
+    #[test]
+    fn no_shell_tools_schemas_are_well_formed() {
+        assert_schemas_well_formed(&tool_definitions(&sel_no_shell_tools()));
+    }
+
+    #[test]
+    fn minimal_schemas_are_well_formed() {
+        assert_schemas_well_formed(&tool_definitions(&sel_minimal()));
+    }
+
+    // -----------------------------------------------------------------------
+    // fetch_url schema gating (depends on whether any shell-execution tool
+    // is present in the selection)
+    // -----------------------------------------------------------------------
+
+    fn fetch_url_def(sel: &[String]) -> ToolDefinition {
+        tool_definitions(sel)
             .into_iter()
-            .map(|d| d.name)
+            .find(|d| d.name == "fetch_url")
+            .expect("fetch_url must be present")
+    }
+
+    #[test]
+    fn fetch_url_with_shell_tools_requires_url_and_postprocess() {
+        let def = fetch_url_def(&sel_default());
+        let required: Vec<&str> = def.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
             .collect();
-        assert_eq!(
-            names,
-            vec![
-                "run_command",
-                "run_background",
-                "wait_for_output",
-                "write_stdin",
-                "web_search",
-                "fetch_url",
-                "python_repl",
-            ],
-            "fileops-only limit mode must still expose exactly 7 tools"
-        );
+        assert!(required.contains(&"url"));
+        assert!(required.contains(&"postprocess"));
+        assert!(def.input_schema["properties"]["postprocess"].is_object());
     }
 
     #[test]
-    fn descriptions_are_non_empty() {
-        for def in tool_definitions(flags_repl_only()) {
-            assert!(
-                !def.description.is_empty(),
-                "{} has empty description",
-                def.name
-            );
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // fetch_url schema gating (repl_replaces_shell)
-    // -----------------------------------------------------------------------
-
-    /// When flag is off, `fetch_url` requires both `url` and `postprocess`.
-    #[test]
-    fn fetch_url_schema_flag_off_has_url_and_postprocess_required() {
-        let def = tool_definitions(flags_default())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present");
-        let required = def.input_schema["required"]
+    fn fetch_url_without_shell_tools_requires_only_url() {
+        let def = fetch_url_def(&sel_no_shell_tools());
+        let required: Vec<&str> = def.input_schema["required"]
             .as_array()
-            .expect("required must be array");
-        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-        assert!(
-            required_names.contains(&"url"),
-            "flag-off schema must require url: {required_names:?}"
-        );
-        assert!(
-            required_names.contains(&"postprocess"),
-            "flag-off schema must require postprocess: {required_names:?}"
-        );
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(required, vec!["url"]);
     }
 
-    /// When flag is off, `fetch_url` schema lists `postprocess` in properties.
     #[test]
-    fn fetch_url_schema_flag_off_has_postprocess_property() {
-        let def = tool_definitions(flags_default())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present");
-        assert!(
-            def.input_schema["properties"]["postprocess"].is_object(),
-            "flag-off schema must list postprocess as a property"
-        );
-    }
-
-    /// When flag is on (`repl_replaces_shell`), `fetch_url` requires only `url`.
-    #[test]
-    fn fetch_url_schema_flag_on_has_only_url_required() {
-        let def = tool_definitions(flags_repl_replaces_shell())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present in repl_replaces_shell mode");
-        let required = def.input_schema["required"]
-            .as_array()
-            .expect("required must be array");
-        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-        assert_eq!(
-            required_names,
-            vec!["url"],
-            "flag-on schema must require only url"
-        );
-    }
-
-    /// When flag is on, `postprocess` must not appear anywhere in the schema.
-    #[test]
-    fn fetch_url_schema_flag_on_has_no_postprocess_parameter() {
-        let def = tool_definitions(flags_repl_replaces_shell())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present in repl_replaces_shell mode");
-        assert!(
-            def.input_schema["properties"]["postprocess"].is_null(),
-            "flag-on schema must not list postprocess in properties"
-        );
-        // Serialise and scan the raw JSON to be certain.
+    fn fetch_url_without_shell_tools_has_no_postprocess_anywhere() {
+        let def = fetch_url_def(&sel_no_shell_tools());
+        assert!(def.input_schema["properties"]["postprocess"].is_null());
         let raw = serde_json::to_string(&def.input_schema).unwrap();
-        assert!(
-            !raw.contains("postprocess"),
-            "flag-on schema must not mention postprocess at all: {raw}"
-        );
+        assert!(!raw.contains("postprocess"));
+        assert!(!def.description.contains("postprocess"));
     }
 
-    /// Tier 2 `fetch_url` schema is also flag-on (`repl_replaces_shell` is true).
     #[test]
-    fn fetch_url_schema_tier2_has_only_url_required() {
-        let def = tool_definitions(flags_tier2())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present in Tier 2 mode");
-        let required = def.input_schema["required"]
+    fn fetch_url_minimal_selection_requires_only_url() {
+        let def = fetch_url_def(&sel_minimal());
+        let required: Vec<&str> = def.input_schema["required"]
             .as_array()
-            .expect("required must be array");
-        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-        assert_eq!(
-            required_names,
-            vec!["url"],
-            "Tier 2 schema must require only url"
-        );
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(required, vec!["url"]);
     }
 
-    /// When flag is on, the `fetch_url` description mentions the byte/line cap.
     #[test]
-    fn fetch_url_description_flag_on_mentions_cap() {
-        let def = tool_definitions(flags_repl_replaces_shell())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present");
-        assert!(
-            def.description.contains("2000") || def.description.contains("50"),
-            "flag-on description must mention the truncation cap: {}",
-            def.description
-        );
-    }
-
-    /// When flag is on, the `fetch_url` description does not mention `postprocess`.
-    #[test]
-    fn fetch_url_description_flag_on_has_no_postprocess_mention() {
-        let def = tool_definitions(flags_repl_replaces_shell())
-            .into_iter()
-            .find(|d| d.name == "fetch_url")
-            .expect("fetch_url must be present");
-        assert!(
-            !def.description.contains("postprocess"),
-            "flag-on description must not mention postprocess: {}",
-            def.description
-        );
+    fn fetch_url_without_shell_tools_description_mentions_cap() {
+        let def = fetch_url_def(&sel_no_shell_tools());
+        assert!(def.description.contains("2000") || def.description.contains("50"));
     }
 }

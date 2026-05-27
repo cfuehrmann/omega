@@ -897,6 +897,7 @@ async fn system_prompt_guard_blocks_read_of_instruction_file_end_to_end() {
             session_dir: tmp.path().to_path_buf(),
             headless: true,
             features: None,
+            tool_selection: None,
         },
     );
     agent.init().await.expect("init");
@@ -979,7 +980,6 @@ fn system_prompt_round_trips_init_for_resume() {
 async fn python_repl_tool_state_persists() {
     use omega_agent::AgentConfig;
     use omega_store::{ContextStore, EventStore};
-    use omega_types::FeatureFlags;
     use omega_types::events::{ToolCallEvent, ToolResultEvent};
 
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -996,11 +996,15 @@ async fn python_repl_tool_state_persists() {
             cwd: session_dir.clone(),
             session_dir: session_dir.clone(),
             headless: true,
-            features: Some(FeatureFlags {
-                repl: true,
-                subagents: false,
-                repl_replaces_fileops: false,
-                repl_replaces_shell: false,
+            features: None,
+            // Default 12 base tools + python_repl (this test exercises the REPL).
+            tool_selection: Some({
+                let mut v: Vec<String> = omega_tools::DEFAULT_TOOL_NAMES
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect();
+                v.push("python_repl".to_owned());
+                v
             }),
         },
     );
@@ -1114,5 +1118,128 @@ async fn python_repl_tool_state_persists() {
         tc1.input["code"].as_str(),
         Some("x = 42"),
         "full code must appear in ToolCall input"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.2 — tool_selection
+// ---------------------------------------------------------------------------
+
+/// `Agent::init` must reject a `tool_selection` containing a name not in
+/// `omega_tools::ALL_TOOL_NAMES`.  The error message must name the
+/// offending entry so the operator can diagnose the typo from the WS
+/// client or CLI surface.
+#[tokio::test]
+async fn init_rejects_unknown_tool_name() {
+    use omega_agent::{Agent, AgentConfig};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let provider: std::sync::Arc<dyn omega_core::Provider> =
+        std::sync::Arc::new(common::MockProvider::new());
+    let mut agent = Agent::new(
+        provider,
+        omega_store::ContextStore::new(tmp.path().join("context.jsonl")),
+        omega_store::EventStore::new(tmp.path().join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: tmp.path().to_path_buf(),
+            session_dir: tmp.path().to_path_buf(),
+            headless: false,
+            features: None,
+            tool_selection: Some(vec!["does_not_exist".to_owned()]),
+        },
+    );
+    let err = agent
+        .init()
+        .await
+        .expect_err("init must fail when tool_selection contains an unknown name");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("does_not_exist"),
+        "error must mention the offending tool name; got: {msg}",
+    );
+}
+
+/// End-to-end via `Agent::send_message` + `MockProvider`: a session
+/// started with `tool_selection = ["python_repl", "web_search",
+/// "fetch_url"]` must:
+///   1. send exactly those three tool definitions in the LLM request, and
+///   2. carry a system prompt that mentions `python_repl` but does NOT
+///      mention `run_command` (except inside the "Reduced toolset" block
+///      that names the absent shell tools).
+#[tokio::test]
+async fn tool_selection_drives_request_tools_and_system_prompt() {
+    use omega_agent::{Agent, AgentConfig};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mock = std::sync::Arc::new(common::MockProvider::new());
+    let provider: std::sync::Arc<dyn omega_core::Provider> = mock.clone();
+    let mut agent = Agent::new(
+        provider,
+        omega_store::ContextStore::new(tmp.path().join("context.jsonl")),
+        omega_store::EventStore::new(tmp.path().join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: tmp.path().to_path_buf(),
+            session_dir: tmp.path().to_path_buf(),
+            headless: false,
+            features: None,
+            tool_selection: Some(vec![
+                "python_repl".to_owned(),
+                "web_search".to_owned(),
+                "fetch_url".to_owned(),
+            ]),
+        },
+    );
+    agent.init().await.expect("init must succeed");
+
+    // Single LLM call: plain end_turn so the agent loop exits after one
+    // request — that's all we need to inspect the LlmRequest.
+    mock.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+
+    let stream = agent.send_message("noop".to_owned(), CancellationToken::new());
+    let _ = collect_stream(stream).await;
+
+    let reqs = mock.take_requests();
+    assert_eq!(reqs.len(), 1, "exactly one LLM request expected");
+    let req = &reqs[0];
+
+    // Tool names in the request, in some order:
+    let tool_names: std::collections::BTreeSet<String> =
+        req.tools.iter().map(|t| t.name.clone()).collect();
+    let expected: std::collections::BTreeSet<String> = ["python_repl", "web_search", "fetch_url"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    assert_eq!(
+        tool_names, expected,
+        "tools sent to provider must match tool_selection exactly",
+    );
+
+    // System prompt invariants.
+    let sys = req
+        .system
+        .as_ref()
+        .expect("agent must send system blocks")
+        .join("\n\n");
+    assert!(
+        sys.contains("python_repl"),
+        "system prompt must mention python_repl when it is in tool_selection",
+    );
+
+    // `run_command` may appear inside the "Reduced toolset" block (which
+    // enumerates the absent shell tools).  Strip that block before the
+    // residue check.
+    let residue = sys
+        .split("Reduced toolset")
+        .next()
+        .expect("split always yields at least one element");
+    assert!(
+        !residue.contains("run_command"),
+        "system prompt must not reference `run_command` outside the \
+         Reduced-toolset block when shell tools are not selected; \
+         residue: {residue}",
     );
 }

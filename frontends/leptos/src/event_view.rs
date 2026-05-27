@@ -974,6 +974,7 @@ mod tests {
             agent_time_zone: "UTC".into(),
             origin: Origin::Root,
             features: FeatureFlags::default(),
+            tool_selection: Vec::new(),
         });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }

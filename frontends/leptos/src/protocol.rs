@@ -360,6 +360,11 @@ pub enum ClientFrame {
         effort: Option<String>,
         #[serde(rename = "allowDirty", skip_serializing_if = "is_false")]
         allow_dirty: bool,
+        // TODO(Phase 2.1): wire the UI's tool-selection picker through to
+        // this field.  For now we always send `None`, which causes the
+        // server to fall back to `omega_tools::DEFAULT_TOOL_NAMES`.
+        #[serde(rename = "toolSelection", skip_serializing_if = "Option::is_none")]
+        tool_selection: Option<Vec<String>>,
     },
     #[serde(rename_all = "camelCase")]
     ResumeSession {
@@ -728,6 +733,7 @@ mod tests {
             model: None,
             effort: None,
             allow_dirty: false,
+            tool_selection: None,
         };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"reset"}"#);

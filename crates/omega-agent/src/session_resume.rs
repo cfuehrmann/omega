@@ -376,6 +376,33 @@ pub fn extract_resumption_basis(events: &[OmegaEvent]) -> String {
     parts.join("\n\n")
 }
 
+/// Extract the parent session's `tool_selection` from its event log.
+///
+/// The Phase 1.2 design pins the session's enabled toolset on the
+/// `SessionStartedEvent`.  When a successor session is spawned via the
+/// resume path, the new `AgentConfig.tool_selection` is seeded from this
+/// value so the successor exposes the same toolset as its parent (rather
+/// than re-defaulting to `DEFAULT_TOOL_NAMES`, which would silently widen
+/// or narrow the toolset across the boundary).
+///
+/// Returns `Some(selection)` when a `SessionStartedEvent` with a
+/// non-empty `tool_selection` is found in `events`.  Returns `None` when
+/// the event log contains no such event (e.g. an empty / malformed log,
+/// or one written by a pre-Phase-1.2 binary that has since been pruned).
+/// In that case the caller falls back to the resolver in `Agent::new`,
+/// which defaults to `DEFAULT_TOOL_NAMES`.
+///
+/// This is a pure function — no I/O.
+#[must_use]
+pub fn extract_tool_selection(events: &[OmegaEvent]) -> Option<Vec<String>> {
+    events.iter().find_map(|e| match e {
+        OmegaEvent::SessionStarted(s) if !s.tool_selection.is_empty() => {
+            Some(s.tool_selection.clone())
+        }
+        _ => None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Public: summary extraction from LLM response (Phase 1d.1b)
 // ---------------------------------------------------------------------------
@@ -1347,5 +1374,71 @@ mod tests {
             !result.contains("firstsecond"),
             "two responses must not be concatenated: {result:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // extract_tool_selection (Phase 1.2)
+    // -----------------------------------------------------------------------
+
+    fn session_started_with(tool_selection: Vec<String>) -> OmegaEvent {
+        use omega_types::FeatureFlags;
+        use omega_types::events::SessionStartedEvent;
+        use omega_types::ids::Origin;
+        OmegaEvent::SessionStarted(SessionStartedEvent {
+            time: t(),
+            session_id: omega_types::ids::SessionId(uuid::Uuid::nil()),
+            path: "sessions/session-1".to_owned(),
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: "medium".to_owned(),
+            system_prompt: "p".to_owned(),
+            omega_commit: "u".to_owned(),
+            agent_time_zone: "UTC".to_owned(),
+            origin: Origin::Root,
+            features: FeatureFlags::default(),
+            tool_selection,
+        })
+    }
+
+    /// Spec test 5 — the successor session sees the same toolset as the
+    /// parent.  When the parent's event log contains a `SessionStarted`
+    /// event with a non-empty `tool_selection`, `extract_tool_selection`
+    /// returns that selection so the router can seed the new
+    /// `AgentConfig.tool_selection` with it.
+    #[test]
+    fn extract_tool_selection_returns_parent_selection() {
+        let parent_selection = vec![
+            "python_repl".to_owned(),
+            "web_search".to_owned(),
+            "fetch_url".to_owned(),
+        ];
+        let events = vec![
+            session_started_with(parent_selection.clone()),
+            user_msg("hi"),
+            turn_end(),
+        ];
+        assert_eq!(
+            extract_tool_selection(&events),
+            Some(parent_selection),
+            "successor session must inherit the parent's tool_selection",
+        );
+    }
+
+    /// When the parent log has no `SessionStarted` event — e.g. a
+    /// malformed log, or one truncated before init — the helper returns
+    /// `None`, and the caller (router) falls back to
+    /// `DEFAULT_TOOL_NAMES` via the resolver in `Agent::new`.
+    #[test]
+    fn extract_tool_selection_returns_none_when_no_session_started() {
+        let events = vec![user_msg("hi"), turn_end()];
+        assert_eq!(extract_tool_selection(&events), None);
+    }
+
+    /// An explicit empty `tool_selection` on the parent event is treated
+    /// as "no selection found" so the successor falls back to the
+    /// default — better than starting a session with zero tools.
+    #[test]
+    fn extract_tool_selection_returns_none_when_selection_empty() {
+        let events = vec![session_started_with(Vec::new())];
+        assert_eq!(extract_tool_selection(&events), None);
     }
 }

@@ -31,7 +31,7 @@ mod tools;
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
 pub use python_repl::PythonRepl;
-pub use schemas::tool_definitions;
+pub use schemas::{ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, tool_definitions};
 pub use tool_ctx::ToolCtx;
 
 /// Outcome of a single tool invocation.
@@ -143,8 +143,8 @@ pub async fn execute_tool(
             };
             let Some(repl_arc) = &ctx.python_repl else {
                 return ToolResult::err(
-                    "python_repl: feature not enabled \
-                     (start the session with OMEGA_FEATURE_REPL=1)",
+                    "python_repl: tool not present in this session's tool_selection \
+                     (include \"python_repl\" when creating the session)",
                 );
             };
             let Some(code) = input["code"].as_str() else {
@@ -227,14 +227,12 @@ mod dispatch_tests {
 
     #[tokio::test]
     async fn dispatch_table_routes_every_known_name() {
-        // Every name listed in tool_definitions (with REPL enabled) must dispatch
-        // to a body — no "Unknown tool" errors.  Verifies the table and the
-        // dispatch in execute_tool stay in sync.
-        use omega_types::FeatureFlags;
-        let defs = tool_definitions(FeatureFlags {
-            repl: true,
-            ..Default::default()
-        });
+        // Every tool name in ALL_TOOL_NAMES must dispatch to a body — no
+        // "Unknown tool" errors.  Verifies the table and the dispatch in
+        // execute_tool stay in sync.
+        use crate::schemas::ALL_TOOL_NAMES;
+        let selection: Vec<String> = ALL_TOOL_NAMES.iter().map(|s| (*s).to_owned()).collect();
+        let defs = tool_definitions(&selection);
         for def in defs {
             let r = execute_tool(&def.name, json!({}), None, None).await;
             // Stubs return is_error=true with "not yet implemented".

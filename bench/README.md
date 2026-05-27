@@ -1,5 +1,13 @@
 # Omega — Terminal-Bench 2.0
 
+> **NOTE (Phase 1.2):** The `OMEGA_FEATURE_REPL*` environment variables
+> referenced in the experiment-arm sections below have been removed.
+> Tool selection is now an explicit `tool_selection` field on
+> `SessionStartedEvent` (set via the WS `CreateSession` frame or the
+> `AgentConfig.tool_selection` API).  Re-wiring the bench harness to
+> drive `tool_selection` from the command line is tracked as a Phase 2
+> follow-up; the historical results table below is preserved as-is.
+
 Terminal-Bench 2.0 is a 89-task containerised coding benchmark run via [Harbor](https://github.com/the-harbor-project/harbor).
 
 ## Results

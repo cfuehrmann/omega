@@ -21,8 +21,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use omega_types::FeatureFlags;
-
 use crate::python_repl::PythonRepl;
 
 /// Session-scoped execution context passed to every tool invocation.
@@ -76,13 +74,14 @@ pub struct ToolCtx {
     /// sequential).
     pub python_repl: Option<Arc<tokio::sync::Mutex<Option<PythonRepl>>>>,
 
-    /// Runtime feature flags active for this session.
+    /// Names of the tools selected for this session.
     ///
-    /// Controls flag-gated tool behaviour (e.g. `repl_replaces_shell` disables
-    /// the `fetch_url` postprocess shell pipeline).  Defaults to
-    /// `FeatureFlags::default()` (all flags off) when constructed via
-    /// [`ToolCtx::new`]; the agent sets this to the live session flags.
-    pub flags: FeatureFlags,
+    /// Controls selection-gated tool behaviour (e.g. when no shell-execution
+    /// tool is in this list, `fetch_url` switches to a postprocess-free
+    /// schema and refuses to run a shell pipeline).  Defaults to the empty
+    /// vector when constructed via [`ToolCtx::new`]; the agent populates
+    /// this with the live session's `tool_selection` for every dispatch.
+    pub tool_selection: Vec<String>,
 }
 
 impl ToolCtx {
@@ -102,7 +101,7 @@ impl ToolCtx {
             tool_call_id: tool_call_id.into(),
             system_prompt_paths: Arc::new(HashSet::new()),
             python_repl: None,
-            flags: FeatureFlags::default(),
+            tool_selection: Vec::new(),
         }
     }
 }

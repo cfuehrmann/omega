@@ -300,6 +300,10 @@ pub fn SessionPicker() -> impl IntoView {
             model: None,
             effort: None,
             allow_dirty: false,
+            // TODO(Phase 2.1): expose a tool-selection picker in the UI
+            // and forward the chosen set here.  `None` makes the server
+            // fall back to the default 12-tool selection.
+            tool_selection: None,
         }) {
             list.set_error(format!("send Reset: {err:?}"));
             return;

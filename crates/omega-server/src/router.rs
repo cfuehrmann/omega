@@ -191,6 +191,7 @@ async fn create_active_session(
     state: &AppState,
     model: Option<String>,
     effort: Option<String>,
+    tool_selection: Option<Vec<String>>,
 ) -> Result<(ActiveSession, String), String> {
     let paths = omega_store::make_session_dir(&state.sessions_root)
         .await
@@ -215,6 +216,11 @@ async fn create_active_session(
         session_dir: paths.dir.clone(),
         headless: false, // web UI sessions are always interactive
         features: None,  // resolved from env in agent.init()
+        // None → Agent::new falls back to omega_tools::DEFAULT_TOOL_NAMES.
+        // The Reset frame currently leaves this as None (the UI does not
+        // yet send a selection — see Phase 2.1).  The resume path
+        // explicitly forwards the parent's selection.
+        tool_selection,
     };
     let mut agent = Agent::new(
         Arc::clone(&state.provider),
@@ -276,7 +282,7 @@ async fn post_session(
     body: Option<Json<PostSessionBody>>,
 ) -> Response {
     let PostSessionBody { model, effort } = body.map(|Json(b)| b).unwrap_or_default();
-    match create_active_session(&state, model, effort).await {
+    match create_active_session(&state, model, effort, None).await {
         Ok((session, dir_name)) => {
             *state.active_session.lock().await = Some(session);
             (
@@ -330,6 +336,11 @@ enum ClientFrame {
         /// the operator clicks "Proceed" on the dirty-tree warning modal.
         #[serde(default, rename = "allowDirty")]
         allow_dirty: bool,
+        /// Tools enabled for the new session.  `None` (the default — the
+        /// UI does not yet send this; see Phase 2.1) means
+        /// `omega_tools::DEFAULT_TOOL_NAMES` (12 base tools).
+        #[serde(default, rename = "toolSelection")]
+        tool_selection: Option<Vec<String>>,
     },
     /// Resume a prior session: spawn a new session and synthesise a
     /// summary of `session_dir`'s history via the resumption LLM call.
@@ -610,7 +621,8 @@ async fn dispatch_client_frame(
             model,
             effort,
             allow_dirty,
-        } => handle_reset(state, tx, model, effort, allow_dirty).await,
+            tool_selection,
+        } => handle_reset(state, tx, model, effort, allow_dirty, tool_selection).await,
         ClientFrame::ResumeSession {
             session_dir,
             allow_dirty,
@@ -857,6 +869,7 @@ async fn handle_reset(
     model: Option<String>,
     effort: Option<String>,
     allow_dirty: bool,
+    tool_selection: Option<Vec<String>>,
 ) -> Result<(), String> {
     // Pre-flight dirty-tree gate.  Mirrors the CLI's deny-by-default
     // `--allow-dirty` semantics: if the working tree is dirty and the
@@ -880,7 +893,8 @@ async fn handle_reset(
         }
     }
 
-    let (mut session, _dir_name) = create_active_session(state, model, effort).await?;
+    let (mut session, _dir_name) =
+        create_active_session(state, model, effort, tool_selection).await?;
     session.ws_tx = Some(tx.clone());
 
     // Capture what we need before installing the session into the slot so we
@@ -952,10 +966,16 @@ async fn handle_resume_session(
         .filter_map(|v| serde_json::from_value(v).ok())
         .collect();
     let basis = omega_agent::extract_resumption_basis(&prior_events);
+    // Carry the parent's tool selection forward so the successor session
+    // exposes the same toolset.  `None` means the parent log lacked a
+    // SessionStarted event (malformed / pre-Phase-1.2); the resolver in
+    // `Agent::new` falls back to `DEFAULT_TOOL_NAMES`.
+    let resumed_tool_selection = omega_agent::extract_tool_selection(&prior_events);
     let prev_meta = omega_store::read_session_metadata(&prev_dir).await;
 
     // Build the new session and install ws_tx.
-    let (mut session, _new_dir_name) = create_active_session(state, None, None).await?;
+    let (mut session, _new_dir_name) =
+        create_active_session(state, None, None, resumed_tool_selection).await?;
     session.ws_tx = Some(tx.clone());
     let agent = Arc::clone(&session.agent);
     let turn_state_arc = Arc::clone(&session.turn_state);
@@ -1298,10 +1318,12 @@ mod tests {
                 model,
                 effort,
                 allow_dirty,
+                tool_selection,
             } => {
                 assert_eq!(model, None);
                 assert_eq!(effort, None);
                 assert!(!allow_dirty, "allow_dirty defaults to false");
+                assert_eq!(tool_selection, None, "tool_selection defaults to None");
             }
             other => panic!("expected Reset, got {other:?}"),
         }
@@ -1317,10 +1339,12 @@ mod tests {
                 model,
                 effort,
                 allow_dirty,
+                tool_selection,
             } => {
                 assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
                 assert_eq!(effort.as_deref(), Some("high"));
                 assert!(!allow_dirty);
+                assert_eq!(tool_selection, None);
             }
             other => panic!("expected Reset, got {other:?}"),
         }
@@ -1478,7 +1502,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let state = test_state(&tmp);
 
-        let (session, _) = create_active_session(&state, None, None).await.unwrap();
+        let (session, _) = create_active_session(&state, None, None, None)
+            .await
+            .unwrap();
         *state.active_session.lock().await = Some(session);
 
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
@@ -1512,7 +1538,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let state = test_state(&tmp);
 
-        let (mut session, _) = create_active_session(&state, None, None).await.unwrap();
+        let (mut session, _) = create_active_session(&state, None, None, None)
+            .await
+            .unwrap();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
         session.ws_tx = Some(tx);
         *state.active_session.lock().await = Some(session);
