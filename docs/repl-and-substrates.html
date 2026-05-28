@@ -237,57 +237,48 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: Phase 1.2 — tool-selection mechanism</h2>
+<h2 id="next">⏭ Next step: Phase 1.4 — Forensics affordance for the AI</h2>
 
 <div class="callout">
   <div class="callout-title">What to do</div>
   <p>
-    Migrate the three REPL feature flags (currently env vars:
-    <code>OMEGA_FEATURE_REPL</code>,
-    <code>OMEGA_FEATURE_REPL_REPLACES_FILEOPS</code>,
-    <code>OMEGA_FEATURE_REPL_REPLACES_SHELL</code>) into a
-    <code>tool_selection</code> field on <code>SessionStartedEvent</code>.
-    System-prompt assembly derives the toolset from the field; the
-    "REPL mode / Tier 1 / Tier 2" terminology is dropped.  Env vars are
-    removed.
+    A small system-prompt addition teaching the agent that
+    <code>.omega/sessions/&lt;id&gt;/events.jsonl</code> is the canonical
+    post-mortem source for past sessions, so the model picks the right file
+    without fishing.  The current AI-resume flow leaves the model to discover
+    the path empirically; making it explicit is one paragraph of prose with
+    high payoff per token.
   </p>
 
   <p style="margin-bottom:0.4rem;"><strong>Files to touch:</strong></p>
   <ul style="margin-top:0;">
-    <li><code>crates/omega-types/src/events.rs</code> — add
-        <code>tool_selection</code> field to <code>SessionStartedEvent</code>;
-        remove the old <code>features.repl*</code> booleans (schema-evolution-loud
-        rule: rename, don't alias).</li>
-    <li><code>crates/omega-agent/src/system_prompt.rs</code> — derive toolset
-        from <code>tool_selection</code> instead of env vars.</li>
-    <li><code>crates/omega-agent/src/agent.rs</code> — wire the field through
-        at session creation.  Audit env-var reads — they should disappear.</li>
-    <li><code>crates/omega-agent/src/session_resume.rs</code> — kept after the
-        strict-resume deletion for AI-resume helpers.  Audit: does
-        <code>tool_selection</code> need to flow through
-        <code>handle_resume_session</code>'s seed path so a successor session
-        inherits the parent's toolset?  Likely free if the seed path reads
-        the parent's <code>SessionStartedEvent</code>.</li>
-    <li><code>crates/omega-server/src/router.rs</code> +
-        <code>ws_message.rs</code> — session-creation WS message carries
-        <code>tool_selection</code>; remove any features-derived field from
-        <code>ClientFrame::ResumeSession</code> if present.</li>
+    <li><code>crates/omega-agent/src/system_prompt.rs</code> — append a short
+        "Session forensics" section to <code>core_prompt</code> (interactive
+        mode only — headless sessions don't have prior-session context to
+        forage in).  Describe the layout of
+        <code>.omega/sessions/&lt;id&gt;/</code>, point at
+        <code>events.jsonl</code> as the authoritative log, and mention the
+        <code>cache/run/</code> sub-directory for tee'd command output.</li>
+    <li>Pin the new text with a system-prompt assertion in the existing test
+        suite (interactive includes / headless excludes).</li>
   </ul>
 
   <p style="margin-bottom:0.4rem;"><strong>Acceptance:</strong></p>
   <ul style="margin-top:0;">
-    <li>Round-trip serde test on the new <code>SessionStartedEvent</code> field.</li>
-    <li>System-prompt unit tests pin the actual prompt text for the relevant tool subsets.</li>
-    <li>End-to-end <code>Agent::send_message</code> test confirming a REPL-enabled
-        session gets the REPL toolset advertised in the system prompt.</li>
-    <li><code>cargo test --workspace</code>, clippy, and mutation tests on the
-        touched files all green.</li>
+    <li>System-prompt assertion confirms the new paragraph is present in
+        interactive mode and absent in headless.</li>
+    <li><code>cargo test --workspace</code> and clippy green.</li>
+    <li>Mutation testing on <code>system_prompt.rs</code> via the existing
+        <code>mutants-system-prompt</code> recipe — all mutations caught or
+        unviable.</li>
   </ul>
 </div>
 
 <p>
-  Load-bearing rationale for this migration: see <a href="#q3">Q3</a> and
-  <a href="#q1">Q1</a> in <a href="#decisions">Decisions on record</a>.
+  After 1.4, the next user-facing milestone is
+  <a href="#phase2">Phase 2.1 — Tool-selection UI</a>.  Phase 1.2 already
+  landed the data plumbing; 2.1 is purely a Leptos affordance plus a CLI
+  flag for the bench harness.
 </p>
 
 
@@ -341,6 +332,23 @@ tr:nth-child(even) td { background: #fafbfc; }
           their tests.  AI-resume kept; see
           <a href="./session-design.html#ai-resume-sunset">§ai-resume-sunset</a>.</td>
     </tr>
+    <tr>
+      <td>Phase 1.2 — Tool-selection mechanism</td>
+      <td><code>568e7af</code></td>
+      <td>Replaced three REPL env-var flags with an explicit
+          <code>tool_selection: Vec&lt;String&gt;</code> field on
+          <code>SessionStartedEvent</code>.  <code>FeatureFlags</code> shrunk to
+          <code>subagents</code> only; <code>tool_definitions</code> and
+          <code>build_system_blocks</code> now filter by membership.
+          <code>DEFAULT_TOOL_NAMES</code> (12) / <code>ALL_TOOL_NAMES</code>
+          (12 + <code>python_repl</code>) exposed from <code>omega-tools</code>.
+          Session-resume propagates the parent's selection.  WS
+          <code>CreateSession</code> carries <code>tool_selection</code>; UI sweep
+          done.  Bench harness rewiring deferred to Phase 2.1
+          (deprecation notice in <code>bench/README.md</code>).  Mutation
+          testing green on all three touched files (recipe:
+          <code>mutants-tool-selection</code>).</td>
+    </tr>
   </tbody>
 </table>
 
@@ -359,14 +367,11 @@ tr:nth-child(even) td { background: #fafbfc; }
   <li><strong>1.1 — Refactor <code>python_repl.rs</code>.</strong>
       ✅ Done (<code>8f557aa</code> + <code>7cd3bd6</code>).</li>
   <li><strong>1.2 — Tool-selection mechanism.</strong>
-      ⏭ Next.  See <a href="#next">Next step</a> above.</li>
+      ✅ Done (<code>568e7af</code>).</li>
   <li><strong>1.3 — <code>sh()</code> helper.</strong>
       ✅ Done (<code>700e8f4</code>).</li>
   <li id="phase14"><strong>1.4 — Forensics affordance for the AI.</strong>
-      Small system-prompt addition teaching the agent that
-      <code>.omega/sessions/&lt;id&gt;/events.jsonl</code> is the canonical
-      post-mortem source for past sessions, so the model picks the right file
-      without fishing.  Tiny; can ride along with 1.2 or land standalone.</li>
+      ⏭ Next.  See <a href="#next">Next step</a> above.</li>
 </ul>
 
 <h3 id="phase2">Phase 2 — User-grade affordances</h3>
@@ -744,8 +749,11 @@ tr:nth-child(even) td { background: #fafbfc; }
   <p>
     Implemented as three runtime flags recorded in
     <code>SessionStartedEvent.features</code>.  All new code on
-    <code>develop</code> behind flags.  The flags are migrated to a
-    tool-selection list in Phase 1.2; the env-var mechanism is retired.
+    <code>develop</code> behind flags.  Phase 1.2 (<code>568e7af</code>)
+    migrated the three REPL flags to an explicit
+    <code>tool_selection</code> list on <code>SessionStartedEvent</code>;
+    the env-var mechanism is retired.  <code>features</code> retains only
+    the <code>subagents</code> toggle.
     <strong><code>[abe7e7]</code></strong> <span class="status-resolved">RESOLVED</span>
   </p>
 </div>
@@ -1110,8 +1118,10 @@ tr:nth-child(even) td { background: #fafbfc; }
   REPL state usage.  The benchmark research phase for RQ-A is complete.
   The forward work is Phase 1–2: making the REPL user-grade, not running more
   benchmark confirmation trials.  The broader Harbor sweep (87 remaining TB2 tasks)
-  is deferred until the tool-selection mechanism (Phase 1.2) replaces the env-var
-  flags in the Harbor invocation pattern.
+  is deferred until the bench harness is rewired to drive
+  <code>tool_selection</code> from the command line — tracked as a Phase 2
+  follow-up.  (Phase 1.2 retired the env-var flags themselves; see
+  <code>bench/README.md</code>'s deprecation notice.)
 </p>
 
 <details>
@@ -1127,8 +1137,9 @@ tr:nth-child(even) td { background: #fafbfc; }
 <ul>
   <li><code>[368041]</code> What language is the REPL? → Python subprocess-based.
       PTY-based shell REPL remains unexplored but is the Phase 3 Bash REPL target.</li>
-  <li><code>[fa3e44]</code> How do existing tools integrate? → Currently additive tool
-      plus flag-gated replacements; Phase 1.2 migrates to tool-selection list.</li>
+  <li><code>[fa3e44]</code> How do existing tools integrate? → Additive
+      tool plus an explicit per-session <code>tool_selection</code> list
+      (Phase 1.2, <code>568e7af</code>).</li>
 </ul>
 </div>
 </details>
@@ -1196,8 +1207,11 @@ harbor run -d terminal-bench@2.0 \
   [--ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1] \
   --job-name &lt;descriptive-name&gt;</code></pre>
 <p>
-  <em>After Phase 1.2 this pattern changes: tool selection is passed as a structured
-  field, not as env vars.</em>
+  <em>Historical pattern — preserved for archaeological context.  The
+  <code>OMEGA_FEATURE_REPL*</code> env vars were removed in Phase 1.2
+  (<code>568e7af</code>).  Rewiring the Harbor harness to drive
+  <code>tool_selection</code> from the command line is a Phase 2.1
+  follow-up; see <code>bench/README.md</code> for the deprecation notice.</em>
 </p>
 </div>
 </details>
@@ -1209,12 +1223,14 @@ harbor run -d terminal-bench@2.0 \
 <h3 id="oq-ground">Ground rules (already decided)</h3>
 
 <div class="callout rec">
-  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags — REPL independently switchable <span class="status-resolved">RESOLVED → migrating to tool-selection in Phase 1.2</span></div>
+  <div class="callout-title">✓ <code>[b0bc06]</code> Feature flags — REPL independently switchable <span class="status-resolved">RESOLVED</span></div>
   <p>
-    Implemented as three runtime flags.  Phase 1.2 migrates to a
-    tool-selection list in <code>SessionStartedEvent</code>.  The env vars
-    are retired.  See <a href="#finding-a">F-A</a> and
-    <a href="#pf-phase1">Phase 1.2</a>.
+    Originally implemented as three runtime env-var flags.  Phase 1.2
+    (<code>568e7af</code>) migrated them to an explicit
+    <code>tool_selection: Vec&lt;String&gt;</code> on
+    <code>SessionStartedEvent</code>; the env vars are gone.  See
+    <a href="#finding-a">F-A</a> and the Phase 1.2 entry in
+    <a href="#done">✅ Done</a>.
   </p>
 </div>
 
@@ -1254,11 +1270,12 @@ harbor run -d terminal-bench@2.0 \
 </div>
 
 <div class="callout">
-  <div class="callout-title">💡 <code>[fa3e44]</code> How do existing tools integrate with the REPL? <span class="status-resolved">RESOLVED → evolving in Phase 1.2</span></div>
+  <div class="callout-title">💡 <code>[fa3e44]</code> How do existing tools integrate with the REPL? <span class="status-resolved">RESOLVED</span></div>
   <p>
-    Currently: additive tool plus flag-gated replacements.  Phase 1.2 replaces
-    this with a tool-selection list at session creation.  The "Tier" abstraction
-    becomes a saved configuration in the UI (Phase 2.1).
+    Additive tool plus an explicit per-session
+    <code>tool_selection</code> list at session creation (Phase 1.2,
+    <code>568e7af</code>).  The "Tier" abstraction is gone; named
+    preset configurations become a UI affordance in Phase 2.1.
   </p>
 </div>
 
