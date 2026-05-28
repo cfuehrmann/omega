@@ -666,7 +666,27 @@ For C4 diagrams specifically:
 
 Before implementing a non-trivial change, state your chosen approach and the
 alternatives you considered, then proceed. If the user raises a design
-question — before, during, or after — stop and discuss before continuing.",
+question — before, during, or after — stop and discuss before continuing.
+
+## Session forensics
+
+Each Omega session writes to `.omega/sessions/<id>/`:
+- `events.jsonl` — the canonical, append-only log of every event in the
+  session (user turns, model responses, tool calls, tool results). When
+  the user asks what a previous session did, or wants you to read a prior
+  run's history, this is the authoritative file. Read it
+  directly; do not fish through `cache/run/` first.
+- `context.jsonl` — the model's running context window, derived from
+  `events.jsonl`. Useful only for understanding token usage.
+- `session.jsonc` — session configuration (model, tool selection, etc.).
+- `cache/run/` — tee'd stdout/stderr from shell-running tools, one file
+  per invocation; referenced by the `[full output: <path>]` footers in
+  tool results.
+
+`<id>` is the directory name (timestamp + short hash). The current
+session's own log is `events.jsonl` inside this session's directory —
+reading it lets you see how earlier turns were structured if you need to
+reconstruct a sequence.",
         );
     }
     s.push_str(
@@ -1065,6 +1085,48 @@ mod tests {
         assert!(
             core.contains("stop and discuss"),
             "interactive must include discussion policy"
+        );
+    }
+
+    // ---- Session-forensics section (Phase 1.4) ---------------------------
+    //
+    // Contract: the interactive prompt teaches the model that
+    // `events.jsonl` is the authoritative post-mortem source for past
+    // sessions; the headless prompt omits this guidance entirely.
+
+    #[test]
+    fn interactive_includes_session_forensics() {
+        let blocks = build_system_blocks("/tmp", 1000, false, &[], &selection_default());
+        let core = &blocks[0].content;
+        assert!(
+            core.contains("## Session forensics"),
+            "interactive must include session-forensics heading"
+        );
+        assert!(
+            core.contains(".omega/sessions/<id>/"),
+            "interactive must document the session directory layout"
+        );
+        assert!(
+            core.contains("`events.jsonl`"),
+            "interactive must name events.jsonl as the authoritative log"
+        );
+        assert!(
+            core.contains("authoritative"),
+            "interactive must call events.jsonl the authoritative source"
+        );
+    }
+
+    #[test]
+    fn headless_omits_session_forensics() {
+        let blocks = build_system_blocks("/tmp", 1000, true, &[], &selection_default());
+        let core = &blocks[0].content;
+        assert!(
+            !core.contains("## Session forensics"),
+            "headless must omit session-forensics heading"
+        );
+        assert!(
+            !core.contains(".omega/sessions/<id>/"),
+            "headless must omit the session directory layout"
         );
     }
 
