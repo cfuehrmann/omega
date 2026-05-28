@@ -58,7 +58,35 @@ enum Command {
         /// policy from the core prompt.  Use for headless / benchmark runs.
         #[arg(long)]
         headless: bool,
+
+        /// Tool-selection preset.  Single source of truth for the CLI and the
+        /// (forthcoming) UI is `omega_tools::PRESETS`.
+        ///
+        /// Presets:
+        ///   - `standard`     — 12 tools — file ops, shell, web (no REPL)
+        ///   - `all`          — all 13 — standard plus `python_repl`
+        ///   - `repl-centric` — `python_repl` + `web_search` + `fetch_url`
+        ///
+        /// Omitting the flag is equivalent to `--preset standard` at the
+        /// agent level (server falls back to `DEFAULT_TOOL_NAMES`).
+        #[arg(long, value_parser = parse_preset)]
+        preset: Option<&'static omega_tools::Preset>,
     },
+}
+
+/// Resolve `--preset <id>` against [`omega_tools::PRESETS`].
+///
+/// Returns a clap-friendly error listing every known preset id when the
+/// caller passes an unknown one — matches clap's own "possible values" hint
+/// style.
+fn parse_preset(s: &str) -> Result<&'static omega_tools::Preset, String> {
+    omega_tools::preset_by_id(s).ok_or_else(|| {
+        let known: Vec<&str> = omega_tools::PRESETS.iter().map(|p| p.id).collect();
+        format!(
+            "unknown preset '{s}'; expected one of: {}",
+            known.join(", ")
+        )
+    })
 }
 
 #[tokio::main]
@@ -81,6 +109,7 @@ async fn main() {
             session_root,
             allow_dirty,
             headless,
+            preset,
         } => {
             run(
                 instruction,
@@ -89,6 +118,7 @@ async fn main() {
                 session_root,
                 allow_dirty,
                 headless,
+                preset,
             )
             .await
         }
@@ -96,7 +126,7 @@ async fn main() {
     std::process::exit(exit_code);
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 async fn run(
     instruction: String,
     model: String,
@@ -104,6 +134,7 @@ async fn run(
     session_root: Option<String>,
     allow_dirty: bool,
     headless: bool,
+    preset: Option<&'static omega_tools::Preset>,
 ) -> i32 {
     // ---- API key -------------------------------------------------------
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
@@ -198,8 +229,13 @@ async fn run(
         cwd: cwd.clone(),
         session_dir: paths.dir.clone(),
         headless,
-        features: None,       // resolved from env in agent.init()
-        tool_selection: None, // defaults to omega_tools::DEFAULT_TOOL_NAMES in Agent::new
+        features: None, // resolved from env in agent.init()
+        // None (no `--preset` flag) lets `Agent::new` apply
+        // `omega_tools::DEFAULT_TOOL_NAMES` — functionally equal to passing
+        // `--preset standard`, but distinguishable on the event log: an
+        // explicit preset materialises as `Some(…)` in the
+        // `session_started` event for forensics.
+        tool_selection: preset.map(|p| p.tools.iter().map(|s| (*s).to_owned()).collect()),
     };
     let mut agent = Agent::new(provider, context_store, event_store, config);
     if let Err(e) = agent.init().await {

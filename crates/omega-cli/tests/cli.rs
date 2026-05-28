@@ -183,6 +183,152 @@ async fn happy_path_single_text_turn() {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. --preset flag (tool-selection presets, Phase 2.1)
+// ---------------------------------------------------------------------------
+//
+// `--preset <id>` resolves against `omega_tools::PRESETS` and materialises in
+// the `session_started` event's `tool_selection` field.  These tests pin the
+// tool list each preset name produces; they also guard the CLI from silently
+// reverting to the server default when the flag is misspelt.
+
+fn run_preset_and_collect_tools(preset: &str) -> Vec<String> {
+    let mock = futures::executor::block_on(MockServer::start(vec![MockResponse::Text {
+        text: "ok".to_owned(),
+        input_tokens: 1,
+        output_tokens: 1,
+    }]));
+
+    let temp = TempDir::new().unwrap();
+    let session_root = temp.path().join("sessions");
+    fs::create_dir_all(&session_root).unwrap();
+
+    cargo_bin_cmd!("omega")
+        .env("ANTHROPIC_API_KEY", "sk-test")
+        .env("ANTHROPIC_BASE_URL", &mock.base_url)
+        .env("OMEGA_RETRY_INITIAL_MS", "1")
+        .current_dir(temp.path())
+        .args([
+            "run",
+            "--instruction",
+            "hi",
+            "--session-root",
+            session_root.to_str().unwrap(),
+            "--preset",
+            preset,
+        ])
+        .assert()
+        .success();
+
+    let session = find_session_dir(&session_root);
+    let events = read_events(&session);
+    let session_started = events
+        .iter()
+        .find(|e| e.get("type").and_then(|v| v.as_str()) == Some("session_started"))
+        .expect("session_started event present");
+    session_started
+        .get("toolSelection")
+        .and_then(|v| v.as_array())
+        .expect("toolSelection field present on session_started")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Kills: `replace preset.map(...) with None` in `omega-cli` — would drop the
+/// explicit `tool_selection` and fall back to the server default, which happens
+/// to also be 12 tools, BUT in a different identity sense (None vs Some).
+/// The `session_started` event carries the materialised list either way, so we
+/// pin the exact contents.
+#[tokio::test(flavor = "multi_thread")]
+async fn preset_standard_yields_twelve_tools() {
+    let tools = run_preset_and_collect_tools("standard");
+    assert_eq!(
+        tools.len(),
+        12,
+        "standard preset should give 12 tools, got: {tools:?}"
+    );
+    assert!(
+        !tools.contains(&"python_repl".to_owned()),
+        "standard preset must not include python_repl"
+    );
+    assert!(tools.contains(&"read_file".to_owned()));
+    assert!(tools.contains(&"run_command".to_owned()));
+}
+
+/// Kills: swapping `all` with `standard` in the PRESETS const — `all` is the
+/// only preset that exposes `python_repl` alongside the standard 12.
+#[tokio::test(flavor = "multi_thread")]
+async fn preset_all_yields_thirteen_tools_including_repl() {
+    let tools = run_preset_and_collect_tools("all");
+    assert_eq!(
+        tools.len(),
+        13,
+        "all preset should give 13 tools, got: {tools:?}"
+    );
+    assert!(
+        tools.contains(&"python_repl".to_owned()),
+        "all preset must include python_repl"
+    );
+    assert!(tools.contains(&"read_file".to_owned()));
+    assert!(tools.contains(&"run_command".to_owned()));
+}
+
+/// Kills: shrinking `REPL_CENTRIC_TOOLS` or adding stray tools to it.
+#[tokio::test(flavor = "multi_thread")]
+async fn preset_repl_centric_yields_three_tools() {
+    let mut tools = run_preset_and_collect_tools("repl-centric");
+    tools.sort();
+    assert_eq!(
+        tools,
+        vec![
+            "fetch_url".to_owned(),
+            "python_repl".to_owned(),
+            "web_search".to_owned()
+        ],
+        "repl-centric preset must be exactly python_repl + web_search + fetch_url"
+    );
+}
+
+/// Kills: `replace parse_preset Err with Ok(&PRESETS[0])` — clap would accept
+/// any string and silently fall back to `standard`.
+#[test]
+fn preset_unknown_errors_with_clap_message() {
+    let temp = TempDir::new().unwrap();
+    let session_root = temp.path().join("sessions");
+    fs::create_dir_all(&session_root).unwrap();
+
+    let assert = cargo_bin_cmd!("omega")
+        .env("ANTHROPIC_API_KEY", "sk-test")
+        .args([
+            "run",
+            "--instruction",
+            "hi",
+            "--session-root",
+            session_root.to_str().unwrap(),
+            "--preset",
+            "nope",
+        ])
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("unknown preset 'nope'"),
+        "stderr missing preset rejection message: {stderr}"
+    );
+    assert!(
+        stderr.contains("standard") && stderr.contains("all") && stderr.contains("repl-centric"),
+        "stderr should list known presets: {stderr}"
+    );
+    // No session directory should be created on a clap parse failure.
+    let entries: Vec<_> = fs::read_dir(&session_root).unwrap().collect();
+    assert!(
+        entries.is_empty(),
+        "clap failure must not create a session directory: {entries:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 4. Tool-use round trip
 // ---------------------------------------------------------------------------
 

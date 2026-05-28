@@ -10,6 +10,8 @@ harbor run -d terminal-bench@2.0 \\
 
 Optional kwargs (via --agent-kwargs or subclass override):
   effort  str  Thinking effort: low|medium|high (default medium)
+  preset  str  Tool-selection preset: standard|all|repl-centric
+               (default standard, matches the omega-cli default).
 """
 
 from __future__ import annotations
@@ -72,6 +74,15 @@ class OmegaRustAgent(BaseInstalledAgent):
             type="enum",
             choices=["low", "medium", "high"],
             default="medium",
+        ),
+        # Phase 2.1: tool-selection preset.  Choices and default must stay in
+        # lock-step with `omega_tools::PRESETS` in the Rust source.
+        CliFlag(
+            kwarg="preset",
+            cli="--preset",
+            type="enum",
+            choices=["standard", "all", "repl-centric"],
+            default="standard",
         ),
     ]
 

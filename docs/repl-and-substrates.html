@@ -234,49 +234,71 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: Phase 2.1 — Tool-selection UI at session creation</h2>
+<h2 id="next">⏭ Next step: Phase 2.1 — Tool-selection UI (Commit B)</h2>
 
 <div class="callout">
-  <div class="callout-title">What to do</div>
+  <div class="callout-title">Status</div>
   <p>
-    Phase 1 is complete: <code>tool_selection</code> is now an explicit
-    field on <code>SessionStartedEvent</code> (<code>568e7af</code>) and the
-    agent has the session-forensics affordance it needs
-    (<code>69f2ecd</code>).  Phase 2.1 surfaces tool selection in the UI so
-    users don't hand-craft WS payloads or rely on the server default.
+    <strong>Commit A landed</strong> (this commit) — <code>--preset</code>
+    flag on <code>omega-cli</code> resolving against a new
+    <code>omega_tools::PRESETS</code> single-source-of-truth const, with a
+    matching <code>CliFlag</code> in <code>bench/omega_agent.py</code> so
+    Harbor sweeps drive <code>tool_selection</code> via
+    <code>--agent-kwargs preset=NAME</code>.  Three presets:
+    <code>standard</code> / <code>all</code> / <code>repl-centric</code>.
+    Removes the last user of the retired <code>OMEGA_FEATURE_*</code> env
+    vars; the deferred 87-task TB2 sweep is unblocked.
   </p>
+  <p>
+    <strong>Commit B (next)</strong> — surface the same selection in the
+    Leptos UI so users don't drop to the CLI for non-default toolsets.
+  </p>
+
+  <div class="callout-title">Commit B — what to do</div>
+  <p style="margin-bottom:0.4rem;"><strong>UX (locked from mockup
+  review):</strong></p>
+  <ul style="margin-top:0;">
+    <li>Clicking <em>+ New session</em> in the picker <strong>replaces</strong>
+        the session list with the tool-selection view (not a drawer, not a
+        dim overlay — the list is hidden).  <kbd>Esc</kbd> returns to the
+        list.</li>
+    <li>Top row: four chip buttons — <em>Standard</em>,
+        <em>+ Python REPL</em>, <em>REPL-centric</em>, <em>Custom</em>.
+        Clicking a chip applies that preset to the checkboxes below.
+        Toggling any checkbox flips the chip to whichever preset matches
+        the new selection, or to <em>Custom</em> if none does
+        (bidirectional).</li>
+    <li>Tool grid grouped by category: <em>File ops</em> /
+        <em>Shell</em> / <em>Web</em> / <em>REPL</em>.</li>
+    <li>Initial state is <em>Standard</em>; the last-confirmed selection
+        persists in <code>localStorage</code> and becomes the default next
+        time the picker opens.</li>
+    <li><em>Create session →</em> sends
+        <code>ClientFrame::Reset { tool_selection: Some([…]), … }</code>.</li>
+  </ul>
 
   <p style="margin-bottom:0.4rem;"><strong>Files to touch:</strong></p>
   <ul style="margin-top:0;">
-    <li><code>frontends/leptos/</code> — per-tool checkbox grid in the
-        session-creation panel.  Source the tool list from
-        <code>ALL_TOOL_NAMES</code> exposed by <code>omega-tools</code>
-        (single source of truth, no client-side hard-coding).  Send the
-        result as <code>tool_selection</code> on
-        <code>ClientFrame::CreateSession</code>.</li>
-    <li>Preset quick-picks per <a href="#q2">Q2</a>: <em>default</em>
-        (12 base tools, no REPL), <em>REPL added</em>,
-        <em>REPL replaces shell</em>, <em>REPL only</em>.  These are UI
-        affordances on top of the checkbox grid, not a separate concept.</li>
-    <li><code>bench/</code> harness — add a CLI flag that drives
-        <code>tool_selection</code> from the command line.  Removes the
-        last user of the retired <code>OMEGA_FEATURE_*</code> env vars and
-        unblocks the deferred 87-task TB2 sweep (see
-        <code>bench/README.md</code>'s deprecation notice).</li>
+    <li><code>frontends/leptos/src/picker.rs</code> — the
+        <code>TODO(Phase 2.1)</code> at <code>on_new_click</code> is the
+        anchor.</li>
+    <li><code>frontends/leptos/src/store.rs</code> — state for current
+        selection and persisted last-choice.</li>
+    <li><code>frontends/leptos/src/protocol.rs</code> — the
+        <code>Reset</code> frame already carries
+        <code>tool_selection</code> from Phase 1.2; mirror
+        <code>omega_tools::PRESETS</code> here with a doc-comment pointing
+        at the Rust const as the source of truth.</li>
+    <li><code>frontends/leptos/tests/snapshots.rs</code> — pin the new
+        panel.</li>
   </ul>
 
   <p style="margin-bottom:0.4rem;"><strong>Acceptance:</strong></p>
   <ul style="margin-top:0;">
     <li>User can start a session from the UI with any subset of tools — no
         env-var fiddling, no WS hand-crafting.</li>
-    <li>The set of available checkboxes is derived from
-        <code>ALL_TOOL_NAMES</code> at build/runtime (single source of
-        truth).</li>
-    <li>Bench harness invocation no longer carries any
-        <code>OMEGA_FEATURE_*</code> env vars; the deferred Harbor sweep
-        unblocks.</li>
-    <li>Leptos snapshot tests pin the new panel; <code>cargo test
-        --workspace</code> and clippy green.</li>
+    <li>Chip↔checkbox sync is bidirectional and pinned by snapshot tests.</li>
+    <li><code>cargo test --workspace</code> and clippy green.</li>
   </ul>
 </div>
 

@@ -31,7 +31,9 @@ mod tools;
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
 pub use python_repl::PythonRepl;
-pub use schemas::{ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, tool_definitions};
+pub use schemas::{
+    ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, PRESETS, Preset, preset_by_id, tool_definitions,
+};
 pub use tool_ctx::ToolCtx;
 
 /// Outcome of a single tool invocation.

@@ -1,13 +1,5 @@
 # Omega — Terminal-Bench 2.0
 
-> **NOTE (Phase 1.2):** The `OMEGA_FEATURE_REPL*` environment variables
-> referenced in the experiment-arm sections below have been removed.
-> Tool selection is now an explicit `tool_selection` field on
-> `SessionStartedEvent` (set via the WS `CreateSession` frame or the
-> `AgentConfig.tool_selection` API).  Re-wiring the bench harness to
-> drive `tool_selection` from the command line is tracked as a Phase 2
-> follow-up; the historical results table below is preserved as-is.
-
 Terminal-Bench 2.0 is a 89-task containerised coding benchmark run via [Harbor](https://github.com/the-harbor-project/harbor).
 
 ## Results
@@ -55,63 +47,52 @@ Results land in `bench/jobs/<job-name>/`. Each trial directory contains
 > **Note on effort:** `xhigh` is too slow for tasks with ≤ 900 s budgets — extended
 > thinking consumes 2–4× the token budget per call. Use `high` for tasks under ~15 min.
 
-## Feature flag sweeps
+## Tool selection sweeps
 
-Omega's research-mode feature flags (`[b0bc06]`) are runtime-switchable env
-vars surfaced via Harbor's `--ae KEY=VAL`. No `omega_agent.py` change required
-to enable them — pass `--ae OMEGA_FEATURE_REPL=1` and/or
-`--ae OMEGA_FEATURE_SUBAGENTS=1` at run time.
+Tool selection is exposed via `--preset` on the omega-cli binary, surfaced to
+Harbor as a regular `--agent-kwargs` flag.  Three presets, defined once in
+`crates/omega-tools/src/schemas.rs::PRESETS`:
 
-The resolved combination lands in `SessionStartedEvent.features` for every
-session; post-mortem can grep `events.jsonl` to know which combination a run
-used.
+| Preset | Tools | Use case |
+|---|---|---|
+| `standard` (default) | 12 — file ops + shell + web | Baseline; matches the unflagged default |
+| `all` | 13 — standard plus `python_repl` | REPL alongside the rest |
+| `repl-centric` | 3 — `python_repl`, `web_search`, `fetch_url` | REPL-only: shell + file I/O must happen inside Python |
 
-### Limit-mode treatment arm
+The resolved selection lands in `SessionStartedEvent.tool_selection` for every
+session; post-mortem can grep `events.jsonl` to recover the exact tool set a
+run used.
 
-To run the **limit-mode** treatment (removes the six file-op tools so the LLM
-must choose between `python_repl` and `run_command` for file work), pass both
-flags together:
+Treatment arms:
 
-```bash
---ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1
-```
-
-Setting `OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` without `OMEGA_FEATURE_REPL=1`
-is a configuration error and the agent will exit with a clear message at
-startup.
-
-### Shell-replacement treatment arm (Tier 2)
-
-To run the **shell-replacement** treatment (removes `run_command`,
-`run_background`, `wait_for_output`, `write_stdin` — forcing shell work through
-`subprocess` inside `python_repl`), use:
-
-```bash
---ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1
-```
-
-Setting `OMEGA_FEATURE_REPL_REPLACES_SHELL=1` without `OMEGA_FEATURE_REPL=1`
-is a configuration error (same loud-failure policy as the fileops flag).
-
-The two `REPL_REPLACES_*` flags are **orthogonal** — all four combinations are
-valid when `OMEGA_FEATURE_REPL=1`.  For the full Tier 2 (REPL-only, no direct
-file or shell access) use:
-
-```bash
---ae OMEGA_FEATURE_REPL=1 \
---ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1 \
---ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1
-```
-
-The five-mode sweep matrix for the REPL benchmark is:
-
-| Treatment arm | `--ae` flags |
+| Arm | `--agent-kwargs` |
 |---|---|
-| OFF (baseline) | _(none)_ |
-| Additive REPL | `--ae OMEGA_FEATURE_REPL=1` |
-| Limit-mode REPL (fileops removed) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1` |
-| Shell-replacement REPL (Tier 2) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1` |
-| Full Tier 2 (fileops + shell removed) | `--ae OMEGA_FEATURE_REPL=1 --ae OMEGA_FEATURE_REPL_REPLACES_FILEOPS=1 --ae OMEGA_FEATURE_REPL_REPLACES_SHELL=1` |
+| Baseline | _(none, or `preset=standard`)_ |
+| Additive REPL | `--agent-kwargs preset=all` |
+| REPL-centric | `--agent-kwargs preset=repl-centric` |
+
+Example:
+
+```bash
+harbor run -d terminal-bench@2.0 \
+  --agent-import-path omega_agent:OmegaRustAgent \
+  -m anthropic/claude-sonnet-4-6 \
+  --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  --agent-kwargs preset=repl-centric \
+  --job-name v0114-repl-centric-sonnet-medium
+```
+
+Unknown preset names fail loudly at clap-parse time — no silent fallback.
+
+> **Historical note.**  Earlier rounds (v0.1.8–v0.1.13) drove the same
+> treatments via three `OMEGA_FEATURE_REPL*` env vars passed with `--ae`.
+> Those env vars were removed in Phase 1.2 (commit `568e7af`) and replaced
+> with `tool_selection`; the CLI surface above landed in Phase 2.1.  The
+> mapping is: old `REPL=1` → `preset=all`; old `REPL=1 REPL_REPLACES_SHELL=1`
+> → `preset=repl-centric`.  The old `REPL_REPLACES_FILEOPS=1` arm (file ops
+> stripped but shell retained) is no longer a named preset — it can still be
+> reached via a custom `--tools` list once the UI ships that escape hatch, or
+> by editing `PRESETS` directly.
 
 ---
 
@@ -150,34 +131,30 @@ the reference treatment arm.  Full analysis in
 
 ---
 
-### REPL benchmark plan (v0.1.8, first benchmark data on the REPL MVP)
+### REPL benchmark plan (v0.1.14+, first sweep on the `--preset` surface)
 
 Run both legs at the **same Omega tag** so the comparison is apples-to-apples.
-The legacy `v0.1.7` baseline (53/89 sonnet-medium, 62/89 opus-high) is not
-comparable directly — `v0.1.8` includes intervening scaffolding work
-(`FeatureFlags`, `DomainSnapshot`, `fold_features`, system-prompt round-trip)
-that may shift the baseline by a percentage point or two.
 
 ```bash
 cd bench
 
-# Baseline at v0.1.8 (REPL off).
+# Baseline (12 standard tools, no REPL).
 harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  --job-name v018-baseline-sonnet-medium
+  --job-name v0114-baseline-sonnet-medium
 
-# Treatment: same everything, OMEGA_FEATURE_REPL=1.
+# Treatment: same everything, REPL-centric preset (REPL + web only).
 harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  --ae OMEGA_FEATURE_REPL=1 \
-  --job-name v018-repl-on-sonnet-medium
+  --agent-kwargs preset=repl-centric \
+  --job-name v0114-repl-centric-sonnet-medium
 ```
 
-The headline number: **delta between v018-baseline and v018-repl-on**.
+The headline number: **delta between baseline and repl-centric**.
 
 Start with sonnet-medium only (cheaper, faster to iterate; Kim et al.'s
 results suggest small-model effects are where multi-agent / scaffold changes

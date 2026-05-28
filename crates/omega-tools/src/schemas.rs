@@ -52,6 +52,58 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "python_repl",
 ];
 
+/// Tools in the REPL-centric preset: Python REPL plus web tools.  Everything
+/// else (file I/O, subprocess work) is done inside the REPL.
+const REPL_CENTRIC_TOOLS: &[&str] = &["python_repl", "web_search", "fetch_url"];
+
+/// A named tool-selection preset.
+///
+/// Single source of truth for the CLI (`omega run --preset <id>`) and the UI
+/// tool-picker chips (label + description).  Adding a new preset requires
+/// extending only [`PRESETS`] — both surfaces pick it up automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Preset {
+    /// CLI identifier (kebab-case, lowercase).  Stable wire value.
+    pub id: &'static str,
+    /// UI chip label.  May contain Unicode and punctuation.
+    pub label: &'static str,
+    /// Tools enabled by this preset, in canonical order.
+    pub tools: &'static [&'static str],
+    /// Short description — used in `--help` and (later) UI tooltips.
+    pub description: &'static str,
+}
+
+/// All known presets, in display order.  See [`Preset`].
+///
+/// Order is the order the UI shows preset chips and the CLI lists
+/// `--preset` choices in `--help`.
+pub const PRESETS: &[Preset] = &[
+    Preset {
+        id: "standard",
+        label: "Standard",
+        tools: DEFAULT_TOOL_NAMES,
+        description: "12 tools — file ops, shell, web (no Python REPL)",
+    },
+    Preset {
+        id: "all",
+        label: "+ Python REPL",
+        tools: ALL_TOOL_NAMES,
+        description: "All 13 tools — standard plus python_repl",
+    },
+    Preset {
+        id: "repl-centric",
+        label: "REPL-centric",
+        tools: REPL_CENTRIC_TOOLS,
+        description: "Python REPL plus web tools; everything else inside the REPL",
+    },
+];
+
+/// Look up a preset by its CLI id.  Returns `None` for unknown ids.
+#[must_use]
+pub fn preset_by_id(id: &str) -> Option<&'static Preset> {
+    PRESETS.iter().find(|p| p.id == id)
+}
+
 /// Build the tool definitions exposed to the LLM for this session.
 ///
 /// Iterates [`ALL_TOOL_NAMES`] in canonical order and emits the definition
@@ -812,5 +864,73 @@ mod tests {
     fn fetch_url_without_shell_tools_description_mentions_cap() {
         let def = fetch_url_def(&sel_no_shell_tools());
         assert!(def.description.contains("2000") || def.description.contains("50"));
+    }
+
+    // ---------------------------------------------------------------
+    // Presets
+    // ---------------------------------------------------------------
+
+    /// Kills: `replace PRESETS with &[]` (every lookup goes away).
+    #[test]
+    fn presets_has_three_entries_in_display_order() {
+        let ids: Vec<&str> = PRESETS.iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec!["standard", "all", "repl-centric"]);
+    }
+
+    /// Kills: `replace PRESETS[0].tools with DEFAULT_TOOL_NAMES` mutated to
+    /// anything else — `standard` MUST be the 12-tool default set verbatim,
+    /// otherwise omitting `--preset` and passing `--preset standard` would
+    /// silently mean different things.
+    #[test]
+    fn standard_preset_matches_default_tool_names() {
+        let p = preset_by_id("standard").expect("standard exists");
+        assert_eq!(p.tools, DEFAULT_TOOL_NAMES);
+        assert_eq!(p.label, "Standard");
+    }
+
+    /// Kills: `replace ALL_TOOL_NAMES with DEFAULT_TOOL_NAMES` for the `all`
+    /// preset — `all` MUST cover the 13-tool superset.
+    #[test]
+    fn all_preset_matches_all_tool_names() {
+        let p = preset_by_id("all").expect("all exists");
+        assert_eq!(p.tools, ALL_TOOL_NAMES);
+        assert!(p.tools.contains(&"python_repl"));
+    }
+
+    /// Kills: shrinking `REPL_CENTRIC_TOOLS` to e.g. `["python_repl"]` — the
+    /// web tools are part of the contract because nothing else exposes HTTP.
+    #[test]
+    fn repl_centric_preset_is_python_repl_plus_web_tools() {
+        let p = preset_by_id("repl-centric").expect("repl-centric exists");
+        assert_eq!(p.tools, &["python_repl", "web_search", "fetch_url"]);
+    }
+
+    /// Kills: `replace preset_by_id -> Option<&Preset> with Some(&PRESETS[0])`
+    /// or similar always-Some mutants.
+    #[test]
+    fn preset_by_id_returns_none_for_unknown() {
+        assert!(preset_by_id("nope").is_none());
+        assert!(preset_by_id("").is_none());
+        assert!(
+            preset_by_id("Standard").is_none(),
+            "id lookup is case-sensitive"
+        );
+    }
+
+    /// Every tool in every preset must be a known tool name — otherwise the
+    /// preset would produce an unknown-tool validation error at session
+    /// start.  This is the cross-check that keeps the two consts in sync.
+    #[test]
+    fn every_preset_tool_is_known() {
+        for p in PRESETS {
+            for t in p.tools {
+                assert!(
+                    ALL_TOOL_NAMES.contains(t),
+                    "preset {} references unknown tool {}",
+                    p.id,
+                    t
+                );
+            }
+        }
     }
 }
