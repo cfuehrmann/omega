@@ -841,3 +841,85 @@ mod composer_states {
         insta::assert_snapshot!(html);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tool-selection panel (Phase 2.1 Commit B)
+// ---------------------------------------------------------------------------
+//
+// These snapshots pin the rendered tool-picker body in three states:
+//
+//   1. Fresh open with the *Standard* preset.
+//   2. After clicking the *REPL-centric* preset chip.
+//   3. After unchecking one tool from Standard — *Custom* chip active.
+//
+// `<ToolSelectionPanel/>` reads its initial state from the `PickerOpen`
+// context, so the tests pre-populate `tool_selection` and then render
+// the panel directly (no need to drive a click sequence).
+mod tool_picker_states {
+    use super::*;
+    use omega_web::picker::ToolSelectionPanel;
+    use omega_web::protocol::PRESETS;
+    use omega_web::sessions::SessionListStore;
+    use omega_web::store::SessionStore;
+    use omega_web::ws::WsClient;
+
+    /// Install the minimal context the panel needs.  Unlike
+    /// `composer_states::install_app_context` we don't materialise an
+    /// active session — the panel doesn't read `SessionStore` itself,
+    /// but `WsClient::new` borrows it, so we provide one anyway.
+    fn install_picker_context(initial_selection: Vec<String>) {
+        let store = SessionStore::new();
+        provide_context(store);
+        let list_store = SessionListStore::new();
+        provide_context(list_store);
+        let ws = WsClient::new(String::new(), store, list_store);
+        provide_context(ws);
+        let picker_open = PickerOpen::new();
+        picker_open.open.set(true);
+        picker_open.show_tool_picker.set(true);
+        picker_open.tool_selection.set(initial_selection);
+        provide_context(picker_open);
+    }
+
+    #[test]
+    fn snap_tool_picker_standard() {
+        let html = render(|| {
+            // Standard preset — the freshly-opened state with no prior
+            // localStorage value.
+            let standard: Vec<String> = PRESETS[0].tools.iter().map(|s| (*s).to_owned()).collect();
+            install_picker_context(standard);
+            view! { <ToolSelectionPanel /> }
+        });
+        insta::assert_snapshot!(html);
+    }
+
+    #[test]
+    fn snap_tool_picker_repl_centric() {
+        let html = render(|| {
+            // After clicking the *REPL-centric* preset chip.
+            let repl_centric: Vec<String> = PRESETS
+                .iter()
+                .find(|p| p.id == "repl-centric")
+                .expect("repl-centric preset must exist")
+                .tools
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect();
+            install_picker_context(repl_centric);
+            view! { <ToolSelectionPanel /> }
+        });
+        insta::assert_snapshot!(html);
+    }
+
+    #[test]
+    fn snap_tool_picker_custom() {
+        let html = render(|| {
+            // Standard preset minus one tool — Custom chip should be active.
+            let mut sel: Vec<String> = PRESETS[0].tools.iter().map(|s| (*s).to_owned()).collect();
+            sel.retain(|s| s != "fetch_url");
+            install_picker_context(sel);
+            view! { <ToolSelectionPanel /> }
+        });
+        insta::assert_snapshot!(html);
+    }
+}

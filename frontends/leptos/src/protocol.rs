@@ -390,6 +390,138 @@ pub enum ClientFrame {
 }
 
 // ---------------------------------------------------------------------------
+// Tool-selection presets (Phase 2.1 Commit B)
+// ---------------------------------------------------------------------------
+
+/// A named tool-selection preset surfaced by the picker UI.
+///
+/// SOURCE OF TRUTH: `crates/omega-tools/src/schemas.rs::PRESETS`.
+///
+/// The leptos crate compiles to `wasm32-unknown-unknown` and cannot
+/// link against `omega-tools` (different target).  This mirror
+/// duplicates the three preset definitions the UI needs (id, label,
+/// tool list).  `Preset.description` is intentionally not mirrored;
+/// the UI doesn't render it.  When `PRESETS` in `omega-tools` grows a
+/// new entry, add a matching mirror here — both arrays must agree
+/// (the server validates the wire `tool_selection` against
+/// `ALL_TOOL_NAMES`, so a UI/preset mismatch surfaces as an
+/// `agent_error` envelope rather than silent drift).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Preset {
+    /// Stable preset id (matches `omega-tools::Preset::id`).
+    pub id: &'static str,
+    /// Display label for the chip.
+    pub label: &'static str,
+    /// Tool names this preset selects.
+    pub tools: &'static [&'static str],
+}
+
+/// Standard preset — file ops + shell + web (no python_repl).
+const STANDARD_TOOLS: &[&str] = &[
+    "read_file",
+    "write_file",
+    "run_command",
+    "edit_file",
+    "list_files",
+    "web_search",
+    "fetch_url",
+    "grep_files",
+    "find_files",
+    "run_background",
+    "wait_for_output",
+    "write_stdin",
+];
+
+/// All-tools preset — Standard plus python_repl.
+const ALL_TOOLS: &[&str] = &[
+    "read_file",
+    "write_file",
+    "run_command",
+    "edit_file",
+    "list_files",
+    "web_search",
+    "fetch_url",
+    "grep_files",
+    "find_files",
+    "run_background",
+    "wait_for_output",
+    "write_stdin",
+    "python_repl",
+];
+
+/// REPL-centric preset — python_repl plus web tools.
+const REPL_CENTRIC_TOOLS: &[&str] = &["python_repl", "web_search", "fetch_url"];
+
+/// All known presets, in chip-display order.  Mirrors
+/// `omega_tools::PRESETS` — see [`Preset`] for the contract.
+pub const PRESETS: &[Preset] = &[
+    Preset {
+        id: "standard",
+        label: "Standard",
+        tools: STANDARD_TOOLS,
+    },
+    Preset {
+        id: "all",
+        label: "+ Python REPL",
+        tools: ALL_TOOLS,
+    },
+    Preset {
+        id: "repl-centric",
+        label: "REPL-centric",
+        tools: REPL_CENTRIC_TOOLS,
+    },
+];
+
+/// localStorage key persisting the operator's last tool selection.
+/// Restored as the initial selection on the next "+ New session".
+pub const TOOL_SELECTION_STORAGE_KEY: &str = "omega.toolSelection.lastChoice";
+
+/// Standard preset materialised as a fresh `Vec<String>` — the
+/// fallback when localStorage is empty / corrupt, and the initial
+/// state of a tool picker on first ever use.
+#[must_use]
+pub fn default_tool_selection() -> Vec<String> {
+    PRESETS[0].tools.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// Resolve a checkbox selection back to a preset id by **set equality**
+/// (order doesn't matter).  Returns `None` when the selection matches
+/// no named preset; the UI surfaces this as the *Custom* chip.
+#[must_use]
+pub fn resolve_preset(selection: &[String]) -> Option<&'static str> {
+    PRESETS
+        .iter()
+        .find(|p| {
+            p.tools.len() == selection.len()
+                && p.tools.iter().all(|t| selection.iter().any(|s| s == t))
+        })
+        .map(|p| p.id)
+}
+
+/// Parse a localStorage payload (JSON array of strings) into a tool
+/// selection.  Returns the Standard preset on any of:
+///
+/// * `raw == None`               — storage empty
+/// * not valid JSON              — corrupt
+/// * not a JSON array of strings — corrupt
+/// * empty array                 — the UI requires ≥1 tool
+///
+/// Pure function — testable without a browser.
+#[must_use]
+pub fn parse_stored_selection(raw: Option<&str>) -> Vec<String> {
+    raw.and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(default_tool_selection)
+}
+
+/// Serialise a tool selection for localStorage.  Cannot fail for
+/// `Vec<String>`; the caller gets a plain `String`.
+#[must_use]
+pub fn serialize_selection(selection: &[String]) -> String {
+    serde_json::to_string(selection).expect("Vec<String> always serialises")
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -737,5 +869,172 @@ mod tests {
         };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"reset"}"#);
+    }
+
+    #[wasm_bindgen_test]
+    fn client_frame_reset_serialises_tool_selection_under_camel_case_key() {
+        let frame = ClientFrame::Reset {
+            model: None,
+            effort: None,
+            allow_dirty: false,
+            tool_selection: Some(vec!["python_repl".into(), "web_search".into()]),
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"reset","toolSelection":["python_repl","web_search"]}"#
+        );
+    }
+
+    // ---- Tool-selection presets (Phase 2.1 Commit B) -----------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn presets_mirror_omega_tools_in_display_order() {
+        let ids: Vec<&str> = PRESETS.iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec!["standard", "all", "repl-centric"]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn presets_standard_has_twelve_tools_without_python_repl() {
+        let p = &PRESETS[0];
+        assert_eq!(p.id, "standard");
+        assert_eq!(p.tools.len(), 12);
+        assert!(!p.tools.contains(&"python_repl"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn presets_all_has_thirteen_tools_with_python_repl() {
+        let p = &PRESETS[1];
+        assert_eq!(p.id, "all");
+        assert_eq!(p.tools.len(), 13);
+        assert!(p.tools.contains(&"python_repl"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn presets_repl_centric_is_python_repl_plus_web_tools() {
+        let p = &PRESETS[2];
+        assert_eq!(p.id, "repl-centric");
+        assert_eq!(p.tools, &["python_repl", "web_search", "fetch_url"]);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn default_tool_selection_matches_standard_preset_by_set_equality() {
+        let sel = default_tool_selection();
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_finds_standard_in_canonical_order() {
+        let sel: Vec<String> = PRESETS[0].tools.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_finds_standard_ignoring_order() {
+        // Set equality — reversed input still matches.
+        let mut sel: Vec<String> = PRESETS[0].tools.iter().map(|s| (*s).to_owned()).collect();
+        sel.reverse();
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_finds_all_thirteen() {
+        let sel: Vec<String> = PRESETS[1].tools.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(resolve_preset(&sel), Some("all"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_finds_repl_centric() {
+        let sel: Vec<String> = PRESETS[2].tools.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(resolve_preset(&sel), Some("repl-centric"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_returns_none_for_unchecking_one_tool_from_standard() {
+        // Standard minus run_command — diverges from every preset.
+        let sel: Vec<String> = PRESETS[0]
+            .tools
+            .iter()
+            .filter(|t| **t != "run_command")
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(resolve_preset(&sel), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_returns_none_for_empty_selection() {
+        assert_eq!(resolve_preset(&[]), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn resolve_preset_returns_none_for_superset_of_a_preset() {
+        // REPL-centric plus one extra — superset, not equal, so Custom.
+        let mut sel: Vec<String> = PRESETS[2].tools.iter().map(|s| (*s).to_owned()).collect();
+        sel.push("run_command".into());
+        assert_eq!(resolve_preset(&sel), None);
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn parse_stored_selection_returns_standard_on_none() {
+        let sel = parse_stored_selection(None);
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn parse_stored_selection_returns_standard_on_invalid_json() {
+        let sel = parse_stored_selection(Some("not-json"));
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn parse_stored_selection_returns_standard_on_wrong_shape() {
+        // JSON object, not an array of strings.
+        let sel = parse_stored_selection(Some(r#"{"foo":"bar"}"#));
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn parse_stored_selection_returns_standard_on_empty_array() {
+        // Empty selection isn't a valid UI state (≥1 tool required) — fall back.
+        let sel = parse_stored_selection(Some("[]"));
+        assert_eq!(resolve_preset(&sel), Some("standard"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn parse_stored_selection_round_trips_repl_centric() {
+        let stored = serialize_selection(
+            PRESETS[2]
+                .tools
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect::<Vec<_>>()
+                .as_slice(),
+        );
+        let sel = parse_stored_selection(Some(&stored));
+        assert_eq!(resolve_preset(&sel), Some("repl-centric"));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn serialize_selection_emits_json_array_of_strings() {
+        let s = serialize_selection(&["a".into(), "b".into()]);
+        assert_eq!(s, r#"["a","b"]"#);
     }
 }

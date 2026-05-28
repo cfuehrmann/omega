@@ -53,11 +53,88 @@ use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
 use leptos::web_sys;
 
+use wasm_bindgen::JsCast as _;
+
 use crate::http::get_sessions;
-use crate::protocol::ClientFrame;
+use crate::protocol::{
+    ClientFrame, PRESETS, Preset, TOOL_SELECTION_STORAGE_KEY, default_tool_selection,
+    parse_stored_selection, resolve_preset, serialize_selection,
+};
 use crate::sessions::{SessionListItem, SessionListStore, filter_sessions, is_active};
 use crate::store::SessionStore;
 use crate::ws::WsClient;
+
+// ---------------------------------------------------------------------------
+// Tool category groupings (Phase 2.1 Commit B)
+// ---------------------------------------------------------------------------
+
+/// One visual category of tools in the picker grid.
+///
+/// Categories are a **UI-only** concern: they live here, not in the
+/// `Preset` struct.  `omega-tools` doesn't know or care about them.
+struct ToolCategory {
+    label: &'static str,
+    tools: &'static [&'static str],
+}
+
+/// All tool categories in display order. Every tool surfaced by
+/// `PRESETS` must appear in exactly one category here — otherwise the
+/// checkbox grid will silently drop it.  Order within each category is
+/// the order the checkboxes render.
+const TOOL_CATEGORIES: &[ToolCategory] = &[
+    ToolCategory {
+        label: "File ops",
+        tools: &[
+            "read_file",
+            "write_file",
+            "edit_file",
+            "find_files",
+            "grep_files",
+            "list_files",
+        ],
+    },
+    ToolCategory {
+        label: "Shell",
+        tools: &[
+            "run_command",
+            "run_background",
+            "wait_for_output",
+            "write_stdin",
+        ],
+    },
+    ToolCategory {
+        label: "Web",
+        tools: &["web_search", "fetch_url"],
+    },
+    ToolCategory {
+        label: "REPL",
+        tools: &["python_repl"],
+    },
+];
+
+// ---------------------------------------------------------------------------
+// localStorage helpers (Phase 2.1 Commit B)
+// ---------------------------------------------------------------------------
+
+/// Read the last-used tool selection from localStorage and parse via
+/// [`parse_stored_selection`].  Returns the Standard preset when
+/// `window()` / `localStorage` are unavailable (SSR snapshot path or
+/// browsers with storage disabled), or when the stored value is
+/// missing / corrupt.
+fn read_stored_tool_selection() -> Vec<String> {
+    let raw = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(TOOL_SELECTION_STORAGE_KEY).ok().flatten());
+    parse_stored_selection(raw.as_deref())
+}
+
+/// Persist a confirmed tool selection to localStorage.  Best-effort —
+/// silently no-ops when storage isn't available.
+fn write_stored_tool_selection(selection: &[String]) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = storage.set_item(TOOL_SELECTION_STORAGE_KEY, &serialize_selection(selection));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // PickerOpen context handle (Phase 3.9 TODO-1)
@@ -91,6 +168,19 @@ pub struct PickerOpen {
     /// `pending_changes_warning` — leaving the operator with no way back
     /// to the picker after Cancel.
     pub swap_pending: RwSignal<bool>,
+    /// Phase 2.1 Commit B: when `true`, the picker shows the
+    /// tool-selection panel (header + chips + checkbox grid + footer)
+    /// instead of the session list.  Toggled by `+ New session` (→ `true`)
+    /// and Cancel / Esc / successful Create (→ `false`).  Reset to `false`
+    /// on every fresh picker open so the operator always starts on the
+    /// list view.  Exposed publicly so snapshot tests can pin specific
+    /// panel states without going through the click sequence.
+    pub show_tool_picker: RwSignal<bool>,
+    /// Phase 2.1 Commit B: in-progress tool selection while the
+    /// tool-picker panel is open.  Read+written by chips and checkboxes;
+    /// read by Create to populate `ClientFrame::Reset { tool_selection }`.
+    /// Exposed publicly so snapshot tests can pin a specific selection.
+    pub tool_selection: RwSignal<Vec<String>>,
 }
 
 impl PickerOpen {
@@ -101,6 +191,8 @@ impl PickerOpen {
         Self {
             open: RwSignal::new(false),
             swap_pending: RwSignal::new(false),
+            show_tool_picker: RwSignal::new(false),
+            tool_selection: RwSignal::new(default_tool_selection()),
         }
     }
 
@@ -219,11 +311,15 @@ pub fn SessionPicker() -> impl IntoView {
     let has_session = Memo::new(move |_| conv.session_info.with(Option::is_some));
 
     // Search query — cleared each time the picker opens so operators
-    // always start with the full list on a fresh open.
+    // always start with the full list on a fresh open.  Phase 2.1
+    // Commit B: this Effect *also* resets `show_tool_picker` to false
+    // so every picker reopen lands on the session list, never on the
+    // mid-configuration tool-picker view.
     let query: RwSignal<String> = RwSignal::new(String::new());
     Effect::new(move |_| {
         if picker_open.open.get() {
             query.set(String::new());
+            picker_open.show_tool_picker.set(false);
         }
     });
 
@@ -295,20 +391,14 @@ pub fn SessionPicker() -> impl IntoView {
     // imperatively after `ws.send()`.  This way, if the server rejects
     // the swap with a `pending_changes_warning`, the picker stays open
     // behind the warning modal so Cancel returns the operator to it.
+    // Phase 2.1 Commit B: "+ New session" no longer fires a Reset
+    // directly.  It hydrates the in-progress selection from
+    // localStorage (or falls back to the Standard preset) and flips the
+    // picker into tool-selection mode.  The actual Reset is sent by the
+    // Create button inside `<ToolSelectionPanel/>`.
     let on_new_click = move |_| {
-        if let Err(err) = ws.send(&ClientFrame::Reset {
-            model: None,
-            effort: None,
-            allow_dirty: false,
-            // TODO(Phase 2.1): expose a tool-selection picker in the UI
-            // and forward the chosen set here.  `None` makes the server
-            // fall back to the default 12-tool selection.
-            tool_selection: None,
-        }) {
-            list.set_error(format!("send Reset: {err:?}"));
-            return;
-        }
-        picker_open.mark_swap_pending();
+        picker_open.tool_selection.set(read_stored_tool_selection());
+        picker_open.show_tool_picker.set(true);
     };
 
     // TODO-1: close handler shared by `✕` button and backdrop click.
@@ -321,13 +411,28 @@ pub fn SessionPicker() -> impl IntoView {
     };
 
     // Esc-key dismissal on the backdrop div.
-    // Guards:
-    //  1. No active session → Esc is ignored (operator must choose a session).
-    //  2. A rename is in progress → Esc is ignored here (the rename input's
+    // Guards (in order):
+    //  1. Phase 2.1 Commit B: in tool-picker mode — Esc returns to the
+    //     session list (Cancel semantics), never closes the picker.
+    //  2. No active session → Esc is ignored (operator must choose a session).
+    //  3. A rename is in progress → Esc is ignored here (the rename input's
     //     own keydown already handles it and calls stop_propagation, but this
     //     check is a safety-net for any other path that might bubble).
+    //
+    // Enter while tool-picker is showing and ≥1 tool is selected: send
+    // Create.  Mirrors the Create button's on:click.
     let on_keydown = move |evt: leptos::ev::KeyboardEvent| {
-        if evt.key() == "Escape"
+        let key = evt.key();
+        if picker_open.show_tool_picker.get_untracked() {
+            if key == "Escape" {
+                picker_open.show_tool_picker.set(false);
+            } else if key == "Enter" && !picker_open.tool_selection.with_untracked(Vec::is_empty) {
+                let selection = picker_open.tool_selection.get_untracked();
+                send_create_session(ws, list, picker_open, &selection);
+            }
+            return;
+        }
+        if key == "Escape"
             && has_session.get_untracked()
             && editing_dir.with_untracked(Option::is_none)
         {
@@ -356,26 +461,55 @@ pub fn SessionPicker() -> impl IntoView {
                     data-testid="leptos-session-picker"
                     on:click=stop_propagation
                 >
-                    <header class="picker-header">
-                        <h2>"Sessions"</h2>
-                        <div class="picker-header-btns">
-                            <button
-                                data-testid="leptos-session-new"
-                                on:click=on_new_click
-                            >
-                                "+ New session"
-                            </button>
-                            <Show when=move || has_session.get() fallback=|| ()>
+                    // Phase 2.1 Commit B: two header variants.  In
+                    // session-list mode the header has "Sessions" plus
+                    // the "+ New session" trigger.  In tool-picker mode
+                    // the title becomes "Tools for the new session" and
+                    // the "+ New session" button is gone — the operator
+                    // is already configuring a new session.  The ✕ close
+                    // button is preserved in both modes (still gated by
+                    // `has_session` so the very first picker open can't
+                    // close itself).
+                    <Show
+                        when=move || !picker_open.show_tool_picker.get()
+                        fallback=move || view! {
+                            <header class="picker-header">
+                                <h2>"Tools for the new session"</h2>
+                                <div class="picker-header-btns">
+                                    <Show when=move || has_session.get() fallback=|| ()>
+                                        <button
+                                            class="picker-close"
+                                            data-testid="leptos-picker-close"
+                                            on:click=on_close
+                                        >
+                                            "✕"
+                                        </button>
+                                    </Show>
+                                </div>
+                            </header>
+                        }
+                    >
+                        <header class="picker-header">
+                            <h2>"Sessions"</h2>
+                            <div class="picker-header-btns">
                                 <button
-                                    class="picker-close"
-                                    data-testid="leptos-picker-close"
-                                    on:click=on_close
+                                    data-testid="leptos-session-new"
+                                    on:click=on_new_click
                                 >
-                                    "✕"
+                                    "+ New session"
                                 </button>
-                            </Show>
-                        </div>
-                    </header>
+                                <Show when=move || has_session.get() fallback=|| ()>
+                                    <button
+                                        class="picker-close"
+                                        data-testid="leptos-picker-close"
+                                        on:click=on_close
+                                    >
+                                        "✕"
+                                    </button>
+                                </Show>
+                            </div>
+                        </header>
+                    </Show>
                     <Show
                         when=move || list.last_error.with(Option::is_some)
                         fallback=|| ().into_any()
@@ -387,57 +521,66 @@ pub fn SessionPicker() -> impl IntoView {
                             {move || list.last_error.with(|e| e.clone().unwrap_or_default())}
                         </p>
                     </Show>
-                    <div class="picker-search-row">
-                        <input
-                            type="text"
-                            class="picker-search"
-                            data-testid="leptos-session-search"
-                            placeholder="Search sessions\u{2026}"
-                            node_ref=search_ref
-                            prop:value=move || query.get()
-                            on:input=move |evt| query.set(event_target_value(&evt))
-                            on:keydown=move |evt: leptos::ev::KeyboardEvent| {
-                                // Esc with a non-empty query: clear the search
-                                // and consume the event so it doesn't bubble
-                                // to the backdrop and close the whole picker.
-                                // Esc with an empty query: let it propagate
-                                // so the backdrop's Esc-to-close still fires.
-                                if evt.key() == "Escape"
-                                    && !query.with_untracked(|q| q.is_empty())
-                                {
-                                    evt.stop_propagation();
-                                    query.set(String::new());
-                                }
-                            }
-                        />
-                    </div>
-                    <ul data-testid="leptos-session-list">
-                        <For
-                            each=move || filtered_sessions.get()
-                            key=|item: &SessionListItem| item.dir.clone()
-                            children=move |item: SessionListItem| {
-                                view! {
-                                    <SessionRow
-                                        item=item
-                                        active_dir=active_dir
-                                        editing_dir=editing_dir
-                                        backdrop_ref=backdrop_ref
-                                    />
-                                }
-                            }
-                        />
-                        <Show
-                            when=move || {
-                                !query.with(|q| q.trim().is_empty())
-                                    && filtered_sessions.with(Vec::is_empty)
-                            }
-                            fallback=|| ()
-                        >
-                            <li class="picker-no-results">
-                                "No sessions match your search."
-                            </li>
-                        </Show>
-                    </ul>
+                    // Phase 2.1 Commit B: body is either the tool-picker
+                    // panel or the existing search + session list.
+                    <Show
+                        when=move || picker_open.show_tool_picker.get()
+                        fallback=move || view! {
+                            <div class="picker-search-row">
+                                <input
+                                    type="text"
+                                    class="picker-search"
+                                    data-testid="leptos-session-search"
+                                    placeholder="Search sessions\u{2026}"
+                                    node_ref=search_ref
+                                    prop:value=move || query.get()
+                                    on:input=move |evt| query.set(event_target_value(&evt))
+                                    on:keydown=move |evt: leptos::ev::KeyboardEvent| {
+                                        // Esc with a non-empty query: clear the search
+                                        // and consume the event so it doesn't bubble
+                                        // to the backdrop and close the whole picker.
+                                        // Esc with an empty query: let it propagate
+                                        // so the backdrop's Esc-to-close still fires.
+                                        if evt.key() == "Escape"
+                                            && !query.with_untracked(|q| q.is_empty())
+                                        {
+                                            evt.stop_propagation();
+                                            query.set(String::new());
+                                        }
+                                    }
+                                />
+                            </div>
+                            <ul data-testid="leptos-session-list">
+                                <For
+                                    each=move || filtered_sessions.get()
+                                    key=|item: &SessionListItem| item.dir.clone()
+                                    children=move |item: SessionListItem| {
+                                        view! {
+                                            <SessionRow
+                                                item=item
+                                                active_dir=active_dir
+                                                editing_dir=editing_dir
+                                                backdrop_ref=backdrop_ref
+                                            />
+                                        }
+                                    }
+                                />
+                                <Show
+                                    when=move || {
+                                        !query.with(|q| q.trim().is_empty())
+                                            && filtered_sessions.with(Vec::is_empty)
+                                    }
+                                    fallback=|| ()
+                                >
+                                    <li class="picker-no-results">
+                                        "No sessions match your search."
+                                    </li>
+                                </Show>
+                            </ul>
+                        }
+                    >
+                        <ToolSelectionPanel/>
+                    </Show>
                 </section>
             </div>
         </Show>
@@ -754,5 +897,246 @@ async fn refresh_sessions(list: SessionListStore) {
     match get_sessions().await {
         Ok(items) => list.finish_loading_if_current(token, items),
         Err(message) => list.fail_loading_if_current(token, message),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ToolSelectionPanel component (Phase 2.1 Commit B)
+// ---------------------------------------------------------------------------
+
+/// Send `ClientFrame::Reset` with the chosen tool selection, persist
+/// the selection to localStorage on success, and mark the picker as
+/// having a swap pending (so the auto-close Effect in `SessionPicker`
+/// closes the picker once the new session lands).
+///
+/// Pulled out of the `<ToolSelectionPanel/>` body so that the Enter
+/// keydown shortcut on the picker backdrop can share exactly the same
+/// commit logic as the Create button.
+#[mutants::skip] // WS send + storage side-effects; covered by e2e harness.
+fn send_create_session(
+    ws: WsClient,
+    list: SessionListStore,
+    picker_open: PickerOpen,
+    selection: &[String],
+) {
+    if let Err(err) = ws.send(&ClientFrame::Reset {
+        model: None,
+        effort: None,
+        allow_dirty: false,
+        tool_selection: Some(selection.to_vec()),
+    }) {
+        list.set_error(format!("send Reset: {err:?}"));
+        return;
+    }
+    write_stored_tool_selection(selection);
+    picker_open.show_tool_picker.set(false);
+    picker_open.mark_swap_pending();
+}
+
+/// Tool-selection panel — the body the picker renders instead of the
+/// session list when `PickerOpen::show_tool_picker == true`.
+///
+/// Contract:
+/// * Reads + writes `picker_open.tool_selection` (the in-progress
+///   selection).  The caller (`SessionPicker::on_new_click`)
+///   pre-populates this signal from localStorage before flipping the
+///   mode flag.
+/// * On Create, sends `ClientFrame::Reset { tool_selection: Some(…) }`
+///   via `WsClient`, persists the selection to localStorage, and marks
+///   the picker as having a swap pending.
+/// * On Cancel, flips `show_tool_picker` back to `false` (the picker
+///   stays open, returns to the session list).  Esc on the picker
+///   backdrop calls the same path.
+///
+/// Public so the snapshot tests can render it directly with custom
+/// initial state.
+#[component]
+pub fn ToolSelectionPanel() -> impl IntoView {
+    let ws = use_context::<WsClient>().expect("WsClient must be provided");
+    let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
+    let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
+
+    // Resolved preset id from the current selection.  `None` lights up
+    // the Custom chip.  Memoised so chip rendering doesn't recompute the
+    // set-equality scan on every signal touch.
+    let active_preset = Memo::new(move |_| {
+        picker_open
+            .tool_selection
+            .with(|sel| resolve_preset(sel).map(String::from))
+    });
+
+    // Selected-count summary used in the footer.  Cheap to recompute.
+    let selected_count = Memo::new(move |_| picker_open.tool_selection.with(Vec::len));
+
+    // Total tool count surfaced by `omega-tools` — derived from the
+    // "+ Python REPL" preset (which is `ALL_TOOL_NAMES`).  This keeps
+    // the "N of M selected" summary honest even if the mirror grows.
+    let total_tools = PRESETS
+        .iter()
+        .find(|p| p.id == "all")
+        .map(|p| p.tools.len())
+        .unwrap_or(0);
+
+    // Cancel: stay in the picker, return to the session list.
+    let on_cancel = move |_| {
+        picker_open.show_tool_picker.set(false);
+    };
+
+    // Create: commit via `send_create_session`.  Guarded on a non-empty
+    // selection so an operator can't ship an unusable session.
+    let on_create = move |_| {
+        if picker_open.tool_selection.with_untracked(Vec::is_empty) {
+            return;
+        }
+        let selection = picker_open.tool_selection.get_untracked();
+        send_create_session(ws, list, picker_open, &selection);
+    };
+
+    view! {
+        <div
+            class="new-session-config"
+            data-testid="leptos-tool-picker"
+        >
+            // Preset chips row.  `Preset` is `Copy`, so we iterate by
+            // value to satisfy leptos's `<For>` `children` arity.
+            <div class="preset-row" data-testid="leptos-preset-row">
+                {PRESETS
+                    .iter()
+                    .copied()
+                    .map(|preset: Preset| {
+                        let id = preset.id;
+                        let label = preset.label;
+                        let count = preset.tools.len();
+                        let tools_for_click: Vec<String> = preset
+                            .tools
+                            .iter()
+                            .map(|s| (*s).to_owned())
+                            .collect();
+                        let is_active = move || {
+                            active_preset.with(|cur| cur.as_deref() == Some(id))
+                        };
+                        view! {
+                            <button
+                                class="preset-chip"
+                                class:selected=is_active
+                                data-testid=move || format!("leptos-preset-{id}")
+                                data-preset-id=id
+                                on:click={
+                                    let tools = tools_for_click.clone();
+                                    move |_| {
+                                        picker_open.tool_selection.set(tools.clone());
+                                    }
+                                }
+                            >
+                                {label}
+                                <span class="preset-tag">{format!("{count} tools")}</span>
+                            </button>
+                        }
+                    })
+                    .collect_view()}
+                // "Custom" chip — informative only.  Disabled when no
+                // preset matches; visually highlighted via the
+                // `.selected` class when `active_preset` resolves to
+                // None.  Per spec: clicking it is a no-op.
+                <button
+                    class="preset-chip preset-chip-custom"
+                    class:selected=move || active_preset.with(Option::is_none)
+                    data-testid="leptos-preset-custom"
+                    disabled=true
+                    tabindex="-1"
+                >
+                    "Custom"
+                </button>
+            </div>
+
+            // Tool grid, one block per category.
+            <div class="tool-grid-wrap">
+                {TOOL_CATEGORIES
+                    .iter()
+                    .map(|cat| {
+                        let label = cat.label;
+                        let tools = cat.tools;
+                        view! {
+                            <div class="tool-group">
+                                <h4 class="tool-group-header">{label}</h4>
+                                <div class="tool-grid">
+                                    {tools
+                                        .iter()
+                                        .map(|t| {
+                                            let name: &'static str = t;
+                                            let is_checked = move || {
+                                                picker_open
+                                                    .tool_selection
+                                                    .with(|sel| sel.iter().any(|s| s == name))
+                                            };
+                                            view! {
+                                                <label
+                                                    class="tool-check"
+                                                    data-testid=move || {
+                                                        format!("leptos-tool-{name}")
+                                                    }
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        prop:checked=is_checked
+                                                        on:change=move |evt| {
+                                                            let checked = evt
+                                                                .target()
+                                                                .and_then(|t| {
+                                                                    t.dyn_into::<web_sys::HtmlInputElement>()
+                                                                        .ok()
+                                                                })
+                                                                .map(|el| el.checked())
+                                                                .unwrap_or(false);
+                                                            picker_open.tool_selection.update(|sel| {
+                                                                if checked {
+                                                                    if !sel.iter().any(|s| s == name) {
+                                                                        sel.push(name.to_owned());
+                                                                    }
+                                                                } else {
+                                                                    sel.retain(|s| s != name);
+                                                                }
+                                                            });
+                                                        }
+                                                    />
+                                                    <code>{name}</code>
+                                                </label>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </div>
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+
+            // Footer: count summary + Cancel / Create.
+            <div class="config-actions">
+                <span
+                    class="selected-count"
+                    data-testid="leptos-tool-count"
+                >
+                    {move || format!("{} of {} tools selected", selected_count.get(), total_tools)}
+                </span>
+                <div class="config-actions-right">
+                    <button
+                        class="config-btn"
+                        data-testid="leptos-tool-cancel"
+                        on:click=on_cancel
+                    >
+                        "Cancel"
+                    </button>
+                    <button
+                        class="config-btn config-btn-primary"
+                        data-testid="leptos-tool-create"
+                        disabled=move || selected_count.get() == 0
+                        on:click=on_create
+                    >
+                        "Create session →"
+                    </button>
+                </div>
+            </div>
+        </div>
     }
 }
