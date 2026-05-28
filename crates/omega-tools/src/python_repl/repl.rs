@@ -29,7 +29,7 @@ use super::bootstrap::{BootstrapInfo, BootstrapOutcome, cached_bootstrap, is_not
 use super::output::truncate_for_llm;
 use super::sentinel::gen_sentinel;
 use super::tee::{flush_log, make_repl_log_path, open_log_writer, tee_line};
-use super::wrapper::{CODE_END_MARKER, PYTHON_WRAPPER};
+use super::wrapper::{CODE_END_MARKER, python_wrapper};
 
 // ---------------------------------------------------------------------------
 // Timing constants
@@ -86,7 +86,7 @@ fn try_spawn_python(python_bin: &str) -> Result<PythonRepl, std::io::Error> {
     let mut cmd = tokio::process::Command::new(python_bin);
     cmd.arg("-u")
         .arg("-c")
-        .arg(PYTHON_WRAPPER)
+        .arg(python_wrapper())
         .arg(&sentinel)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

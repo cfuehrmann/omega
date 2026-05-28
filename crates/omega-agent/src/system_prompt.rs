@@ -21,6 +21,8 @@
 
 use std::path::{Path, PathBuf};
 
+use omega_tools::{MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES};
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -283,7 +285,8 @@ pub fn build_system_blocks(
 /// Anthropic provider stamps `cache_control: ephemeral` on it.
 #[must_use]
 pub fn repl_addendum() -> String {
-    "## Python REPL
+    format!(
+        "## Python REPL
 
 \
      You have access to a `python_repl` tool that executes Python code in a \
@@ -292,10 +295,12 @@ pub fn repl_addendum() -> String {
      - Variables, imports, and definitions from one call persist into all \
        subsequent calls within this session.\n\
      - The tool returns combined stdout + stderr output, truncated at \
-       200 lines or 2000 characters (whichever comes first). When truncated, \
-       a `... [output truncated: N lines / M chars suppressed. Capture large \
-       values in variables and inspect/slice them in subsequent calls rather \
-       than printing them whole.]` marker appears at the end.\n\
+       {MAX_OUTPUT_LINES} lines or {MAX_OUTPUT_CHARS} characters (whichever \
+       comes first). When truncated, a `... [output truncated: N lines / M \
+       chars suppressed. Cap: {MAX_OUTPUT_LINES} lines / {MAX_OUTPUT_CHARS} \
+       chars. Capture large values in variables and inspect/slice them in \
+       subsequent calls rather than printing them whole.]` marker appears \
+       at the end.\n\
      - Use it for arithmetic, data parsing, string manipulation, exploration, \
        and building up intermediate results step-by-step.\n\
      - Prefer a single call with all related statements over many small calls \
@@ -321,7 +326,7 @@ pub fn repl_addendum() -> String {
      - Use `sh(\"cmd\")` to run shell commands: \
        `out, err, rc = sh(\"echo hi\")`.  Returns `(stdout, stderr, returncode)` \
        (str, str, int).  Pre-imported — no `import subprocess` needed."
-        .to_owned()
+    )
 }
 
 /// System-prompt addendum injected when `the file-op tools are absent`
@@ -1467,6 +1472,27 @@ mod tests {
         assert!(
             content.contains("(stdout, stderr, returncode)"),
             "repl_addendum must describe sh() return tuple"
+        );
+    }
+
+    /// `repl_addendum()` must state the exact cap values — derived from
+    /// `MAX_OUTPUT_CHARS` and `MAX_OUTPUT_LINES` constants — so the
+    /// system prompt and the truncation footer can never drift out of sync.
+    ///
+    /// When you bump a constant, this test tells you to update the prompt too.
+    #[test]
+    fn repl_addendum_contains_cap_values() {
+        use omega_tools::{MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES};
+        let content = repl_addendum();
+        let expected_chars = MAX_OUTPUT_CHARS.to_string();
+        let expected_lines = MAX_OUTPUT_LINES.to_string();
+        assert!(
+            content.contains(&expected_chars),
+            "repl_addendum must contain MAX_OUTPUT_CHARS ({expected_chars}): {content:.300}"
+        );
+        assert!(
+            content.contains(&expected_lines),
+            "repl_addendum must contain MAX_OUTPUT_LINES ({expected_lines}): {content:.300}"
         );
     }
 

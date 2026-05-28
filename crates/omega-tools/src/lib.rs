@@ -31,6 +31,7 @@ mod tools;
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
 pub use python_repl::PythonRepl;
+pub use python_repl::{MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES};
 pub use schemas::{
     ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, PRESETS, Preset, preset_by_id, tool_definitions,
 };
@@ -216,6 +217,10 @@ pub async fn execute_tool(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used, // test assertions
+    clippy::unwrap_used, // test assertions
+)]
 mod dispatch_tests {
     use super::*;
     use serde_json::json;
@@ -246,5 +251,47 @@ mod dispatch_tests {
                 def.name,
             );
         }
+    }
+    /// Integration test: `OMEGA_OUTPUT_CAP_CHARS` and `OMEGA_OUTPUT_CAP_LINES`
+    /// are seeded as globals by the Python wrapper and are accessible in
+    /// executed snippets.  Tests via `execute_tool` per the AGENTS.md mandate.
+    #[tokio::test]
+    async fn python_repl_cap_globals_are_accessible() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        // Build a ToolCtx with an empty REPL slot (lazily initialized on first call).
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let mut ctx = ToolCtx::new(tmp.path(), "test0001");
+        ctx.python_repl = Some(Arc::new(Mutex::new(None)));
+        ctx.tool_selection = vec!["python_repl".to_owned()];
+
+        let result = execute_tool(
+            "python_repl",
+            serde_json::json!({
+                "code": "print(OMEGA_OUTPUT_CAP_CHARS)\nprint(OMEGA_OUTPUT_CAP_LINES)"
+            }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+
+        assert!(
+            !result.is_error,
+            "python_repl execute failed: {}",
+            result.content
+        );
+        let expected_chars = MAX_OUTPUT_CHARS.to_string();
+        let expected_lines = MAX_OUTPUT_LINES.to_string();
+        assert!(
+            result.content.contains(&expected_chars),
+            "OMEGA_OUTPUT_CAP_CHARS ({expected_chars}) must appear in output: {:?}",
+            result.content
+        );
+        assert!(
+            result.content.contains(&expected_lines),
+            "OMEGA_OUTPUT_CAP_LINES ({expected_lines}) must appear in output: {:?}",
+            result.content
+        );
     }
 }

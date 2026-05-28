@@ -18,12 +18,12 @@ use std::fmt::Write as _;
 /// Maximum number of output lines to include before truncating.
 ///
 /// 200 lines is deliberately low for the benchmark prototype.
-pub(super) const MAX_OUTPUT_LINES: usize = 200;
+pub const MAX_OUTPUT_LINES: usize = 200;
 
 /// Maximum number of output characters to include before truncating.
 ///
 /// 2 000 characters is deliberately low for the benchmark prototype.
-pub(super) const MAX_OUTPUT_CHARS: usize = 2_000;
+pub const MAX_OUTPUT_CHARS: usize = 2_000;
 
 /// Truncate `lines` for LLM consumption, respecting the configured limits.
 ///
@@ -55,8 +55,9 @@ pub(super) fn truncate_for_llm(lines: &[String], tail_bias: bool) -> String {
         if suppressed_count > 0 {
             let _ = writeln!(
                 output,
-                "... [output truncated: {suppressed_count} lines / {suppressed_chars} chars \
-                 suppressed. Capture large values in variables and inspect/slice them \
+                "... [output truncated: {suppressed_count} lines / {suppressed_chars} chars suppressed. \
+                 Cap: {MAX_OUTPUT_LINES} lines / {MAX_OUTPUT_CHARS} chars. \
+                 Capture large values in variables and inspect/slice them \
                  in subsequent calls rather than printing them whole.]"
             );
         }
@@ -85,8 +86,9 @@ pub(super) fn truncate_for_llm(lines: &[String], tail_bias: bool) -> String {
         if suppressed_lines > 0 {
             let _ = write!(
                 output,
-                "\n... [output truncated: {suppressed_lines} lines / {suppressed_chars} chars \
-                 suppressed. Capture large values in variables and inspect/slice them \
+                "\n... [output truncated: {suppressed_lines} lines / {suppressed_chars} chars suppressed. \
+                 Cap: {MAX_OUTPUT_LINES} lines / {MAX_OUTPUT_CHARS} chars. \
+                 Capture large values in variables and inspect/slice them \
                  in subsequent calls rather than printing them whole.]"
             );
         }
@@ -240,6 +242,44 @@ mod tests {
         assert!(
             !out.contains("output truncated"),
             "no truncation marker expected when output fits within limits: {out:?}"
+        );
+    }
+    /// The truncation footer for head-bias mode includes the cap values
+    /// interpolated from the constants (not hard-coded literals).
+    ///
+    /// This test will break if the constants change without the marker text
+    /// changing — by design.
+    #[test]
+    fn head_bias_marker_contains_cap_values() {
+        let lines: Vec<String> = (0..=209).map(|i| format!("line_{i}\n")).collect();
+        let out = truncate_for_llm(&lines, false);
+        let expected_lines = MAX_OUTPUT_LINES.to_string();
+        let expected_chars = MAX_OUTPUT_CHARS.to_string();
+        assert!(
+            out.contains(&expected_lines),
+            "head-bias marker must contain MAX_OUTPUT_LINES ({expected_lines}): {out:.300}"
+        );
+        assert!(
+            out.contains(&expected_chars),
+            "head-bias marker must contain MAX_OUTPUT_CHARS ({expected_chars}): {out:.300}"
+        );
+    }
+
+    /// The truncation footer for tail-bias mode includes the cap values
+    /// interpolated from the constants (not hard-coded literals).
+    #[test]
+    fn tail_bias_marker_contains_cap_values() {
+        let lines: Vec<String> = (0..=209).map(|i| format!("line_{i}\n")).collect();
+        let out = truncate_for_llm(&lines, true);
+        let expected_lines = MAX_OUTPUT_LINES.to_string();
+        let expected_chars = MAX_OUTPUT_CHARS.to_string();
+        assert!(
+            out.contains(&expected_lines),
+            "tail-bias marker must contain MAX_OUTPUT_LINES ({expected_lines}): {out:.300}"
+        );
+        assert!(
+            out.contains(&expected_chars),
+            "tail-bias marker must contain MAX_OUTPUT_CHARS ({expected_chars}): {out:.300}"
         );
     }
 }
