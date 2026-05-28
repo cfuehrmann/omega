@@ -293,19 +293,52 @@ tr:nth-child(even) td { background: #fafbfc; }
             feeds candidate edits to <code>repl_addendum</code> in
             <code>crates/omega-agent/src/system_prompt.rs</code>.</li>
       </ul>
-      <p style="margin:0.3rem 0 0; font-size:0.9rem; color:var(--muted);">
-        <strong>First session to examine:</strong>
-        <code>2026-05-28T18-22-58-861-277c5610</code> (“Miriam 2. First
-        serious REPL test”) — master-session analysed it in conversation;
-        clean example of a Sonnet-medium agent shifting from sequential
-        “pager mode” to targeted-search mode mid-task after ignoring the
-        truncation footer for 7 calls.  Candidate intervention noted there:
-        a strategic “doc-overview” preamble in <code>repl_addendum</code>
-        teaching <code>text.find(...)</code> + narrow windows over
-        sequential slicing for long values.  Do not ship the preamble
-        ad-hoc — confirm the pattern across multiple sessions during this
-        audit before editing the prompt.
-      </p></li>
+      <div style="margin:0.4rem 0 0; font-size:0.9rem; color:var(--muted);">
+        <p style="margin:0 0 0.3rem;"><strong>Seed sessions (analysed in conversation, same task: thesis-correction PDF → German HTML review):</strong></p>
+        <ul style="margin:0 0 0.4rem; padding-left:1.2rem;">
+          <li><code>2026-05-28T18-22-58-861-277c5610</code> — Sonnet-medium,
+              21 REPL calls, 22 % effective document coverage.  Clean
+              three-phase shape: bootstrap → sequential pager → targeted
+              search → synthesis.  Ignored the truncation footer for 7
+              calls before shifting strategy.</li>
+          <li><code>2026-05-28T19-30-45-422-6174493d</code> — Opus-high,
+              36 REPL calls (+71 %), ~28 % effective coverage.  Zigzag
+              shape: <em>three</em> separate pager passes interleaved
+              with strategic interludes.  Found higher-stakes issues
+              than Sonnet (KI-self-contradiction in the thesis), but at
+              substantially higher token cost.</li>
+        </ul>
+        <p style="margin:0 0 0.3rem;"><strong>Cross-session findings (two data points, not one):</strong></p>
+        <ul style="margin:0 0 0.4rem; padding-left:1.2rem;">
+          <li><strong>Pager anti-pattern is model-independent.</strong>
+              Both models default to <code>print(text[a:b])</code> in fixed
+              chunks for an unknown-shape long document.  The truncation
+              footer alone does not prevent it.</li>
+          <li><strong>Opus shows degenerate adaptation to the footer.</strong>
+              Sonnet asked for 10–25 KB chunks; Opus asked for 5 KB chunks.
+              Output cap is ~2 KB.  Opus partially absorbed the “smaller
+              is better” signal but mis-calibrated, throwing away ~60 % of
+              every chunk vs Sonnet’s ~85 %.  Suggests the footer wording
+              should <em>state</em> the cap, not just imply it.  Cheap
+              experiment to run during the audit: A/B the current footer
+              against one that names “~2 KB cap; print windows ≤ 1 KB”.</li>
+          <li><strong>Strongest concrete example for a prompt addition</strong>
+              is Opus call 30: <code>for m in re.finditer("…", text):
+              print(m.start())</code> — produced 125 bytes covering 17
+              positions across the document.  Prefer this idiom over
+              abstract advice when drafting any preamble.</li>
+          <li><strong>Body-vs-TOC disambiguation</strong> showed up in Opus
+              (calls 18–20): a chapter heading appears in a PDF’s table of
+              contents <em>and</em> as the body heading later.  An agent
+              that uses TOC offsets naïvely will read the TOC instead of the
+              body.  Worth surfacing as an example in the preamble.</li>
+        </ul>
+        <p style="margin:0;"><strong>Do not ship a preamble ad-hoc.</strong>
+        The audit should look at ≥5 REPL sessions across at least two
+        models and two task shapes (long-doc analysis, code modification,
+        data exploration) before editing <code>repl_addendum</code>.
+        Findings above are seed hypotheses, not conclusions.</p>
+      </div></li>
   <li><strong>2.3 — REPL observability in the UI feed.</strong>
       Best-possible rendering of REPL events: code block visible, output
       with truncation marker, bootstrap event surfaced, timeout/escalation
