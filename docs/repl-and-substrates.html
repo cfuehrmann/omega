@@ -234,79 +234,43 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: Phase 2.1 — Tool-selection UI (Commit B)</h2>
+<h2 id="next">⏭ Next step: TBD — choose between three candidates</h2>
 
 <div class="callout">
-  <div class="callout-title">Status</div>
+  <div class="callout-title">Where we are</div>
   <p>
-    <strong>Commit A landed</strong> (this commit) — <code>--preset</code>
-    flag on <code>omega-cli</code> resolving against a new
-    <code>omega_tools::PRESETS</code> single-source-of-truth const, with a
-    matching <code>CliFlag</code> in <code>bench/omega_agent.py</code> so
-    Harbor sweeps drive <code>tool_selection</code> via
-    <code>--agent-kwargs preset=NAME</code>.  Three presets:
-    <code>standard</code> / <code>all</code> / <code>repl-centric</code>.
-    Removes the last user of the retired <code>OMEGA_FEATURE_*</code> env
-    vars; the deferred 87-task TB2 sweep is unblocked.
-  </p>
-  <p>
-    <strong>Commit B (next)</strong> — surface the same selection in the
-    Leptos UI so users don't drop to the CLI for non-default toolsets.
+    Phase 2.1 is complete (<code>886d35d</code> + <code>d6fd05f</code>) —
+    users can now configure the toolset from the Leptos UI <em>and</em>
+    drive it from the CLI / Harbor sweeps.  No more
+    <code>OMEGA_FEATURE_*</code> anywhere in the codebase.
   </p>
 
-  <div class="callout-title">Commit B — what to do</div>
-  <p style="margin-bottom:0.4rem;"><strong>UX (locked from mockup
-  review):</strong></p>
-  <ul style="margin-top:0;">
-    <li>Clicking <em>+ New session</em> in the picker <strong>replaces</strong>
-        the session list with the tool-selection view (not a drawer, not a
-        dim overlay — the list is hidden).  <kbd>Esc</kbd> returns to the
-        list.</li>
-    <li>Top row: four chip buttons — <em>Standard</em>,
-        <em>+ Python REPL</em>, <em>REPL-centric</em>, <em>Custom</em>.
-        Clicking a chip applies that preset to the checkboxes below.
-        Toggling any checkbox flips the chip to whichever preset matches
-        the new selection, or to <em>Custom</em> if none does
-        (bidirectional).</li>
-    <li>Tool grid grouped by category: <em>File ops</em> /
-        <em>Shell</em> / <em>Web</em> / <em>REPL</em>.</li>
-    <li>Initial state is <em>Standard</em>; the last-confirmed selection
-        persists in <code>localStorage</code> and becomes the default next
-        time the picker opens.</li>
-    <li><em>Create session →</em> sends
-        <code>ClientFrame::Reset { tool_selection: Some([…]), … }</code>.</li>
+  <div class="callout-title">Candidates for the next step</div>
+  <ul>
+    <li><strong>Phase 2.2 — Live-session intelligibility audit.</strong>
+        Cheap, no UX risk, lays ground for 2.3.  Read what the UI feed
+        actually shows for REPL-using sessions today and write down what's
+        confusing or missing.  <em>Master lean: do this next.</em></li>
+    <li><strong>Phase 1.5 — Vision tool (decision needed).</strong>
+        Conditional in <a href="#phase15">Upcoming</a>.  If we
+        want the agent to validate UI renders itself (most valuable when
+        Phase 2.3 lands), this is the prerequisite.  Decision pending.</li>
+    <li><strong>Phase 2.3 — REPL observability in the UI feed.</strong>
+        The work 2.2 prepares for; benefits from 1.5 if we have it.
+        Bigger commit than 2.2.</li>
   </ul>
 
-  <p style="margin-bottom:0.4rem;"><strong>Files to touch:</strong></p>
-  <ul style="margin-top:0;">
-    <li><code>frontends/leptos/src/picker.rs</code> — the
-        <code>TODO(Phase 2.1)</code> at <code>on_new_click</code> is the
-        anchor.</li>
-    <li><code>frontends/leptos/src/store.rs</code> — state for current
-        selection and persisted last-choice.</li>
-    <li><code>frontends/leptos/src/protocol.rs</code> — the
-        <code>Reset</code> frame already carries
-        <code>tool_selection</code> from Phase 1.2; mirror
-        <code>omega_tools::PRESETS</code> here with a doc-comment pointing
-        at the Rust const as the source of truth.</li>
-    <li><code>frontends/leptos/tests/snapshots.rs</code> — pin the new
-        panel.</li>
-  </ul>
-
-  <p style="margin-bottom:0.4rem;"><strong>Acceptance:</strong></p>
-  <ul style="margin-top:0;">
-    <li>User can start a session from the UI with any subset of tools — no
-        env-var fiddling, no WS hand-crafting.</li>
-    <li>Chip↔checkbox sync is bidirectional and pinned by snapshot tests.</li>
-    <li><code>cargo test --workspace</code> and clippy green.</li>
-  </ul>
+  <p style="margin:0.6rem 0 0;">
+    Each candidate has a fuller brief in <a href="#upcoming">↪ Upcoming</a>
+    below; promoting one to this slot is a single user decision.
+  </p>
 </div>
 
 
 <h2 id="upcoming">↪ Upcoming</h2>
 
 <p style="color:var(--muted);font-size:0.95rem;">
-  Forward runway after 2.1.  Most entries are small enough to be their own
+  Forward runway.  Most entries are small enough to be their own
   next-step block when promoted; Phase 1.5 is conditional and listed
   separately because its inclusion is still up for decision.
 </p>
@@ -409,7 +373,7 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h2 id="done">📜 Done</h2>
 
 <details>
-<summary>Phase 1 — Cleanup &amp; consolidation (complete) and pre-Phase-1 infrastructure work</summary>
+<summary>Phase 1 &amp; 2.1 — Cleanup, tool-selection foundation, and pre-Phase-1 infrastructure work</summary>
 <div class="details-body">
 <p style="color:var(--muted);font-size:0.92rem;">
   All Phase 1 work has landed.  Past achievements are kept here for
@@ -458,6 +422,26 @@ tr:nth-child(even) td { background: #fafbfc; }
           Mutation testing green via existing
           <code>mutants-system-prompt</code> recipe (35 caught,
           5 unviable, 0 survivors).</td>
+    </tr>
+    <tr>
+      <td>Phase 2.1 — Tool-selection surface (CLI + UI)</td>
+      <td><code>886d35d</code>, <code>d6fd05f</code></td>
+      <td>Commit A: <code>--preset</code> flag on <code>omega-cli</code>
+          resolving against a new <code>omega_tools::PRESETS</code>
+          single-source-of-truth const
+          (<code>standard</code> / <code>all</code> /
+          <code>repl-centric</code>); matching <code>CliFlag</code> in
+          <code>bench/omega_agent.py</code> so Harbor sweeps drive
+          <code>tool_selection</code> via
+          <code>--agent-kwargs preset=NAME</code>.  Removed the last
+          user of the retired <code>OMEGA_FEATURE_*</code> env vars.
+          Commit B: Leptos session-picker UI — clicking <em>+ New
+          session</em> replaces the session list with a tool-selection
+          panel (preset chips with bidirectional checkbox sync,
+          grouped tool grid, <kbd>Esc</kbd>/Cancel,
+          <code>localStorage</code> persistence under
+          <code>omega.toolSelection.lastChoice</code>).  3 insta
+          snapshots pin Standard / REPL-centric / Custom states.</td>
     </tr>
     <tr>
       <td>Strict-resume — dropped &amp; deleted</td>
