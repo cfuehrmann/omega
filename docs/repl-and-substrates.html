@@ -210,6 +210,7 @@ tr:nth-child(even) td { background: #fafbfc; }
   <ol>
     <li><a href="#next"        class="toc-h1">⏭ Next step</a></li>
     <li><a href="#upcoming"    class="toc-h1">↪ Upcoming</a></li>
+    <li><a href="#phase15"     class="toc-sub">Phase 1.5 — Vision (TBD)</a></li>
     <li><a href="#done"        class="toc-h1">📜 Done (archive)</a></li>
     <li><a href="#decisions"   class="toc-h1">🧭 Decisions on record</a></li>
     <li class="toc-divider"></li>
@@ -283,8 +284,9 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h2 id="upcoming">↪ Upcoming</h2>
 
 <p style="color:var(--muted);font-size:0.95rem;">
-  Forward runway after 2.1.  Each entry is small enough to be its own
-  next-step block when it gets promoted.
+  Forward runway after 2.1.  Most entries are small enough to be their own
+  next-step block when promoted; Phase 1.5 is conditional and listed
+  separately because its inclusion is still up for decision.
 </p>
 
 <h3 id="phase2" style="margin-top:1.2rem;">Phase 2 — User-grade affordances</h3>
@@ -301,6 +303,57 @@ tr:nth-child(even) td { background: #fafbfc; }
       Best-possible rendering of REPL events: code block visible, output
       with truncation marker, bootstrap event surfaced, timeout/escalation
       events surfaced.  Scope informed by 2.2.</li>
+</ul>
+
+<h3 id="phase15" style="margin-top:1.2rem;">Phase 1.5 — Vision tool <span style="color:var(--muted);font-weight:normal;">(decision pending)</span></h3>
+<p style="margin-top:0.4rem;">
+  Not scheduled.  Listed here so the option is visible when planning
+  Phase 2.3.  Decide whether to do it (and when) before promoting 2.3
+  to Next step.
+</p>
+<ul>
+  <li><strong>What:</strong> A <code>screenshot</code> tool that captures
+      the running UI (or any URL) and returns the image to the model as a
+      tool-result image content block.  Anthropic's Messages API already
+      accepts image content in tool results; the work is on Omega's side.</li>
+  <li><strong>Why it would matter:</strong> Best ROI is validating
+      Phase 2.3 (REPL observability in the UI feed) — the agent can
+      verify that code blocks, truncation markers, tracebacks, and
+      escalation events actually render as intended, instead of relying
+      solely on snapshot tests + the user as visual oracle.  Also useful
+      for catching CSS regressions and for any future UI work.</li>
+  <li><strong>Cost:</strong>
+    <ul>
+      <li><em>Schema-loud cross-crate change.</em>  Tool results currently
+          carry text; need to generalise to a sequence of content blocks
+          (text + image), matching Anthropic's shape.  Same shape of change
+          as Phase 1.2.</li>
+      <li><em>Image persistence.</em>  Write PNGs to
+          <code>.omega/sessions/&lt;id&gt;/cache/images/&lt;hash&gt;.png</code>
+          and store a path-reference in <code>events.jsonl</code> — mirrors
+          how <code>cache/run/</code> works for shell tee'd output.  Avoids
+          bloating the event log with inline base64.</li>
+      <li><em>WS protocol + Leptos rendering.</em>  So the user sees what
+          the agent saw, not just <code>[image]</code>.</li>
+      <li><em>Capture mechanism.</em>  MVP: shell out to
+          <code>chromium --headless --screenshot</code> (zero new Rust
+          deps; works today).  Richer interaction (click / type / scroll
+          before snapping) needs a headless-Chromium Rust crate
+          (<code>chromiumoxide</code> or <code>headless_chrome</code>) —
+          defer until needed.</li>
+    </ul>
+  </li>
+  <li><strong>Open questions:</strong>
+    <ul>
+      <li>Do we ship the MVP (one-shot screenshot) or invest in the
+          interactive variant up front?</li>
+      <li>Should the tool be REPL-callable (so <code>python_repl</code>
+          code can capture screenshots) or only top-level?</li>
+      <li>Token-cost budgeting — a 768×768 tile is ~250 tokens;
+          full-page screenshots can be several thousand.  Need a default
+          viewport size.</li>
+    </ul>
+  </li>
 </ul>
 
 <h3 id="phase3" style="margin-top:1.2rem;">Phase 3 — Multi-language substrate</h3>
