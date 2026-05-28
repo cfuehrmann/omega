@@ -279,12 +279,33 @@ tr:nth-child(even) td { background: #fafbfc; }
 <ul>
   <li id="phase22"><strong>2.2 — Live-session intelligibility audit (REPL-focused).</strong>
       Read-only investigation producing a written gap list +
-      recommendations.  Inputs: <code>WsMessage</code> variants emitted
-      during a REPL turn; frontend rendering for <code>ToolCallEvent</code>
-      / <code>ToolResultEvent</code> when
-      <code>name == "python_repl"</code>; treatment of streaming output,
-      kernel state, <code>sh()</code> three-tuple, tracebacks, cell
-      boundaries.  Output feeds 2.3 scope.</li>
+      recommendations along two axes:
+      <ul style="margin-top:0.3rem;">
+        <li><em>UI intelligibility</em> — <code>WsMessage</code> variants
+            emitted during a REPL turn; frontend rendering for
+            <code>ToolCallEvent</code> / <code>ToolResultEvent</code> when
+            <code>name == "python_repl"</code>; treatment of streaming
+            output, kernel state, <code>sh()</code> three-tuple,
+            tracebacks, cell boundaries.  Output feeds 2.3 scope.</li>
+        <li><em>Agent-behaviour intelligibility</em> — did the model use
+            the REPL well?  Variable hygiene, response to the output
+            truncation footer, strategy for long-document reads.  Output
+            feeds candidate edits to <code>repl_addendum</code> in
+            <code>crates/omega-agent/src/system_prompt.rs</code>.</li>
+      </ul>
+      <p style="margin:0.3rem 0 0; font-size:0.9rem; color:var(--muted);">
+        <strong>First session to examine:</strong>
+        <code>2026-05-28T18-22-58-861-277c5610</code> (“Miriam 2. First
+        serious REPL test”) — master-session analysed it in conversation;
+        clean example of a Sonnet-medium agent shifting from sequential
+        “pager mode” to targeted-search mode mid-task after ignoring the
+        truncation footer for 7 calls.  Candidate intervention noted there:
+        a strategic “doc-overview” preamble in <code>repl_addendum</code>
+        teaching <code>text.find(...)</code> + narrow windows over
+        sequential slicing for long values.  Do not ship the preamble
+        ad-hoc — confirm the pattern across multiple sessions during this
+        audit before editing the prompt.
+      </p></li>
   <li><strong>2.3 — REPL observability in the UI feed.</strong>
       Best-possible rendering of REPL events: code block visible, output
       with truncation marker, bootstrap event surfaced, timeout/escalation
