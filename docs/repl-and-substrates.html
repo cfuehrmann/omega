@@ -234,36 +234,130 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: TBD — choose between three candidates</h2>
+<h2 id="next">⏭ Next step: Phase 2.2 — make the REPL output cap legible</h2>
 
 <div class="callout">
   <div class="callout-title">Where we are</div>
   <p>
-    Phase 2.1 is complete (<code>886d35d</code> + <code>d6fd05f</code>) —
-    users can now configure the toolset from the Leptos UI <em>and</em>
-    drive it from the CLI / Harbor sweeps.  No more
-    <code>OMEGA_FEATURE_*</code> anywhere in the codebase.
+    Phase 2.1 shipped (<code>886d35d</code> + <code>d6fd05f</code>) — users
+    pick the toolset from the UI and from Harbor/CLI.  Three Miriam-2
+    sessions have been analysed (same task, three configs — see
+    <em>Seed sessions</em> below).  One finding drives this step:
+    <strong>the REPL's per-call output cap is not legible to the model.</strong>
+    Opus visibly mis-calibrated, asking for 5 KB chunks when the cap is
+    2 KB; Sonnet asked for 10–25 KB chunks.  Both wasted calls.
   </p>
 
-  <div class="callout-title">Candidates for the next step</div>
-  <ul>
-    <li><strong>Phase 2.2 — Live-session intelligibility audit.</strong>
-        Cheap, no UX risk, lays ground for 2.3.  Read what the UI feed
-        actually shows for REPL-using sessions today and write down what's
-        confusing or missing.  <em>Master lean: do this next.</em></li>
-    <li><strong>Phase 1.5 — Vision tool (decision needed).</strong>
-        Conditional in <a href="#phase15">Upcoming</a>.  If we
-        want the agent to validate UI renders itself (most valuable when
-        Phase 2.3 lands), this is the prerequisite.  Decision pending.</li>
-    <li><strong>Phase 2.3 — REPL observability in the UI feed.</strong>
-        The work 2.2 prepares for; benefits from 1.5 if we have it.
-        Bigger commit than 2.2.</li>
+  <div class="callout-title">What to ship — three small mechanical changes</div>
+  <ol style="margin-bottom:0;">
+    <li><strong>Single source of truth for the cap.</strong>
+        Constants currently live in
+        <code>crates/omega-tools/src/python_repl/output.rs</code>:
+        <code>MAX_OUTPUT_LINES = 200</code> and
+        <code>MAX_OUTPUT_CHARS = 2_000</code>, both
+        <code>pub(super)</code>.  Promote to <code>pub</code> (or move
+        into a small <code>python_repl/limits.rs</code>) so the system
+        prompt can reference them too.</li>
+    <li><strong>Footer states the cap.</strong>
+        Same file, both writeln! sites (head-bias and tail-bias
+        branches).  Current marker reads roughly <em>“… [output
+        truncated: N lines / M chars suppressed.  Capture large values
+        in variables…]”</em> — it never says <em>how big</em> a chunk
+        would fit.  Reword to include the cap, interpolated from the
+        constants.  Exact wording is the implementer's call; the
+        invariant is that the cap value appears.</li>
+    <li><strong><code>repl_addendum()</code> interpolates the constants.</strong>
+        In <code>crates/omega-agent/src/system_prompt.rs</code> around
+        line 295, the addendum hardcodes <em>“truncated at 200 lines or
+        2000 characters”</em> as a string literal.  Change to
+        <code>format!()</code> against the same constants from (1).
+        Once done, drift between footer wording and prompt wording is
+        structurally impossible.</li>
+  </ol>
+
+  <div class="callout-title">Optional add-on (genuine affordance, not paternalism)</div>
+  <p style="margin-bottom:0;">
+    Expose the cap to the running REPL as
+    <code>OMEGA_OUTPUT_CAP_CHARS</code> and
+    <code>OMEGA_OUTPUT_CAP_LINES</code> in <code>_globals</code>.
+    Edit point: <code>PYTHON_WRAPPER</code> in
+    <code>crates/omega-tools/src/python_repl/wrapper.rs</code>, around
+    line 31 (where <code>_globals = {"sh": sh}</code> is built).  Then
+    the model can <code>print(OMEGA_OUTPUT_CAP_CHARS)</code> when it
+    wants to introspect.  Not strategy advice — just a fact in code
+    form.
+  </p>
+
+  <div class="callout-title">Your options to drive this forward</div>
+  <ul style="margin-bottom:0;">
+    <li><strong>Ship (1)+(2)+(3) as one commit.</strong>  Mechanical,
+        ~2–3 hours including tests.  Sub-session at Sonnet-medium is
+        plenty; Opus not needed.  The optional add-on can ride along
+        or wait.</li>
+    <li><strong>Defer.</strong>  Three sessions is a small sample.  If
+        stronger evidence is wanted first, run two more REPL-heavy
+        sessions on different task shapes (e.g. code modification,
+        data exploration) before shipping any change.</li>
+    <li><strong>Switch focus.</strong>  Promote
+        <a href="#phase15">Phase 1.5 (vision tool)</a> or
+        <a href="#phase23">Phase 2.3 (REPL observability in UI)</a>
+        to this slot instead.</li>
   </ul>
 
-  <p style="margin:0.6rem 0 0;">
-    Each candidate has a fuller brief in <a href="#upcoming">↪ Upcoming</a>
-    below; promoting one to this slot is a single user decision.
-  </p>
+  <details style="margin-top:0.8rem;">
+    <summary style="cursor:pointer; color:var(--muted);">Considered, not shipping (with rationale)</summary>
+    <ul style="margin-top:0.4rem;">
+      <li><strong>Raise the cap</strong> (e.g. 2 KB → 20 KB).  Tempting
+          but in tension with REPL philosophy: “clever transformations
+          into context, not raw bytes.”  Raising would implicitly
+          endorse pager-style reading.  Measurable but not a first
+          move.</li>
+      <li><strong><code>show(text, lines=N, start=K)</code> primitive.</strong>
+          Python already has the capability via slicing and
+          <code>re.finditer</code>.  The standard-tools session’s win
+          is the model’s <em>reflex</em> reach for
+          <code>head</code>/<code>grep -n</code> — a training-data
+          effect, not a capability gap.  Adding a helper is naming,
+          not affordance.  Re-examine if (1)–(3) prove insufficient.</li>
+      <li><strong>Strategic advice in the prompt.</strong>  E.g.
+          “for unknown-shape long text, first call should be
+          <code>len(text)</code>, then <code>re.finditer</code>…”
+          Paternalistic — the model may have a better strategy for any
+          given task.  The factual cap-statement above is the
+          non-paternalistic version.</li>
+    </ul>
+  </details>
+
+  <details style="margin-top:0.4rem;">
+    <summary style="cursor:pointer; color:var(--muted);">Seed sessions (for context)</summary>
+    <p style="font-size:0.9rem; margin:0.4rem 0;">
+      Three runs of the same task (German thesis-correction PDF →
+      HTML review).  Cost from <code>events.jsonl</code> usage records,
+      including prompt-caching (writes 1.25× input, reads 0.1×).
+    </p>
+    <table style="font-size:0.85rem; border-collapse:collapse; margin:0;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;  padding:0.2rem 0.6rem 0.2rem 0;">Session</th>
+          <th style="text-align:left;  padding:0.2rem 0.6rem;">Config</th>
+          <th style="text-align:right; padding:0.2rem 0.6rem;">Calls</th>
+          <th style="text-align:right; padding:0.2rem 0.6rem;">Cost</th>
+          <th style="text-align:left;  padding:0.2rem 0 0.2rem 0.6rem;">Notable</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…18-22-58…277c5610</code></td><td style="padding:0.2rem 0.6rem;">Sonnet-med + <code>repl-centric</code></td><td style="text-align:right; padding:0.2rem 0.6rem;">21</td><td style="text-align:right; padding:0.2rem 0.6rem;">$0.34</td><td style="padding:0.2rem 0 0.2rem 0.6rem;">8 pager calls; switched to targeted mid-session</td></tr>
+        <tr><td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…19-30-45…6174493d</code></td><td style="padding:0.2rem 0.6rem;">Opus-high + <code>repl-centric</code></td><td style="text-align:right; padding:0.2rem 0.6rem;">36</td><td style="text-align:right; padding:0.2rem 0.6rem;">$3.49</td><td style="padding:0.2rem 0 0.2rem 0.6rem;">22 pager calls; found a high-stakes issue (KI self-contradiction)</td></tr>
+        <tr><td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…19-53-39…d5d96f3a</code></td><td style="padding:0.2rem 0.6rem;">Sonnet-med + <code>standard</code></td><td style="text-align:right; padding:0.2rem 0.6rem;">13</td><td style="text-align:right; padding:0.2rem 0.6rem;">$0.40</td><td style="padding:0.2rem 0 0.2rem 0.6rem;">Zero pager calls; <code>head</code>/<code>grep -n</code> by reflex</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:0.85rem; color:var(--muted); margin:0.5rem 0 0;">
+      The pager anti-pattern is substrate-specific, not model-specific
+      (same Sonnet, 8 pager calls under REPL vs 0 under standard tools).
+      Cost is dominated by model choice (Opus = 5× Sonnet) and output
+      volume, not by toolset — the two Sonnet runs tie within 18 %.
+    </p>
+  </details>
 </div>
 
 
@@ -277,172 +371,32 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 <h3 id="phase2" style="margin-top:1.2rem;">Phase 2 — User-grade affordances</h3>
 <ul>
-  <li id="phase22"><strong>2.2 — Live-session intelligibility audit (REPL-focused).</strong>
-      Read-only investigation producing a written gap list +
-      recommendations along two axes:
-      <ul style="margin-top:0.3rem;">
-        <li><em>UI intelligibility</em> — <code>WsMessage</code> variants
-            emitted during a REPL turn; frontend rendering for
-            <code>ToolCallEvent</code> / <code>ToolResultEvent</code> when
-            <code>name == "python_repl"</code>; treatment of streaming
-            output, kernel state, <code>sh()</code> three-tuple,
-            tracebacks, cell boundaries.  Output feeds 2.3 scope.</li>
-        <li><em>Agent-behaviour intelligibility</em> — did the model use
-            the REPL well?  Variable hygiene, response to the output
-            truncation footer, strategy for long-document reads.  Output
-            feeds candidate edits to <code>repl_addendum</code> in
-            <code>crates/omega-agent/src/system_prompt.rs</code>.</li>
-      </ul>
-      <div style="margin:0.4rem 0 0; font-size:0.9rem; color:var(--muted);">
-        <p style="margin:0 0 0.3rem;"><strong>Seed sessions (analysed in conversation, same task: thesis-correction PDF → German HTML review):</strong></p>
-        <table style="font-size:0.85rem; border-collapse:collapse; margin:0 0 0.5rem;">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);">
-              <th style="text-align:left; padding:0.2rem 0.6rem 0.2rem 0;">Session</th>
-              <th style="text-align:left; padding:0.2rem 0.6rem;">Config</th>
-              <th style="text-align:right; padding:0.2rem 0.6rem;">Tool calls</th>
-              <th style="text-align:right; padding:0.2rem 0.6rem;">LLM responses</th>
-              <th style="text-align:right; padding:0.2rem 0.6rem;">Cost*</th>
-              <th style="text-align:left;  padding:0.2rem 0 0.2rem 0.6rem;">Shape</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…18-22-58…277c5610</code></td>
-              <td style="padding:0.2rem 0.6rem;">Sonnet-med + <code>repl-centric</code></td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">21</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">22</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">$0.34</td>
-              <td style="padding:0.2rem 0 0.2rem 0.6rem;">Bootstrap → pager → targeted → synth</td>
-            </tr>
-            <tr>
-              <td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…19-30-45…6174493d</code></td>
-              <td style="padding:0.2rem 0.6rem;">Opus-high + <code>repl-centric</code></td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">36</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">37</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">$3.49</td>
-              <td style="padding:0.2rem 0 0.2rem 0.6rem;">Three pager passes interleaved with strategic interludes</td>
-            </tr>
-            <tr>
-              <td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…19-53-39…d5d96f3a</code></td>
-              <td style="padding:0.2rem 0.6rem;">Sonnet-med + <code>standard</code> (no REPL)</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">13</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">10</td>
-              <td style="text-align:right; padding:0.2rem 0.6rem;">$0.40</td>
-              <td style="padding:0.2rem 0 0.2rem 0.6rem;">Shell pipelines: <code>head</code>/<code>tail</code>/<code>sed</code>/<code>grep&nbsp;-n</code></td>
-            </tr>
-          </tbody>
-        </table>
-        <p style="margin:0 0 0.4rem; font-size:0.8rem;">* Real Anthropic API cost from <code>events.jsonl</code> usage records, including prompt-caching (writes at 1.25× input, reads at 0.1×).  Sonnet 4.6 / Opus 4.7 list prices, Nov 2025.</p>
-
-        <p style="margin:0 0 0.3rem;"><strong>Cross-session findings (three data points):</strong></p>
-        <ul style="margin:0 0 0.4rem; padding-left:1.2rem;">
-          <li><strong>Pager anti-pattern is substrate-specific, not model-specific.</strong>
-              Same Sonnet-medium model: 8/21 pager calls under REPL, <em>0/13</em>
-              under standard tools.  When the toolset has built-in pagination
-              primitives (<code>head</code>, <code>tail</code>, <code>sed -n</code>,
-              <code>grep -n</code>), the model uses them; when it has only
-              <code>print(text[a:b])</code> it falls into the anti-pattern.
-              This reframes the original (two-session) conclusion that the
-              pattern was “model-independent”: it’s actually a property of
-              what the substrate <em>provides</em>.</li>
-          <li><strong>Token cost is dominated by model choice and output volume,
-              not by toolset.</strong>
-              Sessions A and C cost essentially the same ($0.34 vs $0.40 — within
-              18 %).  Two effects roughly cancel: C makes fewer LLM round-trips
-              (10 vs 22) but writes bigger tool results into the prompt cache
-              (45 K vs 28 K cache-write tokens).  Anthropic’s caching makes
-              re-reads ~12.5× cheaper than writes, so the per-call output cap
-              difference between REPL (~2 KB) and <code>run_command</code>
-              (~50–100 KB) is <em>not</em> a token-cost lever.  B costs 10×
-              the others almost entirely because of Opus’s 5× per-token price
-              × 1.7× more output tokens.</li>
-          <li><strong>The REPL output cap is a latency and process lever,
-              not a cost lever.</strong>  C’s clearest win is the round-trip
-              count: 10 vs 22 vs 37.  Each Sonnet round-trip is ~5–10 s of
-              wallclock; from the user’s chair, C feels ~½ as long as A and
-              ~⅓ as long as B.  This is the dimension worth optimising the
-              REPL substrate on, not $$.  <em>Walked back:</em> the prior
-              “raise the cap to save tokens” hypothesis is incorrect; the
-              caching numbers above prove it.</li>
-          <li><strong>Opus shows degenerate adaptation to the footer.</strong>
-              Sonnet asked for 10–25 KB chunks; Opus asked for 5 KB chunks.
-              Output cap is ~2 KB.  Opus partially absorbed the “smaller is
-              better” signal but mis-calibrated, throwing away ~60 % of every
-              chunk vs Sonnet’s ~85 %.  Still suggests the footer wording
-              should <em>state</em> the cap, not imply it — motivation is
-              process-quality (fewer wasted calls), not cost.</li>
-          <li><strong>Strongest concrete example for a prompt addition</strong>
-              is Opus call 30: <code>for m in re.finditer("…", text):
-              print(m.start())</code> — 125 bytes covering 17 positions.
-              In session C, the same idiom appears as <code>grep -n
-              "pattern1\|pattern2\|…" | head -20</code>: one call,
-              line-numbered hits.  Both are the positions-list pattern;
-              the shell version is what the model reaches for natively.</li>
-          <li><strong>Body-vs-TOC disambiguation</strong> showed up in Opus
-              (calls 18–20): a chapter heading appears in a PDF’s table of
-              contents <em>and</em> as the body heading later.  An agent
-              that uses TOC offsets naïvely will read the TOC instead of the
-              body.  Worth surfacing as an example in any preamble.</li>
-        </ul>
-
-        <p style="margin:0 0 0.3rem;"><strong>Candidate interventions, ranked by evidence × cheapness-to-try:</strong></p>
-        <ol style="margin:0 0 0.4rem; padding-left:1.4rem;">
-          <li><strong>Footer wording + shared-constant for the output cap.</strong>
-              Introduce a single Rust <code>const OUTPUT_CAP_BYTES: usize
-              = 2048</code> (or similar) used by the truncation enforcement,
-              the truncation footer wording, and any prompt content that
-              references the cap.  Reword the footer to <em>state</em> the
-              cap explicitly (“output capped at <var>N</var> bytes per call”),
-              not just imply it.  Optionally expose it inside the REPL
-              namespace as <code>OMEGA_OUTPUT_CAP_BYTES</code> so the model
-              can introspect.  <em>Evidence:</em> Opus’s “5 KB chunk”
-              degenerate adaptation strongly suggests the cap isn’t legible
-              to the model.  <em>Cost to try:</em> a few hours — const +
-              footer interpolation + one A/B run.  <em>Risk:</em> minimal;
-              the fallback is the current behaviour.  <strong>Priority: high.</strong></li>
-          <li><strong>Raise the output cap.</strong>  Bump from ~2 KB to e.g.
-              20 KB and re-run the Miriam-2 task.  If A drops from 21 calls
-              to ~10, the cap is doing real damage; if not, the cap was
-              never the bottleneck.  <em>Tension to flag:</em> raising the
-              cap goes against the REPL philosophy of “clever transformations
-              into context, not raw bytes” — if accepted as the fix, we’re
-              implicitly endorsing pager-style reading.  Worth measuring,
-              not worth rushing to ship.  <strong>Priority: medium, after
-              (1).</strong></li>
-          <li><strong><code>show(text, lines=N, start=K)</code> primitive.</strong>
-              <em>Partially walked back from an earlier draft.</em>  Python
-              already has the capability (<code>print(text[a:b])</code>,
-              <code>re.finditer</code>); the C-session win is the model’s
-              <em>reflex</em> reach for <code>head</code>/<code>grep -n</code>,
-              which is a training-data effect, not a capability gap.  Adding
-              <code>show()</code> is naming, not new affordance — it
-              <em>might</em> help by being closer in syntax to the shell
-              idioms the model already knows, but evidence for that is weak
-              on three sessions.  Re-examine only if the audit at ≥5
-              sessions shows the reflex doesn’t emerge naturally even with
-              (1) in place.  <strong>Priority: low; keep on the list.</strong></li>
-          <li><strong>Bootstrap strategy advice.</strong>  E.g. “for unknown-shape
-              long text, first call should be <code>len(text)</code>,
-              <code>text[:500]</code>, <code>text[-500:]</code>; then
-              <code>re.finditer</code>; then narrow windows.”  This is
-              <em>paternalistic</em> — the model may have a better strategy
-              for any given task.  Prefer the factual version in (1)
-              (state the cap; let the model calibrate).  <strong>Priority:
-              low; only if (1)+(2) prove insufficient.</strong></li>
-        </ol>
-
-        <p style="margin:0;"><strong>Do not ship any of these ad-hoc.</strong>
-        The audit should look at ≥5 sessions across at least two models and
-        two task shapes (long-doc analysis is one; <em>code modification</em>
-        and <em>data exploration</em> are the others worth examining
-        — they may favour REPL where long-doc didn’t).  Findings above are
-        seed hypotheses, not conclusions.</p>
-      </div></li>
-  <li><strong>2.3 — REPL observability in the UI feed.</strong>
+  <li id="phase22"><strong>2.2 — Make the REPL output cap legible.</strong>
+      Promoted to <a href="#next">⏭ Next step</a> above.  Three small
+      mechanical changes (shared <code>const</code> for the cap, footer
+      restates it, system-prompt addendum interpolates from the same
+      constant).  See the Next-step block for the actionable spec.
+      <details style="margin-top:0.4rem; color:var(--muted); font-size:0.9rem;">
+        <summary style="cursor:pointer;">Earlier (broader) framing of 2.2, kept for reference</summary>
+        <p style="margin:0.4rem 0;">
+          2.2 was originally scoped as a two-axis <em>audit</em> — UI
+          intelligibility (feeding 2.3) and agent-behaviour
+          intelligibility (feeding the <code>repl_addendum</code>).  After
+          analysing three Miriam-2 seed sessions the agent-behaviour
+          findings converged on the concrete cap-legibility intervention
+          above.  The UI-intelligibility audit now naturally folds into
+          Phase 2.3 (it is the prelude to deciding what to render there).
+        </p>
+        <p style="margin:0 0 0.4rem;">Cross-session findings and the
+          ranked candidate-intervention list have been distilled into
+          the Next-step block; the longer reasoning trail lives in the
+          session log.</p>
+      </details></li>
+  <li id="phase23"><strong>2.3 — REPL observability in the UI feed.</strong>
       Best-possible rendering of REPL events: code block visible, output
       with truncation marker, bootstrap event surfaced, timeout/escalation
-      events surfaced.  Scope informed by 2.2.</li>
+      events surfaced.  Absorbs the UI-intelligibility audit that used to
+      live under 2.2.</li>
 </ul>
 
 <h3 id="phase15" style="margin-top:1.2rem;">Phase 1.5 — Vision tool <span style="color:var(--muted);font-weight:normal;">(decision pending)</span></h3>
