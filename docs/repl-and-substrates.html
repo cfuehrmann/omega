@@ -209,12 +209,8 @@ tr:nth-child(even) td { background: #fafbfc; }
   <h2>Contents</h2>
   <ol>
     <li><a href="#next"        class="toc-h1">⏭ Next step</a></li>
-    <li><a href="#done"        class="toc-h1">✅ Done</a></li>
-    <li><a href="#plan"        class="toc-h1">🗺 The plan</a></li>
-    <li><a href="#phase1"      class="toc-sub">Phase 1 — Cleanup</a></li>
-    <li><a href="#phase2"      class="toc-sub">Phase 2 — User-grade</a></li>
-    <li><a href="#phase3"      class="toc-sub">Phase 3 — Multi-language</a></li>
-    <li><a href="#acceptance"  class="toc-sub">Acceptance criteria</a></li>
+    <li><a href="#upcoming"    class="toc-h1">↪ Upcoming</a></li>
+    <li><a href="#done"        class="toc-h1">📜 Done (archive)</a></li>
     <li><a href="#decisions"   class="toc-h1">🧭 Decisions on record</a></li>
     <li class="toc-divider"></li>
     <li><a href="#background"  class="toc-h1">📜 Background &amp; research</a></li>
@@ -237,53 +233,113 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: Phase 1.4 — Forensics affordance for the AI</h2>
+<h2 id="next">⏭ Next step: Phase 2.1 — Tool-selection UI at session creation</h2>
 
 <div class="callout">
   <div class="callout-title">What to do</div>
   <p>
-    A small system-prompt addition teaching the agent that
-    <code>.omega/sessions/&lt;id&gt;/events.jsonl</code> is the canonical
-    post-mortem source for past sessions, so the model picks the right file
-    without fishing.  The current AI-resume flow leaves the model to discover
-    the path empirically; making it explicit is one paragraph of prose with
-    high payoff per token.
+    Phase 1 is complete: <code>tool_selection</code> is now an explicit
+    field on <code>SessionStartedEvent</code> (<code>568e7af</code>) and the
+    agent has the session-forensics affordance it needs
+    (<code>69f2ecd</code>).  Phase 2.1 surfaces tool selection in the UI so
+    users don't hand-craft WS payloads or rely on the server default.
   </p>
 
   <p style="margin-bottom:0.4rem;"><strong>Files to touch:</strong></p>
   <ul style="margin-top:0;">
-    <li><code>crates/omega-agent/src/system_prompt.rs</code> — append a short
-        "Session forensics" section to <code>core_prompt</code> (interactive
-        mode only — headless sessions don't have prior-session context to
-        forage in).  Describe the layout of
-        <code>.omega/sessions/&lt;id&gt;/</code>, point at
-        <code>events.jsonl</code> as the authoritative log, and mention the
-        <code>cache/run/</code> sub-directory for tee'd command output.</li>
-    <li>Pin the new text with a system-prompt assertion in the existing test
-        suite (interactive includes / headless excludes).</li>
+    <li><code>frontends/leptos/</code> — per-tool checkbox grid in the
+        session-creation panel.  Source the tool list from
+        <code>ALL_TOOL_NAMES</code> exposed by <code>omega-tools</code>
+        (single source of truth, no client-side hard-coding).  Send the
+        result as <code>tool_selection</code> on
+        <code>ClientFrame::CreateSession</code>.</li>
+    <li>Preset quick-picks per <a href="#q2">Q2</a>: <em>default</em>
+        (12 base tools, no REPL), <em>REPL added</em>,
+        <em>REPL replaces shell</em>, <em>REPL only</em>.  These are UI
+        affordances on top of the checkbox grid, not a separate concept.</li>
+    <li><code>bench/</code> harness — add a CLI flag that drives
+        <code>tool_selection</code> from the command line.  Removes the
+        last user of the retired <code>OMEGA_FEATURE_*</code> env vars and
+        unblocks the deferred 87-task TB2 sweep (see
+        <code>bench/README.md</code>'s deprecation notice).</li>
   </ul>
 
   <p style="margin-bottom:0.4rem;"><strong>Acceptance:</strong></p>
   <ul style="margin-top:0;">
-    <li>System-prompt assertion confirms the new paragraph is present in
-        interactive mode and absent in headless.</li>
-    <li><code>cargo test --workspace</code> and clippy green.</li>
-    <li>Mutation testing on <code>system_prompt.rs</code> via the existing
-        <code>mutants-system-prompt</code> recipe — all mutations caught or
-        unviable.</li>
+    <li>User can start a session from the UI with any subset of tools — no
+        env-var fiddling, no WS hand-crafting.</li>
+    <li>The set of available checkboxes is derived from
+        <code>ALL_TOOL_NAMES</code> at build/runtime (single source of
+        truth).</li>
+    <li>Bench harness invocation no longer carries any
+        <code>OMEGA_FEATURE_*</code> env vars; the deferred Harbor sweep
+        unblocks.</li>
+    <li>Leptos snapshot tests pin the new panel; <code>cargo test
+        --workspace</code> and clippy green.</li>
   </ul>
 </div>
 
-<p>
-  After 1.4, the next user-facing milestone is
-  <a href="#phase2">Phase 2.1 — Tool-selection UI</a>.  Phase 1.2 already
-  landed the data plumbing; 2.1 is purely a Leptos affordance plus a CLI
-  flag for the bench harness.
+
+<h2 id="upcoming">↪ Upcoming</h2>
+
+<p style="color:var(--muted);font-size:0.95rem;">
+  Forward runway after 2.1.  Each entry is small enough to be its own
+  next-step block when it gets promoted.
 </p>
+
+<h3 id="phase2" style="margin-top:1.2rem;">Phase 2 — User-grade affordances</h3>
+<ul>
+  <li id="phase22"><strong>2.2 — Live-session intelligibility audit (REPL-focused).</strong>
+      Read-only investigation producing a written gap list +
+      recommendations.  Inputs: <code>WsMessage</code> variants emitted
+      during a REPL turn; frontend rendering for <code>ToolCallEvent</code>
+      / <code>ToolResultEvent</code> when
+      <code>name == "python_repl"</code>; treatment of streaming output,
+      kernel state, <code>sh()</code> three-tuple, tracebacks, cell
+      boundaries.  Output feeds 2.3 scope.</li>
+  <li><strong>2.3 — REPL observability in the UI feed.</strong>
+      Best-possible rendering of REPL events: code block visible, output
+      with truncation marker, bootstrap event surfaced, timeout/escalation
+      events surfaced.  Scope informed by 2.2.</li>
+</ul>
+
+<h3 id="phase3" style="margin-top:1.2rem;">Phase 3 — Multi-language substrate</h3>
+<ul>
+  <li><strong>3.1 — Pluggable REPL backend abstraction.</strong>
+      Python REPL becomes one implementation of a <code>ReplBackend</code>
+      trait (or equivalent).  Abstraction covers: process spawn, sentinel
+      protocol, SIGINT/kill-group escalation, tee-always output,
+      bootstrap.</li>
+  <li><strong>3.2 — Bash REPL as second implementation.</strong>
+      Same plumbing as Python REPL.  No bootstrap required.  Tool name:
+      <code>bash_repl</code>.</li>
+  <li><strong>3.3 — Tool selection includes backend choice.</strong>
+      The per-tool checkbox grid from Phase 2.1 naturally covers this —
+      no extra mechanism needed.</li>
+</ul>
+
+<h3 id="acceptance" style="margin-top:1.2rem;">Overall acceptance: "user-grade REPL"</h3>
+<ul>
+  <li>User starts a session with REPL enabled via a UI gesture — no
+      env-var fiddling.</li>
+  <li>REPL code and output render clearly in the feed.</li>
+  <li>User can recognize, from the UI alone, when REPL was invoked, what
+      code ran, what came back, and whether anything went wrong.</li>
+  <li>Python REPL is robust enough for real work (long text analysis, log
+      inspection) without expert hand-holding.</li>
+</ul>
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="done">✅ Done</h2>
+<h2 id="done">📜 Done</h2>
+
+<details>
+<summary>Phase 1 — Cleanup &amp; consolidation (complete) and pre-Phase-1 infrastructure work</summary>
+<div class="details-body">
+<p style="color:var(--muted);font-size:0.92rem;">
+  All Phase 1 work has landed.  Past achievements are kept here for
+  archaeology and so commit hashes are easy to recover; open when needed.
+</p>
 
 <table>
   <thead>
@@ -291,130 +347,64 @@ tr:nth-child(even) td { background: #fafbfc; }
   </thead>
   <tbody>
     <tr>
-      <td>Phase 1.1 — file split</td>
-      <td><code>8f557aa</code></td>
-      <td><code>python_repl.rs</code> → directory module
-          (<code>wrapper</code>, <code>sentinel</code>, <code>tee</code>,
-          <code>output</code>, <code>bootstrap</code>, <code>repl</code>).</td>
+      <td>Phase 1.1 — Refactor <code>python_repl.rs</code></td>
+      <td><code>8f557aa</code>, <code>7cd3bd6</code></td>
+      <td>File split into a directory module (<code>wrapper</code>,
+          <code>sentinel</code>, <code>tee</code>, <code>output</code>,
+          <code>bootstrap</code>, <code>repl</code>) plus shared
+          <code>read_phase</code> helper across the three I/O loops.</td>
     </tr>
     <tr>
-      <td>Phase 1.1 — <code>execute()</code> cleanup</td>
-      <td><code>7cd3bd6</code></td>
-      <td>Shared <code>read_phase</code> helper extracted from three I/O loops;
-          drain's deliberate lack of sentinel check preserved.</td>
+      <td>Phase 1.2 — Tool-selection mechanism</td>
+      <td><code>568e7af</code></td>
+      <td>Three REPL env-var flags replaced by an explicit
+          <code>tool_selection: Vec&lt;String&gt;</code> on
+          <code>SessionStartedEvent</code>.  <code>FeatureFlags</code>
+          shrunk to <code>subagents</code> only.
+          <code>DEFAULT_TOOL_NAMES</code> / <code>ALL_TOOL_NAMES</code>
+          exposed from <code>omega-tools</code>; session-resume propagates
+          the parent's selection; WS <code>CreateSession</code> carries
+          the field.  Mutation testing green (recipe:
+          <code>mutants-tool-selection</code>).</td>
     </tr>
     <tr>
       <td>Phase 1.3 — <code>sh()</code> helper</td>
       <td><code>700e8f4</code></td>
-      <td>Pre-imported <code>sh(cmd)</code> in the REPL preamble; system prompt
-          updated to lead with it.</td>
+      <td>Pre-imported <code>sh(cmd)</code> in the REPL preamble; system
+          prompt leads with it.</td>
+    </tr>
+    <tr>
+      <td>Phase 1.4 — Session-forensics affordance</td>
+      <td><code>69f2ecd</code></td>
+      <td>Added a "Session forensics" section to the interactive system
+          prompt teaching the agent that
+          <code>.omega/sessions/&lt;id&gt;/events.jsonl</code> is the
+          authoritative post-mortem log.  Headless prompt unchanged.
+          Mutation testing green via existing
+          <code>mutants-system-prompt</code> recipe (35 caught,
+          5 unviable, 0 survivors).</td>
+    </tr>
+    <tr>
+      <td>Strict-resume — dropped &amp; deleted</td>
+      <td><code>a19ebb2</code>, <code>d8538d4</code></td>
+      <td>Decision plus −1892 / +131 LOC deletion.  Removed
+          <code>strict_resume()</code>, <code>StrictResumeError</code>,
+          <code>DomainSnapshot</code>, <code>fold_*</code>,
+          <code>read_events_strict</code>.  AI-resume kept.  Full reasoning:
+          <a href="./session-design.html#decision-drop-strict-resume">session-design.html
+          §decision-drop-strict-resume</a>.</td>
     </tr>
     <tr>
       <td>ws-test flake fix</td>
       <td><code>68ee22c</code></td>
       <td>Deterministic <code>Notify</code>-based step gate replaced 30 ms
-          timing slack in <code>ws.rs</code> and <code>ws_router.rs</code>.</td>
-    </tr>
-    <tr>
-      <td>Strict-resume rethink — decision</td>
-      <td><code>a19ebb2</code></td>
-      <td>Drop <code>strict_resume()</code> entirely; AI-based forensics covers
-          the real use case.  Full reasoning in
-          <a href="./session-design.html#decision-drop-strict-resume">session-design.html
-          §decision-drop-strict-resume</a>.</td>
-    </tr>
-    <tr>
-      <td>Strict-resume — code deletion</td>
-      <td><code>d8538d4</code></td>
-      <td>−1892 / +131 LOC.  Deleted <code>strict_resume()</code>,
-          <code>StrictResumeError</code>, <code>DomainSnapshot</code>,
-          <code>fold_*</code> helpers, <code>read_events_strict</code>, and
-          their tests.  AI-resume kept; see
-          <a href="./session-design.html#ai-resume-sunset">§ai-resume-sunset</a>.</td>
-    </tr>
-    <tr>
-      <td>Phase 1.2 — Tool-selection mechanism</td>
-      <td><code>568e7af</code></td>
-      <td>Replaced three REPL env-var flags with an explicit
-          <code>tool_selection: Vec&lt;String&gt;</code> field on
-          <code>SessionStartedEvent</code>.  <code>FeatureFlags</code> shrunk to
-          <code>subagents</code> only; <code>tool_definitions</code> and
-          <code>build_system_blocks</code> now filter by membership.
-          <code>DEFAULT_TOOL_NAMES</code> (12) / <code>ALL_TOOL_NAMES</code>
-          (12 + <code>python_repl</code>) exposed from <code>omega-tools</code>.
-          Session-resume propagates the parent's selection.  WS
-          <code>CreateSession</code> carries <code>tool_selection</code>; UI sweep
-          done.  Bench harness rewiring deferred to Phase 2.1
-          (deprecation notice in <code>bench/README.md</code>).  Mutation
-          testing green on all three touched files (recipe:
-          <code>mutants-tool-selection</code>).</td>
+          timing slack in <code>ws.rs</code> and <code>ws_router.rs</code>.
+          Unrelated to REPL work; landed during this period.</td>
     </tr>
   </tbody>
 </table>
-
-
-<!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="plan">🗺 The plan</h2>
-
-<p>
-  Three sequential phases.  Phase 1 cleans up the existing Python REPL surface.
-  Phase 2 makes REPL a first-class UI affordance.  Phase 3 generalizes to a
-  pluggable substrate, with Bash REPL as the second implementation.
-</p>
-
-<h3 id="phase1">Phase 1 — Cleanup &amp; consolidation</h3>
-<ul>
-  <li><strong>1.1 — Refactor <code>python_repl.rs</code>.</strong>
-      ✅ Done (<code>8f557aa</code> + <code>7cd3bd6</code>).</li>
-  <li><strong>1.2 — Tool-selection mechanism.</strong>
-      ✅ Done (<code>568e7af</code>).</li>
-  <li><strong>1.3 — <code>sh()</code> helper.</strong>
-      ✅ Done (<code>700e8f4</code>).</li>
-  <li id="phase14"><strong>1.4 — Forensics affordance for the AI.</strong>
-      ⏭ Next.  See <a href="#next">Next step</a> above.</li>
-</ul>
-
-<h3 id="phase2">Phase 2 — User-grade affordances</h3>
-<ul>
-  <li><strong>2.1 — Tool-selection UI at session creation.</strong>
-      Per-tool checkboxes in the session-creation panel.  Small list of preset
-      configurations (<em>default</em>, <em>REPL-only</em>,
-      <em>REPL no-shell</em>, …) as quick-picks.</li>
-  <li id="phase22"><strong>2.2 — Live-session intelligibility audit (REPL-focused).</strong>
-      Read-only investigation producing a written gap list + recommendations.
-      Inputs to examine: <code>WsMessage</code> variants emitted during a REPL
-      turn; frontend rendering for <code>ToolCallEvent</code> /
-      <code>ToolResultEvent</code> when <code>name == "python_repl"</code>;
-      treatment of streaming output, kernel state, <code>sh()</code>
-      three-tuple, tracebacks, cell boundaries.  Output feeds 2.3 scope.</li>
-  <li><strong>2.3 — REPL observability in the UI feed.</strong>
-      Best-possible rendering of REPL events: code block visible, output with
-      truncation marker, bootstrap event surfaced, timeout/escalation events
-      surfaced.  Scope informed by 2.2.</li>
-</ul>
-
-<h3 id="phase3">Phase 3 — Multi-language substrate</h3>
-<ul>
-  <li><strong>3.1 — Pluggable REPL backend abstraction.</strong>
-      Python REPL becomes one implementation of a <code>ReplBackend</code>
-      trait (or equivalent).  Abstraction covers: process spawn, sentinel
-      protocol, SIGINT/kill-group escalation, tee-always output, bootstrap.</li>
-  <li><strong>3.2 — Bash REPL as second implementation.</strong>
-      Same plumbing as Python REPL.  No bootstrap required.  Tool name:
-      <code>bash_repl</code>.</li>
-  <li><strong>3.3 — Tool selection includes backend choice.</strong>
-      The per-tool checkbox grid from Phase 2 naturally covers this.</li>
-</ul>
-
-<h3 id="acceptance">Acceptance criteria for "user-grade REPL"</h3>
-<ul>
-  <li>User starts a session with REPL enabled via a UI gesture — no env-var fiddling.</li>
-  <li>REPL code and output render clearly in the feed.</li>
-  <li>User can recognize, from the UI alone, when REPL was invoked, what code ran,
-      what came back, and whether anything went wrong.</li>
-  <li>Python REPL is robust enough for real work (long text analysis, log inspection)
-      without expert hand-holding.</li>
-</ul>
+</div>
+</details>
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
