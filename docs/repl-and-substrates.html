@@ -295,49 +295,109 @@ tr:nth-child(even) td { background: #fafbfc; }
       </ul>
       <div style="margin:0.4rem 0 0; font-size:0.9rem; color:var(--muted);">
         <p style="margin:0 0 0.3rem;"><strong>Seed sessions (analysed in conversation, same task: thesis-correction PDF → German HTML review):</strong></p>
+        <table style="font-size:0.85rem; border-collapse:collapse; margin:0 0 0.5rem;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left; padding:0.2rem 0.6rem 0.2rem 0;">Session</th>
+              <th style="text-align:left; padding:0.2rem 0.6rem;">Config</th>
+              <th style="text-align:right; padding:0.2rem 0.6rem;">Tool calls</th>
+              <th style="text-align:right; padding:0.2rem 0.6rem;">LLM responses</th>
+              <th style="text-align:right; padding:0.2rem 0.6rem;">Cost*</th>
+              <th style="text-align:left;  padding:0.2rem 0 0.2rem 0.6rem;">Shape</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…18-22-58…277c5610</code></td>
+              <td style="padding:0.2rem 0.6rem;">Sonnet-med + <code>repl-centric</code></td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">21</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">22</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">$0.34</td>
+              <td style="padding:0.2rem 0 0.2rem 0.6rem;">Bootstrap → pager → targeted → synth</td>
+            </tr>
+            <tr>
+              <td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…19-30-45…6174493d</code></td>
+              <td style="padding:0.2rem 0.6rem;">Opus-high + <code>repl-centric</code></td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">36</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">37</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">$3.49</td>
+              <td style="padding:0.2rem 0 0.2rem 0.6rem;">Three pager passes interleaved with strategic interludes</td>
+            </tr>
+            <tr>
+              <td style="padding:0.2rem 0.6rem 0.2rem 0;"><code>…19-53-39…d5d96f3a</code></td>
+              <td style="padding:0.2rem 0.6rem;">Sonnet-med + <code>standard</code> (no REPL)</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">13</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">10</td>
+              <td style="text-align:right; padding:0.2rem 0.6rem;">$0.40</td>
+              <td style="padding:0.2rem 0 0.2rem 0.6rem;">Shell pipelines: <code>head</code>/<code>tail</code>/<code>sed</code>/<code>grep&nbsp;-n</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="margin:0 0 0.4rem; font-size:0.8rem;">* Real Anthropic API cost from <code>events.jsonl</code> usage records, including prompt-caching (writes at 1.25× input, reads at 0.1×).  Sonnet 4.6 / Opus 4.7 list prices, Nov 2025.</p>
+
+        <p style="margin:0 0 0.3rem;"><strong>Cross-session findings (three data points):</strong></p>
         <ul style="margin:0 0 0.4rem; padding-left:1.2rem;">
-          <li><code>2026-05-28T18-22-58-861-277c5610</code> — Sonnet-medium,
-              21 REPL calls, 22 % effective document coverage.  Clean
-              three-phase shape: bootstrap → sequential pager → targeted
-              search → synthesis.  Ignored the truncation footer for 7
-              calls before shifting strategy.</li>
-          <li><code>2026-05-28T19-30-45-422-6174493d</code> — Opus-high,
-              36 REPL calls (+71 %), ~28 % effective coverage.  Zigzag
-              shape: <em>three</em> separate pager passes interleaved
-              with strategic interludes.  Found higher-stakes issues
-              than Sonnet (KI-self-contradiction in the thesis), but at
-              substantially higher token cost.</li>
-        </ul>
-        <p style="margin:0 0 0.3rem;"><strong>Cross-session findings (two data points, not one):</strong></p>
-        <ul style="margin:0 0 0.4rem; padding-left:1.2rem;">
-          <li><strong>Pager anti-pattern is model-independent.</strong>
-              Both models default to <code>print(text[a:b])</code> in fixed
-              chunks for an unknown-shape long document.  The truncation
-              footer alone does not prevent it.</li>
+          <li><strong>Pager anti-pattern is substrate-specific, not model-specific.</strong>
+              Same Sonnet-medium model: 8/21 pager calls under REPL, <em>0/13</em>
+              under standard tools.  When the toolset has built-in pagination
+              primitives (<code>head</code>, <code>tail</code>, <code>sed -n</code>,
+              <code>grep -n</code>), the model uses them; when it has only
+              <code>print(text[a:b])</code> it falls into the anti-pattern.
+              This reframes the original (two-session) conclusion that the
+              pattern was “model-independent”: it’s actually a property of
+              what the substrate <em>provides</em>.</li>
+          <li><strong>Token cost is dominated by model choice and output volume,
+              not by toolset.</strong>
+              Sessions A and C cost essentially the same ($0.34 vs $0.40 — within
+              18 %).  Two effects roughly cancel: C makes fewer LLM round-trips
+              (10 vs 22) but writes bigger tool results into the prompt cache
+              (45 K vs 28 K cache-write tokens).  Anthropic’s caching makes
+              re-reads ~12.5× cheaper than writes, so the per-call output cap
+              difference between REPL (~2 KB) and <code>run_command</code>
+              (~50–100 KB) is <em>not</em> a token-cost lever.  B costs 10×
+              the others almost entirely because of Opus’s 5× per-token price
+              × 1.7× more output tokens.</li>
+          <li><strong>The REPL output cap is a latency and process lever,
+              not a cost lever.</strong>  C’s clearest win is the round-trip
+              count: 10 vs 22 vs 37.  Each Sonnet round-trip is ~5–10 s of
+              wallclock; from the user’s chair, C feels ~½ as long as A and
+              ~⅓ as long as B.  This is the dimension worth optimising the
+              REPL substrate on, not $$.  <em>Walked back:</em> the prior
+              “raise the cap to save tokens” hypothesis is incorrect; the
+              caching numbers above prove it.</li>
           <li><strong>Opus shows degenerate adaptation to the footer.</strong>
               Sonnet asked for 10–25 KB chunks; Opus asked for 5 KB chunks.
-              Output cap is ~2 KB.  Opus partially absorbed the “smaller
-              is better” signal but mis-calibrated, throwing away ~60 % of
-              every chunk vs Sonnet’s ~85 %.  Suggests the footer wording
-              should <em>state</em> the cap, not just imply it.  Cheap
-              experiment to run during the audit: A/B the current footer
-              against one that names “~2 KB cap; print windows ≤ 1 KB”.</li>
+              Output cap is ~2 KB.  Opus partially absorbed the “smaller is
+              better” signal but mis-calibrated, throwing away ~60 % of every
+              chunk vs Sonnet’s ~85 %.  Still suggests the footer wording
+              should <em>state</em> the cap, not imply it — motivation is
+              process-quality (fewer wasted calls), not cost.</li>
           <li><strong>Strongest concrete example for a prompt addition</strong>
               is Opus call 30: <code>for m in re.finditer("…", text):
-              print(m.start())</code> — produced 125 bytes covering 17
-              positions across the document.  Prefer this idiom over
-              abstract advice when drafting any preamble.</li>
+              print(m.start())</code> — 125 bytes covering 17 positions.
+              In session C, the same idiom appears as <code>grep -n
+              "pattern1\|pattern2\|…" | head -20</code>: one call,
+              line-numbered hits.  Both are the positions-list pattern;
+              the shell version is what the model reaches for natively.</li>
           <li><strong>Body-vs-TOC disambiguation</strong> showed up in Opus
               (calls 18–20): a chapter heading appears in a PDF’s table of
               contents <em>and</em> as the body heading later.  An agent
               that uses TOC offsets naïvely will read the TOC instead of the
-              body.  Worth surfacing as an example in the preamble.</li>
+              body.  Worth surfacing as an example in any preamble.</li>
+          <li><strong>Candidate <em>substrate</em> intervention (not prompt):</strong>
+              add a <code>show(text, lines=N, start=K)</code> primitive
+              alongside <code>sh()</code> in the REPL bootstrap.  Structural
+              fix beats prompt advice — the C session never had to be taught
+              <code>head -N</code> because it was already the natural reach.
+              Provide the REPL equivalent and the pager anti-pattern
+              disappears mechanically.</li>
         </ul>
-        <p style="margin:0;"><strong>Do not ship a preamble ad-hoc.</strong>
-        The audit should look at ≥5 REPL sessions across at least two
-        models and two task shapes (long-doc analysis, code modification,
-        data exploration) before editing <code>repl_addendum</code>.
-        Findings above are seed hypotheses, not conclusions.</p>
+        <p style="margin:0;"><strong>Do not ship a preamble or primitive ad-hoc.</strong>
+        The audit should look at ≥5 sessions across at least two models and
+        two task shapes (long-doc analysis is one; <em>code modification</em>
+        and <em>data exploration</em> are the others worth examining
+        — they may favour REPL where long-doc didn’t).  Findings above are
+        seed hypotheses, not conclusions.</p>
       </div></li>
   <li><strong>2.3 — REPL observability in the UI feed.</strong>
       Best-possible rendering of REPL events: code block visible, output
