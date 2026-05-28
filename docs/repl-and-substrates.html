@@ -384,15 +384,55 @@ tr:nth-child(even) td { background: #fafbfc; }
               contents <em>and</em> as the body heading later.  An agent
               that uses TOC offsets naïvely will read the TOC instead of the
               body.  Worth surfacing as an example in any preamble.</li>
-          <li><strong>Candidate <em>substrate</em> intervention (not prompt):</strong>
-              add a <code>show(text, lines=N, start=K)</code> primitive
-              alongside <code>sh()</code> in the REPL bootstrap.  Structural
-              fix beats prompt advice — the C session never had to be taught
-              <code>head -N</code> because it was already the natural reach.
-              Provide the REPL equivalent and the pager anti-pattern
-              disappears mechanically.</li>
         </ul>
-        <p style="margin:0;"><strong>Do not ship a preamble or primitive ad-hoc.</strong>
+
+        <p style="margin:0 0 0.3rem;"><strong>Candidate interventions, ranked by evidence × cheapness-to-try:</strong></p>
+        <ol style="margin:0 0 0.4rem; padding-left:1.4rem;">
+          <li><strong>Footer wording + shared-constant for the output cap.</strong>
+              Introduce a single Rust <code>const OUTPUT_CAP_BYTES: usize
+              = 2048</code> (or similar) used by the truncation enforcement,
+              the truncation footer wording, and any prompt content that
+              references the cap.  Reword the footer to <em>state</em> the
+              cap explicitly (“output capped at <var>N</var> bytes per call”),
+              not just imply it.  Optionally expose it inside the REPL
+              namespace as <code>OMEGA_OUTPUT_CAP_BYTES</code> so the model
+              can introspect.  <em>Evidence:</em> Opus’s “5 KB chunk”
+              degenerate adaptation strongly suggests the cap isn’t legible
+              to the model.  <em>Cost to try:</em> a few hours — const +
+              footer interpolation + one A/B run.  <em>Risk:</em> minimal;
+              the fallback is the current behaviour.  <strong>Priority: high.</strong></li>
+          <li><strong>Raise the output cap.</strong>  Bump from ~2 KB to e.g.
+              20 KB and re-run the Miriam-2 task.  If A drops from 21 calls
+              to ~10, the cap is doing real damage; if not, the cap was
+              never the bottleneck.  <em>Tension to flag:</em> raising the
+              cap goes against the REPL philosophy of “clever transformations
+              into context, not raw bytes” — if accepted as the fix, we’re
+              implicitly endorsing pager-style reading.  Worth measuring,
+              not worth rushing to ship.  <strong>Priority: medium, after
+              (1).</strong></li>
+          <li><strong><code>show(text, lines=N, start=K)</code> primitive.</strong>
+              <em>Partially walked back from an earlier draft.</em>  Python
+              already has the capability (<code>print(text[a:b])</code>,
+              <code>re.finditer</code>); the C-session win is the model’s
+              <em>reflex</em> reach for <code>head</code>/<code>grep -n</code>,
+              which is a training-data effect, not a capability gap.  Adding
+              <code>show()</code> is naming, not new affordance — it
+              <em>might</em> help by being closer in syntax to the shell
+              idioms the model already knows, but evidence for that is weak
+              on three sessions.  Re-examine only if the audit at ≥5
+              sessions shows the reflex doesn’t emerge naturally even with
+              (1) in place.  <strong>Priority: low; keep on the list.</strong></li>
+          <li><strong>Bootstrap strategy advice.</strong>  E.g. “for unknown-shape
+              long text, first call should be <code>len(text)</code>,
+              <code>text[:500]</code>, <code>text[-500:]</code>; then
+              <code>re.finditer</code>; then narrow windows.”  This is
+              <em>paternalistic</em> — the model may have a better strategy
+              for any given task.  Prefer the factual version in (1)
+              (state the cap; let the model calibrate).  <strong>Priority:
+              low; only if (1)+(2) prove insufficient.</strong></li>
+        </ol>
+
+        <p style="margin:0;"><strong>Do not ship any of these ad-hoc.</strong>
         The audit should look at ≥5 sessions across at least two models and
         two task shapes (long-doc analysis is one; <em>code modification</em>
         and <em>data exploration</em> are the others worth examining
