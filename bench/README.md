@@ -18,6 +18,12 @@ Run `python bench/scripts/bench-summary.py` for a live breakdown from `bench/res
 
 **Always run Harbor from the `bench/` directory** — Harbor writes `jobs/` relative to CWD, so running from `bench/` is what keeps job output inside `bench/jobs/`.
 
+> **Harbor version requirement.** Use harbor ≥ **v0.9.0**.  Older clients
+> (≤ v0.8.0) issue a task-version-resolution query that exceeds the Supabase
+> row cap and fails with a server-side `statement_timeout` (Postgres code
+> `57014`).  The fix landed in harbor v0.9.0 (PRs #1719 paginated queries +
+> #1736 RPC-based resolution).  Upgrade via `uv tool upgrade harbor`.
+
 ```bash
 cd bench
 
@@ -50,7 +56,7 @@ Results land in `bench/jobs/<job-name>/`. Each trial directory contains
 ## Tool selection sweeps
 
 Tool selection is exposed via `--preset` on the omega-cli binary, surfaced to
-Harbor as a regular `--agent-kwargs` flag.  Three presets, defined once in
+Harbor as a regular `--agent-kwarg` flag.  Three presets, defined once in
 `crates/omega-tools/src/schemas.rs::PRESETS`:
 
 | Preset | Tools | Use case |
@@ -65,11 +71,11 @@ run used.
 
 Treatment arms:
 
-| Arm | `--agent-kwargs` |
+| Arm | `--agent-kwarg` |
 |---|---|
 | Baseline | _(none, or `preset=standard`)_ |
-| Additive REPL | `--agent-kwargs preset=all` |
-| REPL-centric | `--agent-kwargs preset=repl-centric` |
+| Additive REPL | `--agent-kwarg preset=all` |
+| REPL-centric | `--agent-kwarg preset=repl-centric` |
 
 Example:
 
@@ -78,7 +84,7 @@ harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  --agent-kwargs preset=repl-centric \
+  --agent-kwarg preset=repl-centric \
   --job-name v0114-repl-centric-sonnet-medium
 ```
 
@@ -150,7 +156,7 @@ harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  --agent-kwargs preset=repl-centric \
+  --agent-kwarg preset=repl-centric \
   --job-name v0114-repl-centric-sonnet-medium
 ```
 
@@ -244,11 +250,13 @@ A full 89-task Sonnet run costs ≈ $25; Opus ≈ $30.
 
 ## Next steps
 
-1. **Confirmation runs** — run 3–5 trials of Tier 2 full mode on fix-git and
+1. **Confirmation runs** — run 3–5 trials of repl-centric mode on fix-git and
    crack-7z-hash to quantify single-trial variance on the v0.1.13 result.
 
-2. **Broader REPL sweep** — once Harbor’s registry is back, sweep Tier 2 full mode
-   across all 89 TB2 tasks.  Only fix-git and crack-7z-hash are cached locally.
+2. **Broader REPL sweep** — sweep repl-centric mode across all 89 TB2 tasks
+   (unblocked since harbor v0.9.0 — see the version requirement above).
+   Sonnet-medium full-sweep budget ≈ $25; expected wall-clock ≈ 1–2 h at
+   `-n 10` concurrency.
 
 3. **SWE-Bench Verified** (planned): same Harbor wrapper, one flag change;
    ~500 tasks, ~$300 budget.
