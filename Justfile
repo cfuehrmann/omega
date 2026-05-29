@@ -330,6 +330,22 @@ mutants-system-prompt-221:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
 
+
+# Phase 2.3 — event_view.rs: python_repl arm in tool_call_preview.
+# Must be run from the frontends/leptos directory since omega-web is
+# a standalone workspace.  All mutations must be caught or unviable.
+mutants-python-repl-23:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{justfile_directory()}}/{{mutants-tmp}}         cargo mutants --cap-lints=true         --file "src/event_view.rs"
+
+# Phase 2.3 — feed.rs: ToolUseBlock dispatch (timeout chip + expansion body).
+# Scoped to the ToolUseBlock-related logic via --regex to keep runtime
+# manageable.  feed.rs is otherwise mostly JS-interop glue exempt from
+# mutation testing (see component docs in feed.rs).
+mutants-feed-tool-use-23:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{justfile_directory()}}/{{mutants-tmp}}         cargo mutants --cap-lints=true         --file "src/feed.rs"         --regex "PYTHON_REPL_DEFAULT_TIMEOUT_SECS|timeout_chip|python_repl"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

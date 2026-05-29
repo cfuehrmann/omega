@@ -498,6 +498,49 @@ fn snap_event_tool_use_block_with_toggle() {
 }
 
 #[test]
+fn snap_event_tool_use_python_repl_default_timeout_collapsed() {
+    // Phase 2.3 — python_repl ToolUseBlock: first non-blank line shown as
+    // preview; no timeout chip (default timeout omitted).  Collapsed state.
+    let html = render(|| {
+        let ev = ev_tool_use(
+            "python_repl",
+            serde_json::json!({ "code": "out, err, rc = sh(\"ls -la\")\nprint(out)" }),
+        );
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_tool_use_python_repl_non_default_timeout_chip() {
+    // Phase 2.3 — timeout chip appears when timeout != default (60 s).
+    let html = render(|| {
+        let ev = ev_tool_use(
+            "python_repl",
+            serde_json::json!({ "code": "import time\ntime.sleep(1)", "timeout": 1800 }),
+        );
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_tool_use_python_repl_empty_code() {
+    // Phase 2.3 — empty code: label row still renders cleanly (no preview text).
+    let html = render(|| {
+        let ev = ev_tool_use("python_repl", serde_json::json!({ "code": "" }));
+        provide_context(ContextModalState::new());
+        provide_context(TextModalState::new());
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
 fn snap_event_assistant_html_is_escaped() {
     let html = render(|| {
         let ev = ev_assistant("hello <script>alert(1)</script>");

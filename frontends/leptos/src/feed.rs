@@ -136,6 +136,11 @@ fn js_add_copy_buttons(_container: &()) {}
 /// micro-scrolls and sub-pixel rounding on hi-DPI displays.
 const AUTOSCROLL_THRESHOLD_PX: f64 = 40.0;
 
+/// Default timeout for `python_repl` tool calls (seconds).
+/// Mirror of `omega_tools::python_repl::DEFAULT_TIMEOUT_SECS`;
+/// duplicated here to avoid a heavy crate dep in the frontend.
+const PYTHON_REPL_DEFAULT_TIMEOUT_SECS: u64 = 60;
+
 // ---------------------------------------------------------------------------
 // Top-level feed
 // ---------------------------------------------------------------------------
@@ -960,6 +965,17 @@ fn render_event_body(
             let expanded = RwSignal::new(false);
             let time_iso = e.time.clone();
             let time_pill = format_time(&time_iso, &tz);
+            // Phase 2.3 — timeout chip: shown when python_repl has a
+            // non-default timeout so the operator can see it at a glance.
+            let timeout_chip = if name == "python_repl" {
+                e.input
+                    .get("timeout")
+                    .and_then(|v| v.as_u64())
+                    .filter(|&t| t != PYTHON_REPL_DEFAULT_TIMEOUT_SECS)
+                    .map(|t| format!("[timeout: {t}s]"))
+            } else {
+                None
+            };
             view! {
                 <div
                     class="block-label-row"
@@ -992,6 +1008,11 @@ fn render_event_body(
                     >
                         {preview}
                     </span>
+                    {timeout_chip.map(|chip| view! {
+                        <span class="block-badge" data-testid="leptos-python-repl-timeout-chip">
+                            {chip}
+                        </span>
+                    })}
                     <button
                         class="block-label-row-btn thinking-toggle-btn"
                         data-testid="leptos-tool-use-block-expand"
@@ -1002,14 +1023,26 @@ fn render_event_body(
                     <TimestampChip iso=time_iso display=time_pill pill=true />
                 </div>
                 {move || expanded.get().then(|| {
-                    let pretty = serde_json::to_string_pretty(&input)
-                        .unwrap_or_else(|_| "{}".to_owned());
+                    // Phase 2.3 — python_repl gets its code rendered as plain
+                    // text; every other tool keeps the pretty-printed JSON.
+                    let (body_text, body_testid) = if name == "python_repl" {
+                        let code = input
+                            .get("code")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_owned();
+                        (code, "leptos-python-repl-code")
+                    } else {
+                        let pretty = serde_json::to_string_pretty(&input)
+                            .unwrap_or_else(|_| "{}".to_owned());
+                        (pretty, "leptos-tool-use-block-body")
+                    };
                     view! {
                         <pre
                             class=if partial { "block-body block-discarded-body" } else { "block-body" }
-                            data-testid="leptos-tool-use-block-body"
+                            data-testid=body_testid
                         >
-                            {pretty}
+                            {body_text}
                         </pre>
                     }
                 })}

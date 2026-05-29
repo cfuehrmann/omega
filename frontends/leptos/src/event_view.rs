@@ -727,6 +727,17 @@ pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
             }
         }
 
+        // ── REPL ───────────────────────────────────────────────────────────
+        "python_repl" => {
+            // First non-blank line of the code snippet.  Empty string when
+            // code is absent or contains only whitespace.
+            let code = s(input, "code");
+            code.lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .to_owned()
+        }
+
         // ── fallback: pretty-print full JSON ───────────────────────────────
         _ => serde_json::to_string_pretty(input).unwrap_or_else(|_| "{}".to_owned()),
     }
@@ -2311,6 +2322,55 @@ mod tests {
             result.contains("bar"),
             "fallback must include field value: {result}"
         );
+    }
+
+    // ---- python_repl preview -----------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_python_repl_single_line() {
+        let input = serde_json::json!({ "code": "print('hello')" });
+        assert_eq!(tool_call_preview("python_repl", &input), "print('hello')");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_python_repl_multi_line_with_leading_blanks() {
+        // First non-blank line is returned.
+        let input = serde_json::json!({ "code": "\n  \nresult = 42\nprint(result)" });
+        assert_eq!(tool_call_preview("python_repl", &input), "result = 42");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_python_repl_empty_code() {
+        let input = serde_json::json!({ "code": "" });
+        assert_eq!(tool_call_preview("python_repl", &input), "");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_python_repl_blank_lines_only() {
+        let input = serde_json::json!({ "code": "\n  \n\t\n" });
+        assert_eq!(tool_call_preview("python_repl", &input), "");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_python_repl_comment_first_line() {
+        let input = serde_json::json!({ "code": "# compute something\nresult = 1 + 1" });
+        assert_eq!(
+            tool_call_preview("python_repl", &input),
+            "# compute something"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_python_repl_no_timeout_in_preview() {
+        // timeout must NOT appear in the preview string — it is a separate chip.
+        let input = serde_json::json!({ "code": "x = 1", "timeout": 1800 });
+        assert_eq!(tool_call_preview("python_repl", &input), "x = 1");
     }
 
     // -----------------------------------------------------------------------

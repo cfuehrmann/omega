@@ -301,12 +301,13 @@ tr:nth-child(even) td { background: #fafbfc; }
       ✅ Shipped — see <a href="#done">📜 Done</a> table.</li>
   <li id="phase222"><strong>2.2.2 — Self-hosting re-measurement.</strong>
       Promoted to <a href="#next">⏭ Next step</a>.  Full scope in that block.</li>
-  <li id="phase23"><strong>2.3 — REPL observability in the UI feed.</strong>
-      <span style="color:var(--muted);">Queued behind 2.2.2.</span>
-      Best-possible rendering of REPL events: code block visible, output
-      with truncation marker, bootstrap event surfaced, timeout/escalation
-      events surfaced.  Absorbs the UI-intelligibility audit that used to
-      live under 2.2.</li>
+  <li id="phase23"><strong>2.3 — Make python_repl tool_use render Python as Python.</strong>
+      <span style="color:var(--green);">Shipped.</span>
+      Collapsed = first non-blank line; expanded = full code in a plain pre
+      (<code>data-testid="leptos-python-repl-code"</code>); timeout chip when
+      non-default.  Result-block work retired — python_repl results are
+      structurally identical to run_command results; any output-chip work
+      belongs in a generic Phase 2.4.</li>
 </ul>
 
 <h3 id="phase15" style="margin-top:1.2rem;">Phase 1.5 — Vision tool <span style="color:var(--muted);font-weight:normal;">(decision pending)</span></h3>
@@ -502,6 +503,16 @@ tr:nth-child(even) td { background: #fafbfc; }
           <code>mutants-python-repl-221</code>,
           <code>mutants-system-prompt-221</code>).</td>
     </tr>
+    <tr>
+      <td>Phase 2.3 — python_repl tool_use renders Python as Python (frontend-only)</td>
+      <td><code>ff7ab92</code></td>
+      <td>Collapsed preview = first non-blank line of code.  Expanded body =
+          plain <code>&lt;pre data-testid="leptos-python-repl-code"&gt;</code>
+          instead of JSON dump.  Timeout chip (<code>block-badge</code> style)
+          on label row when timeout ≠ 60 s.  Unit tests + snapshot tests added;
+          mutation testing recipes: <code>mutants-python-repl-23</code>,
+          <code>mutants-feed-tool-use-23</code>.</td>
+    </tr>
 </tbody>
 </table>
 </div>
@@ -665,7 +676,40 @@ tr:nth-child(even) td { background: #fafbfc; }
         </ul>
       </td>
     </tr>
-  </tbody>
+    <tr id="log-session-f">
+      <td>Session F (this session) — substrate: post-2.2.1 repl-centric</td>
+      <td>claude-sonnet-4-6 · tool selection: <code>python_repl</code> +
+          <code>web_search</code> + <code>fetch_url</code><br/>
+          <em>post-2.2.1 substrate</em></td>
+      <td>Implementing Phase 2.3 — python_repl tool_use UI rendering</td>
+      <td>~60–80 python_repl calls (estimated)<br/>~30 min<br/>~$1.50 est.<br/>
+          <span style="color:var(--muted);font-size:0.85rem;">
+          tokens: tracked in events.jsonl; cache-heavy session</span></td>
+      <td>
+        <ul style="margin:0;padding-left:1.1rem;">
+          <li><strong>0 sh()-with-pipe calls.</strong>  The variable-pattern
+              discipline held: all shell output was captured into variables,
+              then sliced via Python in follow-up calls.  No
+              <code>sh("… | head -N")</code> anti-pattern observed.</li>
+          <li><strong>0 SyntaxWarnings.</strong>  Raw strings used for
+              regex patterns throughout (where needed), no <code>\|</code>
+              pitfall hit.</li>
+          <li><strong>0 timeout hits.</strong>  All operations well within
+              the 60 s default; the new 3600 s ceiling was not needed.</li>
+          <li><strong>0 over-cap rejections.</strong>  Output stayed within
+              limits; the python_repl output was read incrementally via
+              variable slicing rather than printing large blobs.</li>
+          <li><strong>pager-call fraction: 0.</strong>  All file reading
+              done via Python <code>open()</code> + slicing, not shell
+              pagers.</li>
+          <li><strong>Bootstrapping note.</strong>  python_repl was the
+              correct tool for this task — file reading, searching, and
+              writing all via Python calls from a single persistent REPL
+              state, avoiding repeated shell subprocess overhead.</li>
+        </ul>
+      </td>
+    </tr>
+    </tbody>
 </table>
 </div>
 </details>
