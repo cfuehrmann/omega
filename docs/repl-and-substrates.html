@@ -234,29 +234,51 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: Phase 2.3 — REPL observability in the UI feed</h2>
+<h2 id="next">⏭ Next step: Phase 2.2.1 — REPL affordance fixes surfaced by self-hosting</h2>
 
 <div class="callout">
   <div class="callout-title">Where we are</div>
   <p>
-    Phase 2.2 shipped — the REPL output cap is now legible to the model.
-    <code>MAX_OUTPUT_LINES</code> / <code>MAX_OUTPUT_CHARS</code> are exported
-    as public constants; the truncation footer states the cap values; the system
-    prompt interpolates them; and the Python wrapper seeds
-    <code>OMEGA_OUTPUT_CAP_CHARS</code> / <code>OMEGA_OUTPUT_CAP_LINES</code>
-    as accessible globals.
+    Phase 2.2 shipped (commits <code>590db74</code>, <code>3e2c683</code>) — output
+    cap now legible.  The implementation session itself
+    (<a href="#log-session-d">Session D</a>: Sonnet-medium + <code>repl-centric</code>,
+    151 calls, ~$3.74, pre-2.2 substrate) ran cleanly to completion but
+    exposed three concrete REPL affordances that misbehave under sustained
+    real-world dev use.  Fix these before promoting Phase 2.3.
   </p>
 
-  <div class="callout-title">What to ship next</div>
-  <p>
-    Phase 2.3 — best-possible rendering of REPL events in the UI feed:
-    code block visible, output with truncation marker, bootstrap event
-    surfaced, timeout/escalation events surfaced.  Absorbs the
-    UI-intelligibility audit that used to live under 2.2.
-  </p>
-  <p>
-    See the <a href="#phase23">Phase 2.3 entry</a> in the upcoming list
-    for the full scope.
+  <div class="callout-title">What to ship</div>
+  <ol>
+    <li><strong>Raise <code>MAX_TIMEOUT_SECS</code> 600 → 3600 s, and fail loudly
+        when over cap.</strong>  Today the REPL silently clamps requests above
+        600 s.  <code>cargo mutants</code> (9–10 min) sits right above it; Session D
+        burned 6 attempts and ~22 min wall-clock before guessing the workaround.
+        <code>run_command</code> has <em>no</em> cap, so a standard-tools session
+        never hits this wall — the asymmetry is a policy holdover, not a substrate
+        property.  Fix: raise the ceiling to 3600 s and return an explicit
+        <code>Err</code> when the caller exceeds it (same legibility principle as
+        Phase 2.2's footer marker).  <code>repl_addendum()</code> interpolates the
+        new ceiling from the constant.</li>
+    <li><strong>Reframe <code>sh()</code> as the variable-pattern carrier.</strong>
+        Session D used <code>sh()</code> as a <code>run_command</code> clone with
+        shell-pipe pre-truncation — every <code>cargo mutants</code> call was
+        <code>sh("… 2&gt;&amp;1 | tail -N"); print(out[-2000:])</code>, throwing away
+        bytes in <em>both</em> layers.  Add one factual line to the addendum:
+        <em>“Prefer <code>out, err, rc = sh(cmd)</code> followed by Python slicing /
+        <code>re</code> / <code>print(out[-N:])</code> over shell pipes inside the
+        <code>cmd</code> string.”</em></li>
+    <li><strong>Document the <code>\|</code> SyntaxWarning.</strong>
+        Session D emitted 11 <code>SyntaxWarning: "\|" is an invalid escape sequence</code>,
+        all from <code>grep '…\|…'</code> shell strings inside Python literals.
+        The model ignored every one of them.  One factual addendum line:
+        <em>“Shell strings containing backslashes (regex alternation <code>\|</code>,
+        escapes) — use raw strings <code>r"…"</code> to avoid Python
+        <code>SyntaxWarning</code>.”</em></li>
+  </ol>
+
+  <p style="color:var(--muted);font-size:0.92rem;">
+    Phase 2.2.2 (controlled re-measurement) follows.  Phase 2.3 (UI rendering)
+    is queued behind both.  Full entries in <a href="#phase2">Upcoming</a>.
   </p>
 </div>
 
@@ -271,8 +293,23 @@ tr:nth-child(even) td { background: #fafbfc; }
 <h3 id="phase2" style="margin-top:1.2rem;">Phase 2 — User-grade affordances</h3>
 <ul>
   <li id="phase22"><strong>2.2 — Make the REPL output cap legible.</strong>
-      ✅ Shipped — moved to <a href="#done">📜 Done</a> table.</li>
+      ✅ Shipped — see <a href="#done">📜 Done</a> table.</li>
+  <li id="phase221"><strong>2.2.1 — REPL affordance fixes surfaced by self-hosting.</strong>
+      Three small changes diagnosed by <a href="#log-session-d">Session D</a>:
+      raise <code>MAX_TIMEOUT_SECS</code> (with loud over-cap rejection, not
+      silent clamp), reframe <code>sh()</code> as variable-pattern carrier in the
+      addendum, document the <code>\|</code> SyntaxWarning pitfall.  Full scope
+      in the <a href="#next">Next step</a> block.</li>
+  <li id="phase222"><strong>2.2.2 — Self-hosting re-measurement.</strong>
+      After 2.2.1 ships, re-run a coding task comparable to Session D under
+      Sonnet-medium + <code>repl-centric</code>.  Measure: did the
+      <code>sh()</code>-with-pipe fraction drop?  Did <code>cargo mutants</code>
+      succeed on the first attempt?  Did <code>\|</code> SyntaxWarnings
+      disappear?  Also re-run the Miriam-2 thesis-correction prompt (the
+      basis for earlier substrate-comparison runs) on the post-2.2.1
+      substrate as a second comparable data point.</li>
   <li id="phase23"><strong>2.3 — REPL observability in the UI feed.</strong>
+      <span style="color:var(--muted);">Queued behind 2.2.1 + 2.2.2.</span>
       Best-possible rendering of REPL events: code block visible, output
       with truncation marker, bootstrap event surfaced, timeout/escalation
       events surfaced.  Absorbs the UI-intelligibility audit that used to
@@ -450,14 +487,10 @@ tr:nth-child(even) td { background: #fafbfc; }
     </tr>
       <tr>
       <td>Phase 2.2 — Make the REPL output cap legible</td>
-      <td><code>590db74</code></td>
-      <td>Promoted <code>MAX_OUTPUT_LINES</code> / <code>MAX_OUTPUT_CHARS</code>
-          to <code>pub</code> and re-exported from the crate root.
-          Truncation footer now states the cap values (interpolated from the
-          constants).  <code>repl_addendum()</code> uses <code>format!()</code>
-          against the same constants.  Python wrapper seeds
-          <code>OMEGA_OUTPUT_CAP_CHARS</code> / <code>OMEGA_OUTPUT_CAP_LINES</code>
-          as globals.  All mutations caught (recipes:
+      <td><code>590db74</code>, <code>3e2c683</code></td>
+      <td>Cap constants <code>pub</code>-exported; truncation footer states the
+          values; <code>repl_addendum()</code> and the Python wrapper both
+          interpolate from the constants.  Mutation testing green (recipes:
           <code>mutants-python-repl</code>, <code>mutants-system-prompt</code>).</td>
     </tr>
 </tbody>
@@ -534,6 +567,57 @@ tr:nth-child(even) td { background: #fafbfc; }
   questions on REPL scope.  Collapsed by default — open if you need to
   verify the empirical basis for a current decision.
 </p>
+
+<details open>
+<summary>Self-hosting observation log (Phase 2.2 onward)</summary>
+<div class="details-body">
+<p style="color:var(--muted);font-size:0.92rem;">
+  Real-task sessions where Omega works on its own codebase.  Each row
+  records concrete affordance findings that feed back into the plan.
+  Future entries (2.2.2 re-measurement, Miriam-2 replays, etc.) accrue here.
+</p>
+
+<table>
+  <thead><tr>
+    <th>Session</th><th>Config / substrate</th><th>Task</th><th>Calls · time · cost</th><th>Findings</th>
+  </tr></thead>
+  <tbody>
+    <tr id="log-session-d">
+      <td><code>2026-05-28T21-35-55-033-8464899f</code></td>
+      <td>Sonnet-medium + <code>repl-centric</code><br/><em>pre-2.2 substrate</em></td>
+      <td>Implementing Phase 2.2 itself (cap legibility)</td>
+      <td>151 calls (all <code>python_repl</code>)<br/>~54 min<br/>~$3.74</td>
+      <td>
+        <ul style="margin:0;padding-left:1.1rem;">
+          <li><strong>Variable pattern bypassed for subprocess work.</strong>
+              Every <code>cargo mutants</code> call was
+              <code>sh("… 2&gt;&amp;1 | tail -N"); print(out[-2000:])</code> —
+              double truncation, bytes unrecoverable.  The whole REPL premise
+              of capturing large values for later slicing was not engaged for
+              the most expensive operations.</li>
+          <li><strong>6 <code>cargo mutants</code> attempts before success</strong>
+              (~22 min wall-clock burned).  Root cause: silent clamp at
+              <code>MAX_TIMEOUT_SECS=600</code>.  Model asked for
+              <code>timeout=1200</code>, got 600 with no signal, kept guessing.
+              Eventually settled on <code>-j1</code> + shell <code>timeout 600</code>
+              + python_repl <code>timeout=660</code>.  <code>run_command</code> has
+              no such cap, so the standard-tools substrate would not have hit this.</li>
+          <li><strong>11 <code>SyntaxWarning: "\|" is an invalid escape sequence</code></strong>,
+              all from <code>grep '…\|…'</code> shell strings inside Python literals.
+              Model never adapted — same pattern through all 11 occurrences.</li>
+          <li><strong>Pager anti-pattern persists.</strong>  35 % of calls (53 / 151)
+              were pure file reads (<code>sh("cat …")</code> +
+              <code>Path(…).read_text()</code>).  Cap-legibility (just shipped) does not
+              address this; it nudges <em>how much</em> output to ask for, not <em>whether
+              to re-read</em>.</li>
+          <li>Task completed cleanly; findings ⇒ <a href="#phase221">Phase 2.2.1</a>.</li>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
+</table>
+</div>
+</details>
 
 <details>
 <summary>The pivot — how we got from benchmarks to user-grade</summary>
