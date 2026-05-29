@@ -248,25 +248,40 @@ tr:nth-child(even) td { background: #fafbfc; }
 
   <div class="callout-title">What to ship</div>
   <p>
-    Run a controlled re-measurement sub-session (Sonnet-medium + <code>repl-centric</code>)
-    on the post-2.2.1 substrate.  This phase sets up the experiment, not runs it — the
-    actual run is a separate sub-session.  Compare against Session D on:
+    Run controlled re-measurement sub-sessions on the post-2.2.1 substrate.
+    <strong>Target n ≥ 3 per task</strong> — single-shot runs can't separate
+    substrate effects from per-run variance, and the Miriam-2 cost question raised
+    by <a href="#log-session-e">Session E</a> needs more than one data point to
+    settle.
   </p>
+  <p style="color:var(--muted);font-size:0.92rem;">
+    Status: <a href="#log-session-e">Session E</a> already provides 1 of the 3 needed
+    Miriam-2 + Sonnet-medium + post-2.2.1 runs (it was done before this phase was
+    formally promoted).  Two more Miriam-2 replays + a fresh self-hosted coding task
+    (Session-D-shape) remain.
+  </p>
+  <p>Compare against Session D / Session A on:</p>
   <ol>
     <li><strong>sh()-with-pipe fraction.</strong>  Did fewer <code>sh()</code> calls
         pipe to <code>head</code>/<code>tail</code>/<code>grep</code> in the cmd
-        string?  The updated addendum should steer toward the variable pattern.</li>
-    <li><strong>cargo-mutants first-attempt success.</strong>  Session D burned 6
-        attempts and ~22 min because the 600 s cap was invisible.  With 3600 s
-        available and an explicit rejection, one attempt should suffice.</li>
+        string?  Session E hit 0 / 50; need to confirm that holds.</li>
+    <li><strong>cargo-mutants first-attempt success</strong> (self-hosting task only).
+        Session D burned 6 attempts and ~22 min because the 600 s cap was invisible.
+        With 3600 s available and an explicit rejection, one attempt should suffice.</li>
     <li><strong><code>\|</code> SyntaxWarning count.</strong>  Session D emitted 11;
-        target is 0 (or near-zero) after the raw-string guidance is in the prompt.</li>
-    <li><strong>Miriam-2 thesis-correction prompt.</strong>  Re-run on the
-        post-2.2.1 substrate as a second comparable data point (basis for earlier
-        substrate-comparison runs).</li>
+        Session E emitted 0.  Target: 0 across all post-2.2.1 runs.</li>
+    <li><strong>Cost vs. baseline.</strong>  Session E was 2.4× more calls / cost
+        than the pre-2.2 Sonnet-REPL Miriam-2 run (Session A).  Open question whether
+        this is real substrate cost (longer addendum, more steering toward
+        thoroughness) or single-shot variance.  n ≥ 3 with medians answers it.</li>
+    <li><strong>Miriam-2 substrate triangulation.</strong>  Pair the new
+        Sonnet-medium + post-2.2.1 runs with at least one fresh standard-tools run
+        on the same prompt, so the comparison has both substrates at the current
+        substrate version (not the pre-2.2 Session C as the only standard-tools
+        anchor).</li>
   </ol>
   <p>
-    Record results in a new <code>#log-session-e</code> row in this document.
+    Record each run as a new <code>#log-session-*</code> row in this document.
   </p>
 </div>
 
@@ -605,6 +620,48 @@ tr:nth-child(even) td { background: #fafbfc; }
               address this; it nudges <em>how much</em> output to ask for, not <em>whether
               to re-read</em>.</li>
           <li>Task completed cleanly; findings ⇒ <a href="#phase221">Phase 2.2.1</a>.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr id="log-session-e">
+      <td><code>2026-05-29T19-28-37-591-ac8b1222</code></td>
+      <td>Sonnet-medium · tool selection: <code>python_repl</code> +
+          <code>web_search</code> + <code>fetch_url</code><br/>
+          <em>post-2.2.1 substrate</em></td>
+      <td>Miriam-2 — PDF thesis → friendly German HTML <em>Gutachten</em>
+          (same prompt as the pre-2.2 Sessions A / B / C)</td>
+      <td>50 calls (all <code>python_repl</code>)<br/>4 min 46 s<br/>~$0.78
+          <br/><span style="color:var(--muted);font-size:0.85rem;">
+          tokens: in 53 · out 14 171 · cache-read 1.26 M · cache-write 49.7 k</span></td>
+      <td>
+        <ul style="margin:0;padding-left:1.1rem;">
+          <li><strong>Variable pattern used textbook-cleanly.</strong>
+              <code>pdftotext</code> ran <em>once</em> via <code>sh()</code>;
+              output captured into <code>out</code>, rebound to <code>full_text</code>,
+              then sliced as <code>full_text[3000:8000]</code>,
+              <code>[8000:15000]</code>, …, <code>[60000:80000]</code> across
+              six follow-up calls.  No re-shelling, no shell pre-truncation.
+              Exactly the discipline Phase 2.2 + 2.2.1 were designed to encourage.</li>
+          <li><strong>0 <code>sh()</code>-with-pipe calls</strong> (only 1
+              <code>sh()</code> total — call [1], no pipe).  Session D's
+              double-truncation anti-pattern did not recur.</li>
+          <li><strong>0 <code>\|</code> <code>SyntaxWarnings</code></strong>;
+              the model did not reach for shell-regex strings, using Python
+              <code>re</code> where pattern matching was needed.</li>
+          <li><strong>0 timeouts, 0 over-cap rejections.</strong>  Nothing the task
+              did was long-running, so the new 3600 s ceiling never came into
+              play — the correct outcome.</li>
+          <li><strong>Deliverable:</strong> a 14.8 KB structured HTML
+              <em>Gutachten</em> with nav bar + 7 numbered sections, written in a
+              single tool call (#49).  Matches the user brief on tone, length,
+              navigability.</li>
+          <li><strong>Open question — cost vs. Session A.</strong>  E used 50 calls
+              / $0.78; the pre-2.2 Sonnet-REPL Miriam-2 (Session A) used ~21 / $0.34
+              — <strong>2.4× more</strong> on the same prompt.  Possible drivers:
+              more thorough PDF reading (E sliced 6 ranges to 80 KB), heavier HTML
+              output, longer system addendum costing more cache-write, or simple
+              single-shot variance.  Cannot be answered from one run; ⇒
+              <a href="#phase222">Phase 2.2.2</a> revised to require n ≥ 3.</li>
         </ul>
       </td>
     </tr>
