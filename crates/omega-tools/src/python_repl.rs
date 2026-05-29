@@ -105,4 +105,4 @@ pub use repl::PythonRepl;
 // public API; the only `pub use` above is `PythonRepl`.
 pub(crate) use bootstrap::BootstrapInfo;
 pub use output::{MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES};
-pub(crate) use repl::{DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS};
+pub use repl::{DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS};

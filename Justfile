@@ -311,6 +311,25 @@ mutants-system-prompt:
 # you touch the toolset wiring.
 mutants-tool-selection: mutants-feature-flags mutants-schemas mutants-system-prompt
 
+# Phase 2.2.1 — timeout over-cap rejection in the python_repl dispatch arm.
+# Covers the new over-cap rejection path added to execute_tool's python_repl arm.
+mutants-python-repl-timeout:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
+
+# Phase 2.2.1 — full python_repl module sweep (includes repl.rs constant change).
+# Covers MAX_TIMEOUT_SECS constant and repl.execute() defence-in-depth clamp.
+mutants-python-repl-221:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/python_repl/repl.rs"
+
+# Phase 2.2.1 — system_prompt.rs: timeout constants + sh() / SyntaxWarning.
+# Alias for mutants-system-prompt scoped to the 2.2.1 additions.
+mutants-system-prompt-221:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
+
 # -----------------------------------------------------------------------
 # Repo housekeeping
 # -----------------------------------------------------------------------

@@ -22,6 +22,7 @@ const PICKER_BACKDROP: &str = "[data-testid='leptos-picker-backdrop']";
 const PICKER_CLOSE: &str = "[data-testid='leptos-picker-close']";
 const COMPOSER_SESSIONS: &str = "[data-testid='leptos-composer-sessions']";
 const SESSION_NEW: &str = "[data-testid='leptos-session-new']";
+const TOOL_CREATE: &str = "[data-testid='leptos-tool-create']";
 
 fn item_sel(dir: &str) -> String {
     format!("[data-testid='leptos-session-item'][data-session-dir='{dir}']")
@@ -251,7 +252,11 @@ async fn picker_backdrop_click_closes() {
 // Auto-close on Reset / Resume (Phase 3.9 TODO-2)
 // ---------------------------------------------------------------------------
 
-/// `+ new session` auto-closes the picker (before the server ack).
+/// `+ new session` → tool panel → Create auto-closes the picker.
+///
+/// Phase 2.1 changed the flow: clicking `+ new session` now opens a
+/// tool-selection panel (picker stays open); `Create session →` commits
+/// the create and closes the picker.
 #[tokio::test]
 #[ignore = "browser"]
 async fn picker_new_session_auto_closes() {
@@ -261,10 +266,16 @@ async fn picker_new_session_auto_closes() {
     let prev = h.active_dir().await.unwrap_or_default();
     h.click(SESSION_NEW).await.expect("click + new");
 
-    // Picker disappears immediately (don't wait for server ack).
+    // Picker stays open while the tool-selection panel is visible.
+    h.wait_for_selector(TOOL_CREATE, Duration::from_secs(3))
+        .await
+        .expect("tool-create button must appear");
+    h.click(TOOL_CREATE).await.expect("click Create");
+
+    // Picker disappears after Create (before the server ack).
     h.wait_for_detached(PICKER, Duration::from_secs(3))
         .await
-        .expect("picker auto-closes");
+        .expect("picker auto-closes after Create");
 
     // Eventually the active dir reflects the new session.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);

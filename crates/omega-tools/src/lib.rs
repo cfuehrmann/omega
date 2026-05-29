@@ -31,7 +31,7 @@ mod tools;
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
 pub use python_repl::PythonRepl;
-pub use python_repl::{MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES};
+pub use python_repl::{DEFAULT_TIMEOUT_SECS, MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES, MAX_TIMEOUT_SECS};
 pub use schemas::{
     ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, PRESETS, Preset, preset_by_id, tool_definitions,
 };
@@ -179,11 +179,21 @@ pub async fn execute_tool(
                     "python_repl: internal error: REPL not initialised after successful start",
                 );
             };
-            // Parse per-call timeout: default 60 s, clamped to [1, 600].
-            let timeout_secs = input["timeout"]
-                .as_u64()
-                .unwrap_or(python_repl::DEFAULT_TIMEOUT_SECS)
-                .min(python_repl::MAX_TIMEOUT_SECS);
+            // Parse per-call timeout: default DEFAULT_TIMEOUT_SECS.
+            // Reject explicit values above MAX_TIMEOUT_SECS loudly; silent
+            // clamp inside repl.execute() is retained as defense-in-depth.
+            let requested_timeout = input["timeout"].as_u64();
+            let timeout_secs = match requested_timeout {
+                Some(t) if t > python_repl::MAX_TIMEOUT_SECS => {
+                    return ToolResult::err(format!(
+                        "python_repl: timeout={t}s exceeds maximum of \
+                         {}s. Reduce, or split the work across multiple calls.",
+                        python_repl::MAX_TIMEOUT_SECS
+                    ));
+                }
+                Some(t) => t,
+                None => python_repl::DEFAULT_TIMEOUT_SECS,
+            };
             let output = repl.execute(&code, timeout_secs, Some(ctx)).await;
             // If the repl was hard-killed during execute, clear the cached
             // handle so the next call spawns a fresh kernel.
@@ -252,6 +262,85 @@ mod dispatch_tests {
             );
         }
     }
+    /// `python_repl` rejects timeout values above `MAX_TIMEOUT_SECS` with a
+    /// descriptive error that includes both the requested and max values.
+    /// Tests via `execute_tool` per AGENTS.md mandate.
+    #[tokio::test]
+    async fn python_repl_timeout_over_cap_is_rejected() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let mut ctx = ToolCtx::new(tmp.path(), "test0002");
+        ctx.python_repl = Some(Arc::new(Mutex::new(None)));
+        ctx.tool_selection = vec!["python_repl".to_owned()];
+
+        let over_cap = python_repl::MAX_TIMEOUT_SECS + 1;
+        let result = execute_tool(
+            "python_repl",
+            serde_json::json!({
+                "code": "1+1",
+                "timeout": over_cap
+            }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+
+        assert!(
+            result.is_error,
+            "expected error for timeout > MAX_TIMEOUT_SECS, got ok: {}",
+            result.content
+        );
+        let requested_str = over_cap.to_string();
+        let max_str = python_repl::MAX_TIMEOUT_SECS.to_string();
+        assert!(
+            result.content.contains(&requested_str),
+            "error must contain requested timeout ({requested_str}): {}",
+            result.content
+        );
+        assert!(
+            result.content.contains(&max_str),
+            "error must contain max timeout ({max_str}): {}",
+            result.content
+        );
+    }
+
+    /// `python_repl` with timeout exactly == `MAX_TIMEOUT_SECS` must NOT reject.
+    /// Tests via `execute_tool` per AGENTS.md mandate.
+    #[tokio::test]
+    async fn python_repl_timeout_at_cap_is_accepted() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let mut ctx = ToolCtx::new(tmp.path(), "test0003");
+        ctx.python_repl = Some(Arc::new(Mutex::new(None)));
+        ctx.tool_selection = vec!["python_repl".to_owned()];
+
+        let result = execute_tool(
+            "python_repl",
+            serde_json::json!({
+                "code": "print('ok')",
+                "timeout": python_repl::MAX_TIMEOUT_SECS
+            }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+
+        assert!(
+            !result.is_error,
+            "timeout == MAX_TIMEOUT_SECS must not be rejected: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("ok"),
+            "expected 'ok' in output: {}",
+            result.content
+        );
+    }
+
     /// Integration test: `OMEGA_OUTPUT_CAP_CHARS` and `OMEGA_OUTPUT_CAP_LINES`
     /// are seeded as globals by the Python wrapper and are accessible in
     /// executed snippets.  Tests via `execute_tool` per the AGENTS.md mandate.

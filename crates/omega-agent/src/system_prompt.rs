@@ -21,7 +21,7 @@
 
 use std::path::{Path, PathBuf};
 
-use omega_tools::{MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES};
+use omega_tools::{DEFAULT_TIMEOUT_SECS, MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES, MAX_TIMEOUT_SECS};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -305,7 +305,8 @@ pub fn repl_addendum() -> String {
        and building up intermediate results step-by-step.\n\
      - Prefer a single call with all related statements over many small calls \
        — state persists, so you can build on previous results.\n\
-     - Optional `timeout` parameter (default 60 s, max 600 s).  This is the \
+     - Optional `timeout` parameter (default {DEFAULT_TIMEOUT_SECS} s, \
+       max {MAX_TIMEOUT_SECS} s).  This is the \
        OUTER bound on a single call.  Any inner timeouts you set in the \
        code itself (`subprocess.run(..., timeout=N)`, `threading` joins, \
        etc.) must be **strictly less than** this outer timeout \u{2014} inner \
@@ -325,7 +326,13 @@ pub fn repl_addendum() -> String {
        do not.\n\
      - Use `sh(\"cmd\")` to run shell commands: \
        `out, err, rc = sh(\"echo hi\")`.  Returns `(stdout, stderr, returncode)` \
-       (str, str, int).  Pre-imported — no `import subprocess` needed."
+       (str, str, int).  Pre-imported — no `import subprocess` needed.  \
+       Prefer `out, err, rc = sh(cmd)` followed by Python slicing / \
+       `re` / `print(out[-N:])` over shell pipes inside the `cmd` string. \
+       Shell-piping to `head`/`tail`/`grep` discards bytes you can't \
+       re-inspect; the variable pattern keeps them.\n\
+     - Shell strings containing backslashes (regex alternation `\\|`, \
+       escapes) — use raw strings `r\"...\"` to avoid Python `SyntaxWarning`."
     )
 }
 
@@ -1493,6 +1500,52 @@ mod tests {
         assert!(
             content.contains(&expected_lines),
             "repl_addendum must contain MAX_OUTPUT_LINES ({expected_lines}): {content:.300}"
+        );
+    }
+
+    /// `repl_addendum()` interpolates `DEFAULT_TIMEOUT_SECS` and `MAX_TIMEOUT_SECS`
+    /// so the prompt can never drift from the constants.
+    #[test]
+    fn repl_addendum_contains_timeout_constants() {
+        use omega_tools::{DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS};
+        let content = repl_addendum();
+        let expected_default = DEFAULT_TIMEOUT_SECS.to_string();
+        let expected_max = MAX_TIMEOUT_SECS.to_string();
+        assert!(
+            content.contains(&expected_max),
+            "repl_addendum must contain MAX_TIMEOUT_SECS ({expected_max}): {content:.300}"
+        );
+        assert!(
+            content.contains(&expected_default),
+            "repl_addendum must contain DEFAULT_TIMEOUT_SECS ({expected_default}): {content:.300}"
+        );
+    }
+
+    /// `repl_addendum()` must contain the variable-pattern guidance for `sh()`.
+    #[test]
+    fn repl_addendum_contains_sh_variable_pattern_guidance() {
+        let content = repl_addendum();
+        assert!(
+            content.contains("variable pattern keeps them"),
+            "repl_addendum must describe sh() variable-pattern benefit: {content:.400}"
+        );
+        assert!(
+            content.contains("Shell-piping to"),
+            "repl_addendum must warn about shell-piping: {content:.400}"
+        );
+    }
+
+    /// `repl_addendum()` must document the raw-string fix for `SyntaxWarning`.
+    #[test]
+    fn repl_addendum_contains_syntax_warning_guidance() {
+        let content = repl_addendum();
+        assert!(
+            content.contains("SyntaxWarning"),
+            "repl_addendum must mention SyntaxWarning: {content:.400}"
+        );
+        assert!(
+            content.contains("raw strings"),
+            "repl_addendum must mention raw strings as fix: {content:.400}"
         );
     }
 

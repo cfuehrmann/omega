@@ -699,11 +699,17 @@ impl TestHarness {
         Ok(())
     }
 
-    /// Click `+ new session` (assumes the picker is open) and wait
-    /// for `<main data-active-session-dir>` to flip to a new value.
+    /// Click `+ new session`, confirm the tool-selection panel (which now
+    /// appears as an intermediate step), and wait for
+    /// `<main data-active-session-dir>` to flip to a new value.
     pub async fn new_session(&self) -> Result<String> {
         let before = self.active_dir().await.unwrap_or_default();
         self.click("[data-testid='leptos-session-new']").await?;
+        // The new session button now opens a tool-selection panel.
+        // Wait for the Create button to appear, then click it.
+        self.wait_for_selector("[data-testid='leptos-tool-create']", DEFAULT_TIMEOUT)
+            .await?;
+        self.click("[data-testid='leptos-tool-create']").await?;
         let deadline = Instant::now() + DEFAULT_TIMEOUT;
         loop {
             if let Ok(now) = self.active_dir().await

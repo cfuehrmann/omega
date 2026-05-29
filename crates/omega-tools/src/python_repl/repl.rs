@@ -39,8 +39,9 @@ use super::wrapper::{CODE_END_MARKER, python_wrapper};
 pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
 /// Maximum per-call timeout the LLM may request.  Values above this are
-/// silently clamped — a confused LLM cannot wedge the session indefinitely.
-pub const MAX_TIMEOUT_SECS: u64 = 600;
+/// rejected with an error from the dispatch site;
+/// `execute()` itself still clamps as defense-in-depth.
+pub const MAX_TIMEOUT_SECS: u64 = 3600;
 
 /// Grace window (seconds) after SIGINT before escalating to hard kill.
 ///
