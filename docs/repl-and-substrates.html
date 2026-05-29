@@ -234,51 +234,39 @@ tr:nth-child(even) td { background: #fafbfc; }
 
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<h2 id="next">⏭ Next step: Phase 2.2.1 — REPL affordance fixes surfaced by self-hosting</h2>
+<h2 id="next">⏭ Next step: Phase 2.2.2 — Self-hosting re-measurement</h2>
 
 <div class="callout">
   <div class="callout-title">Where we are</div>
   <p>
-    Phase 2.2 shipped (commits <code>590db74</code>, <code>3e2c683</code>) — output
-    cap now legible.  The implementation session itself
-    (<a href="#log-session-d">Session D</a>: Sonnet-medium + <code>repl-centric</code>,
-    151 calls, ~$3.74, pre-2.2 substrate) ran cleanly to completion but
-    exposed three concrete REPL affordances that misbehave under sustained
-    real-world dev use.  Fix these before promoting Phase 2.3.
+    Phase 2.2.1 shipped (commit <code>ac04a5a</code>) — <code>MAX_TIMEOUT_SECS</code>
+    raised to 3600 s with loud over-cap rejection, <code>sh()</code> reframed as the
+    variable-pattern carrier in the system prompt, and the <code>\|</code>
+    <code>SyntaxWarning</code> pitfall documented.
+    Also fixed picker e2e tests broken by the Phase 2.1 tool-selection UI change.
   </p>
 
   <div class="callout-title">What to ship</div>
+  <p>
+    Run a controlled re-measurement sub-session (Sonnet-medium + <code>repl-centric</code>)
+    on the post-2.2.1 substrate.  This phase sets up the experiment, not runs it — the
+    actual run is a separate sub-session.  Compare against Session D on:
+  </p>
   <ol>
-    <li><strong>Raise <code>MAX_TIMEOUT_SECS</code> 600 → 3600 s, and fail loudly
-        when over cap.</strong>  Today the REPL silently clamps requests above
-        600 s.  <code>cargo mutants</code> (9–10 min) sits right above it; Session D
-        burned 6 attempts and ~22 min wall-clock before guessing the workaround.
-        <code>run_command</code> has <em>no</em> cap, so a standard-tools session
-        never hits this wall — the asymmetry is a policy holdover, not a substrate
-        property.  Fix: raise the ceiling to 3600 s and return an explicit
-        <code>Err</code> when the caller exceeds it (same legibility principle as
-        Phase 2.2's footer marker).  <code>repl_addendum()</code> interpolates the
-        new ceiling from the constant.</li>
-    <li><strong>Reframe <code>sh()</code> as the variable-pattern carrier.</strong>
-        Session D used <code>sh()</code> as a <code>run_command</code> clone with
-        shell-pipe pre-truncation — every <code>cargo mutants</code> call was
-        <code>sh("… 2&gt;&amp;1 | tail -N"); print(out[-2000:])</code>, throwing away
-        bytes in <em>both</em> layers.  Add one factual line to the addendum:
-        <em>“Prefer <code>out, err, rc = sh(cmd)</code> followed by Python slicing /
-        <code>re</code> / <code>print(out[-N:])</code> over shell pipes inside the
-        <code>cmd</code> string.”</em></li>
-    <li><strong>Document the <code>\|</code> SyntaxWarning.</strong>
-        Session D emitted 11 <code>SyntaxWarning: "\|" is an invalid escape sequence</code>,
-        all from <code>grep '…\|…'</code> shell strings inside Python literals.
-        The model ignored every one of them.  One factual addendum line:
-        <em>“Shell strings containing backslashes (regex alternation <code>\|</code>,
-        escapes) — use raw strings <code>r"…"</code> to avoid Python
-        <code>SyntaxWarning</code>.”</em></li>
+    <li><strong>sh()-with-pipe fraction.</strong>  Did fewer <code>sh()</code> calls
+        pipe to <code>head</code>/<code>tail</code>/<code>grep</code> in the cmd
+        string?  The updated addendum should steer toward the variable pattern.</li>
+    <li><strong>cargo-mutants first-attempt success.</strong>  Session D burned 6
+        attempts and ~22 min because the 600 s cap was invisible.  With 3600 s
+        available and an explicit rejection, one attempt should suffice.</li>
+    <li><strong><code>\|</code> SyntaxWarning count.</strong>  Session D emitted 11;
+        target is 0 (or near-zero) after the raw-string guidance is in the prompt.</li>
+    <li><strong>Miriam-2 thesis-correction prompt.</strong>  Re-run on the
+        post-2.2.1 substrate as a second comparable data point (basis for earlier
+        substrate-comparison runs).</li>
   </ol>
-
-  <p style="color:var(--muted);font-size:0.92rem;">
-    Phase 2.2.2 (controlled re-measurement) follows.  Phase 2.3 (UI rendering)
-    is queued behind both.  Full entries in <a href="#phase2">Upcoming</a>.
+  <p>
+    Record results in a new <code>#log-session-e</code> row in this document.
   </p>
 </div>
 
@@ -295,21 +283,11 @@ tr:nth-child(even) td { background: #fafbfc; }
   <li id="phase22"><strong>2.2 — Make the REPL output cap legible.</strong>
       ✅ Shipped — see <a href="#done">📜 Done</a> table.</li>
   <li id="phase221"><strong>2.2.1 — REPL affordance fixes surfaced by self-hosting.</strong>
-      Three small changes diagnosed by <a href="#log-session-d">Session D</a>:
-      raise <code>MAX_TIMEOUT_SECS</code> (with loud over-cap rejection, not
-      silent clamp), reframe <code>sh()</code> as variable-pattern carrier in the
-      addendum, document the <code>\|</code> SyntaxWarning pitfall.  Full scope
-      in the <a href="#next">Next step</a> block.</li>
+      ✅ Shipped — see <a href="#done">📜 Done</a> table.</li>
   <li id="phase222"><strong>2.2.2 — Self-hosting re-measurement.</strong>
-      After 2.2.1 ships, re-run a coding task comparable to Session D under
-      Sonnet-medium + <code>repl-centric</code>.  Measure: did the
-      <code>sh()</code>-with-pipe fraction drop?  Did <code>cargo mutants</code>
-      succeed on the first attempt?  Did <code>\|</code> SyntaxWarnings
-      disappear?  Also re-run the Miriam-2 thesis-correction prompt (the
-      basis for earlier substrate-comparison runs) on the post-2.2.1
-      substrate as a second comparable data point.</li>
+      Promoted to <a href="#next">⏭ Next step</a>.  Full scope in that block.</li>
   <li id="phase23"><strong>2.3 — REPL observability in the UI feed.</strong>
-      <span style="color:var(--muted);">Queued behind 2.2.1 + 2.2.2.</span>
+      <span style="color:var(--muted);">Queued behind 2.2.2.</span>
       Best-possible rendering of REPL events: code block visible, output
       with truncation marker, bootstrap event surfaced, timeout/escalation
       events surfaced.  Absorbs the UI-intelligibility audit that used to
@@ -492,6 +470,22 @@ tr:nth-child(even) td { background: #fafbfc; }
           values; <code>repl_addendum()</code> and the Python wrapper both
           interpolate from the constants.  Mutation testing green (recipes:
           <code>mutants-python-repl</code>, <code>mutants-system-prompt</code>).</td>
+    </tr>
+    <tr>
+      <td>Phase 2.2.1 — REPL affordance fixes surfaced by self-hosting</td>
+      <td><code>ac04a5a</code></td>
+      <td><code>MAX_TIMEOUT_SECS</code> raised 600 → 3600 s; over-cap requests
+          now return an explicit error instead of silent clamp.
+          <code>repl_addendum()</code> interpolates default and max from the
+          constants.  <code>sh()</code> bullet extended with variable-pattern
+          guidance (prefer capturing output over shell-piping to
+          <code>head</code>/<code>tail</code>).  Raw-string (<code>r"…"</code>)
+          tip added for the <code>\|</code> <code>SyntaxWarning</code> pitfall.
+          Also fixed picker e2e tests broken by the Phase 2.1 tool-selection
+          UI change.  Mutation testing green (recipes:
+          <code>mutants-python-repl-timeout</code>,
+          <code>mutants-python-repl-221</code>,
+          <code>mutants-system-prompt-221</code>).</td>
     </tr>
 </tbody>
 </table>
