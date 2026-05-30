@@ -3,6 +3,8 @@ node_modules
 
 # Rust build artifacts
 target/
+# Portable binary builder output (ubuntu:20.04 container, glibc 2.31 portability)
+target-builder/
 
 # Leptos frontend build artifacts (Phase 3.0+)
 # `frontends/leptos/` is a standalone Cargo workspace; trunk writes its

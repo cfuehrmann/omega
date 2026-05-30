@@ -263,21 +263,34 @@ trial per task, sequentially, with Docker cleanup between trials.  This avoids
 the parallel resource contention that caused install timeouts in earlier sweep
 attempts (3–6 min per install solo, 10–20 min under parallel load).
 
-**Step 1 — build the host binary (one-time, ~5 min):**
+**Step 1 — build the portable host binary (one-time, ~5 min):**
 
 ```bash
 cd /home/carsten/omega/dev
-cargo build -p omega-cli --release
+bench/build_release_binary.sh
 ```
+
+> **Why a container build?**  A host-native `cargo build` links against the
+> host's glibc (currently 2.43 on this machine).  Four of the ten TB2 task
+> images carry older base images (glibc < 2.38), so the host binary refuses
+> to load there with a `GLIBC_2.38 not found` error.  Building inside
+> `ubuntu:20.04` (glibc 2.31) produces a binary that runs on every TB2 image.
+> The script mounts the repo into the container and uses a persisted
+> `target-builder/` directory, so subsequent runs reuse cargo's incremental
+> cache and are fast.
+
+The script prints a one-line summary including the max GLIBC version.
+Output binary lands in `target-builder/release/omega` (separate from the
+native `target/` directory used by `cargo test` and dev builds).
 
 Verify the version matches the pin in `omega_agent.py`:
 
 ```bash
-./target/release/omega --version
+./target-builder/release/omega --version
 # Expected output: omega 0.1.15  (matches OMEGA_VERSION = "v0.1.15")
 ```
 
-If the version doesn't match, rebuild and/or check `crates/omega-cli/Cargo.toml`.
+If the version doesn't match, re-run the build script and/or check `crates/omega-cli/Cargo.toml`.
 
 **Step 2 — run the sweep:**
 

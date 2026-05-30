@@ -261,13 +261,16 @@ tr:nth-child(even) td { background: #fafbfc; }
     (Session-D-shape) remain.
   </p>
   <p style="color:var(--ok-border);font-size:0.92rem;">
-    ✅ <strong>Measurement infrastructure now in place</strong> (Phase 2.2.2(c),
-    <a href="#log-session-g">Session G</a>):
+    ✅ <strong>Phase 2.2.2(c) infra complete</strong>
+    (<a href="#log-session-g">Session G</a> + <a href="#log-session-h">Session H</a>):
     <code>bench/run_sequential_sweep.py</code> runs 87 TB2 tasks sequentially,
     one at a time, with Docker cleanup between trials, using a
-    host-built <code>omega-cli</code> binary copied into each container
-    (eliminates the 5-min per-trial compile).  Smoke gate confirmed:<br/>
-    <code>fix-git</code> → mean=1.0, agent-setup 4 s (was 300–360 s).  <br/>
+    GLIBC-portable <code>omega-cli</code> binary (built inside
+    <code>ubuntu:20.04</code> / glibc 2.31, max GLIBC requirement: 2.30)
+    copied into each container — zero setup timeouts, binary loads on
+    every TB2 task image.  Smoke gate confirmed:<br/>
+    <code>circuit-fibsqrt</code> → 0 exceptions, no GLIBC error (reward 0.0 —
+    agent failed the task, infra worked).  <br/>
     Remaining work: operator runs the full 87-task sweep via
     <code>python run_sequential_sweep.py [--resume]</code>; n ≥ 3 re-runs
     once sweep shape is confirmed.  Build prerequisite: see
@@ -787,6 +790,50 @@ tr:nth-child(even) td { background: #fafbfc; }
               No performance metrics for this session (infrastructure work, not
               a task completion session).  Operator will audit commit diff and
               smoke-test log.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr id="log-session-h">
+      <td><code>2026-05-30T13-00-55-549-81061017</code></td>
+      <td>Standard tools, Sonnet-medium (<code>claude-sonnet-4-6</code>)</td>
+      <td>GLIBC portability fix: ubuntu:20.04 container build for glibc 2.31</td>
+      <td>Infrastructure session (no agent performance measurement)</td>
+      <td>
+        <ul style="margin:0;padding-left:1.1rem;">
+          <li><strong>Problem diagnosed from v0115-seq-* sweep:</strong>
+              4 of 10 TB2 task containers had glibc &lt; 2.38; host-native
+              binary (glibc 2.43) failed to load with
+              <code>GLIBC_2.38/2.39 not found</code>.</li>
+          <li><strong>Fix:</strong> <code>bench/build_release_binary.sh</code>
+              builds <code>omega-cli</code> inside <code>ubuntu:20.04</code>
+              (glibc 2.31, gcc-10 — gcc-9 refused by
+              <code>aws-lc-sys</code> due to memcmp bug #95189).
+              Output lands in <code>target-builder/release/omega</code>,
+              separate from the dev <code>target/</code> directory.
+              Max GLIBC requirement of the resulting binary: <strong>2.30</strong>.</li>
+          <li><strong>Files touched:</strong>
+              <code>bench/build_release_binary.sh</code> (new, executable),
+              <code>bench/omega_agent.py</code> (binary path
+              <code>target/</code> → <code>target-builder/</code>, error
+              messages updated),
+              <code>bench/run_sequential_sweep.py</code> (docstring
+              build step updated),
+              <code>bench/README.md</code> (Step 1 updated, portability
+              rationale added),
+              <code>.gitignore</code> (<code>target-builder/</code> added),
+              <code>docs/repl-and-substrates.html</code> (this row +
+              next-step callout updated to note Phase 2.2.2(c) complete).</li>
+          <li><strong>Smoke-test result:</strong> <code>circuit-fibsqrt</code>
+              → 0 exceptions, no GLIBC error in trial output, reward 0.0
+              (agent failed the task — legitimate outcome, binary loaded
+              cleanly on the container).  Incremental build cache
+              confirmed working (second run of script reuses
+              <code>target-builder/</code>).</li>
+          <li><strong>Phase 2.2.2(c) infra now complete:</strong>
+              zero setup timeouts, GLIBC-portable binary (max 2.30),
+              sequential prune, incremental cache.
+              Operator can run full 87-task sweep immediately.</li>
+          <li><strong>Factual-only self-report per operator instruction.</strong></li>
         </ul>
       </td>
     </tr>

@@ -8,10 +8,14 @@ in earlier sweep attempts.
 
 Pre-requisites
 --------------
-1. Build the host binary before invoking this script::
+1. Build the portable host binary before invoking this script::
 
        cd <repo-root>
-       cargo build -p omega-cli --release
+       ./bench/build_release_binary.sh
+
+   This builds inside ubuntu:20.04 (glibc 2.31) so the binary runs on
+   every TB2 task image, including those with older base images
+   (glibc < 2.38).  Output lands in ``target-builder/release/omega``.
 
 2. Set ANTHROPIC_API_KEY in the environment.
 

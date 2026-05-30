@@ -58,11 +58,12 @@ class OmegaRustAgent(BaseInstalledAgent):
 
     **Pre-requisite:** build the binary on the host before running any sweep::
 
-        cargo build -p omega-cli --release
+        bench/build_release_binary.sh
 
-    The binary is expected at ``<repo-root>/target/release/omega`` (one level
-    above the ``bench/`` directory).  ``install()`` will raise a clear error
-    if the binary is absent.
+    The binary is expected at ``<repo-root>/target-builder/release/omega``
+    (built inside ubuntu:20.04 for glibc 2.31 portability across all TB2
+    task images).  ``install()`` will raise a clear error if the binary is
+    absent.
 
     The run step invokes the native binary directly with ``--headless`` and
     writes session files into Harbor's bind-mounted ``/logs/agent`` tree, so
@@ -74,8 +75,8 @@ class OmegaRustAgent(BaseInstalledAgent):
 
     Usage
     -----
-    # Build the host binary first:
-    cargo build -p omega-cli --release
+    # Build the portable binary first (ubuntu:20.04 container, glibc 2.31):
+    bench/build_release_binary.sh
 
     harbor run -d terminal-bench@2.0 \\
       --agent-import-path omega_agent:OmegaRustAgent \\
@@ -117,11 +118,11 @@ class OmegaRustAgent(BaseInstalledAgent):
         # Locate the pre-built host binary (one level above bench/).
         # The binary name is "omega" because crates/omega-cli/Cargo.toml
         # declares [[bin]] name = "omega".
-        host_bin = Path(__file__).parent.parent / "target" / "release" / "omega"
+        host_bin = Path(__file__).parent.parent / "target-builder" / "release" / "omega"
         if not host_bin.exists():
             raise FileNotFoundError(
                 f"Host binary not found at {host_bin}.  "
-                "Run `cargo build -p omega-cli --release` on the host first."
+                "Run `bench/build_release_binary.sh` on the host first."
             )
 
         # Sanity-check: verify the binary version matches the pinned OMEGA_VERSION.
@@ -145,7 +146,7 @@ class OmegaRustAgent(BaseInstalledAgent):
             raise RuntimeError(
                 f"Host binary version mismatch: expected {OMEGA_VERSION!r} "
                 f"but `omega --version` output was {version_output!r}.  "
-                f"Run `cargo build -p omega-cli --release` on the host and "
+                f"Run `bench/build_release_binary.sh` on the host and "
                 f"ensure crates/omega-cli/Cargo.toml version = \"{expected_version}\"."
             )
 
@@ -155,8 +156,9 @@ class OmegaRustAgent(BaseInstalledAgent):
         #    rustls-native-certs can validate the Anthropic API's TLS cert
         #    against the system trust store.  No build tools, no Rust
         #    toolchain, no git clone.
-        #    Note: build the host binary in a Debian Bookworm container
-        #    (matching the task image) so the glibc ABI is compatible.
+        #    Note: build the host binary inside ubuntu:20.04 (glibc 2.31)
+        #    via bench/build_release_binary.sh so the ABI is compatible with
+        #    all TB2 task images, including those with glibc < 2.38.
         await self.exec_as_root(
             environment,
             command=(
