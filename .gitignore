@@ -84,3 +84,4 @@ bench/jobs/
 __pycache__/
 *.pyc
 .phase4-notes.md
+*.snap.new
