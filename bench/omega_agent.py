@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -47,12 +48,24 @@ OMEGA_RUST_SESSION_ROOT = "/logs/agent/omega-session"
 
 
 class OmegaRustAgent(BaseInstalledAgent):
-    """Omega Rust binary, built from source inside the task container.
+    """Omega Rust binary, copied from the host into each task container.
 
-    The install step downloads the Rust toolchain, clones the Omega repo at
-    the pinned tag, and compiles the ``omega-cli`` crate.  The run step
-    invokes the native binary directly with ``--headless`` and writes session
-    files into Harbor's bind-mounted ``/logs/agent`` tree, so
+    The install step copies a pre-built host binary into the container and
+    installs only the minimal runtime libraries it needs (ca-certificates +
+    libssl3).  This replaces the old approach of cloning the repo and running
+    ``cargo build`` inside every container, which took 3–6 min solo and
+    blew the 360 s setup ceiling under parallel load.
+
+    **Pre-requisite:** build the binary on the host before running any sweep::
+
+        cargo build -p omega-cli --release
+
+    The binary is expected at ``<repo-root>/target/release/omega`` (one level
+    above the ``bench/`` directory).  ``install()`` will raise a clear error
+    if the binary is absent.
+
+    The run step invokes the native binary directly with ``--headless`` and
+    writes session files into Harbor's bind-mounted ``/logs/agent`` tree, so
     ``events.jsonl`` / ``context.jsonl`` appear on the host filesystem live
     (no download step required) and survive abrupt termination.
 
@@ -61,6 +74,9 @@ class OmegaRustAgent(BaseInstalledAgent):
 
     Usage
     -----
+    # Build the host binary first:
+    cargo build -p omega-cli --release
+
     harbor run -d terminal-bench@2.0 \\
       --agent-import-path omega_agent:OmegaRustAgent \\
       -m anthropic/claude-sonnet-4-6 \\
@@ -98,34 +114,75 @@ class OmegaRustAgent(BaseInstalledAgent):
     # ------------------------------------------------------------------
 
     async def install(self, environment: "BaseEnvironment") -> None:
-        # 1. System build dependencies (libssl-dev needed for reqwest/openssl-sys).
+        # Locate the pre-built host binary (one level above bench/).
+        # The binary name is "omega" because crates/omega-cli/Cargo.toml
+        # declares [[bin]] name = "omega".
+        host_bin = Path(__file__).parent.parent / "target" / "release" / "omega"
+        if not host_bin.exists():
+            raise FileNotFoundError(
+                f"Host binary not found at {host_bin}.  "
+                "Run `cargo build -p omega-cli --release` on the host first."
+            )
+
+        # Sanity-check: verify the binary version matches the pinned OMEGA_VERSION.
+        # This catches "you forgot to rebuild after bumping the tag" mistakes.
+        # Note: the Cargo crate version (crates/omega-cli/Cargo.toml) must
+        # match OMEGA_VERSION.lstrip("v") for this check to pass.  If you
+        # bump the git tag, also bump the crate version.
+        expected_version = OMEGA_VERSION.lstrip("v")
+        try:
+            result = subprocess.run(
+                [str(host_bin), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            version_output = result.stdout.strip() + result.stderr.strip()
+        except subprocess.TimeoutExpired:
+            version_output = ""
+
+        if expected_version not in version_output:
+            raise RuntimeError(
+                f"Host binary version mismatch: expected {OMEGA_VERSION!r} "
+                f"but `omega --version` output was {version_output!r}.  "
+                f"Run `cargo build -p omega-cli --release` on the host and "
+                f"ensure crates/omega-cli/Cargo.toml version = \"{expected_version}\"."
+            )
+
+        # 1. Install only the minimal runtime libraries the binary needs.
+        #    The binary uses rustls (not openssl) for TLS, so it has no
+        #    libssl dependency.  ca-certificates is needed so that
+        #    rustls-native-certs can validate the Anthropic API's TLS cert
+        #    against the system trust store.  No build tools, no Rust
+        #    toolchain, no git clone.
+        #    Note: build the host binary in a Debian Bookworm container
+        #    (matching the task image) so the glibc ABI is compatible.
         await self.exec_as_root(
             environment,
             command=(
                 "apt-get update -qq"
                 " && apt-get install -y --no-install-recommends"
-                " curl git ca-certificates build-essential pkg-config"
-                " libssl-dev"
+                " ca-certificates"
             ),
         )
-        # 2. Rust toolchain (minimal profile — no docs, no clippy etc.).
-        await self.exec_as_agent(
+
+        # 2. Create the target directory the binary lives in, matching the
+        #    path the old cargo-build approach produced.
+        await self.exec_as_root(
             environment,
-            command=(
-                "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs"
-                " | sh -s -- -y --profile minimal"
-            ),
+            command=f"mkdir -p {OMEGA_RUST_INSTALL_DIR}/target/release",
         )
-        # 3. Clone the repo at the pinned tag and compile the CLI binary.
-        #    The release profile produces a single self-contained binary.
-        await self.exec_as_agent(
+
+        # 3. Copy the pre-built binary into the container.
+        await environment.upload_file(
+            source_path=host_bin,
+            target_path=OMEGA_RUST_BIN,
+        )
+
+        # 4. Ensure the binary is executable.
+        await self.exec_as_root(
             environment,
-            command=(
-                f"git clone --branch {OMEGA_VERSION} --depth 1"
-                f" {OMEGA_REPO} {OMEGA_RUST_INSTALL_DIR}"
-                f" && cd {OMEGA_RUST_INSTALL_DIR}"
-                f" && ~/.cargo/bin/cargo build -p omega-cli --release"
-            ),
+            command=f"chmod +x {OMEGA_RUST_BIN}",
         )
 
     # ------------------------------------------------------------------

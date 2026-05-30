@@ -20,7 +20,11 @@ use omega_types::OmegaEvent;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
-#[command(name = "omega", about = "Omega software engineering agent (Rust)")]
+#[command(
+    name = "omega",
+    version,
+    about = "Omega software engineering agent (Rust)"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

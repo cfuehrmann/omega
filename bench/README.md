@@ -34,7 +34,7 @@ harbor run -d terminal-bench@2.0 \
   --ae ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -t terminal-bench/fix-git -n 1
 
-# explicit list of tasks (recommended for targeted re-runs)
+# explicit list of tasks — use -i (repeatable) for multi-task runs
 harbor run -d terminal-bench@2.0 \
   --agent-import-path omega_agent:OmegaRustAgent \
   -m anthropic/claude-sonnet-4-6 \
@@ -45,6 +45,14 @@ harbor run -d terminal-bench@2.0 \
 
 Results land in `bench/jobs/<job-name>/`. Each trial directory contains
 `agent/events.jsonl`, `agent/context.jsonl`, Harbor's `result.json`, and `trial.log`.
+
+> **Flag note — `-t` (singular) vs `-i` / `--include-task-name` (repeatable):**
+> `-t <name>` sets the **one** task for a single-task run and cannot be repeated.
+> For multi-task runs use `-i` (or `--include-task-name`) — it is repeatable and
+> supports glob patterns: `-i fix-git -i crack-7z-hash -i 'build-*'`.
+> The sequential sweep wrapper (`run_sequential_sweep.py`) always uses `-t` with one
+> task per invocation — that is intentional (see Phase 2.2.2(c) rationale in
+> `docs/repl-and-substrates.html`).
 
 **Harbor buffers all stdout until the run completes.** Use `run_background` +
 `wait_for_output` sized to the batch (~30 min per task upper bound), pattern
@@ -247,6 +255,61 @@ Analysis of the 89-task run surfaced seven structurally distinct failure shapes:
 | `claude-opus-4-7` | $5 / MTok | $25 / MTok | $0.50 / MTok |
 
 A full 89-task Sonnet run costs ≈ $25; Opus ≈ $30.
+
+## Running the sequential sweep
+
+The sequential sweep runner (`bench/run_sequential_sweep.py`) runs one Harbor
+trial per task, sequentially, with Docker cleanup between trials.  This avoids
+the parallel resource contention that caused install timeouts in earlier sweep
+attempts (3–6 min per install solo, 10–20 min under parallel load).
+
+**Step 1 — build the host binary (one-time, ~5 min):**
+
+```bash
+cd /home/carsten/omega/dev
+cargo build -p omega-cli --release
+```
+
+Verify the version matches the pin in `omega_agent.py`:
+
+```bash
+./target/release/omega --version
+# Expected output: omega 0.1.15  (matches OMEGA_VERSION = "v0.1.15")
+```
+
+If the version doesn't match, rebuild and/or check `crates/omega-cli/Cargo.toml`.
+
+**Step 2 — run the sweep:**
+
+```bash
+cd /home/carsten/omega/dev/bench
+
+# Full 87-task sweep (~3–4 h wall-clock, ~$25 Sonnet budget)
+python run_sequential_sweep.py
+
+# Resume after interruption (skips tasks with valid result.json)
+python run_sequential_sweep.py --resume
+
+# Smoke-test on a single known-passing task
+python run_sequential_sweep.py --tasks-from <(echo fix-git) --max-tasks 1
+
+# Dry-run: print planned commands without executing
+python run_sequential_sweep.py --dry-run
+```
+
+Each task runs a single Harbor trial.  After Harbor exits, the wrapper
+automatically prunes stopped containers and dangling images (`docker container
+prune -f && docker image prune -f`).  Operators do not need to monitor disk
+usage between trials.
+
+Results land in `bench/jobs/v0115-seq-<task>-sonnet-medium-repl-centric/`.
+The aggregate summary is written to
+`bench/jobs/v0115-seq-sonnet-medium-repl-centric-summary.json` and also
+printed to stdout at the end of the sweep.
+
+**Expected wall-clock:** ~3–4 h for 87 tasks (setup now < 60 s per task
+because the binary is pre-built on the host; the old approach took 5+ min
+per task for `cargo build`).
 
 ## Next steps
 

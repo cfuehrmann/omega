@@ -260,6 +260,19 @@ tr:nth-child(even) td { background: #fafbfc; }
     formally promoted).  Two more Miriam-2 replays + a fresh self-hosted coding task
     (Session-D-shape) remain.
   </p>
+  <p style="color:var(--ok-border);font-size:0.92rem;">
+    ✅ <strong>Measurement infrastructure now in place</strong> (Phase 2.2.2(c),
+    <a href="#log-session-g">Session G</a>):
+    <code>bench/run_sequential_sweep.py</code> runs 87 TB2 tasks sequentially,
+    one at a time, with Docker cleanup between trials, using a
+    host-built <code>omega-cli</code> binary copied into each container
+    (eliminates the 5-min per-trial compile).  Smoke gate confirmed:<br/>
+    <code>fix-git</code> → mean=1.0, agent-setup 4 s (was 300–360 s).  <br/>
+    Remaining work: operator runs the full 87-task sweep via
+    <code>python run_sequential_sweep.py [--resume]</code>; n ≥ 3 re-runs
+    once sweep shape is confirmed.  Build prerequisite: see
+    <code>bench/README.md § Running the sequential sweep</code>.
+  </p>
   <p>Compare against Session D / Session A on:</p>
   <ol>
     <li><strong>sh()-with-pipe fraction.</strong>  Did fewer <code>sh()</code> calls
@@ -742,6 +755,38 @@ tr:nth-child(even) td { background: #fafbfc; }
               prompt sentence — both want structural affordances (a
               <code>read_lines(path, range)</code> helper, perhaps) or a
               fundamentally different intervention.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr id="log-session-g">
+      <td><code>2026-05-30T08-02-32-585-310aac4b</code></td>
+      <td>Standard tools, Sonnet-medium (<code>claude-sonnet-4-6</code>)</td>
+      <td>Phase 2.2.2(c) infra fix: host-built binary + sequential sweep runner</td>
+      <td>Infrastructure session (no agent performance measurement)</td>
+      <td>
+        <ul style="margin:0;padding-left:1.1rem;">
+          <li><strong>Files touched:</strong>
+              <code>bench/omega_agent.py</code> (new <code>install()</code>),
+              <code>bench/run_sequential_sweep.py</code> (new),
+              <code>bench/README.md</code> (new § &quot;Running the sequential sweep&quot;),
+              <code>crates/omega-cli/Cargo.toml</code> (version 0.1.0 → 0.1.15
+              so <code>--version</code> matches <code>OMEGA_VERSION</code>),
+              <code>crates/omega-cli/src/main.rs</code> (added
+              <code>version = env!(&quot;CARGO_PKG_VERSION&quot;)</code> to clap
+              <code>#[command]</code>),
+              <code>docs/repl-and-substrates.html</code> (this row + next-step update).</li>
+          <li><strong>Smoke-test result:</strong> <code>fix-git</code> →
+              mean=1.0 (pass), agent-setup 4 s (was ~300 s before this change),
+              no <code>AgentSetupTimeoutError</code>, Docker clean after prune.
+              ABI issue encountered: host binary (glibc 2.43) incompatible with
+              task container (glibc 2.36 / Debian Bookworm).  Resolved by building
+              the binary inside a matching <code>debian:bookworm-slim</code>
+              container; max glibc requirement dropped to 2.34.  Binary uses
+              rustls — no libssl dependency in the container.</li>
+          <li><strong>Factual-only self-report per operator instruction.</strong>
+              No performance metrics for this session (infrastructure work, not
+              a task completion session).  Operator will audit commit diff and
+              smoke-test log.</li>
         </ul>
       </td>
     </tr>
