@@ -820,7 +820,6 @@ mod composer_states {
             model: "claude-sonnet-4-6".into(),
             effort: "medium".into(),
             cwd: "/work".into(),
-            sessions_root: "/work/.omega/sessions".into(),
             turn_state,
             has_pending_changes: false,
             name: None,

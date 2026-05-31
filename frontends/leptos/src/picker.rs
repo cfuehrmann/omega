@@ -629,8 +629,11 @@ fn SessionRow(
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
-    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
+    // Absolute path to this session's directory, supplied by the server
+    // in the `/api/sessions` list. Used by the "Copy @path" button so the
+    // reference is fully-qualified regardless of the active session.
+    let path_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.path.clone());
 
     // Draft text for the rename input.
     let draft = RwSignal::new(item.name.clone().unwrap_or_else(|| item.dir.clone()));
@@ -771,19 +774,7 @@ fn SessionRow(
 
     let copied = RwSignal::new(false);
     let on_insert_at = move |_: leptos::ev::MouseEvent| {
-        let dir = dir_sv.get_value();
-        // Build the absolute path so agents referring to another session have
-        // a fully-qualified, unambiguous reference.
-        let sessions_root = store
-            .session_info
-            .get_untracked()
-            .map(|si| si.sessions_root)
-            .unwrap_or_default();
-        let path = if sessions_root.is_empty() {
-            format!("@.omega/sessions/{}/", dir)
-        } else {
-            format!("@{}/{}/", sessions_root, dir)
-        };
+        let path = session_at_path(&path_sv.get_value());
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast as _;
@@ -903,6 +894,17 @@ fn event_target_value(evt: &leptos::ev::Event) -> String {
 /// concurrent `SessionDeleted` / `SessionRenamed` broadcast (which
 /// bumps the generation) drops this stale result. See `sessions.rs`
 /// struct-level docs for the race scenario.
+/// Format an absolute session directory path as an `@`-reference for the
+/// composer: `@<abs-path>/`. The trailing slash marks it as a directory.
+///
+/// The absolute path itself is computed server-side and delivered per
+/// session in [`SessionListItem::path`](crate::sessions::SessionListItem),
+/// so the reference is fully-qualified regardless of which session (if
+/// any) is currently active.
+fn session_at_path(abs_path: &str) -> String {
+    format!("@{abs_path}/")
+}
+
 #[mutants::skip] // async fetch side-effect; covered by e2e harness session-list tests.
 async fn refresh_sessions(list: SessionListStore) {
     let token = list.begin_loading();
@@ -1150,5 +1152,26 @@ pub fn ToolSelectionPanel() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_at_path;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn session_at_path_wraps_absolute_path_with_at_and_trailing_slash() {
+        assert_eq!(
+            session_at_path("/home/u/dev/.omega/sessions/2026-05-31T17-06-44-906-23689b23"),
+            "@/home/u/dev/.omega/sessions/2026-05-31T17-06-44-906-23689b23/",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn session_at_path_preserves_the_exact_path_between_at_and_slash() {
+        // A different root must be reflected verbatim — the function must
+        // not hard-code `.omega/sessions` or drop any component.
+        assert_eq!(session_at_path("/custom/root/d1"), "@/custom/root/d1/");
     }
 }

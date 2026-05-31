@@ -317,9 +317,11 @@ async fn picker_resume_auto_closes() {
 // `copy @path` button — copies path to clipboard, keeps picker open.
 // ---------------------------------------------------------------------------
 
-/// The "copy @path" button writes `@.omega/sessions/<dir>/` to the
-/// clipboard and does NOT close the picker (the user pastes wherever
-/// they want, at the cursor position of their choice).
+/// The "copy @path" button writes the session's **absolute** `@<path>/`
+/// to the clipboard and does NOT close the picker (the user pastes wherever
+/// they want, at the cursor position of their choice). The path is the
+/// server's sessions root joined with the directory name, so it is usable
+/// regardless of which session (if any) is active.
 ///
 /// Also verifies that the textarea is untouched and that a second
 /// click on a different row simply overwrites the clipboard.
@@ -359,10 +361,11 @@ async fn picker_copy_at_path_button_copies_to_clipboard() {
 
     // Clipboard holds A's @path.
     let clip_a: String = h.eval("window.__clip || ''").await.expect("read clipboard");
+    let root = h.sessions_root().display().to_string();
     assert_eq!(
         clip_a,
-        format!("@.omega/sessions/{a}/"),
-        "clipboard should contain A's @path"
+        format!("@{root}/{a}/"),
+        "clipboard should contain A's absolute @path"
     );
 
     // Textarea must be untouched — copy @path never injects text.
@@ -382,8 +385,8 @@ async fn picker_copy_at_path_button_copies_to_clipboard() {
         .expect("read clipboard after b");
     assert_eq!(
         clip_b,
-        format!("@.omega/sessions/{b}/"),
-        "clipboard should hold B's @path after second click"
+        format!("@{root}/{b}/"),
+        "clipboard should hold B's absolute @path after second click"
     );
 }
 

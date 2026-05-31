@@ -524,7 +524,6 @@ mod tests {
             model: "m".into(),
             effort: "e".into(),
             cwd: "/c".into(),
-            sessions_root: "/sessions".into(),
             turn_state,
             has_pending_changes: false,
             name: None,
@@ -1295,7 +1294,7 @@ mod tests {
         // (no `serde_json::Value` in the parse path).
         let frames: &[&str] = &[
             r#"{"type":"ready"}"#,
-            r#"{"type":"session_info","dir":"d","model":"m","effort":"e","cwd":"/c","sessionsRoot":"/sessions","turnState":"idle","hasPendingChanges":false}"#,
+            r#"{"type":"session_info","dir":"d","model":"m","effort":"e","cwd":"/c","turnState":"idle","hasPendingChanges":false}"#,
             r#"{"type":"history","events":[]}"#,
             r#"{"type":"user_message","time":"2024-01-01T00:00:00.000Z","content":"hi"}"#,
             r#"{"type":"text","index":0,"text":"part"}"#,

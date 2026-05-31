@@ -273,6 +273,25 @@ mutants-repl-resume:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
+# Run cargo-mutants targeted at the absolute sessions-root resolution used by
+# GET /api/sessions, so the picker's "Copy @path" button yields an absolute
+# reference. Scoped to `absolute_sessions_root` (relative-default anchoring,
+# absolute-root passthrough) and `list_sessions` (per-item `path`). The
+# integration assertion lives in tests/http.rs::get_sessions_item_path_is_absolute.
+mutants-sessions-root:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+        --file "crates/omega-server/src/router.rs" --re 'absolute_sessions_root|list_sessions'
+
+# Run cargo-mutants targeted at the picker's `session_at_path` formatter, which
+# wraps the server-supplied absolute path as an `@<path>/` composer reference.
+# Runs on the wasm target (the only one the leptos crate's tests build for).
+mutants-session-at-path:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 \
+        --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
+        --file "src/picker.rs" --re 'session_at_path'
+
 # Run cargo-mutants targeted at the schemas.rs tool-definition filtering.
 # Covers the tool_definitions(tool_selection) membership-driven filtering,
 # canonical-order iteration, and the shell-aware fetch_url schema branch.

@@ -86,8 +86,10 @@ pub struct TestHarness {
     pub ctrl_url: String,
     /// reqwest client reused for control calls.
     http: reqwest::Client,
-    /// Holds the sessions tempdir alive for the test's lifetime.
-    _sessions_dir: TempDir,
+    /// Holds the sessions tempdir alive for the test's lifetime; also
+    /// exposed via [`Self::sessions_root`] so tests can compute the
+    /// absolute `@path` the picker copies.
+    sessions_dir: TempDir,
     /// Mock-omega-server child. Killed in `Drop`.
     server_child: Option<Child>,
     /// chromiumoxide handler driver. Aborted in `Drop` after the
@@ -122,6 +124,14 @@ const WS_SPY_INIT_SCRIPT: &str = r"
 ";
 
 impl TestHarness {
+    /// Absolute filesystem path of the sessions root the server was
+    /// launched with (a `TempDir`). `GET /api/sessions` reports each
+    /// session's `path` as this root joined with the directory name, so
+    /// tests can compute the exact absolute `@path` the picker copies.
+    pub fn sessions_root(&self) -> &Path {
+        self.sessions_dir.path()
+    }
+
     /// Spawn the server, wait for `/health`, launch headless Chrome,
     /// open `/`, wait for WS connect.
     pub async fn launch() -> Result<Self> {
@@ -165,7 +175,7 @@ impl TestHarness {
             base_url,
             ctrl_url,
             http,
-            _sessions_dir: sessions_dir,
+            sessions_dir,
             server_child: Some(server_child),
             handler_task: Some(handler_task),
             _browser: browser,
@@ -208,7 +218,7 @@ impl TestHarness {
             base_url,
             ctrl_url,
             http,
-            _sessions_dir: sessions_dir,
+            sessions_dir,
             server_child: Some(server_child),
             handler_task: Some(handler_task),
             _browser: browser,

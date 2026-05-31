@@ -44,6 +44,10 @@ use crate::protocol::WsMessage;
 #[serde(rename_all = "camelCase")]
 pub struct SessionListItem {
     pub dir: String,
+    /// Absolute filesystem path to this session's directory, supplied by
+    /// the server so the picker can copy a fully-qualified `@path`
+    /// reference regardless of whether a session is currently active.
+    pub path: String,
     pub last_activity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -368,6 +372,7 @@ mod tests {
     fn item(dir: &str, name: Option<&str>) -> SessionListItem {
         SessionListItem {
             dir: dir.into(),
+            path: format!("/abs/.omega/sessions/{dir}"),
             last_activity: "2024-01-01T00:00:00.000Z".into(),
             name: name.map(str::to_string),
             resumed_from: None,
@@ -820,11 +825,12 @@ mod tests {
     fn session_list_item_deserialises_from_server_shape() {
         // Mirrors `omega-server::router::SessionListItem` JSON output.
         let json = r#"[
-            {"dir":"d1","lastActivity":"2024-01-01T00:00:00.000Z","name":"alpha"},
-            {"dir":"d2","lastActivity":"2024-01-02T00:00:00.000Z","resumedFrom":"d1"}
+            {"dir":"d1","path":"/abs/.omega/sessions/d1","lastActivity":"2024-01-01T00:00:00.000Z","name":"alpha"},
+            {"dir":"d2","path":"/abs/.omega/sessions/d2","lastActivity":"2024-01-02T00:00:00.000Z","resumedFrom":"d1"}
         ]"#;
         let v: Vec<SessionListItem> = serde_json::from_str(json).unwrap();
         assert_eq!(v.len(), 2);
+        assert_eq!(v[0].path, "/abs/.omega/sessions/d1");
         assert_eq!(v[0].name.as_deref(), Some("alpha"));
         assert_eq!(v[1].resumed_from.as_deref(), Some("d1"));
     }

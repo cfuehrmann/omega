@@ -441,6 +441,51 @@ async fn get_sessions_returns_two_after_two_posts() {
     assert_eq!(arr.len(), 2, "expected 2 sessions, got {}", arr.len());
 }
 
+/// `GET /api/sessions` reports each session's **absolute** directory path so
+/// the picker's "Copy @path" button yields a fully-qualified reference rather
+/// than a `.omega/sessions/...` relative one. The path is the configured
+/// sessions root joined with the directory name.
+#[tokio::test]
+async fn get_sessions_item_path_is_absolute() {
+    let tmp = TempDir::new().expect("tempdir");
+    let sessions_root = tmp.path().join("sessions");
+    let state = make_test_state(sessions_root.clone());
+    let addr = spawn_server(state).await;
+    let client = http_client();
+
+    let r = client
+        .post(format!("http://{addr}/api/sessions"))
+        .send()
+        .await
+        .expect("POST");
+    assert_eq!(r.status().as_u16(), 201);
+
+    let resp = client
+        .get(format!("http://{addr}/api/sessions"))
+        .send()
+        .await
+        .expect("GET /api/sessions");
+    assert_eq!(resp.status().as_u16(), 200);
+
+    let body: serde_json::Value = resp.json().await.expect("decode json");
+    let arr = body.as_array().expect("expected JSON array");
+    assert_eq!(arr.len(), 1, "expected 1 session");
+
+    let item = &arr[0];
+    let dir = item["dir"].as_str().expect("dir field");
+    let path = item["path"].as_str().expect("path field");
+
+    assert!(
+        std::path::Path::new(path).is_absolute(),
+        "path must be absolute, got {path:?}"
+    );
+    assert_eq!(
+        path,
+        sessions_root.join(dir).to_string_lossy(),
+        "path must be the configured root joined with the dir name"
+    );
+}
+
 /// After two POSTs the list is sorted newest-first.
 #[tokio::test]
 async fn get_sessions_newest_first() {

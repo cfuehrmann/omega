@@ -109,6 +109,13 @@ async fn health() -> Json<serde_json::Value> {
 #[serde(rename_all = "camelCase")]
 pub struct SessionListItem {
     pub dir: String,
+    /// Absolute filesystem path to this session's directory.
+    ///
+    /// Computed server-side from the (possibly relative) configured
+    /// `sessions_root` joined onto the absolute process `cwd`, so the
+    /// client can offer a fully-qualified `@path` reference without
+    /// knowing the server's working directory.
+    pub path: String,
     pub last_activity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -144,6 +151,10 @@ fn folder_name_to_timestamp(name: &str) -> String {
 
 /// Enumerate session directories under `sessions_root`, sort newest-first,
 /// and attach metadata.
+///
+/// `sessions_root` must be **absolute** so each item's `path` is a
+/// fully-qualified reference; callers resolve it via
+/// [`absolute_sessions_root`].
 pub async fn list_sessions(sessions_root: &Path) -> Vec<SessionListItem> {
     let Ok(mut dir_reader) = tokio::fs::read_dir(sessions_root).await else {
         return Vec::new();
@@ -167,6 +178,7 @@ pub async fn list_sessions(sessions_root: &Path) -> Vec<SessionListItem> {
         let meta = omega_store::read_session_metadata(&full_path).await;
         items.push(SessionListItem {
             dir: name.clone(),
+            path: full_path.display().to_string(),
             last_activity: folder_name_to_timestamp(name),
             name: meta.name,
             resumed_from: meta.resumed_from,
@@ -175,8 +187,22 @@ pub async fn list_sessions(sessions_root: &Path) -> Vec<SessionListItem> {
     items
 }
 
+/// Resolve the configured `sessions_root` to an absolute path.
+///
+/// Resolve the configured sessions root to an absolute path.
+///
+/// `cwd` is the absolute process working directory captured once at startup.
+/// Joining an already-absolute `sessions_root` onto it yields the configured
+/// path unchanged (per `Path::join` semantics); joining a relative one (the
+/// `.omega/sessions` default) anchors it at `cwd`. Either way the result is
+/// absolute, so each session's `path` is a fully-qualified reference.
+fn absolute_sessions_root(cwd: &Path, sessions_root: &Path) -> PathBuf {
+    cwd.join(sessions_root)
+}
+
 async fn get_sessions(State(state): State<AppState>) -> Response {
-    let items = list_sessions(&state.sessions_root).await;
+    let root = absolute_sessions_root(&state.cwd, &state.sessions_root);
+    let items = list_sessions(&root).await;
     (StatusCode::OK, Json(items)).into_response()
 }
 
@@ -243,7 +269,6 @@ async fn create_active_session(
         model: active_model,
         effort: active_effort,
         cwd: cwd_string,
-        sessions_root: state.sessions_root.display().to_string(),
         name: None,
         has_pending_changes,
         features,
@@ -399,7 +424,6 @@ fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage 
         model: cache.model,
         effort: cache.effort,
         cwd: cache.cwd,
-        sessions_root: cache.sessions_root,
         name: cache.name,
         turn_state,
         has_pending_changes: cache.has_pending_changes,
@@ -1248,7 +1272,28 @@ mod tests {
     // a direct WS observable.  All are appropriate carve-outs.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-    use super::{ClientFrame, folder_name_to_timestamp};
+    use super::{ClientFrame, absolute_sessions_root, folder_name_to_timestamp};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn absolute_sessions_root_anchors_relative_default_at_cwd() {
+        // The CLI default `.omega/sessions` is relative; it must be anchored
+        // at the process cwd so list items carry absolute paths.
+        assert_eq!(
+            absolute_sessions_root(Path::new("/home/u/dev"), Path::new(".omega/sessions")),
+            PathBuf::from("/home/u/dev/.omega/sessions"),
+        );
+    }
+
+    #[test]
+    fn absolute_sessions_root_keeps_explicit_absolute_root() {
+        // An explicitly-configured absolute root is used unchanged: cwd must
+        // not be prepended.
+        assert_eq!(
+            absolute_sessions_root(Path::new("/home/u/dev"), Path::new("/srv/sessions")),
+            PathBuf::from("/srv/sessions"),
+        );
+    }
 
     #[test]
     fn timestamp_conversion_with_millis() {
