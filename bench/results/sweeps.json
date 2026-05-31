@@ -1,0 +1,236 @@
+{
+  "_comment": "Sweep registry. Each entry is one logical sweep — a named, reproducible set of Harbor trials that together produce a single canonical score for a (model, effort, substrate) configuration. When a sweep proceeds in chunks or includes correction re-runs, every component job directory is listed here so a future analyst can reconstruct exactly which trial counts for each task.",
+
+  "_selection_rules": {
+    "latest_per_task": "For each canonical task, pick the trial with the latest started_at timestamp whose job_dir matches any listed component glob. Use bench/results/oracle-tasks.json as the canonical task list.",
+    "correction_override": "Component list is ordered (seq 1, 2, …). For each canonical task, use the result from the highest-seq component whose job_dir_glob matches a directory containing a result for that task. If only one component covers the task, use that. This lets a later correction component supersede the main sweep for specific tasks without changing the rest."
+  },
+
+  "sweeps": [
+    {
+      "sweep_id": "S1",
+      "display_name": "Standard Sonnet medium — parallel (April 2026)",
+      "model": "claude-sonnet-4-6",
+      "effort": "medium",
+      "substrate": "standard",
+      "canonical_score": "53/89",
+      "canonical_score_pct": 59.6,
+      "selection_rule": "latest_per_task",
+      "reconstructible": false,
+      "reconstruction_note": "Score 53/89 was recorded at the time of the sweep but the exact trial-to-task mapping has not been preserved. The sweep was run across many job directories in parallel; known components are listed below, but later retry/supplementary runs (also listed) mean that 'latest_per_task' over all components yields ~62/89, not 53/89. A fresh n=1 replication is required for a reliable comparison against S2. The ~4 setup-timeouts mentioned in the README were caused by parallel Docker resource contention making container install steps time out; the exact 4 task names are not reliably recoverable.",
+      "components": [
+        {
+          "seq": 1,
+          "label": "phase-A batch 1",
+          "job_dir_glob": "phaseA-batch1",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 15,
+          "notes": "First parallel batch. Some tasks hit setup timeouts due to resource contention."
+        },
+        {
+          "seq": 2,
+          "label": "phase-A retries",
+          "job_dir_glob": "phaseA-batch1-retry*",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 11,
+          "notes": "Retry runs for tasks that failed or were missing in batch 1."
+        },
+        {
+          "seq": 3,
+          "label": "phase-A prompt validation",
+          "job_dir_glob": "phaseA-prompt-validation",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 7
+        },
+        {
+          "seq": 4,
+          "label": "phase-B deadline validation",
+          "job_dir_glob": "phaseB-deadline-validation",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 4
+        },
+        {
+          "seq": 5,
+          "label": "phase-C fresh 12",
+          "job_dir_glob": "phaseC-fresh-12",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 12
+        },
+        {
+          "seq": 6,
+          "label": "phase-D infra retry",
+          "job_dir_glob": "phaseD-infra-retry",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 5
+        },
+        {
+          "seq": 7,
+          "label": "phase-D remaining 42",
+          "job_dir_glob": "phaseD-remaining-42",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 42
+        },
+        {
+          "seq": 8,
+          "label": "early date-stamped singles",
+          "job_dir_glob": "2026-04-23__*",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-23", "end": "2026-04-23"},
+          "task_count": 4
+        },
+        {
+          "seq": 9,
+          "label": "April-24 date-stamped",
+          "job_dir_glob": "2026-04-24__*",
+          "omega_version": "0.1.0",
+          "date_range": {"start": "2026-04-24", "end": "2026-04-24"},
+          "task_count": 11
+        },
+        {
+          "seq": 10,
+          "label": "fix-e validation / fix-f polyglot / fix-f smoke",
+          "job_dir_glob": "fix-e-validation",
+          "omega_version": "0.1.1",
+          "date_range": {"start": "2026-04-25", "end": "2026-04-25"},
+          "task_count": 6
+        },
+        {
+          "seq": 11,
+          "label": "sonnet missing-13 gap fill",
+          "job_dir_glob": "sonnet-missing-13",
+          "omega_version": "0.1.2",
+          "date_range": {"start": "2026-04-26", "end": "2026-04-26"},
+          "task_count": 13,
+          "notes": "Gap-fill run to cover the 13 canonical tasks absent from earlier batches."
+        }
+      ]
+    },
+
+    {
+      "sweep_id": "S2",
+      "display_name": "Sequential repl-centric Sonnet medium (May 2026)",
+      "model": "claude-sonnet-4-6",
+      "effort": "medium",
+      "substrate": "repl-centric",
+      "preset": "repl-centric",
+      "canonical_score": "52/89",
+      "canonical_score_pct": 58.4,
+      "as_run_score": "50/89",
+      "as_run_score_pct": 56.2,
+      "selection_rule": "correction_override",
+      "reconstructible": true,
+      "reconstruction_note": "All 89 tasks are covered. For 87 tasks use component 1 (job dirs match v0115-seq-*-sonnet-medium-repl-centric). For fix-code-vulnerability use component 2; for pytorch-model-recovery use component 3. The as-run score of 50/89 is component 1 alone; the canonical score of 52/89 incorporates the two bug-fix re-runs from components 2 and 3.",
+      "components": [
+        {
+          "seq": 1,
+          "label": "main v0.1.15 sequential sweep",
+          "job_dir_glob": "v0115-seq-*-sonnet-medium-repl-centric",
+          "omega_version": "0.1.15",
+          "date_range": {
+            "start": "2026-05-30T08:23:30Z",
+            "end": "2026-05-31T07:37:21Z"
+          },
+          "task_count": 89,
+          "score": "50/89",
+          "notes": "Two tasks failed due to omega-cli bugs unrelated to agent capability: fix-code-vulnerability (exit 1 — omega dirty-tree check tripped by task repo at /app) and pytorch-model-recovery (exit 2 — clap rejected instruction string beginning with '- '). Both bugs fixed in v0.1.16; see docs/repl-and-substrates.html#session-i-error-analysis for full analysis."
+        },
+        {
+          "seq": 2,
+          "label": "v0.1.16 bug-fix re-run: fix-code-vulnerability",
+          "job_dir_glob": "v0116-fix-code-vulnerability-sonnet-medium-repl-centric",
+          "omega_version": "0.1.16",
+          "date_range": {
+            "start": "2026-05-31T14:15:38Z",
+            "end": "2026-05-31T14:17:48Z"
+          },
+          "task_count": 1,
+          "corrects_tasks": ["fix-code-vulnerability"],
+          "score": "1/1",
+          "notes": "Re-run after adding --allow-dirty to bench wrapper. Scored 1.000."
+        },
+        {
+          "seq": 3,
+          "label": "v0.1.16 bug-fix re-run: pytorch-model-recovery",
+          "job_dir_glob": "v0116-pytorch-model-recovery-sonnet-medium-repl-centric",
+          "omega_version": "0.1.16",
+          "date_range": {
+            "start": "2026-05-31T14:17:57Z",
+            "end": "2026-05-31T14:25:47Z"
+          },
+          "task_count": 1,
+          "corrects_tasks": ["pytorch-model-recovery"],
+          "score": "1/1",
+          "notes": "Re-run after adding allow_hyphen_values=true to omega-cli --instruction arg. Scored 1.000."
+        }
+      ]
+    },
+
+    {
+      "sweep_id": "S3",
+      "display_name": "Standard Opus high (April 2026)",
+      "model": "claude-opus-4-7",
+      "effort": "high",
+      "substrate": "standard",
+      "canonical_score": "62/89",
+      "canonical_score_pct": 69.7,
+      "selection_rule": "latest_per_task",
+      "reconstructible": true,
+      "reconstruction_note": "All 89 tasks covered across four job directories. Take the latest-started trial per task across all four components.",
+      "components": [
+        {
+          "seq": 1,
+          "label": "main xhigh-76 parallel sweep",
+          "job_dir_glob": "opus-4-7-xhigh-76",
+          "omega_version": "0.1.2",
+          "date_range": {
+            "start": "2026-04-25T16:15:18Z",
+            "end": "2026-04-25T19:37:48Z"
+          },
+          "task_count": 76,
+          "notes": "76 of 89 canonical tasks. xhigh effort used for tasks with >= 900 s budget; high effort for shorter tasks. 1 setup timeout (mailman)."
+        },
+        {
+          "seq": 2,
+          "label": "high retry (9 tasks)",
+          "job_dir_glob": "opus-4-7-high-retry",
+          "omega_version": "0.1.2",
+          "date_range": {
+            "start": "2026-04-26T06:27:27Z",
+            "end": "2026-04-26T07:05:01Z"
+          },
+          "task_count": 9
+        },
+        {
+          "seq": 3,
+          "label": "fix-g retry (2 tasks)",
+          "job_dir_glob": "opus-4-7-fixg-retry",
+          "omega_version": "0.1.2",
+          "date_range": {
+            "start": "2026-04-26T08:14:50Z",
+            "end": "2026-04-26T08:20:44Z"
+          },
+          "task_count": 2
+        },
+        {
+          "seq": 4,
+          "label": "missing-13 gap fill",
+          "job_dir_glob": "opus-missing-13",
+          "omega_version": "0.1.2",
+          "date_range": {
+            "start": "2026-04-26T19:26:27Z",
+            "end": "2026-04-26T20:41:33Z"
+          },
+          "task_count": 13,
+          "notes": "Gap-fill run for the 13 canonical tasks absent from the main parallel sweep."
+        }
+      ]
+    }
+  ]
+}

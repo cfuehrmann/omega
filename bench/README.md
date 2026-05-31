@@ -4,19 +4,64 @@ Terminal-Bench 2.0 is a 89-task containerised coding benchmark run via [Harbor](
 
 ## Results
 
-| Model | Effort | Substrate | Score | Notes |
-|---|---|---|---|---|
-| `claude-sonnet-4-6` | medium | **`repl-centric`** | **52 / 89 = 58.4 %** | omega v0.1.16: v0.1.15 sweep (50 / 89) + 2 NonZero bug-fix re-runs (`fix-code-vulnerability`, `pytorch-model-recovery`; both 1.000, 2026-05-31). [Session I + error analysis](../docs/repl-and-substrates.html#session-i-error-analysis). |
-| `claude-sonnet-4-6` | medium | **`repl-centric`** | 50 / 89 = 56.2 % | omega v0.1.15 sweep as-run (2 tasks failed with NonZeroAgentExitCodeError — infra bugs, not agent failures). [Session I](../docs/repl-and-substrates.html#log-session-i). |
-| `claude-sonnet-4-6` | medium | `standard` | **53 / 89 = 59.6 %** | Historical baseline, omega ≤ v0.1.13, parallel sweep. Mixed in ~4 / 89 setup-timeouts and other infra noise. |
-| `claude-opus-4-7` | high | `standard` | **62 / 89 = 69.7 %** | xhigh used for tasks ≥ 900 s budget |
-| Claude Opus 4.7 / Adaptive (official) | adaptive | n/a | **69.4 %** | tbench.ai leaderboard |
+| Sweep | Model | Effort | Substrate | Score | Notes |
+|---|---|---|---|---|---|
+| [`S3`](#sweep-s3) | `claude-opus-4-7` | high | `standard` | **62 / 89 = 69.7 %** | omega v0.1.2, parallel. xhigh effort for tasks ≥ 900 s budget. |
+| [`S2`](#sweep-s2) | `claude-sonnet-4-6` | medium | `repl-centric` | **52 / 89 = 58.4 %** | omega v0.1.15 + v0.1.16 correction. As-run: 50/89; 2 tasks re-run after infra bug fixes. [Session I + error analysis](../docs/repl-and-substrates.html#session-i-error-analysis). |
+| [`S1`](#sweep-s1) | `claude-sonnet-4-6` | medium | `standard` | **53 / 89 = 59.6 %** | omega ≤ v0.1.2, parallel, April 2026. **Score not reliably reconstructible** — see S1 registry entry. |
+| — | Claude Opus 4.7 / Adaptive (official) | adaptive | n/a | **69.4 %** | tbench.ai leaderboard |
+
+Sweep IDs (`S1`–`S3`) resolve to entries in [`bench/results/sweeps.json`](results/sweeps.json), which records every component job directory, omega version, date window, and the selection rule for picking the canonical per-task result.
 
 Omega + Opus 4.7 at 69.7 % matches the official leaderboard's Opus 4.7 Adaptive entry (69.4 %) — same model, different agent harness.
 
-The Sonnet-medium `repl-centric` vs `standard` comparison is **−1.1 pp on n = 89 single trials** (52 / 89 vs 53 / 89, using the bug-corrected v0.1.16 score), which is well within plausible sampling noise; an n ≥ 3 replication on a representative subset is what Phase 2.2.2 still needs to distinguish substrate signal from variance.
+The Sonnet-medium `repl-centric` vs `standard` comparison is **−1.1 pp on n = 89 single trials** (S2: 52/89 vs S1: 53/89), which is well within plausible sampling noise. Additionally, S1 is not reliably reconstructible (see registry), so this gap may not be meaningful. An n ≥ 3 replication on a representative subset is what Phase 2.2.2 still needs to distinguish substrate signal from variance.
 
 Run `python bench/scripts/bench-summary.py` for a live breakdown from `bench/results/results.jsonl` (regenerate this script in Python if it does not exist yet).
+
+---
+
+## Sweep registry
+
+`bench/results/sweeps.json` is the authoritative record of every logical sweep. It is the single place that answers:
+
+- Which job directories belong to this sweep?
+- Which omega version ran each component?
+- When did each component run (start / end timestamps)?
+- When a sweep has corrections or gap-fill re-runs, which task uses which component's result?
+
+### Convention
+
+Each sweep entry carries a stable `sweep_id` (`S1`, `S2`, …), a `selection_rule`, and an ordered `components` list. The two supported selection rules are:
+
+| Rule | Meaning |
+|---|---|
+| `latest_per_task` | For each canonical task, use the trial with the latest `started_at` across all component job dirs. |
+| `correction_override` | Components are ordered (seq 1, 2, …). For each task, use the highest-seq component that has a result for it. Later components act as corrections to earlier ones. |
+
+### Registering a new sweep
+
+After any sweep (or correction re-run) completes:
+
+1. Add an entry to `sweeps.json` with a new `sweep_id`.
+2. List every component job directory glob, its omega version, and its date range.
+3. State the `selection_rule` and a `reconstruction_note` summarising how to get the canonical score.
+4. If the sweep corrects a previous sweep (same model/effort/substrate), add the new components to the existing sweep entry (increment `seq`) rather than creating a new top-level sweep.
+5. Update the results table above with the canonical score and a link to the sweep ID anchor.
+
+### Sweep summaries
+
+<a id="sweep-s1"></a>
+**S1 — Standard Sonnet medium, parallel (April 2026), `reconstructible: false`**  
+Omega ≤ v0.1.2, run in parallel across ~10 job directories (`phaseA-batch1`, `phaseD-remaining-42`, `sonnet-missing-13`, and others). Score 53/89 was recorded at the time but exact trial-to-task mapping is not preserved; `latest_per_task` over all known components yields a different number. ~4 tasks hit setup-timeouts due to parallel Docker resource contention. **A fresh n = 1 replication is required before comparing S1 against S2.**
+
+<a id="sweep-s2"></a>
+**S2 — Sequential repl-centric Sonnet medium (May 2026), `reconstructible: true`**  
+Omega v0.1.15 main sweep (`v0115-seq-*-sonnet-medium-repl-centric`, all 89 tasks, 2026-05-30 – 2026-05-31) scored **50/89** as-run. Two tasks failed with omega-cli infra bugs (not agent failures): `fix-code-vulnerability` and `pytorch-model-recovery`. Both re-run with v0.1.16 after the bugs were fixed, both scored 1.000. Canonical score: **52/89**. Selection rule: `correction_override` — for `fix-code-vulnerability` use `v0116-fix-code-vulnerability-*`; for `pytorch-model-recovery` use `v0116-pytorch-model-recovery-*`; for all other tasks use the v0.1.15 job dir.
+
+<a id="sweep-s3"></a>
+**S3 — Standard Opus high, parallel (April 2026), `reconstructible: true`**  
+Omega v0.1.2, four job directories (`opus-4-7-xhigh-76`, `opus-4-7-high-retry`, `opus-4-7-fixg-retry`, `opus-missing-13`), all 89 tasks covered. Selection rule: `latest_per_task`. Canonical score: **62/89**.
 
 ## Running benchmarks
 
@@ -207,6 +252,7 @@ To permanently exclude a contaminated or infra-failed trial, add its UUID to
 |---|---|
 | `bench/omega_agent.py` | Harbor agent adapter |
 | `bench/results/results.jsonl` | Accumulated trial data (one JSON record per line) |
+| `bench/results/sweeps.json` | **Sweep registry** — maps each sweep ID to its component job dirs, versions, date windows, and selection rule |
 | `bench/results/oracle-tasks.json` | Per-task metadata for all 89 tasks |
 | `bench/results/.skip-trials` | Trial UUIDs permanently excluded from ingest |
 | `bench/jobs/` | Raw Harbor job output — gitignored, local only |
