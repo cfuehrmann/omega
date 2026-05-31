@@ -279,14 +279,15 @@ tr:nth-child(even) td { background: #fafbfc; }
     <a href="#session-i-error-analysis">§ Phase 2.2.2 follow-up: Session I error analysis</a>.
   </p>
   <p style="color:var(--ok-border);font-size:0.92rem;margin-top:-0.4rem;">
-    ✅ <strong>2 NonZeroAgentExitCodeError causes identified</strong> —
-    <code>fix-code-vulnerability</code>: omega dirty-tree startup check on a
-    task image where <code>/app</code> is a dirty git repo; bench wrapper needs
-    <code>--allow-dirty</code>.
-    <code>pytorch-model-recovery</code>: clap parse error when the instruction
-    string begins with <code>- </code>; bench wrapper should use
-    <code>--instruction=&lt;value&gt;</code> syntax.  Both are one-line wrapper
-    fixes; neither is a GLIBC or infra issue.  Details in
+    ✅ <strong>2 NonZeroAgentExitCodeError causes identified and fixed (omega v0.1.16)</strong> —
+    <code>fix-code-vulnerability</code>: omega dirty-tree guard; fixed by passing
+    <code>--allow-dirty</code> in the bench wrapper.
+    <code>pytorch-model-recovery</code>: clap parse error on leading-<code>-</code>
+    instruction; fixed by adding <code>allow_hyphen_values = true</code> to
+    <code>--instruction</code> in the omega-cli Rust source.
+    Both tasks re-run on 2026-05-31 and scored <strong>1.000</strong>
+    (<code>fix-code-vulnerability</code> 2 m 11 s, <code>pytorch-model-recovery</code> 7 m 52 s).
+    Details in
     <a href="#session-i-error-analysis">§ Phase 2.2.2 follow-up: Session I error analysis</a>.
   </p>
   <p style="color:var(--warning-border,#e5a000);font-size:0.92rem;margin-top:-0.4rem;">
@@ -1196,9 +1197,10 @@ tr:nth-child(even) td { background: #fafbfc; }
   <code>/app</code> at all, so they are unaffected.
 </p>
 <p style="font-size:0.88rem;color:var(--muted);">
-  <strong>Recommendation:</strong> Open an issue: the bench wrapper should pass
-  <code>--allow-dirty</code> unconditionally, or omega should default to
-  allow-dirty when no session journal exists for the path.  Do not fix here.
+  <strong>Fix applied (omega v0.1.16, 2026-05-31):</strong>
+  <code>bench/omega_agent.py</code> now passes <code>--allow-dirty</code>
+  unconditionally.  Re-run scored <strong>1.000</strong> (2 m 11 s,
+  job <code>v0116-fix-code-vulnerability-sonnet-medium-repl-centric</code>).
 </p>
 
 <h5>(b) <code>pytorch-model-recovery</code> — exit code 2, wall time ≈ 336 s</h5>
@@ -1229,12 +1231,13 @@ tr:nth-child(even) td { background: #fafbfc; }
   edge-case.
 </p>
 <p style="font-size:0.88rem;color:var(--muted);">
-  <strong>Recommendation:</strong> Open an issue: the bench wrapper should use
-  <code>--instruction=&lt;value&gt;</code> (with <code>=</code>) instead of
-  <code>--instruction &lt;value&gt;</code> (space-separated) so that leading-dash
-  instruction strings cannot be misinterpreted by clap.  Alternatively, omega
-  should declare <code>--instruction</code> with
-  <code>allow_hyphen_values(true)</code>.  Do not fix here.
+  <strong>Fix applied (omega v0.1.16, 2026-05-31):</strong>
+  <code>crates/omega-cli/src/main.rs</code> declares
+  <code>allow_hyphen_values = true</code> on the <code>--instruction</code>
+  clap argument.  This fixes the API contract at the source rather than
+  patching only the bench wrapper.  Re-run scored <strong>1.000</strong>
+  (7 m 52 s,
+  job <code>v0116-pytorch-model-recovery-sonnet-medium-repl-centric</code>).
 </p>
 
 <h5>Same or different root cause?</h5>
@@ -1245,7 +1248,8 @@ tr:nth-child(even) td { background: #fafbfc; }
   is a harbor-infra or GLIBC issue.  Neither is expected to be widespread —
   only tasks whose <code>/app</code> is a dirty git repo would hit (a), and only
   tasks whose instruction literally starts with <code>- </code> would hit (b).
-  Both are one-line fixes in the bench wrapper.
+  (a) was fixed by a one-line change in the bench wrapper; (b) was fixed
+  in the omega-cli Rust source (<code>allow_hyphen_values = true</code>).
 </p>
 </div>
 

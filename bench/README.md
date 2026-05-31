@@ -290,7 +290,7 @@ Verify the version matches the pin in `omega_agent.py`:
 
 ```bash
 ./target-builder/release/omega --version
-# Expected output: omega 0.1.15  (matches OMEGA_VERSION = "v0.1.15")
+# Expected output: omega 0.1.16  (matches OMEGA_VERSION = "v0.1.16")
 ```
 
 If the version doesn't match, re-run the build script and/or check `crates/omega-cli/Cargo.toml`.
