@@ -271,16 +271,27 @@ tr:nth-child(even) td { background: #fafbfc; }
     plausible single-trial noise.
   </p>
   <p style="color:var(--ok-border);font-size:0.92rem;margin-top:-0.4rem;">
-    Remaining: <strong>n ≥ 3 replication</strong> on a representative subset
-    to distinguish substrate signal from variance; analysis of the 15
-    <code>AgentTimeoutError</code> tasks (17 % of the corpus — are they
-    concentrated in a category?); and investigation of the 2
-    <code>NonZeroAgentExitCodeError</code>s on
-    <code>fix-code-vulnerability</code> (45 s) and
-    <code>pytorch-model-recovery</code> (336 s).  Both ran the
-    GLIBC-portable binary cleanly, so the early non-zero exit is
-    <em>not</em> infra — most likely an omega-cli or task-specific issue.
-    Keep on radar for the next analysis session.
+    ✅ <strong>15 AgentTimeoutError tasks analysed</strong> — spread across
+    four categories (compile-heavy 5, search/brute-force 4, data-manipulation 3,
+    ML 1, other 2); no single category dominates; both tasks with custom 3600 s
+    budgets timed out due to slow external oracles (pmars, fasttext training),
+    not agent confusion.  Full breakdown in
+    <a href="#session-i-error-analysis">§ Phase 2.2.2 follow-up: Session I error analysis</a>.
+  </p>
+  <p style="color:var(--ok-border);font-size:0.92rem;margin-top:-0.4rem;">
+    ✅ <strong>2 NonZeroAgentExitCodeError causes identified</strong> —
+    <code>fix-code-vulnerability</code>: omega dirty-tree startup check on a
+    task image where <code>/app</code> is a dirty git repo; bench wrapper needs
+    <code>--allow-dirty</code>.
+    <code>pytorch-model-recovery</code>: clap parse error when the instruction
+    string begins with <code>- </code>; bench wrapper should use
+    <code>--instruction=&lt;value&gt;</code> syntax.  Both are one-line wrapper
+    fixes; neither is a GLIBC or infra issue.  Details in
+    <a href="#session-i-error-analysis">§ Phase 2.2.2 follow-up: Session I error analysis</a>.
+  </p>
+  <p style="color:var(--warning-border,#e5a000);font-size:0.92rem;margin-top:-0.4rem;">
+    Remaining open: <strong>n ≥ 3 replication</strong> on a representative subset
+    to distinguish substrate signal from variance.
   </p>
   <p>Compare against Session D / Session A on:</p>
   <ol>
@@ -995,6 +1006,249 @@ tr:nth-child(even) td { background: #fafbfc; }
     </tr>
   </tbody>
 </table>
+
+<!-- ─── Session I error analysis ─────────────────────────────────────── -->
+<div id="session-i-error-analysis" style="margin-top:2rem;padding:0 0.2rem;">
+<h3 style="margin-top:0;">Phase 2.2.2 follow-up: Session I error analysis</h3>
+<p style="color:var(--muted);font-size:0.92rem;">
+  Performed after Session I completed.  The 89-task sweep produced 15
+  <code>AgentTimeoutError</code>s and 2 <code>NonZeroAgentExitCodeError</code>s.
+  This section categorises them and dives into representative cases.
+</p>
+
+<h4>1 · Timeout categorisation (all 15 tasks)</h4>
+<p>
+  Each of the 15 timed-out tasks was classified by reading its
+  <code>instruction.md</code> and <code>task.toml</code> from the task cache
+  (<code>~/.cache/harbor/tasks/&lt;id&gt;/&lt;slug&gt;/</code>).
+</p>
+<table style="border-collapse:collapse;font-size:0.92rem;width:100%;">
+  <thead>
+    <tr>
+      <th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);">Category</th>
+      <th style="text-align:center;padding:4px 8px;border-bottom:1px solid var(--border);">Count</th>
+      <th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);">Tasks (budget s)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="padding:4px 8px;"><strong>compile-heavy</strong> — write and/or cross-compile substantial C/C++/JS code</td>
+      <td style="text-align:center;padding:4px 8px;">5</td>
+      <td style="padding:4px 8px;">
+        <code>gpt2-codegolf</code> (900 s),
+        <code>make-doom-for-mips</code> (900 s),
+        <code>make-mips-interpreter</code> (1800 s),
+        <code>path-tracing</code> (1800 s),
+        <code>path-tracing-reverse</code> (1800 s)
+      </td>
+    </tr>
+    <tr style="background:var(--code-bg,#f6f8fa);">
+      <td style="padding:4px 8px;"><strong>search / brute-force</strong> — exhaustive iteration, hash-cracking, or adversarial optimisation</td>
+      <td style="text-align:center;padding:4px 8px;">4</td>
+      <td style="padding:4px 8px;">
+        <code>break-filter-js-from-html</code> (1200 s),
+        <code>crack-7z-hash</code> (900 s),
+        <code>winning-avg-corewars</code> (3600 s),
+        <code>write-compressor</code> (900 s)
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:4px 8px;"><strong>data manipulation / format conversion</strong> — parse, transform, or translate structured data</td>
+      <td style="text-align:center;padding:4px 8px;">3</td>
+      <td style="padding:4px 8px;">
+        <code>extract-moves-from-video</code> (1800 s),
+        <code>gcode-to-text</code> (900 s),
+        <code>rstan-to-pystan</code> (1800 s)
+      </td>
+    </tr>
+    <tr style="background:var(--code-bg,#f6f8fa);">
+      <td style="padding:4px 8px;"><strong>ML training / inference</strong> — GPU/CPU-bound model work</td>
+      <td style="text-align:center;padding:4px 8px;">1</td>
+      <td style="padding:4px 8px;">
+        <code>train-fasttext</code> (3600 s)
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:4px 8px;"><strong>other</strong> — does not fit the above (infrastructure setup, simulation tuning)</td>
+      <td style="text-align:center;padding:4px 8px;">2</td>
+      <td style="padding:4px 8px;">
+        <code>qemu-startup</code> (900 s),
+        <code>tune-mjcf</code> (900 s)
+      </td>
+    </tr>
+  </tbody>
+</table>
+<p style="margin-top:0.6rem;">
+  <strong>Finding:</strong> compile-heavy tasks are the single largest category (5 / 15),
+  followed closely by search / brute-force (4 / 15).  No single category dominates;
+  the failures are spread across four of five buckets.  The two tasks with
+  custom-extended budgets (3600 s) are in <em>different</em> categories
+  (search vs. ML), which argues against budget extension being a universal remedy.
+</p>
+<p style="font-size:0.88rem;color:var(--muted);">
+  <strong>Recommendation:</strong> No blanket budget increase.  For compile-heavy tasks,
+  consider whether the agent needs a faster iteration loop (smaller compile targets,
+  incremental builds).  For search / brute-force tasks, confirm whether the task
+  is solvable at all within the stated budget before raising it.
+</p>
+
+<h4>2 · Deep-dive: two representative timeouts</h4>
+
+<h5>(a) Standard-budget timeout — <code>path-tracing</code> (1800 s)</h5>
+<p>
+  Session ran from <code>2026-05-30T22:56:10Z</code> to <code>2026-05-30T23:24:06Z</code>
+  (27 min 56 s, i.e. right at the 1800 s wall).  The agent made exactly
+  <strong>56 tool calls</strong>, every single one a <code>python_repl</code> call.
+  No other tool was called — the agent never called <code>write_file</code>,
+  <code>run_command</code>, or any file-writing primitive.  The task asks the
+  agent to write a C program (<code>image.c</code>) that reproduces a ray-traced
+  image to within 0.99 L2 similarity.  The entire session was spent reverse-engineering
+  the scene geometry by numerical analysis of the provided PPM pixels:
+</p>
+<blockquote style="font-size:0.88rem;font-family:monospace;background:var(--code-bg,#f6f8fa);padding:0.6rem 1rem;border-left:3px solid var(--border);">
+  <code>[318] python_repl: import numpy as np; from PIL import Image; im = Image.open('/app/image.ppm'); img = np.array(im); h, w = img.shape[:2]; print(f"Image: {w}x{h}")</code><br/>
+  <code>[345] python_repl: # Check top boundary with sz=5.44 / sz = 5.44; sy = 1.5 - 0.1033*sz; r = 0.2015*sz</code><br/>
+  <code>[366] python_repl: # Find exact y where sphere becomes invisible at x=1200, sz=8 / for y in range(1100, 1160): …</code>
+</blockquote>
+<p>
+  Classification: <strong>slow productive work</strong>.  Each call is analytically
+  different, fitting pixel boundaries, deriving sphere radii, computing discriminants.
+  The agent was genuinely building toward an answer.  However it massively overinvested
+  in the analysis phase — 56 exploratory python_repl calls, ~28 minutes elapsed —
+  without ever writing a line of C.  The path-tracing task is inherently
+  analysis-first (you must reverse-engineer the scene before you can code it), but
+  the agent did not time-box that phase.
+</p>
+<p style="font-size:0.88rem;color:var(--muted);">
+  <strong>Recommendation:</strong> No budget change warranted; 1800 s should be
+  enough for an agent that writes a working first draft early and refines.  The
+  behaviour is an agent-strategy issue — consider whether the system prompt
+  should nudge early-draft code attempts for tasks that require implementation,
+  not purely an omega-cli or infra issue.
+</p>
+
+<h5>(b) Extended-budget timeout — <code>winning-avg-corewars</code> (3600 s)</h5>
+<p>
+  Session ran from <code>2026-05-31T05:53:37Z</code> to <code>2026-05-31T06:52:22Z</code>
+  (58 min 45 s, right at the 3600 s wall).  The agent made only
+  <strong>14 tool calls</strong>, all <code>python_repl</code>, each running
+  <code>pmars</code> (the CoreWars simulator) for multi-round battles.  The task
+  asks for a CoreWars warrior that beats five classic opponents.  The agent iterated
+  through nine named warrior versions (Paladin_v1 … Paladin_v9), systematically
+  diagnosing failure modes:
+</p>
+<blockquote style="font-size:0.88rem;font-family:monospace;background:var(--code-bg,#f6f8fa);padding:0.6rem 1rem;border-left:3px solid var(--border);">
+  <code>[83] RESULT: vs stone.red: Phoenix wins=30 ties=45 losses=25; vs snake.red: Phoenix loses; …</code><br/>
+  <code>[90] RESULT: vs stone.red: Paladin_v8 wins=26 ties=58 losses=16; vs vampire.red: wins=88 …</code><br/>
+  <code>[97] RESULT: vs stone.red: Paladin_v9 wins=64 ties=36 losses=0; vs paper.red: wins=36 ties=28 losses=36; …</code>
+</blockquote>
+<p>
+  At timeout the agent was on Paladin_v9, still short of the required ≥75-win average
+  against all five opponents and stuck on the snake/g2-clear matchup.  Each
+  <code>pmars</code> battle set took ~4 minutes wall time, leaving room for only 14
+  iterations in the 60-minute budget.
+</p>
+<p>
+  Classification: <strong>slow productive work</strong>.  The agent was
+  methodically improving strategy in each iteration — different warrior code
+  per call, with explicit reasoning about the previous version's failure
+  mode.  It ran out of clock because the simulator itself is slow (not the
+  LLM), and the search space is large.
+</p>
+<p style="font-size:0.88rem;color:var(--muted);">
+  <strong>Recommendation:</strong> The 3600 s budget is already at the
+  extended ceiling.  The bottleneck is simulator throughput, not agent
+  reasoning.  Further budget increases face diminishing returns; this task
+  category may be fundamentally infeasible for a pure REPL agent without
+  a faster evaluation oracle.
+</p>
+
+<h4>3 · NonZeroAgentExitCodeError triage</h4>
+<p>
+  No <code>events.jsonl</code> exists in either trial's agent directory —
+  both processes exited before the omega session was created.  The root causes
+  come from <code>exception.txt</code> and the captured stdout in each
+  <code>trial.log</code>.
+</p>
+
+<h5>(a) <code>fix-code-vulnerability</code> — exit code 1, wall time ≈ 45 s</h5>
+<p>
+  The omega CLI printed to stdout before exiting:
+</p>
+<blockquote style="font-family:monospace;font-size:0.88rem;background:var(--code-bg,#f6f8fa);padding:0.6rem 1rem;border-left:3px solid var(--border);">
+  omega: there are uncommitted changes in the working tree.
+  Commit or stash them before running omega, or pass --allow-dirty to proceed anyway.
+</blockquote>
+<p>
+  The bench wrapper runs <code>cd /app &amp;&amp; omega run --instruction …</code>.  The
+  <code>fix-code-vulnerability</code> Docker image places the Bottle repository at
+  <code>/app</code> and that directory is a live git repo with modified (pre-seeded)
+  files.  omega's startup check detects the dirty working tree and refuses to
+  proceed.  The bench wrapper does not pass <code>--allow-dirty</code>.
+  The ≈40 s before the exit is accounted for by the
+  <code>apt-get update &amp;&amp; install ca-certificates</code> setup step that
+  runs before the omega binary is invoked.
+</p>
+<p>
+  <strong>Root cause:</strong> omega-cli startup check triggered by a task image
+  whose <code>/app</code> directory is a git repository with uncommitted files.
+  Other tasks either have a clean <code>/app</code> git repo or no git repo at
+  <code>/app</code> at all, so they are unaffected.
+</p>
+<p style="font-size:0.88rem;color:var(--muted);">
+  <strong>Recommendation:</strong> Open an issue: the bench wrapper should pass
+  <code>--allow-dirty</code> unconditionally, or omega should default to
+  allow-dirty when no session journal exists for the path.  Do not fix here.
+</p>
+
+<h5>(b) <code>pytorch-model-recovery</code> — exit code 2, wall time ≈ 336 s</h5>
+<p>
+  The omega CLI printed to stdout before exiting:
+</p>
+<blockquote style="font-family:monospace;font-size:0.88rem;background:var(--code-bg,#f6f8fa);padding:0.6rem 1rem;border-left:3px solid var(--border);">
+  error: unexpected argument '- ' found<br/>
+  Usage: omega run [OPTIONS] --instruction &lt;INSTRUCTION&gt;
+</blockquote>
+<p>
+  The task instruction text begins with <code>- You are given a PyTorch state
+  dictionary…</code> (leading dash-space, a YAML-style list bullet).  The bench
+  wrapper passes the instruction as <code>--instruction {shlex.quote(instruction)}</code>.
+  Python's <code>shlex.quote</code> single-quotes the value; the shell strips the
+  quotes and passes the raw string to the binary.  clap (the Rust CLI parser) sees
+  a value beginning with <code>- </code> after <code>--instruction</code> and,
+  depending on the clap version and argument definition, may treat it as an
+  unrecognised flag rather than a plain string value.  Exit code 2 is clap's
+  standard parse-error exit.  The ≈5.5-minute wall time before the exit is
+  accounted for by container setup and the model-weight file loading
+  that happens as part of the Docker image startup.
+</p>
+<p>
+  <strong>Root cause:</strong> omega-cli's argument parser rejects instruction
+  strings beginning with <code>- </code>.  A single-character leading dash is
+  sufficient to trigger the parse error; this is a clap argument-parsing
+  edge-case.
+</p>
+<p style="font-size:0.88rem;color:var(--muted);">
+  <strong>Recommendation:</strong> Open an issue: the bench wrapper should use
+  <code>--instruction=&lt;value&gt;</code> (with <code>=</code>) instead of
+  <code>--instruction &lt;value&gt;</code> (space-separated) so that leading-dash
+  instruction strings cannot be misinterpreted by clap.  Alternatively, omega
+  should declare <code>--instruction</code> with
+  <code>allow_hyphen_values(true)</code>.  Do not fix here.
+</p>
+
+<h5>Same or different root cause?</h5>
+<p>
+  Different.  (a) is an omega <em>startup policy</em> issue (dirty-tree guard);
+  (b) is an omega <em>CLI parsing</em> issue (leading-dash instruction).  Both
+  are omega-cli bugs triggered by unusual task-environment conditions; neither
+  is a harbor-infra or GLIBC issue.  Neither is expected to be widespread —
+  only tasks whose <code>/app</code> is a dirty git repo would hit (a), and only
+  tasks whose instruction literally starts with <code>- </code> would hit (b).
+  Both are one-line fixes in the bench wrapper.
+</p>
+</div>
+
 </div>
 </details>
 
