@@ -25,6 +25,8 @@ pub struct SessionInfoCache {
     pub model: String,
     pub effort: String,
     pub cwd: String,
+    /// Absolute path to the root directory containing all session folders.
+    pub sessions_root: String,
     pub name: Option<String>,
     /// Whether the working tree had uncommitted changes when this session
     /// was created.  Computed once by `git status --porcelain` and carried

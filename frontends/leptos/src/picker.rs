@@ -629,6 +629,7 @@ fn SessionRow(
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
     let list = use_context::<SessionListStore>().expect("SessionListStore must be provided");
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
     let dir_sv: StoredValue<String, LocalStorage> = StoredValue::new_local(item.dir.clone());
 
     // Draft text for the rename input.
@@ -771,7 +772,18 @@ fn SessionRow(
     let copied = RwSignal::new(false);
     let on_insert_at = move |_: leptos::ev::MouseEvent| {
         let dir = dir_sv.get_value();
-        let path = format!("@.omega/sessions/{}/", dir);
+        // Build the absolute path so agents referring to another session have
+        // a fully-qualified, unambiguous reference.
+        let sessions_root = store
+            .session_info
+            .get_untracked()
+            .map(|si| si.sessions_root)
+            .unwrap_or_default();
+        let path = if sessions_root.is_empty() {
+            format!("@.omega/sessions/{}/", dir)
+        } else {
+            format!("@{}/{}/", sessions_root, dir)
+        };
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast as _;

@@ -44,6 +44,8 @@ pub enum WsMessage {
         effort: String,
         /// Server working directory.
         cwd: String,
+        /// Absolute path to the root directory containing all session folders.
+        sessions_root: String,
         /// Optional human-readable session name; omitted when `None`.
         name: Option<String>,
         /// Current derived turn state (`idle` / `running` / `pause_requested` / `paused`).
@@ -158,17 +160,22 @@ impl WsMessage {
                 model,
                 effort,
                 cwd,
+                sessions_root,
                 name,
                 turn_state,
                 has_pending_changes,
                 features,
             } => {
-                let mut obj = serde_json::Map::with_capacity(9);
+                let mut obj = serde_json::Map::with_capacity(10);
                 obj.insert("type".to_owned(), serde_json::Value::from("session_info"));
                 obj.insert("dir".to_owned(), serde_json::Value::from(dir.clone()));
                 obj.insert("model".to_owned(), serde_json::Value::from(model.clone()));
                 obj.insert("effort".to_owned(), serde_json::Value::from(effort.clone()));
                 obj.insert("cwd".to_owned(), serde_json::Value::from(cwd.clone()));
+                obj.insert(
+                    "sessionsRoot".to_owned(),
+                    serde_json::Value::from(sessions_root.clone()),
+                );
                 obj.insert(
                     "turnState".to_owned(),
                     serde_json::Value::from(turn_state.clone()),
@@ -310,6 +317,7 @@ mod tests {
             model: "claude-sonnet-4-6".to_owned(),
             effort: "medium".to_owned(),
             cwd: "/tmp".to_owned(),
+            sessions_root: "/tmp/.omega/sessions".to_owned(),
             name: None,
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
@@ -321,10 +329,11 @@ mod tests {
         assert_eq!(v["model"], "claude-sonnet-4-6");
         assert_eq!(v["effort"], "medium");
         assert_eq!(v["cwd"], "/tmp");
+        assert_eq!(v["sessionsRoot"], "/tmp/.omega/sessions");
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("name"), "name must be omitted when None");
-        // type, dir, model, effort, cwd, turnState, hasPendingChanges, features = 8
-        assert_eq!(obj.len(), 8, "unexpected extra fields: {obj:?}");
+        // type, dir, model, effort, cwd, sessionsRoot, turnState, hasPendingChanges, features = 9
+        assert_eq!(obj.len(), 9, "unexpected extra fields: {obj:?}");
         assert_eq!(obj["turnState"], "idle");
         assert_eq!(obj["hasPendingChanges"], false);
         // features is always present
@@ -339,6 +348,7 @@ mod tests {
             model: "m".to_owned(),
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
+            sessions_root: "/sessions".to_owned(),
             name: None,
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
@@ -349,12 +359,13 @@ mod tests {
     }
 
     #[test]
-    fn session_info_includes_name_with_features_gives_nine_fields() {
+    fn session_info_includes_name_with_features_gives_ten_fields() {
         let v = WsMessage::SessionInfo {
             dir: "d".to_owned(),
             model: "m".to_owned(),
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
+            sessions_root: "/sessions".to_owned(),
             name: Some("my-session".to_owned()),
             turn_state: "running".to_owned(),
             has_pending_changes: false,
@@ -363,8 +374,8 @@ mod tests {
         .to_json();
         assert_eq!(v["name"], "my-session");
         let obj = v.as_object().unwrap();
-        // type, dir, model, effort, cwd, turnState, hasPendingChanges, features, name = 9
-        assert_eq!(obj.len(), 9, "unexpected field count: {obj:?}");
+        // type, dir, model, effort, cwd, sessionsRoot, turnState, hasPendingChanges, features, name = 10
+        assert_eq!(obj.len(), 10, "unexpected field count: {obj:?}");
     }
 
     #[test]
@@ -374,6 +385,7 @@ mod tests {
             model: "m".to_owned(),
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
+            sessions_root: "/sessions".to_owned(),
             name: None,
             turn_state: "idle".to_owned(),
             has_pending_changes: true,
@@ -390,6 +402,7 @@ mod tests {
             model: "m".to_owned(),
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
+            sessions_root: "/sessions".to_owned(),
             name: Some("my-session".to_owned()),
             turn_state: "running".to_owned(),
             has_pending_changes: false,
@@ -406,6 +419,7 @@ mod tests {
             model: "m".to_owned(),
             effort: "e".to_owned(),
             cwd: "/c".to_owned(),
+            sessions_root: "/sessions".to_owned(),
             name: Some("n".to_owned()),
             turn_state: "idle".to_owned(),
             has_pending_changes: false,

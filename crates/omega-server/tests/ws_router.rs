@@ -227,7 +227,14 @@ async fn reset_and_ready(ws: &mut WsClient) -> String {
 /// so snapshots are stable across runs.
 fn redact(mut v: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = v.as_object_mut() {
-        for key in &["time", "dir", "cwd", "contextHash", "hasPendingChanges"] {
+        for key in &[
+            "time",
+            "dir",
+            "cwd",
+            "sessionsRoot",
+            "contextHash",
+            "hasPendingChanges",
+        ] {
             if obj.contains_key(*key) {
                 obj.insert(
                     (*key).to_owned(),

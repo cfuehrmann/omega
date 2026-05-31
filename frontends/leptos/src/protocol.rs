@@ -116,6 +116,8 @@ pub struct SessionInfoPayload {
     pub model: String,
     pub effort: String,
     pub cwd: String,
+    /// Absolute path to the root directory containing all session folders.
+    pub sessions_root: String,
     pub turn_state: TurnState,
     pub has_pending_changes: bool,
     /// Omitted on the wire when absent (server uses `Option::is_none`).
@@ -575,7 +577,7 @@ mod tests {
     fn session_info_with_name_and_pending_changes() {
         let json = r#"{
             "type":"session_info","dir":"d","model":"m","effort":"e",
-            "cwd":"/c","turnState":"running","hasPendingChanges":true,
+            "cwd":"/c","sessionsRoot":"/sessions","turnState":"running","hasPendingChanges":true,
             "name":"alpha"
         }"#;
         match parse(json) {
@@ -592,7 +594,7 @@ mod tests {
     fn session_info_without_name_field() {
         let json = r#"{
             "type":"session_info","dir":"d","model":"m","effort":"e",
-            "cwd":"/c","turnState":"idle","hasPendingChanges":false
+            "cwd":"/c","sessionsRoot":"/sessions","turnState":"idle","hasPendingChanges":false
         }"#;
         match parse(json) {
             WsMessage::SessionInfo(p) => {
