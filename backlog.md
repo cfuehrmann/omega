@@ -46,6 +46,53 @@ Remaining backlog (post-audit):
 
 ## P3 — Low priority / deferred
 
+### OPUS48-1 — Fast mode
+
+Opus 4.8 supports `speed: "fast"` (+ beta header `fast-mode-2026-02-01`) for
+up to 2.5× higher output tokens/second at 2× cost ($10/$50/MTok). Would
+reduce streaming latency for Omega's agentic tool-dispatch turns noticeably.
+Currently a research preview behind a waitlist/account manager.
+
+**Do not join the waitlist.** Monitor Anthropic release notes for when fast
+mode becomes publicly available without gating, then implement:
+- Add `speed` field to `LlmRequest` / `ModelConfig`
+- Pass `fast-mode-2026-02-01` beta header when set
+- Add UI toggle (per-session, not global — cost doubles)
+- Handle separate fast-mode rate limit pool (429 → fall back to standard)
+- Note: switching between fast/standard invalidates the prompt cache.
+
+### OPUS48-2 — Mid-conversation system messages
+
+Opus 4.8 accepts `{"role": "system"}` entries in the `messages` array
+(after a user turn). They carry system-level instruction authority and,
+critically, do **not** invalidate the cached prefix that precedes them —
+because they are appended at the *end* of the history rather than modifying
+the top-level `system` field.
+
+Conflict resolution: later system messages take precedence; mid-conversation
+messages take precedence over the top-level `system` field for all subsequent
+turns.
+
+**Possible Omega use cases:**
+- Inject a standing directive with system-level authority during a pause
+  (rather than as a plain user message).
+- Refresh stale runtime-context data (e.g. current time) mid-session without
+  a cache miss.
+
+**Questionable for tool-set changes.** The seemingly natural use case —
+"remove tools mid-session to shrink the prompt" — does not work with this
+feature. A mid-conversation system message can *instruct* the model not to
+use certain tools, but the tool definitions and their associated system-prompt
+addenda remain in every request unchanged. The token load is strictly
+additive (both the original system prompt and the injected message are
+present, though both are cached after the first turn). To genuinely reduce
+token load by removing tools, you must modify the top-level `system` field
+and the `tools` array and accept a one-time cache miss — that is a separate
+feature with no relation to mid-conversation system messages.
+
+**Also note:** only available on the Claude API (not Bedrock / Vertex).
+No beta header required.
+
 ### Advisor tool — blocked on `clear_tool_uses` compatibility
 
 **[backlog/advisor-tool.md](backlog/advisor-tool.md)**
