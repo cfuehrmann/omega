@@ -35,7 +35,7 @@ enum Command {
     /// Run a single agent turn from the command line.
     Run {
         /// User instruction to send to the agent.
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         instruction: String,
 
         /// Anthropic model identifier.

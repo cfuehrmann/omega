@@ -267,6 +267,7 @@ class OmegaRustAgent(BaseInstalledAgent):
             f"mkdir -p {OMEGA_RUST_SESSION_ROOT}"
             f" && cd /app || true"
             f" && {OMEGA_RUST_BIN} run"
+            f" --allow-dirty"
             f" --instruction {shlex.quote(instruction)}"
             f" --model {shlex.quote(self._parsed_model_name)}"
             f" --session-root {OMEGA_RUST_SESSION_ROOT}"
