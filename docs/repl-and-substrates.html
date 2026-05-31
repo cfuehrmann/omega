@@ -261,20 +261,26 @@ tr:nth-child(even) td { background: #fafbfc; }
     (Session-D-shape) remain.
   </p>
   <p style="color:var(--ok-border);font-size:0.92rem;">
-    ✅ <strong>Phase 2.2.2(c) infra complete</strong>
-    (<a href="#log-session-g">Session G</a> + <a href="#log-session-h">Session H</a>):
-    <code>bench/run_sequential_sweep.py</code> runs 87 TB2 tasks sequentially,
-    one at a time, with Docker cleanup between trials, using a
-    GLIBC-portable <code>omega-cli</code> binary (built inside
-    <code>ubuntu:20.04</code> / glibc 2.31, max GLIBC requirement: 2.30)
-    copied into each container — zero setup timeouts, binary loads on
-    every TB2 task image.  Smoke gate confirmed:<br/>
-    <code>circuit-fibsqrt</code> → 0 exceptions, no GLIBC error (reward 0.0 —
-    agent failed the task, infra worked).  <br/>
-    Remaining work: operator runs the full 87-task sweep via
-    <code>python run_sequential_sweep.py [--resume]</code>; n ≥ 3 re-runs
-    once sweep shape is confirmed.  Build prerequisite: see
-    <code>bench/README.md § Running the sequential sweep</code>.
+    ✅ <strong>Phase 2.2.2(c) infra complete and validated end-to-end</strong>
+    (Sessions <a href="#log-session-g">G</a> + <a href="#log-session-h">H</a>
+    built the pieces; <a href="#log-session-i">Session I</a> is the first full
+    89-task sweep on it).  Across all 89 tasks: <strong>0 setup timeouts,
+    0 GLIBC failures, 0 disk cascades</strong>.  Headline: Sonnet-medium
+    <code>repl-centric</code> = <strong>50 / 89 = 56.2 %</strong>, vs the
+    <code>standard</code>-tools baseline 53 / 89 = 59.6 % — −3.4 pp, within
+    plausible single-trial noise.
+  </p>
+  <p style="color:var(--ok-border);font-size:0.92rem;margin-top:-0.4rem;">
+    Remaining: <strong>n ≥ 3 replication</strong> on a representative subset
+    to distinguish substrate signal from variance; analysis of the 15
+    <code>AgentTimeoutError</code> tasks (17 % of the corpus — are they
+    concentrated in a category?); and investigation of the 2
+    <code>NonZeroAgentExitCodeError</code>s on
+    <code>fix-code-vulnerability</code> (45 s) and
+    <code>pytorch-model-recovery</code> (336 s).  Both ran the
+    GLIBC-portable binary cleanly, so the early non-zero exit is
+    <em>not</em> infra — most likely an omega-cli or task-specific issue.
+    Keep on radar for the next analysis session.
   </p>
   <p>Compare against Session D / Session A on:</p>
   <ol>
@@ -917,6 +923,75 @@ tr:nth-child(even) td { background: #fafbfc; }
       <td><strong>Tier 2 (full)</strong></td>
       <td><code>repl=1 replaces_fileops=1 replaces_shell=1</code></td>
       <td>10 tools total</td><td>everything → python_repl only</td>
+    </tr>
+
+    <tr id="log-session-i">
+      <td>Operator-driven sweep (no sub-session)<br/>
+          started 2026-05-30 ~16:00<br/>
+          completed 2026-05-31 ~09:36</td>
+      <td>Sonnet-medium + <code>repl-centric</code> (post-2.2.1,
+          omega v0.1.15) via
+          <code>bench/run_sequential_sweep.py</code></td>
+      <td>First full clean 89-task TB2 sweep on the post-2.2 / 2.2.1
+          substrate — the measurement Phase 2.2.2(c) was built to enable.</td>
+      <td>89 trials · ~17 h 46 min wall · disk stable 75 GB free throughout</td>
+      <td>
+        <ul style="margin:0;padding-left:1.1rem;">
+          <li><strong>Headline:</strong> <strong>50 / 89 = 56.2 %</strong>
+              pass rate (50 / 72 = 69 % excluding errors).</li>
+          <li><strong>Substrate comparison vs Sonnet-medium
+              <code>standard</code> (53 / 89 = 59.6 % from the README
+              baseline):</strong> <strong>−3.4 pp</strong>.  Within plausible
+              single-trial noise on n = 89; needs n ≥ 3 replication to
+              distinguish substrate signal from variance.</li>
+          <li><strong>Architectural promises delivered:</strong>
+              <strong>0 / 89</strong> <code>AgentSetupTimeoutError</code>
+              (vs ~4 / 89 in the standard-tools baseline),
+              <strong>0 GLIBC failures</strong>,
+              <strong>0 disk-fill cascades</strong>.
+              The first sweep before Phase 2.2.2(c) infra had 33 / 89
+              setup-timeouts cascading from a disk-fill at hour 0:38;
+              this sweep ran 17.6 h with disk free at start ≈ disk free
+              at end.</li>
+          <li><strong>Outcome breakdown:</strong> 50 PASS, 22 FAIL,
+              15 <code>AgentTimeoutError</code> (hit per-task budget),
+              2 <code>NonZeroAgentExitCodeError</code>.</li>
+          <li><strong>Investigation point —
+              <code>NonZeroAgentExitCodeError</code>:</strong>
+              <code>fix-code-vulnerability</code> (exit 1 at 45 s),
+              <code>pytorch-model-recovery</code> (exit 1 at 336 s).
+              Not GLIBC (this sweep used the post-Phase-2.2.2(c) portable
+              binary, which loaded cleanly on every other task).  Hypothesis:
+              omega-cli crash on a specific input pattern OR a
+              task-specific runtime failure.  Worth a focused triage
+              before the next sweep so we know whether to expect 2 / 89
+              or 20 / 89 of these in the wild.</li>
+          <li><strong>Investigation point — 15 timeouts:</strong>
+              17 % of the corpus hit the per-task budget without solving.
+              Some ran very long (<code>winning-avg-corewars</code> 3648 s,
+              <code>train-fasttext</code> 4403 s) on tasks with custom
+              extended budgets.  Are these concentrated in one category
+              (compile-heavy?  ML?  search-heavy?) or distributed?
+              Per-task-category breakdown + 2–3 session-jsonl audits at
+              the budget cutoff would answer it.</li>
+          <li><strong>Wrapper bug fixed in the same commit
+              as this row:</strong> <code>summary.json</code>
+              double-undercounted — its <code>passed/failed/errors</code>
+              only tallied tasks the wrapper ran in the current invocation,
+              not tasks skipped via <code>--resume</code>.  Fix:
+              resumed tasks are now categorised by their cached outcome
+              and folded into the same buckets.  The 50/22/15/2 numbers
+              above come from scanning all 89 per-task
+              <code>result.json</code> files, not from the (stale)
+              wrapper-written summary.</li>
+          <li><strong>API key leak in <code>--dry-run</code>:</strong>
+              the wrapper's <code>--dry-run</code> mode prints the harbor
+              command with <code>$ANTHROPIC_API_KEY</code> expanded
+              in-line.  Not exercised by normal use, but worth fixing
+              (mask the key in dry-run output) before the wrapper sees
+              broader use.</li>
+        </ul>
+      </td>
     </tr>
   </tbody>
 </table>

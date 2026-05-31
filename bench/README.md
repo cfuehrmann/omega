@@ -4,13 +4,16 @@ Terminal-Bench 2.0 is a 89-task containerised coding benchmark run via [Harbor](
 
 ## Results
 
-| Model | Effort | Score | Notes |
-|---|---|---|---|
-| `claude-sonnet-4-6` | medium | **53/89 = 59.6 %** | |
-| `claude-opus-4-7` | high | **62/89 = 69.7 %** | xhigh used for tasks ≥ 900 s budget |
-| Claude Opus 4.7 / Adaptive (official) | adaptive | **69.4 %** | tbench.ai leaderboard |
+| Model | Effort | Substrate | Score | Notes |
+|---|---|---|---|---|
+| `claude-sonnet-4-6` | medium | **`repl-centric`** | **50 / 89 = 56.2 %** | First clean post-Phase-2.2.1 sweep (omega v0.1.15, sequential, host-built portable binary). 0 setup-timeouts, 0 GLIBC failures, 0 disk cascades. [Session I](../docs/repl-and-substrates.html#log-session-i) in the self-hosting observation log. |
+| `claude-sonnet-4-6` | medium | `standard` | **53 / 89 = 59.6 %** | Historical baseline, omega ≤ v0.1.13, parallel sweep. Mixed in ~4 / 89 setup-timeouts and other infra noise. |
+| `claude-opus-4-7` | high | `standard` | **62 / 89 = 69.7 %** | xhigh used for tasks ≥ 900 s budget |
+| Claude Opus 4.7 / Adaptive (official) | adaptive | n/a | **69.4 %** | tbench.ai leaderboard |
 
 Omega + Opus 4.7 at 69.7 % matches the official leaderboard's Opus 4.7 Adaptive entry (69.4 %) — same model, different agent harness.
+
+The Sonnet-medium `repl-centric` vs `standard` comparison is **−3.4 pp on n = 89 single trials**, which is within plausible sampling noise; an n ≥ 3 replication on a representative subset is what Phase 2.2.2 still needs to distinguish substrate signal from variance.
 
 Run `python bench/scripts/bench-summary.py` for a live breakdown from `bench/results/results.jsonl` (regenerate this script in Python if it does not exist yet).
 

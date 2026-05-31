@@ -151,6 +151,31 @@ def result_is_complete(task: str) -> bool:
     return n_trials >= 1 and n_errors < n_trials
 
 
+def _categorize_eval_stats(
+    eval_stats: dict | None, rc: int = 0
+) -> tuple[str, str]:
+    """
+    Map a harbor eval_stats dict to (status, note).
+
+    Single source of truth used both by the live-run path (run_task) and the
+    resume path in main(), so resumed tasks land in the same
+    pass/fail/error buckets as freshly-run ones and the summary tally
+    matches reality across both batches.
+    """
+    if eval_stats is None:
+        return "fail", f"rc={rc} no result.json"
+    exc_stats = eval_stats.get("exception_stats") or {}
+    if exc_stats:
+        return "error", next(iter(exc_stats.keys()))
+    metrics = eval_stats.get("metrics") or []
+    if metrics and "mean" in metrics[0]:
+        mean = metrics[0]["mean"]
+        if mean == 1.0:
+            return "pass", f"mean={mean:.1f}"
+        return "fail", f"mean={mean:.2f}"
+    return "fail", f"rc={rc} no metrics"
+
+
 # ---------------------------------------------------------------------------
 # Docker pruning
 # ---------------------------------------------------------------------------
@@ -218,30 +243,7 @@ def run_task(task: str, dry_run: bool) -> TaskResult:
 
     # Inspect result.json written by Harbor to determine pass/fail.
     eval_stats = _read_job_result(job_dir_for_task(task))
-    mean: float | None = None
-    exception_class: str | None = None
-
-    if eval_stats is not None:
-        exc_stats = eval_stats.get("exception_stats") or {}
-        if exc_stats:
-            exception_class = next(iter(exc_stats.keys()))
-        metrics = eval_stats.get("metrics") or []
-        if metrics and "mean" in metrics[0]:
-            mean = metrics[0]["mean"]
-
-    if exception_class:
-        note = exception_class
-        status = "error"
-    elif mean is None:
-        note = f"rc={rc} no result.json"
-        status = "fail"
-    elif mean == 1.0:
-        note = f"mean={mean:.1f}"
-        status = "pass"
-    else:
-        note = f"mean={mean:.2f}"
-        status = "fail"
-
+    status, note = _categorize_eval_stats(eval_stats, rc=rc)
     return TaskResult(task=task, status=status, elapsed_sec=elapsed, note=note)
 
 
@@ -404,10 +406,21 @@ def main() -> int:
 
         print(f"\n[{i}/{len(task_list)}] {task}", flush=True)
 
-        # --resume: skip if already done.
+        # --resume: skip if already done, but FOLD the cached outcome into
+        # the summary tally (pass/fail/error) so a resumed sweep's totals
+        # match what scanning all per-task result.jsons would show.
         if args.resume and result_is_complete(task):
-            print(f"  → skipped (already complete)")
-            results.append(TaskResult(task=task, status="skipped", elapsed_sec=0.0, note="resumed"))
+            cached_stats = _read_job_result(job_dir_for_task(task))
+            status, note = _categorize_eval_stats(cached_stats)
+            print(f"  → {status.upper():<8}    resumed ({note})")
+            results.append(
+                TaskResult(
+                    task=task,
+                    status=status,
+                    elapsed_sec=0.0,
+                    note=f"resumed ({note})",
+                )
+            )
             continue
 
         # Run the trial.
