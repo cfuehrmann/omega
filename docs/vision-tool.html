@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vision / Screenshot Tool — Design Notes</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#f9f9fb; --surface:#ffffff; --border:#e1e4e8; --text:#1a1a2e;
+  --muted:#6a737d; --accent:#0550ae; --accent-bg:#dbeafe;
+  --callout-bg:#eff6ff; --callout-border:#3b82f6;
+  --warn-bg:#fff8dc; --warn-border:#e6c600;
+  --ok-bg:#dcfce7; --ok-border:#16a34a;
+  --content-max:820px; font-size:16px; color-scheme:light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0d1117; --surface:#161b22; --border:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --accent:#58a6ff; --accent-bg:#1c2d48;
+    --callout-bg:#0d1f33; --callout-border:#1f6feb;
+    --warn-bg:#2d2200; --warn-border:#d29922;
+    --ok-bg:#0f2e16; --ok-border:#3fb950; color-scheme:dark;
+  }
+  code { background:#21262d !important; border-color:var(--border) !important; color:#e6edf3; }
+  pre { background:#161b22 !important; }
+}
+body {
+  font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background:var(--bg); color:var(--text); line-height:1.65;
+  max-width:var(--content-max); margin:0 auto; padding:2.5rem 1.5rem;
+}
+h1 { font-size:2rem; font-weight:700; line-height:1.2; margin-bottom:0.4rem; }
+.doc-meta { font-size:0.83rem; color:var(--muted); margin-bottom:2.5rem; padding-bottom:1.25rem; border-bottom:1px solid var(--border); }
+h2 { font-size:1.35rem; font-weight:700; margin-top:2.5rem; margin-bottom:0.75rem; padding-bottom:0.35rem; border-bottom:1px solid var(--border); }
+h3 { font-size:1rem; font-weight:600; margin-top:1.6rem; margin-bottom:0.5rem; }
+p { margin-bottom:0.85rem; }
+ul, ol { padding-left:1.4rem; margin-bottom:0.85rem; }
+li { margin-bottom:0.3rem; }
+code { font-family:"SFMono-Regular", Consolas, Menlo, monospace; font-size:0.87em; background:#f3f4f6; border:1px solid var(--border); border-radius:3px; padding:0.1em 0.35em; }
+pre { background:#f6f8fa; border:1px solid var(--border); border-radius:6px; padding:1rem 1.2rem; overflow-x:auto; margin-bottom:1rem; font-size:0.87rem; }
+pre code { background:none; border:none; padding:0; }
+a { color:var(--accent); }
+.callout { border-left:4px solid var(--callout-border); background:var(--callout-bg); border-radius:0 6px 6px 0; padding:0.85rem 1.1rem; margin:1.2rem 0; }
+.callout.rec  { border-color:var(--ok-border);   background:var(--ok-bg); }
+.callout.warn { border-color:var(--warn-border); background:var(--warn-bg); }
+.callout-title { font-weight:700; font-size:0.82rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem; color:var(--accent); }
+.callout.rec  .callout-title { color:var(--ok-border); }
+.callout.warn .callout-title { color:var(--warn-border); }
+</style>
+</head>
+<body>
+
+<h1>Vision / Screenshot Tool — Design Notes</h1>
+<p class="doc-meta">
+  Status: <strong>Not scheduled — design notes only</strong> ·
+  Extracted from <a href="./repl-and-substrates.html"><code>docs/repl-and-substrates.html</code></a>
+  (formerly "Phase 1.5 — Vision tool") when the REPL experiment was closed.
+  This capability is orthogonal to the REPL work and may be picked up on its own.
+</p>
+
+<div class="callout">
+  <div class="callout-title">In one sentence</div>
+  <p>
+    Give the agent eyes: a <code>screenshot</code> tool that captures the running
+    Omega UI (or any URL) and returns the image to the model as a tool-result
+    image content block, so the agent can visually verify what it built instead
+    of relying solely on snapshot tests and the user as a visual oracle.
+  </p>
+</div>
+
+<h2 id="what">What</h2>
+<p>
+  A <code>screenshot</code> tool that captures the running UI (or any URL) and
+  returns the image to the model as a tool-result image content block.
+  Anthropic's Messages API already accepts image content in tool results; the
+  work is on Omega's side.
+</p>
+
+<h2 id="why">Why it would matter</h2>
+<p>
+  The best ROI is validating UI work — the agent can verify that code blocks,
+  truncation markers, tracebacks, and escalation events actually render as
+  intended, instead of relying solely on snapshot tests plus the user as a
+  visual oracle. It is also useful for catching CSS regressions and for any
+  future UI work generally.
+</p>
+
+<h2 id="cost">Cost / shape of the work</h2>
+<ul>
+  <li><strong>Schema-loud cross-crate change.</strong> Tool results currently
+      carry text; they need to generalise to a sequence of content blocks
+      (text + image), matching Anthropic's shape. Same shape of change as the
+      tool-selection migration (former Phase 1.2).</li>
+  <li><strong>Image persistence.</strong> Write PNGs to
+      <code>.omega/sessions/&lt;id&gt;/cache/images/&lt;hash&gt;.png</code> and
+      store a path-reference in <code>events.jsonl</code> — mirrors how
+      <code>cache/run/</code> works for shell tee'd output. Avoids bloating the
+      event log with inline base64.</li>
+  <li><strong>WS protocol + Leptos rendering.</strong> So the user sees what the
+      agent saw, not just <code>[image]</code>.</li>
+  <li><strong>Capture mechanism.</strong> MVP: shell out to
+      <code>chromium --headless --screenshot</code> (zero new Rust deps; works
+      today). Richer interaction (click / type / scroll before snapping) needs a
+      headless-Chromium Rust crate (<code>chromiumoxide</code> or
+      <code>headless_chrome</code>) — defer until needed.</li>
+</ul>
+
+<h2 id="open-questions">Open questions</h2>
+<ul>
+  <li>Do we ship the MVP (one-shot screenshot) or invest in the interactive
+      variant up front?</li>
+  <li>Should the tool be REPL-callable (so <code>python_repl</code> code can
+      capture screenshots) or only top-level?</li>
+  <li>Token-cost budgeting — a 768×768 tile is ~250 tokens; full-page
+      screenshots can be several thousand. Need a default viewport size.</li>
+</ul>
+
+<h2 id="contract">Contract note</h2>
+<p>
+  Generalising tool results from text to a content-block sequence is a
+  schema-loud change to <code>OmegaEvent</code> (the canonical event type in
+  <code>crates/omega-types/src/events.rs</code>). Per the contract-authority
+  rule, the Rust types are the source of truth: change them first, then let
+  persistence, the WS protocol, and the UI follow. The change should be visible
+  in the on-disk format — old readers should fail loudly on the new syntax
+  rather than silently misinterpret an image block as text.
+</p>
+
+</body>
+</html>
