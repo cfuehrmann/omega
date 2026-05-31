@@ -108,7 +108,7 @@ Only the user can make the connection between a symptom and the right log.
 Omega is Anthropic-only. The supported models are:
 
 - `claude-sonnet-4-6` — default, fast
-- `claude-opus-4-7` — most capable; use for hard problems
+- `claude-opus-4-8` — most capable; use for hard problems
 
 To look up Anthropic/Claude API documentation: fetch `https://platform.claude.com/llms.txt`
 to get an indexed list of all docs pages (each entry links to a `.md` URL), find the

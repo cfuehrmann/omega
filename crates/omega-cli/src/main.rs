@@ -43,7 +43,7 @@ enum Command {
         model: String,
 
         /// Adaptive-thinking effort level (low / medium / high; also
-        /// `xhigh` on Opus 4.7 and `max` on Opus models). Forwarded as
+        /// `xhigh` on Opus 4.7/4.8 and `max` on Opus models). Forwarded as
         /// `output_config.effort` on every Anthropic request and
         /// capped per model by `cap_effort_for_model`.
         #[arg(long, default_value = "medium")]

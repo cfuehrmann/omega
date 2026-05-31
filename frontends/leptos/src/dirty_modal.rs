@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn retry_frame_for_reset_preserves_model_effort_and_sets_allow_dirty() {
         let intent = PendingChangesIntent::Reset {
-            model: Some("claude-opus-4-7".into()),
+            model: Some("claude-opus-4-8".into()),
             effort: Some("high".into()),
         };
         let frame = retry_frame_for(&intent);
@@ -190,7 +190,7 @@ mod tests {
                 allow_dirty,
                 tool_selection,
             } => {
-                assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
+                assert_eq!(model.as_deref(), Some("claude-opus-4-8"));
                 assert_eq!(effort.as_deref(), Some("high"));
                 assert!(allow_dirty);
                 assert!(tool_selection.is_none());

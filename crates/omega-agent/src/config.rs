@@ -12,6 +12,7 @@ const MODEL_MAX_OUTPUT_TOKENS: &[(&str, u32)] = &[
     ("claude-sonnet-4-6", 64_000),
     ("claude-opus-4-6", 128_000),
     ("claude-opus-4-7", 128_000),
+    ("claude-opus-4-8", 128_000),
 ];
 
 /// Fallback when the model name is not recognised — same as Sonnet 4.6.
@@ -31,15 +32,15 @@ pub fn max_output_tokens_for_model(model: &str) -> u32 {
 }
 
 /// Models that support the `"max"` effort level (Opus variants).
-const OPUS_MODELS: &[&str] = &["claude-opus-4-6", "claude-opus-4-7"];
+const OPUS_MODELS: &[&str] = &["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"];
 
-/// Models that support the `"xhigh"` effort level.
-const XHIGH_MODELS: &[&str] = &["claude-opus-4-7"];
+/// Models that support the `"xhigh"` effort level (Opus 4.7 and later).
+const XHIGH_MODELS: &[&str] = &["claude-opus-4-7", "claude-opus-4-8"];
 
 /// Cap `effort` to the highest level the given `model` actually supports.
 ///
 /// Mirrors `capEffortForModel` in `src/agent.ts`:
-/// - `"xhigh"` → only `claude-opus-4-7`; degrades to `"high"` elsewhere.
+/// - `"xhigh"` → `claude-opus-4-7` / `claude-opus-4-8`; degrades to `"high"` elsewhere.
 /// - `"max"`   → only Opus models; degrades to `"high"` on Sonnet.
 /// - All other values are passed through unchanged.
 #[must_use]
@@ -71,6 +72,7 @@ mod tests {
         assert_eq!(max_output_tokens_for_model("claude-sonnet-4-6"), 64_000);
         assert_eq!(max_output_tokens_for_model("claude-opus-4-6"), 128_000);
         assert_eq!(max_output_tokens_for_model("claude-opus-4-7"), 128_000);
+        assert_eq!(max_output_tokens_for_model("claude-opus-4-8"), 128_000);
     }
 
     #[test]
@@ -83,7 +85,12 @@ mod tests {
 
     #[test]
     fn effort_passthrough_for_common_levels() {
-        for model in ["claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-7"] {
+        for model in [
+            "claude-sonnet-4-6",
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+        ] {
             for effort in ["low", "medium", "high"] {
                 assert_eq!(cap_effort_for_model(effort, model), effort);
             }
@@ -91,10 +98,11 @@ mod tests {
     }
 
     #[test]
-    fn xhigh_capped_to_high_on_non_opus47() {
+    fn xhigh_capped_to_high_on_non_opus47_or_48() {
         assert_eq!(cap_effort_for_model("xhigh", "claude-sonnet-4-6"), "high");
         assert_eq!(cap_effort_for_model("xhigh", "claude-opus-4-6"), "high");
         assert_eq!(cap_effort_for_model("xhigh", "claude-opus-4-7"), "xhigh");
+        assert_eq!(cap_effort_for_model("xhigh", "claude-opus-4-8"), "xhigh");
     }
 
     #[test]
@@ -102,5 +110,6 @@ mod tests {
         assert_eq!(cap_effort_for_model("max", "claude-sonnet-4-6"), "high");
         assert_eq!(cap_effort_for_model("max", "claude-opus-4-6"), "max");
         assert_eq!(cap_effort_for_model("max", "claude-opus-4-7"), "max");
+        assert_eq!(cap_effort_for_model("max", "claude-opus-4-8"), "max");
     }
 }

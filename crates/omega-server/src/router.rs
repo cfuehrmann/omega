@@ -639,9 +639,9 @@ async fn dispatch_client_frame(
 }
 
 /// Models that accept thinking-effort `"max"` (Opus tier).
-const MAX_EFFORT_MODELS: &[&str] = &["claude-opus-4-6", "claude-opus-4-7"];
-/// Models that accept thinking-effort `"xhigh"` (Opus 4.7 only).
-const XHIGH_EFFORT_MODELS: &[&str] = &["claude-opus-4-7"];
+const MAX_EFFORT_MODELS: &[&str] = &["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"];
+/// Models that accept thinking-effort `"xhigh"` (Opus 4.7 and later).
+const XHIGH_EFFORT_MODELS: &[&str] = &["claude-opus-4-7", "claude-opus-4-8"];
 
 async fn handle_set_model(
     state: &AppState,
@@ -1332,7 +1332,7 @@ mod tests {
     #[test]
     fn client_frame_reset_with_model_and_effort_parses() {
         let f: ClientFrame =
-            serde_json::from_str(r#"{"type":"reset","model":"claude-opus-4-7","effort":"high"}"#)
+            serde_json::from_str(r#"{"type":"reset","model":"claude-opus-4-8","effort":"high"}"#)
                 .unwrap();
         match f {
             ClientFrame::Reset {
@@ -1341,7 +1341,7 @@ mod tests {
                 allow_dirty,
                 tool_selection,
             } => {
-                assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
+                assert_eq!(model.as_deref(), Some("claude-opus-4-8"));
                 assert_eq!(effort.as_deref(), Some("high"));
                 assert!(!allow_dirty);
                 assert_eq!(tool_selection, None);

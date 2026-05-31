@@ -571,7 +571,7 @@ async fn propagates_beta_header() {
                 "type": "message_start",
                 "message": {
                     "id": "msg_x",
-                    "model": "claude-opus-4-7",
+                    "model": "claude-opus-4-8",
                     "usage": { "input_tokens": 1, "output_tokens": 1 }
                 }
             }),

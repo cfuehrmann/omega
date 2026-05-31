@@ -329,7 +329,7 @@ async fn composer_switch_model_idle() {
         .expect("model.value");
     assert_eq!(cur, "claude-sonnet-4-6");
 
-    h.select_option(MODEL, "claude-opus-4-7")
+    h.select_option(MODEL, "claude-opus-4-8")
         .await
         .expect("select opus");
 
@@ -339,7 +339,7 @@ async fn composer_switch_model_idle() {
             .eval(&format!("document.querySelector('{MODEL}').value"))
             .await
             .expect("model.value poll");
-        if v == "claude-opus-4-7" {
+        if v == "claude-opus-4-8" {
             break;
         }
         assert!(

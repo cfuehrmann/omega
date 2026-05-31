@@ -83,7 +83,7 @@ use crate::ws::WsClient;
 /// "discovery endpoint" rationale.
 pub const MODELS: &[(&str, &str)] = &[
     ("claude-sonnet-4-6", "Sonnet"),
-    ("claude-opus-4-7", "Opus 4.7"),
+    ("claude-opus-4-8", "Opus 4.8"),
 ];
 
 /// Effort levels for Sonnet 4.6 (and Opus 4.6 if ever re-added).
@@ -96,7 +96,7 @@ pub const EFFORTS: &[(&str, &str)] = &[
     ("max", "Max"),
 ];
 
-/// Effort levels for Claude Opus 4.7, which additionally exposes
+/// Effort levels for Claude Opus 4.7 and later, which additionally expose
 /// `xhigh` — a tier between `high` and `max` recommended as the
 /// starting point for long-horizon coding and agentic tasks.
 pub const EFFORTS_OPUS47: &[(&str, &str)] = &[
@@ -108,11 +108,12 @@ pub const EFFORTS_OPUS47: &[(&str, &str)] = &[
 ];
 
 /// Return the appropriate effort slice for `model`.
-/// `claude-opus-4-7` gets the extended list (including `xhigh`);
-/// all other models fall back to the standard four-level list.
+/// `claude-opus-4-7` and `claude-opus-4-8` get the extended list
+/// (including `xhigh`); all other models fall back to the standard
+/// four-level list.
 #[must_use]
 pub fn efforts_for_model(model: &str) -> &'static [(&'static str, &'static str)] {
-    if model == "claude-opus-4-7" {
+    if matches!(model, "claude-opus-4-7" | "claude-opus-4-8") {
         EFFORTS_OPUS47
     } else {
         EFFORTS
@@ -1038,7 +1039,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn selected_label_returns_label_for_known_value() {
         assert_eq!(selected_label_for(MODELS, "claude-sonnet-4-6"), "Sonnet");
-        assert_eq!(selected_label_for(MODELS, "claude-opus-4-7"), "Opus 4.7");
+        assert_eq!(selected_label_for(MODELS, "claude-opus-4-8"), "Opus 4.8");
         assert_eq!(selected_label_for(EFFORTS, "low"), "Low");
         assert_eq!(selected_label_for(EFFORTS, "max"), "Max");
     }
@@ -1047,7 +1048,7 @@ mod tests {
     fn selected_label_falls_back_to_value_when_unknown() {
         // `xhigh` is not in the Sonnet EFFORTS list — falls back to value.
         assert_eq!(selected_label_for(EFFORTS, "xhigh"), "xhigh");
-        // But `xhigh` IS in the Opus 4.7 list — returns its label.
+        // But `xhigh` IS in the Opus 4.7/4.8 list — returns its label.
         assert_eq!(selected_label_for(EFFORTS_OPUS47, "xhigh"), "XHigh");
         assert_eq!(selected_label_for(MODELS, "unknown-model"), "unknown-model");
     }
@@ -1174,7 +1175,7 @@ mod tests {
         let values: Vec<&str> = MODELS.iter().map(|(v, _)| *v).collect();
         assert_eq!(values.len(), 2);
         assert!(values.contains(&"claude-sonnet-4-6"));
-        assert!(values.contains(&"claude-opus-4-7"));
+        assert!(values.contains(&"claude-opus-4-8"));
     }
 
     #[wasm_bindgen_test]
@@ -1194,6 +1195,11 @@ mod tests {
     #[wasm_bindgen_test]
     fn efforts_for_model_returns_opus47_list_for_opus47() {
         assert_eq!(efforts_for_model("claude-opus-4-7"), EFFORTS_OPUS47);
+    }
+
+    #[wasm_bindgen_test]
+    fn efforts_for_model_returns_opus47_list_for_opus48() {
+        assert_eq!(efforts_for_model("claude-opus-4-8"), EFFORTS_OPUS47);
     }
 
     #[wasm_bindgen_test]

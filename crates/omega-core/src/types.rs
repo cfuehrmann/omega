@@ -44,7 +44,7 @@ pub struct ModelConfig {
     /// deprecated `thinking: { type: "enabled", budget_tokens: N }` mode.
     /// Only consulted when [`Self::adaptive_thinking`] is `false`, and
     /// even then `enabled` mode is deprecated on Opus 4.6 / Sonnet 4.6 and
-    /// rejected outright on Opus 4.7 — see the Adaptive Thinking docs at
+    /// rejected outright on Opus 4.7/4.8 — see the Adaptive Thinking docs at
     /// <https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking>.
     /// Production code in `omega-agent` never sets this; it exists for
     /// older models (Sonnet 4.5 / Opus 4.5 / earlier) and external callers.
@@ -54,7 +54,7 @@ pub struct ModelConfig {
     /// Enable Anthropic adaptive thinking — serialised as
     /// `thinking: { "type": "adaptive", "display": "summarized" }`.
     ///
-    /// This is the recommended (and on Opus 4.7, the only supported)
+    /// This is the recommended (and on Opus 4.7/4.8, the only supported)
     /// thinking mode for all current Claude models. Adaptive mode lets
     /// the model decide when and how much to think, and automatically
     /// enables interleaved thinking between tool calls — no

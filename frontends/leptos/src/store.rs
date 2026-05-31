@@ -1220,9 +1220,9 @@ mod tests {
             assert_eq!(s.snapshot().session_info.unwrap().model, "m");
             s.apply(WsMessage::ModelChanged(ModelChangedEvent {
                 time: "t".into(),
-                model: "claude-opus-4-7".into(),
+                model: "claude-opus-4-8".into(),
             }));
-            assert_eq!(s.snapshot().session_info.unwrap().model, "claude-opus-4-7");
+            assert_eq!(s.snapshot().session_info.unwrap().model, "claude-opus-4-8");
         });
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
             let s = SessionStore::new();
             s.apply(WsMessage::ModelChanged(ModelChangedEvent {
                 time: "t".into(),
-                model: "claude-opus-4-7".into(),
+                model: "claude-opus-4-8".into(),
             }));
             assert!(s.snapshot().session_info.is_none());
         });
@@ -1277,7 +1277,7 @@ mod tests {
             s.apply(session_info(TurnState::Idle));
             s.apply(WsMessage::ModelChanged(ModelChangedEvent {
                 time: "t".into(),
-                model: "claude-opus-4-7".into(),
+                model: "claude-opus-4-8".into(),
             }));
             assert_eq!(s.snapshot().events.len(), 1);
         });

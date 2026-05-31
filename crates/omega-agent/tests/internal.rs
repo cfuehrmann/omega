@@ -724,8 +724,8 @@ async fn active_model_reflects_initial_config() {
 #[tokio::test]
 async fn active_model_reflects_set_model() {
     let (mut agent, _p, _t) = make_test_agent();
-    let _ = agent.set_model("claude-opus-4-7".to_owned()).await;
-    assert_eq!(agent.active_model(), "claude-opus-4-7");
+    let _ = agent.set_model("claude-opus-4-8".to_owned()).await;
+    assert_eq!(agent.active_model(), "claude-opus-4-8");
 }
 
 /// Kills `replace Agent::active_effort -> &str with ""` (and `"xyzzy"`).
