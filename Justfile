@@ -292,6 +292,17 @@ mutants-session-at-path:
         --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
         --file "src/picker.rs" --re 'session_at_path'
 
+# Run cargo-mutants targeted at the context-modal `render_block` projection,
+# which formats one content block (text / tool_use / tool_result / thinking)
+# to its display string — including the inline tool-id labels that let a
+# tool_use and its tool_result be paired by the protocol's opaque id.
+# Runs on the wasm target (the only one the leptos crate's tests build for).
+mutants-render-block:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 \
+        --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
+        --file "src/context_modal.rs" --re 'render_block'
+
 # Run cargo-mutants targeted at the schemas.rs tool-definition filtering.
 # Covers the tool_definitions(tool_selection) membership-driven filtering,
 # canonical-order iteration, and the shell-aware fetch_url schema branch.

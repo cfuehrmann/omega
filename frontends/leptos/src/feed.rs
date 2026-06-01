@@ -962,6 +962,10 @@ fn render_event_body(
             let raw_preview = tool_call_preview(&e.name, &e.input);
             let preview = truncate_preview(&raw_preview, 2, 300).unwrap_or(raw_preview);
             let input = e.input.clone();
+            // Provider-assigned tool_use id, surfaced in the expanded
+            // "More" panel so the operator can pair this block with its
+            // tool_result by the same opaque id the protocol uses.
+            let tool_use_id = e.tool_use_id.clone();
             let expanded = RwSignal::new(false);
             let time_iso = e.time.clone();
             let time_pill = format_time(&time_iso, &tz);
@@ -1038,6 +1042,9 @@ fn render_event_body(
                         (pretty, "leptos-tool-use-block-body")
                     };
                     view! {
+                        <div class="block-body block-tool-id" data-testid="leptos-tool-use-id">
+                            {format!("tool_use_id: {tool_use_id}")}
+                        </div>
                         <pre
                             class=if partial { "block-body block-discarded-body" } else { "block-body" }
                             data-testid=body_testid

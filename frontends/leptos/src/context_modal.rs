@@ -133,8 +133,12 @@ pub fn render_content(content: &serde_json::Value) -> String {
 ///
 /// Matches SolidJS's per-block formatting:
 /// - `text`        → the plain `text` field.
-/// - `tool_use`    → `[tool_use: <name>]\n<pretty input>`.
-/// - `tool_result` → `[tool_result]\n<flattened content>`.
+/// - `tool_use`    → `[tool_use: <name> · <id>]\n<pretty input>`.
+/// - `tool_result` → `[tool_result · <tool_use_id>]\n<flattened content>`.
+///
+/// The provider-assigned tool id is shown inline after a ` · ` separator
+/// so a `tool_use` block and its matching `tool_result` can be paired by
+/// the same opaque id the protocol uses — as plain text, never JSON.
 /// - `thinking`    → `[thinking]\n<thinking text>`.
 /// - anything else → pretty-printed JSON of the whole block.
 ///
@@ -159,13 +163,21 @@ pub fn render_block(block: &serde_json::Value) -> String {
                 .get("name")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
+            let id = obj
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let input = obj.get("input").map_or_else(
                 || "{}".to_owned(),
                 |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| "{}".to_owned()),
             );
-            format!("[tool_use: {name}]\n{input}")
+            format!("[tool_use: {name} · {id}]\n{input}")
         }
         Some("tool_result") => {
+            let id = obj
+                .get("tool_use_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let content = obj.get("content").map_or_else(String::new, |c| {
                 if let Some(s) = c.as_str() {
                     s.to_owned()
@@ -185,7 +197,7 @@ pub fn render_block(block: &serde_json::Value) -> String {
                     serde_json::to_string(c).unwrap_or_default()
                 }
             });
-            format!("[tool_result]\n{content}")
+            format!("[tool_result · {id}]\n{content}")
         }
         Some("thinking") => {
             let thinking = obj
@@ -709,31 +721,44 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn render_block_tool_use_formats_with_name_and_input() {
+    fn render_block_tool_use_formats_with_name_id_and_input() {
         let r = render_block(&json!({
             "type": "tool_use",
+            "id": "toolu_01ABC",
             "name": "run_command",
             "input": { "command": "ls" },
         }));
-        assert!(r.starts_with("[tool_use: run_command]\n"));
+        // Name and provider id both appear in the label, id after ·.
+        assert!(r.starts_with("[tool_use: run_command · toolu_01ABC]\n"));
         assert!(r.contains("\"command\""));
         assert!(r.contains("\"ls\""));
     }
 
     #[wasm_bindgen_test]
-    fn render_block_tool_use_missing_name_uses_empty_label() {
+    fn render_block_tool_use_missing_name_and_id_use_empty_label() {
         let r = render_block(&json!({ "type": "tool_use", "input": {} }));
-        assert!(r.starts_with("[tool_use: ]\n"));
+        assert!(r.starts_with("[tool_use:  · ]\n"));
     }
 
     #[wasm_bindgen_test]
     fn render_block_tool_result_string_content() {
         let r = render_block(&json!({
             "type": "tool_result",
-            "tool_use_id": "id",
+            "tool_use_id": "toolu_01ABC",
             "content": "ok",
         }));
-        assert_eq!(r, "[tool_result]\nok");
+        // The tool_use_id is shown in the label so the result can be
+        // paired with its originating tool_use block.
+        assert_eq!(r, "[tool_result · toolu_01ABC]\nok");
+    }
+
+    #[wasm_bindgen_test]
+    fn render_block_tool_result_missing_id_uses_empty_label() {
+        let r = render_block(&json!({
+            "type": "tool_result",
+            "content": "ok",
+        }));
+        assert_eq!(r, "[tool_result · ]\nok");
     }
 
     #[wasm_bindgen_test]
@@ -749,7 +774,7 @@ mod tests {
                 { "type": "text", "text": "line2" },
             ],
         }));
-        assert_eq!(r, "[tool_result]\nline1\nline2");
+        assert_eq!(r, "[tool_result · id]\nline1\nline2");
     }
 
     #[wasm_bindgen_test]
