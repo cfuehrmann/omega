@@ -176,15 +176,42 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
       <li>right after it appends a <code>tool_result</code>, before calling the model again; and</li>
       <li>when it is about to <strong>park</strong> at <code>end_turn</code>.</li>
     </ol></li>
-  <li>When parked, the loop blocks on a select over
-    <code>{ human input, monitor queue, roster-changed }</code>. Any of them wakes it;
-    it drains the queue and runs.</li>
+  <li>When parked, the loop blocks on a <code>select</code> over three wake
+    sources: <strong>human input</strong> and <strong>monitor output</strong> (both
+    arrive in the queue), plus <strong>roster-changed</strong> — a signal that the
+    set of live monitors mutated <em>without</em> producing any queue output (a
+    monitor was killed or exited on its own). Any of the three wakes the loop; it
+    then drains the queue and re-evaluates park-vs-terminate.</li>
   <li><strong>No-preemption is free</strong>: the loop simply never inspects the queue
     mid-turn.</li>
   <li>The monitor subsystem is <strong>dumb</strong> — it knows nothing about the fold
     or the tool_use/tool_result invariant. That ignorance is the safety; only the loop,
     which is always at a legal boundary when it drains, ever appends.</li>
 </ul>
+<div class="box callout">
+  <h4>What &ldquo;roster&rdquo; means</h4>
+  <p>
+    The <strong>roster</strong> is the running process&rsquo;s <strong>in-memory list
+    of currently-live monitors</strong> &mdash; pure ephemeral runtime state, never
+    persisted and never reconstructed. <code>events.jsonl</code> records
+    <code>MonitorStarted</code>/<code>MonitorStopped</code> for forensics, but the live
+    set itself is held only in RAM; after a restart it is empty (see &sect;10,
+    Lifecycle). Each entry carries id, description, command, status, start time,
+    event-fired count, and a stderr tail &mdash; exactly what the UI badge/modal renders
+    (&sect;9) and what the WS layer pushes ephemerally (&sect;7).
+  </p>
+  <p>
+    <strong>Why <code>roster-changed</code> is a wake reason.</strong> The
+    park/terminate rule is &ldquo;park iff a live monitor or queued event exists;
+    otherwise terminate.&rdquo; When the agent is parked on its <em>last</em> live
+    monitor and that monitor is killed (UI <code>KillMonitor</code>) or exits by
+    itself, <em>no queue line is produced</em>, so neither of the other two wake
+    sources fires. Without a roster-changed wake the loop would sit parked forever
+    even though the terminate condition is now satisfied. The signal forces a
+    re-evaluation so the loop exits cleanly instead of hanging &mdash; it is the
+    mechanism behind &ldquo;never hang when nothing can ever fire.&rdquo;
+  </p>
+</div>
 <pre><code>runtime (ephemeral)            main loop (single writer)        persistence / UI
 ─────────────────────          ─────────────────────────        ────────────────
 monitor procs --stdout line--> [ pending queue ] --drain at----> events.jsonl
@@ -231,6 +258,36 @@ UI "KillMonitor" -----------------------------------------------> loop (logs Mon
   baked-in filter advice. Add a typed helper only if observation shows the agent
   repeatedly fumbles the shell boilerplate.
 </p>
+<div class="box callout">
+  <h4>Prerequisite: the prompt and tool descriptions must teach monitors</h4>
+  <p>
+    Explorative minimalism (&sect;5) drops <em>prompt nannying</em> &mdash; micro-advice
+    like &ldquo;always use <code>grep --line-buffered</code>.&rdquo; It does
+    <strong>not</strong> drop the baseline conceptual explanation the feature needs to
+    be usable at all. Before monitors ship, the <strong>system prompt</strong> and the
+    <strong><code>monitor</code>/<code>stop_monitor</code> tool descriptions</strong>
+    must clearly convey:
+  </p>
+  <ul>
+    <li><strong>What a monitor is</strong> &mdash; an async, out-of-band channel;
+      <code>monitor()</code> returns immediately and stdout lines arrive later as
+      injected user turns.</li>
+    <li><strong>The seam guarantee</strong> &mdash; no preemption; a monitor never
+      interrupts an in-flight turn, so the agent can rely on atomic turns.</li>
+    <li><strong>When to use which</strong> &mdash; monitors vs the synchronous
+      <code>wait_for_output</code> (see the open decision in &sect;12); the agent should
+      not reach for the blocking tool when an async wait will do.</li>
+    <li><strong>Stop discipline</strong> &mdash; monitors must be stopped with
+      <code>stop_monitor(id)</code> when no longer needed (session-end reaping is a
+      backstop, not licence to leak).</li>
+  </ul>
+  <p class="meta">
+    This is load-bearing for <em>usability</em>, distinct from the public-serving rails
+    we drop. Treat it as a deliverable alongside the tools (Phase&nbsp;1) and verify
+    with a <code>MockProvider</code> end-to-end test that the agent reaches for monitors
+    where appropriate.
+  </p>
+</div>
 
 <h2 id="decisions">6. Signed-off decisions</h2>
 <table>
@@ -340,6 +397,16 @@ MonitorStopped { id, reason, exit_code, time }
   <li><strong>Human-in-delivery representation</strong> — does <code>MonitorDelivery</code> aggregate human + monitor items in one event, or does the human turn stay its existing user-message event drained <em>alongside</em> a monitor delivery? Lean: keep them as <em>separate</em> canonical events; the projection merges them. (Either way the UI tags by source.)</li>
   <li><strong>Exact <code>reason</code> enum</strong> for <code>MonitorStopped</code> and which reasons project into context (lean: all "unexpected" ones do).</li>
   <li><strong>Does <code>MonitorStarted</code> re-surface into context?</strong> Lean: no — the tool result already informs the agent; the event is for log/causality.</li>
+  <li><strong>Retire / reposition <code>wait_for_output</code>?</strong> Monitors are
+    the async replacement for the synchronous, Seam-B-blocking <code>wait_for_output</code>
+    (&sect;1, the original motivation). <strong>Do not remove it at Phase&nbsp;0</strong>
+    &mdash; that would delete a working capability before its replacement exists, and
+    Phase&nbsp;0 is schema-only. Options once monitors are proven: (a)&nbsp;hard-remove
+    the tool; (b)&nbsp;keep it but drop it from the default tool selection;
+    (c)&nbsp;keep it and note in its description that monitors are preferred for
+    non-blocking waits. Decision deferred until we observe whether the agent still
+    reaches for the blocking tool with monitors available. (Closely tied to the
+    prompt/tool-description prerequisite in &sect;5.)</li>
 </ul>
 
 <h2 id="codefacts">13. Codebase facts gathered (Omega = Rust workspace)</h2>
