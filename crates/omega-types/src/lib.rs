@@ -23,8 +23,9 @@ pub mod stream_signal;
 
 pub use conversation::{ContentBlock, Role};
 pub use events::{
-    ContinueMode, InterruptReason, LlmResponseUsage, LlmRetryReason, OmegaEvent, ServerStopOutcome,
-    TurnMetrics,
+    ContinueMode, InterruptReason, LlmResponseUsage, LlmRetryReason, MonitorDeliveryEvent,
+    MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason,
+    MonitorStoppedEvent, OmegaEvent, ServerStopOutcome, TurnMetrics,
 };
 pub use feature_flags::FeatureFlags;
 pub use ids::{EventId, LoggedEvent, Origin, SessionId, SessionRef, SessionRefParseError};

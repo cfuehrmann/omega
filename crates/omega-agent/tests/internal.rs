@@ -68,15 +68,21 @@
 
 mod common;
 
-use common::{collect_stream, make_llm_response, make_test_agent, make_tool_use_items, tags};
+use common::{
+    collect_stream, make_llm_response, make_monitor_item, make_test_agent, make_tool_use_items,
+    tags,
+};
+use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, ContentBlock, LlmError, Message, Role};
-use omega_store::content_hash;
+use omega_store::{ContextStore, EventStore, content_hash};
+use omega_types::events::MonitorStopReason;
 use omega_types::events::ToolResultEvent;
 use omega_types::events::{
     ContextCompactedEvent, LlmResponseEndedEvent, LlmResponseUsage, UsageIteration,
 };
-use omega_types::{OmegaEvent, StreamSignal};
+use omega_types::{FeatureFlags, OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
@@ -181,13 +187,46 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
         other => panic!("expected ToolResult block, got {other:?}"),
     }
 
-    // The first request the agent sent to the provider must include all
-    // four messages in its `messages` array (seeded user, seeded
-    // assistant, synthetic user, new user).  Proves the repair landed
-    // before the LLM call.
+    // The first request the agent sent to the provider must contain 3
+    // messages: [seeded_user, seeded_assistant, merged_user].
+    //
+    // project_messages() merges consecutive role:user entries into one
+    // API message, so the synthetic tool-result user message and the new
+    // "continue" user message are combined.  The in-memory history still
+    // has 5 entries (asserted above); only the projected API view collapses.
     let reqs = provider.take_requests();
     assert_eq!(reqs.len(), 1);
-    assert_eq!(reqs[0].messages.len(), 4);
+    assert_eq!(
+        reqs[0].messages.len(),
+        3,
+        "project_messages must merge the synthetic tool-result and the new \
+         user message into one role:user API message"
+    );
+    // The merged user message is the last one; it must contain both the
+    // ToolResult block (from the dangling repair) and the Text block (from
+    // the new "continue" message).
+    let merged = &reqs[0].messages[2];
+    assert!(
+        merged.content.len() >= 2,
+        "merged user message must have at least 2 content blocks, got {}",
+        merged.content.len()
+    );
+    let has_tool_result = merged
+        .content
+        .iter()
+        .any(|b| matches!(b, omega_core::ContentBlock::ToolResult { .. }));
+    let has_text = merged
+        .content
+        .iter()
+        .any(|b| matches!(b, omega_core::ContentBlock::Text { .. }));
+    assert!(
+        has_tool_result,
+        "merged message must contain the ToolResult block"
+    );
+    assert!(
+        has_text,
+        "merged message must contain the Text block for 'continue'"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1241,5 +1280,461 @@ async fn tool_selection_drives_request_tools_and_system_prompt() {
         "system prompt must not reference `run_command` outside the \
          Reduced-toolset block when shell tools are not selected; \
          residue: {residue}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0 — Async Monitors: context projection
+// ---------------------------------------------------------------------------
+//
+// Tests (a)–(d) verify the core projection invariants:
+//
+//   (a) MonitorStderr is NEVER projected into the LLM context.
+//   (b) MonitorDelivery projects to role:user.
+//   (c) Consecutive role:user events merge into ONE API message.
+//   (d) MonitorStarted is NOT projected (log/causality only).
+//
+// Additionally:
+//   (e) MonitorStopped with an unexpected reason IS projected.
+//   (f) MonitorStopped with AgentStopped is NOT projected.
+//
+// All tests drive the public Agent API and observe effects via
+// history() / MockProvider.take_requests().
+
+/// (a) MonitorStderr: written to event log only, NEVER into context.
+///
+/// After append_monitor_stderr, history must be unchanged and the
+/// LlmRequest seen by the provider must contain no stderr text.
+#[tokio::test]
+async fn monitor_stderr_not_projected_into_context() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    // History must be empty after init (no user turn yet).
+    assert_eq!(agent.history().len(), 0);
+
+    // Inject stderr — must not touch history.
+    agent
+        .append_monitor_stderr("mon-1".into(), "fatal: out of memory".into())
+        .await
+        .expect("append_monitor_stderr");
+
+    assert_eq!(
+        agent.history().len(),
+        0,
+        "append_monitor_stderr must NOT add to in-memory history"
+    );
+
+    // Drive a normal turn — the LlmRequest must contain exactly ONE
+    // message (the user text), with no stderr noise.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("hello".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 1);
+    let msgs = &reqs[0].messages;
+    assert_eq!(
+        msgs.len(),
+        1,
+        "only the user 'hello' message must reach the API"
+    );
+
+    let body = serde_json::to_string(&msgs[0].content).unwrap();
+    assert!(
+        !body.contains("fatal"),
+        "stderr text must NOT appear in API context, got: {body}"
+    );
+}
+
+/// (b) MonitorDelivery: projects to role:user in the LLM context.
+///
+/// inject_monitor_delivery must add a role:user entry to history, and
+/// the LlmRequest must carry the monitor lines.
+#[tokio::test]
+async fn monitor_delivery_projects_to_user_role() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    let item = make_monitor_item("mon-1", &["line A", "line B"]);
+    agent
+        .inject_monitor_delivery(vec![item])
+        .await
+        .expect("inject_monitor_delivery");
+
+    // History must now contain exactly one role:user message.
+    assert_eq!(
+        agent.history().len(),
+        1,
+        "inject_monitor_delivery must add exactly one history entry"
+    );
+    assert_eq!(
+        agent.history()[0].role,
+        Role::User,
+        "injected monitor delivery must project to role:user"
+    );
+
+    // The content block must contain the monitor id and lines.
+    let text_content = match &agent.history()[0].content[0] {
+        ContentBlock::Text { text } => text.clone(),
+        other => panic!("expected Text block, got {other:?}"),
+    };
+    assert!(
+        text_content.contains("mon-1"),
+        "monitor id must appear in context text, got: {text_content}"
+    );
+    assert!(
+        text_content.contains("line A"),
+        "monitor lines must appear in context text, got: {text_content}"
+    );
+
+    // Drive a turn — the LlmRequest must contain the monitor content.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("continue".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    let body = serde_json::to_string(&reqs[0].messages).unwrap();
+    assert!(
+        body.contains("mon-1"),
+        "monitor id must reach the LLM API, got: {body}"
+    );
+}
+
+/// (c) Consecutive role:user events merge into ONE API message.
+///
+/// Two MonitorDelivery injections followed by a send_message produce
+/// three consecutive role:user entries in history.  project_messages
+/// must collapse them into a single message for the API call.
+#[tokio::test]
+async fn consecutive_user_role_events_merge_into_one_api_message() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    // Simulate one completed turn first so history is [user, assistant].
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 2))]);
+    let _ = collect_stream(agent.send_message("question".into(), CancellationToken::new())).await;
+    assert_eq!(
+        agent.history().len(),
+        2,
+        "after one turn: [user, assistant]"
+    );
+
+    // Now inject two monitor deliveries — both project to role:user.
+    agent
+        .inject_monitor_delivery(vec![make_monitor_item("mon-1", &["stdout line 1"])])
+        .await
+        .expect("delivery 1");
+    agent
+        .inject_monitor_delivery(vec![make_monitor_item("mon-2", &["stdout line 2"])])
+        .await
+        .expect("delivery 2");
+
+    // History now has: [user, assistant, user(mon-1), user(mon-2)] = 4 entries.
+    assert_eq!(
+        agent.history().len(),
+        4,
+        "history must hold all 4 entries before projection"
+    );
+
+    // Drive the next turn.  The LlmRequest must receive a MERGED view:
+    // [user(q), assistant(a), user(mon-1 + mon-2 + 'follow-up')] = 3 messages.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 2))]);
+    let _ = collect_stream(agent.send_message("follow-up".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    assert_eq!(
+        reqs.len(),
+        2,
+        "two LLM calls expected (one per send_message)"
+    );
+    let last_req = &reqs[1];
+    assert_eq!(
+        last_req.messages.len(),
+        3,
+        "project_messages must merge [user(mon-1), user(mon-2), user(follow-up)] \
+         into one API message; got {}",
+        last_req.messages.len()
+    );
+
+    // The merged user message must contain content from both deliveries
+    // and from the new human message.
+    let last_user = &last_req.messages[2];
+    let body = serde_json::to_string(&last_user.content).unwrap();
+    assert!(
+        body.contains("mon-1"),
+        "merged message must include monitor 1 content, got: {body}"
+    );
+    assert!(
+        body.contains("mon-2"),
+        "merged message must include monitor 2 content, got: {body}"
+    );
+    assert!(
+        body.contains("follow-up"),
+        "merged message must include human text, got: {body}"
+    );
+}
+
+/// (d) MonitorStarted: NOT projected into context (log/causality only).
+///
+/// append_monitor_started must leave history unchanged.
+#[tokio::test]
+async fn monitor_started_not_projected_into_context() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    agent
+        .append_monitor_started(
+            "mon-1".into(),
+            "watch build log".into(),
+            "tail -f build.log".into(),
+        )
+        .await
+        .expect("append_monitor_started");
+
+    assert_eq!(
+        agent.history().len(),
+        0,
+        "append_monitor_started must NOT add to in-memory history"
+    );
+
+    // Drive a turn — the LlmRequest must contain only the user text.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("hi".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    assert_eq!(reqs[0].messages.len(), 1, "only the user 'hi' message");
+    let body = serde_json::to_string(&reqs[0].messages[0].content).unwrap();
+    assert!(
+        !body.contains("mon-1"),
+        "MonitorStarted must NOT appear in API context, got: {body}"
+    );
+}
+
+/// (e) MonitorStopped with an unexpected reason projects into context.
+///
+/// Unexpected reasons (UserKilled, ProcessExited, Crashed) must add a
+/// role:user notification to history so the agent learns.
+#[tokio::test]
+async fn monitor_stopped_unexpected_projected_into_context() {
+    for reason in [
+        MonitorStopReason::UserKilled,
+        MonitorStopReason::ProcessExited,
+        MonitorStopReason::Crashed,
+    ] {
+        let (mut agent, provider, _tmp) = make_test_agent();
+        agent.init().await.expect("init");
+
+        agent
+            .inject_monitor_stopped("mon-1".into(), reason, Some(1))
+            .await
+            .expect("inject_monitor_stopped");
+
+        assert_eq!(
+            agent.history().len(),
+            1,
+            "unexpected MonitorStopped must add one role:user entry to history"
+        );
+        assert_eq!(agent.history()[0].role, Role::User);
+
+        // The notification must mention the monitor id.
+        let text = match &agent.history()[0].content[0] {
+            ContentBlock::Text { text } => text.clone(),
+            other => panic!("expected Text block, got {other:?}"),
+        };
+        assert!(
+            text.contains("mon-1"),
+            "stop notification must reference monitor id, got: {text}"
+        );
+
+        // Also verify the notification reaches the API.
+        provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+        let _ =
+            collect_stream(agent.send_message("continue".into(), CancellationToken::new())).await;
+
+        let reqs = provider.take_requests();
+        let body = serde_json::to_string(&reqs[0].messages).unwrap();
+        assert!(
+            body.contains("mon-1"),
+            "stop notification must reach the LLM API, got: {body}"
+        );
+    }
+}
+
+/// (f) MonitorStopped with AgentStopped is NOT projected into context.
+///
+/// The agent already knows it stopped the monitor; no notification needed.
+#[tokio::test]
+async fn monitor_stopped_agent_stopped_not_projected() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    agent
+        .inject_monitor_stopped("mon-1".into(), MonitorStopReason::AgentStopped, Some(0))
+        .await
+        .expect("inject_monitor_stopped");
+
+    assert_eq!(
+        agent.history().len(),
+        0,
+        "AgentStopped must NOT add to in-memory history"
+    );
+
+    // Drive a turn — only the user text must reach the API.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("hi".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    assert_eq!(reqs[0].messages.len(), 1, "only user 'hi' must appear");
+    let body = serde_json::to_string(&reqs[0].messages[0].content).unwrap();
+    assert!(
+        !body.contains("mon-1"),
+        "AgentStopped must NOT inject into API context, got: {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 7. Accessor-mutation guards
+// ---------------------------------------------------------------------------
+// These tests close survivor mutations on simple read-only accessors and
+// on `append_*` methods whose only observable effect is writing to the
+// event log — effects that the higher-level projection tests don't cover.
+
+/// `features()` must return the flags actually configured, not
+/// `Default::default()`.
+///
+/// Guard: `replace Agent::features -> FeatureFlags with Default::default()`.
+#[tokio::test]
+async fn features_accessor_reflects_configured_flags() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let provider = Arc::new(common::MockProvider::new());
+    let agent = Agent::new(
+        provider,
+        ContextStore::new(tmp.path().join("context.jsonl")),
+        EventStore::new(tmp.path().join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: tmp.path().to_path_buf(),
+            session_dir: tmp.path().to_path_buf(),
+            headless: false,
+            features: Some(FeatureFlags { subagents: true }),
+            tool_selection: None,
+        },
+    );
+    assert!(
+        agent.features().subagents,
+        "features() must return the configured value, not Default::default()"
+    );
+}
+
+/// `tool_selection()` must return the names actually registered,
+/// not an empty or placeholder vec.
+///
+/// Guards the three `Vec::leak` replacement mutations on `tool_selection()`.
+#[test]
+fn tool_selection_accessor_reflects_configured_tools() {
+    let (agent, _, _tmp) = make_test_agent();
+    // Default (None in config) falls back to all built-in tools.
+    assert!(
+        !agent.tool_selection().is_empty(),
+        "tool_selection() must not be empty"
+    );
+    assert!(
+        !agent.tool_selection().iter().any(String::is_empty),
+        "tool_selection() must not contain empty-string names"
+    );
+    assert!(
+        !agent.tool_selection().iter().any(|s| s == "xyzzy"),
+        "tool_selection() must not contain placeholder 'xyzzy'"
+    );
+    // Spot-check: a known built-in tool must be present.
+    assert!(
+        agent.tool_selection().iter().any(|s| s == "read_file"),
+        "tool_selection() must contain 'read_file'"
+    );
+}
+
+/// `context_hashes()` must reflect what was actually stored in context.jsonl.
+///
+/// Guard: `replace Agent::context_hashes -> &[ContextHash] with Vec::leak(Vec::new())`.
+#[tokio::test]
+async fn context_hashes_accessor_tracks_injected_items() {
+    let (mut agent, _, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    assert!(agent.context_hashes().is_empty(), "starts empty after init");
+
+    agent
+        .inject_monitor_delivery(vec![make_monitor_item("mon-1", &["line"])])
+        .await
+        .expect("inject");
+
+    assert_eq!(
+        agent.context_hashes().len(),
+        1,
+        "context_hashes() must track the injected delivery"
+    );
+}
+
+/// `append_monitor_started` must write a `monitor_started` event to
+/// `events.jsonl`.
+///
+/// Guard: `replace Agent::append_monitor_started -> omega_store::Result<()>
+/// with Ok(())`.
+#[tokio::test]
+async fn append_monitor_started_writes_event_to_log() {
+    let (mut agent, _, tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    agent
+        .append_monitor_started(
+            "mon-42".into(),
+            "watch the build".into(),
+            "tail -f build.log".into(),
+        )
+        .await
+        .expect("append_monitor_started");
+
+    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
+    let started = events
+        .iter()
+        .find(|v| v["type"] == "monitor_started")
+        .expect("monitor_started event must appear in events.jsonl");
+
+    assert_eq!(started["id"], "mon-42", "id must match");
+    assert_eq!(
+        started["command"], "tail -f build.log",
+        "command must match"
+    );
+    assert_eq!(
+        started["description"], "watch the build",
+        "description must match"
+    );
+}
+
+/// `append_monitor_stderr` must write a `monitor_stderr` event to
+/// `events.jsonl` (and ONLY there — not into the context).
+///
+/// Guard: `replace Agent::append_monitor_stderr -> omega_store::Result<()>
+/// with Ok(())`.
+#[tokio::test]
+async fn append_monitor_stderr_writes_event_to_log() {
+    let (mut agent, _, tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    agent
+        .append_monitor_stderr("mon-99".into(), "error: file not found\n".into())
+        .await
+        .expect("append_monitor_stderr");
+
+    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
+    let stderr = events
+        .iter()
+        .find(|v| v["type"] == "monitor_stderr")
+        .expect("monitor_stderr event must appear in events.jsonl");
+
+    assert_eq!(stderr["id"], "mon-99", "id must match");
+    assert_eq!(
+        stderr["chunk"], "error: file not found\n",
+        "chunk must match"
     );
 }

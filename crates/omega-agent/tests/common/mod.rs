@@ -30,7 +30,7 @@ use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_store::{ContextStore, EventStore};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
-use omega_types::{LlmResponseUsage, OmegaEvent};
+use omega_types::{LlmResponseUsage, MonitorDeliveryItem, OmegaEvent};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -241,8 +241,20 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::TextBlock(_) => "TextBlock",
                 OmegaEvent::ThinkingBlock(_) => "ThinkingBlock",
                 OmegaEvent::ToolUseBlock(_) => "ToolUseBlock",
+                OmegaEvent::MonitorStarted(_) => "MonitorStarted",
+                OmegaEvent::MonitorDelivery(_) => "MonitorDelivery",
+                OmegaEvent::MonitorStderr(_) => "MonitorStderr",
+                OmegaEvent::MonitorStopped(_) => "MonitorStopped",
                 _ => "OtherEvent",
             },
         })
         .collect()
+}
+
+/// Build a `MonitorDeliveryItem` with a given monitor id and lines.
+pub fn make_monitor_item(id: &str, lines: &[&str]) -> MonitorDeliveryItem {
+    MonitorDeliveryItem {
+        monitor_id: id.to_owned(),
+        lines: lines.iter().map(|l| (*l).to_owned()).collect(),
+    }
 }

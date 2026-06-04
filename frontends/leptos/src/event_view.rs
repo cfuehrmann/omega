@@ -102,7 +102,12 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         // Phase 2.0 (F11): server-side compaction is a lifecycle marker.
         | OmegaEvent::ContextCompacted(_)
         // python_repl bootstrap: treated as a status / informational event.
-        | OmegaEvent::PythonReplBootstrapped(_) => EventKind::Status,
+        | OmegaEvent::PythonReplBootstrapped(_)
+        // Phase 0 monitor events: causality / diagnostic markers.
+        | OmegaEvent::MonitorStarted(_)
+        | OmegaEvent::MonitorDelivery(_)
+        | OmegaEvent::MonitorStderr(_)
+        | OmegaEvent::MonitorStopped(_) => EventKind::Status,
     }
 }
 
@@ -171,6 +176,11 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::ContextCompacted(_) => "context_compacted",
         // python_repl bootstrap.
         OmegaEvent::PythonReplBootstrapped(_) => "python_repl_bootstrapped",
+        // Phase 0 monitor events.
+        OmegaEvent::MonitorStarted(_) => "monitor_started",
+        OmegaEvent::MonitorDelivery(_) => "monitor_delivery",
+        OmegaEvent::MonitorStderr(_) => "monitor_stderr",
+        OmegaEvent::MonitorStopped(_) => "monitor_stopped",
     }
 }
 
@@ -253,6 +263,11 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::ContextCompacted(_) => LABEL_CONTEXT_COMPACTED,
         // python_repl bootstrap.
         OmegaEvent::PythonReplBootstrapped(_) => LABEL_PYTHON_REPL_BOOTSTRAPPED,
+        // Phase 0 monitor events.
+        OmegaEvent::MonitorStarted(_) => "Monitor started",
+        OmegaEvent::MonitorDelivery(_) => "Monitor delivery",
+        OmegaEvent::MonitorStderr(_) => "Monitor stderr",
+        OmegaEvent::MonitorStopped(_) => "Monitor stopped",
     }
 }
 

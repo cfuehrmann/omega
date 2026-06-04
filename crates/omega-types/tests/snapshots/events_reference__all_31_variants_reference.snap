@@ -225,5 +225,38 @@ expression: events
     "tokensBefore": 80000,
     "tokensAfter": 500,
     "summaryTokens": 300
+  },
+  {
+    "type": "monitor_started",
+    "id": "mon-1",
+    "description": "Watch the build log for errors",
+    "command": "tail -f build.log",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "monitor_delivery",
+    "time": "2024-01-15T12:00:00.000Z",
+    "items": [
+      {
+        "monitorId": "mon-1",
+        "lines": [
+          "Build step 1 done",
+          "Build step 2 done"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "monitor_stderr",
+    "id": "mon-1",
+    "chunk": "tail: inotify resources exhausted",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "monitor_stopped",
+    "id": "mon-1",
+    "reason": "crashed",
+    "exitCode": null,
+    "time": "2024-01-15T12:00:00.000Z"
   }
 ]

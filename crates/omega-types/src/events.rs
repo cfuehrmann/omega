@@ -541,6 +541,115 @@ pub struct TurnContinuedEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 0 — Async Monitors event types
+// ---------------------------------------------------------------------------
+
+/// Reason a monitor process stopped.
+///
+/// Used by [`MonitorStoppedEvent`].  Unexpected reasons (`UserKilled`,
+/// `ProcessExited`, `Crashed`) are projected into the LLM context so
+/// the agent learns and does not wait forever.  `AgentStopped` is NOT
+/// projected — the agent issued the stop itself, so a notice would be
+/// redundant noise.
+///
+/// §12 locked decision: `AgentStopped` → not projected;  all other
+/// variants → projected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorStopReason {
+    /// The agent stopped the monitor explicitly via `stop_monitor`.
+    AgentStopped,
+    /// The user killed the monitor via the UI.
+    UserKilled,
+    /// The monitor process exited naturally (ran to completion).
+    ProcessExited,
+    /// The monitor process crashed unexpectedly.
+    Crashed,
+}
+
+impl MonitorStopReason {
+    /// Returns `true` for stop reasons that should be projected into the
+    /// LLM context.
+    ///
+    /// `AgentStopped` returns `false` — the agent already knows because
+    /// it issued the stop.  Every other reason returns `true` so the
+    /// agent learns about unexpected terminations and does not wait
+    /// forever on a dead monitor.
+    #[must_use]
+    pub fn should_project(&self) -> bool {
+        !matches!(self, Self::AgentStopped)
+    }
+}
+
+/// One monitor source contributing to a [`MonitorDeliveryEvent`] batch.
+///
+/// Each item carries the id of the monitor that produced the lines plus
+/// the stdout lines themselves.  Human-typed messages are NOT included
+/// here — they stay as `UserMessage` events and are merged by the
+/// projection (§12 LEAN: separate canonical events, merged at projection).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorDeliveryItem {
+    pub monitor_id: String,
+    pub lines: Vec<String>,
+}
+
+/// A monitor was registered.  Causality / forensics only.
+///
+/// Per §12 locked decision: `MonitorStarted` does NOT re-surface into
+/// the LLM context — the `monitor()` tool result already informs the
+/// agent; this event exists for log attribution and forensics only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorStartedEvent {
+    pub id: String,
+    pub description: String,
+    pub command: String,
+    pub time: ISOTimestamp,
+}
+
+/// Batched monitor stdout delivered at a turn boundary.  Projects to
+/// `role: user` in the LLM context.
+///
+/// Carries only MONITOR-sourced items (§12 LEAN).  Human-typed messages
+/// stay as `UserMessage` events; the context projection merges
+/// consecutive `role: user` messages into one API message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorDeliveryEvent {
+    pub time: ISOTimestamp,
+    pub items: Vec<MonitorDeliveryItem>,
+}
+
+/// A chunk of stderr from a monitor process.
+///
+/// **DIAGNOSTIC** — present in `events.jsonl`, **never** projected into
+/// `context.jsonl` or the in-memory history.  Zero token cost; does not
+/// wake the agent.  (§6 decision 3.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorStderrEvent {
+    pub id: String,
+    pub chunk: String,
+    pub time: ISOTimestamp,
+}
+
+/// A monitor process stopped.
+///
+/// `reason` determines projection: `AgentStopped` is NOT projected;
+/// `UserKilled`, `ProcessExited`, and `Crashed` ARE projected into the
+/// LLM context so the agent learns and does not block waiting on a dead
+/// monitor.  See [`MonitorStopReason::should_project`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorStoppedEvent {
+    pub id: String,
+    pub reason: MonitorStopReason,
+    pub exit_code: Option<i32>,
+    pub time: ISOTimestamp,
+}
+
+// ---------------------------------------------------------------------------
 // OmegaEvent — the unified discriminated union
 // ---------------------------------------------------------------------------
 
@@ -593,6 +702,25 @@ pub enum OmegaEvent {
     /// Emitted at most once per process, on the first `python_repl` call that
     /// triggered a successful bootstrap.
     PythonReplBootstrapped(PythonReplBootstrappedEvent),
+
+    // --- Phase 0 — Async Monitors schema ----------------------------------
+    /// A monitor was registered.  Log / causality only; NOT projected into
+    /// LLM context (the tool result already informs the agent).
+    MonitorStarted(MonitorStartedEvent),
+
+    /// Batched monitor stdout delivered at a turn boundary.  Projects to
+    /// `role: user` in the LLM context.  Consecutive user-role messages
+    /// are merged into one API message by the context projection.
+    MonitorDelivery(MonitorDeliveryEvent),
+
+    /// A chunk of stderr from a monitor process.  **DIAGNOSTIC only** —
+    /// present in `events.jsonl`, never in `context.jsonl` or history.
+    MonitorStderr(MonitorStderrEvent),
+
+    /// A monitor process stopped.  Unexpected reasons (`UserKilled`,
+    /// `ProcessExited`, `Crashed`) are projected into LLM context;
+    /// `AgentStopped` is not.
+    MonitorStopped(MonitorStoppedEvent),
 }
 
 impl OmegaEvent {
@@ -633,6 +761,10 @@ impl OmegaEvent {
             Self::ToolUseBlock(e) => &e.time,
             Self::ContextCompacted(e) => &e.time,
             Self::PythonReplBootstrapped(e) => &e.time,
+            Self::MonitorStarted(e) => &e.time,
+            Self::MonitorDelivery(e) => &e.time,
+            Self::MonitorStderr(e) => &e.time,
+            Self::MonitorStopped(e) => &e.time,
         }
     }
 }
@@ -1375,6 +1507,210 @@ mod tests {
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
             },
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 0 — Async Monitors: MonitorStopReason::should_project()
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn monitor_stop_reason_agent_stopped_is_not_projected() {
+        assert!(
+            !MonitorStopReason::AgentStopped.should_project(),
+            "AgentStopped must NOT project — agent already knows it stopped the monitor"
+        );
+    }
+
+    #[test]
+    fn monitor_stop_reason_user_killed_is_projected() {
+        assert!(
+            MonitorStopReason::UserKilled.should_project(),
+            "UserKilled must project so agent learns the monitor was killed by the user"
+        );
+    }
+
+    #[test]
+    fn monitor_stop_reason_process_exited_is_projected() {
+        assert!(
+            MonitorStopReason::ProcessExited.should_project(),
+            "ProcessExited must project so agent learns the monitor finished naturally"
+        );
+    }
+
+    #[test]
+    fn monitor_stop_reason_crashed_is_projected() {
+        assert!(
+            MonitorStopReason::Crashed.should_project(),
+            "Crashed must project so agent learns the monitor crashed"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 0 — Async Monitors: serde round-trips + wire-format assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn monitor_started_serde_round_trip_and_wire_format() {
+        let ev = OmegaEvent::MonitorStarted(MonitorStartedEvent {
+            id: "mon-1".into(),
+            description: "watch build log".into(),
+            command: "tail -f build.log".into(),
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        // type discriminator
+        assert_eq!(json["type"], "monitor_started");
+        // camelCase field names on the wire
+        assert_eq!(json["id"], "mon-1");
+        assert_eq!(json["description"], "watch build log");
+        assert_eq!(json["command"], "tail -f build.log");
+        assert_eq!(json["time"], "2024-01-15T12:00:00.000Z");
+        // round-trip
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_delivery_serde_round_trip_and_wire_format() {
+        let ev = OmegaEvent::MonitorDelivery(MonitorDeliveryEvent {
+            time: "2024-01-15T12:00:00.000Z".into(),
+            items: vec![MonitorDeliveryItem {
+                monitor_id: "mon-1".into(),
+                lines: vec!["line 1".into(), "line 2".into()],
+            }],
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        // type discriminator
+        assert_eq!(json["type"], "monitor_delivery");
+        // camelCase on items
+        assert_eq!(json["items"][0]["monitorId"], "mon-1");
+        assert_eq!(json["items"][0]["lines"][0], "line 1");
+        assert_eq!(json["items"][0]["lines"][1], "line 2");
+        // round-trip
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_stderr_serde_round_trip_and_wire_format() {
+        let ev = OmegaEvent::MonitorStderr(MonitorStderrEvent {
+            id: "mon-1".into(),
+            chunk: "stderr output".into(),
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "monitor_stderr");
+        assert_eq!(json["id"], "mon-1");
+        assert_eq!(json["chunk"], "stderr output");
+        assert_eq!(json["time"], "2024-01-15T12:00:00.000Z");
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_stopped_serde_round_trip_agent_stopped() {
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "mon-1".into(),
+            reason: MonitorStopReason::AgentStopped,
+            exit_code: Some(0),
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "monitor_stopped");
+        assert_eq!(json["id"], "mon-1");
+        assert_eq!(json["reason"], "agent_stopped");
+        assert_eq!(json["exitCode"], 0);
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_stopped_serde_round_trip_crashed_no_exit_code() {
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "mon-2".into(),
+            reason: MonitorStopReason::Crashed,
+            exit_code: None,
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["reason"], "crashed");
+        assert!(json["exitCode"].is_null(), "absent exit code must be null");
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_stopped_user_killed_wire_format() {
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "mon-3".into(),
+            reason: MonitorStopReason::UserKilled,
+            exit_code: Some(137),
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["reason"], "user_killed");
+        assert_eq!(json["exitCode"], 137);
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_stopped_process_exited_wire_format() {
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "mon-4".into(),
+            reason: MonitorStopReason::ProcessExited,
+            exit_code: Some(0),
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["reason"], "process_exited");
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_started_time_accessor() {
+        let ts = "2025-01-01T00:00:00.000Z";
+        let ev = OmegaEvent::MonitorStarted(MonitorStartedEvent {
+            id: "m".into(),
+            description: String::new(),
+            command: String::new(),
+            time: ts.into(),
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
+
+    #[test]
+    fn monitor_delivery_time_accessor() {
+        let ts = "2025-02-01T00:00:00.000Z";
+        let ev = OmegaEvent::MonitorDelivery(MonitorDeliveryEvent {
+            time: ts.into(),
+            items: vec![],
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
+
+    #[test]
+    fn monitor_stderr_time_accessor() {
+        let ts = "2025-03-01T00:00:00.000Z";
+        let ev = OmegaEvent::MonitorStderr(MonitorStderrEvent {
+            id: "m".into(),
+            chunk: String::new(),
+            time: ts.into(),
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
+
+    #[test]
+    fn monitor_stopped_time_accessor() {
+        let ts = "2025-04-01T00:00:00.000Z";
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "m".into(),
+            reason: MonitorStopReason::Crashed,
+            exit_code: None,
+            time: ts.into(),
         });
         assert_eq!(ev.time().as_str(), ts);
     }

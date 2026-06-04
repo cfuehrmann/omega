@@ -1077,6 +1077,33 @@ fn render_event_body(
             </span>
         }
         .into_any(),
+        // Phase 0 monitor events: minimal status rendering.
+        // Full UI (Phase 3) will give these richer components.
+        OmegaEvent::MonitorStarted(e) => view! {
+            <span class="block-label">{"Monitor started"}</span>
+            <span class="block-body">{format!("[{}] {}", e.id, e.command)}</span>
+        }
+        .into_any(),
+        OmegaEvent::MonitorDelivery(e) => view! {
+            <span class="block-label">{"Monitor delivery"}</span>
+            <span class="block-body">
+                {e.items.iter()
+                    .map(|item| format!("[{}]: {}", item.monitor_id, item.lines.join("\n")))
+                    .collect::<Vec<_>>()
+                    .join("\n")}
+            </span>
+        }
+        .into_any(),
+        OmegaEvent::MonitorStderr(e) => view! {
+            <span class="block-label">{"Monitor stderr"}</span>
+            <span class="block-body">{format!("[{}] {}", e.id, e.chunk)}</span>
+        }
+        .into_any(),
+        OmegaEvent::MonitorStopped(e) => view! {
+            <span class="block-label">{"Monitor stopped"}</span>
+            <span class="block-body">{format!("[{}] {:?}", e.id, e.reason)}</span>
+        }
+        .into_any(),
     }
 }
 

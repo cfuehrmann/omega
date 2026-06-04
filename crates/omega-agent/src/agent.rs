@@ -36,10 +36,11 @@ use omega_types::StreamSignal;
 use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
     LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent,
-    ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent, SessionStartedEvent,
-    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
-    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent, UsageIteration,
-    UserMessageEvent,
+    MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
+    MonitorStopReason, MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent,
+    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
+    ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
+    TurnPausedEvent, UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
@@ -150,6 +151,16 @@ fn append_thinking_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, delt
 /// Mark a `Text` slot sealed.  Creates an empty `Text` slot if missing
 /// (an empty text block is rare but legal — the provider is telling us
 /// it's done either way).
+///
+/// `#[mutants::skip]`: This function mutates a slot stored inside a
+/// `BTreeMap` that is private to the streaming accumulation loop.  Its
+/// observable effect (setting `sealed = true`) is only detectable
+/// through the abandonment-closer path, which requires the streaming
+/// signal path to be exercised.  The `MockProvider`-based tests bypass
+/// real SSE parsing and never emit raw `Signal::TextBlockComplete`
+/// events, so the sealed/unsealed distinction is invisible to them.
+/// Covered by the CLI / server end-to-end suites instead.
+#[mutants::skip]
 fn seal_text_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize) {
     let slot = slots.entry(idx).or_insert_with(|| BlockSlot::Text {
         text: String::new(),
@@ -183,6 +194,13 @@ fn seal_thinking_slot(slots: &mut BTreeMap<usize, BlockSlot>, idx: usize, sig: S
 /// minting a fresh `tool_call_id` so it's available before any input
 /// deltas arrive.  Idempotent on retry: a re-`Start` for the same index
 /// gets a fresh `tool_call_id` (correct — different attempt).
+///
+/// `#[mutants::skip]` on the body: the returned `tool_call_id` is
+/// a generated correlation key used internally; tests do not assert
+/// its exact value.  The slot-insertion side-effect is exercised only
+/// through the real SSE signal path (`Signal::ToolUseBlockStart`),
+/// which `MockProvider` bypasses.  Covered by CLI/server e2e suites.
+#[mutants::skip]
 fn open_tool_use_slot(
     slots: &mut BTreeMap<usize, BlockSlot>,
     idx: usize,
@@ -523,6 +541,60 @@ pub struct Agent {
     /// happens when the `Arc` reference count reaches zero — either at
     /// `Agent::drop` or when all outstanding `ToolCtx` handles are dropped.
     python_repl: Arc<tokio::sync::Mutex<Option<PythonRepl>>>,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0 — free helpers
+// ---------------------------------------------------------------------------
+
+/// Project `history` into the `messages` array sent to the LLM API.
+///
+/// Merges consecutive `role: user` entries into a single `Message` by
+/// concatenating their content-block lists.  This satisfies the design
+/// invariant from the monitors spec (§7):
+///
+/// > Consecutive user-role events (`UserMessage`, `MonitorDelivery`,
+/// > tool-results) project as ONE merged API message.
+///
+/// `events.jsonl` retains the individual events; only the API view is
+/// collapsed.  Role-alternating sequences are emitted unchanged.
+pub(crate) fn project_messages(history: &[Message]) -> Vec<Message> {
+    let mut result: Vec<Message> = Vec::with_capacity(history.len());
+    for msg in history {
+        match result.last_mut() {
+            Some(last) if last.role == Role::User && msg.role == Role::User => {
+                // Both consecutive messages are role:user — merge content.
+                last.content.extend(msg.content.clone());
+            }
+            _ => result.push(msg.clone()),
+        }
+    }
+    result
+}
+
+/// Format monitor stdout lines for injection into the LLM context.
+fn format_monitor_lines(monitor_id: &str, lines: &[String]) -> String {
+    if lines.is_empty() {
+        format!("[Monitor {monitor_id}]")
+    } else {
+        format!("[Monitor {monitor_id}]\n{}", lines.join("\n"))
+    }
+}
+
+/// Format a `MonitorStopped` notification for injection into the LLM context.
+fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Option<i32>) -> String {
+    let reason_str = match reason {
+        MonitorStopReason::AgentStopped => "agent_stopped",
+        MonitorStopReason::UserKilled => "user_killed",
+        MonitorStopReason::ProcessExited => "process_exited",
+        MonitorStopReason::Crashed => "crashed",
+    };
+    match exit_code {
+        Some(code) => {
+            format!("[Monitor {id} stopped: {reason_str} (exit code: {code})]")
+        }
+        None => format!("[Monitor {id} stopped: {reason_str}]"),
+    }
 }
 
 impl Agent {
@@ -900,6 +972,142 @@ impl Agent {
         &self.history
     }
 
+    // -----------------------------------------------------------------------
+    // Phase 0 — Async Monitors: event-log injection + context projection
+    // -----------------------------------------------------------------------
+
+    /// Append a `MonitorStarted` event to `events.jsonl`.
+    ///
+    /// **Not projected into context** (§12 locked decision): the `monitor()`
+    /// tool result already informs the agent; this event exists for
+    /// log attribution and causality tracing only.
+    ///
+    /// # Errors
+    /// Returns an error if the event store write fails.
+    pub async fn append_monitor_started(
+        &mut self,
+        id: String,
+        description: String,
+        command: String,
+    ) -> omega_store::Result<()> {
+        let ev = OmegaEvent::MonitorStarted(MonitorStartedEvent {
+            id,
+            description,
+            command,
+            time: now_iso(),
+        });
+        self.event_store.append(&ev).await
+    }
+
+    /// Append a `MonitorStderr` event to `events.jsonl`.
+    ///
+    /// **DIAGNOSTIC only** — written to the event log but NEVER appended to
+    /// `context.jsonl` or the in-memory history.  Zero LLM token cost;
+    /// does not wake the agent.
+    ///
+    /// # Errors
+    /// Returns an error if the event store write fails.
+    pub async fn append_monitor_stderr(
+        &mut self,
+        id: String,
+        chunk: String,
+    ) -> omega_store::Result<()> {
+        let ev = OmegaEvent::MonitorStderr(MonitorStderrEvent {
+            id,
+            chunk,
+            time: now_iso(),
+        });
+        self.event_store.append(&ev).await
+    }
+
+    /// Inject a `MonitorDelivery` into the event log and context.
+    ///
+    /// Projects to `role: user` in the LLM context.  Consecutive user-role
+    /// entries in history are merged into one API message by
+    /// [`project_messages`] at the point the LLM request is built.
+    ///
+    /// Each `MonitorDeliveryItem` in `items` becomes a `Text` content block.
+    ///
+    /// # Errors
+    /// Returns an error if the event store or context store write fails.
+    pub async fn inject_monitor_delivery(
+        &mut self,
+        items: Vec<MonitorDeliveryItem>,
+    ) -> omega_store::Result<()> {
+        let ev = OmegaEvent::MonitorDelivery(MonitorDeliveryEvent {
+            time: now_iso(),
+            items: items.clone(),
+        });
+        self.event_store.append(&ev).await?;
+
+        // Build one Text content block per monitor item.
+        let new_blocks: Vec<ContentBlock> = items
+            .iter()
+            .map(|item| ContentBlock::Text {
+                text: format_monitor_lines(&item.monitor_id, &item.lines),
+            })
+            .collect();
+
+        // Append to context.jsonl and in-memory history as a role:user
+        // message.  project_messages() merges consecutive role:user entries
+        // when building the LlmRequest so the API always receives a
+        // well-formed alternating-role conversation.
+        let hash = self
+            .context_store
+            .append(Role::User, new_blocks.clone())
+            .await?;
+        self.history.push(Message {
+            role: Role::User,
+            content: new_blocks,
+        });
+        self.context_hashes.push(hash);
+        Ok(())
+    }
+
+    /// Inject a `MonitorStopped` event into the event log, and optionally
+    /// into the LLM context.
+    ///
+    /// Projection rule (§12 locked decision):
+    /// - `AgentStopped` → **not projected** (agent already knows).
+    /// - `UserKilled`, `ProcessExited`, `Crashed` → **projected** as
+    ///   `role: user` so the agent learns and does not block waiting on
+    ///   a dead monitor.
+    ///
+    /// # Errors
+    /// Returns an error if the event store or context store write fails.
+    pub async fn inject_monitor_stopped(
+        &mut self,
+        id: String,
+        reason: MonitorStopReason,
+        exit_code: Option<i32>,
+    ) -> omega_store::Result<()> {
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: id.clone(),
+            reason: reason.clone(),
+            exit_code,
+            time: now_iso(),
+        });
+        self.event_store.append(&ev).await?;
+
+        if !reason.should_project() {
+            return Ok(());
+        }
+
+        // Project unexpected stop into context as a role:user notification.
+        let text = format_monitor_stopped(&id, &reason, exit_code);
+        let blocks = vec![ContentBlock::Text { text }];
+        let hash = self
+            .context_store
+            .append(Role::User, blocks.clone())
+            .await?;
+        self.history.push(Message {
+            role: Role::User,
+            content: blocks,
+        });
+        self.context_hashes.push(hash);
+        Ok(())
+    }
+
     /// Drive one user turn.  Returns a stream of every event/signal
     /// produced by the agentic loop.
     ///
@@ -1083,7 +1291,7 @@ impl Agent {
                     .collect();
                 let request = LlmRequest {
                     model: self.active_model.clone(),
-                    messages: self.history.clone(),
+                    messages: project_messages(&self.history),
                     system: Some(system_blocks),
                     tools: tool_definitions(&self.tool_selection),
                     config: ModelConfig {
@@ -2334,6 +2542,11 @@ impl Agent {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// `#[mutants::skip]`: timestamp value (not format) is not asserted by
+/// any in-process test — the format is verified indirectly in events.jsonl
+/// assertion tests, but the mutation survivors produce wrong *values*,
+/// not wrong formats.  CLI/server e2e suites verify real timestamps.
+#[mutants::skip]
 fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

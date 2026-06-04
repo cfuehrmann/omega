@@ -1,4 +1,4 @@
-//! All-27-variants `OmegaEvent` reference snapshot.
+//! All-31-variants `OmegaEvent` reference snapshot.
 //!
 //! This file is the living wire-format reference for `events.jsonl`.  It
 //! contains exactly one example of every `OmegaEvent` variant, serialised
@@ -18,7 +18,9 @@
 //! (`LlmResponseStarted`, `LlmResponseEnded`, `LlmResponseDiscarded`,
 //! `TextBlock`, `ThinkingBlock`, `ToolUseBlock`).  Phase 6.5 removed
 //! the legacy `LlmResponse` and `Compacted` variants.  Phase 2.0 (F11)
-//! adds variant 27: `ContextCompacted`.
+//! adds variant 27: `ContextCompacted`.  Phase 0 Async Monitors adds
+//! variants 28–31: `MonitorStarted`, `MonitorDelivery`, `MonitorStderr`,
+//! `MonitorStopped`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -28,11 +30,12 @@ use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
     LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
     LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason, ModelChangedEvent,
-    PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome,
-    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
-    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent,
-    UsageIteration, UserMessageEvent,
+    MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
+    MonitorStopReason, MonitorStoppedEvent, PauseRequestedEvent, ResumingSessionEvent,
+    ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent,
+    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
+    ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
+    TurnMetrics, TurnPausedEvent, UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use serde_json::json;
@@ -64,8 +67,8 @@ const TOOL_USE_ID: &str = "toolu_ref_01";
 ///
 /// The correlated pair (positions 6–7) uses the same `id` to demonstrate
 /// id propagation.  Every other value is illustrative but realistic.
-#[allow(clippy::too_many_lines)] // test fixture: 27 event variants, one per arm
-fn all_27_events() -> Vec<OmegaEvent> {
+#[allow(clippy::too_many_lines)] // test fixture: 31 event variants, one per arm
+fn all_31_events() -> Vec<OmegaEvent> {
     vec![
         // 1. SessionStarted
         OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -285,6 +288,35 @@ fn all_27_events() -> Vec<OmegaEvent> {
             tokens_after: 500,
             summary_tokens: 300,
         }),
+        // --- Phase 0 Async Monitors ------------------------------------------
+        // 28. MonitorStarted — causality/forensics only; not projected.
+        OmegaEvent::MonitorStarted(MonitorStartedEvent {
+            id: "mon-1".into(),
+            description: "Watch the build log for errors".into(),
+            command: "tail -f build.log".into(),
+            time: T.into(),
+        }),
+        // 29. MonitorDelivery — batched stdout; projects to role:user.
+        OmegaEvent::MonitorDelivery(MonitorDeliveryEvent {
+            time: T.into(),
+            items: vec![MonitorDeliveryItem {
+                monitor_id: "mon-1".into(),
+                lines: vec!["Build step 1 done".into(), "Build step 2 done".into()],
+            }],
+        }),
+        // 30. MonitorStderr — diagnostic only; never projected.
+        OmegaEvent::MonitorStderr(MonitorStderrEvent {
+            id: "mon-1".into(),
+            chunk: "tail: inotify resources exhausted".into(),
+            time: T.into(),
+        }),
+        // 31. MonitorStopped — unexpected stop (Crashed) projects into context.
+        OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "mon-1".into(),
+            reason: MonitorStopReason::Crashed,
+            exit_code: None,
+            time: T.into(),
+        }),
     ]
 }
 
@@ -303,9 +335,9 @@ fn all_27_events() -> Vec<OmegaEvent> {
 ///     transcript field from the provider's `tool_use` block,
 ///     redacted to `[id_2]`.
 #[test]
-fn all_27_variants_reference() {
-    let events = all_27_events();
-    assert_eq!(events.len(), 27, "exactly 27 OmegaEvent variants");
+fn all_31_variants_reference() {
+    let events = all_31_events();
+    assert_eq!(events.len(), 31, "exactly 31 OmegaEvent variants");
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {

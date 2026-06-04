@@ -205,6 +205,14 @@ mutants-events:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
 
+# Run cargo-mutants targeted at the Phase 0 context projection logic.
+# Mutates agent.rs (project_messages, monitor injection methods) and runs
+# the full omega-agent test suite including the Phase 0 monitor projection tests.
+# Template: mutants-system-prompt-guard (see AGENTS.md).
+mutants-agent-projection:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/agent.rs"
+
 # Run cargo-mutants targeted at the strict-resume fold logic (Phase 2.1-2.4).
 # Mutates session_resume.rs (resumable-boundary predicate, context-hash
 # reconstruction, model/effort folding, strict event reader).
