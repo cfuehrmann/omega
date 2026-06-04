@@ -284,6 +284,79 @@ UI "KillMonitor" -----------------------------------------------> loop (logs Mon
   </p>
 </div>
 
+<div class="box callout">
+  <h4>Phase 1 &mdash; as built (API surface the Phase 2 loop wires against)</h4>
+  <p>
+    Everything below lives in <small class="path">crates/omega-tools/src/monitors.rs</small>
+    (runtime) plus <small class="path">tools/monitor.rs</small> /
+    <small class="path">tools/stop_monitor.rs</small> (the two tools). Commit
+    <code>e101dfb</code>. Internally the manager is one
+    <code>Mutex&lt;ManagerInner&gt;</code> holding the roster
+    (<code>HashMap&lt;id, entry&gt;</code>), the <code>pending</code> queue
+    (<code>VecDeque&lt;PendingItem&gt;</code>), and an id counter.
+  </p>
+<pre><code>// Shared handle: agent owns one Arc, clones it into every ToolCtx.
+MonitorManager::new() -&gt; Arc&lt;Self&gt;
+
+// Spawn `bash -c command` in its own process group (pgid = child pid via
+// process_group(0)), piped stdout/stderr, null stdin, kill_on_drop. Starts
+// 3 tokio tasks (stdout reader, stderr reader, waiter) and RETURNS IMMEDIATELY.
+spawn(self: &amp;Arc&lt;Self&gt;, description, command) -&gt; Result&lt;SpawnedMonitor{id, started_at}, String&gt;
+
+stop(&amp;self, id) -&gt; bool        // kills whole tree (kill_group); true iff it was live (caller logs
+                               //   MonitorStopped); false = no-op for unknown / already-stopped
+shutdown(&amp;self) -&gt; Vec&lt;String&gt; // session-end reaping: kill all live trees, return their ids
+drain_pending(&amp;self) -&gt; Vec&lt;PendingItem&gt;   // Phase 2 calls this AT THE TWO BOUNDARIES
+roster(&amp;self) -&gt; Vec&lt;MonitorInfo&gt;         // ephemeral snapshot (UI/WS, Phase 3)
+status(&amp;self, id) -&gt; Option&lt;MonitorStatus&gt;
+
+enum PendingItem { Stdout{monitor_id, line}, Stderr{monitor_id, chunk} }
+enum MonitorStatus { Running, Stopped }
+struct MonitorInfo { id, description, command, status, started_at, fired_count, stderr_tail }
+const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows through the queue</code></pre>
+  <p>
+    <strong>Event emission = single writer, via <code>extra_events</code>.</strong> The
+    tools do not append events. <code>monitor()</code> returns
+    <code>MonitorStarted</code> and <code>stop_monitor()</code> returns
+    <code>MonitorStopped{reason: AgentStopped}</code> on the
+    <code>ToolResult.extra_events</code> vec; the agent&rsquo;s dispatch loop persists those
+    (same mechanism as <code>python_repl</code>&rsquo;s <code>PythonReplBootstrapped</code>).
+    Phase 0&rsquo;s <code>Agent::append_monitor_started</code> /
+    <code>inject_monitor_delivery</code> / <code>inject_monitor_stopped</code> remain unused for
+    now &mdash; they are the hooks for the <em>loop-driven</em> paths Phase 2 adds (delivery
+    on drain; <code>ProcessExited</code>/<code>Crashed</code> stops).
+  </p>
+  <div class="box ok">
+    <strong>Phase 2 wiring checklist (no re-architecting needed):</strong>
+    <ol>
+      <li>Create one <code>Arc&lt;MonitorManager&gt;</code> per session in the agent; clone it
+        into each <code>ToolCtx</code> (replace the Phase 1 <code>monitors: None</code> in
+        <small class="path">agent.rs</small>).</li>
+      <li>At the two boundaries call <code>drain_pending()</code> and map items:
+        <code>Stdout</code> &rarr; <code>MonitorDelivery</code> (batch per monitor; projected
+        <code>role: user</code>), <code>Stderr</code> &rarr; <code>MonitorStderr</code>
+        (non-projected). Reuse <code>inject_monitor_delivery</code>.</li>
+      <li>Parking <code>select</code> over <code>{human, queue, roster-changed}</code>; fire
+        <em>roster-changed</em> when a live monitor exits/killed without queue output.</li>
+      <li>Call <code>shutdown()</code> on session end (reaps trees &mdash; no orphans).</li>
+      <li><strong>Cutover (atomic):</strong> add <code>monitor</code>/<code>stop_monitor</code> to
+        <code>ALL_TOOL_NAMES</code> (+ default/preset), add their schema fns so
+        <code>tool_definitions</code> emits them, and add the deferred teaching copy (&sect;5).</li>
+    </ol>
+  </div>
+  <p>
+    <strong>Deliberate Phase 1/2 boundary (not an oversight).</strong> On natural exit the
+    waiter task only reaps the child and flips the roster entry to <code>Stopped</code>
+    &mdash; it does <em>not</em> capture the exit code, distinguish
+    <code>ProcessExited</code> vs <code>Crashed</code>, or enqueue a stop item. So
+    <em>projected</em> stop delivery for self-terminating monitors is unwired by design;
+    Phase 2 must capture exit status if it wants that projection. Phase 1 stops at
+    &ldquo;mark stopped + reap.&rdquo; (Also: stderr&rsquo;s roster cap uses a single
+    <code>if</code>, not a <code>while</code> &mdash; safe because pushes are one-at-a-time, and
+    it keeps the boundary mutation catchable rather than an infinite-loop timeout.)
+  </p>
+</div>
+
 <h2 id="philosophy">5. Guardrail philosophy</h2>
 <div class="box callout">
   <strong>Explorative minimalism.</strong> Add <em>only</em> guardrails that are
